@@ -848,6 +848,7 @@ class _AnchoredOutputTarget:
     input_path: Path
     meta_path: Path
     manifest: dict[str, Any] | None
+    consumed_artifacts: tuple[Mapping[str, Any], ...]
 
     @property
     def name(self) -> str:
@@ -857,13 +858,75 @@ class _AnchoredOutputTarget:
     def staging_name(self) -> str:
         return f".{self.name}.tmp-{os.getpid()}"
 
-    @property
-    def descriptor_path(self) -> Path:
-        return Path(f"/proc/self/fd/{self.parent_fd}") / self.name
-
 
 def _directory_identity(stat_result: os.stat_result) -> tuple[int, int]:
     return int(stat_result.st_dev), int(stat_result.st_ino)
+
+
+_PROC_SELF_FD = Path("/proc/self/fd")
+
+
+def _strict_descriptor_path(fd: int, *, kind: str) -> Path:
+    """Resolve one procfs descriptor link and prove that it names ``fd``."""
+    descriptor_link = _PROC_SELF_FD / str(fd)
+    try:
+        resolved = descriptor_link.resolve(strict=True)
+        descriptor_stat = os.stat(descriptor_link)
+        fd_stat = os.fstat(fd)
+    except OSError as exc:
+        raise RuntimeError(
+            f"safe analyzer I/O requires an intact procfs descriptor mapping for {kind}"
+        ) from exc
+    expected_kind = stat.S_ISDIR if kind == "directory" else stat.S_ISREG
+    if (
+        not expected_kind(fd_stat.st_mode)
+        or not expected_kind(descriptor_stat.st_mode)
+        or _directory_identity(descriptor_stat) != _directory_identity(fd_stat)
+    ):
+        raise RuntimeError(f"procfs {kind} descriptor mapping disagrees with fstat")
+    return resolved
+
+
+def _stable_file_identity(stat_result: os.stat_result) -> tuple[int, ...]:
+    return (
+        int(stat_result.st_mode), int(stat_result.st_size),
+        int(stat_result.st_mtime_ns), int(stat_result.st_ctime_ns),
+        int(stat_result.st_dev), int(stat_result.st_ino),
+    )
+
+
+def _read_consumed_artifact(path: Path, *, role: str) -> tuple[bytes, dict[str, Any]]:
+    """Read exact bytes while retaining their descriptor-authenticated identity."""
+    lexical_path = path.expanduser().absolute()
+    fd = os.open(lexical_path, os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        before = os.fstat(fd)
+        canonical_before = _strict_descriptor_path(fd, kind="file")
+        with os.fdopen(os.dup(fd), "rb") as fh:
+            content = fh.read()
+        after = os.fstat(fd)
+        canonical_after = _strict_descriptor_path(fd, kind="file")
+        if (
+            _stable_file_identity(before) != _stable_file_identity(after)
+            or canonical_before != canonical_after
+            or len(content) != int(after.st_size)
+        ):
+            raise RuntimeError(f"consumed {role} changed during authenticated read")
+        return content, {
+            "role": role,
+            "lexical_path": str(lexical_path),
+            "canonical_path": str(canonical_after),
+            "size": int(after.st_size),
+            "mtime_ns": int(after.st_mtime_ns),
+            "ctime_ns": int(after.st_ctime_ns),
+            "device": int(after.st_dev),
+            "inode": int(after.st_ino),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "stable_read": True,
+            "descriptor_authenticated": True,
+        }
+    finally:
+        os.close(fd)
 
 
 def _open_directory_anchored(path: Path, *, create: bool) -> int:
@@ -912,12 +975,16 @@ def _require_anchored_output_stable(target: _AnchoredOutputTarget) -> None:
         or _directory_identity(descriptor_parent) != target.parent_identity
     ):
         raise RuntimeError("analyzer output parent changed during publication")
+    descriptor_parent_path = _strict_descriptor_path(
+        target.parent_fd, kind="directory",
+    )
     _require_safe_output_path(
         target.input_path,
         target.meta_path,
         target.lexical_path,
         manifest=target.manifest,
-        _resolved_output=target.descriptor_path,
+        consumed_artifacts=target.consumed_artifacts,
+        _resolved_output=descriptor_parent_path / target.name,
     )
 
 
@@ -928,9 +995,16 @@ def _anchored_output_target(
     output_path: Path,
     *,
     manifest: dict[str, Any] | None = None,
+    consumed_artifacts: Sequence[Mapping[str, Any]] = (),
 ) -> Generator[_AnchoredOutputTarget, None, None]:
     """Pin the validated output parent for the entire atomic publication."""
-    _require_safe_output_path(input_path, meta_path, output_path, manifest=manifest)
+    _require_safe_output_path(
+        input_path,
+        meta_path,
+        output_path,
+        manifest=manifest,
+        consumed_artifacts=consumed_artifacts,
+    )
     lexical_path = output_path.expanduser().absolute()
     resolved_parent = lexical_path.parent.resolve()
     parent_fd = _open_directory_anchored(resolved_parent, create=True)
@@ -941,6 +1015,7 @@ def _anchored_output_target(
         input_path=input_path,
         meta_path=meta_path,
         manifest=manifest,
+        consumed_artifacts=tuple(consumed_artifacts),
     )
     try:
         _require_anchored_output_stable(target)
@@ -1000,12 +1075,98 @@ def _write_json_atomic(target: _AnchoredOutputTarget, rendered: str) -> None:
                 pass
 
 
+def _add_protected_path(protected: set[Path], raw_path: str | Path) -> None:
+    """Protect both the authenticated spelling and its current resolution."""
+    lexical = Path(raw_path).expanduser().absolute()
+    protected.add(lexical)
+    protected.add(lexical.resolve())
+
+
+def _recorded_identity(record: Mapping[str, Any]) -> tuple[int, int] | None:
+    device = record.get("device")
+    inode = record.get("inode")
+    if (
+        isinstance(device, int) and not isinstance(device, bool)
+        and isinstance(inode, int) and not isinstance(inode, bool)
+        and device >= 0 and inode > 0
+    ):
+        return device, inode
+    return None
+
+
+def _manifest_object_identities(value: Any) -> set[tuple[int, int]]:
+    """Collect every explicit device/inode pair in authenticated manifest data."""
+    identities: set[tuple[int, int]] = set()
+    pending = [value]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, dict):
+            identity = _recorded_identity(current)
+            if identity is not None:
+                identities.add(identity)
+            pending.extend(current.values())
+        elif isinstance(current, list):
+            pending.extend(current)
+    return identities
+
+
+def _manifest_directory_identities(
+    manifest: Mapping[str, Any] | None,
+) -> set[tuple[int, int]]:
+    identities: set[tuple[int, int]] = set()
+    if manifest is None:
+        return identities
+    syzygy = manifest.get("syzygy")
+    directories = syzygy.get("directories") if isinstance(syzygy, dict) else None
+    for directory in directories if isinstance(directories, list) else []:
+        if not isinstance(directory, dict):
+            continue
+        for record in (
+            directory.get("root_identity"),
+            *(directory.get("path_components", []) or []),
+        ):
+            if isinstance(record, dict):
+                identity = _recorded_identity(record)
+                if identity is not None:
+                    identities.add(identity)
+    origin = manifest.get("matched_row_origin_verification")
+    snapshot = origin.get("snapshot_inventory") if isinstance(origin, dict) else None
+    if isinstance(snapshot, dict):
+        records = [snapshot.get("root_identity"), *(snapshot.get("shards", []) or [])]
+        for record in records:
+            if isinstance(record, dict):
+                identity = _recorded_identity(record)
+                if identity is not None:
+                    identities.add(identity)
+    return identities
+
+
+def _tablebase_file_identities(
+    manifest: Mapping[str, Any] | None,
+) -> set[tuple[int, int]]:
+    identities: set[tuple[int, int]] = set()
+    syzygy = manifest.get("syzygy") if manifest is not None else None
+    directories = syzygy.get("directories") if isinstance(syzygy, dict) else None
+    for directory in directories if isinstance(directories, list) else []:
+        rows = directory.get("file_identities") if isinstance(directory, dict) else None
+        for row in rows if isinstance(rows, list) else []:
+            if (
+                isinstance(row, list) and len(row) == 6
+                and isinstance(row[4], int) and not isinstance(row[4], bool)
+                and isinstance(row[5], int) and not isinstance(row[5], bool)
+                and row[4] >= 0 and row[5] > 0
+            ):
+                identities.add((row[4], row[5]))
+    return identities
+
+
 def _require_safe_output_path(
     input_path: Path,
     meta_path: Path,
     output_path: Path | None,
     *,
     manifest: dict[str, Any] | None = None,
+    consumed_artifacts: Sequence[Mapping[str, Any]] = (),
     _resolved_output: Path | None = None,
 ) -> None:
     if output_path is None:
@@ -1017,12 +1178,29 @@ def _require_safe_output_path(
         if _resolved_output is not None
         else output_path.expanduser().resolve()
     )
-    protected = {
-        input_path.expanduser().resolve(),
-        meta_path.expanduser().resolve(),
-        Path(__file__).resolve(),
-        Path(solve_reachable_oracle.__code__.co_filename).resolve(),
+    protected: set[Path] = set()
+    for path in (
+        input_path,
+        meta_path,
+        Path(__file__),
+        Path(solve_reachable_oracle.__code__.co_filename),
+    ):
+        _add_protected_path(protected, path)
+    consumed_identities: set[tuple[int, int]] = set()
+    for record in consumed_artifacts:
+        for field in ("lexical_path", "canonical_path"):
+            raw_path = record.get(field)
+            if isinstance(raw_path, str) and raw_path:
+                _add_protected_path(protected, raw_path)
+        identity = _recorded_identity(record)
+        if identity is not None:
+            consumed_identities.add(identity)
+    protected_object_identities = {
+        *consumed_identities,
+        *_manifest_object_identities(manifest),
+        *_tablebase_file_identities(manifest),
     }
+    protected_directory_identities = _manifest_directory_identities(manifest)
     repo_root = Path(__file__).resolve().parents[1]
     if (
         repo_controlled_output(output_path, repo_root)
@@ -1034,25 +1212,25 @@ def _require_safe_output_path(
         raise ValueError("--out must not overwrite a tracked or repository-control path")
     if manifest is not None:
         for name in (
-            "producer_script", "publication_helper", "checkpoint",
+            "output", "producer_script", "publication_helper", "checkpoint",
             "checkpoint_params", "audit_set", "matched_rows", "matched_rows_report",
             "preregistration", "features_extension", "mcts_extension",
             "lc0_extension",
         ):
             artifact = manifest.get(name)
             if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
-                protected.add(Path(artifact["path"]).expanduser().resolve())
+                _add_protected_path(protected, artifact["path"])
         producer_sources = manifest.get("producer_sources")
         if isinstance(producer_sources, dict):
             for artifact in producer_sources.values():
                 if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
-                    protected.add(Path(artifact["path"]).expanduser().resolve())
+                    _add_protected_path(protected, artifact["path"])
         preimport = manifest.get("python_preimport")
         preimport_files = preimport.get("files") if isinstance(preimport, dict) else None
         if isinstance(preimport_files, dict):
             for artifact in preimport_files.values():
                 if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
-                    protected.add(Path(artifact["path"]).expanduser().resolve())
+                    _add_protected_path(protected, artifact["path"])
         params_inventory = manifest.get("params_candidate_inventory")
         params_candidates = (
             params_inventory.get("candidates")
@@ -1061,19 +1239,26 @@ def _require_safe_output_path(
         if isinstance(params_candidates, list):
             for candidate in params_candidates:
                 if isinstance(candidate, dict) and isinstance(candidate.get("path"), str):
-                    protected.add(Path(candidate["path"]).expanduser().resolve())
+                    _add_protected_path(protected, candidate["path"])
     if output in protected:
         raise ValueError("--out must not overwrite a consumed input artifact")
+    try:
+        output_identity = _directory_identity(os.stat(
+            _resolved_output if _resolved_output is not None else output_path,
+        ))
+    except FileNotFoundError:
+        output_identity = None
+    if output_identity is not None and output_identity in protected_object_identities:
+        raise ValueError("--out must not replace an alias of a consumed input artifact")
     syzygy = manifest.get("syzygy") if manifest is not None else None
     directories = syzygy.get("directories") if isinstance(syzygy, dict) else None
     for row in directories if isinstance(directories, list) else []:
         if not isinstance(row, dict) or not isinstance(row.get("path"), str):
             continue
-        try:
-            output.relative_to(Path(row["path"]).expanduser().resolve())
-        except ValueError:
-            continue
-        raise ValueError("--out must not be inside a consumed Syzygy directory")
+        directory_paths: set[Path] = set()
+        _add_protected_path(directory_paths, row["path"])
+        if any(output == path or output.is_relative_to(path) for path in directory_paths):
+            raise ValueError("--out must not be inside a consumed Syzygy directory")
     origin_verification = (
         manifest.get("matched_row_origin_verification")
         if manifest is not None else None
@@ -1084,14 +1269,23 @@ def _require_safe_output_path(
     )
     snapshot_path = snapshot.get("path") if isinstance(snapshot, dict) else None
     if isinstance(snapshot_path, str) and snapshot_path:
-        try:
-            output.relative_to(Path(snapshot_path).expanduser().resolve())
-        except ValueError:
-            pass
-        else:
+        snapshot_paths: set[Path] = set()
+        _add_protected_path(snapshot_paths, snapshot_path)
+        if any(output == path or output.is_relative_to(path) for path in snapshot_paths):
             raise ValueError(
                 "--out must not be inside an authenticated replay-snapshot directory"
             )
+    output_parent = (
+        _resolved_output.parent if _resolved_output is not None
+        else output_path.expanduser().absolute().parent
+    )
+    for parent in (output_parent, *output_parent.parents):
+        try:
+            parent_identity = _directory_identity(os.stat(parent))
+        except FileNotFoundError:
+            continue
+        if parent_identity in protected_directory_identities:
+            raise ValueError("--out must not be inside a consumed protected directory")
 
 
 def _require_bootstrap_resolution(samples: int, methodology_smoke: bool) -> None:
@@ -3984,8 +4178,16 @@ def load_transitions(
     # Authenticate and parse the same immutable byte buffers. Reading the
     # paths independently for hashing and parsing leaves a replacement window
     # in which the manifest can attest to bytes other than those analyzed.
-    input_bytes = input_path.read_bytes()
-    meta_bytes = actual_meta.read_bytes() if actual_meta.is_file() else None
+    input_bytes, input_artifact = _read_consumed_artifact(
+        input_path, role="trajectory_bank",
+    )
+    meta_artifact: dict[str, Any] | None = None
+    if actual_meta.is_file():
+        meta_bytes, meta_artifact = _read_consumed_artifact(
+            actual_meta, role="trajectory_manifest",
+        )
+    else:
+        meta_bytes = None
     manifest, decision_grade, preregistered_design = _require_manifest(
         input_path,
         actual_meta,
@@ -4205,6 +4407,11 @@ def load_transitions(
         "clock_conditioning_tested": False,
         "cross_move_tree_reuse_tested": False,
         "reference_censoring": manifest.get("reference_censoring"),
+        "analyzer_consumed_inputs": [
+            artifact
+            for artifact in (input_artifact, meta_artifact)
+            if artifact is not None
+        ],
         "manifest": manifest,
     }
     return transitions, info
@@ -5419,11 +5626,17 @@ def main() -> None:
         args.input_path, meta_path=actual_meta, methodology_smoke=args.methodology_smoke,
     )
     manifest = info.get("manifest")
+    consumed_inputs = info.get("analyzer_consumed_inputs")
+    if not isinstance(consumed_inputs, list) or not all(
+        isinstance(record, dict) for record in consumed_inputs
+    ):
+        raise RuntimeError("analyzer input consumption identity is unavailable")
     _require_safe_output_path(
         args.input_path,
         actual_meta,
         args.out,
         manifest=manifest if isinstance(manifest, dict) else None,
+        consumed_artifacts=consumed_inputs,
     )
     source_game_group_count = len({row.group_id for row in transitions})
     source_group_resolution_passed = (
@@ -5507,6 +5720,7 @@ def main() -> None:
             actual_meta,
             args.out,
             manifest=output_manifest,
+            consumed_artifacts=consumed_inputs,
         ) as output_target:
             _write_json_atomic(output_target, rendered)
     print(rendered)

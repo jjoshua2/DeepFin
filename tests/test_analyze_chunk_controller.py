@@ -2479,7 +2479,11 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
                 "root_declined": None, "tree_created": False, "passed": True,
             },
         },
-        "output": {"sha256": digest, "size": path.stat().st_size},
+        "output": {
+            "path": str(path.resolve()),
+            "sha256": digest,
+            "size": path.stat().st_size,
+        },
     }
     matched_builder_script = dict(producer_sources["scripts.match_audit_rows"])
     matched_builder_script["matches_git_revision"] = True
@@ -5095,6 +5099,253 @@ def test_analyzer_parent_symlink_swap_cannot_replace_analyzer_source(
     assert not (safe_parent / analyzer_source.name).exists()
 
 
+def test_analyzer_pre_anchor_bank_symlink_swap_keeps_consumed_target_protected(
+    tmp_path: Path,
+) -> None:
+    original_directory = tmp_path / "original"
+    original_directory.mkdir()
+    bank = original_directory / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    bank_bytes = bank.read_bytes()
+    alias = tmp_path / "bank-link.jsonl"
+    alias.symlink_to(bank)
+
+    _transitions, info = load_transitions(alias, meta_path=meta)
+    consumed = info["analyzer_consumed_inputs"]
+    manifest = dict(info["manifest"])
+    manifest["output"] = dict(manifest["output"])
+    manifest["output"].pop("path", None)
+    decoy = tmp_path / "decoy.jsonl"
+    decoy.write_text("decoy\n")
+    alias.unlink()
+    alias.symlink_to(decoy)
+
+    with (
+        pytest.raises(ValueError, match="consumed input artifact"),
+        controller_module._anchored_output_target(
+            alias,
+            meta,
+            bank,
+            manifest=manifest,
+            consumed_artifacts=consumed,
+        ),
+    ):
+        pytest.fail("consumed bank target reached publication")
+
+    assert bank.read_bytes() == bank_bytes
+    assert decoy.read_text() == "decoy\n"
+
+
+def test_analyzer_pre_anchor_meta_symlink_swap_keeps_consumed_target_protected(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    meta_bytes = meta.read_bytes()
+    alias = tmp_path / "manifest-link.json"
+    alias.symlink_to(meta)
+
+    _transitions, info = load_transitions(bank, meta_path=alias)
+    consumed = info["analyzer_consumed_inputs"]
+    decoy = tmp_path / "decoy.json"
+    decoy.write_text("{}\n")
+    alias.unlink()
+    alias.symlink_to(decoy)
+
+    with (
+        pytest.raises(ValueError, match="consumed input artifact"),
+        controller_module._anchored_output_target(
+            bank,
+            alias,
+            meta,
+            manifest=info["manifest"],
+            consumed_artifacts=consumed,
+        ),
+    ):
+        pytest.fail("consumed manifest target reached publication")
+
+    assert meta.read_bytes() == meta_bytes
+    assert decoy.read_text() == "{}\n"
+
+
+def test_analyzer_output_protects_manifest_recorded_bank_path(tmp_path: Path) -> None:
+    published_bank = tmp_path / "published-bank.jsonl"
+
+    with pytest.raises(ValueError, match="consumed input artifact"):
+        _require_safe_output_path(
+            tmp_path / "relocated-bank.jsonl",
+            tmp_path / "relocated-bank.jsonl.meta.json",
+            published_bank,
+            manifest={"output": {"path": str(published_bank)}},
+        )
+
+
+def test_analyzer_output_rejects_renamed_checkpoint_by_identity(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint.pt"
+    checkpoint.write_bytes(b"authenticated checkpoint\n")
+    checkpoint_stat = checkpoint.stat()
+    manifest = {
+        "checkpoint": {
+            "path": str(checkpoint),
+            "device": checkpoint_stat.st_dev,
+            "inode": checkpoint_stat.st_ino,
+        },
+    }
+    renamed = tmp_path / "apparently-ordinary-report.json"
+    checkpoint.rename(renamed)
+
+    with pytest.raises(ValueError, match="alias of a consumed input artifact"):
+        _require_safe_output_path(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            renamed,
+            manifest=manifest,
+        )
+
+    assert renamed.read_bytes() == b"authenticated checkpoint\n"
+
+
+def test_analyzer_output_rejects_renamed_syzygy_directory_by_identity(
+    tmp_path: Path,
+) -> None:
+    tablebases = tmp_path / "syzygy"
+    tablebases.mkdir()
+    tablebase_stat = tablebases.stat()
+    manifest = {
+        "syzygy": {
+            "directories": [{
+                "path": str(tablebases),
+                "root_identity": {
+                    "device": tablebase_stat.st_dev,
+                    "inode": tablebase_stat.st_ino,
+                },
+            }],
+        },
+    }
+    renamed = tmp_path / "ordinary-directory"
+    tablebases.rename(renamed)
+    output = renamed / "analysis.json"
+
+    with pytest.raises(ValueError, match="inside a consumed protected directory"):
+        _require_safe_output_path(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+            manifest=manifest,
+        )
+
+    assert not output.exists()
+
+
+def test_analyzer_output_rejects_renamed_tablebase_file_by_identity(
+    tmp_path: Path,
+) -> None:
+    tablebases = tmp_path / "syzygy"
+    tablebases.mkdir()
+    table = tablebases / "KQvK.rtbw"
+    table.write_bytes(b"authenticated tablebase\n")
+    table_stat = table.stat()
+    manifest = {
+        "syzygy": {
+            "directories": [{
+                "path": str(tablebases),
+                "file_identities": [[
+                    table.name,
+                    table_stat.st_size,
+                    table_stat.st_mtime_ns,
+                    table_stat.st_ctime_ns,
+                    table_stat.st_dev,
+                    table_stat.st_ino,
+                ]],
+            }],
+        },
+    }
+    renamed = tmp_path / "apparently-ordinary-report.json"
+    table.rename(renamed)
+
+    with pytest.raises(ValueError, match="alias of a consumed input artifact"):
+        _require_safe_output_path(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            renamed,
+            manifest=manifest,
+        )
+
+    assert renamed.read_bytes() == b"authenticated tablebase\n"
+
+
+def test_analyzer_missing_procfs_descriptor_mapping_fails_before_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    bank.write_text("bank evidence\n")
+    checkpoint = tmp_path / "model.pt"
+    checkpoint.write_bytes(b"checkpoint evidence\n")
+    output = tmp_path / "safe" / "analysis.json"
+    _bytes, consumed = controller_module._read_consumed_artifact(
+        bank, role="trajectory_bank",
+    )
+    monkeypatch.setattr(controller_module, "_PROC_SELF_FD", tmp_path / "missing-proc")
+
+    with (
+        pytest.raises(RuntimeError, match="procfs descriptor mapping"),
+        controller_module._anchored_output_target(
+            bank,
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+            manifest={"checkpoint": {"path": str(checkpoint)}},
+            consumed_artifacts=(consumed,),
+        ),
+    ):
+        pytest.fail("missing procfs mapping reached publication")
+
+    assert bank.read_text() == "bank evidence\n"
+    assert checkpoint.read_bytes() == b"checkpoint evidence\n"
+    assert not output.exists()
+    assert not output.with_name(f".{output.name}.tmp-{os.getpid()}").exists()
+
+
+def test_analyzer_misdirected_procfs_descriptor_mapping_fails_before_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    bank.write_text("bank evidence\n")
+    output = tmp_path / "safe" / "analysis.json"
+    wrong_parent = tmp_path / "wrong"
+    fake_proc = tmp_path / "fake-proc"
+    wrong_parent.mkdir()
+    fake_proc.mkdir()
+    _bytes, consumed = controller_module._read_consumed_artifact(
+        bank, role="trajectory_bank",
+    )
+    real_open_directory = controller_module._open_directory_anchored
+
+    def open_with_misdirected_proc(path: Path, *, create: bool) -> int:
+        fd = real_open_directory(path, create=create)
+        (fake_proc / str(fd)).symlink_to(wrong_parent, target_is_directory=True)
+        return fd
+
+    monkeypatch.setattr(controller_module, "_PROC_SELF_FD", fake_proc)
+    monkeypatch.setattr(
+        controller_module, "_open_directory_anchored", open_with_misdirected_proc,
+    )
+
+    with (
+        pytest.raises(RuntimeError, match="mapping disagrees with fstat"),
+        controller_module._anchored_output_target(
+            bank,
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+            consumed_artifacts=(consumed,),
+        ),
+    ):
+        pytest.fail("misdirected procfs mapping reached publication")
+
+    assert bank.read_text() == "bank evidence\n"
+    assert not output.exists()
+    assert not output.with_name(f".{output.name}.tmp-{os.getpid()}").exists()
+
+
 def test_producer_recovers_fully_staged_pair_before_either_publish(tmp_path: Path) -> None:
     from scripts import backtest_chunk_trajectory as producer
 
@@ -6429,18 +6680,22 @@ def test_loader_authenticates_and_parses_one_bank_buffer(
 ) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
-    original_read_bytes = Path.read_bytes
+    original_read_artifact = controller_module._read_consumed_artifact
     reads: dict[Path, int] = {}
 
-    def racing_read_bytes(path: Path) -> bytes:
+    def racing_read_artifact(
+        path: Path, *, role: str,
+    ) -> tuple[bytes, dict[str, Any]]:
         resolved = path.resolve()
         reads[resolved] = reads.get(resolved, 0) + 1
-        payload = original_read_bytes(path)
+        payload = original_read_artifact(path, role=role)
         if resolved == bank.resolve():
             path.write_text('{"replacement": true}\n')
         return payload
 
-    monkeypatch.setattr(Path, "read_bytes", racing_read_bytes)
+    monkeypatch.setattr(
+        controller_module, "_read_consumed_artifact", racing_read_artifact,
+    )
 
     transitions, _ = load_transitions(bank)
 
