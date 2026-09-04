@@ -1,8 +1,11 @@
 # RL Loop Audit — plan and standing record
 
 **Status: LIVING DOCUMENT.** Update the status cells in place as checks run.
-This is both the plan (what to verify, in what order, with which exact command)
-and the record (what has actually been verified, when, with what evidence).
+This records what has been verified, when, and with which evidence, alongside
+methods for reproducing those checks. Read the relevant stage for the task; this is
+not an instruction to rerun the complete audit. Dated measurements describe their
+recorded revision. Current task scope and resource commitments come from the user's
+authorization, [project guidance](../CLAUDE.md) and [evaluation](eval_protocol.md).
 
 `docs/experiment_ledger.md` owns *experiments* — hypotheses, yardsticks,
 verdicts. This document owns *invariants* — things that must be true for any
@@ -108,9 +111,10 @@ These are written from mistakes made *while doing this audit*, not hypotheticals
     against a clean baseline window, and state the exchange rate in the entry.
     Then give it a hard wall-clock deadline and let the CI float: sizing by
     statistical power ("200 games resolves the effect") sets no upper bound on
-    cost, and the cost is what the operator actually feels. **Standing budget:
-    ~30 min/day of GPU outside training.** sims-1 screening is nearly free;
-    sims-32 never is, at any concurrency.
+    cost, and the cost is what the operator actually feels. The **historical daily
+    ratchet budget was ~30 min/day of GPU outside training**. Choose the current
+    deadline within the task's authorized budget and account for competing work;
+    neither a simulation count nor an old timing establishes today's cost.
 
 12. **A "realized" value must come from the stage that resolves it, not from an
     input to that stage.** I5 was marked *measured* on the strength of the live

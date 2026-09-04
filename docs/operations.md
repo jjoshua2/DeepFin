@@ -1,6 +1,38 @@
 # Operations
 
-Detailed procedures. `CLAUDE.md` carries the always-on rules and points here.
+Detailed procedures; [CLAUDE.md](../CLAUDE.md) carries durable constraints. Read the
+section relevant to the task. Dated measurements and incident descriptions retain
+their original context; verify paths, process ownership and loaded code before acting.
+
+## Preparing a live change
+
+Identify the owning checkout, process and loaded revision, YAML, tune directory,
+observers and resource budget before touching a run. Editing or merging code does not
+replace code already loaded in a process. Build and test in an isolated checkout;
+plan adoption and any necessary restart against the actual running revision.
+
+For YAML changes, trace `utils/config_yaml.py`, `tune/trial_config.py`, the reload
+path in `tune/trainable_config_ops.py`, and the actual consumer. An unknown key can
+reject a whole mid-run reload while leaving the old config active; at launch there is
+no old config to fall back to. A schema-known value can still fail validation and kill
+a trial, reach an unchecked consumer, or be skipped by live reload. Removing a key
+may not remove its previous overlay. Validate a copy with
+`flatten_run_config_defaults` and `TrialConfig.from_dict`, then check the consumer and
+verify the realized setting after adoption. Parsing alone proves none of those effects.
+Before restart, compare the live keys with the target revision's schema, not just with
+that revision's sample YAML.
+
+Before a change whose effects survive a config revert, export current recovery state:
+
+```bash
+./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out data/salvage/<label>
+```
+
+Use `training_iteration` to select recent state; the default ranking metric can select
+an older checkpoint. Inspect the export and record its donor, weights, optimizer/PID,
+replay coverage and revision. Allow for its actual disk cost. Copy long-lived baselines
+outside Ray's pruned directories. Consult the relevant procedure below before restore;
+restoring a config alone leaves trained weights and changed replay in place.
 
 ## Driving training
 
@@ -33,15 +65,10 @@ the variable unset. Read that as the normal case, not the exception: set it by h
 export CHESS_ANTI_ENGINE_LIVE_CONFIG=/abs/path/to/live/tree/configs/pbt2_small.yaml
 ```
 
-⚑ This is not optional hygiene. CLAUDE.md mandates a `git worktree` for branch work,
-and a worktree's in-tree `configs/pbt2_small.yaml` is stale by construction — the live
-tree is the only writer and its edits are routinely uncommitted (`origin/main` carries
-none of `gumbel_policy_temp` / `gumbel_target_max_visit_cap` /
-`gumbel_target_untempered_prior`, which the live yaml sets). With the variable unset,
-`audit_targets.py` now **refuses** to emit rows (d)/(e) rather than score the wrong
-search under the heading "production training target"; pass `--allow-stale-config`
-only when you deliberately mean a non-production config, and note that it stamps the
-per-position dump `config_authority.authoritative = false`.
+An isolated worktree's YAML may differ from the live file. Without an authoritative
+reference, `audit_targets.py` refuses production training-target rows. Use
+`--allow-stale-config` only for an intentionally non-production comparison; its dump
+records `config_authority.authoritative = false`.
 
 **Graceful pause before killing PBT**: `python3 scripts/graceful_restart.py` creates
 `pause.txt` in the tune dir; active trials finish the current iteration, hold, then the
@@ -184,13 +211,12 @@ armed with its only recovery disabled.
 
 **Order (each step gated on the previous):**
 
-1. **Reconcile the live tree's uncommitted edits first.** Commit them on the live branch,
-   or diff them against `main` and discard them deliberately — **never** `git checkout --`
-   or `git stash`, which CLAUDE.md bans in this tree and which would discard the watchdog
-   currently running. A `git pull`/`merge` will otherwise abort with "your local changes
-   would be overwritten", and the reflex fix is the forbidden one.
-2. **Merge, and require `git diff HEAD...origin/main` to be EMPTY** before restarting
-   anything. A merged PR is not the same as code on the live branch.
+1. **Reconcile the live tree's uncommitted edits first.** Preserve the intended live
+   changes and review conflicts against the deployment revision. A pull/merge failure
+   does not authorize discarding or stashing files beneath running processes.
+2. **Verify the intended deployment files and schema are present** before restarting.
+   Account for deliberate live-branch differences; an empty whole-branch diff is not a
+   deployment requirement. A merged PR is not the same as code loaded by the process.
 3. **Restart `watchdog_loop.sh` FIRST**, so the exit-6 consumer is live before any
    producer can create an owned marker.
 4. **Then `ratchet_loop.sh`**, and only **between** polls — `tail scratchpad/ratchet_loop.log`
@@ -1004,12 +1030,15 @@ and the search — find where before reporting any number from that run.
 
 ## Static analysis
 
+Choose validation scope using [development guidance](development.md#validation-by-change-scope).
+Documentation-only work does not require the code lint gate.
+
 `./scripts/lint.sh <paths>` — default gate is ruff + basedpyright + vulture, a few
 seconds, kept at **zero findings repo-wide with no baseline**. CI gates basedpyright on
 the whole repo.
 
 ```bash
-./scripts/lint.sh                    # ruff + basedpyright at CI's scope — run before committing
+./scripts/lint.sh                    # ruff + basedpyright at CI's scope — final code validation
 ./scripts/lint.sh --changed          # changed/untracked .py (basedpyright: whole repo)
 ./scripts/lint.sh --deep [paths...]  # + skylos + ruff cleanup report (advisory, ~40s)
 ```
@@ -1018,8 +1047,8 @@ the whole repo.
 versus 544 in ~32s whole-repo. Every invocation without paths (bare, `--changed`,
 `--fast`, `--deep`, `--slop`, `--all`) runs it at `pyrightconfig.json`'s whole-repo scope,
 which is what CI runs. A path-scoped run cannot see breakage the change caused in a file
-it never opened; that is how PR #295 turned `main` red. Run the no-argument form before
-committing.
+it never opened; that is how PR #295 turned `main` red. For code changes, run the
+no-argument form on the final candidate as described in the development guidance.
 
 `--changed` narrows **ruff and vulture** to the changed `.py` files, falling back to the
 full default list when the change collected none. It is a scope *swap* for basedpyright,

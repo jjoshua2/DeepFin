@@ -1,3 +1,8 @@
+> **Historical design document.** This preserves earlier proposals and their
+> original wording; it is not the current architecture, task list or operating
+> procedure. Use [project guidance](CLAUDE.md), current source/configuration and
+> [experiment records](docs/experiments/README.md) to establish what applies.
+
 # Chess AI Training Framework: Implementation Specification
 
 ## Project Overview
