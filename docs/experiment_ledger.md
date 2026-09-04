@@ -73749,3 +73749,38 @@ The gain is already present in a shallow-search regime and is almost the same
 magnitude as the separately banked 100-sim +74.4 Elo result; this supports a
 learned-prior mechanism, but by preregistration does not choose the next mix or
 replace any joint-target yardstick.
+
+**2026-09-04 14:58 EDT — RECOVERED EXACT-EPOCH SAMPLER A/B AND PREREGISTERED
+ELO ESTIMATE; no checkpoint scoring or arena result read at this line.** The
+four frozen 4,894,143-row arms under code revision
+`0c825ad1e0b2164034755d3d1d4bdcd2af7132b5` completed 9,559 optimizer steps:
+replacement and game-aware exact epoch at seeds 0 and 1.  The recovery driver
+subsequently failed only because its operational checker requested superseded
+summary keys `rows` and `batches`; the emitted schema uses `rows_planned` and
+`batches_planned`.  Both exact summaries independently record 4,894,143 rows
+realized, 9,559 batches realized, `complete: true`, zero same-game repeats,
+and realized schedule SHA-256 equal to the planned SHA-256.  Preserve the
+driver failure sentinel as provenance; it is not a training failure.
+
+- The original preregistered two-seed broad-value-regret comparison remains
+  the sampler promotion yardstick and runs exactly as specified above on the
+  already-banked checkpoints.  Its sign is exact epoch minus replacement;
+  negative regret is better.  Do not reinterpret the Elo context below as a
+  replacement decision rule.
+- Josh specifically requested an Elo estimate for the cleaner-IID treatment.
+  Before scoring any checkpoint, the scaling-law prior is frozen at about
+  **+95 Elo**: the banked clean-target result is +144.1 Elo per exposure
+  doubling, while one uniform replacement-sampled nominal epoch has expected
+  unique coverage `1-exp(-1) = 63.2%`; `144.1*log2(1/0.632) = 95.3`.  Report
+  that as a prior, not an observation.
+- After the four regret dumps, run two independent no-rolling 1,000-game
+  paired arenas, exact epoch versus replacement within training seed, at the
+  already calibrated cheap regime `matched_sims`, training search shape and
+  25 simulations.  Use arena seeds 202609040 and 202609041 respectively and
+  bank every game as
+  `scratchpad/game_epoch_ab_0c825ad1/s{0,1}_game_epoch_vs_replacement_sims25.games.jsonl`.
+  The requested descriptive Elo estimate is the arithmetic mean of the two
+  printed per-seed Elo estimates; report both estimates and intervals so seed
+  sensitivity is visible.  This is a low-sim context estimate, not a claim
+  about 100-sim Elo and not a new adoption gate.  Any partial or structurally
+  invalid arena is preserved but excluded rather than extended post hoc.
