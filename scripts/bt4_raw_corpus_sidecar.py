@@ -931,10 +931,12 @@ def advisory_lease(
                     )
                     announced = True
                 time.sleep(poll_seconds)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        # Deliberately do not call LOCK_UN.  A forked label child inherits this
+        # open file description, and flock unlock on either duplicate would
+        # release the lease for both processes.  Closing on context exit
+        # releases it when there is no child, or only after the last inherited
+        # descriptor closes if the coordinator exits while its child is live.
+        yield
 
 
 def run_label_group(args: argparse.Namespace) -> int:

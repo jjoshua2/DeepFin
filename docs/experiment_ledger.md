@@ -73729,8 +73729,11 @@ unwind unlocked just before CUDA process teardown.  The admitted revision does
 the caught-up scan under a separate per-output writer lease before requesting
 the GPU, then forks only before CUDA initialization so parent and child inherit
 the locked open-file description; the parent retains it through `join`, while
-an orphaned child retains it if the parent dies.  Unit tests cover both
-properties.  This readout admits the operational streamer only; it does not
+an orphaned child retains it if the parent dies.  No process calls explicit
+`LOCK_UN`: doing so on either fork duplicate would release their shared flock;
+normal context exit closes only that process's descriptor.  A real fork/flock
+regression test plus unit tests cover both properties.  This readout admits the
+operational streamer only; it does not
 admit a BT4/SF target recipe.
 
 **2026-09-04 16:54Z — 25-SIM BT4 PERSISTENCE READOUT: PERSISTS.** The frozen

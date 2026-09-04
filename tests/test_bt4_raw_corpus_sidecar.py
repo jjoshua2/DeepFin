@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import gzip
 import json
+import os
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -126,6 +128,53 @@ def test_caught_up_preflight_never_acquires_gpu_lease(
     )
     assert tool.run(args) == 0
     assert events == ["sidecar-writer_acquired", "sidecar-writer_released"]
+
+
+def test_forked_descriptor_keeps_real_flock_after_parent_context_exits(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "lease.lock"
+    ready_read, ready_write = os.pipe()
+    release_read, release_write = os.pipe()
+    child_pid = -1
+    with tool.advisory_lease(
+        lock_path,
+        poll_seconds=0.01,
+        description="test",
+    ):
+        child_pid = os.fork()
+        if child_pid == 0:  # pragma: no cover - assertions run in the parent
+            os.close(ready_read)
+            os.close(release_write)
+            os.write(ready_write, b"1")
+            os.read(release_read, 1)
+            os._exit(0)
+        os.close(ready_write)
+        os.close(release_read)
+        assert os.read(ready_read, 1) == b"1"
+
+    probe = os.open(lock_path, os.O_RDWR)
+    unexpectedly_acquired = False
+    try:
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            unexpectedly_acquired = True
+        except BlockingIOError:
+            pass
+    finally:
+        os.write(release_write, b"1")
+        os.close(release_write)
+        os.close(ready_read)
+        _, status = os.waitpid(child_pid, 0)
+        os.close(probe)
+    assert not unexpectedly_acquired
+    assert os.waitstatus_to_exitcode(status) == 0
+
+    final_probe = os.open(lock_path, os.O_RDWR)
+    try:
+        fcntl.flock(final_probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        os.close(final_probe)
 
 
 def make_source(tmp_path: Path, *, bad_input_key: bool = False) -> tool.SourceSpec:
