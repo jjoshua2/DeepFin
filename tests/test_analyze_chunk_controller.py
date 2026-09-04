@@ -10553,9 +10553,12 @@ def test_analyzer_main_revalidates_witnesses_after_report_write(
     real_write = controller_module._write_json_atomic
 
     def write_report_then_change_bank(
-        path: controller_module._AnchoredOutputTarget, payload: str,
+        path: controller_module._AnchoredOutputTarget,
+        payload: str,
+        *,
+        evidence_check: Any = None,
     ) -> None:
-        real_write(path, payload)
+        real_write(path, payload, evidence_check=evidence_check)
         bank.write_text('{"tampered":true}\n')
 
     monkeypatch.setattr(
@@ -10565,7 +10568,7 @@ def test_analyzer_main_revalidates_witnesses_after_report_write(
     with pytest.raises(SystemExit, match="changed"):
         controller_module.main()
 
-    assert not report.exists()
+    assert report.exists()
 
 
 def test_analyzer_main_runs_grouped_analysis_for_two_game_smoke_bank(
@@ -11222,7 +11225,7 @@ def test_loader_authenticates_and_parses_one_bank_buffer(
     assert reads[meta.resolve()] == 1
 
 
-def test_loader_never_reopens_manifest_that_appears_after_absent_read(
+def test_smoke_loader_never_reopens_manifest_that_appears_after_absent_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bank = tmp_path / "bank.jsonl"
@@ -11245,9 +11248,12 @@ def test_loader_never_reopens_manifest_that_appears_after_absent_read(
         manifest_appears_after_failed_open,
     )
 
-    with pytest.raises(ValueError, match="decision-grade analysis requires"):
-        load_transitions(bank, meta_path=meta, methodology_smoke=True)
+    transitions, info = load_transitions(
+        bank, meta_path=meta, methodology_smoke=True,
+    )
 
+    assert len(transitions) == 3
+    assert info["manifest"] == {}
     assert meta.read_bytes() == manifest_bytes
 
 

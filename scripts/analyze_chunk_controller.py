@@ -42,7 +42,7 @@ import subprocess
 import sys
 import types
 from collections import defaultdict
-from collections.abc import Collection, Generator, Mapping, Sequence
+from collections.abc import Callable, Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from itertools import pairwise
@@ -1325,7 +1325,12 @@ def _link_anonymous_file_no_replace(
     raise RuntimeError("could not atomically publish anonymous analyzer output") from error
 
 
-def _write_json_atomic(target: _AnchoredOutputTarget, rendered: str) -> None:
+def _write_json_atomic(
+    target: _AnchoredOutputTarget,
+    rendered: str,
+    *,
+    evidence_check: Callable[[], None] | None = None,
+) -> None:
     """Publish fresh JSON without clobbering through the validated directory fd."""
     staging_fd: int | None = None
     try:
@@ -1347,6 +1352,8 @@ def _write_json_atomic(target: _AnchoredOutputTarget, rendered: str) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         _require_anchored_output_stable(target)
+        if evidence_check is not None:
+            evidence_check()
         try:
             _link_anonymous_file_no_replace(
                 staging_fd, target.parent_fd, target.name,
@@ -1368,6 +1375,8 @@ def _write_json_atomic(target: _AnchoredOutputTarget, rendered: str) -> None:
         )
         if not _same_file_identity(final_destination, staging_identity):
             raise RuntimeError("published analyzer output changed after publication")
+        if evidence_check is not None:
+            evidence_check()
     finally:
         if staging_fd is not None:
             os.close(staging_fd)
@@ -6027,7 +6036,14 @@ def _analyze_loaded_evidence(
         ) as output_target:
             if evidence_guard is not None:
                 evidence_guard.require_unchanged()
-            _write_json_atomic(output_target, rendered)
+            _write_json_atomic(
+                output_target,
+                rendered,
+                evidence_check=(
+                    evidence_guard.require_unchanged
+                    if evidence_guard is not None else None
+                ),
+            )
             if evidence_guard is not None:
                 evidence_guard.require_unchanged()
         if evidence_guard is not None:
