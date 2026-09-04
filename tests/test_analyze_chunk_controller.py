@@ -5438,7 +5438,7 @@ def test_analyzer_publication_never_name_unlinks_consumed_or_foreign_entries(
     real_unlink = controller_module.os.unlink
     unlink_calls = 0
 
-    def destroy_bank_at_unlink(path: str | bytes | int, **kwargs: Any) -> None:
+    def destroy_bank_at_unlink(path: str | bytes, **kwargs: Any) -> None:
         nonlocal unlink_calls
         unlink_calls += 1
         bank.replace(staging)
