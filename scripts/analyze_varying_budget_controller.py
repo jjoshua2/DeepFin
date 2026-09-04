@@ -320,8 +320,17 @@ def build_examples(rows: Sequence[Trajectory], horizons: Sequence[int], price: f
         for horizon in horizons:
             if horizon > len(trajectory.snapshots):
                 raise ValueError("horizon exceeds collected trajectory")
-            for chunk in range(1, horizon):
-                result.append(Example(trajectory.key, trajectory.group_id, horizon, chunk, trajectory.snapshots[chunk - 1], value_to_go(trajectory.snapshots, chunk, horizon, price)))
+            result.extend(
+                Example(
+                    trajectory.key,
+                    trajectory.group_id,
+                    horizon,
+                    chunk,
+                    trajectory.snapshots[chunk - 1],
+                    value_to_go(trajectory.snapshots, chunk, horizon, price),
+                )
+                for chunk in range(1, horizon)
+            )
     return result
 
 
@@ -436,7 +445,11 @@ def rollout_policy(rows: Sequence[Trajectory], horizons: Sequence[int], price: f
             else:
                 stop = 1
                 for chunk in range(1, horizon):
-                    go = trajectory.snapshots[chunk - 1].complexity_continue if complexity else predictions[(trajectory.key, horizon, chunk)] > 0.0  # type: ignore[index]
+                    if complexity:
+                        go = trajectory.snapshots[chunk - 1].complexity_continue
+                    else:
+                        assert predictions is not None
+                        go = predictions[(trajectory.key, horizon, chunk)] > 0.0
                     if not go:
                         break
                     stop = chunk + 1
@@ -500,8 +513,8 @@ def analyze(rows: Sequence[Trajectory], *, horizons: Sequence[int] = HORIZONS, p
         raise ValueError("analysis needs rows, >=2 folds, and positive bootstrap samples")
     if mode == "final" and bootstrap_samples < 1000:
         raise ValueError("final analysis requires at least 1000 bootstrap samples")
-    horizons = tuple(sorted(set(int(value) for value in horizons)))
-    prices = tuple(sorted(set(float(value) for value in prices)))
+    horizons = tuple(sorted({int(value) for value in horizons}))
+    prices = tuple(sorted({float(value) for value in prices}))
     if not horizons or max(horizons) > MAX_CHUNKS or any(price < 0.0 or not math.isfinite(price) for price in prices) or primary_price not in prices:
         raise ValueError("invalid horizons/prices")
     collection = collection_status(rows, manifest)
@@ -517,7 +530,8 @@ def analyze(rows: Sequence[Trajectory], *, horizons: Sequence[int] = HORIZONS, p
         curve[f"{price:.8g}"] = {"summaries": summaries, "budget_minus_age": policy_delta(policies["M_budget"], policies["M_age"])}
         if math.isclose(price, primary_price, abs_tol=1e-15):
             primary_summaries, primary_policies, primary_diagnostics = summaries, policies, diagnostics
-    assert primary_summaries is not None and primary_policies is not None
+    assert primary_summaries is not None
+    assert primary_policies is not None
     bootstrap = cluster_bootstrap_delta(primary_policies["M_budget"], primary_policies["M_age"], bootstrap_samples, seed)
     delta = policy_delta(primary_policies["M_budget"], primary_policies["M_age"])
     budget, age = primary_summaries["M_budget"], primary_summaries["M_age"]
