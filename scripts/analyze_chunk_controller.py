@@ -1156,6 +1156,11 @@ def _write_json_atomic(target: _AnchoredOutputTarget, rendered: str) -> None:
         _unlink_owned_output_entry(target, target.staging_name, staging_identity)
         os.fsync(target.parent_fd)
         _require_anchored_output_stable(target)
+        final_destination = os.stat(
+            target.name, dir_fd=target.parent_fd, follow_symlinks=False,
+        )
+        if not _same_file_identity(final_destination, staging_identity):
+            raise RuntimeError("published analyzer output changed after publication")
     except BaseException:
         directory_changed = False
         if destination_is_ours and staging_identity is not None:

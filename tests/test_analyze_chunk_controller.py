@@ -5399,6 +5399,36 @@ def test_analyzer_descriptor_ancestry_rejects_protected_root_after_procfs_swap(
     assert not output.exists()
 
 
+def test_analyzer_descriptor_ancestry_depth_failure_closes_walk_fds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_parent = tmp_path / "output-parent"
+    output_parent.mkdir()
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent_fd = os.open(output_parent, flags)
+    duplicated_fds: list[int] = []
+    real_dup = controller_module.os.dup
+
+    def tracked_dup(fd: int) -> int:
+        duplicated = real_dup(fd)
+        duplicated_fds.append(duplicated)
+        return duplicated
+
+    monkeypatch.setattr(controller_module.os, "dup", tracked_dup)
+    monkeypatch.setattr(controller_module, "_MAX_OUTPUT_ANCESTOR_DEPTH", 1)
+    try:
+        with pytest.raises(RuntimeError, match="ancestry is too deep"):
+            controller_module._descriptor_ancestor_identities(parent_fd)
+        assert stat.S_ISDIR(os.fstat(parent_fd).st_mode)
+        assert duplicated_fds
+        for duplicated in duplicated_fds:
+            with pytest.raises(OSError):
+                os.fstat(duplicated)
+    finally:
+        os.close(parent_fd)
+
+
 def test_analyzer_output_rejects_renamed_syzygy_directory_by_identity(
     tmp_path: Path,
 ) -> None:
