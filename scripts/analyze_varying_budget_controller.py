@@ -247,12 +247,18 @@ def load_trajectories(path: Path) -> list[Trajectory]:
             root_q = _finite(row.get("root_q"), f"{key}: root Q")
             q_drift = _optional(row.get("q_drift"), f"{key}: q drift")
             expected_drift = None if previous_q is None else abs(root_q - previous_q)
-            if (expected_drift is None) != (q_drift is None) or (expected_drift is not None and not math.isclose(float(q_drift), expected_drift, rel_tol=1e-10, abs_tol=1e-12)):
+            if expected_drift is None:
+                if q_drift is not None:
+                    raise ValueError(f"{key}: q_drift disagrees with history")
+            elif q_drift is None or not math.isclose(q_drift, expected_drift, rel_tol=1e-10, abs_tol=1e-12):
                 raise ValueError(f"{key}: q_drift disagrees with history")
             share_map = dict(zip(actions, shares, strict=True))
             churn = _optional(row.get("visit_churn"), f"{key}: visit churn")
             expected_churn = None if previous_shares is None else 0.5 * sum(abs(share_map.get(a, 0.0) - previous_shares.get(a, 0.0)) for a in set(share_map) | set(previous_shares))
-            if (expected_churn is None) != (churn is None) or (expected_churn is not None and not math.isclose(float(churn), expected_churn, rel_tol=1e-10, abs_tol=1e-12)):
+            if expected_churn is None:
+                if churn is not None:
+                    raise ValueError(f"{key}: visit_churn disagrees with history")
+            elif churn is None or not math.isclose(churn, expected_churn, rel_tol=1e-10, abs_tol=1e-12):
                 raise ValueError(f"{key}: visit_churn disagrees with history")
 
             snapshots.append(Snapshot(
@@ -274,8 +280,11 @@ def load_manifest(bank: Path, meta: Path | None = None) -> dict[str, Any] | None
     path = meta or Path(str(bank) + ".meta.json")
     if not path.is_file():
         return None
-    manifest = json.loads(path.read_text(encoding="utf-8"))
-    output = manifest.get("output") if isinstance(manifest, dict) else None
+    loaded: Any = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise ValueError("collector manifest is not a JSON object")
+    manifest: dict[str, Any] = loaded
+    output = manifest.get("output")
     if not isinstance(output, dict) or output.get("size") != bank.stat().st_size or output.get("sha256") != _sha256(bank):
         raise ValueError("collector manifest does not match trajectory bank")
     return manifest
@@ -285,8 +294,8 @@ def collection_status(rows: Sequence[Trajectory], manifest: dict[str, Any] | Non
     reasons: list[str] = []
     if manifest is None:
         return {"passed": False, "reasons": ["manifest_missing"]}
-    config = manifest.get("config") if isinstance(manifest, dict) else None
-    model = manifest.get("model") if isinstance(manifest, dict) else None
+    config = manifest.get("config")
+    model = manifest.get("model")
     if manifest.get("complete") is not True or manifest.get("completed_positions") != len(rows):
         reasons.append("incomplete_collection")
     expected = {
@@ -349,8 +358,6 @@ def feature_vector(example: Example, model: ModelName) -> list[float]:
     aged = [*base, math.log1p(snap.nodes)]
     if model == "M_age":
         return aged
-    if model != "M_budget":
-        raise ValueError(f"unknown model {model}")
     remaining = example.horizon - example.chunk
     fraction = remaining / example.horizon
     hard_nodes = (snap.nodes // snap.chunk) * example.horizon
