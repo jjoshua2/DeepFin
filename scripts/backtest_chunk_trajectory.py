@@ -3433,6 +3433,8 @@ def _main() -> None:
 
     tmp_path = _pending_output_path(args.out)
     n_rows = 0
+    intended_output_digest = hashlib.sha256()
+    intended_output_size = 0
     completed_positions = 0
     completed_group_ids: dict[str, str] = {}
     reference_censoring_details: list[dict[str, Any]] = []
@@ -3708,9 +3710,13 @@ def _main() -> None:
                 censoring = _trajectory_reference_censoring(pos.key, position_rows)
                 if censoring is not None:
                     reference_censoring_details.append(censoring)
-                fh.write("".join(
+                document = "".join(
                     json.dumps(row, sort_keys=True) + "\n" for row in position_rows
-                ))
+                )
+                intended_bytes = document.encode("utf-8")
+                intended_output_digest.update(intended_bytes)
+                intended_output_size += len(intended_bytes)
+                fh.write(document)
                 n_rows += len(position_rows)
                 completed_positions += 1
                 completed_group_id = group_ids[pos.key]
@@ -3724,7 +3730,12 @@ def _main() -> None:
                     if str(args.device).startswith("cuda"):
                         torch.cuda.empty_cache()
             completed_output_artifact = _durably_prepare_output_artifact(
-                fh, tmp_path, args.out, parent_fd=pending_parent_fd,
+                fh,
+                tmp_path,
+                args.out,
+                parent_fd=pending_parent_fd,
+                expected_size=intended_output_size,
+                expected_sha256=intended_output_digest.hexdigest(),
             )
         _ACTIVE_PENDING_EVIDENCE.update({
             "collection_complete": True,

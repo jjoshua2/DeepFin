@@ -7743,6 +7743,46 @@ def test_completed_bank_fsync_rejects_same_inode_rewrite(
     assert pending.read_text() == "attacker observations are longer\n"
 
 
+def test_completed_bank_flush_is_bound_to_intended_bytes(
+    tmp_path: Path,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    pending = tmp_path / ".bank.jsonl.tmp-pending"
+    output = tmp_path / "bank.jsonl"
+    intended_bytes = b"completed bank\n"
+    attacker_bytes = b"attacker observations are longer\n"
+    injected = False
+
+    class RewriteAfterFlush:
+        def __init__(self, handle: Any) -> None:
+            self.handle = handle
+
+        def flush(self) -> None:
+            nonlocal injected
+            self.handle.flush()
+            if not injected:
+                injected = True
+                pending.write_bytes(attacker_bytes)
+
+        def fileno(self) -> int:
+            return int(self.handle.fileno())
+
+    with pending.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(intended_bytes.decode("utf-8"))
+        with pytest.raises(SystemExit, match="differs from intended bytes"):
+            publication._durably_prepare_output_artifact(
+                RewriteAfterFlush(handle),
+                pending,
+                output,
+                expected_size=len(intended_bytes),
+                expected_sha256=hashlib.sha256(intended_bytes).hexdigest(),
+            )
+
+    assert injected is True
+    assert pending.read_bytes() == attacker_bytes
+
+
 def test_pending_bank_sync_uses_parent_retained_from_creation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

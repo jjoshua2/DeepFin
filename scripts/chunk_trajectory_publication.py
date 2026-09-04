@@ -666,7 +666,7 @@ def _open_staged_output_file(
                 ) from exc
             raise
         _authenticate_initial_open(path, parent_fd, descriptor, links=1)
-        with os.fdopen(descriptor, "w+") as fh:
+        with os.fdopen(descriptor, "w+", encoding="utf-8", newline="") as fh:
             descriptor = -1
             yield fh, parent_fd
     finally:
@@ -1566,8 +1566,12 @@ def _durably_prepare_output_artifact(
     output_path: Path,
     *,
     parent_fd: int | None = None,
+    expected_size: int | None = None,
+    expected_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Make staged bytes and their name durable before snapshotting identity."""
+    if (expected_size is None) != (expected_sha256 is None):
+        raise RuntimeError("expected bank size and digest must be supplied together")
     owned_parent = parent_fd is None
     if parent_fd is None:
         parent_fd = _open_parent(tmp_path)
@@ -1593,6 +1597,13 @@ def _durably_prepare_output_artifact(
         ):
             raise SystemExit(f"pending trajectory bank changed: {tmp_path}")
         private = _artifact_from_fd(reader_fd, tmp_path, before=opened)
+        if expected_size is not None and (
+            private["size"] != expected_size
+            or private["sha256"] != expected_sha256
+        ):
+            raise SystemExit(
+                f"pending trajectory bank differs from intended bytes: {tmp_path}"
+            )
         _require_parent(tmp_path, parent_fd)
         return {**private, "path": str(output_path.expanduser().resolve())}
     finally:
