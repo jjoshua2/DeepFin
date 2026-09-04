@@ -534,7 +534,7 @@ def _anchored_file(
 
 def _flush_fsync_file_and_parent(
     fh: _FlushableFile, path: Path, *, parent_fd: int | None = None,
-) -> None:
+) -> os.stat_result:
     """Flush Python buffers, then fsync the file and its containing directory."""
     owned_parent = parent_fd is None
     if parent_fd is None:
@@ -545,8 +545,9 @@ def _flush_fsync_file_and_parent(
         fh.flush()
         os.fsync(fh.fileno())
         os.fsync(parent_fd)
-        _require_entry(path, parent_fd, fh.fileno(), links=1)
+        opened = _require_entry(path, parent_fd, fh.fileno(), links=1)
         _require_parent(path, parent_fd)
+        return opened
     finally:
         if owned_parent:
             os.close(parent_fd)
@@ -1560,17 +1561,22 @@ def _durably_prepare_output_artifact(
         parent_fd = _open_parent(tmp_path)
     reader_fd = -1
     try:
-        _flush_fsync_file_and_parent(fh, tmp_path, parent_fd=parent_fd)
+        writer_before = _flush_fsync_file_and_parent(
+            fh, tmp_path, parent_fd=parent_fd,
+        )
         flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
         reader_fd = os.open(tmp_path.name, flags, dir_fd=parent_fd)
-        opened = _require_entry(tmp_path, parent_fd, reader_fd, links=1)
-        writer = os.fstat(fh.fileno())
+        opened = _authenticate_initial_open(
+            tmp_path, parent_fd, reader_fd, links=1,
+        )
+        writer_after = os.fstat(fh.fileno())
         stable = (
             "st_mode", "st_dev", "st_ino", "st_nlink", "st_size",
             "st_mtime_ns", "st_ctime_ns",
         )
         if any(
-            getattr(opened, field) != getattr(writer, field)
+            getattr(writer_before, field) != getattr(opened, field)
+            or getattr(writer_before, field) != getattr(writer_after, field)
             for field in stable
         ):
             raise SystemExit(f"pending trajectory bank changed: {tmp_path}")

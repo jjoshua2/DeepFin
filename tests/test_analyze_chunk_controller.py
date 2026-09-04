@@ -7668,6 +7668,52 @@ def test_completed_bank_reader_baseline_rejects_same_inode_rewrite(
     assert pending.read_text() == "attacker observations are longer\n"
 
 
+def test_completed_bank_reader_open_rejects_same_inode_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    pending = tmp_path / ".bank.jsonl.tmp-pending"
+    output = tmp_path / "bank.jsonl"
+    real_open = publication.os.open
+    real_stat = publication.os.stat
+    reader_opened = False
+    injected = False
+
+    def track_reader_open(
+        path: Any, flags: int, *args: Any, **kwargs: Any,
+    ) -> int:
+        nonlocal reader_opened
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if path == pending.name and kwargs.get("dir_fd") is not None:
+            reader_opened = True
+        return descriptor
+
+    def rewrite_on_first_reader_name_check(
+        path: Any, *args: Any, **kwargs: Any,
+    ) -> os.stat_result:
+        nonlocal injected
+        if (
+            reader_opened
+            and not injected
+            and path == pending.name
+            and kwargs.get("dir_fd") is not None
+        ):
+            injected = True
+            pending.write_text("attacker observations are longer\n")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication.os, "open", track_reader_open)
+    monkeypatch.setattr(publication.os, "stat", rewrite_on_first_reader_name_check)
+    with pending.open("w") as handle:
+        handle.write("completed bank\n")
+        with pytest.raises(SystemExit, match="changed during authentication"):
+            publication._durably_prepare_output_artifact(handle, pending, output)
+
+    assert injected is True
+    assert pending.read_text() == "attacker observations are longer\n"
+
+
 def test_pending_bank_sync_uses_parent_retained_from_creation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
