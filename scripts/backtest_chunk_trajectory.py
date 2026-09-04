@@ -258,8 +258,25 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
             tmp_path.unlink()
 
 
+def _write_json_staged(path: Path, payload: dict[str, Any]) -> None:
+    """Durably stage JSON at a private path before publishing an evidence pair."""
+    with path.open("x") as fh:
+        json.dump(payload, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
 def _output_lock_path(output_path: Path) -> Path:
     return output_path.with_name(f".{output_path.name}.lock")
+
+
+def _pending_output_path(output_path: Path) -> Path:
+    return output_path.with_name(f".{output_path.name}.tmp-pending")
+
+
+def _pending_manifest_path(meta_path: Path) -> Path:
+    return meta_path.with_name(f".{meta_path.name}.tmp-pending")
 
 
 def _acquire_output_lock(output_path: Path) -> IO[bytes]:
@@ -306,17 +323,44 @@ def _acquire_output_locks(
 
 def _require_new_output_pair(
     output_path: Path, meta_path: Path, *, overwrite: bool,
-) -> None:
-    """Keep completed trajectory evidence immutable once either half exists."""
+) -> bool:
+    """Resume a prepared pair, or require a completely new immutable destination."""
     if overwrite:
         raise SystemExit(
             "--overwrite is disabled for trajectory evidence; choose a new versioned --out"
         )
-    if output_path.exists() or meta_path.exists():
+    pending_output = _pending_output_path(output_path)
+    pending_meta = _pending_manifest_path(meta_path)
+    if output_path.exists() and not meta_path.exists() and pending_meta.exists():
+        manifest = _read_pending_manifest(pending_meta)
+        if pending_output.exists():
+            _require_output_matches_manifest(pending_output, output_path, manifest)
+        _require_output_matches_manifest(output_path, output_path, manifest)
+        if pending_output.exists():
+            pending_output.unlink()
+        _publish_no_replace(pending_meta, meta_path)
+        return True
+    if (
+        not output_path.exists()
+        and not meta_path.exists()
+        and pending_output.exists()
+        and pending_meta.exists()
+    ):
+        manifest = _read_pending_manifest(pending_meta)
+        _require_output_matches_manifest(pending_output, output_path, manifest)
+        published = _publish_output(pending_output, output_path)
+        if _artifact_identity(published) != _artifact_identity(manifest.get("output")):
+            raise RuntimeError("recovered trajectory bank differs from its manifest")
+        _publish_no_replace(pending_meta, meta_path)
+        return True
+    if any(
+        path.exists() for path in (output_path, meta_path, pending_output, pending_meta)
+    ):
         raise SystemExit(
-            f"refusing to replace immutable evidence at {output_path} or {meta_path}; "
-            "choose a new versioned --out"
+            f"refusing to replace immutable or incomplete evidence for {output_path}; "
+            "choose a new versioned --out, or retain a fully prepared pending pair"
         )
+    return False
 
 
 def _publish_no_replace(tmp_path: Path, output_path: Path) -> None:
@@ -332,13 +376,89 @@ def _publish_no_replace(tmp_path: Path, output_path: Path) -> None:
 
 def _publish_output(tmp_path: Path, output_path: Path) -> dict[str, Any]:
     """Publish exactly the private bytes whose identity the manifest records."""
-    private = _artifact(tmp_path, require_file=True)
-    expected = {**private, "path": str(output_path.expanduser().resolve())}
+    expected = _prepared_output_artifact(tmp_path, output_path)
     _publish_no_replace(tmp_path, output_path)
     published = _artifact(output_path, require_file=True)
     if _artifact_identity(published) != _artifact_identity(expected):
         raise RuntimeError("published trajectory bank differs from its private output")
     return published
+
+
+def _prepared_output_artifact(tmp_path: Path, output_path: Path) -> dict[str, Any]:
+    private = _artifact(tmp_path, require_file=True)
+    return {**private, "path": str(output_path.expanduser().resolve())}
+
+
+def _read_pending_manifest(path: Path) -> dict[str, Any]:
+    before = _artifact(path, require_file=True)
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"pending evidence manifest is not valid JSON: {path}") from exc
+    after = _artifact(path, require_file=True)
+    if _artifact_identity(before) != _artifact_identity(after):
+        raise SystemExit(f"pending evidence manifest changed while being read: {path}")
+    if not isinstance(payload, dict) or payload.get("schema") != _SCHEMA:
+        raise SystemExit(f"pending evidence manifest has the wrong schema: {path}")
+    if payload.get("complete") is not True or not isinstance(payload.get("output"), dict):
+        raise SystemExit(f"pending evidence manifest is incomplete: {path}")
+    return payload
+
+
+def _require_output_matches_manifest(
+    candidate_path: Path, output_path: Path, manifest: dict[str, Any],
+) -> None:
+    expected = manifest.get("output")
+    if not isinstance(expected, dict):
+        raise SystemExit("pending evidence manifest lacks an output artifact")
+    actual = _prepared_output_artifact(candidate_path, output_path)
+    if _artifact_identity(actual) != _artifact_identity(expected):
+        raise SystemExit("pending trajectory bank does not match its manifest")
+
+
+def _publish_evidence_pair(
+    pending_output: Path,
+    output_path: Path,
+    pending_meta: Path,
+    meta_path: Path,
+    manifest: dict[str, Any],
+) -> None:
+    """Prepare both artifacts before publishing either; retain recovery state."""
+    try:
+        _write_json_staged(pending_meta, manifest)
+    except BaseException:
+        if pending_meta.exists():
+            pending_meta.unlink()
+        raise
+    published = _publish_output(pending_output, output_path)
+    if _artifact_identity(published) != _artifact_identity(manifest.get("output")):
+        raise RuntimeError("published trajectory bank differs from its manifest")
+    _publish_no_replace(pending_meta, meta_path)
+
+
+def _git_ignored_or_outside(path: Path, repo_root: Path) -> bool:
+    """Whether creating a path cannot dirty the producer checkout."""
+    root = repo_root.expanduser().resolve()
+    for candidate in {path.expanduser().absolute(), path.expanduser().resolve()}:
+        try:
+            relative = candidate.relative_to(root)
+        except ValueError:
+            continue
+        try:
+            result = subprocess.run(
+                [
+                    "git", "-C", str(root), "check-ignore", "-q", "--no-index",
+                    "--", str(relative),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except OSError:
+            return False
+        if result.returncode != 0:
+            return False
+    return True
 
 
 def _require_safe_output_paths(
@@ -361,11 +481,18 @@ def _require_safe_output_paths(
         *destinations,
         _output_lock_path(output_path).expanduser().resolve(),
         _output_lock_path(meta_path).expanduser().resolve(),
+        _pending_output_path(output_path).expanduser().resolve(),
+        _pending_manifest_path(meta_path).expanduser().resolve(),
     }
     repo_root = Path(__file__).resolve().parents[1]
     if any(repo_controlled_output(output, repo_root) for output in outputs):
         raise SystemExit(
             "--out or its manifest must not overwrite a tracked or repository-control path"
+        )
+    if any(not _git_ignored_or_outside(output, repo_root) for output in outputs):
+        raise SystemExit(
+            "--out, its manifest, locks, and staging files must be Git-ignored "
+            "or outside the repository"
         )
     inputs = {path.expanduser().resolve() for path in protected_files}
     if outputs & inputs:
@@ -491,7 +618,7 @@ def _find_direct_evaluator(evaluator: Any) -> Any:
 
 def main() -> None:
     ap = argparse.ArgumentParser(prog="backtest_chunk_trajectory")
-    ap.add_argument("--checkpoint", required=True)
+    ap.add_argument("--checkpoint", default=None)
     ap.add_argument(
         "--preregistration", type=Path, default=None,
         help=(
@@ -557,11 +684,40 @@ def main() -> None:
         "--methodology-smoke", action="store_true",
         help="allow missing game groups; output is stamped non-decision-grade",
     )
+    ap.add_argument(
+        "--recover-publication", action="store_true",
+        help="publish a fully prepared interrupted pair without reloading search inputs",
+    )
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--out", type=Path, default=Path("runs/backtest/chunk_trajectory.jsonl"))
     args = ap.parse_args()
 
     meta_path = Path(str(args.out) + ".meta.json")
+    pending_meta_path = _pending_manifest_path(meta_path)
+    if args.recover_publication:
+        if args.write_preregistration is not None:
+            raise SystemExit(
+                "--recover-publication and --write-preregistration are mutually exclusive"
+            )
+        _require_safe_output_paths(
+            args.out, meta_path, protected_files=[], protected_directories=[],
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        recovery_locks = _acquire_output_locks(args.out, meta_path)
+        try:
+            recovered = _require_new_output_pair(
+                args.out, meta_path, overwrite=bool(args.overwrite),
+            )
+        finally:
+            for recovery_lock in reversed(recovery_locks):
+                recovery_lock.close()
+        if not recovered:
+            raise SystemExit(f"no fully prepared evidence pair to recover for {args.out}")
+        print(f"[traj] recovered evidence pair -> {args.out}")
+        print(f"[traj] provenance -> {meta_path}")
+        return
+    if args.checkpoint is None:
+        raise SystemExit("--checkpoint is required unless --recover-publication is used")
     matched_path = args.matched_rows or default_matched_rows_path(args.audit_set)
     checkpoint_path = _checkpoint_file(Path(args.checkpoint))
     producer_git_sha, producer_git_dirty = _git_state()
@@ -763,13 +919,19 @@ def main() -> None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         output_locks = _acquire_output_locks(args.out, meta_path)
         try:
-            _require_new_output_pair(
+            resumed_publication = _require_new_output_pair(
                 args.out, meta_path, overwrite=bool(args.overwrite),
             )
         except BaseException:
             for output_lock in reversed(output_locks):
                 output_lock.close()
             raise
+        if resumed_publication:
+            for output_lock in reversed(output_locks):
+                output_lock.close()
+            print(f"[traj] recovered evidence pair -> {args.out}")
+            print(f"[traj] provenance -> {meta_path}")
+            return
 
     provenance = {
         "schema": _SCHEMA,
@@ -1307,11 +1469,12 @@ def main() -> None:
             return None, -1
         return (uci, ucis.index(uci)) if uci in ucis else (uci, -1)
 
-    tmp_path = args.out.with_name(f".{args.out.name}.tmp-{os.getpid()}")
+    tmp_path = _pending_output_path(args.out)
     n_rows = 0
     completed_positions = 0
     excluded_positions: list[dict[str, Any]] = []
     started = time.perf_counter()
+    collection_complete = False
     try:
         with tmp_path.open("x") as fh:
             for pi, pos in enumerate(positions):
@@ -1543,10 +1706,10 @@ def main() -> None:
                     print(f"[traj] {pi + 1}/{len(positions)}", flush=True)
                     if str(args.device).startswith("cuda"):
                         torch.cuda.empty_cache()
-        published_output_artifact = _publish_output(tmp_path, args.out)
+        collection_complete = True
     finally:
         worker.close()
-        if tmp_path.exists():
+        if not collection_complete and tmp_path.exists():
             tmp_path.unlink()
 
     incomplete_exclusions = sum(
@@ -1629,7 +1792,7 @@ def main() -> None:
             "kind": "callback_instrumented_wall_time",
             "usable_for_controller_or_cost_analysis": False,
         },
-        "output": published_output_artifact,
+        "output": _prepared_output_artifact(tmp_path, args.out),
         "requested_search": requested_search,
         "realized_search": realized_search,
         "requested_model_search_contract": expected_model_search_contract,
@@ -1666,7 +1829,9 @@ def main() -> None:
             },
         },
     }
-    _write_json_atomic(meta_path, manifest)
+    _publish_evidence_pair(
+        tmp_path, args.out, pending_meta_path, meta_path, manifest,
+    )
     for output_lock in reversed(output_locks):
         output_lock.close()
 

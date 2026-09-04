@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -1633,7 +1635,7 @@ def test_producer_never_overwrites_frozen_evidence_pair(tmp_path: Path) -> None:
     output.write_text("old bank\n")
     meta.write_text("old manifest\n")
 
-    with pytest.raises(SystemExit, match="immutable evidence"):
+    with pytest.raises(SystemExit, match="immutable or incomplete evidence"):
         _require_new_output_pair(output, meta, overwrite=False)
     with pytest.raises(SystemExit, match="overwrite is disabled"):
         _require_new_output_pair(output, meta, overwrite=True)
@@ -1646,7 +1648,146 @@ def test_producer_accepts_a_new_evidence_pair_path(tmp_path: Path) -> None:
     output = tmp_path / "bank.jsonl"
     meta = tmp_path / "bank.jsonl.meta.json"
 
-    _require_new_output_pair(output, meta, overwrite=False)
+    assert _require_new_output_pair(output, meta, overwrite=False) is False
+
+
+def test_producer_recovers_bank_published_before_its_manifest(tmp_path: Path) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = producer._pending_output_path(output)
+    pending_meta = producer._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": producer._SCHEMA,
+        "complete": True,
+        "output": producer._prepared_output_artifact(pending_output, output),
+    }
+    producer._write_json_staged(pending_meta, manifest)
+    producer._publish_output(pending_output, output)
+
+    assert not meta.exists()
+    assert pending_meta.exists()
+    assert _require_new_output_pair(output, meta, overwrite=False) is True
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(meta.read_text()) == manifest
+    assert not pending_output.exists()
+    assert not pending_meta.exists()
+
+
+def test_producer_prepares_both_artifacts_before_pair_publication(tmp_path: Path) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = producer._pending_output_path(output)
+    pending_meta = producer._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": producer._SCHEMA,
+        "complete": True,
+        "output": producer._prepared_output_artifact(pending_output, output),
+    }
+
+    producer._publish_evidence_pair(
+        pending_output, output, pending_meta, meta, manifest,
+    )
+
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(meta.read_text()) == manifest
+    assert not pending_output.exists()
+    assert not pending_meta.exists()
+
+
+def test_producer_recovers_fully_staged_pair_before_either_publish(tmp_path: Path) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = producer._pending_output_path(output)
+    pending_meta = producer._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": producer._SCHEMA,
+        "complete": True,
+        "output": producer._prepared_output_artifact(pending_output, output),
+    }
+    producer._write_json_staged(pending_meta, manifest)
+
+    assert _require_new_output_pair(output, meta, overwrite=False) is True
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(meta.read_text()) == manifest
+    assert not pending_output.exists()
+    assert not pending_meta.exists()
+
+
+def test_recovery_cli_does_not_require_search_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = producer._pending_output_path(output)
+    pending_meta = producer._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": producer._SCHEMA,
+        "complete": True,
+        "output": producer._prepared_output_artifact(pending_output, output),
+    }
+    producer._write_json_staged(pending_meta, manifest)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["backtest_chunk_trajectory", "--recover-publication", "--out", str(output)],
+    )
+
+    producer.main()
+
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(meta.read_text()) == manifest
+
+
+def test_producer_refuses_unprepared_pending_bank(tmp_path: Path) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    producer._pending_output_path(output).write_text("partial bank\n")
+
+    with pytest.raises(SystemExit, match="incomplete evidence"):
+        _require_new_output_pair(output, meta, overwrite=False)
+
+
+def test_git_ignored_output_guard_distinguishes_repository_paths(tmp_path: Path) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".gitignore").write_text("/ignored/\n")
+
+    assert producer._git_ignored_or_outside(repo / "ignored/bank.jsonl", repo)
+    assert not producer._git_ignored_or_outside(repo / "bank.jsonl", repo)
+    assert producer._git_ignored_or_outside(tmp_path / "outside.jsonl", repo)
+
+
+def test_producer_rejects_output_artifacts_that_would_dirty_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    monkeypatch.setattr(producer, "_git_ignored_or_outside", lambda _path, _root: False)
+
+    with pytest.raises(SystemExit, match="must be Git-ignored or outside"):
+        _require_safe_output_paths(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            protected_files=[],
+            protected_directories=[],
+        )
 
 
 @pytest.mark.parametrize(
