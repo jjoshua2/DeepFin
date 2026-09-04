@@ -62,10 +62,25 @@ _TEST_GIT_FILES: dict[str, bytes] = {}
 
 @pytest.fixture(autouse=True)
 def _authenticate_test_preregistration(monkeypatch: pytest.MonkeyPatch) -> None:
+    _TEST_GIT_FILES.clear()
     monkeypatch.setattr(
         controller_module,
         "_git_file_at_commit",
         lambda _commit, relative_path: _TEST_GIT_FILES.get(relative_path),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_git_python_tree_at_commit",
+        lambda _commit: {
+            path: (
+                "100644", "blob",
+                hashlib.sha1(
+                    f"blob {len(content)}\0".encode("ascii") + content
+                ).hexdigest(),
+            )
+            for path, content in _TEST_GIT_FILES.items()
+            if path.endswith(".py")
+        },
     )
     monkeypatch.setattr(
         controller_module,
@@ -390,6 +405,91 @@ def test_trajectory_preimport_guard_covers_every_loaded_project_extension() -> N
 
     assert inventory["loaded"] == inventory["guarded"]
     assert "chess_anti_engine.encoding._features_ext" in inventory["loaded"]
+
+
+def _restored_source_execution_status(
+    module: Any, tmp_path: Path,
+) -> dict[str, Any]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "dependency.py"
+    original = b"VALUE = 1\n"
+    altered = b"VALUE = 2\n"
+    target.write_bytes(original)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "dependency.py"], check=True)
+    subprocess.run(
+        [
+            "git", "-C", str(repo), "-c", "user.name=DeepFin Test",
+            "-c", "user.email=test@deepfin.invalid", "commit", "-qm", "fixture",
+        ],
+        check=True,
+    )
+    git_sha = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True,
+    ).strip()
+    blob_oid = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", "HEAD:dependency.py"], text=True,
+    ).strip()
+    initial = module._preimport_python_file_artifact(
+        target, expected_oid=blob_oid, object_format="sha1",
+    )
+    snapshot = {
+        "git_sha": git_sha,
+        "git_object_format": "sha1",
+        "repo_root": str(repo),
+        "tracked_python_surface_sha256": "a" * 64,
+        "files": {"dependency.py": initial},
+    }
+    original_stat = target.stat()
+    namespace: dict[str, Any] = {}
+    try:
+        target.write_bytes(altered)
+        exec(compile(target.read_bytes(), str(target), "exec"), namespace)
+    finally:
+        target.write_bytes(original)
+        os.utime(
+            target,
+            ns=(int(original_stat.st_atime_ns), int(original_stat.st_mtime_ns)),
+        )
+    assert namespace["VALUE"] == 2
+    assert subprocess.check_output(
+        ["git", "-C", str(repo), "status", "--porcelain"], text=True,
+    ) == ""
+    return module._preimport_python_surface_status(snapshot)
+
+
+def test_producer_preimport_snapshot_detects_alter_execute_restore(
+    tmp_path: Path,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    status = _restored_source_execution_status(producer, tmp_path)
+
+    assert status["passed"] is False
+    assert status["changed"] == ["dependency.py"]
+
+
+def test_analyzer_preimport_snapshot_detects_alter_execute_restore(
+    tmp_path: Path,
+) -> None:
+    status = _restored_source_execution_status(controller_module, tmp_path)
+
+    assert status["passed"] is False
+    assert status["changed"] == ["dependency.py"]
+
+
+def test_python_preimport_snapshots_precede_project_and_third_party_imports() -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    producer_source = inspect.getsource(producer)
+    analyzer_source = inspect.getsource(controller_module)
+    marker = "_PREIMPORT_PYTHON_SOURCES = _preimport_python_source_snapshot()"
+    assert producer_source.index(marker) < producer_source.index(
+        "from scripts import chunk_trajectory_publication"
+    )
+    assert producer_source.index(marker) < producer_source.index("import chess\n")
+    assert analyzer_source.index(marker) < analyzer_source.index("import chess\n")
 
 
 def test_search_take_effect_rejects_an_inert_active_parameter() -> None:
@@ -941,6 +1041,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "path": "/producer-checkout/" + relative_path,
             "repo_relative_path": relative_path,
             "matches_producer_git_revision": True,
+            "matches_preimport_snapshot": True,
             "size": len(source),
             "mtime_ns": 1,
             "sha256": hashlib.sha256(source).hexdigest(),
@@ -963,6 +1064,62 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
     deep_reference_evidence = controller_module._deep_reference_evidence_summary(
         [rows[0]], audit_set_sha256=audit_set_sha256,
     )
+    python_preimport_files: dict[str, dict[str, Any]] = {}
+    for index, (relative_path, source) in enumerate(sorted(
+        (path, content) for path, content in _TEST_GIT_FILES.items()
+        if path.endswith(".py")
+    ), start=1):
+        blob_oid = hashlib.sha1(
+            f"blob {len(source)}\0".encode("ascii") + source
+        ).hexdigest()
+        python_preimport_files[relative_path] = {
+            "path": "/producer-checkout/" + relative_path,
+            "size": len(source),
+            "mtime_ns": 1,
+            "ctime_ns": 1,
+            "device": 1,
+            "inode": index,
+            "sha256": hashlib.sha256(source).hexdigest(),
+            "git_blob_oid": blob_oid,
+            "observed_git_blob_oid": blob_oid,
+            "stable_read": True,
+            "matches_git_revision": True,
+            "git_mode": "100644",
+            "git_kind": "blob",
+        }
+    surface_rows = [
+        [relative_path, artifact["git_blob_oid"], artifact["sha256"]]
+        for relative_path, artifact in sorted(python_preimport_files.items())
+    ]
+    surface_digest = hashlib.sha256(json.dumps(
+        surface_rows, separators=(",", ":"), ensure_ascii=True,
+    ).encode()).hexdigest()
+    python_check = {
+        "passed": True,
+        "changed": [],
+        "git_sha": "a" * 40,
+        "tracked_python_file_count": len(python_preimport_files),
+        "tracked_python_surface_sha256": surface_digest,
+    }
+    python_preimport = {
+        "schema": "deepfin.python_preimport.v1",
+        "git_sha": "a" * 40,
+        "final_git_sha": "a" * 40,
+        "git_object_format": "sha1",
+        "repo_root": "/producer-checkout",
+        "entrypoint": "/producer-checkout/scripts/backtest_chunk_trajectory.py",
+        "snapshot_stage": "before_project_or_third_party_imports",
+        "trust_boundary": "already_executing_entry_script_and_python_process",
+        "preexisting_project_modules": [],
+        "tracked_python_file_count": len(python_preimport_files),
+        "tracked_python_surface_sha256": surface_digest,
+        "source_tree_matches_revision": True,
+        "files": python_preimport_files,
+        "passed": True,
+        "start_check": dict(python_check),
+        "post_import_check": dict(python_check),
+        "post_run_check": dict(python_check),
+    }
     manifest: dict[str, Any] = {
         "schema": "deepfin.chunk_trajectory.v4",
         "complete": True,
@@ -1031,6 +1188,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         },
         "producer_git_sha": "a" * 40,
         "producer_git_dirty": False,
+        "python_preimport": python_preimport,
         "producer_script": producer_sources["producer_script"],
         "publication_helper": producer_sources[
             "scripts.chunk_trajectory_publication"
@@ -1566,6 +1724,27 @@ def test_loader_rejects_publication_helper_not_bound_to_producer_revision(
 
     with pytest.raises(ValueError, match="not bound to the producer Git revision"):
         load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("passed", False),
+        ("preexisting_project_modules", ["chess_anti_engine.eval.audit"]),
+        ("snapshot_stage", "after_imports"),
+    ],
+)
+def test_loader_rejects_invalid_producer_preimport_proof(
+    tmp_path: Path, field: str, value: Any,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["python_preimport"][field] = value
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="pre-import Python source provenance"):
+        load_transitions(bank, meta_path=meta)
 
 
 def test_loader_rejects_foreign_loaded_producer_python_module(tmp_path: Path) -> None:
@@ -3768,6 +3947,13 @@ def test_analyzer_main_skips_grouped_analysis_for_undersized_bank(
     )
     monkeypatch.setattr(controller_module, "_analyzer_source_artifacts", dict)
     monkeypatch.setattr(controller_module, "_git_state", lambda: ("b" * 40, False))
+    monkeypatch.setattr(
+        controller_module, "_PREIMPORT_PYTHON_SOURCES", {"passed": True},
+    )
+    monkeypatch.setattr(
+        controller_module, "_preimport_python_surface_status",
+        lambda _snapshot: {"passed": True},
+    )
     monkeypatch.setattr(controller_module, "_require_safe_output_path", lambda *_a, **_k: None)
     monkeypatch.setattr(
         controller_module,
@@ -3782,7 +3968,7 @@ def test_analyzer_main_skips_grouped_analysis_for_undersized_bank(
     monkeypatch.setattr(
         controller_module,
         "_analyzer_provenance",
-        lambda *_a: {
+        lambda *_a, **_k: {
             "decision_grade": True,
             "git_sha": "b" * 40,
             "final_git_sha": "b" * 40,
@@ -3838,7 +4024,7 @@ def test_analyzer_main_runs_grouped_analysis_for_two_game_smoke_bank(
     monkeypatch.setattr(
         controller_module,
         "_analyzer_provenance",
-        lambda *_a: {
+        lambda *_a, **_k: {
             "decision_grade": True,
             "git_sha": "b" * 40,
             "final_git_sha": "b" * 40,
@@ -3912,7 +4098,7 @@ def test_analyzer_main_reports_nonrectangular_smoke_bank_without_entering_rollou
     monkeypatch.setattr(
         controller_module,
         "_analyzer_provenance",
-        lambda *_a: {
+        lambda *_a, **_k: {
             "decision_grade": True,
             "git_sha": "b" * 40,
             "final_git_sha": "b" * 40,
@@ -4049,8 +4235,18 @@ def test_analyzer_provenance_requires_a_stable_clean_checkout(
 
     repo_root = Path(controller.__file__).resolve().parents[1]
     sources = controller._analyzer_source_artifacts()
+    for artifact in sources.values():
+        artifact["matches_preimport_snapshot"] = True
     monkeypatch.setattr(controller, "_analyzer_source_artifacts", lambda: sources)
     monkeypatch.setattr(controller, "_git_state", lambda: ("b" * 40, False))
+    monkeypatch.setattr(
+        controller, "_PREIMPORT_PYTHON_SOURCES",
+        {"passed": True, "git_sha": "b" * 40},
+    )
+    monkeypatch.setattr(
+        controller, "_preimport_python_surface_status",
+        lambda _snapshot: {"passed": True, "changed": [], "git_sha": "b" * 40},
+    )
     monkeypatch.setattr(
         controller,
         "_git_file_at_commit",
@@ -4074,6 +4270,8 @@ def test_analyzer_provenance_rejects_helper_from_another_worktree(
 
     repo_root = Path(controller.__file__).resolve().parents[1]
     sources = controller._analyzer_source_artifacts()
+    for artifact in sources.values():
+        artifact["matches_preimport_snapshot"] = True
     foreign_oracle = tmp_path / "reachable_oracle.py"
     foreign_oracle.write_bytes(
         Path(controller.solve_reachable_oracle.__code__.co_filename).read_bytes()
@@ -4081,6 +4279,14 @@ def test_analyzer_provenance_rejects_helper_from_another_worktree(
     sources["scripts.reachable_oracle"] = controller._artifact_snapshot(foreign_oracle)
     monkeypatch.setattr(controller, "_analyzer_source_artifacts", lambda: sources)
     monkeypatch.setattr(controller, "_git_state", lambda: ("b" * 40, False))
+    monkeypatch.setattr(
+        controller, "_PREIMPORT_PYTHON_SOURCES",
+        {"passed": True, "git_sha": "b" * 40},
+    )
+    monkeypatch.setattr(
+        controller, "_preimport_python_surface_status",
+        lambda _snapshot: {"passed": True, "changed": [], "git_sha": "b" * 40},
+    )
     monkeypatch.setattr(
         controller,
         "_git_file_at_commit",
@@ -4095,6 +4301,8 @@ def test_analyzer_provenance_rejects_helper_from_another_worktree(
     assert provenance["source_revision_bindings"]["scripts.reachable_oracle"] == {
         "repo_relative_path": None,
         "matches_reported_git_revision": False,
+        "matches_preimport_snapshot": False,
+        "passed": False,
     }
 
 

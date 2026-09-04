@@ -23,6 +23,7 @@ Usage:
     --preregistration <tracked-plan.json> --device cuda --chunk-sims 2048 \
     --max-chunks 8 --max-positions 200
 """
+# ruff: noqa: E402  # Provenance snapshot must precede non-stdlib imports.
 from __future__ import annotations
 
 import argparse
@@ -31,6 +32,7 @@ import json
 import math
 import os
 import platform
+import stat
 import subprocess
 import sys
 import threading
@@ -39,6 +41,222 @@ from collections import Counter, deque
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import IO, Any
+
+
+_PYTHON_PREIMPORT_SCHEMA = "deepfin.python_preimport.v1"
+
+
+def _preimport_python_file_artifact(
+    path: Path, *, expected_oid: str, object_format: str,
+) -> dict[str, Any]:
+    """Read one source without accepting a change during the read."""
+    resolved = path.resolve()
+    try:
+        before = resolved.lstat()
+        content = resolved.read_bytes()
+        after = resolved.lstat()
+    except OSError as exc:
+        return {
+            "path": str(resolved),
+            "git_blob_oid": expected_oid,
+            "error": f"{type(exc).__name__}: {exc}",
+            "stable_read": False,
+            "matches_git_revision": False,
+        }
+    identity = (
+        int(before.st_mode), int(before.st_size), int(before.st_mtime_ns),
+        int(before.st_ctime_ns), int(before.st_dev), int(before.st_ino),
+    )
+    stable_read = bool(
+        identity == (
+            int(after.st_mode), int(after.st_size), int(after.st_mtime_ns),
+            int(after.st_ctime_ns), int(after.st_dev), int(after.st_ino),
+        )
+        and stat.S_ISREG(before.st_mode)
+        and len(content) == before.st_size
+    )
+    blob = f"blob {len(content)}\0".encode("ascii") + content
+    observed_oid = hashlib.new(object_format, blob).hexdigest()
+    return {
+        "path": str(resolved),
+        "size": len(content),
+        "mtime_ns": int(after.st_mtime_ns),
+        "ctime_ns": int(after.st_ctime_ns),
+        "device": int(after.st_dev),
+        "inode": int(after.st_ino),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "git_blob_oid": expected_oid,
+        "observed_git_blob_oid": observed_oid,
+        "stable_read": stable_read,
+        "matches_git_revision": bool(stable_read and observed_oid == expected_oid),
+    }
+
+
+def _preimport_python_source_snapshot() -> dict[str, Any]:
+    """Snapshot tracked Python before any project or third-party import.
+
+    The executing entry script and the Python process itself are the trust boundary.
+    This proof detects concurrent checkout mutation; it does not claim to defend
+    against a hostile process that can replace this already-executing guard.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    preexisting = sorted(
+        name for name in sys.modules
+        if name in ("chess_anti_engine", "scripts")
+        or name.startswith(("chess_anti_engine.", "scripts."))
+    )
+    try:
+        git_sha = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        object_format = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "--show-object-format"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        tree = subprocess.check_output(
+            ["git", "-C", str(repo_root), "ls-tree", "-r", "-z", git_sha],
+            stderr=subprocess.DEVNULL,
+        )
+        final_git_sha = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return {
+            "schema": _PYTHON_PREIMPORT_SCHEMA,
+            "git_sha": "unknown",
+            "repo_root": str(repo_root),
+            "entrypoint": str(Path(__file__).resolve()),
+            "trust_boundary": "already_executing_entry_script_and_python_process",
+            "preexisting_project_modules": preexisting,
+            "files": {},
+            "passed": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    if object_format not in hashlib.algorithms_available:
+        return {
+            "schema": _PYTHON_PREIMPORT_SCHEMA,
+            "git_sha": git_sha,
+            "repo_root": str(repo_root),
+            "entrypoint": str(Path(__file__).resolve()),
+            "trust_boundary": "already_executing_entry_script_and_python_process",
+            "preexisting_project_modules": preexisting,
+            "files": {},
+            "passed": False,
+            "error": f"unsupported Git object format: {object_format}",
+        }
+    files: dict[str, dict[str, Any]] = {}
+    for raw_entry in tree.split(b"\0"):
+        if not raw_entry:
+            continue
+        metadata, raw_path = raw_entry.split(b"\t", 1)
+        mode, kind, oid = metadata.decode("ascii").split()
+        relative_path = raw_path.decode("utf-8", errors="surrogateescape")
+        if not relative_path.endswith(".py"):
+            continue
+        artifact = _preimport_python_file_artifact(
+            repo_root / relative_path,
+            expected_oid=oid,
+            object_format=object_format,
+        )
+        artifact["git_mode"] = mode
+        artifact["git_kind"] = kind
+        files[relative_path] = artifact
+    surface_rows = [
+        [relative_path, artifact.get("git_blob_oid"), artifact.get("sha256")]
+        for relative_path, artifact in sorted(files.items())
+    ]
+    surface_digest = hashlib.sha256(json.dumps(
+        surface_rows, separators=(",", ":"), ensure_ascii=True,
+    ).encode("utf-8")).hexdigest()
+    source_tree_matches_revision = bool(files) and all(
+        artifact.get("matches_git_revision") is True for artifact in files.values()
+    )
+    return {
+        "schema": _PYTHON_PREIMPORT_SCHEMA,
+        "git_sha": git_sha,
+        "final_git_sha": final_git_sha,
+        "git_object_format": object_format,
+        "repo_root": str(repo_root),
+        "entrypoint": str(Path(__file__).resolve()),
+        "snapshot_stage": "before_project_or_third_party_imports",
+        "trust_boundary": "already_executing_entry_script_and_python_process",
+        "preexisting_project_modules": preexisting,
+        "tracked_python_file_count": len(files),
+        "tracked_python_surface_sha256": surface_digest,
+        "source_tree_matches_revision": source_tree_matches_revision,
+        "files": files,
+        "passed": bool(
+            source_tree_matches_revision
+            and final_git_sha == git_sha
+            and not preexisting
+        ),
+    }
+
+
+_PREIMPORT_PYTHON_SOURCES = _preimport_python_source_snapshot()
+
+
+def _preimport_python_surface_status(
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Re-read the exact pre-import surface and report any identity/content drift."""
+    files = snapshot.get("files")
+    object_format = snapshot.get("git_object_format")
+    git_sha = snapshot.get("git_sha")
+    repo_root = Path(str(snapshot.get("repo_root", "")))
+    if (
+        not isinstance(files, dict)
+        or not isinstance(object_format, str)
+        or object_format not in hashlib.algorithms_available
+        or not isinstance(git_sha, str)
+        or not repo_root.is_dir()
+    ):
+        return {"passed": False, "changed": ["invalid_preimport_snapshot"]}
+    changed: list[str] = []
+    for relative_path, initial in sorted(files.items()):
+        if not isinstance(relative_path, str) or not isinstance(initial, dict):
+            changed.append(str(relative_path))
+            continue
+        expected_oid = initial.get("git_blob_oid")
+        if not isinstance(expected_oid, str):
+            changed.append(relative_path)
+            continue
+        current = _preimport_python_file_artifact(
+            repo_root / relative_path,
+            expected_oid=expected_oid,
+            object_format=object_format,
+        )
+        identity_keys = (
+            "path", "size", "mtime_ns", "ctime_ns", "device", "inode",
+            "sha256", "git_blob_oid", "observed_git_blob_oid", "stable_read",
+            "matches_git_revision",
+        )
+        if any(current.get(key) != initial.get(key) for key in identity_keys):
+            changed.append(relative_path)
+    try:
+        current_git_sha = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        current_git_sha = "unknown"
+    if current_git_sha != git_sha:
+        changed.append("producer_checkout_revision")
+    return {
+        "passed": not changed,
+        "changed": sorted(set(changed)),
+        "git_sha": current_git_sha,
+        "tracked_python_file_count": len(files),
+        "tracked_python_surface_sha256": snapshot.get(
+            "tracked_python_surface_sha256"
+        ),
+    }
 
 from scripts import chunk_trajectory_publication as publication_module
 
@@ -405,8 +623,11 @@ def _artifact_if_file(path: Path) -> dict[str, Any] | None:
 def _producer_python_source_artifacts(
     producer_git_sha: str, *, require_tracked: bool,
 ) -> dict[str, dict[str, Any]]:
-    """Bind every loaded project Python module to the producer revision."""
+    """Bind every loaded project module to the revision and pre-import bytes."""
     repo_root = Path(__file__).resolve().parents[1]
+    preimport_files = _PREIMPORT_PYTHON_SOURCES.get("files")
+    if not isinstance(preimport_files, dict):
+        preimport_files = {}
     source_paths = {"producer_script": Path(__file__)}
     for module_name, module in sorted(sys.modules.items()):
         if not (
@@ -435,17 +656,31 @@ def _producer_python_source_artifacts(
             and artifact.get("size") == len(committed)
             and artifact.get("sha256") == hashlib.sha256(committed).hexdigest()
         )
+        preimport = (
+            preimport_files.get(relative_path)
+            if relative_path is not None else None
+        )
+        matches_preimport = bool(
+            isinstance(preimport, dict)
+            and artifact.get("path") == preimport.get("path")
+            and artifact.get("size") == preimport.get("size")
+            and artifact.get("mtime_ns") == preimport.get("mtime_ns")
+            and artifact.get("device") == preimport.get("device")
+            and artifact.get("inode") == preimport.get("inode")
+            and artifact.get("sha256") == preimport.get("sha256")
+        )
         artifacts[name] = {
             **artifact,
             "repo_relative_path": relative_path,
             "matches_producer_git_revision": matches_commit,
+            "matches_preimport_snapshot": matches_preimport,
         }
-        if not matches_commit:
+        if not matches_commit or not matches_preimport:
             unbound.append(name)
     if require_tracked and unbound:
         raise SystemExit(
-            "decision-grade producer Python sources are not tracked by the producer "
-            f"revision: {', '.join(unbound)}"
+            "decision-grade producer Python sources are not bound to the pre-import "
+            f"producer revision snapshot: {', '.join(unbound)}"
         )
     return artifacts
 
@@ -858,6 +1093,9 @@ def _main() -> None:
     ap.add_argument("--out", type=Path, default=Path("runs/backtest/chunk_trajectory.jsonl"))
     args = ap.parse_args()
 
+    preimport_start_status = _preimport_python_surface_status(
+        _PREIMPORT_PYTHON_SOURCES
+    )
     meta_path = Path(str(args.out) + ".meta.json")
     pending_meta_path = _pending_manifest_path(meta_path)
     if args.recover_publication:
@@ -886,11 +1124,30 @@ def _main() -> None:
     _validate_registry_search_values(
         requested_path, {"chunk_sims": int(args.chunk_sims)},
     )
+    if (
+        not args.methodology_smoke
+        and (
+            _PREIMPORT_PYTHON_SOURCES.get("passed") is not True
+            or preimport_start_status.get("passed") is not True
+        )
+    ):
+        raise SystemExit(
+            "decision-grade trajectory collection requires a clean tracked-Python "
+            "snapshot taken before project imports; run the script as a fresh process "
+            "from a clean checkout"
+        )
     if args.checkpoint is None:
         raise SystemExit("--checkpoint is required unless --recover-publication is used")
     matched_path = args.matched_rows or default_matched_rows_path(args.audit_set)
     checkpoint_path = _checkpoint_file(Path(args.checkpoint))
     producer_git_sha, producer_git_dirty = _git_state()
+    if (
+        not args.methodology_smoke
+        and producer_git_sha != _PREIMPORT_PYTHON_SOURCES.get("git_sha")
+    ):
+        raise SystemExit(
+            "producer Git revision changed after the pre-import Python snapshot"
+        )
     if producer_git_dirty and not args.methodology_smoke:
         raise SystemExit(
             "decision-grade trajectory banks require a clean producer checkout; "
@@ -1138,7 +1395,7 @@ def _main() -> None:
             print(f"[traj] provenance -> {meta_path}")
             return
 
-    provenance = {
+    provenance: dict[str, Any] = {
         "schema": _SCHEMA,
         "decision_grade": not args.methodology_smoke,
         "analysis_scope": "fixed_node_horizons_only",
@@ -1156,6 +1413,10 @@ def _main() -> None:
         },
         "producer_git_sha": producer_git_sha,
         "producer_git_dirty": producer_git_dirty,
+        "python_preimport": {
+            **_PREIMPORT_PYTHON_SOURCES,
+            "start_check": preimport_start_status,
+        },
         "producer_script": initial_input_artifacts["producer_script"],
         "publication_helper": initial_input_artifacts["publication_helper"],
         "checkpoint": initial_input_artifacts["checkpoint"],
@@ -1188,6 +1449,18 @@ def _main() -> None:
         producer_git_sha,
         require_tracked=not args.methodology_smoke,
     )
+    python_post_import_status = _preimport_python_surface_status(
+        _PREIMPORT_PYTHON_SOURCES
+    )
+    provenance["python_preimport"]["post_import_check"] = python_post_import_status
+    if (
+        not args.methodology_smoke
+        and python_post_import_status.get("passed") is not True
+    ):
+        raise SystemExit(
+            "tracked Python sources changed while producer modules imported: "
+            + ", ".join(python_post_import_status.get("changed", []))
+        )
     missing_producer_sources = sorted(
         _REQUIRED_PRODUCER_SOURCE_MODULES - producer_sources.keys()
     )
@@ -2128,6 +2401,12 @@ def _main() -> None:
     })
     if current_producer_sources != provenance["producer_sources"]:
         changed_artifacts.append("producer_sources")
+    python_post_run_status = _preimport_python_surface_status(
+        _PREIMPORT_PYTHON_SOURCES
+    )
+    provenance["python_preimport"]["post_run_check"] = python_post_run_status
+    if python_post_run_status.get("passed") is not True:
+        changed_artifacts.append("python_preimport_surface")
     try:
         current_syzygy_inventory = (
             _tablebase_inventory(str(args.syzygy_path)) if args.syzygy_path else None
