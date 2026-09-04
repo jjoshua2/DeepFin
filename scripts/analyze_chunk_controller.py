@@ -872,6 +872,7 @@ def _strict_descriptor_path(fd: int, *, kind: str) -> Path:
     try:
         resolved = descriptor_link.resolve(strict=True)
         descriptor_stat = os.stat(descriptor_link)
+        resolved_stat = os.stat(resolved)
         fd_stat = os.fstat(fd)
     except OSError as exc:
         raise RuntimeError(
@@ -881,7 +882,9 @@ def _strict_descriptor_path(fd: int, *, kind: str) -> Path:
     if (
         not expected_kind(fd_stat.st_mode)
         or not expected_kind(descriptor_stat.st_mode)
+        or not expected_kind(resolved_stat.st_mode)
         or _directory_identity(descriptor_stat) != _directory_identity(fd_stat)
+        or _directory_identity(resolved_stat) != _directory_identity(fd_stat)
     ):
         raise RuntimeError(f"procfs {kind} descriptor mapping disagrees with fstat")
     return resolved
@@ -3524,21 +3527,19 @@ def _validate_decision_grade_row(
 
 
 def _require_manifest(
-    input_path: Path, meta_path: Path, methodology_smoke: bool,
+    meta_path: Path, methodology_smoke: bool,
     *,
-    input_bytes: bytes | None = None,
-    meta_bytes: bytes | None = None,
+    input_bytes: bytes,
+    meta_bytes: bytes | None,
 ) -> tuple[dict[str, Any], bool, bool]:
-    if meta_bytes is None and not meta_path.is_file():
+    if meta_bytes is None:
         if methodology_smoke:
             return {}, False, False
         raise ValueError(
             f"decision-grade analysis requires {meta_path}; pass --methodology-smoke "
             "only to exercise the estimator on a legacy bank"
         )
-    consumed_input = input_path.read_bytes() if input_bytes is None else input_bytes
-    consumed_meta = meta_path.read_bytes() if meta_bytes is None else meta_bytes
-    manifest = json.loads(consumed_meta)
+    manifest = json.loads(meta_bytes)
     failures: list[str] = []
     if manifest.get("schema") != _SCHEMA:
         failures.append(f"schema={manifest.get('schema')!r}")
@@ -3572,8 +3573,8 @@ def _require_manifest(
     output = manifest.get("output")
     if (
         not isinstance(output, dict)
-        or output.get("sha256") != hashlib.sha256(consumed_input).hexdigest()
-        or output.get("size") != len(consumed_input)
+        or output.get("sha256") != hashlib.sha256(input_bytes).hexdigest()
+        or output.get("size") != len(input_bytes)
     ):
         failures.append("input digest does not match manifest")
     producer_sha = manifest.get("producer_git_sha")
@@ -4182,14 +4183,13 @@ def load_transitions(
         input_path, role="trajectory_bank",
     )
     meta_artifact: dict[str, Any] | None = None
-    if actual_meta.is_file():
+    try:
         meta_bytes, meta_artifact = _read_consumed_artifact(
             actual_meta, role="trajectory_manifest",
         )
-    else:
+    except FileNotFoundError:
         meta_bytes = None
     manifest, decision_grade, preregistered_design = _require_manifest(
-        input_path,
         actual_meta,
         methodology_smoke,
         input_bytes=input_bytes,

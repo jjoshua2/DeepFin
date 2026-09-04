@@ -5346,6 +5346,33 @@ def test_analyzer_misdirected_procfs_descriptor_mapping_fails_before_staging(
     assert not output.with_name(f".{output.name}.tmp-{os.getpid()}").exists()
 
 
+def test_analyzer_procfs_resolved_path_must_name_the_open_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    consumed = tmp_path / "consumed.jsonl"
+    consumed.write_text("authenticated input\n")
+    wrong = tmp_path / "wrong.jsonl"
+    wrong.write_text("different input\n")
+    fd = os.open(consumed, os.O_RDONLY | os.O_CLOEXEC)
+    descriptor_link = controller_module._PROC_SELF_FD / str(fd)
+    real_resolve = Path.resolve
+
+    def misdirect_resolved_path(path: Path, strict: bool = False) -> Path:
+        if path == descriptor_link:
+            return wrong
+        return real_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", misdirect_resolved_path)
+    try:
+        with pytest.raises(RuntimeError, match="mapping disagrees with fstat"):
+            controller_module._strict_descriptor_path(fd, kind="file")
+    finally:
+        os.close(fd)
+
+    assert consumed.read_text() == "authenticated input\n"
+    assert wrong.read_text() == "different input\n"
+
+
 def test_producer_recovers_fully_staged_pair_before_either_publish(tmp_path: Path) -> None:
     from scripts import backtest_chunk_trajectory as producer
 
@@ -6702,6 +6729,35 @@ def test_loader_authenticates_and_parses_one_bank_buffer(
     assert len(transitions) == 3
     assert reads[bank.resolve()] == 1
     assert reads[meta.resolve()] == 1
+
+
+def test_loader_never_reopens_manifest_that_appears_after_absent_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest_bytes = meta.read_bytes()
+    meta.unlink()
+    original_read_artifact = controller_module._read_consumed_artifact
+
+    def manifest_appears_after_failed_open(
+        path: Path, *, role: str,
+    ) -> tuple[bytes, dict[str, Any]]:
+        if role == "trajectory_manifest":
+            path.write_bytes(manifest_bytes)
+            raise FileNotFoundError(path)
+        return original_read_artifact(path, role=role)
+
+    monkeypatch.setattr(
+        controller_module,
+        "_read_consumed_artifact",
+        manifest_appears_after_failed_open,
+    )
+
+    with pytest.raises(ValueError, match="decision-grade analysis requires"):
+        load_transitions(bank, meta_path=meta)
+
+    assert meta.read_bytes() == manifest_bytes
 
 
 def test_loader_requires_loaded_cboard_native_provenance(tmp_path: Path) -> None:
