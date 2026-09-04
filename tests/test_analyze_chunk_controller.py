@@ -482,6 +482,146 @@ def test_cluster_bootstrap_is_deterministic() -> None:
     )
     assert first["selection_semantics"] == point["selection_semantics"]
     assert first["oracle_semantics"] == point["oracle_semantics"]
+    assert first["resampling_semantics"] == (
+        "global_source_game_clusters_with_recomputed_evaluation_folds"
+    )
+
+
+def test_global_cluster_resample_can_omit_the_old_singleton_fold_game() -> None:
+    rows = [
+        _transition(str(game), game, horizon, 0.0, current=True)
+        for game in range(9)
+        for horizon in (100, 150, 200)
+    ]
+    point_folds = _evaluation_fold_ids(rows, 5)
+    groups_by_fold = {
+        fold: {
+            row.group_id
+            for row, row_fold in zip(rows, point_folds, strict=True)
+            if int(row_fold) == fold
+        }
+        for fold in sorted(set(point_folds.tolist()))
+    }
+    singleton = next(iter(next(
+        groups for groups in groups_by_fold.values() if len(groups) == 1
+    )))
+
+    sampled = controller_module._resample_source_game_clusters(
+        rows, np.random.default_rng(3),
+    )
+
+    assert singleton not in {row.group_id for row in sampled}
+
+
+def test_duplicate_bootstrap_cluster_cannot_cross_recomputed_folds() -> None:
+    rows = [
+        _transition(str(game), game, horizon, 0.0, current=True)
+        for game in range(4)
+        for horizon in (100, 150, 200)
+    ]
+    sampled = controller_module._resample_source_game_clusters(
+        rows, np.random.default_rng(0),
+    )
+    fold_ids = _evaluation_fold_ids(sampled, 3)
+    first_horizon = min(row.horizon for row in sampled)
+    occurrences = {
+        group: sum(
+            row.group_id == group and row.horizon == first_horizon
+            for row in sampled
+        )
+        for group in {row.group_id for row in sampled}
+    }
+    duplicate = next(group for group, count in occurrences.items() if count > 1)
+
+    assert len({
+        int(fold)
+        for row, fold in zip(sampled, fold_ids, strict=True)
+        if row.group_id == duplicate
+    }) == 1
+    assert len({
+        row.key for row in sampled
+        if row.group_id == duplicate and row.horizon == first_horizon
+    }) == occurrences[duplicate]
+
+
+def test_bootstrap_valid_fraction_counts_invalid_recomputed_fold_draws(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _transition(str(game), game, horizon, 0.0, current=True)
+        for game in range(6)
+        for horizon in (100, 150)
+    ]
+    actual_fold_ids = controller_module._evaluation_fold_ids
+    calls = 0
+
+    def fail_first_fold_assignment(
+        sampled: list[Transition], n_folds: int,
+    ) -> np.ndarray:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ValueError("degenerate global cluster draw")
+        return actual_fold_ids(sampled, n_folds)
+
+    monkeypatch.setattr(
+        controller_module, "_evaluation_fold_ids", fail_first_fold_assignment,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_refit_fold_predictions",
+        lambda sampled, _fold_ids, *, model, n_folds: np.zeros(len(sampled)),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_minimum_reachable_rung_gain_delta",
+        lambda *_args, **_kwargs: 1.0,
+    )
+
+    result = cluster_bootstrap_delta(
+        rows,
+        allocation_fraction=0.5,
+        samples=2,
+        seed=7,
+        n_folds=3,
+    )
+
+    assert result["requested_samples"] == 2
+    assert result["valid_samples"] == 1
+    assert result["valid_fraction"] == 0.5
+    assert result["lower_95"] == 1.0
+
+
+def test_nine_game_five_fold_global_draws_retain_canonical_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _transition(str(game), game, horizon, 0.0, current=True)
+        for game in range(9)
+        for horizon in (100, 150, 200)
+    ]
+    monkeypatch.setattr(
+        controller_module,
+        "_refit_fold_predictions",
+        lambda sampled, _fold_ids, *, model, n_folds: np.zeros(len(sampled)),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_minimum_reachable_rung_gain_delta",
+        lambda *_args, **_kwargs: 1.0,
+    )
+
+    result = cluster_bootstrap_delta(
+        rows,
+        allocation_fraction=0.2,
+        samples=2000,
+        seed=0,
+        n_folds=5,
+    )
+
+    assert result["requested_samples"] == 2000
+    assert result["valid_samples"] == 2000
+    assert result["valid_fraction"] == 1.0
 
 
 def test_bootstrap_refits_exclude_the_target_fold_and_horizon(
@@ -869,6 +1009,13 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "min_capture_gain": 0.05,
             "min_oracle_headroom": 1e-4,
             "min_bootstrap_valid_fraction": 0.95,
+            "reachable_selection_semantics": "fold_local_nested_prefix_no_reentry",
+            "reachable_oracle_semantics": (
+                "exact_fold_local_nested_stop_depth_assignment"
+            ),
+            "bootstrap_resampling_semantics": (
+                "global_source_game_clusters_with_recomputed_evaluation_folds"
+            ),
         },
     }
     document = json.dumps(preregistration, sort_keys=True, separators=(",", ":")) + "\n"

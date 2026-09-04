@@ -77,6 +77,11 @@ _CANONICAL_ALLOCATION_FRACTION = 0.2
 _CANONICAL_MIN_CAPTURE_GAIN = 0.05
 _CANONICAL_MIN_ORACLE_HEADROOM = 1e-4
 _CANONICAL_MIN_BOOTSTRAP_VALID_FRACTION = 0.95
+_FOLD_SELECTION_SEMANTICS = "fold_local_nested_prefix_no_reentry"
+_FOLD_ORACLE_SEMANTICS = "exact_fold_local_nested_stop_depth_assignment"
+_BOOTSTRAP_RESAMPLING_SEMANTICS = (
+    "global_source_game_clusters_with_recomputed_evaluation_folds"
+)
 _PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v1"
 SEARCH_OPTIONS = search_options_module.SEARCH_OPTIONS
 _NATIVE_MODULES = [
@@ -507,7 +512,7 @@ def _is_canonical_decision_rule(
     )
 
 
-def _canonical_analysis_contract() -> dict[str, int | float]:
+def _canonical_analysis_contract() -> dict[str, int | float | str]:
     """Exact analysis knobs that a decision-grade collection must freeze."""
     return {
         "folds": _CANONICAL_FOLDS,
@@ -517,6 +522,9 @@ def _canonical_analysis_contract() -> dict[str, int | float]:
         "min_capture_gain": _CANONICAL_MIN_CAPTURE_GAIN,
         "min_oracle_headroom": _CANONICAL_MIN_ORACLE_HEADROOM,
         "min_bootstrap_valid_fraction": _CANONICAL_MIN_BOOTSTRAP_VALID_FRACTION,
+        "reachable_selection_semantics": _FOLD_SELECTION_SEMANTICS,
+        "reachable_oracle_semantics": _FOLD_ORACLE_SEMANTICS,
+        "bootstrap_resampling_semantics": _BOOTSTRAP_RESAMPLING_SEMANTICS,
     }
 
 
@@ -2804,11 +2812,11 @@ def evaluate_reachable_rollout(
         "target_allocation_fraction": allocation_fraction,
         "realized_allocation_fraction": sum(counts) / (len(keys) * len(horizons)),
         "selection_semantics": (
-            "fold_local_nested_prefix_no_reentry"
+            _FOLD_SELECTION_SEMANTICS
             if fold_ids is not None else "nested_prefix_no_reentry"
         ),
         "oracle_semantics": (
-            "exact_fold_local_nested_stop_depth_assignment"
+            _FOLD_ORACLE_SEMANTICS
             if fold_ids is not None else "exact_nested_stop_depth_assignment"
         ),
         "evaluation_fold_count": len(partitions),
@@ -2982,40 +2990,30 @@ def _refit_fold_predictions(
     return predictions
 
 
-def _resample_evaluation_folds(
-    transitions: Sequence[Transition], fold_ids: Sequence[int] | np.ndarray,
-    rng: np.random.Generator,
-) -> tuple[list[Transition], np.ndarray]:
-    """Cluster-resample each fixed evaluation fold while preserving trajectories."""
-    folds = np.asarray(fold_ids, dtype=np.int64)
-    groups_by_fold: dict[int, list[str]] = {}
+def _resample_source_game_clusters(
+    transitions: Sequence[Transition], rng: np.random.Generator,
+) -> list[Transition]:
+    """Globally resample source games while preserving complete trajectories."""
     indices_by_group: dict[str, list[int]] = {}
-    group_fold: dict[str, int] = {}
-    for index, (transition, fold) in enumerate(
-        zip(transitions, folds, strict=True)
-    ):
-        fold_number = int(fold)
-        previous = group_fold.setdefault(transition.group_id, fold_number)
-        if previous != fold_number:
-            raise ValueError("one source game cannot be split across evaluation folds")
+    for index, transition in enumerate(transitions):
         indices_by_group.setdefault(transition.group_id, []).append(index)
-    for group, fold in group_fold.items():
-        groups_by_fold.setdefault(fold, []).append(group)
-
+    groups = sorted(indices_by_group)
+    if not groups:
+        raise ValueError("cluster bootstrap requires at least one source game")
+    drawn = rng.choice(groups, size=len(groups), replace=True)
     sampled: list[Transition] = []
-    sampled_folds: list[int] = []
-    for fold in sorted(groups_by_fold):
-        groups = sorted(groups_by_fold[fold])
-        drawn = rng.choice(groups, size=len(groups), replace=True)
-        for occurrence, group in enumerate(drawn.tolist()):
-            for index in indices_by_group[str(group)]:
-                transition = transitions[index]
-                sampled.append(replace(
-                    transition,
-                    key=f"{transition.key}\0bootstrap:{fold}:{occurrence}",
-                ))
-                sampled_folds.append(fold)
-    return sampled, np.asarray(sampled_folds, dtype=np.int64)
+    for occurrence, group in enumerate(drawn.tolist()):
+        for index in indices_by_group[str(group)]:
+            transition = transitions[index]
+            sampled.append(replace(
+                transition,
+                # Each occurrence is a distinct sampled position trajectory,
+                # while the source-game identity deliberately remains shared.
+                # Recomputed grouped folds therefore cannot put identical
+                # copies of one empirical cluster in train and test.
+                key=f"{transition.key}\0bootstrap:{occurrence}",
+            ))
+    return sampled
 
 
 def cluster_bootstrap_delta(
@@ -3028,14 +3026,12 @@ def cluster_bootstrap_delta(
     min_oracle_headroom: float = 0.0,
 ) -> dict[str, Any]:
     """Refit and bootstrap the fold-local worst-rung M1-minus-M0 gain."""
-    point_fold_ids = _evaluation_fold_ids(transitions, n_folds)
     rng = np.random.default_rng(seed)
     values: list[float] = []
     for _ in range(samples):
-        rows, fold_ids = _resample_evaluation_folds(
-            transitions, point_fold_ids, rng,
-        )
         try:
+            rows = _resample_source_game_clusters(transitions, rng)
+            fold_ids = _evaluation_fold_ids(rows, n_folds)
             m0 = _refit_fold_predictions(
                 rows, fold_ids, model="M0", n_folds=n_folds,
             )
@@ -3052,8 +3048,9 @@ def cluster_bootstrap_delta(
             values.append(delta)
     if not values:
         return {
-            "selection_semantics": "fold_local_nested_prefix_no_reentry",
-            "oracle_semantics": "exact_fold_local_nested_stop_depth_assignment",
+            "resampling_semantics": _BOOTSTRAP_RESAMPLING_SEMANTICS,
+            "selection_semantics": _FOLD_SELECTION_SEMANTICS,
+            "oracle_semantics": _FOLD_ORACLE_SEMANTICS,
             "requested_samples": samples,
             "valid_samples": 0,
             "valid_fraction": 0.0,
@@ -3063,8 +3060,9 @@ def cluster_bootstrap_delta(
         }
     array = np.asarray(values, dtype=np.float64)
     return {
-        "selection_semantics": "fold_local_nested_prefix_no_reentry",
-        "oracle_semantics": "exact_fold_local_nested_stop_depth_assignment",
+        "resampling_semantics": _BOOTSTRAP_RESAMPLING_SEMANTICS,
+        "selection_semantics": _FOLD_SELECTION_SEMANTICS,
+        "oracle_semantics": _FOLD_ORACLE_SEMANTICS,
         "requested_samples": samples,
         "valid_samples": len(values),
         "valid_fraction": len(values) / samples,
@@ -3162,7 +3160,9 @@ def analyze(
             "allocation_fraction": allocation_fraction,
             "minimum_M1_minus_M0_oracle_capture": min_capture_gain,
             "minimum_oracle_over_random_headroom_mean": min_oracle_headroom,
-            "reachable_selection_required": "fold_local_nested_prefix_no_reentry",
+            "reachable_selection_required": _FOLD_SELECTION_SEMANTICS,
+            "reachable_oracle_required": _FOLD_ORACLE_SEMANTICS,
+            "bootstrap_resampling_required": _BOOTSTRAP_RESAMPLING_SEMANTICS,
             "fold_score_comparison": "within_held_out_fold_only",
             "per_horizon_tables_are_diagnostic_only": True,
             "M1_reachable_rollout_capture_above_random": True,
