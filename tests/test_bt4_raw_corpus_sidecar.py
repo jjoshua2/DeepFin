@@ -26,32 +26,106 @@ class FakeSession:
         return [np.zeros((rows, tool.COMPACT_POLICY_SIZE), dtype=np.float32)]
 
 
-def test_label_child_holds_lease_around_gpu_group(
+def test_parent_holds_lease_through_child_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[str] = []
 
     @contextmanager
-    def fake_lease(_path: Path, *, poll_seconds: float):
+    def fake_lease(
+        _path: Path,
+        *,
+        poll_seconds: float,
+        description: str,
+    ):
         assert poll_seconds == 0.25
+        assert description == "GPU"
         events.append("lease_acquired")
         try:
             yield
         finally:
             events.append("lease_released")
 
-    def fake_group(_args: argparse.Namespace) -> int:
-        assert events == ["lease_acquired"]
-        events.append("gpu_group_finished")
-        return 0
+    class FakeChild:
+        exitcode = 0
 
-    monkeypatch.setattr(tool, "gpu_lease", fake_lease)
-    monkeypatch.setattr(tool, "run_label_group", fake_group)
+        def start(self) -> None:
+            assert events == ["lease_acquired"]
+            events.append("child_started")
+
+        def join(self) -> None:
+            events.append("child_exited")
+
+        def is_alive(self) -> bool:
+            return False
+
+        def terminate(self) -> None:
+            raise AssertionError("successful child must not be terminated")
+
+    class FakeContext:
+        def Process(self, *, target: Any, args: tuple[Any, ...]) -> FakeChild:
+            assert target is tool.label_child
+            assert len(args) == 1
+            return FakeChild()
+
+    monkeypatch.setattr(tool, "advisory_lease", fake_lease)
+    monkeypatch.setattr(
+        tool.multiprocessing,
+        "get_context",
+        lambda method: FakeContext() if method == "fork" else None,
+    )
     args = argparse.Namespace(gpu_lock=Path("lock"), lock_poll_seconds=0.25)
-    with pytest.raises(SystemExit) as stopped:
-        tool.label_child(args)
-    assert stopped.value.code == 0
-    assert events == ["lease_acquired", "gpu_group_finished", "lease_released"]
+    tool.run_label_child_under_gpu_lease(args)
+    assert events == [
+        "lease_acquired",
+        "child_started",
+        "child_exited",
+        "lease_released",
+    ]
+
+
+def test_caught_up_preflight_never_acquires_gpu_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    @contextmanager
+    def fake_lease(
+        _path: Path,
+        *,
+        poll_seconds: float,
+        description: str,
+    ):
+        assert poll_seconds == 0.25
+        events.append(f"{description}_acquired")
+        try:
+            yield
+        finally:
+            events.append(f"{description}_released")
+
+    monkeypatch.setattr(tool, "advisory_lease", fake_lease)
+    monkeypatch.setattr(tool, "file_sha256", lambda _path: "onnx-sha")
+    monkeypatch.setattr(tool, "load_sources", lambda _sources, _out: [object()])
+    monkeypatch.setattr(
+        tool,
+        "pending_shards",
+        lambda _sources, *, onnx_sha256: ([], {"source": 7}),
+    )
+    monkeypatch.setattr(
+        tool,
+        "run_label_child_under_gpu_lease",
+        lambda _args: events.append("gpu_started"),
+    )
+    args = argparse.Namespace(
+        out_root=tmp_path / "out",
+        onnx=tmp_path / "teacher.onnx",
+        verify_all=False,
+        lock_poll_seconds=0.25,
+        source=[],
+    )
+    assert tool.run(args) == 0
+    assert events == ["sidecar-writer_acquired", "sidecar-writer_released"]
 
 
 def make_source(tmp_path: Path, *, bad_input_key: bool = False) -> tool.SourceSpec:

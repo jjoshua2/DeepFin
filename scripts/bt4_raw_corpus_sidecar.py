@@ -910,7 +910,12 @@ def verify_all(args: argparse.Namespace, *, out_root: Path, onnx_sha: str) -> in
 
 
 @contextmanager
-def gpu_lease(path: Path, *, poll_seconds: float) -> Generator[None, None, None]:
+def advisory_lease(
+    path: Path,
+    *,
+    poll_seconds: float,
+    description: str,
+) -> Generator[None, None, None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a+", encoding="utf-8") as handle:
         announced = False
@@ -920,7 +925,10 @@ def gpu_lease(path: Path, *, poll_seconds: float) -> Generator[None, None, None]
                 break
             except BlockingIOError:
                 if not announced:
-                    print(f"[bt4-raw] waiting for GPU lease {path}", flush=True)
+                    print(
+                        f"[bt4-raw] waiting for {description} lease {path}",
+                        flush=True,
+                    )
                     announced = True
                 time.sleep(poll_seconds)
         try:
@@ -941,18 +949,6 @@ def run_label_group(args: argparse.Namespace) -> int:
         )
     onnx_path = Path(args.onnx).resolve()
     onnx_sha = file_sha256(onnx_path)
-    sources = load_sources(args.source, out_root)
-    todo, complete_before = pending_shards(sources, onnx_sha256=onnx_sha)
-    todo.sort(key=lambda item: (item.path.stat().st_mtime_ns, item.source.source_id, item.path.name))
-    selected = todo[: int(args.max_shards)]
-    if not selected:
-        print(
-            f"[bt4-raw] caught up: {sum(complete_before.values())} closed shards "
-            f"across {len(sources)} sources",
-            flush=True,
-        )
-        return 0
-
     sess, input_name, input_dtype, providers = open_session(
         str(onnx_path),
         gpu_mem_gb=float(args.gpu_mem_gb),
@@ -967,7 +963,7 @@ def run_label_group(args: argparse.Namespace) -> int:
     # Existing sidecars must agree with the realized session before this
     # invocation can extend the bank.
     sources = load_sources(args.source, out_root)
-    todo, complete_before = pending_shards(
+    todo, _complete_before = pending_shards(
         sources,
         onnx_sha256=onnx_sha,
         policy_output=policy_name,
@@ -1041,33 +1037,64 @@ def run_label_group(args: argparse.Namespace) -> int:
 
 
 def label_child(args: argparse.Namespace) -> None:
-    """Own both the lease and ONNX Runtime until process teardown."""
-    with gpu_lease(
+    """Own the ONNX Runtime session while inheriting the parent's lease fd."""
+    raise SystemExit(run_label_group(args))
+
+
+def run_label_child_under_gpu_lease(args: argparse.Namespace) -> None:
+    """Keep the GPU lease live until the disposable CUDA process has exited."""
+    with advisory_lease(
         Path(args.gpu_lock).resolve(),
         poll_seconds=float(args.lock_poll_seconds),
+        description="GPU",
     ):
-        raise SystemExit(run_label_group(args))
+        # Fork happens before any CUDA session exists.  The child inherits the
+        # already-locked open file description: if this coordinator is killed,
+        # the child keeps the lease; normally the coordinator keeps it through
+        # join(), so flock cannot become available before CUDA process teardown.
+        child = multiprocessing.get_context("fork").Process(
+            target=label_child,
+            args=(args,),
+        )
+        child.start()
+        try:
+            child.join()
+        except BaseException:
+            if child.is_alive():
+                child.terminate()
+            child.join()
+            raise
+        if child.exitcode != 0:
+            raise RuntimeError(f"BT4 label child exited with status {child.exitcode}")
 
 
 def run(args: argparse.Namespace) -> int:
     out_root = Path(args.out_root).resolve()
     out_root.mkdir(parents=True, exist_ok=True)
     onnx_sha = file_sha256(Path(args.onnx).resolve())
-    if bool(args.verify_all):
-        return verify_all(args, out_root=out_root, onnx_sha=onnx_sha)
+    writer_lock = out_root / ".bt4_raw_sidecar.writer.lock"
+    with advisory_lease(
+        writer_lock,
+        poll_seconds=float(args.lock_poll_seconds),
+        description="sidecar-writer",
+    ):
+        if bool(args.verify_all):
+            return verify_all(args, out_root=out_root, onnx_sha=onnx_sha)
 
-    # The disposable child owns both the flock and CUDA. Process teardown drops
-    # them together, even if this coordinator dies, so a waiter cannot observe
-    # an unlocked lease while an orphaned ORT session is still running.
-    child = multiprocessing.get_context("spawn").Process(
-        target=label_child,
-        args=(args,),
-    )
-    child.start()
-    child.join()
-    if child.exitcode != 0:
-        raise RuntimeError(f"BT4 label child exited with status {child.exitcode}")
-    return 0
+        # Do the potentially long existing-bank scan before touching the GPU
+        # lease.  The separate writer lease closes the race between two
+        # coordinators doing this preflight concurrently.
+        sources = load_sources(args.source, out_root)
+        todo, complete = pending_shards(sources, onnx_sha256=onnx_sha)
+        if not todo:
+            print(
+                f"[bt4-raw] caught up: {sum(complete.values())} closed shards "
+                f"across {len(sources)} sources",
+                flush=True,
+            )
+            return 0
+        run_label_child_under_gpu_lease(args)
+        return 0
 
 
 def build_parser() -> argparse.ArgumentParser:

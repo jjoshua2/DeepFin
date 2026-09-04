@@ -73715,6 +73715,24 @@ live G10 source corpora; no G10 BT4 sidecar exists at this line.**
   **PASS**. Learning quality remains deliberately unjudged until a separately
   preregistered joint-target train and arena.
 
+**2026-09-04 17:33Z — G10 BT4 STREAMER IMPLEMENTATION READOUT: ADMITTED.**
+The corrected one-shard GPU smoke reconstructed, keyed, labeled, verified and
+atomically published all 8,450 rows of frozen
+`run06_g10/w01-00000.jsonl.zst` at 461.7 positions/s while the 16 Stockfish
+workers remained live.  The realized provider list was
+`[CUDAExecutionProvider, CPUExecutionProvider]`; after the disposable child
+exited, `gpu0_experiment.lock` was immediately acquirable and `nvidia-smi`
+listed no compute process.  The focused sidecar/deriver/mixer suite passed 301
+tests.  Independent Grok review of `30b6c8b6a...92599df69` found two valid
+lease-lifetime defects: CPU-only caught-up scans held the GPU lease, and normal
+unwind unlocked just before CUDA process teardown.  The admitted revision does
+the caught-up scan under a separate per-output writer lease before requesting
+the GPU, then forks only before CUDA initialization so parent and child inherit
+the locked open-file description; the parent retains it through `join`, while
+an orphaned child retains it if the parent dies.  Unit tests cover both
+properties.  This readout admits the operational streamer only; it does not
+admit a BT4/SF target recipe.
+
 **2026-09-04 16:54Z — 25-SIM BT4 PERSISTENCE READOUT: PERSISTS.** The frozen
 1,000-game bank is complete and structurally valid: 500 pair IDs, exactly two
 games and both `a_is_white` values per pair, one matched opening per pair,
