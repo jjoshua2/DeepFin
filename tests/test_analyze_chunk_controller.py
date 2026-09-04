@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import importlib.machinery
 import inspect
 import json
 import os
@@ -9,6 +10,7 @@ import py_compile
 import shutil
 import subprocess
 import sys
+import sysconfig
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -411,6 +413,178 @@ def test_trajectory_preimport_guard_covers_every_loaded_project_extension() -> N
 
     assert inventory["loaded"] == inventory["guarded"]
     assert "chess_anti_engine.encoding._features_ext" in inventory["loaded"]
+
+
+def _compile_marker_extension(
+    output: Path, *, init_name: str, marker: Path,
+) -> None:
+    source = output.parent / f"{init_name}_shadow.c"
+    source.write_text(
+        "#include <Python.h>\n"
+        "#include <stdio.h>\n"
+        "static struct PyModuleDef module = {\n"
+        "  PyModuleDef_HEAD_INIT, \"shadow\", NULL, -1, NULL\n"
+        "};\n"
+        f"PyMODINIT_FUNC PyInit_{init_name}(void) {{\n"
+        f"  FILE *f = fopen({json.dumps(str(marker))}, \"w\");\n"
+        "  if (f != NULL) { fputs(\"executed\", f); fclose(f); }\n"
+        "  return PyModule_Create(&module);\n"
+        "}\n"
+    )
+    include = sysconfig.get_paths()["include"]
+    subprocess.run(
+        [
+            "gcc", "-shared", "-fPIC", f"-I{include}",
+            str(source), "-o", str(output),
+        ],
+        check=True,
+    )
+
+
+def test_source_guard_rejects_extension_shadow_of_tracked_python(
+    tmp_path: Path,
+) -> None:
+    checkout = _clone_clean_guard_checkout(tmp_path, native=False)
+    marker = tmp_path / "shadow-executed"
+    suffix = importlib.machinery.EXTENSION_SUFFIXES[0]
+    shadow = checkout / "scripts" / f"reachable_oracle{suffix}"
+    _compile_marker_extension(
+        shadow, init_name="reachable_oracle", marker=marker,
+    )
+
+    # Demonstrate that ordinary import precedence selects and executes the
+    # untracked extension instead of the tracked Python source.
+    subprocess.run(
+        [sys.executable, "-c", "import scripts.reachable_oracle"],
+        cwd=checkout,
+        env={**os.environ, "PYTHONPATH": str(checkout)},
+        check=True,
+    )
+    assert marker.read_text() == "executed"
+    marker.unlink()
+
+    completed = subprocess.run(
+        [
+            sys.executable, "scripts/analyze_chunk_controller.py", "--help",
+        ],
+        cwd=checkout,
+        env={**os.environ, "PYTHONPATH": str(checkout)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert "project native extension is not explicitly authorized" in completed.stderr
+    assert not marker.exists()
+
+
+def test_source_guard_rejects_valid_extension_copied_to_new_project_fullname(
+    tmp_path: Path,
+) -> None:
+    checkout = _clone_clean_guard_checkout(tmp_path, native=True)
+    source_module = importlib.import_module(
+        "chess_anti_engine.encoding._features_ext"
+    )
+    source = Path(str(source_module.__file__)).resolve()
+    copied = checkout / "chess_anti_engine" / "eval" / source.name
+    shutil.copy2(source, copied)
+    fullname = "chess_anti_engine.eval._features_ext"
+
+    ordinary = subprocess.run(
+        [sys.executable, "-c", f"import {fullname}"],
+        cwd=checkout,
+        env={**os.environ, "PYTHONPATH": str(checkout)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert ordinary.returncode == 0, ordinary.stderr
+
+    probe = "\n".join((
+        "import runpy",
+        "runpy.run_path('scripts/analyze_chunk_controller.py', run_name='guard_probe')",
+        f"import {fullname}",
+    ))
+    guarded = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=checkout,
+        env={**os.environ, "PYTHONPATH": str(checkout)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert guarded.returncode != 0
+    assert "project native extension is not explicitly authorized" in guarded.stderr
+
+
+def test_producer_preimport_rejects_symlinked_canonical_native_output(
+    tmp_path: Path,
+) -> None:
+    checkout = _clone_clean_guard_checkout(tmp_path, native=False)
+    source_module = importlib.import_module(
+        "chess_anti_engine.encoding._features_ext"
+    )
+    source = Path(str(source_module.__file__)).resolve()
+    symlink = checkout / "chess_anti_engine" / "encoding" / source.name
+    symlink.symlink_to(source)
+
+    completed = subprocess.run(
+        [sys.executable, "scripts/backtest_chunk_trajectory.py", "--help"],
+        cwd=checkout,
+        env={**os.environ, "PYTHONPATH": str(checkout)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert "decision-grade native extension is missing" in completed.stderr
+
+
+@pytest.mark.parametrize("interference", ["finder", "fileless_module"])
+def test_analyzer_provenance_fails_closed_on_import_guard_interference(
+    tmp_path: Path, interference: str,
+) -> None:
+    checkout = _clone_clean_guard_checkout(tmp_path, native=False)
+    setup = (
+        "sys.meta_path.insert(0, object())"
+        if interference == "finder"
+        else (
+            "sys.modules['scripts.fileless_probe'] = "
+            "types.ModuleType('scripts.fileless_probe')"
+        )
+    )
+    probe = "\n".join((
+        "import json, runpy, sys, types",
+        "ns = runpy.run_path('scripts/analyze_chunk_controller.py', run_name='guard_probe')",
+        setup,
+        "sources = ns['_analyzer_source_artifacts']()",
+        "sha, dirty = ns['_git_state']()",
+        "proof = ns['_analyzer_provenance'](sources, sha, dirty)",
+        "status = proof['python_preimport']['source_only_import']",
+        "print(json.dumps({'decision_grade': proof['decision_grade'], "
+        "'active': status['active'], 'first': status['first_finder'], "
+        "'loaded_passed': status['loaded_project_modules']['passed'], "
+        "'source_recorded': 'scripts.fileless_probe' in sources}))",
+    ))
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=checkout,
+        env={**os.environ, "PYTHONPATH": str(checkout)},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    observed = json.loads(completed.stdout)
+    assert observed["decision_grade"] is False
+    if interference == "finder":
+        assert observed["active"] is False
+        assert observed["first"] is False
+        assert observed["loaded_passed"] is True
+    else:
+        assert observed["active"] is True
+        assert observed["first"] is True
+        assert observed["loaded_passed"] is False
+        assert observed["source_recorded"] is True
 
 
 def _restored_source_execution_status(
@@ -1304,6 +1478,37 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "tracked_python_file_count": len(python_preimport_files),
         "tracked_python_surface_sha256": surface_digest,
     }
+    native_import_artifacts = {
+        "chess_anti_engine.encoding._features_ext": {
+            "path": "/_features_ext.so", "lexical_path": "/_features_ext.so", "size": 1,
+            "mtime_ns": 1, "ctime_ns": 1, "device": 1, "inode": 101,
+            "sha256": "4" * 64, "stable_read": True,
+        },
+        "chess_anti_engine.encoding._lc0_ext": {
+            "path": "/_lc0_ext.so", "lexical_path": "/_lc0_ext.so", "size": 1,
+            "mtime_ns": 1, "ctime_ns": 1, "device": 1, "inode": 102,
+            "sha256": "2" * 64, "stable_read": True,
+        },
+        "chess_anti_engine.mcts._mcts_tree": {
+            "path": "/_mcts_tree.so", "lexical_path": "/_mcts_tree.so", "size": 1,
+            "mtime_ns": 1, "ctime_ns": 1, "device": 1, "inode": 103,
+            "sha256": "e" * 64, "stable_read": True,
+        },
+    }
+    verified_source_modules = {
+        name: {
+            "repo_relative_path": relative_path,
+            "sha256": python_preimport_files[relative_path]["sha256"],
+            "execution": (
+                "compiled_authenticated_bootstrap_source_bytes"
+                if name == "scripts.source_only_import"
+                else "compiled_authenticated_source_bytes"
+            ),
+            "bytecode_cache_read": False,
+        }
+        for name, relative_path in producer_source_paths.items()
+        if name != "producer_script"
+    }
     python_preimport = {
         "schema": "deepfin.python_preimport.v1",
         "git_sha": "a" * 40,
@@ -1323,27 +1528,36 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "post_import_check": dict(python_check),
         "post_run_check": dict(python_check),
         "source_only_import": {
-            "schema": "deepfin.source_only_import.v1",
+            "schema": "deepfin.source_only_import.v2",
             "active": True,
+            "installed": True,
+            "first_finder": True,
             "git_sha": "a" * 40,
             "tracked_python_surface_sha256": surface_digest,
             "project_scope": ["chess_anti_engine", "scripts"],
             "execution": "compile_authenticated_source_bytes",
             "bytecode_cache_reads": False,
-            "native_extension_loading": "unchanged_pathfinder_loader",
-            "verified_modules": {
+            "native_extension_loading": (
+                "default_deny_exact_preimport_artifact_authenticated_loader"
+            ),
+            "permitted_native_modules": list(controller_module._NATIVE_MODULES),
+            "authorized_native_modules": list(controller_module._NATIVE_MODULES),
+            "authorized_native_artifacts": native_import_artifacts,
+            "verified_native_modules": {
                 name: {
-                    "repo_relative_path": relative_path,
-                    "sha256": python_preimport_files[relative_path]["sha256"],
-                    "execution": (
-                        "compiled_authenticated_bootstrap_source_bytes"
-                        if name == "scripts.source_only_import"
-                        else "compiled_authenticated_source_bytes"
-                    ),
-                    "bytecode_cache_read": False,
+                    **artifact,
+                    "execution": "authenticated_canonical_extension_loader",
+                    "preimport_artifact_authenticated": True,
                 }
-                for name, relative_path in producer_source_paths.items()
-                if name != "producer_script"
+                for name, artifact in native_import_artifacts.items()
+            },
+            "verified_modules": verified_source_modules,
+            "loaded_project_modules": {
+                "passed": True,
+                "loaded_modules": sorted(
+                    set(verified_source_modules) | set(controller_module._NATIVE_MODULES)
+                ),
+                "unverified_modules": [],
             },
             "failures": [],
         },
@@ -1482,8 +1696,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             }],
         },
         "features_extension": {
-            "path": "/_features_ext.so", "size": 1, "mtime_ns": 1,
-            "sha256": "4" * 64,
+            **native_import_artifacts["chess_anti_engine.encoding._features_ext"],
             "build_attestation": native_builds[
                 "chess_anti_engine.encoding._features_ext"
             ],
@@ -1495,8 +1708,8 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             },
         },
         "mcts_extension": {
-            "path": "/_mcts_tree.so", "size": 1, "mtime_ns": 1,
-            "sha256": "e" * 64, "abi_version": 9, "required_abi_version": 9,
+            **native_import_artifacts["chess_anti_engine.mcts._mcts_tree"],
+            "abi_version": 9, "required_abi_version": 9,
             "gss_halving_rev": 3,
             "build_attestation": native_builds[
                 "chess_anti_engine.mcts._mcts_tree"
@@ -1509,8 +1722,8 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             },
         },
         "lc0_extension": {
-            "path": "/_lc0_ext.so", "size": 1, "mtime_ns": 1,
-            "sha256": "2" * 64, "cboard_encode_full": True,
+            **native_import_artifacts["chess_anti_engine.encoding._lc0_ext"],
+            "cboard_encode_full": True,
             "build_attestation": native_builds[
                 "chess_anti_engine.encoding._lc0_ext"
             ],
@@ -4311,7 +4524,15 @@ def test_real_producer_source_inventory_round_trips_through_analyzer(
         producer, "_SOURCE_ONLY_IMPORT_GUARD",
         SimpleNamespace(
             verified_modules={},
+            verified_native_modules={},
             module_verified=lambda _name, _relative: True,
+            status=lambda: {
+                "active": True,
+                "first_finder": True,
+                "loaded_project_modules": {
+                    "passed": True, "unverified_modules": [],
+                },
+            },
         ),
     )
 
@@ -4827,7 +5048,17 @@ def test_analyzer_provenance_requires_a_stable_clean_checkout(
     from scripts import analyze_chunk_controller as controller
 
     repo_root = Path(controller.__file__).resolve().parents[1]
-    sources = controller._analyzer_source_artifacts()
+    sources = {
+        name: artifact
+        for name, artifact in controller._analyzer_source_artifacts().items()
+        if (
+            name == "analyzer"
+            or (
+                isinstance(artifact.get("path"), str)
+                and str(artifact["path"]).endswith(".py")
+            )
+        )
+    }
     for artifact in sources.values():
         artifact["matches_preimport_snapshot"] = True
         artifact["source_only_import_verified"] = True
@@ -4844,14 +5075,26 @@ def test_analyzer_provenance_requires_a_stable_clean_checkout(
     monkeypatch.setattr(
         controller, "_SOURCE_ONLY_IMPORT_GUARD",
         SimpleNamespace(status=lambda: {
-            "schema": "deepfin.source_only_import.v1",
+            "schema": "deepfin.source_only_import.v2",
             "active": True,
+            "installed": True,
+            "first_finder": True,
             "git_sha": "b" * 40,
             "tracked_python_surface_sha256": None,
             "project_scope": ["chess_anti_engine", "scripts"],
             "execution": "compile_authenticated_source_bytes",
             "bytecode_cache_reads": False,
-            "native_extension_loading": "unchanged_pathfinder_loader",
+            "native_extension_loading": (
+                "default_deny_exact_preimport_artifact_authenticated_loader"
+            ),
+            "permitted_native_modules": list(controller._NATIVE_MODULES),
+            "authorized_native_modules": [],
+            "authorized_native_artifacts": {},
+            "verified_native_modules": {},
+            "loaded_project_modules": {
+                "passed": True, "loaded_modules": sorted(sources),
+                "unverified_modules": [],
+            },
             "failures": [],
         }),
     )
@@ -4877,7 +5120,17 @@ def test_analyzer_provenance_rejects_helper_from_another_worktree(
     from scripts import analyze_chunk_controller as controller
 
     repo_root = Path(controller.__file__).resolve().parents[1]
-    sources = controller._analyzer_source_artifacts()
+    sources = {
+        name: artifact
+        for name, artifact in controller._analyzer_source_artifacts().items()
+        if (
+            name == "analyzer"
+            or (
+                isinstance(artifact.get("path"), str)
+                and str(artifact["path"]).endswith(".py")
+            )
+        )
+    }
     for artifact in sources.values():
         artifact["matches_preimport_snapshot"] = True
         artifact["source_only_import_verified"] = True
@@ -4899,14 +5152,26 @@ def test_analyzer_provenance_rejects_helper_from_another_worktree(
     monkeypatch.setattr(
         controller, "_SOURCE_ONLY_IMPORT_GUARD",
         SimpleNamespace(status=lambda: {
-            "schema": "deepfin.source_only_import.v1",
+            "schema": "deepfin.source_only_import.v2",
             "active": True,
+            "installed": True,
+            "first_finder": True,
             "git_sha": "b" * 40,
             "tracked_python_surface_sha256": None,
             "project_scope": ["chess_anti_engine", "scripts"],
             "execution": "compile_authenticated_source_bytes",
             "bytecode_cache_reads": False,
-            "native_extension_loading": "unchanged_pathfinder_loader",
+            "native_extension_loading": (
+                "default_deny_exact_preimport_artifact_authenticated_loader"
+            ),
+            "permitted_native_modules": list(controller._NATIVE_MODULES),
+            "authorized_native_modules": [],
+            "authorized_native_artifacts": {},
+            "verified_native_modules": {},
+            "loaded_project_modules": {
+                "passed": True, "loaded_modules": sorted(sources),
+                "unverified_modules": [],
+            },
             "failures": [],
         }),
     )

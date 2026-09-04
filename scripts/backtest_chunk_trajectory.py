@@ -323,6 +323,7 @@ import numpy as np
 
 from scripts.native_import_guard import artifact as _artifact
 from scripts.native_import_guard import PREIMPORT_NATIVE_ARTIFACTS
+_SOURCE_ONLY_IMPORT_GUARD.authorize_native(PREIMPORT_NATIVE_ARTIFACTS)
 from scripts.chunk_trajectory_publication import (
     CHUNK_TRAJECTORY_SCHEMA,
     _acquire_output_lock as _acquire_output_lock,
@@ -743,6 +744,29 @@ def _producer_python_source_artifacts(
     producer_git_sha: str, *, require_tracked: bool,
 ) -> dict[str, dict[str, Any]]:
     """Bind every loaded project module to the revision and pre-import bytes."""
+    import_status = _SOURCE_ONLY_IMPORT_GUARD.status()
+    loaded_status = import_status.get("loaded_project_modules")
+    import_guard_passed = bool(
+        import_status.get("active") is True
+        and import_status.get("first_finder") is True
+        and isinstance(loaded_status, dict)
+        and loaded_status.get("passed") is True
+        and loaded_status.get("unverified_modules") == []
+    )
+    if require_tracked and not import_guard_passed:
+        unverified = (
+            loaded_status.get("unverified_modules", [])
+            if isinstance(loaded_status, dict) else []
+        )
+        names = ", ".join(
+            str(row.get("module"))
+            for row in unverified
+            if isinstance(row, dict)
+        )
+        raise SystemExit(
+            "decision-grade producer loaded an unauthenticated project module or "
+            f"lost source-guard precedence: {names or 'unknown module'}"
+        )
     repo_root = Path(__file__).resolve().parents[1]
     preimport_files = _PREIMPORT_PYTHON_SOURCES.get("files")
     if not isinstance(preimport_files, dict):
@@ -1718,6 +1742,19 @@ def _main() -> None:
     provenance["python_preimport"][
         "source_only_import"
     ] = _SOURCE_ONLY_IMPORT_GUARD.status()
+    source_guard_status = provenance["python_preimport"]["source_only_import"]
+    loaded_project_status = source_guard_status.get("loaded_project_modules")
+    if not (
+        source_guard_status.get("active") is True
+        and source_guard_status.get("first_finder") is True
+        and isinstance(loaded_project_status, dict)
+        and loaded_project_status.get("passed") is True
+        and loaded_project_status.get("unverified_modules") == []
+    ) and not args.methodology_smoke:
+        raise SystemExit(
+            "decision-grade producer loaded an unauthenticated project module or "
+            "lost source-guard precedence"
+        )
     if (
         not args.methodology_smoke
         and python_post_import_status.get("passed") is not True
@@ -2677,6 +2714,16 @@ def _main() -> None:
     provenance["python_preimport"][
         "source_only_import"
     ] = _SOURCE_ONLY_IMPORT_GUARD.status()
+    source_guard_status = provenance["python_preimport"]["source_only_import"]
+    loaded_project_status = source_guard_status.get("loaded_project_modules")
+    if not (
+        source_guard_status.get("active") is True
+        and source_guard_status.get("first_finder") is True
+        and isinstance(loaded_project_status, dict)
+        and loaded_project_status.get("passed") is True
+        and loaded_project_status.get("unverified_modules") == []
+    ):
+        changed_artifacts.append("source_only_import_guard")
     if python_post_run_status.get("passed") is not True:
         changed_artifacts.append("python_preimport_surface")
     origin_snapshot = matched_origin_verification.get("snapshot_inventory")

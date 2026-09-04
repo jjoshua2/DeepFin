@@ -625,6 +625,8 @@ def _analyzer_source_artifacts() -> dict[str, dict[str, Any]]:
         "scripts.reachable_oracle": Path(solve_reachable_oracle.__code__.co_filename),
         "scripts.repo_output_guard": Path(repo_controlled_output.__code__.co_filename),
     }
+    unauthenticated_loaded: dict[str, str | None] = {}
+    verified_native = _SOURCE_ONLY_IMPORT_GUARD.verified_native_modules
     for module_name, module in sorted(sys.modules.items()):
         if not (
             module_name in ("chess_anti_engine", "scripts")
@@ -634,6 +636,10 @@ def _analyzer_source_artifacts() -> dict[str, dict[str, Any]]:
         module_file = getattr(module, "__file__", None)
         if isinstance(module_file, str) and Path(module_file).suffix == ".py":
             source_paths[module_name] = Path(module_file)
+        elif module_name not in verified_native:
+            unauthenticated_loaded[module_name] = (
+                module_file if isinstance(module_file, str) else None
+            )
     preimport_files = _PREIMPORT_PYTHON_SOURCES.get("files")
     if not isinstance(preimport_files, dict):
         preimport_files = {}
@@ -677,6 +683,14 @@ def _analyzer_source_artifacts() -> dict[str, dict[str, Any]]:
             )
         )
         artifacts[name] = artifact
+    for name, module_file in sorted(unauthenticated_loaded.items()):
+        artifacts[name] = {
+            "path": module_file,
+            "repo_relative_path": None,
+            "matches_preimport_snapshot": False,
+            "source_only_import_verified": False,
+            "source_execution": "unauthenticated_loaded_project_module",
+        }
     return artifacts
 
 
@@ -733,8 +747,10 @@ def _analyzer_provenance(
     end_preimport = _preimport_python_surface_status(_PREIMPORT_PYTHON_SOURCES)
     source_only_import = _SOURCE_ONLY_IMPORT_GUARD.status()
     source_only_import_passed = bool(
-        source_only_import.get("schema") == "deepfin.source_only_import.v1"
+        source_only_import.get("schema") == "deepfin.source_only_import.v2"
         and source_only_import.get("active") is True
+        and source_only_import.get("installed") is True
+        and source_only_import.get("first_finder") is True
         and source_only_import.get("git_sha") == start_git_sha
         and source_only_import.get("tracked_python_surface_sha256")
         == _PREIMPORT_PYTHON_SOURCES.get("tracked_python_surface_sha256")
@@ -744,7 +760,15 @@ def _analyzer_provenance(
         == "compile_authenticated_source_bytes"
         and source_only_import.get("bytecode_cache_reads") is False
         and source_only_import.get("native_extension_loading")
-        == "unchanged_pathfinder_loader"
+        == "default_deny_exact_preimport_artifact_authenticated_loader"
+        and source_only_import.get("permitted_native_modules") == _NATIVE_MODULES
+        and source_only_import.get("authorized_native_modules") == []
+        and source_only_import.get("authorized_native_artifacts") == {}
+        and source_only_import.get("verified_native_modules") == {}
+        and isinstance(source_only_import.get("loaded_project_modules"), dict)
+        and source_only_import["loaded_project_modules"].get("passed") is True
+        and source_only_import["loaded_project_modules"].get("unverified_modules")
+        == []
         and source_only_import.get("failures") == []
     )
     source_bindings = _source_revision_bindings(start_sources, start_git_sha)
@@ -1577,8 +1601,10 @@ def _producer_preimport_matches_revision(proof: Any, producer_sha: Any) -> bool:
     source_only = proof.get("source_only_import")
     if (
         not isinstance(source_only, dict)
-        or source_only.get("schema") != "deepfin.source_only_import.v1"
+        or source_only.get("schema") != "deepfin.source_only_import.v2"
         or source_only.get("active") is not True
+        or source_only.get("installed") is not True
+        or source_only.get("first_finder") is not True
         or source_only.get("git_sha") != producer_sha
         or source_only.get("tracked_python_surface_sha256")
         != proof.get("tracked_python_surface_sha256")
@@ -1586,9 +1612,18 @@ def _producer_preimport_matches_revision(proof: Any, producer_sha: Any) -> bool:
         or source_only.get("execution") != "compile_authenticated_source_bytes"
         or source_only.get("bytecode_cache_reads") is not False
         or source_only.get("native_extension_loading")
-        != "unchanged_pathfinder_loader"
+        != "default_deny_exact_preimport_artifact_authenticated_loader"
+        or source_only.get("permitted_native_modules") != _NATIVE_MODULES
+        or source_only.get("authorized_native_modules") != _NATIVE_MODULES
+        or not isinstance(source_only.get("authorized_native_artifacts"), dict)
+        or set(source_only["authorized_native_artifacts"]) != set(_NATIVE_MODULES)
         or source_only.get("failures") != []
         or not isinstance(source_only.get("verified_modules"), dict)
+        or not isinstance(source_only.get("verified_native_modules"), dict)
+        or set(source_only["verified_native_modules"]) != set(_NATIVE_MODULES)
+        or not isinstance(source_only.get("loaded_project_modules"), dict)
+        or source_only["loaded_project_modules"].get("passed") is not True
+        or source_only["loaded_project_modules"].get("unverified_modules") != []
     ):
         return False
     tree = _git_python_tree_at_commit(producer_sha)
@@ -1640,6 +1675,35 @@ def _producer_preimport_matches_revision(proof: Any, producer_sha: Any) -> bool:
             or row.get("bytecode_cache_read") is not False
         ):
             return False
+    loaded_modules = source_only["loaded_project_modules"].get("loaded_modules")
+    expected_loaded = set(source_only["verified_modules"]) | set(_NATIVE_MODULES)
+    if not isinstance(loaded_modules, list) or set(loaded_modules) != expected_loaded:
+        return False
+    for module, row in source_only["verified_native_modules"].items():
+        authorized = source_only["authorized_native_artifacts"].get(module)
+        if (
+            not isinstance(row, dict)
+            or not isinstance(authorized, dict)
+            or row.get("execution") != "authenticated_canonical_extension_loader"
+            or row.get("preimport_artifact_authenticated") is not True
+            or not isinstance(row.get("path"), str)
+            or row.get("lexical_path") != row.get("path")
+            or not _positive_int(row.get("size"))
+            or not _nonnegative_int(row.get("mtime_ns"))
+            or not _nonnegative_int(row.get("ctime_ns"))
+            or not _nonnegative_int(row.get("device"))
+            or not _positive_int(row.get("inode"))
+            or not _valid_sha256(row.get("sha256"))
+            or authorized.get("stable_read") is not True
+            or any(
+                row.get(name) != authorized.get(name)
+                for name in (
+                    "path", "lexical_path", "size", "mtime_ns", "ctime_ns",
+                    "device", "inode", "sha256", "stable_read",
+                )
+            )
+        ):
+            return False
     for check_name in ("start_check", "post_import_check", "post_run_check"):
         check = proof.get(check_name)
         if (
@@ -1649,6 +1713,47 @@ def _producer_preimport_matches_revision(proof: Any, producer_sha: Any) -> bool:
             or check.get("git_sha") != producer_sha
             or check.get("tracked_python_file_count") != len(files)
             or check.get("tracked_python_surface_sha256") != surface_digest
+        ):
+            return False
+    return True
+
+
+def _producer_native_imports_match_manifest(
+    proof: Any, manifest: Mapping[str, Any],
+) -> bool:
+    """Tie pre-import native authorization to the published extension records."""
+    if not isinstance(proof, dict):
+        return False
+    source_only = proof.get("source_only_import")
+    if not isinstance(source_only, dict):
+        return False
+    authorized = source_only.get("authorized_native_artifacts")
+    verified = source_only.get("verified_native_modules")
+    if not isinstance(authorized, dict) or not isinstance(verified, dict):
+        return False
+    manifest_names = {
+        "chess_anti_engine.encoding._features_ext": "features_extension",
+        "chess_anti_engine.encoding._lc0_ext": "lc0_extension",
+        "chess_anti_engine.mcts._mcts_tree": "mcts_extension",
+    }
+    identity_names = (
+        "path", "lexical_path", "size", "mtime_ns", "ctime_ns", "device",
+        "inode", "sha256", "stable_read",
+    )
+    for module, manifest_name in manifest_names.items():
+        initial = authorized.get(module)
+        loaded = verified.get(module)
+        published = manifest.get(manifest_name)
+        if (
+            not isinstance(initial, dict)
+            or not isinstance(loaded, dict)
+            or not isinstance(published, dict)
+        ):
+            return False
+        if any(
+            initial.get(name) != loaded.get(name)
+            or loaded.get(name) != published.get(name)
+            for name in identity_names
         ):
             return False
     return True
@@ -2623,6 +2728,12 @@ def _require_manifest(
         failures.append("native feature encoding extension provenance is incomplete")
     if not _compatible_lc0_extension(manifest.get("lc0_extension"), producer_sha):
         failures.append("native CBoard encoding extension provenance is incomplete")
+    if not _producer_native_imports_match_manifest(
+        manifest.get("python_preimport"), manifest,
+    ):
+        failures.append(
+            "native extension imports are not bound to their pre-import snapshots"
+        )
     artifact_stability = manifest.get("artifact_stability")
     if (
         not isinstance(artifact_stability, dict)
