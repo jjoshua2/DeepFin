@@ -77,31 +77,37 @@ def _open_parent(
             opened = os.fstat(descriptor)
             named_after = parent.stat()
         except OSError:
-            if quarantine_meta_path is not None:
-                _mark_manifest_namespace_invalid(
-                    quarantine_meta_path, parent_fd=descriptor,
-                )
-            os.close(descriptor)
+            try:
+                if quarantine_meta_path is not None:
+                    _mark_manifest_namespace_invalid(
+                        quarantine_meta_path, parent_fd=descriptor,
+                    )
+            finally:
+                os.close(descriptor)
             raise
         if _identity(named_before) != _identity(opened) or _identity(
             named_after
         ) != _identity(opened):
-            if quarantine_meta_path is not None:
-                _mark_manifest_namespace_invalid(
-                    quarantine_meta_path, parent_fd=descriptor,
-                )
-            os.close(descriptor)
+            try:
+                if quarantine_meta_path is not None:
+                    _mark_manifest_namespace_invalid(
+                        quarantine_meta_path, parent_fd=descriptor,
+                    )
+            finally:
+                os.close(descriptor)
             raise SystemExit(
                 f"containing directory changed while being opened: {path.parent}"
             ) from exc
         os.close(descriptor)
         raise
     if not stat.S_ISDIR(opened.st_mode) or _identity(named_before) != _identity(opened):
-        if quarantine_meta_path is not None:
-            _mark_manifest_namespace_invalid(
-                quarantine_meta_path, parent_fd=descriptor,
-            )
-        os.close(descriptor)
+        try:
+            if quarantine_meta_path is not None:
+                _mark_manifest_namespace_invalid(
+                    quarantine_meta_path, parent_fd=descriptor,
+                )
+        finally:
+            os.close(descriptor)
         raise SystemExit(f"containing directory changed while being opened: {path.parent}")
     return descriptor
 
@@ -119,7 +125,12 @@ def _require_parent(path: Path, parent_fd: int) -> None:
 
 def _authenticate_initial_parent(path: Path, parent_fd: int) -> None:
     """Recheck a newly opened parent and classify a transient first failure."""
-    opened_before = os.fstat(parent_fd)
+    try:
+        opened_before = os.fstat(parent_fd)
+    except OSError as exc:
+        raise RuntimeError(
+            f"cannot snapshot newly opened evidence parent: {path.parent}"
+        ) from exc
     try:
         _require_parent(path, parent_fd)
     except OSError as exc:
@@ -168,7 +179,12 @@ def _authenticate_initial_open(
     links: int | None,
 ) -> None:
     """Bind a returned descriptor to its name despite a transient first check."""
-    opened_before = os.fstat(file_fd)
+    try:
+        opened_before = os.fstat(file_fd)
+    except OSError as exc:
+        raise RuntimeError(
+            f"cannot snapshot newly opened evidence: {path}"
+        ) from exc
     try:
         _require_entry(path, parent_fd, file_fd, links=links)
         _require_parent(path, parent_fd)
@@ -733,21 +749,36 @@ def _mark_manifest_recovery_invalid(
 
 def _mark_manifest_namespace_invalid(meta_path: Path, *, parent_fd: int) -> None:
     """Block both a retained parent and any concurrently installed alias."""
-    _mark_manifest_recovery_invalid(meta_path, parent_fd=parent_fd)
-    current_parent_fd = -1
+    retained_failure: BaseException | None = None
     try:
-        current_parent_fd = _open_parent(meta_path)
-        if _identity(os.fstat(current_parent_fd)) != _identity(os.fstat(parent_fd)):
-            _mark_manifest_recovery_invalid(
-                meta_path, parent_fd=current_parent_fd,
-            )
-    except (OSError, SystemExit, RuntimeError) as alias_exc:
+        _mark_manifest_recovery_invalid(meta_path, parent_fd=parent_fd)
+    except BaseException as exc:
+        retained_failure = exc
+    current_failure: BaseException | None = None
+    for _attempt in range(3):
+        current_parent_fd = -1
+        try:
+            current_parent_fd = _open_parent(meta_path)
+            if _identity(os.fstat(current_parent_fd)) != _identity(
+                os.fstat(parent_fd)
+            ):
+                _mark_manifest_recovery_invalid(
+                    meta_path, parent_fd=current_parent_fd,
+                )
+            _require_parent(meta_path, current_parent_fd)
+            current_failure = None
+            break
+        except BaseException as exc:
+            current_failure = exc
+        finally:
+            if current_parent_fd >= 0:
+                os.close(current_parent_fd)
+    if current_failure is not None:
         raise RuntimeError(
             "cannot quarantine the current manifest namespace"
-        ) from alias_exc
-    finally:
-        if current_parent_fd >= 0:
-            os.close(current_parent_fd)
+        ) from current_failure
+    if retained_failure is not None:
+        raise retained_failure
 
 
 @contextmanager
@@ -807,9 +838,34 @@ def _acquire_output_locks(
 def _manifest_recovery_is_invalid(meta_path: Path, *, parent_fd: int) -> bool:
     marker = _invalid_manifest_path(meta_path)
     try:
+        parent_before = os.fstat(parent_fd)
+    except OSError:
+        _ensure_manifest_recovery_invalid(meta_path, parent_fd=parent_fd)
+        raise
+    try:
         os.stat(marker.name, dir_fd=parent_fd, follow_symlinks=False)
     except OSError as exc:
         if exc.errno == errno.ENOENT:
+            try:
+                parent_after = os.fstat(parent_fd)
+            except OSError:
+                _ensure_manifest_recovery_invalid(
+                    meta_path, parent_fd=parent_fd,
+                )
+                raise
+            namespace_fields = (
+                "st_dev", "st_ino", "st_mtime_ns", "st_ctime_ns",
+            )
+            if any(
+                getattr(parent_before, field) != getattr(parent_after, field)
+                for field in namespace_fields
+            ):
+                _ensure_manifest_recovery_invalid(
+                    meta_path, parent_fd=parent_fd,
+                )
+                raise SystemExit(
+                    "invalid-recovery marker absence changed during check"
+                ) from exc
             return False
         _ensure_manifest_recovery_invalid(meta_path, parent_fd=parent_fd)
         raise
