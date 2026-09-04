@@ -1890,6 +1890,7 @@ def _producer_sources_match_revision(sources: Any, producer_git_sha: Any) -> boo
         "scripts.analyze_chunk_controller": "scripts/analyze_chunk_controller.py",
         "scripts.repo_output_guard": "scripts/repo_output_guard.py",
         "scripts.match_audit_rows": "scripts/match_audit_rows.py",
+        "scripts.approved_syzygy": "scripts/approved_syzygy.py",
         "chess_anti_engine.eval.audit": "chess_anti_engine/eval/audit.py",
         "chess_anti_engine.mcts.search_options": (
             "chess_anti_engine/mcts/search_options.py"
@@ -2475,6 +2476,27 @@ def _tablebase_component_counts(rows: Any) -> tuple[tuple[int, int], ...]:
         )
     except (KeyError, TypeError, ValueError):
         return ()
+
+
+def _canonical_manifest_syzygy_paths(value: Any) -> tuple[str, ...]:
+    """Return exact canonical absolute components, or empty on any ambiguity."""
+    if not isinstance(value, str) or not value:
+        return ()
+    components = value.split(os.pathsep)
+    if not components:
+        return ()
+    for component in components:
+        if (
+            not component
+            or "\0" in component
+            or not os.path.isabs(component)
+            or component.startswith("//")
+            or os.path.expanduser(component) != component
+            or os.path.normpath(component) != component
+            or str(Path(component)) != component
+        ):
+            return ()
+    return tuple(components)
 
 
 def _valid_tablebase_directory_inventory(value: Any) -> bool:
@@ -3485,13 +3507,8 @@ def _require_manifest(
     directories = syzygy.get("directories") if isinstance(syzygy, dict) else None
     directory_wdl_count = _sum_manifest_ints(directories, "rtbw_count")
     directory_dtz_count = _sum_manifest_ints(directories, "rtbz_count")
-    syzygy_paths = (
-        tuple(
-            str(Path(value.strip()).expanduser().resolve())
-            for value in syzygy["path"].split(os.pathsep)
-        )
-        if isinstance(syzygy, dict) and isinstance(syzygy.get("path"), str)
-        else ()
+    syzygy_paths = _canonical_manifest_syzygy_paths(
+        syzygy.get("path") if isinstance(syzygy, dict) else None
     )
     directory_paths = (
         tuple(str(row.get("path", "")) for row in directories)

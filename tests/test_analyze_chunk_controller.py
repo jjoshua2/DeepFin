@@ -80,7 +80,7 @@ from scripts.check_c_extensions_fresh import extension_spec
 _TEST_GIT_FILES: dict[str, bytes] = {}
 
 
-def test_approved_syzygy_layout_constants_match_production_inventory() -> None:
+def test_approved_syzygy_layout_pins_remain_stable() -> None:
     assert (
         ApprovedSyzygyComponent(
             "syzygy_3-4-5", 510, 145, 655, 73_818_025_392,
@@ -3124,6 +3124,26 @@ def test_loader_rejects_foreign_loaded_producer_python_module(tmp_path: Path) ->
         load_transitions(bank)
 
 
+@pytest.mark.parametrize("tamper", ["omit", "wrong_path"])
+def test_loader_requires_exact_approved_syzygy_source_provenance(
+    tmp_path: Path, tamper: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    sources = manifest["producer_sources"]
+    if tamper == "omit":
+        sources.pop("scripts.approved_syzygy")
+    else:
+        sources["scripts.approved_syzygy"]["repo_relative_path"] = (
+            "scripts/other_syzygy.py"
+        )
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="producer Python sources"):
+        load_transitions(bank)
+
+
 def test_loader_rejects_a_collection_outside_the_preregistered_design(
     tmp_path: Path,
 ) -> None:
@@ -3744,6 +3764,30 @@ def test_loader_rejects_partial_syzygy_inventory(tmp_path: Path) -> None:
     manifest = json.loads(meta.read_text())
     manifest["syzygy"]["directories"][0]["rtbw_count"] = 500
     manifest["syzygy"]["directories"][1]["rtbw_count"] = 375
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="production Syzygy provenance"):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    "path_value",
+    [
+        "/tb/syzygy_3-4-5/../syzygy_3-4-5:/tb/syzygy_6",
+        "/tb//syzygy_3-4-5:/tb/syzygy_6",
+        "/tb/syzygy_3-4-5/:/tb/syzygy_6",
+        "/tb/syzygy_3-4-5:/tb/./syzygy_6",
+        "//tb/syzygy_3-4-5:/tb/syzygy_6",
+    ],
+)
+def test_loader_rejects_noncanonical_resolving_equal_syzygy_path(
+    tmp_path: Path, path_value: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["syzygy"]["path"] = path_value
+    _refresh_synthetic_syzygy_integrity(manifest["syzygy"])
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="production Syzygy provenance"):
@@ -5650,6 +5694,9 @@ def test_real_producer_source_inventory_round_trips_through_analyzer(
 
     assert sources["scripts"]["repo_relative_path"] == "scripts/__init__.py"
     assert sources["scripts"]["size"] == 0
+    assert sources["scripts.approved_syzygy"]["repo_relative_path"] == (
+        "scripts/approved_syzygy.py"
+    )
     assert controller_module._producer_sources_match_revision(sources, "a" * 40)
 
 
