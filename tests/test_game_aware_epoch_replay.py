@@ -13,6 +13,7 @@ from chess_anti_engine.replay import game_epoch as game_epoch_module
 from chess_anti_engine.replay import disk_buffer as disk_buffer_module
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
+from chess_anti_engine.replay import game_epoch as epoch_tool
 from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
 from chess_anti_engine.replay.shard import (
     SF_EVAL_PV_CHECKED_FIELD,
@@ -111,6 +112,30 @@ def _drain(buf: GameAwareEpochBuffer) -> list[list[tuple[int, int]]]:
         rows = np.asarray(arrays["ply_index"], dtype=np.int64)
         batches.append(list(zip(games.tolist(), rows.tolist(), strict=True)))
     return batches
+
+
+def test_game_choice_is_independent_of_active_dictionary_insertion_order() -> None:
+    """Planner and decoded-loader insertion order cannot move the schedule."""
+    counts = {0: 1, 1: 8, 2: 4, 3: 11}
+    planner_order = dict(counts)
+    loader_order = {key: counts[key] for key in reversed(counts)}
+
+    planned = epoch_tool._choose_games(
+        planner_order,
+        3,
+        epoch_tool._seeded_rng(0, 1),
+        remaining=dict(counts),
+        forced={0},
+    )
+    realized = epoch_tool._choose_games(
+        loader_order,
+        3,
+        epoch_tool._seeded_rng(0, 1),
+        remaining=dict(counts),
+        forced={0},
+    )
+
+    np.testing.assert_array_equal(realized, planned)
 
 
 def test_exact_epoch_uses_every_row_once_and_never_repeats_a_game_in_batch(
