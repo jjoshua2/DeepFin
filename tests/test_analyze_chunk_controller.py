@@ -8936,6 +8936,46 @@ def test_analyzer_linearizes_report_bytes_before_final_parent_snapshot(
     assert output.read_text() == "attacker report\n"
 
 
+def test_analyzer_final_report_open_does_not_block_on_fifo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "analysis.json"
+    displaced = tmp_path / "authentic-analysis.json"
+    real_open = controller_module.os.open
+    opened_fifo = False
+
+    def replace_report_with_fifo(
+        path: Any,
+        flags: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> int:
+        nonlocal opened_fifo
+        if Path(path) == output:
+            output.rename(displaced)
+            os.mkfifo(output)
+            assert flags & os.O_NONBLOCK
+            opened_fifo = True
+        return real_open(path, flags, *args, **kwargs)
+
+    def publish_then_replace_with_fifo() -> None:
+        with controller_module._anchored_output_target(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+        ) as target:
+            controller_module._write_json_atomic(target, "{}")
+            monkeypatch.setattr(controller_module.os, "open", replace_report_with_fifo)
+
+    with pytest.raises(RuntimeError, match="requested analyzer output changed"):
+        publish_then_replace_with_fifo()
+
+    assert opened_fifo is True
+    assert stat.S_ISFIFO(output.stat().st_mode)
+    assert displaced.read_text() == "{}\n"
+
+
 def test_analyzer_atomic_json_requires_fresh_ordinary_output(
     tmp_path: Path,
 ) -> None:

@@ -1371,7 +1371,7 @@ def _require_requested_output_linearized(target: _AnchoredOutputTarget) -> None:
     try:
         requested_fd = os.open(
             target.lexical_path,
-            os.O_RDONLY | os.O_CLOEXEC | nofollow,
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow,
         )
     except OSError as exc:
         raise RuntimeError(
