@@ -4890,7 +4890,14 @@ def load_transitions(
                 raise ValueError(
                     f"{key}: group_id is not (source_dir, game_id)"
                 )
-            if upper.get("group_id", group_id) != group_id:
+            upper_group_id = upper.get("group_id")
+            if (
+                methodology_smoke
+                and upper_group_id is None
+                and str(group_id).startswith("smoke:")
+            ):
+                upper_group_id = group_id
+            if upper_group_id != group_id:
                 raise ValueError(f"{key}: source-scoped game group changes within trajectory")
             lo_regret = (
                 _strict_finite(lower, metric)

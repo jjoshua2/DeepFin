@@ -3069,11 +3069,13 @@ def test_loader_requires_provenance_but_allows_explicit_legacy_smoke(tmp_path: P
     bank.write_text("".join([
         json.dumps({
             "key": "k", "chunk": 1, "nodes": 50, "regret_cp": 20,
-            "visit_gap": 0.1, "uci": "a2a3",
+            "visit_gap": 0.1, "uci": "a2a3", "game_id": None,
+            "group_id": None,
         }) + "\n",
         json.dumps({
             "key": "k", "chunk": 2, "nodes": 100, "regret_cp": 10,
-            "visit_gap": 0.2, "uci": "a2a3",
+            "visit_gap": 0.2, "uci": "a2a3", "game_id": None,
+            "group_id": None,
         }) + "\n",
     ]))
 
