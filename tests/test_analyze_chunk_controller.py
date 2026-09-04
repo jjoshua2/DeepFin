@@ -5360,6 +5360,43 @@ def test_normal_pair_guards_bank_through_manifest_publication(
         assert output.samefile(extra_bank)
 
 
+def test_normal_pair_retains_requested_manifest_through_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(pending_output, output),
+    }
+    real_publish = publication._publish_no_replace
+
+    def mutate_manifest_at_publication(
+        tmp: Path, destination: Path, **kwargs: Any,
+    ) -> None:
+        if tmp == pending_meta:
+            pending_meta.write_text(json.dumps({**manifest, "tampered": True}))
+        real_publish(tmp, destination, **kwargs)
+
+    monkeypatch.setattr(
+        publication, "_publish_no_replace", mutate_manifest_at_publication,
+    )
+    with pytest.raises(SystemExit, match="staged evidence changed"):
+        publication._publish_evidence_pair(
+            pending_output, output, pending_meta, meta, manifest,
+        )
+
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(pending_meta.read_text()) == {**manifest, "tampered": True}
+    assert not meta.exists()
+
+
 def test_final_manifest_recovery_rejects_an_extra_hard_link(tmp_path: Path) -> None:
     from scripts import chunk_trajectory_publication as publication
 
@@ -5933,6 +5970,52 @@ def test_final_manifest_recovery_rejects_identical_different_inode_manifest(
     assert output.read_text() == "completed bank\n"
 
 
+@pytest.mark.parametrize("mutation", ["content", "two-name-swap"])
+def test_final_manifest_recovery_retains_authenticated_manifest_through_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, mutation: str,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_meta = publication._pending_manifest_path(meta)
+    output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(output, output),
+    }
+    publication._write_json_staged(pending_meta, manifest)
+    os.link(pending_meta, meta)
+    attacker_manifest = {**manifest, "tampered": True}
+    real_unlink = publication._unlink_durable
+
+    def mutate_before_cleanup(path: Path, **kwargs: Any) -> None:
+        if path == pending_meta:
+            if mutation == "content":
+                meta.write_text(json.dumps(attacker_manifest))
+            else:
+                original = tmp_path / "original-manifest.json"
+                attacker = tmp_path / "attacker-manifest.json"
+                attacker.write_text(json.dumps(attacker_manifest))
+                os.replace(meta, original)
+                pending_meta.unlink()
+                os.link(attacker, pending_meta)
+                os.replace(attacker, meta)
+        real_unlink(path, **kwargs)
+
+    monkeypatch.setattr(publication, "_unlink_durable", mutate_before_cleanup)
+    with pytest.raises(
+        SystemExit, match=r"changed|anchored regular file|not hard links",
+    ):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert json.loads(meta.read_text()) == attacker_manifest
+    assert pending_meta.samefile(meta)
+    assert meta.stat().st_nlink == 2
+    assert output.read_text() == "completed bank\n"
+
+
 def test_final_manifest_recovery_rejects_bank_that_differs_from_manifest(
     tmp_path: Path,
 ) -> None:
@@ -6109,6 +6192,32 @@ def test_producer_atomic_json_preserves_preexisting_staging_file(tmp_path: Path)
         producer._write_json_atomic(output, {"new": True})
 
     assert staging.read_text() == "other process staging\n"
+    assert not output.exists()
+
+
+def test_producer_atomic_json_retains_requested_payload_through_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "preregistration.json"
+    staging = output.with_name(f".{output.name}.tmp-{os.getpid()}")
+    payload = {"schema": "preregistration", "complete": True}
+    attacker_payload = {**payload, "tampered": True}
+    real_publish = publication._publish_no_replace
+
+    def mutate_at_publication(
+        tmp: Path, destination: Path, **kwargs: Any,
+    ) -> None:
+        if tmp == staging:
+            staging.write_text(json.dumps(attacker_payload))
+        real_publish(tmp, destination, **kwargs)
+
+    monkeypatch.setattr(publication, "_publish_no_replace", mutate_at_publication)
+    with pytest.raises(SystemExit, match="staged evidence changed"):
+        publication._write_json_atomic(output, payload)
+
+    assert json.loads(staging.read_text()) == attacker_payload
     assert not output.exists()
 
 

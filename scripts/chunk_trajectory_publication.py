@@ -170,10 +170,14 @@ def _unlink_durable(
         path, path, durable=False, links=expected_links,
     ) as source:
         _require_entry(path, source.parent_fd, source.file_fd, links=expected_links)
-        if surviving is not None and _identity(os.fstat(source.file_fd)) != _identity(
-            os.fstat(surviving.file_fd)
-        ):
-            raise SystemExit("removed and surviving evidence names are not hard links")
+        if surviving is not None:
+            if expected_links is None:
+                raise RuntimeError("surviving evidence requires an expected link count")
+            _require_publication_guards(((surviving, expected_links),))
+            if _identity(os.fstat(source.file_fd)) != _identity(
+                os.fstat(surviving.file_fd)
+            ):
+                raise SystemExit("removed and surviving evidence names are not hard links")
         os.unlink(path.name, dir_fd=source.parent_fd)
         os.fsync(source.parent_fd)
         _require_parent(path, source.parent_fd)
@@ -183,12 +187,7 @@ def _unlink_durable(
                     surviving_path, source.parent_fd, source.file_fd, links=1,
                 )
             else:
-                _require_entry(
-                    surviving_path,
-                    surviving.parent_fd,
-                    surviving.file_fd,
-                    links=1,
-                )
+                _require_publication_guards(((surviving, 1),))
 
 
 def _artifact(path: Path, *, require_file: bool) -> dict[str, Any]:
@@ -242,7 +241,12 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     tmp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     _write_json_staged(tmp_path, payload)
     try:
-        _publish_no_replace(tmp_path, path)
+        with _anchored_file(
+            tmp_path, tmp_path, durable=True, links=1,
+        ) as staged:
+            if _read_json_fd(staged.file_fd, tmp_path) != payload:
+                raise SystemExit("staged JSON differs from requested payload")
+            _publish_no_replace(tmp_path, path, source=staged)
     except _ImmutableEvidenceExistsError:
         _unlink_durable(tmp_path)
         raise
@@ -362,20 +366,63 @@ def _require_new_output_pair(
         and not os.path.lexists(pending_output)
         and pending_meta.exists()
     ):
-        manifest = _require_same_manifest_hard_link(meta_path, pending_meta)
-        with _matching_output(
-            output_path, output_path, manifest, expected_links=1,
-        ) as final_bank:
-            if _require_same_manifest_hard_link(meta_path, pending_meta) != manifest:
-                raise SystemExit("published evidence manifest changed during recovery")
-            _durably_prepare_existing_output_artifact(meta_path, meta_path)
-            if _require_same_manifest_hard_link(meta_path, pending_meta) != manifest:
-                raise SystemExit("published evidence manifest changed during recovery")
-            _require_publication_guards(((final_bank, 1),))
-            _unlink_durable(pending_meta, expected_links=2, surviving_path=meta_path)
-            _require_publication_guards(((final_bank, 1),))
-            if meta_path.lstat().st_nlink != 1:
-                raise SystemExit("published evidence manifest has unexpected hard links")
+        with _anchored_file(
+            meta_path, meta_path, durable=True, links=None,
+        ) as final_manifest:
+            try:
+                pending_stat = os.stat(
+                    pending_meta.name,
+                    dir_fd=final_manifest.parent_fd,
+                    follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise SystemExit(
+                    "cannot inspect pending evidence manifest during recovery"
+                ) from exc
+            final_stat = os.fstat(final_manifest.file_fd)
+            if (
+                not stat.S_ISREG(pending_stat.st_mode)
+                or _identity(pending_stat) != _identity(final_stat)
+                or int(pending_stat.st_nlink) != 2
+                or int(final_stat.st_nlink) != 2
+            ):
+                raise SystemExit(
+                    "published and pending evidence manifests are not the same "
+                    "recovery hard links"
+                )
+            _require_entry(
+                meta_path,
+                final_manifest.parent_fd,
+                final_manifest.file_fd,
+                links=2,
+            )
+            manifest = _read_pending_manifest_fd(final_manifest.file_fd, meta_path)
+            _require_entry(
+                pending_meta,
+                final_manifest.parent_fd,
+                final_manifest.file_fd,
+                links=2,
+            )
+            with _matching_output(
+                output_path, output_path, manifest, expected_links=1,
+            ) as final_bank:
+                _require_publication_guards(
+                    ((final_bank, 1), (final_manifest, 2)),
+                )
+                _unlink_durable(
+                    pending_meta,
+                    expected_links=2,
+                    surviving_path=meta_path,
+                    surviving=final_manifest,
+                )
+                _require_publication_guards(
+                    ((final_bank, 1), (final_manifest, 1)),
+                )
+                if (
+                    _read_pending_manifest_fd(final_manifest.file_fd, meta_path)
+                    != manifest
+                ):
+                    raise SystemExit("published evidence manifest changed during recovery")
         return True
     if output_path.exists() and not meta_path.exists() and pending_meta.exists():
         with _durably_read_pending_manifest(pending_meta) as (manifest, source):
@@ -651,7 +698,8 @@ def _durably_prepare_anchored_output_artifact(
     return {**artifact, "path": str(output_path.expanduser().resolve())}
 
 
-def _read_pending_manifest_fd(file_fd: int, path: Path) -> dict[str, Any]:
+def _read_json_fd(file_fd: int, path: Path, *, role: str = "staged evidence") -> Any:
+    """Read stable JSON bytes from an exact retained file descriptor."""
     before = _artifact_from_fd(file_fd, path)
     try:
         chunks: list[bytes] = []
@@ -661,20 +709,20 @@ def _read_pending_manifest_fd(file_fd: int, path: Path) -> dict[str, Any]:
             offset += len(block)
         payload = json.loads(b"".join(chunks))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"pending evidence manifest is not valid JSON: {path}") from exc
+        raise SystemExit(f"{role} is not valid JSON: {path}") from exc
     after = _artifact_from_fd(file_fd, path)
     if _artifact_identity(before) != _artifact_identity(after):
-        raise SystemExit(f"pending evidence manifest changed while being read: {path}")
+        raise SystemExit(f"{role} changed while being read: {path}")
+    return payload
+
+
+def _read_pending_manifest_fd(file_fd: int, path: Path) -> dict[str, Any]:
+    payload = _read_json_fd(file_fd, path, role="pending evidence manifest")
     if not isinstance(payload, dict) or payload.get("schema") != CHUNK_TRAJECTORY_SCHEMA:
         raise SystemExit(f"pending evidence manifest has the wrong schema: {path}")
     if payload.get("complete") is not True or not isinstance(payload.get("output"), dict):
         raise SystemExit(f"pending evidence manifest is incomplete: {path}")
     return payload
-
-
-def _read_pending_manifest(path: Path) -> dict[str, Any]:
-    with _anchored_file(path, path, durable=False, links=None) as source:
-        return _read_pending_manifest_fd(source.file_fd, path)
 
 
 @contextmanager
@@ -692,50 +740,6 @@ def _durably_read_pending_manifest(
         _require_entry(path, source.parent_fd, source.file_fd, links=1)
         _require_parent(path, source.parent_fd)
         yield manifest, source
-
-
-def _manifest_name_identity(path: Path, *, role: str) -> tuple[int, int, int]:
-    """Require a manifest name to identify a regular file without a symlink."""
-    try:
-        file_stat = path.lstat()
-    except OSError as exc:
-        raise SystemExit(f"cannot inspect {role}: {path}") from exc
-    if not stat.S_ISREG(file_stat.st_mode):
-        raise SystemExit(f"{role} is not a regular file: {path}")
-    return int(file_stat.st_dev), int(file_stat.st_ino), int(file_stat.st_nlink)
-
-
-def _require_same_manifest_hard_link(
-    meta_path: Path, pending_meta: Path,
-) -> dict[str, Any]:
-    """Authenticate the final-manifest fsync-failure recovery marker."""
-    published_before = _manifest_name_identity(
-        meta_path, role="published evidence manifest",
-    )
-    pending_before = _manifest_name_identity(
-        pending_meta, role="pending evidence manifest",
-    )
-    if published_before != pending_before or published_before[2] != 2:
-        raise SystemExit(
-            "published and pending evidence manifests are not the same recovery hard links"
-        )
-    pending_manifest = _read_pending_manifest(pending_meta)
-    published_manifest = _read_pending_manifest(meta_path)
-    published_after = _manifest_name_identity(
-        meta_path, role="published evidence manifest",
-    )
-    pending_after = _manifest_name_identity(
-        pending_meta, role="pending evidence manifest",
-    )
-    if (
-        published_after != published_before
-        or pending_after != pending_before
-        or published_after != pending_after
-        or published_after[2] != 2
-        or published_manifest != pending_manifest
-    ):
-        raise SystemExit("published evidence manifest changed during recovery")
-    return pending_manifest
 
 
 @contextmanager
@@ -784,21 +788,30 @@ def _publish_evidence_pair(
 ) -> None:
     """Prepare both artifacts before publishing either; retain recovery state."""
     _write_json_staged(pending_meta, manifest)
-    published = _publish_output(
-        pending_output,
-        output_path,
-        expected_artifact=manifest.get("output"),
-    )
-    if _publication_artifact_identity(published) != _publication_artifact_identity(
-        manifest.get("output")
+    with _durably_read_pending_manifest(pending_meta) as (
+        staged_manifest,
+        pending_manifest,
     ):
-        raise RuntimeError("published trajectory bank differs from its manifest")
-    with _matching_output(
-        output_path, output_path, manifest, expected_links=1,
-    ) as final_bank:
-        _publish_no_replace(
-            pending_meta, meta_path, guards=((final_bank, 1),),
+        if staged_manifest != manifest:
+            raise SystemExit("staged evidence manifest differs from requested manifest")
+        published = _publish_output(
+            pending_output,
+            output_path,
+            expected_artifact=manifest.get("output"),
         )
+        if _publication_artifact_identity(published) != _publication_artifact_identity(
+            manifest.get("output")
+        ):
+            raise RuntimeError("published trajectory bank differs from its manifest")
+        with _matching_output(
+            output_path, output_path, manifest, expected_links=1,
+        ) as final_bank:
+            _publish_no_replace(
+                pending_meta,
+                meta_path,
+                source=pending_manifest,
+                guards=((final_bank, 1),),
+            )
 
 
 def _git_ignored_or_outside(path: Path, repo_root: Path) -> bool:
