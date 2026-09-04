@@ -8,6 +8,7 @@ search runtime is available.
 from __future__ import annotations
 
 import argparse
+import errno
 import fcntl
 import hashlib
 import json
@@ -18,7 +19,7 @@ from contextlib import contextmanager
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Protocol
+from typing import IO, Any, NoReturn, Protocol
 
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
@@ -48,9 +49,21 @@ def _identity(file_stat: os.stat_result) -> tuple[int, int]:
     return int(file_stat.st_dev), int(file_stat.st_ino)
 
 
+def _raise_path_access_failure(exc: OSError, message: str) -> NoReturn:
+    """Separate positive namespace drift from retryable inspection failures."""
+    if exc.errno in {errno.ENOENT, errno.ENOTDIR, errno.ELOOP}:
+        raise SystemExit(message) from exc
+    raise exc
+
+
 def _open_parent(path: Path) -> int:
     flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0)
-    descriptor = os.open(path.expanduser().parent, flags)
+    try:
+        descriptor = os.open(path.expanduser().parent, flags)
+    except OSError as exc:
+        _raise_path_access_failure(
+            exc, f"cannot open containing directory for {path}",
+        )
     if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
         os.close(descriptor)
         raise SystemExit(f"containing path is not a directory: {path.parent}")
@@ -61,7 +74,9 @@ def _require_parent(path: Path, parent_fd: int) -> None:
     try:
         named = path.expanduser().parent.stat()
     except OSError as exc:
-        raise SystemExit(f"cannot revalidate containing directory for {path}") from exc
+        _raise_path_access_failure(
+            exc, f"cannot revalidate containing directory for {path}",
+        )
     if _identity(named) != _identity(os.fstat(parent_fd)):
         raise SystemExit(f"containing directory changed during publication: {path.parent}")
 
@@ -72,7 +87,9 @@ def _require_entry(
     try:
         named = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
     except OSError as exc:
-        raise SystemExit(f"cannot revalidate evidence artifact: {path}") from exc
+        _raise_path_access_failure(
+            exc, f"cannot revalidate evidence artifact: {path}",
+        )
     opened = os.fstat(file_fd)
     if (
         not stat.S_ISREG(named.st_mode)
@@ -120,7 +137,9 @@ def _anchored_file(
         try:
             file_fd = os.open(path.name, flags, dir_fd=parent_fd)
         except OSError as exc:
-            raise SystemExit(f"cannot safely open regular evidence file: {path}") from exc
+            _raise_path_access_failure(
+                exc, f"cannot safely open regular evidence file: {path}",
+            )
         _require_entry(path, parent_fd, file_fd, links=links)
         before = _artifact_from_fd(file_fd, artifact_path)
         if durable:
@@ -412,11 +431,45 @@ def _acquire_output_locks(
     return tuple(handles)
 
 
+def _manifest_recovery_is_invalid(meta_path: Path, *, parent_fd: int) -> bool:
+    marker = _invalid_manifest_path(meta_path)
+    try:
+        os.stat(marker.name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        if exc.errno == errno.ENOENT:
+            return False
+        raise
+    return True
+
+
 def _require_new_output_pair(
     output_path: Path, meta_path: Path, *, overwrite: bool,
 ) -> bool:
     """Resume a prepared pair, or require a completely new immutable destination."""
-    if os.path.lexists(_invalid_manifest_path(meta_path)):
+    with _retained_parent(meta_path) as manifest_parent_fd:
+        if _manifest_recovery_is_invalid(
+            meta_path, parent_fd=manifest_parent_fd,
+        ):
+            raise SystemExit(
+                f"manifest recovery was invalidated for {output_path}; "
+                "choose a new versioned --out"
+            )
+        return _require_new_output_pair_at_parent(
+            output_path,
+            meta_path,
+            overwrite=overwrite,
+            manifest_parent_fd=manifest_parent_fd,
+        )
+
+
+def _require_new_output_pair_at_parent(
+    output_path: Path,
+    meta_path: Path,
+    *,
+    overwrite: bool,
+    manifest_parent_fd: int,
+) -> bool:
+    if _manifest_recovery_is_invalid(meta_path, parent_fd=manifest_parent_fd):
         raise SystemExit(
             f"manifest recovery was invalidated for {output_path}; "
             "choose a new versioned --out"
@@ -434,7 +487,6 @@ def _require_new_output_pair(
         and pending_meta.exists()
     ):
         with (
-            _retained_parent(meta_path) as manifest_parent_fd,
             _quarantine_manifest_recovery_on_integrity_failure(
                 meta_path, parent_fd=manifest_parent_fd,
             ),
@@ -449,9 +501,10 @@ def _require_new_output_pair(
                     follow_symlinks=False,
                 )
             except OSError as exc:
-                raise SystemExit(
-                    "cannot inspect pending evidence manifest during recovery"
-                ) from exc
+                _raise_path_access_failure(
+                    exc,
+                    "cannot inspect pending evidence manifest during recovery",
+                )
             final_stat = os.fstat(final_manifest.file_fd)
             if (
                 not stat.S_ISREG(pending_stat.st_mode)
@@ -499,7 +552,6 @@ def _require_new_output_pair(
         return True
     if output_path.exists() and not meta_path.exists() and pending_meta.exists():
         with (
-            _retained_parent(meta_path) as manifest_parent_fd,
             _quarantine_manifest_recovery_on_integrity_failure(
                 meta_path, parent_fd=manifest_parent_fd,
             ),
@@ -548,7 +600,6 @@ def _require_new_output_pair(
         and pending_meta.exists()
     ):
         with (
-            _retained_parent(meta_path) as manifest_parent_fd,
             _quarantine_manifest_recovery_on_integrity_failure(
                 meta_path, parent_fd=manifest_parent_fd,
             ),
@@ -590,10 +641,9 @@ def _require_new_output_pair(
 def _link_open_file(file_fd: int, parent_fd: int, name: str) -> None:
     """Hard-link an exact open inode through procfs, never a mutable source name."""
     descriptor_path = Path(f"/proc/self/fd/{file_fd}")
-    try:
-        descriptor_stat = descriptor_path.stat()
-    except OSError as exc:
-        raise SystemExit(f"cannot authenticate open link source: {descriptor_path}") from exc
+    # Inaccessible procfs is a retryable publication-mechanism failure.  A
+    # readable mapping that names the wrong inode remains an integrity failure.
+    descriptor_stat = descriptor_path.stat()
     if _identity(descriptor_stat) != _identity(os.fstat(file_fd)):
         raise SystemExit(f"open link source changed: {descriptor_path}")
     os.link(descriptor_path, name, dst_dir_fd=parent_fd, follow_symlinks=True)
@@ -615,7 +665,12 @@ def _publish_anchored(
         source.artifact
     ):
         raise SystemExit(f"staged evidence changed before publication: {source.path}")
-    output_parent_stat = output_path.parent.stat()
+    try:
+        output_parent_stat = output_path.parent.stat()
+    except OSError as exc:
+        _raise_path_access_failure(
+            exc, f"cannot inspect publication directory for {output_path}",
+        )
     same_parent = _identity(output_parent_stat) == _identity(os.fstat(source.parent_fd))
     output_parent_fd = source.parent_fd if same_parent else _open_parent(output_path)
     try:
@@ -793,7 +848,9 @@ def _read_json_fd(file_fd: int, path: Path, *, role: str = "staged evidence") ->
             chunks.append(block)
             offset += len(block)
         payload = json.loads(b"".join(chunks))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except OSError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SystemExit(f"{role} is not valid JSON: {path}") from exc
     after = _artifact_from_fd(file_fd, path)
     if _artifact_identity(before) != _artifact_identity(after):
