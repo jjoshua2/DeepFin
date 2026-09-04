@@ -37,6 +37,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import IO, Any
 
@@ -462,7 +463,7 @@ def _git_ignored_or_outside(path: Path, repo_root: Path) -> bool:
 
 
 def _require_analyzable_source_groups(
-    group_ids: dict[str, str | None], *, methodology_smoke: bool,
+    group_ids: Mapping[str, str | None], *, methodology_smoke: bool,
 ) -> None:
     if methodology_smoke:
         return
@@ -1505,6 +1506,7 @@ def main() -> None:
     tmp_path = _pending_output_path(args.out)
     n_rows = 0
     completed_positions = 0
+    completed_group_ids: dict[str, str] = {}
     excluded_positions: list[dict[str, Any]] = []
     started = time.perf_counter()
     collection_complete = False
@@ -1735,10 +1737,17 @@ def main() -> None:
                     fh.write(json.dumps(row, sort_keys=True) + "\n")
                     n_rows += 1
                 completed_positions += 1
+                completed_group_id = group_ids[pos.key]
+                if completed_group_id:
+                    completed_group_ids[completed_group_id] = completed_group_id
                 if (pi + 1) % 25 == 0:
                     print(f"[traj] {pi + 1}/{len(positions)}", flush=True)
                     if str(args.device).startswith("cuda"):
                         torch.cuda.empty_cache()
+        _require_analyzable_source_groups(
+            completed_group_ids,
+            methodology_smoke=bool(args.methodology_smoke),
+        )
         collection_complete = True
     finally:
         worker.close()

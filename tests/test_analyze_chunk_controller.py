@@ -1808,6 +1808,24 @@ def test_producer_requires_two_source_games_before_decision_grade_collection() -
     )
 
 
+def test_producer_rechecks_games_after_terminal_shortcut_exclusions() -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    requested_groups = {
+        "position-a": "snapshot\0game-1",
+        "position-b": "snapshot\0game-2",
+    }
+    completed_groups = {"snapshot\0game-1": "snapshot\0game-1"}
+
+    producer._require_analyzable_source_groups(
+        requested_groups, methodology_smoke=False,
+    )
+    with pytest.raises(SystemExit, match="at least two distinct source games"):
+        producer._require_analyzable_source_groups(
+            completed_groups, methodology_smoke=False,
+        )
+
+
 def test_producer_requires_driver_provenance_before_decision_grade_search() -> None:
     from scripts import backtest_chunk_trajectory as producer
 
