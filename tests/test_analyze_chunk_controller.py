@@ -8823,24 +8823,31 @@ def test_analyzer_no_clobber_when_consumed_bank_appears_at_output_leaf(
         bank.rename(output)
         real_publish(source_fd, parent_fd, name)
 
-    with controller_module._anchored_output_target(
-        bank,
-        tmp_path / "bank.jsonl.meta.json",
-        output,
-        consumed_artifacts=(consumed,),
-    ) as target:
-        monkeypatch.setattr(
-            controller_module,
-            "_link_anonymous_file_no_replace",
-            move_bank_before_publish,
-        )
-        with pytest.raises(FileExistsError, match="appeared during publication"):
-            controller_module._write_json_atomic(target, "{}")
+    monkeypatch.setattr(
+        controller_module,
+        "_link_anonymous_file_no_replace",
+        move_bank_before_publish,
+    )
+    targets: list[controller_module._AnchoredOutputTarget] = []
+
+    def attempt_publication() -> None:
+        with controller_module._anchored_output_target(
+            bank,
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+            consumed_artifacts=(consumed,),
+        ) as target:
+            targets.append(target)
+            with pytest.raises(FileExistsError, match="appeared during publication"):
+                controller_module._write_json_atomic(target, "{}")
+
+    with pytest.raises(ValueError, match="alias of a consumed input artifact"):
+        attempt_publication()
 
     assert not bank.exists()
     assert output.read_bytes() == bank_bytes
     with pytest.raises(OSError, match="Bad file descriptor"):
-        os.fstat(target.parent_fd)
+        os.fstat(targets[0].parent_fd)
 
 
 def test_analyzer_publication_never_name_unlinks_consumed_or_foreign_entries(
