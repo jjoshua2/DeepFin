@@ -147,6 +147,53 @@ def test_near_max_ratio_extends_set_and_preserves_outside_mass() -> None:
     assert np.array_equal(mixed[1], stored_source[1])
 
 
+def test_sf_cp_window_uses_true_rank_gap_not_cold_source_probability() -> None:
+    source = np.asarray([[1.0, 0.0, 0.0, 0.0]], dtype=np.float16)
+    bt4 = np.asarray([[0.10, 0.60, 0.25, 0.05]], dtype=np.float32)
+    legal = np.ones((1, 4), dtype=np.uint8)
+    rank_indices = np.asarray([[0, 1, 2]], dtype=np.uint16)
+    rank_gaps = np.asarray([[0.0, 8.0, 19.0]], dtype=np.float32)
+
+    mixed = tool.mix_policy_targets(
+        source,
+        bt4,
+        legal,
+        alpha=0.5,
+        scope="sf-cp-window",
+        bt4_temperature=1.0,
+        sf_rank_indices=rank_indices,
+        sf_rank_gaps_cp=rank_gaps,
+        sf_rank_cap=3,
+        sf_cp_window=10.0,
+    )
+
+    # Only top-1 and the true 8cp runner-up are eligible. Half the selected
+    # mass keeps the cold SF target and half follows conditional BT4 (1:6).
+    assert mixed[0] == pytest.approx([0.5 + 0.5 / 7.0, 3.0 / 7.0, 0.0, 0.0])
+
+
+def test_sf_cp_window_unions_all_stored_top_ties_with_rank_cap() -> None:
+    source = np.asarray([[0.5, 0.5, 0.0, 0.0]], dtype=np.float16)
+    bt4 = np.asarray([[0.1, 0.2, 0.3, 0.4]], dtype=np.float32)
+    legal = np.ones((1, 4), dtype=np.uint8)
+
+    mixed = tool.mix_policy_targets(
+        source,
+        bt4,
+        legal,
+        alpha=1.0,
+        scope="sf-cp-window",
+        sf_rank_indices=np.asarray([[0, 2]], dtype=np.uint16),
+        sf_rank_gaps_cp=np.asarray([[0.0, 5.0]], dtype=np.float32),
+        sf_rank_cap=2,
+        sf_cp_window=10.0,
+    )
+
+    # Index 1 is retained because it is a stored top tie even though it is not
+    # in the two supplied d9 ranks; index 3 remains outside the treatment.
+    assert mixed[0] == pytest.approx([1.0 / 6.0, 2.0 / 6.0, 3.0 / 6.0, 0.0])
+
+
 def test_top_tie_break_refuses_zero_bt4_mass_on_tied_moves() -> None:
     source = np.asarray([[0.4, 0.4, 0.2]], dtype=np.float16)
     bt4 = np.asarray([[0.0, 0.0, 1.0]], dtype=np.float32)
@@ -200,6 +247,10 @@ def _write_source(root: Path) -> tuple[Path, Path, dict[str, np.ndarray]]:
             dtype=np.float16,
         ),
         "has_search_wdl": np.ones(2, dtype=np.uint8),
+        "game_id": np.asarray([11, 12], dtype=np.int64),
+        "ply_index": np.asarray([3, 4], dtype=np.int32),
+        "has_game_id": np.ones(2, dtype=np.uint8),
+        "has_ply_index": np.ones(2, dtype=np.uint8),
     }
     # Make the row identities distinct without requiring a decodable board.
     arrays["x"][1, 0, 0, 0] = 1.0
@@ -291,9 +342,11 @@ def _write_audit_receipt(
     scope: str = "top-max-ties",
     bt4_temperature: float = 1.0,
     near_max_ratio: float = 0.5,
+    sf_rank_cap: int = 3,
+    sf_cp_window: float = 10.0,
 ) -> Path:
     path = root / "audit.json"
-    near = scope == "near-max-ratio"
+    near = scope in {"near-max-ratio", "sf-cp-window"}
     path.write_text(
         json.dumps(
             {
@@ -304,6 +357,8 @@ def _write_audit_receipt(
                     alpha=1.0,
                     bt4_temperature=bt4_temperature,
                     near_max_ratio=near_max_ratio,
+                    sf_rank_cap=sf_rank_cap,
+                    sf_cp_window=sf_cp_window,
                 ),
                 "source_target_contract": tool.SOURCE_TARGET_CONTRACT,
                 "ruler": tool.AUDIT_RULER_CONTRACT,
@@ -311,9 +366,11 @@ def _write_audit_receipt(
                     "candidate_set_wider_rows": 1 if near else 0,
                     "changed_unique_max_rows": 1 if near else 0,
                     "temperature_one_top1_mismatch_rows": 0,
+                    "temperature_prestorage_top1_mismatch_rows": 0,
                     "near_max_extended": True,
                     "top_tie_unique_max_identity": True,
                     "temperature_one_top1_preserved": True,
+                    "temperature_rank_preserved_before_storage": True,
                     "selected_mass_drift_within_bounds": True,
                 },
                 "gate": {
@@ -326,6 +383,67 @@ def _write_audit_receipt(
         encoding="utf-8",
     )
     return path
+
+
+def _write_rank_sidecar(root: Path, source_dir: Path, shard_path: Path) -> Path:
+    source = zarr.open_group(str(shard_path), mode="r")
+    rank_dir = root / "sf-ranks"
+    rank_path = rank_dir / shard_path.name
+    group = zarr.open_group(str(rank_path), mode="w")
+    indices = np.asarray([[0, 1, 2], [0, 1, 2]], dtype=np.uint16)
+    gaps = np.asarray([[0.0, 0.0, 20.0], [0.0, 8.0, 30.0]], dtype=np.float32)
+    counts = np.asarray([3, 3], dtype=np.uint8)
+    group.create_dataset(tool.sf_ranks.INDEX_FIELD, data=indices)
+    group.create_dataset(tool.sf_ranks.GAP_FIELD, data=gaps)
+    group.create_dataset(tool.sf_ranks.COUNT_FIELD, data=counts)
+    source_summary_sha = tool.file_sha256(source_dir / tool.DERIVE_SUMMARY)
+    group.attrs.update(
+        {
+            "sf_d9_rank_sidecar_schema": tool.sf_ranks.SCHEMA,
+            "source_shard": shard_path.name,
+            "source_rows": 2,
+            "source_row_identity_sha256": tool._source_game_ply_sha(
+                source,
+                shard_path,
+            ),
+            "source_derive_summary_sha256": source_summary_sha,
+            "raw_config_sha256": "raw-config",
+            "depth": 9,
+            "top_k": 3,
+            "index_encoding": "lc0_1858",
+            "gap_definition": "rank1_effective_cp-minus-ranked_effective_cp",
+            "payload_sha256": tool.sf_ranks._sha_arrays(indices, gaps, counts),
+        }
+    )
+    (rank_dir / tool.sf_ranks.SUMMARY_NAME).write_text(
+        json.dumps(
+            {
+                "schema": tool.sf_ranks.SCHEMA,
+                "kind": "sf_d9_rank_gap_sidecar",
+                "source_dir": str(source_dir),
+                "source_derive_summary_sha256": source_summary_sha,
+                "rows": 2,
+                "shards": 1,
+                "depth": 9,
+                "top_k": 3,
+                "index_encoding": "lc0_1858",
+                "gap_definition": "rank1_effective_cp-minus-ranked_effective_cp",
+                "outputs": [
+                    {
+                        "path": shard_path.name,
+                        "rows": 2,
+                        "source_row_identity_sha256": group.attrs[
+                            "source_row_identity_sha256"
+                        ],
+                        "payload_sha256": group.attrs["payload_sha256"],
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return rank_dir
 
 
 def test_audit_receipt_requires_exact_treatment_algorithm(tmp_path: Path) -> None:
@@ -669,6 +787,94 @@ def test_mix_corpus_near_max_changes_declared_unique_maxima(tmp_path: Path) -> N
     assert receipt["changed_unique_max_rows"] == 1
     assert receipt["candidate_set_wider_rows"] == 2
     assert receipt["near_max_ratio"] == 0.5
+
+
+def test_mix_corpus_uses_verified_sf_cp_rank_sidecar(tmp_path: Path) -> None:
+    source_dir, shard_path, _arrays = _write_source(tmp_path)
+    sidecar_dir = _write_sidecar(tmp_path, source_dir, shard_path)
+    rank_dir = _write_rank_sidecar(tmp_path, source_dir, shard_path)
+    audit_receipt = _write_audit_receipt(
+        tmp_path,
+        scope="sf-cp-window",
+        sf_rank_cap=2,
+        sf_cp_window=10.0,
+    )
+    out_dir = tmp_path / "cp-window-mixed"
+
+    result = tool.mix_corpus(
+        argparse.Namespace(
+            shards=source_dir,
+            sidecar=sidecar_dir,
+            sf_rank_sidecar=rank_dir,
+            out=out_dir,
+            alpha=1.0,
+            scope="sf-cp-window",
+            bt4_temperature=1.0,
+            near_max_ratio=0.5,
+            sf_rank_cap=2,
+            sf_cp_window=10.0,
+            expected_rows=2,
+            expected_shards=1,
+            expected_source_summary_sha256=tool.file_sha256(
+                source_dir / tool.DERIVE_SUMMARY
+            ),
+            audit_receipt=audit_receipt,
+        )
+    )
+
+    assert result == 0
+    mixed = zarr.open_group(str(out_dir / shard_path.name), mode="r")
+    assert np.asarray(mixed["policy_target"][0, :3]) == pytest.approx(
+        [0.08, 0.72, 0.20],
+        abs=1e-3,
+    )
+    assert np.asarray(mixed["policy_target"][1, :3]) == pytest.approx(
+        [0.20, 0.80, 0.0],
+        abs=1e-3,
+    )
+    assert mixed.attrs["policy_target_mix_sf_rank_cap"] == 2
+    assert mixed.attrs["policy_target_mix_sf_cp_window"] == 10.0
+    receipt = json.loads((out_dir / tool.MIX_SUMMARY).read_text(encoding="utf-8"))
+    assert receipt["candidate_set_wider_rows"] == 1
+    assert receipt["changed_unique_max_rows"] == 1
+
+
+def test_mix_corpus_refuses_rank_summary_receipt_drift(tmp_path: Path) -> None:
+    source_dir, shard_path, _arrays = _write_source(tmp_path)
+    sidecar_dir = _write_sidecar(tmp_path, source_dir, shard_path)
+    rank_dir = _write_rank_sidecar(tmp_path, source_dir, shard_path)
+    summary_path = rank_dir / tool.sf_ranks.SUMMARY_NAME
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["outputs"][0]["payload_sha256"] = "0" * 64
+    summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+    audit_receipt = _write_audit_receipt(
+        tmp_path,
+        scope="sf-cp-window",
+        sf_rank_cap=2,
+        sf_cp_window=10.0,
+    )
+
+    with pytest.raises(ValueError, match="summary output receipt mismatch"):
+        tool.mix_corpus(
+            argparse.Namespace(
+                shards=source_dir,
+                sidecar=sidecar_dir,
+                sf_rank_sidecar=rank_dir,
+                out=tmp_path / "bad-rank-summary-mixed",
+                alpha=1.0,
+                scope="sf-cp-window",
+                bt4_temperature=1.0,
+                near_max_ratio=0.5,
+                sf_rank_cap=2,
+                sf_cp_window=10.0,
+                expected_rows=2,
+                expected_shards=1,
+                expected_source_summary_sha256=tool.file_sha256(
+                    source_dir / tool.DERIVE_SUMMARY
+                ),
+                audit_receipt=audit_receipt,
+            )
+        )
 
 
 @pytest.mark.parametrize(

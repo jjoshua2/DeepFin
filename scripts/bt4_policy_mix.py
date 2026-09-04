@@ -39,6 +39,7 @@ import os
 import shutil
 import sys
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -63,6 +64,7 @@ from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE, POLICY_ENCODING_
 from chess_anti_engine.moves.leela_index import compact_index_for_move
 from chess_anti_engine.replay.shard import iter_shard_paths
 from chess_anti_engine.stockfish.wdl import cp_to_wdl_array, mate_to_effective_cp
+from scripts import sf_d9_rank_sidecar as sf_ranks
 from scripts.bt4_policy_dump import (
     DEFAULT_ONNX,
     board_from_stored_x,
@@ -83,11 +85,12 @@ DERIVE_SUMMARY = "derive_targets_summary.json"
 POLICY_FIELD = "policy_target"
 SIDECAR_POLICY_FIELD = "bt4_policy"
 SIDECAR_KEY_FIELD = "source_key"
-MIX_SCOPES = ("global", "top-max-ties", "near-max-ratio")
+MIX_SCOPES = ("global", "top-max-ties", "near-max-ratio", "sf-cp-window")
 TREATMENT_ALGORITHMS = {
     "global": "legal-normalized-global-arithmetic-v1",
     "top-max-ties": "stored-top-set-only-v1",
     "near-max-ratio": "stored-near-max-set-only-v1",
+    "sf-cp-window": "stored-top-ties-union-sf-d9-cp-window-v1",
 }
 SOURCE_TARGET_CONTRACT = {
     "scheme": "uniform-d9",
@@ -144,12 +147,30 @@ def validate_near_max_ratio(ratio: float) -> float:
     return value
 
 
+def validate_sf_rank_cap(rank_cap: int) -> int:
+    value = int(rank_cap)
+    if value < 2 or value > 255:
+        raise ValueError(f"--sf-rank-cap must be in [2,255], got {rank_cap!r}")
+    return value
+
+
+def validate_sf_cp_window(window_cp: float) -> float:
+    value = float(window_cp)
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(
+            f"--sf-cp-window must be finite and positive, got {window_cp!r}",
+        )
+    return value
+
+
 def treatment_spec(
     *,
     scope: str,
     alpha: float,
     bt4_temperature: float,
     near_max_ratio: float,
+    sf_rank_cap: int = 3,
+    sf_cp_window: float = 10.0,
 ) -> dict[str, Any]:
     """Return the complete, mechanically comparable treatment identity."""
     if scope not in MIX_SCOPES:
@@ -161,13 +182,20 @@ def treatment_spec(
         if scope == "near-max-ratio"
         else None
     )
-    return {
+    rank_cap = validate_sf_rank_cap(sf_rank_cap) if scope == "sf-cp-window" else None
+    cp_window = (
+        validate_sf_cp_window(sf_cp_window) if scope == "sf-cp-window" else None
+    )
+    spec = {
         "scope": scope,
         "alpha": weight,
         "algorithm": TREATMENT_ALGORITHMS[scope],
         "bt4_temperature": temperature,
         "near_max_ratio": ratio,
     }
+    if scope == "sf-cp-window":
+        spec.update({"sf_rank_cap": rank_cap, "sf_cp_window": cp_window})
+    return spec
 
 
 def _sha_array(value: np.ndarray) -> str:
@@ -291,6 +319,10 @@ def _source_candidate_set(
     *,
     scope: str,
     near_max_ratio: float,
+    sf_rank_indices: np.ndarray | None = None,
+    sf_rank_gaps_cp: np.ndarray | None = None,
+    sf_rank_cap: int = 3,
+    sf_cp_window: float = 10.0,
 ) -> np.ndarray:
     """Select the stored-source set whose mass BT4 may redistribute."""
     legal = np.asarray(legal_mask) != 0
@@ -302,6 +334,37 @@ def _source_candidate_set(
     if scope == "near-max-ratio":
         ratio = validate_near_max_ratio(near_max_ratio)
         return legal & (legal_source >= row_max * ratio)
+    if scope == "sf-cp-window":
+        if sf_rank_indices is None or sf_rank_gaps_cp is None:
+            raise ValueError("sf-cp-window requires d9 rank indices and cp gaps")
+        indices = np.asarray(sf_rank_indices)
+        gaps_cp = np.asarray(sf_rank_gaps_cp, dtype=np.float64)
+        if indices.ndim != 2 or gaps_cp.shape != indices.shape:
+            raise ValueError(
+                "d9 rank indices/gaps must be same-shaped two-dimensional arrays",
+            )
+        if indices.shape[0] != source_values.shape[0]:
+            raise ValueError("d9 rank sidecar row count does not match source policy")
+        rank_cap = validate_sf_rank_cap(sf_rank_cap)
+        if indices.shape[1] < rank_cap:
+            raise ValueError(
+                f"d9 rank sidecar width {indices.shape[1]} is below cap {rank_cap}",
+            )
+        cp_window = validate_sf_cp_window(sf_cp_window)
+        selected = legal & (legal_source == row_max)
+        rows = np.arange(indices.shape[0])
+        for rank in range(rank_cap):
+            compact = indices[:, rank].astype(np.int64, copy=False)
+            include = (
+                (compact >= 0)
+                & (compact < source_values.shape[1])
+                & np.isfinite(gaps_cp[:, rank])
+                & (gaps_cp[:, rank] <= cp_window)
+            )
+            selected[rows[include], compact[include]] = True
+        if bool(np.any(selected & ~legal)):
+            raise ValueError("d9 cp-window selected an illegal move")
+        return selected
     raise ValueError(f"scope {scope!r} has no source candidate set")
 
 
@@ -335,6 +398,10 @@ def mix_policy_targets(
     scope: str,
     bt4_temperature: float = 1.0,
     near_max_ratio: float = 0.5,
+    sf_rank_indices: np.ndarray | None = None,
+    sf_rank_gaps_cp: np.ndarray | None = None,
+    sf_rank_cap: int = 3,
+    sf_cp_window: float = 10.0,
 ) -> np.ndarray:
     """Apply the selected literal probability-space treatment.
 
@@ -367,6 +434,10 @@ def mix_policy_targets(
         legal,
         scope=scope,
         near_max_ratio=near_max_ratio,
+        sf_rank_indices=sf_rank_indices,
+        sf_rank_gaps_cp=sf_rank_gaps_cp,
+        sf_rank_cap=sf_rank_cap,
+        sf_cp_window=sf_cp_window,
     )
     selected_count = selected.sum(axis=1)
     if bool(np.any(selected_count <= 0)):
@@ -377,7 +448,11 @@ def mix_policy_targets(
         bt4_selected_raw.sum(axis=1) <= 0.0,
     )
     if no_bt4_selected_mass.size:
-        set_name = "source top-tie" if scope == "top-max-ties" else "source near-max"
+        set_name = {
+            "top-max-ties": "source top-tie",
+            "near-max-ratio": "source near-max",
+            "sf-cp-window": "source d9 cp-window",
+        }[scope]
         raise ValueError(
             f"BT4 policy has no mass on the {set_name} set for "
             f"{no_bt4_selected_mass.size} rows",
@@ -519,6 +594,108 @@ def _validate_sidecar(
         raise ValueError(
             f"{sidecar_path}: BT4 policy contains negative or non-finite values"
         )
+    return attrs
+
+
+def _source_game_ply_sha(source_group: Any, source_path: Path) -> str:
+    for field in ("game_id", "ply_index", "has_game_id", "has_ply_index"):
+        if field not in source_group:
+            raise ValueError(f"{source_path}: missing row-identity field {field}")
+    if not bool(np.all(np.asarray(source_group["has_game_id"][:]) != 0)) or not bool(
+        np.all(np.asarray(source_group["has_ply_index"][:]) != 0)
+    ):
+        raise ValueError(f"{source_path}: game/ply identity is not active on every row")
+    game_ids = np.asarray(source_group["game_id"][:], dtype=np.int64)
+    plies = np.asarray(source_group["ply_index"][:], dtype=np.int32)
+    return sf_ranks._sha_arrays(game_ids, plies)
+
+
+def _validate_sf_rank_sidecar(
+    rank_path: Path,
+    *,
+    source_group: Any,
+    source_path: Path,
+    source_summary_sha256: str,
+    required_top_k: int,
+) -> dict[str, Any]:
+    if not rank_path.is_dir():
+        raise ValueError(f"missing SF d9 rank sidecar shard {rank_path}")
+    group: Any = zarr.open_group(str(rank_path), mode="r")
+    attrs = dict(group.attrs)
+    rows = int(source_group[POLICY_FIELD].shape[0])
+    expected = {
+        "sf_d9_rank_sidecar_schema": sf_ranks.SCHEMA,
+        "source_shard": source_path.name,
+        "source_rows": rows,
+        "source_row_identity_sha256": _source_game_ply_sha(
+            source_group,
+            source_path,
+        ),
+        "source_derive_summary_sha256": source_summary_sha256,
+        "depth": 9,
+        "index_encoding": POLICY_ENCODING_LC0_1858,
+        "gap_definition": "rank1_effective_cp-minus-ranked_effective_cp",
+    }
+    bad = {
+        key: (attrs.get(key), value)
+        for key, value in expected.items()
+        if attrs.get(key) != value
+    }
+    top_k = int(attrs.get("top_k", -1))
+    if top_k < required_top_k:
+        bad["top_k"] = (top_k, f">={required_top_k}")
+    if bad:
+        raise ValueError(f"{rank_path}: provenance mismatch {bad}")
+    expected_layout = {
+        sf_ranks.INDEX_FIELD: ((rows, top_k), np.dtype(np.uint16)),
+        sf_ranks.GAP_FIELD: ((rows, top_k), np.dtype(np.float32)),
+        sf_ranks.COUNT_FIELD: ((rows,), np.dtype(np.uint8)),
+    }
+    for field, (shape, dtype) in expected_layout.items():
+        if field not in group:
+            raise ValueError(f"{rank_path}: missing {field}")
+        array = group[field]
+        if tuple(array.shape) != shape or np.dtype(array.dtype) != dtype:
+            raise ValueError(
+                f"{rank_path}: {field} is {array.shape}/{array.dtype}, "
+                f"expected {shape}/{dtype}",
+            )
+    indices = np.asarray(group[sf_ranks.INDEX_FIELD][:], dtype=np.uint16)
+    gaps = np.asarray(group[sf_ranks.GAP_FIELD][:], dtype=np.float32)
+    counts = np.asarray(group[sf_ranks.COUNT_FIELD][:], dtype=np.uint8)
+    if sf_ranks._sha_arrays(indices, gaps, counts) != attrs.get("payload_sha256"):
+        raise ValueError(f"{rank_path}: payload digest mismatch")
+    if bool(np.any(counts < 1)) or bool(np.any(counts > top_k)):
+        raise ValueError(f"{rank_path}: rank counts must be between one and top-k")
+    valid = np.arange(top_k)[None, :] < counts[:, None]
+    if bool(np.any(indices[~valid] != sf_ranks.INVALID_INDEX)) or not bool(
+        np.all(np.isinf(gaps[~valid]))
+    ):
+        raise ValueError(f"{rank_path}: malformed padding")
+    if bool(np.any(indices[valid] >= COMPACT_POLICY_SIZE)) or not np.isfinite(
+        gaps[valid]
+    ).all():
+        raise ValueError(f"{rank_path}: invalid rank payload")
+    if bool(np.any(gaps[valid] < 0.0)) or bool(np.any(gaps[:, 0] != 0.0)):
+        raise ValueError(f"{rank_path}: invalid rank gaps")
+    for row_index, count in enumerate(counts.astype(np.int64)):
+        if np.unique(indices[row_index, :count]).size != count:
+            raise ValueError(f"{rank_path}: repeated ranked move")
+        if bool(np.any(np.diff(gaps[row_index, :count]) < -1e-6)):
+            raise ValueError(f"{rank_path}: rank gaps are not nondecreasing")
+    legal = np.asarray(source_group["legal_mask"][:]) != 0
+    row_index = np.repeat(np.arange(rows), counts.astype(np.int64))
+    if not bool(np.all(legal[row_index, indices[valid].astype(np.int64)])):
+        raise ValueError(f"{rank_path}: ranked move is illegal")
+    stored_policy = np.asarray(source_group[POLICY_FIELD][:], dtype=np.float32)
+    legal_policy = np.where(legal, stored_policy, -np.inf)
+    if not bool(
+        np.all(
+            legal_policy[np.arange(rows), indices[:, 0].astype(np.int64)]
+            == np.max(legal_policy, axis=1)
+        )
+    ):
+        raise ValueError(f"{rank_path}: rank-1 is not a stored-policy maximum")
     return attrs
 
 
@@ -801,6 +978,35 @@ def _stored_d9_policy(
     return probs.astype(np.float32).astype(np.float16).astype(np.float32)
 
 
+def _audit_d9_rank_arrays(
+    legal_ucis: Sequence[str],
+    lines: Sequence[Sequence[Any]],
+    *,
+    top_k: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Represent audit-format d9 ranks in the row-local policy ordering."""
+    by_move = {move: index for index, move in enumerate(legal_ucis)}
+    ranked = sorted(lines, key=lambda line: int(line[0]))
+    indices = np.full((1, top_k), -1, dtype=np.int64)
+    gaps_cp = np.full((1, top_k), np.inf, dtype=np.float64)
+    if not ranked:
+        raise ValueError("audit d9 block is empty")
+    best = _effective_cp(ranked[0][2], ranked[0][3])
+    for offset, line in enumerate(ranked[:top_k]):
+        if len(line) < 4:
+            raise ValueError(f"malformed d9 line {line!r}")
+        rank, move, cp, mate = line[:4]
+        if int(rank) != offset + 1 or str(move) not in by_move:
+            raise ValueError("audit d9 ranks or moves are malformed")
+        score = _effective_cp(cp, mate)
+        gap = best - score
+        if gap < -1e-6:
+            raise ValueError("audit d9 ranks disagree with effective-cp scores")
+        indices[0, offset] = by_move[str(move)]
+        gaps_cp[0, offset] = max(0.0, gap)
+    return indices, gaps_cp
+
+
 def _depth_lines(row: dict[str, Any], depth: int) -> list[list[Any]]:
     matches = [entry for entry in row.get("depths", []) if entry.get("depth") == depth]
     if len(matches) != 1:
@@ -899,6 +1105,8 @@ def _load_audit_receipt(
     scope: str,
     bt4_temperature: float,
     near_max_ratio: float,
+    sf_rank_cap: int = 3,
+    sf_cp_window: float = 10.0,
 ) -> dict[str, Any]:
     if not path.is_file():
         raise ValueError(f"missing audit receipt {path}")
@@ -917,6 +1125,8 @@ def _load_audit_receipt(
         alpha=alpha,
         bt4_temperature=bt4_temperature,
         near_max_ratio=near_max_ratio,
+        sf_rank_cap=sf_rank_cap,
+        sf_cp_window=sf_cp_window,
     )
     treatment = receipt.get("treatment")
     if not isinstance(treatment, dict):
@@ -960,7 +1170,7 @@ def _load_audit_receipt(
         required_invariants: dict[str, Any] = {
             "selected_mass_drift_within_bounds": True,
         }
-        if scope == "near-max-ratio":
+        if scope in {"near-max-ratio", "sf-cp-window"}:
             required_invariants.update(
                 {
                     "near_max_extended": True,
@@ -975,11 +1185,26 @@ def _load_audit_receipt(
                     "changed_unique_max_rows": 0,
                 }
             )
-        if bt4_temperature != 1.0:
+        if (
+            scope == "top-max-ties"
+            and bt4_temperature != 1.0
+            and alpha == 1.0
+        ):
             required_invariants.update(
                 {
                     "temperature_one_top1_preserved": True,
                     "temperature_one_top1_mismatch_rows": 0,
+                }
+            )
+        if (
+            scope == "sf-cp-window"
+            and bt4_temperature != 1.0
+            and alpha == 1.0
+        ):
+            required_invariants.update(
+                {
+                    "temperature_rank_preserved_before_storage": True,
+                    "temperature_prestorage_top1_mismatch_rows": 0,
                 }
             )
         for key, requirement in required_invariants.items():
@@ -1015,11 +1240,15 @@ def audit_mix(args: argparse.Namespace) -> int:
         raise SystemExit(f"--scope must be one of {MIX_SCOPES}")
     bt4_temperature = validate_bt4_temperature(float(args.bt4_temperature))
     near_max_ratio = float(args.near_max_ratio)
+    sf_rank_cap = int(getattr(args, "sf_rank_cap", 3))
+    sf_cp_window = float(getattr(args, "sf_cp_window", 10.0))
     treatment = treatment_spec(
         scope=scope,
         alpha=alpha,
         bt4_temperature=bt4_temperature,
         near_max_ratio=near_max_ratio,
+        sf_rank_cap=sf_rank_cap,
+        sf_cp_window=sf_cp_window,
     )
     audit_path = Path(args.audit_set).resolve()
     d9_path = Path(args.d9_labels).resolve()
@@ -1050,6 +1279,15 @@ def audit_mix(args: argparse.Namespace) -> int:
         if bool(d9_row.get("timed_out")):
             raise ValueError(f"{position.key}: d9 label timed out")
         source = _stored_d9_policy(legal_ucis, _depth_lines(d9_row, 9))
+        if scope == "sf-cp-window":
+            sf_rank_indices, sf_rank_gaps_cp = _audit_d9_rank_arrays(
+                legal_ucis,
+                _depth_lines(d9_row, 9),
+                top_k=sf_rank_cap,
+            )
+        else:
+            sf_rank_indices = None
+            sf_rank_gaps_cp = None
 
         topk = bt4_rows[position.key].get("topk", [])
         bt4_by_move = {str(move): float(prob) for move, prob in topk}
@@ -1069,11 +1307,16 @@ def audit_mix(args: argparse.Namespace) -> int:
             scope=scope,
             bt4_temperature=bt4_temperature,
             near_max_ratio=near_max_ratio,
+            sf_rank_indices=sf_rank_indices,
+            sf_rank_gaps_cp=sf_rank_gaps_cp,
+            sf_rank_cap=sf_rank_cap,
+            sf_cp_window=sf_cp_window,
         )
         # The materializer casts back to the source policy_target dtype. The
         # 20M source is float16, so audit what the trainer will actually read.
-        candidate_stored = candidate.astype(np.float16).astype(np.float32)
-        reference_stored = mix_policy_targets(
+        candidate_unstored = candidate
+        candidate_stored = candidate_unstored.astype(np.float16).astype(np.float32)
+        reference_unstored = mix_policy_targets(
             source[None, :],
             bt4[None, :],
             legal,
@@ -1081,7 +1324,12 @@ def audit_mix(args: argparse.Namespace) -> int:
             scope=scope,
             bt4_temperature=1.0,
             near_max_ratio=near_max_ratio,
-        ).astype(np.float16).astype(np.float32)
+            sf_rank_indices=sf_rank_indices,
+            sf_rank_gaps_cp=sf_rank_gaps_cp,
+            sf_rank_cap=sf_rank_cap,
+            sf_cp_window=sf_cp_window,
+        )
+        reference_stored = reference_unstored.astype(np.float16).astype(np.float32)
         candidate = _normalized_legal(
             candidate_stored,
             legal,
@@ -1105,6 +1353,10 @@ def audit_mix(args: argparse.Namespace) -> int:
             legal,
             scope=(scope if scope != "global" else "top-max-ties"),
             near_max_ratio=near_max_ratio,
+            sf_rank_indices=sf_rank_indices,
+            sf_rank_gaps_cp=sf_rank_gaps_cp,
+            sf_rank_cap=sf_rank_cap,
+            sf_cp_window=sf_cp_window,
         )[0]
         candidate_count = int(candidate_set.sum())
         selected_source_mass = float(
@@ -1140,6 +1392,10 @@ def audit_mix(args: argparse.Namespace) -> int:
                 "temperature_one_top1": legal_ucis[int(np.argmax(reference))],
                 "matches_temperature_one_top1": (
                     int(np.argmax(reference)) == candidate_top
+                ),
+                "matches_temperature_one_top1_before_storage": (
+                    int(np.argmax(reference_unstored[0]))
+                    == int(np.argmax(candidate_unstored[0]))
                 ),
                 "top1_changed": source_top != candidate_top,
             }
@@ -1194,6 +1450,12 @@ def audit_mix(args: argparse.Namespace) -> int:
     temperature_one_top1_mismatch_rows = int(
         sum(not row["matches_temperature_one_top1"] for row in per_position)
     )
+    temperature_prestorage_top1_mismatch_rows = int(
+        sum(
+            not row["matches_temperature_one_top1_before_storage"]
+            for row in per_position
+        )
+    )
     selected_mass_drifts = np.asarray(
         [row["selected_mass_abs_drift"] for row in per_position],
         dtype=np.float64,
@@ -1202,15 +1464,27 @@ def audit_mix(args: argparse.Namespace) -> int:
         "candidate_set_wider_rows": candidate_set_wider_rows,
         "changed_unique_max_rows": changed_unique_max_rows,
         "temperature_one_top1_mismatch_rows": temperature_one_top1_mismatch_rows,
+        "temperature_prestorage_top1_mismatch_rows": (
+            temperature_prestorage_top1_mismatch_rows
+        ),
         "near_max_extended": (
-            scope != "near-max-ratio"
+            scope not in {"near-max-ratio", "sf-cp-window"}
             or (candidate_set_wider_rows > 0 and changed_unique_max_rows > 0)
         ),
         "top_tie_unique_max_identity": (
             scope != "top-max-ties" or changed_unique_max_rows == 0
         ),
         "temperature_one_top1_preserved": (
-            bt4_temperature == 1.0 or temperature_one_top1_mismatch_rows == 0
+            bt4_temperature == 1.0
+            or alpha != 1.0
+            or scope != "top-max-ties"
+            or temperature_one_top1_mismatch_rows == 0
+        ),
+        "temperature_rank_preserved_before_storage": (
+            bt4_temperature == 1.0
+            or alpha != 1.0
+            or scope != "sf-cp-window"
+            or temperature_prestorage_top1_mismatch_rows == 0
         ),
         "selected_mass_drift_within_bounds": (
             float(selected_mass_drifts.mean()) <= SELECTED_MASS_DRIFT_MEAN_MAX
@@ -1224,6 +1498,7 @@ def audit_mix(args: argparse.Namespace) -> int:
             "near_max_extended",
             "top_tie_unique_max_identity",
             "temperature_one_top1_preserved",
+            "temperature_rank_preserved_before_storage",
             "selected_mass_drift_within_bounds",
         )
     )
@@ -1337,14 +1612,23 @@ def mix_corpus(args: argparse.Namespace) -> int:
         raise SystemExit(f"--scope must be one of {MIX_SCOPES}")
     bt4_temperature = validate_bt4_temperature(float(args.bt4_temperature))
     near_max_ratio = float(args.near_max_ratio)
+    sf_rank_cap = int(getattr(args, "sf_rank_cap", 3))
+    sf_cp_window = float(getattr(args, "sf_cp_window", 10.0))
     treatment_specification = treatment_spec(
         scope=scope,
         alpha=alpha,
         bt4_temperature=bt4_temperature,
         near_max_ratio=near_max_ratio,
+        sf_rank_cap=sf_rank_cap,
+        sf_cp_window=sf_cp_window,
     )
     source_dir = Path(args.shards).resolve()
     sidecar_dir = Path(args.sidecar).resolve()
+    rank_sidecar_dir = (
+        None
+        if getattr(args, "sf_rank_sidecar", None) is None
+        else Path(args.sf_rank_sidecar).resolve()
+    )
     out_dir = Path(args.out).resolve()
     expected_rows = int(args.expected_rows)
     expected_shards = int(args.expected_shards)
@@ -1363,6 +1647,14 @@ def mix_corpus(args: argparse.Namespace) -> int:
         raise SystemExit("--sidecar must be separate from --shards")
     if sidecar_dir == out_dir or sidecar_dir in out_dir.parents:
         raise SystemExit("--out must be separate from, not inside, --sidecar")
+    if scope == "sf-cp-window" and rank_sidecar_dir is None:
+        raise SystemExit("sf-cp-window requires --sf-rank-sidecar")
+    if scope != "sf-cp-window" and rank_sidecar_dir is not None:
+        raise SystemExit("--sf-rank-sidecar is valid only for sf-cp-window")
+    if rank_sidecar_dir is not None and (
+        rank_sidecar_dir in out_dir.parents or rank_sidecar_dir == out_dir
+    ):
+        raise SystemExit("--out must be separate from, not inside, --sf-rank-sidecar")
     writing = out_dir.with_name(out_dir.name + ".writing")
     if writing.exists():
         raise SystemExit(f"stale partial mixed corpus exists: {writing}")
@@ -1402,6 +1694,8 @@ def mix_corpus(args: argparse.Namespace) -> int:
         scope=scope,
         bt4_temperature=bt4_temperature,
         near_max_ratio=near_max_ratio,
+        sf_rank_cap=sf_rank_cap,
+        sf_cp_window=sf_cp_window,
     )
     side_summary_path = sidecar_dir / SIDECAR_SUMMARY
     if not side_summary_path.is_file():
@@ -1447,6 +1741,50 @@ def mix_corpus(args: argparse.Namespace) -> int:
     if not isinstance(side_policy_output, str):
         raise SystemExit("sidecar summary has no resolved policy output")
 
+    rank_summary_path: Path | None = None
+    rank_summary_sha: str | None = None
+    rank_outputs: dict[str, Mapping[str, Any]] | None = None
+    if rank_sidecar_dir is not None:
+        rank_summary_path = rank_sidecar_dir / sf_ranks.SUMMARY_NAME
+        if not rank_summary_path.is_file():
+            raise SystemExit(f"missing completed SF rank summary {rank_summary_path}")
+        rank_summary = json.loads(rank_summary_path.read_text(encoding="utf-8"))
+        expected_rank = {
+            "schema": sf_ranks.SCHEMA,
+            "kind": "sf_d9_rank_gap_sidecar",
+            "source_dir": str(source_dir),
+            "source_derive_summary_sha256": source_summary_sha256,
+            "rows": source_rows,
+            "shards": len(source_paths),
+            "depth": 9,
+            "index_encoding": POLICY_ENCODING_LC0_1858,
+            "gap_definition": "rank1_effective_cp-minus-ranked_effective_cp",
+        }
+        rank_bad = {
+            key: (rank_summary.get(key), value)
+            for key, value in expected_rank.items()
+            if rank_summary.get(key) != value
+        }
+        if int(rank_summary.get("top_k", -1)) < sf_rank_cap:
+            rank_bad["top_k"] = (rank_summary.get("top_k"), f">={sf_rank_cap}")
+        if rank_bad:
+            raise SystemExit(
+                f"SF rank summary does not describe this source corpus: {rank_bad}",
+            )
+        output_items = rank_summary.get("outputs")
+        if not isinstance(output_items, list) or not all(
+            isinstance(item, Mapping) for item in output_items
+        ):
+            raise SystemExit("SF rank summary has no per-shard output receipts")
+        output_names = [str(item.get("path")) for item in output_items]
+        expected_names = [path.name for path in source_paths]
+        if output_names != expected_names:
+            raise SystemExit(
+                "SF rank summary output order does not match the source shards",
+            )
+        rank_outputs = {str(item["path"]): item for item in output_items}
+        rank_summary_sha = file_sha256(rank_summary_path)
+
     shutil.copytree(source_dir, writing)
     stats = MixStats()
     try:
@@ -1465,6 +1803,38 @@ def mix_corpus(args: argparse.Namespace) -> int:
                 policy_output=side_policy_output,
             )
             side: Any = zarr.open_group(str(side_path), mode="r")
+            rank: Any | None = None
+            rank_attrs: dict[str, Any] | None = None
+            if rank_sidecar_dir is not None:
+                rank_path = rank_sidecar_dir / source_path.name
+                rank_attrs = _validate_sf_rank_sidecar(
+                    rank_path,
+                    source_group=source,
+                    source_path=source_path,
+                    source_summary_sha256=source_summary_sha256,
+                    required_top_k=sf_rank_cap,
+                )
+                if rank_outputs is None:  # pragma: no cover - guarded above
+                    raise AssertionError("rank summary receipts were not loaded")
+                summary_output = rank_outputs[source_path.name]
+                expected_output = {
+                    "path": source_path.name,
+                    "rows": int(source[POLICY_FIELD].shape[0]),
+                    "source_row_identity_sha256": rank_attrs[
+                        "source_row_identity_sha256"
+                    ],
+                    "payload_sha256": rank_attrs["payload_sha256"],
+                }
+                output_bad = {
+                    key: (summary_output.get(key), value)
+                    for key, value in expected_output.items()
+                    if summary_output.get(key) != value
+                }
+                if output_bad:
+                    raise ValueError(
+                        f"{rank_path}: summary output receipt mismatch {output_bad}",
+                    )
+                rank = zarr.open_group(str(rank_path), mode="r")
             destination_path = writing / source_path.name
             destination: Any = zarr.open_group(str(destination_path), mode="a")
             rows = int(source["x"].shape[0])
@@ -1474,6 +1844,16 @@ def mix_corpus(args: argparse.Namespace) -> int:
                 sf_stored = np.asarray(source[POLICY_FIELD][start:stop])
                 bt4_stored = np.asarray(side[SIDECAR_POLICY_FIELD][start:stop])
                 legal = np.asarray(source["legal_mask"][start:stop])
+                sf_rank_indices = (
+                    None
+                    if rank is None
+                    else np.asarray(rank[sf_ranks.INDEX_FIELD][start:stop])
+                )
+                sf_rank_gaps_cp = (
+                    None
+                    if rank is None
+                    else np.asarray(rank[sf_ranks.GAP_FIELD][start:stop])
+                )
                 sf = _normalized_legal(sf_stored, legal, name=f"{source_path}:source")
                 bt4 = _normalized_legal(bt4_stored, legal, name=f"{source_path}:BT4")
                 mixed = mix_policy_targets(
@@ -1484,6 +1864,10 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     scope=scope,
                     bt4_temperature=bt4_temperature,
                     near_max_ratio=near_max_ratio,
+                    sf_rank_indices=sf_rank_indices,
+                    sf_rank_gaps_cp=sf_rank_gaps_cp,
+                    sf_rank_cap=sf_rank_cap,
+                    sf_cp_window=sf_cp_window,
                 )
                 stored = mixed.astype(destination[POLICY_FIELD].dtype, copy=False)
                 destination[POLICY_FIELD][start:stop] = stored
@@ -1514,6 +1898,10 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     legal_bool,
                     scope=(scope if scope != "global" else "top-max-ties"),
                     near_max_ratio=near_max_ratio,
+                    sf_rank_indices=sf_rank_indices,
+                    sf_rank_gaps_cp=sf_rank_gaps_cp,
+                    sf_rank_cap=sf_rank_cap,
+                    sf_cp_window=sf_cp_window,
                 )
                 candidate_count = candidate_set.sum(axis=1)
                 source_top_count = source_top.sum(axis=1)
@@ -1570,6 +1958,20 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     "policy_target_mix_near_max_ratio": (
                         near_max_ratio if scope == "near-max-ratio" else None
                     ),
+                    "policy_target_mix_sf_rank_cap": (
+                        sf_rank_cap if scope == "sf-cp-window" else None
+                    ),
+                    "policy_target_mix_sf_cp_window": (
+                        sf_cp_window if scope == "sf-cp-window" else None
+                    ),
+                    "policy_target_mix_sf_rank_sidecar": (
+                        str(rank_sidecar_dir) if rank_sidecar_dir is not None else None
+                    ),
+                    "policy_target_mix_sf_rank_payload_sha256": (
+                        rank_attrs.get("payload_sha256")
+                        if rank_attrs is not None
+                        else None
+                    ),
                     "policy_target_mix_source": "stored_stockfish_nnue_bootstrap",
                     "policy_target_mix_external": "bt4_raw_one_eval",
                     "policy_target_mix_sidecar": str(sidecar_dir),
@@ -1595,13 +1997,20 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     "redistribute alpha of stored source top-tie mass by "
                     "temperature-scaled BT4 prior"
                     if scope == "top-max-ties"
-                    else "redistribute alpha of stored source near-max mass by "
-                    "temperature-scaled BT4 prior"
+                    else (
+                        "redistribute alpha of stored source near-max mass by "
+                        "temperature-scaled BT4 prior"
+                        if scope == "near-max-ratio"
+                        else "redistribute alpha of stored top-tie union d9 "
+                        "cp-window mass by temperature-scaled BT4 prior"
+                    )
                 )
             ),
             "alpha": alpha,
             "bt4_temperature": bt4_temperature,
             "near_max_ratio": treatment_specification["near_max_ratio"],
+            "sf_rank_cap": treatment_specification.get("sf_rank_cap"),
+            "sf_cp_window": treatment_specification.get("sf_cp_window"),
             "source_dir": str(source_dir),
             "source_derive_summary_sha256": source_summary_sha256,
             "expected_rows": expected_rows,
@@ -1611,6 +2020,17 @@ def mix_corpus(args: argparse.Namespace) -> int:
                 "path": str(side_summary_path),
                 "sha256": file_sha256(side_summary_path),
             },
+            "sf_rank_sidecar_dir": (
+                str(rank_sidecar_dir) if rank_sidecar_dir is not None else None
+            ),
+            "sf_rank_sidecar_summary": (
+                None
+                if rank_summary_path is None
+                else {
+                    "path": str(rank_summary_path),
+                    "sha256": rank_summary_sha,
+                }
+            ),
             "audit_receipt": {
                 "path": str(audit_receipt_path),
                 "sha256": file_sha256(audit_receipt_path),
@@ -1663,11 +2083,11 @@ def mix_corpus(args: argparse.Namespace) -> int:
                 "top-max-ties changed a unique-maximum source row; refusing "
                 "a treatment outside its declared scope",
             )
-        if scope == "near-max-ratio" and (
+        if scope in {"near-max-ratio", "sf-cp-window"} and (
             stats.changed_unique_max_rows <= 0 or stats.candidate_set_wider_rows <= 0
         ):
             raise ValueError(
-                "near-max-ratio did not extend beyond exact source ties; refusing "
+                f"{scope} did not extend beyond exact source ties; refusing "
                 "an inert breadth treatment",
             )
         if (
@@ -1697,6 +2117,8 @@ def mix_corpus(args: argparse.Namespace) -> int:
         f"[bt4-mix] complete: {stats.rows} rows, scope={scope}, "
         f"alpha={alpha:.6f}, bt4_temperature={bt4_temperature:.6f}, "
         f"near_max_ratio={treatment_specification['near_max_ratio']}, "
+        f"sf_rank_cap={treatment_specification.get('sf_rank_cap')}, "
+        f"sf_cp_window={treatment_specification.get('sf_cp_window')}, "
         f"top1 preserved={stats.mixed_source_top1_agree / stats.rows:.4%} -> {out_dir}",
         flush=True,
     )
@@ -1725,6 +2147,9 @@ def build_parser() -> argparse.ArgumentParser:
     mix.add_argument("--scope", choices=MIX_SCOPES, default="top-max-ties")
     mix.add_argument("--bt4-temperature", type=float, default=1.0)
     mix.add_argument("--near-max-ratio", type=float, default=0.5)
+    mix.add_argument("--sf-rank-sidecar", type=Path, default=None)
+    mix.add_argument("--sf-rank-cap", type=int, default=3)
+    mix.add_argument("--sf-cp-window", type=float, default=10.0)
     mix.add_argument("--expected-rows", type=int, required=True)
     mix.add_argument("--expected-shards", type=int, required=True)
     mix.add_argument("--expected-source-summary-sha256", required=True)
@@ -1742,6 +2167,8 @@ def build_parser() -> argparse.ArgumentParser:
     audit.add_argument("--scope", choices=MIX_SCOPES, default="top-max-ties")
     audit.add_argument("--bt4-temperature", type=float, default=1.0)
     audit.add_argument("--near-max-ratio", type=float, default=0.5)
+    audit.add_argument("--sf-rank-cap", type=int, default=3)
+    audit.add_argument("--sf-cp-window", type=float, default=10.0)
     audit.add_argument("--boot", type=int, default=10_000)
     audit.add_argument("--seed", type=int, default=20260903)
     return parser

@@ -73784,3 +73784,243 @@ driver failure sentinel as provenance; it is not a training failure.
   sensitivity is visible.  This is a low-sim context estimate, not a claim
   about 100-sim Elo and not a new adoption gate.  Any partial or structurally
   invalid arena is preserved but excluded rather than extended post hoc.
+**2026-09-04 17:58Z — PREREG: true-d9-near-tie BT4 joint-target screen on the
+full frozen 18.91M-row corpus; no score-window audit, mixed corpus, exact-epoch
+optimizer step, or arena exists at this line.**
+
+- **Purpose.** Use the full first-20M raw prefix / 18,910,484 surviving derived
+  rows as the target-design laboratory, then transfer only the winning recipe
+  to G10/100M.  The successful exact-stored-tie alpha-1/T1 target remains the
+  incumbent.  This screen asks three distinct questions the obsolete N1/S1
+  pair could not: how far BT4 may reach into true d9 near ties, whether BT4
+  should be sharpened or softened inside that set, and whether it should own
+  all or half of the selected mass.  It does not infer a cp window from the
+  source's tau-0.0005 float16 probabilities.
+- **Freeze the missing observation once.** Replay exactly the raw run03 prefix
+  and derivation identity (`limit=20,000,000`, drop only the 1,089,516 null-
+  result rows, 8,192-row boundaries, seed-0 within-shard permutation).  Bank
+  the first three d9 compact move indices and `rank1_effective_cp - move_cp`
+  beside each derived shard.  Require every shuffled `(game_id, ply_index)` to
+  match the immutable source row, every ranked move to be legal, d9 rank 1 to
+  be a stored-policy maximum, and final cardinality 18,910,484 / 2,309.  The
+  exact command is:
+
+      PYTHONPATH=. nice -n 19 python3 scripts/sf_d9_rank_sidecar.py --raw /home/josh/projects/chess/data/nnue_bootstrap/run03_s3 --shards /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m --out /home/josh/projects/chess/data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top3 --limit 20000000 --top-k 3 --rows-per-shard 8192 --seed 0 --expected-rows 18910484 --expected-shards 2309 --expected-source-summary-sha256 391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef
+
+- **Treatment definition.** The eligible set is the union of every exact
+  maximum in the stored SF target and the first `K` actual d9 ranks whose
+  effective-cp gap is at most delta.  Preserve the set's total stored mass and
+  all probabilities outside it; inside it use
+  `(1-alpha)*stored_SF + alpha*BT4_T`, where `BT4_T` is the legal BT4 prior
+  conditioned on the set after temperature scaling.  Thus alpha 1 is still a
+  soft distribution, not one-hot, and T=0.5/T=2 respectively sharpen/soften
+  BT4 without changing its ordering.  All value, feature and priority arrays
+  remain byte-identical.
+- **Fixed six-arm slate; no post-audit parameter selection.** Audit and, if
+  admitted, fully train these exact cells: `A=(K2,delta10,alpha1,T0.5)`,
+  `B=(K2,delta10,alpha1,T2)`, `C=(K3,delta20,alpha1,T0.5)`,
+  `D=(K3,delta20,alpha1,T2)`, `E=(K2,delta10,alpha0.5,T2)`, and
+  `F=(K3,delta20,alpha0.5,T2)`.  A/B and C/D isolate sharpness at fixed
+  breadth; B/D isolate breadth at the soft setting; B/E and D/F isolate BT4
+  dose.  No cell is replaced because another audit point looks nicer.
+- **Audit-first gate.** Run each cell on the frozen 4,000-position deep-SF
+  ruler with the existing 10,000-replicate seed-20260903 paired bootstrap and
+  bank every per-position observation in a distinct immutable receipt.  Kill
+  a cell if candidate-minus-source expected-regret's 95% interval is wholly
+  above zero, or if the candidate set never widens beyond stored ties, changes
+  no unique-maximum row, exceeds mean/max post-float16 selected-mass drift
+  0.0002/0.005, or fails any source/ruler/treatment stamp.  The command shape is:
+
+      PYTHONPATH=. python3 scripts/bt4_policy_mix.py audit --audit-set /home/josh/projects/chess/data/audit_set_v1.jsonl --d9-labels /home/josh/projects/chess/scratchpad/audit_d9_labels/audit_d9_labels.jsonl --bt4-cache /home/josh/projects/chess/data/lc0/bt4_audit_cache_topk256_20260817.jsonl --json <cell-receipt.json> --scope sf-cp-window --alpha <alpha> --bt4-temperature <T> --sf-rank-cap <K> --sf-cp-window <delta> --boot 10000 --seed 20260903
+
+- **Sampler control and full-data use.** First train a fresh incumbent E0 from
+  the already-admitted exact-tie alpha-1/T1 mixed corpus.  E0 and every admitted
+  A-F arm use `lc0_positive_control.yaml`, batch 512, seed 0, from-scratch
+  weights, and `--sampling-mode game_epoch --steps 0 --epoch-plan-workers 16
+  --epoch-load-workers 16 --allow-invalid-control`: exactly one randomized,
+  game-aware pass over every row, 36,935 optimizer steps including the final
+  partial batch, never replacement sampling.  This intentionally makes the
+  exact-epoch E0—not the older replacement-sampled checkpoint—the scientific
+  reference for target comparisons.  Require the summary to attest all
+  18,910,484 unique row ordinals consumed once, no duplicate/missing ordinal,
+  and the same plan identity rules for every arm.
+- **ONE deciding yardstick per target arm.** Run each admitted A-F checkpoint
+  against E0 in a no-rolling 1,000-game / 500 color-swapped-pair
+  `matched_sims`, training-shape, 100-simulation arena on the same opening seed;
+  bank every game.  `SUCCESS` requires Elo above zero and paired 95% CI lower
+  bound above zero; `KILL` requires Elo below zero and CI upper bound below
+  zero; otherwise `INCONCLUSIVE` and E0 is preferred.  If multiple cells
+  succeed, compare their same-opening pair outcomes directly by paired
+  bootstrap; require a positive lower bound to displace the leader, otherwise
+  prefer in order B, A, E, D, C, F (narrower scope first, then the softer
+  teacher/dose).  No 25/400-sim diagnostic changes this yardstick.  After the
+  100-sim winner is frozen, separately preregister its low/high-sim persistence
+  check before authorizing that recipe for the 100M target.
+- **Scheduling/storage.** Materialization is CPU/disk-only at nice 19; exact-
+  epoch training and arenas take `scratchpad/gpu0_experiment.lock`, while the
+  G10 raw-prior banker yields at each 16-shard boundary.  Run only one trainer
+  or arena at a time.  Refuse code/source/BT4/rank/audit identity drift, an
+  existing output or partial, any foreign GPU process, or free disk below 150
+  GiB.  Delete nothing automatically; later mixed corpora may be retired only
+  after their immutable summaries and verdicts are recorded.
+
+**2026-09-04 18:01Z — PRE-RERUN FIDELITY CORRECTION: temperature ordering is
+checked before float16 storage for score-window arms.** All six first-pass
+audit receipts are preserved.  B and D reported deep-SF `graduate_win` and
+passed the screen's preregistered breadth/mass gates, but the tool returned 2
+because one of 4,000 rows became an exact float16 tie after T=2 softening and
+therefore failed an inherited S1 rule requiring the stored `argmax` to equal
+T=1.  That rule was preregistered for the old exact-tie sharpener, not for this
+screen; applying it here would forbid the very target softening being tested.
+For alpha-1 score-window cells, require instead that temperature scaling
+preserve BT4 top-1 before storage, and bank the post-storage mismatch count as
+descriptive quantization evidence.  Keep the old stored-top-1 rule unchanged
+for `top-max-ties`.  Rerun all six cells to fresh `v2` receipts under the one
+corrected invariant before materialization; do not reuse or delete the v1
+receipts and do not change any cell parameter or scientific gate.
+
+**2026-09-04 15:17 EDT — PRE-BANK EXPANSION AMENDMENT: retain enough d9 ranks
+to widen a successful BT4 window until its gain stops.** No d9 rank sidecar,
+score-window mixed corpus, score-window optimizer step, or score-window arena
+exists at this line.  Josh requested that a useful BT4 treatment continue
+outward rather than treating top-3/20 cp as an arbitrary endpoint.
+
+- Change the one-time immutable rank bank from top 3 to **top 8**, output path
+  `data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top8`, and command flag
+  `--top-k 8`.  All other source, replay, identity, row-count, shard-count and
+  digest pins in the 17:58Z command remain unchanged.  A-F still consume only
+  their frozen first two or three ranks, so retaining ranks 4-8 cannot change
+  any current target or audit result.
+- The current paired breadth cells are the first stop test: A versus C, B
+  versus D, and E versus F hold BT4 temperature/dose fixed while moving from
+  top-2/10 cp to top-3/20 cp.  If the winning top-2 cell is not displaced by
+  its paired top-3 cell under the existing same-opening comparison, breadth
+  has stopped and there is no automatic wider train.
+- If a top-3/20 cp cell is the selected winner, freeze its alpha and BT4
+  temperature and test one breadth/window rung at a time in this order:
+  **top-4/40 cp -> top-6/80 cp -> top-8/160 cp**.  Each fresh exact-epoch train
+  compares to the last successful rung under the same no-rolling 1,000-game,
+  100-sim paired arena and the same SUCCESS rule (positive Elo with CI lower
+  bound above zero).  Stop at the first non-success; do not skip past a failed
+  rung or select a later one from audit fit.  Each rung still needs an
+  immutable audit receipt and a launch/readout amendment before execution.
+
+**2026-09-04 15:30 EDT — PREREG: separate rank breadth from the d9 cp safety
+window with one banked marginal scan; no such marginal result has been read at
+this line.** Josh correctly noted that rank cap and score gap are different
+questions: a fourth-ranked move can be a genuine near tie, while rank two can
+be far behind.  Do not infer their separate effects from the coupled K2/10 cp
+and K3/20 cp cells.
+
+- Reuse only the frozen 4,000-row deep-SF ruler, d9 MultiPV bank and BT4 cache;
+  run no new engine search and no training.  For each of the three already
+  frozen `(alpha, BT4 temperature)` families, compute candidate-minus-source
+  deep-SF expected regret for every distinct eligible-set breakpoint produced
+  by `rank <= K AND d9 gap <= delta`, with K from 1 through 8 and delta taken
+  directly from the observed d9 gaps.  Implement this as a cumulative
+  breakpoint scan rather than separate corpus materializations.
+- Report (1) the marginal contribution of each added rank conditional on cp
+  gap, (2) the marginal contribution of widening the cp window conditional on
+  rank cap, (3) support/changed-row counts, and (4) four deterministic
+  SHA-256-of-position-key cross-fits.  In each fold, select on the other three
+  folds and report the held-out regret at that selection.  Prefer the narrowest
+  window and lowest rank cap within one standard error of the training-fold
+  optimum.  This is a conservative shortlist calculation, not an arena gate.
+- This result cannot remove or promote any already-admitted A-F arm and cannot
+  itself authorize a 100M recipe.  It may replace the coupled top-4/40 ->
+  top-6/80 -> top-8/160 follow-up schedule only by a new amendment written
+  before any A-F arena is read.  At most two orthogonal follow-up full trains
+  may be nominated: one holding the selected cp window fixed while changing K,
+  and one holding selected K fixed while changing the window.  Every nominated
+  arm still needs the existing exact-epoch training and paired 100-sim arena.
+
+**2026-09-04 15:38 EDT — BANKED READOUT: rank and cp window separate cleanly;
+replace the coupled wide-rung ladder with one predicted-peak confirmation.** No
+A-F optimizer step or arena exists at this line.  Two implementation attempts
+failed before emitting a JSON/NPZ result because the analysis wrapper tried to
+express the exact-tie baseline as the mixer's deliberately forbidden K=1 and
+then as its deliberately forbidden zero-width score window.  Their logs are
+preserved as `rank_gap_marginal_scan_attempt{1,2}.log`.  The corrected wrapper
+represents the baseline with `top-max-ties` and emitted all 4,000 rows under
+implementation SHA-256
+`e777e35fd0147fd3e403ce07136bb4865fba43998b8ea7ecb59407be696a6653`.
+The summary is `scratchpad/bt4_joint20/rank_gap_marginal_scan.json`, SHA-256
+`12e692625986d3d4cc500851906f3206c776d5fcb9955ac5af2831e6d2f90e68`;
+the reconstructable row states and every fold-summed breakpoint are in the NPZ,
+SHA-256 `ee463f3811b438f6abe37fa8e5ec1e952a6de19a56a8c5a378dad33a35f39bbd`.
+As an independent arithmetic check, reconstructed A-F candidate expected regret
+matches every v2 audit receipt within 0.0000012 cp.
+
+- At alpha 1 / BT4 T=0.5, the four-fold one-SE choice is K3 / 14 cp,
+  -2.0835 cp versus the same-family exact-tie treatment (SE 0.3467).  The raw
+  optimum is K5 / 34 cp at -2.5847 (SE 0.5080).  All four training-fold choices
+  use 14 cp and K4/K5, and all four held-out means improve (-1.44, -2.54,
+  -1.79, -2.64 cp).  At 14 cp, K2 supplies -1.9633 cp; the incremental K3,
+  K4, K5, K6, K7 and K8 contributions are respectively -0.1202, -0.0366,
+  -0.1147, -0.0118, +0.0073 and -0.0041 cp.  Thus almost all breadth value is
+  top two, ranks 3-5 contain a small tail, and ranks 6-8 are a plateau.  At K5,
+  30 cp is -2.5552, the 34-cp peak is -2.5847, and 40 cp has already receded to
+  -2.4625.
+- At alpha 1 / BT4 T=2, the one-SE choice is K2 / 8 cp at -0.4886 (SE 0.2336)
+  and the raw optimum is K2 / 14 cp at -0.6516 (SE 0.2732).  Fold selections
+  vary from 1-8 cp, one of four held-out means is positive, K3/20 is only
+  -0.2221, K3/40 reverses to +1.2135, and K8/160 is +15.4631 cp.  The alpha-0.5
+  family has the same ordering at almost exactly half the magnitude.  Soft BT4
+  therefore calls for a tight top-2 window, not a wide-rank ladder.
+- A-F remain frozen and must run.  The current A=K2/10 and C=K3/20 sharp cells
+  bracket the conservative region, while B/E are already near the soft-family
+  peak and D/F deliberately test whether training contradicts the proxy.  The
+  earlier coupled K4/40 -> K6/80 -> K8/160 automatic follow-up is superseded:
+  it moves both axes into regions the held-out calculation says are flat or
+  harmful.  If and only if C becomes the selected 100-sim leader, nominate one
+  fresh predicted-peak confirmation, **G = K5 / 30 cp with alpha 1 / T=0.5**,
+  against C under the same exact-epoch train and paired 100-sim rule.  G changes
+  both knobs to the independently estimated peak but avoids a factorial GPU
+  grid.  If G fails, retain C; if it succeeds, retain G and treat K>5 or a
+  window >30 cp as stopped by the preregistered cross-fit plateau.  Any attempt
+  to override that stop after seeing G requires new data, not another selection
+  on this ruler.
+
+**2026-09-04 15:46 EDT — OPERATIONAL FAILURE READOUT AND FRESH E0 v3 LAUNCH
+AUTHORIZATION; no v3 optimizer step exists at this line.** The first corrected
+E0 invocation is preserved at
+`runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch` and
+`scratchpad/bt4_joint20/e0_train_v2.log`.  It failed at planned batch 1,359,
+after 1,320 completed optimizer steps, because the planner needed 512 distinct
+games while the loader reconstructed only 510.  It emitted no admissible
+checkpoint or completion summary and is never resumed or reused.
+
+- Root cause was an order-sensitive weighted choice over a dict-derived game
+  candidate list: planning and replay had equal candidate sets but different
+  insertion orders after their schedules diverged at batch 1,249.  Commit
+  `60b16b7cd8e194ea42b3156441e9311156f0b82a` canonicalizes candidates before
+  every seeded choice.  A full lightweight drain of the same 18,910,484 rows
+  then passed: 36,935 batches (36,699 full, 236 ragged, minimum 511), 97,968
+  games, zero same-game repeats, zero decoded resident rows, and matching
+  plan/realized SHA-256
+  `185fa5b2...87041`.  Focused tests passed 165 and full lint passed.
+  Independent Grok review of the scheduler fix reported no finding.  Production
+  follow-up PR #507 passed test/lint/pext CI and merged as
+  `d529afefc2d1dc45b8c4cabbe90c777cef277218`.
+- Authorize a from-scratch E0 v3 at the fresh path
+  `runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3`, with exactly the
+  preregistered E0 command, seed, 18,910,484 rows, 36,935 steps, batch 512 and
+  16 planner/loader workers.  Retain the source mix SHA-256
+  `7bbb7df4e42cbb61fc937fd210bb7f3c6ed66a04644d02fd85b8a32f64c55222`,
+  source derive SHA-256
+  `a1f34cf5f36a659de6b64101f83475940637c30c7d91d3f2ee2624341e73fd4d`,
+  trainer/config SHA-256 pins `52d113...9337` / `413dbe...3de2`, and additionally
+  require scheduler SHA-256
+  `621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3`
+  with the fix commit in HEAD ancestry.  Completion still requires exact row
+  and batch counts, zero same-game repeats, equal plan/realized schedule hashes,
+  zero decoded resident rows and an emitted checkpoint.
+- The GPU is first reserved for both preregistered sampler Elo arenas.  Only
+  after both banks contain exactly 1,000 `kind=game` rows and their logs contain
+  the final result append may the v3 queue acquire the shared GPU lease.  The
+  pinned launch and queue scripts are
+  `scratchpad/bt4_joint20/e0_train_v3{,_queue}.sh`; their current SHA-256 values
+  are `8ba51156620fdd960d4ca7d797a0cdcb7ef42084f546f3e117c71be2ef2e9ca1`
+  and `8e4008108ba54610830bc2b33440827ed7e83538403565b6dcef84ae3db4a563`.
+  The G10 BT4 streamer remains paused.  Any v3 preflight failure is preserved
+  and cannot fall back to the partial v2 directory.
