@@ -73899,3 +73899,50 @@ and K3/20 cp cells.
   may be nominated: one holding the selected cp window fixed while changing K,
   and one holding selected K fixed while changing the window.  Every nominated
   arm still needs the existing exact-epoch training and paired 100-sim arena.
+
+**2026-09-04 15:38 EDT — BANKED READOUT: rank and cp window separate cleanly;
+replace the coupled wide-rung ladder with one predicted-peak confirmation.** No
+A-F optimizer step or arena exists at this line.  Two implementation attempts
+failed before emitting a JSON/NPZ result because the analysis wrapper tried to
+express the exact-tie baseline as the mixer's deliberately forbidden K=1 and
+then as its deliberately forbidden zero-width score window.  Their logs are
+preserved as `rank_gap_marginal_scan_attempt{1,2}.log`.  The corrected wrapper
+represents the baseline with `top-max-ties` and emitted all 4,000 rows under
+implementation SHA-256
+`e777e35fd0147fd3e403ce07136bb4865fba43998b8ea7ecb59407be696a6653`.
+The summary is `scratchpad/bt4_joint20/rank_gap_marginal_scan.json`, SHA-256
+`12e692625986d3d4cc500851906f3206c776d5fcb9955ac5af2831e6d2f90e68`;
+the reconstructable row states and every fold-summed breakpoint are in the NPZ,
+SHA-256 `ee463f3811b438f6abe37fa8e5ec1e952a6de19a56a8c5a378dad33a35f39bbd`.
+As an independent arithmetic check, reconstructed A-F candidate expected regret
+matches every v2 audit receipt within 0.0000012 cp.
+
+- At alpha 1 / BT4 T=0.5, the four-fold one-SE choice is K3 / 14 cp,
+  -2.0835 cp versus the same-family exact-tie treatment (SE 0.3467).  The raw
+  optimum is K5 / 34 cp at -2.5847 (SE 0.5080).  All four training-fold choices
+  use 14 cp and K4/K5, and all four held-out means improve (-1.44, -2.54,
+  -1.79, -2.64 cp).  At 14 cp, K2 supplies -1.9633 cp; the incremental K3,
+  K4, K5, K6, K7 and K8 contributions are respectively -0.1202, -0.0366,
+  -0.1147, -0.0118, +0.0073 and -0.0041 cp.  Thus almost all breadth value is
+  top two, ranks 3-5 contain a small tail, and ranks 6-8 are a plateau.  At K5,
+  30 cp is -2.5552, the 34-cp peak is -2.5847, and 40 cp has already receded to
+  -2.4625.
+- At alpha 1 / BT4 T=2, the one-SE choice is K2 / 8 cp at -0.4886 (SE 0.2336)
+  and the raw optimum is K2 / 14 cp at -0.6516 (SE 0.2732).  Fold selections
+  vary from 1-8 cp, one of four held-out means is positive, K3/20 is only
+  -0.2221, K3/40 reverses to +1.2135, and K8/160 is +15.4631 cp.  The alpha-0.5
+  family has the same ordering at almost exactly half the magnitude.  Soft BT4
+  therefore calls for a tight top-2 window, not a wide-rank ladder.
+- A-F remain frozen and must run.  The current A=K2/10 and C=K3/20 sharp cells
+  bracket the conservative region, while B/E are already near the soft-family
+  peak and D/F deliberately test whether training contradicts the proxy.  The
+  earlier coupled K4/40 -> K6/80 -> K8/160 automatic follow-up is superseded:
+  it moves both axes into regions the held-out calculation says are flat or
+  harmful.  If and only if C becomes the selected 100-sim leader, nominate one
+  fresh predicted-peak confirmation, **G = K5 / 30 cp with alpha 1 / T=0.5**,
+  against C under the same exact-epoch train and paired 100-sim rule.  G changes
+  both knobs to the independently estimated peak but avoids a factorial GPU
+  grid.  If G fails, retain C; if it succeeds, retain G and treat K>5 or a
+  window >30 cp as stopped by the preregistered cross-fit plateau.  Any attempt
+  to override that stop after seeing G requires new data, not another selection
+  on this ruler.
