@@ -156,7 +156,14 @@ def repair_resume_bank(path: Path) -> set[str]:
     complete: set[str] = set()
     for key in order:
         rows = grouped[key]
-        if len(rows) == MAX_CHUNKS and sorted(row.get("chunk") for row in rows) == list(range(1, MAX_CHUNKS + 1)):
+        chunks: list[int] = []
+        for row in rows:
+            chunk = row.get("chunk")
+            if isinstance(chunk, bool) or not isinstance(chunk, int):
+                chunks = []
+                break
+            chunks.append(chunk)
+        if len(rows) == MAX_CHUNKS and sorted(chunks) == list(range(1, MAX_CHUNKS + 1)):
             kept.extend(sorted(rows, key=lambda row: int(row["chunk"])))
             complete.add(key)
     temp = path.with_name(f".{path.name}.repair-{os.getpid()}")
