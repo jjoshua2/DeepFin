@@ -5287,6 +5287,226 @@ def test_recovery_does_not_publish_manifest_after_pending_unlink_sync_failure(
     assert json.loads(meta.read_text()) == manifest
 
 
+def test_final_manifest_directory_sync_failure_restarts_to_complete_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    pending_output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(pending_output, output),
+    }
+    real_fsync = os.fsync
+    real_link = os.link
+    final_manifest_linked = False
+    injected = False
+
+    def link_spy(source: Path, destination: Path) -> None:
+        nonlocal final_manifest_linked
+        real_link(source, destination)
+        if destination == meta:
+            final_manifest_linked = True
+
+    def fsync_spy(descriptor: int) -> None:
+        nonlocal injected
+        if final_manifest_linked and stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            injected = True
+            raise OSError(errno.EIO, "final manifest directory fsync failed")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publication.os, "link", link_spy)
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    with pytest.raises(OSError, match="final manifest directory fsync failed"):
+        publication._publish_evidence_pair(
+            pending_output, output, pending_meta, meta, manifest,
+        )
+
+    assert injected is True
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(meta.read_text()) == manifest
+    assert not pending_output.exists()
+    assert pending_meta.samefile(meta)
+
+    monkeypatch.setattr(publication.os, "link", real_link)
+    monkeypatch.setattr(publication.os, "fsync", real_fsync)
+    assert publication._require_new_output_pair(output, meta, overwrite=False) is True
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(meta.read_text()) == manifest
+    assert not pending_output.exists()
+    assert not pending_meta.exists()
+
+
+def test_final_manifest_recovery_rejects_identical_different_inode_manifest(
+    tmp_path: Path,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_meta = publication._pending_manifest_path(meta)
+    output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(output, output),
+    }
+    publication._write_json_staged(pending_meta, manifest)
+    meta.write_bytes(pending_meta.read_bytes())
+    assert not pending_meta.samefile(meta)
+
+    with pytest.raises(SystemExit, match="not the same recovery hard link"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert json.loads(meta.read_text()) == manifest
+    assert json.loads(pending_meta.read_text()) == manifest
+    assert output.read_text() == "completed bank\n"
+
+
+def test_final_manifest_recovery_rejects_bank_that_differs_from_manifest(
+    tmp_path: Path,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    expected = tmp_path / ".expected-bank"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_meta = publication._pending_manifest_path(meta)
+    expected.write_text("expected bank\n")
+    output.write_text("substituted bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(expected, output),
+    }
+    publication._write_json_staged(pending_meta, manifest)
+    os.link(pending_meta, meta)
+
+    with pytest.raises(SystemExit, match="pending trajectory bank does not match"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert output.read_text() == "substituted bank\n"
+    assert pending_meta.samefile(meta)
+
+
+def test_final_manifest_recovery_sync_failure_retains_pending_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_meta = publication._pending_manifest_path(meta)
+    output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(output, output),
+    }
+    publication._write_json_staged(pending_meta, manifest)
+    os.link(pending_meta, meta)
+    manifest_inode = meta.stat().st_ino
+    real_fsync = os.fsync
+    manifest_file_synced = False
+
+    def fsync_spy(descriptor: int) -> None:
+        nonlocal manifest_file_synced
+        descriptor_stat = os.fstat(descriptor)
+        if stat.S_ISREG(descriptor_stat.st_mode) and descriptor_stat.st_ino == manifest_inode:
+            manifest_file_synced = True
+        elif manifest_file_synced and stat.S_ISDIR(descriptor_stat.st_mode):
+            raise OSError(errno.EIO, "manifest recovery directory fsync failed")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    with pytest.raises(OSError, match="manifest recovery directory fsync failed"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert manifest_file_synced is True
+    assert pending_meta.samefile(meta)
+    assert output.read_text() == "completed bank\n"
+
+
+def test_final_manifest_recovery_rejects_unexpected_pending_bank(tmp_path: Path) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_output = publication._pending_output_path(output)
+    pending_meta = publication._pending_manifest_path(meta)
+    output.write_text("completed bank\n")
+    pending_output.write_text("unexpected pending bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(output, output),
+    }
+    publication._write_json_staged(pending_meta, manifest)
+    os.link(pending_meta, meta)
+
+    with pytest.raises(SystemExit, match="immutable or incomplete evidence"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert pending_output.read_text() == "unexpected pending bank\n"
+    assert pending_meta.samefile(meta)
+
+
+def test_final_manifest_cleanup_sync_failure_leaves_valid_pair_immutable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The final link was synced first, so failed marker cleanup is non-destructive."""
+    from scripts import chunk_trajectory_publication as publication
+
+    bank_dir = tmp_path / "bank"
+    manifest_dir = tmp_path / "manifest"
+    bank_dir.mkdir()
+    manifest_dir.mkdir()
+    output = bank_dir / "bank.jsonl"
+    meta = manifest_dir / "bank.meta.json"
+    pending_meta = publication._pending_manifest_path(meta)
+    output.write_text("completed bank\n")
+    manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "output": publication._prepared_output_artifact(output, output),
+    }
+    publication._write_json_staged(pending_meta, manifest)
+    os.link(pending_meta, meta)
+    real_fsync = os.fsync
+    manifest_directory_syncs = 0
+
+    def fsync_spy(descriptor: int) -> None:
+        nonlocal manifest_directory_syncs
+        descriptor_stat = os.fstat(descriptor)
+        manifest_stat = manifest_dir.stat()
+        if (
+            descriptor_stat.st_dev == manifest_stat.st_dev
+            and descriptor_stat.st_ino == manifest_stat.st_ino
+        ):
+            manifest_directory_syncs += 1
+            if manifest_directory_syncs == 2:
+                raise OSError(errno.EIO, "pending marker cleanup fsync failed")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(publication.os, "fsync", fsync_spy)
+    with pytest.raises(OSError, match="pending marker cleanup fsync failed"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert manifest_directory_syncs == 2
+    assert output.read_text() == "completed bank\n"
+    assert json.loads(meta.read_text()) == manifest
+    assert not pending_meta.exists()
+
+    monkeypatch.setattr(publication.os, "fsync", real_fsync)
+    with pytest.raises(SystemExit, match="immutable or incomplete evidence"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+
 def test_pair_publication_preserves_preexisting_pending_manifest(tmp_path: Path) -> None:
     from scripts import backtest_chunk_trajectory as producer
 

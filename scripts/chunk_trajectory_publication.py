@@ -195,6 +195,21 @@ def _require_new_output_pair(
         )
     pending_output = _pending_output_path(output_path)
     pending_meta = _pending_manifest_path(meta_path)
+    if (
+        output_path.exists()
+        and meta_path.exists()
+        and not os.path.lexists(pending_output)
+        and pending_meta.exists()
+    ):
+        manifest = _require_same_manifest_hard_link(meta_path, pending_meta)
+        _require_output_matches_manifest(output_path, output_path, manifest)
+        if _require_same_manifest_hard_link(meta_path, pending_meta) != manifest:
+            raise SystemExit("published evidence manifest changed during recovery")
+        _durably_prepare_existing_output_artifact(meta_path, meta_path)
+        if _require_same_manifest_hard_link(meta_path, pending_meta) != manifest:
+            raise SystemExit("published evidence manifest changed during recovery")
+        _unlink_durable(pending_meta)
+        return True
     if output_path.exists() and not meta_path.exists() and pending_meta.exists():
         manifest = _read_pending_manifest(pending_meta)
         if pending_output.exists():
@@ -293,6 +308,49 @@ def _read_pending_manifest(path: Path) -> dict[str, Any]:
     if payload.get("complete") is not True or not isinstance(payload.get("output"), dict):
         raise SystemExit(f"pending evidence manifest is incomplete: {path}")
     return payload
+
+
+def _manifest_name_identity(path: Path, *, role: str) -> tuple[int, int]:
+    """Require a manifest name to identify a regular file without a symlink."""
+    try:
+        file_stat = path.lstat()
+    except OSError as exc:
+        raise SystemExit(f"cannot inspect {role}: {path}") from exc
+    if not stat.S_ISREG(file_stat.st_mode):
+        raise SystemExit(f"{role} is not a regular file: {path}")
+    return int(file_stat.st_dev), int(file_stat.st_ino)
+
+
+def _require_same_manifest_hard_link(
+    meta_path: Path, pending_meta: Path,
+) -> dict[str, Any]:
+    """Authenticate the final-manifest fsync-failure recovery marker."""
+    published_before = _manifest_name_identity(
+        meta_path, role="published evidence manifest",
+    )
+    pending_before = _manifest_name_identity(
+        pending_meta, role="pending evidence manifest",
+    )
+    if published_before != pending_before:
+        raise SystemExit(
+            "published and pending evidence manifests are not the same recovery hard link"
+        )
+    pending_manifest = _read_pending_manifest(pending_meta)
+    published_manifest = _read_pending_manifest(meta_path)
+    published_after = _manifest_name_identity(
+        meta_path, role="published evidence manifest",
+    )
+    pending_after = _manifest_name_identity(
+        pending_meta, role="pending evidence manifest",
+    )
+    if (
+        published_after != published_before
+        or pending_after != pending_before
+        or published_after != pending_after
+        or published_manifest != pending_manifest
+    ):
+        raise SystemExit("published evidence manifest changed during recovery")
+    return pending_manifest
 
 
 def _require_output_matches_manifest(
