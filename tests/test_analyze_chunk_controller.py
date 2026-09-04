@@ -7174,7 +7174,12 @@ def test_complete_pair_never_reopens_parent_during_nested_validation(
     # Validation uses the retained parent; the later opens are the fail-closed
     # quarantine convergence check after the bank mismatch is detected.
     assert open_calls >= 2
-    assert swapped is False
+    assert swapped is True
+    invalid_name = publication._invalid_manifest_path(meta).name
+    assert (moved / invalid_name).exists()
+    assert (live / invalid_name).exists()
+    live.rename(decoy)
+    moved.rename(live)
     assert publication._invalid_manifest_path(meta).exists()
     assert output.read_text() == "attacker bank\n"
 
