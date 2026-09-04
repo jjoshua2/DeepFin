@@ -490,6 +490,72 @@ def test_match_audit_rows_unifies_the_same_game_across_shards() -> None:
     )
 
 
+def test_snapshot_inventory_rejects_symlinked_zarr_array_directory(
+    tmp_path: Path,
+) -> None:
+    from scripts.match_audit_rows import snapshot_inventory
+
+    snapshot = tmp_path / "snapshot"
+    shard = snapshot / "s0.zarr"
+    shard.mkdir(parents=True)
+    external = tmp_path / "external_game_id"
+    external.mkdir()
+    (shard / "game_id").symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(SystemExit, match="must not be a symlink"):
+        snapshot_inventory(snapshot)
+
+
+def test_match_builder_rejects_tracked_output_without_mutating_it(
+    tmp_path: Path,
+) -> None:
+    from scripts.match_audit_rows import (
+        _require_safe_matched_output_paths,
+        default_matched_rows_report_path,
+    )
+
+    repo_root = Path(__file__).resolve().parents[1]
+    tracked = repo_root / "tests" / "data" / "audit_history_pairs.npz"
+    before = tracked.read_bytes()
+    with pytest.raises(SystemExit, match="tracked or repository-control"):
+        _require_safe_matched_output_paths(
+            tracked,
+            default_matched_rows_report_path(tracked),
+            audit_set=tmp_path / "audit.jsonl",
+            snapshot=tmp_path / "snapshot",
+            overwrite=True,
+        )
+    assert tracked.read_bytes() == before
+
+
+def test_match_builder_requires_explicit_overwrite_for_existing_outputs(
+    tmp_path: Path,
+) -> None:
+    from scripts.match_audit_rows import _require_safe_matched_output_paths
+
+    output = tmp_path / "matched.npz"
+    report = tmp_path / "matched.npz.report.json"
+    output.write_bytes(b"existing")
+    audit = tmp_path / "audit.jsonl"
+    snapshot = tmp_path / "snapshot"
+
+    with pytest.raises(SystemExit, match="without --overwrite"):
+        _require_safe_matched_output_paths(
+            output,
+            report,
+            audit_set=audit,
+            snapshot=snapshot,
+            overwrite=False,
+        )
+    _require_safe_matched_output_paths(
+        output,
+        report,
+        audit_set=audit,
+        snapshot=snapshot,
+        overwrite=True,
+    )
+
+
 def _matched_origin_fixture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

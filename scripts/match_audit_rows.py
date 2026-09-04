@@ -67,6 +67,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import stat as stat_module
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
@@ -87,6 +89,7 @@ from chess_anti_engine.eval.audit_history import (
     default_matched_rows_path,
 )
 from chess_anti_engine.replay.shard import load_shard_arrays
+from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
 PIECE_PLANES = 12
 _PIECE_SLOTS = ((0, chess.WHITE), (6, chess.BLACK))
@@ -196,29 +199,86 @@ def snapshot_inventory(snapshot: str | Path) -> dict[str, Any]:
     duplicate-game identity.  Two inventory passes make concurrent replacement
     visible without turning a minute-long row scan into a multi-hundred-GB hash.
     """
-    root = Path(snapshot).expanduser().resolve()
+    lexical_root = Path(snapshot).expanduser().absolute()
+    try:
+        root_stat = lexical_root.lstat()
+    except OSError as exc:
+        raise SystemExit(f"cannot inspect replay snapshot {lexical_root}: {exc}") from exc
+    if stat_module.S_ISLNK(root_stat.st_mode):
+        raise SystemExit(f"replay snapshot root must not be a symlink: {lexical_root}")
+    if not stat_module.S_ISDIR(root_stat.st_mode):
+        raise SystemExit(f"replay snapshot root is not a directory: {lexical_root}")
+    root = lexical_root.resolve()
+    root_identity = {
+        "device": int(root_stat.st_dev),
+        "inode": int(root_stat.st_ino),
+        "mtime_ns": int(root_stat.st_mtime_ns),
+        "ctime_ns": int(root_stat.st_ctime_ns),
+    }
     shards = sorted(root.glob("*.zarr"), key=lambda path: path.name)
     if not shards:
         raise SystemExit(f"no *.zarr shards under {root}")
     shard_rows: list[dict[str, Any]] = []
     for shard in shards:
-        shard_stat = shard.stat()
-        entries: list[list[object]] = []
-        total_bytes = 0
-        for child in sorted(
-            (path for path in shard.rglob("*") if path.is_file()),
-            key=lambda path: path.relative_to(shard).as_posix(),
-        ):
-            child_stat = child.stat()
-            total_bytes += int(child_stat.st_size)
-            entries.append([
-                child.relative_to(shard).as_posix(),
-                int(child_stat.st_size),
-                int(child_stat.st_mtime_ns),
-                int(child_stat.st_ctime_ns),
-                int(child_stat.st_dev),
-                int(child_stat.st_ino),
-            ])
+        try:
+            shard_stat = shard.lstat()
+        except OSError as exc:
+            raise SystemExit(f"cannot inspect replay shard {shard}: {exc}") from exc
+        if stat_module.S_ISLNK(shard_stat.st_mode):
+            raise SystemExit(f"replay snapshot shard must not be a symlink: {shard}")
+        if not stat_module.S_ISDIR(shard_stat.st_mode):
+            raise SystemExit(f"replay snapshot shard is not a directory: {shard}")
+        def inventory_directory(
+            directory: Path, *, shard_root: Path = shard,
+        ) -> tuple[list[list[object]], int]:
+            entries: list[list[object]] = []
+            total_bytes = 0
+            try:
+                with os.scandir(directory) as iterator:
+                    children = sorted(iterator, key=lambda entry: entry.name)
+            except OSError as exc:
+                raise SystemExit(
+                    f"cannot inventory replay snapshot directory {directory}: {exc}"
+                ) from exc
+            for entry in children:
+                child = Path(entry.path)
+                relative = child.relative_to(shard_root).as_posix()
+                try:
+                    child_stat = entry.stat(follow_symlinks=False)
+                except OSError as exc:
+                    raise SystemExit(
+                        f"cannot inspect replay snapshot entry {child}: {exc}"
+                    ) from exc
+                if stat_module.S_ISLNK(child_stat.st_mode):
+                    raise SystemExit(
+                        f"replay snapshot entry must not be a symlink: {child}"
+                    )
+                if stat_module.S_ISDIR(child_stat.st_mode):
+                    entries.append([
+                        relative, "directory", 0,
+                        int(child_stat.st_mtime_ns), int(child_stat.st_ctime_ns),
+                        int(child_stat.st_dev), int(child_stat.st_ino),
+                    ])
+                    descendants, descendant_bytes = inventory_directory(
+                        child, shard_root=shard_root,
+                    )
+                    entries.extend(descendants)
+                    total_bytes += descendant_bytes
+                    continue
+                if not stat_module.S_ISREG(child_stat.st_mode):
+                    raise SystemExit(
+                        "replay snapshot entries must be regular files or directories: "
+                        f"{child}"
+                    )
+                total_bytes += int(child_stat.st_size)
+                entries.append([
+                    relative, "file", int(child_stat.st_size),
+                    int(child_stat.st_mtime_ns), int(child_stat.st_ctime_ns),
+                    int(child_stat.st_dev), int(child_stat.st_ino),
+                ])
+            return entries, total_bytes
+
+        entries, total_bytes = inventory_directory(shard)
         entries_document = json.dumps(
             entries, ensure_ascii=True, separators=(",", ":"),
         ).encode("utf-8")
@@ -228,19 +288,63 @@ def snapshot_inventory(snapshot: str | Path) -> dict[str, Any]:
             "inode": int(shard_stat.st_ino),
             "mtime_ns": int(shard_stat.st_mtime_ns),
             "ctime_ns": int(shard_stat.st_ctime_ns),
-            "file_count": len(entries),
+            "file_count": sum(entry[1] == "file" for entry in entries),
             "total_bytes": total_bytes,
             "entries_identity_sha256": _sha256_bytes(entries_document),
         })
-    document = json.dumps(
-        shard_rows, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
-    ).encode("utf-8")
+    document = json.dumps({
+        "root_identity": root_identity,
+        "shards": shard_rows,
+    }, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
     return {
         "path": str(root),
+        "root_identity": root_identity,
         "shard_count": len(shard_rows),
         "shards": shard_rows,
         "inventory_sha256": _sha256_bytes(document),
     }
+
+
+def _require_safe_matched_output_paths(
+    out_path: Path,
+    report_path: Path,
+    *,
+    audit_set: Path,
+    snapshot: Path,
+    overwrite: bool,
+) -> None:
+    """Reject destructive builder destinations before creating any directory."""
+    repo_root = Path(__file__).resolve().parents[1]
+    outputs = (out_path, report_path)
+    if any(reserved_output_path(path) for path in outputs):
+        raise SystemExit("matched-row outputs must not use the output staging namespace")
+    if any(repo_controlled_output(path, repo_root) for path in outputs):
+        raise SystemExit(
+            "matched-row outputs must not overwrite a tracked or repository-control path"
+        )
+    resolved_outputs = tuple(path.expanduser().resolve() for path in outputs)
+    resolved_audit = audit_set.expanduser().resolve()
+    resolved_snapshot = snapshot.expanduser().resolve()
+    if any(path == resolved_audit for path in resolved_outputs):
+        raise SystemExit("matched-row outputs cannot replace the audit-set input")
+    for path in resolved_outputs:
+        try:
+            path.relative_to(resolved_snapshot)
+        except ValueError:
+            continue
+        raise SystemExit("matched-row outputs cannot live inside the replay snapshot")
+    existing = [path for path in resolved_outputs if path.exists()]
+    for lexical in outputs:
+        try:
+            if lexical.expanduser().absolute().is_symlink():
+                raise SystemExit(f"matched-row output must not be a symlink: {lexical}")
+        except OSError as exc:
+            raise SystemExit(f"cannot inspect matched-row output {lexical}: {exc}") from exc
+    if existing and not overwrite:
+        raise SystemExit(
+            "refusing to overwrite existing matched-row output without --overwrite: "
+            + ", ".join(str(path) for path in existing)
+        )
 
 
 def board_fingerprint(board: chess.Board) -> bytes:
@@ -459,7 +563,12 @@ def verify_selected_row_origins(
     reported_snapshot = report.get("snapshot_inventory")
     if not isinstance(reported_snapshot, dict):
         raise SystemExit("matched-row report lacks a replay snapshot inventory")
-    snapshot_path = Path(str(reported_snapshot.get("path", ""))).expanduser().resolve()
+    # Keep the reported lexical leaf intact until snapshot_inventory() has
+    # lstat'ed it; resolving here would turn a replaced snapshot-root symlink
+    # into an apparently ordinary external directory.
+    snapshot_path = Path(
+        str(reported_snapshot.get("path", ""))
+    ).expanduser().absolute()
     before_inventory = snapshot_inventory(snapshot_path)
     if before_inventory != reported_snapshot:
         raise SystemExit("replay snapshot identity differs from the matched-row report")
@@ -704,21 +813,31 @@ def main() -> None:
         "--out", type=Path, default=None,
         help="output .npz (default: <audit-set>.matched_rows.npz, next to the set)",
     )
+    ap.add_argument(
+        "--overwrite", action="store_true",
+        help="intentionally replace an existing untracked output/report pair",
+    )
     args = ap.parse_args()
 
     args.audit_set = args.audit_set.expanduser().resolve()
-    args.snapshot = args.snapshot.expanduser().resolve()
-    out_path = (args.out or default_matched_rows_path(args.audit_set)).expanduser().resolve()
+    # Preserve the lexical leaf until snapshot_inventory() can reject a symlink
+    # instead of resolving it away before the no-follow provenance check.
+    args.snapshot = args.snapshot.expanduser().absolute()
+    requested_out = (
+        args.out or default_matched_rows_path(args.audit_set)
+    ).expanduser().absolute()
+    report_path = default_matched_rows_report_path(requested_out)
+    _require_safe_matched_output_paths(
+        requested_out,
+        report_path,
+        audit_set=args.audit_set,
+        snapshot=args.snapshot,
+        overwrite=bool(args.overwrite),
+    )
+    out_path = requested_out.resolve()
     report_path = default_matched_rows_report_path(out_path)
     if out_path.suffix != ".npz":
         raise SystemExit("--out must end in .npz")
-    if (
-        out_path == args.audit_set
-        or report_path == args.audit_set
-        or out_path.is_relative_to(args.snapshot)
-        or report_path.is_relative_to(args.snapshot)
-    ):
-        raise SystemExit("matched-row outputs cannot replace an input or live inside the snapshot")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     initial_audit_artifact = _file_artifact(args.audit_set)
     initial_snapshot_inventory = snapshot_inventory(args.snapshot)

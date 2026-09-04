@@ -317,7 +317,10 @@ def _require_safe_output_paths(
                 output.relative_to(resolved)
             except ValueError:
                 continue
-            raise SystemExit("--out or its manifest must not be inside a Syzygy directory")
+            raise SystemExit(
+                "--out or its manifest must not be inside a Syzygy or authenticated "
+                "replay-snapshot directory"
+            )
 
 
 def recover_publication_cli(argv: list[str], *, repo_root: Path) -> None:

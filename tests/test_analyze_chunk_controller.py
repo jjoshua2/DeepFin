@@ -52,6 +52,7 @@ from scripts.backtest_chunk_trajectory import (
     _acquire_output_locks,
     _publish_output,
     _require_new_output_pair,
+    _require_safe_preregistration_path,
     _require_safe_output_paths,
     _require_search_take_effect,
     _validate_registry_search_values,
@@ -1445,6 +1446,9 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             },
             "snapshot_inventory": {
                 "path": "/snapshot",
+                "root_identity": {
+                    "device": 1, "inode": 1, "mtime_ns": 1, "ctime_ns": 1,
+                },
                 "shard_count": 1,
                 "shards": [{
                     "name": "s0.zarr", "device": 1, "inode": 1,
@@ -1657,14 +1661,13 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "builder_checkout_unchanged": True,
         },
     })
-    synthetic_shards = manifest["matched_row_origin_verification"][
+    synthetic_inventory = manifest["matched_row_origin_verification"][
         "snapshot_inventory"
-    ]["shards"]
-    manifest["matched_row_origin_verification"]["snapshot_inventory"][
-        "inventory_sha256"
-    ] = hashlib.sha256(json.dumps(
-        synthetic_shards, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
-    ).encode()).hexdigest()
+    ]
+    synthetic_inventory["inventory_sha256"] = hashlib.sha256(json.dumps({
+        "root_identity": synthetic_inventory["root_identity"],
+        "shards": synthetic_inventory["shards"],
+    }, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
     preregistration = {
         "schema": "deepfin.chunk_controller_preregistration.v2",
         "producer": {
@@ -3414,6 +3417,8 @@ def test_output_path_cannot_replace_the_bank_or_manifest(tmp_path: Path) -> None
     bank = tmp_path / "bank.jsonl"
     meta = tmp_path / "bank.jsonl.meta.json"
     checkpoint = tmp_path / "trainer.pt"
+    matched_report = tmp_path / "matched.npz.report.json"
+    snapshot = tmp_path / "snapshot"
     tablebases = tmp_path / "syzygy_6"
     _require_safe_output_path(bank, meta, tmp_path / "report.json")
     with pytest.raises(ValueError, match="must not overwrite"):
@@ -3422,6 +3427,10 @@ def test_output_path_cannot_replace_the_bank_or_manifest(tmp_path: Path) -> None
         _require_safe_output_path(bank, meta, meta)
     manifest = {
         "checkpoint": {"path": str(checkpoint)},
+        "matched_rows_report": {"path": str(matched_report)},
+        "matched_row_origin_verification": {
+            "snapshot_inventory": {"path": str(snapshot)},
+        },
         "preregistration": {"path": str(tmp_path / "preregister.json")},
         "syzygy": {"directories": [{"path": str(tablebases)}]},
     }
@@ -3430,6 +3439,12 @@ def test_output_path_cannot_replace_the_bank_or_manifest(tmp_path: Path) -> None
     with pytest.raises(ValueError, match="consumed input artifact"):
         _require_safe_output_path(
             bank, meta, tmp_path / "preregister.json", manifest=manifest,
+        )
+    with pytest.raises(ValueError, match="consumed input artifact"):
+        _require_safe_output_path(bank, meta, matched_report, manifest=manifest)
+    with pytest.raises(ValueError, match="replay-snapshot"):
+        _require_safe_output_path(
+            bank, meta, snapshot / "s0.zarr" / "analysis.json", manifest=manifest,
         )
     with pytest.raises(ValueError, match="Syzygy"):
         _require_safe_output_path(
@@ -3452,6 +3467,59 @@ def test_producer_output_paths_cannot_replace_inputs_or_tablebases(
         _require_safe_output_paths(
             tablebases / "bank.jsonl", tmp_path / "out.meta.json",
             protected_files=[audit], protected_directories=[tablebases],
+        )
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_producer_overwrite_cannot_replace_matched_report_or_snapshot(
+    tmp_path: Path, overwrite: bool,
+) -> None:
+    """The evidence guard precedes and dominates the ordinary overwrite flag."""
+    report = tmp_path / "matched.npz.report.json"
+    report.write_text("frozen report\n")
+    snapshot = tmp_path / "snapshot"
+    nested = snapshot / "s0.zarr" / "trajectory.jsonl"
+
+    def attempt(output: Path) -> None:
+        meta = tmp_path / "trajectory.meta.json"
+        _require_safe_output_paths(
+            output,
+            meta,
+            protected_files=[report],
+            protected_directories=[snapshot],
+        )
+        _require_new_output_pair(output, meta, overwrite=overwrite)
+
+    with pytest.raises(SystemExit, match="aliases"):
+        attempt(report)
+    with pytest.raises(SystemExit, match="replay-snapshot"):
+        attempt(nested)
+    with pytest.raises(SystemExit, match="replay-snapshot"):
+        _require_safe_output_paths(
+            tmp_path / "trajectory.jsonl",
+            snapshot / "s0.zarr" / "trajectory.meta.json",
+            protected_files=[report],
+            protected_directories=[snapshot],
+        )
+    assert report.read_text() == "frozen report\n"
+
+
+def test_producer_preregistration_cannot_replace_origin_evidence(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "matched.npz.report.json"
+    snapshot = tmp_path / "snapshot"
+    with pytest.raises(SystemExit, match="aliases"):
+        _require_safe_preregistration_path(
+            report,
+            protected_files=[report],
+            protected_directories=[snapshot],
+        )
+    with pytest.raises(SystemExit, match="replay-snapshot"):
+        _require_safe_preregistration_path(
+            snapshot / "s0.zarr" / "plan.json",
+            protected_files=[report],
+            protected_directories=[snapshot],
         )
 
 

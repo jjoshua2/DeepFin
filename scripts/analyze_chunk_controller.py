@@ -829,8 +829,9 @@ def _require_safe_output_path(
     if manifest is not None:
         for name in (
             "producer_script", "publication_helper", "checkpoint",
-            "checkpoint_params", "audit_set", "matched_rows", "preregistration",
-            "features_extension", "mcts_extension", "lc0_extension",
+            "checkpoint_params", "audit_set", "matched_rows", "matched_rows_report",
+            "preregistration", "features_extension", "mcts_extension",
+            "lc0_extension",
         ):
             artifact = manifest.get(name)
             if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
@@ -858,6 +859,24 @@ def _require_safe_output_path(
         except ValueError:
             continue
         raise ValueError("--out must not be inside a consumed Syzygy directory")
+    origin_verification = (
+        manifest.get("matched_row_origin_verification")
+        if manifest is not None else None
+    )
+    snapshot = (
+        origin_verification.get("snapshot_inventory")
+        if isinstance(origin_verification, dict) else None
+    )
+    snapshot_path = snapshot.get("path") if isinstance(snapshot, dict) else None
+    if isinstance(snapshot_path, str) and snapshot_path:
+        try:
+            output.relative_to(Path(snapshot_path).expanduser().resolve())
+        except ValueError:
+            pass
+        else:
+            raise ValueError(
+                "--out must not be inside an authenticated replay-snapshot directory"
+            )
 
 
 def _require_bootstrap_resolution(samples: int, methodology_smoke: bool) -> None:
@@ -2107,10 +2126,16 @@ def _matched_origin_proofs(manifest: Mapping[str, Any]) -> dict[str, dict[str, A
     }:
         raise ValueError("matched-row report did not prove stable builder inputs")
     snapshot = verification.get("snapshot_inventory")
+    root_identity = snapshot.get("root_identity") if isinstance(snapshot, dict) else None
     if (
         not isinstance(snapshot, dict)
         or not isinstance(snapshot.get("path"), str)
         or not snapshot.get("path")
+        or not isinstance(root_identity, dict)
+        or any(
+            not _nonnegative_int(root_identity.get(field))
+            for field in ("device", "inode", "mtime_ns", "ctime_ns")
+        )
         or not _positive_int(snapshot.get("shard_count"))
         or not _valid_sha256(snapshot.get("inventory_sha256"))
         or not isinstance(snapshot.get("shards"), list)
@@ -2134,9 +2159,10 @@ def _matched_origin_proofs(manifest: Mapping[str, Any]) -> dict[str, dict[str, A
         ):
             raise ValueError("matched-row replay shard inventory is malformed")
         shard_names.add(str(shard["name"]))
-    inventory_document = json.dumps(
-        snapshot["shards"], sort_keys=True, ensure_ascii=True, separators=(",", ":"),
-    ).encode("utf-8")
+    inventory_document = json.dumps({
+        "root_identity": root_identity,
+        "shards": snapshot["shards"],
+    }, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
     if hashlib.sha256(inventory_document).hexdigest() != snapshot["inventory_sha256"]:
         raise ValueError("matched-row replay snapshot inventory digest is inconsistent")
     rows = verification.get("rows")

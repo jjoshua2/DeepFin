@@ -1052,12 +1052,40 @@ def _write_preregistration_plan(
     protected_directories: list[Path],
 ) -> Path:
     """Create a new untracked in-repo plan without replacing any evidence input."""
+    output = _require_safe_preregistration_path(
+        output_path,
+        protected_files=protected_files,
+        protected_directories=protected_directories,
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _write_json_atomic(output, payload)
+    return output
+
+
+def _require_safe_preregistration_path(
+    output_path: Path,
+    *,
+    protected_files: list[Path],
+    protected_directories: list[Path],
+) -> Path:
+    """Validate a plan destination before model load or any output write."""
     repo_root = Path(__file__).resolve().parents[1]
     if reserved_output_path(output_path):
         raise SystemExit(
             "--write-preregistration must not use the output lock/staging namespace"
         )
     output = output_path.expanduser().resolve()
+    if output in {path.expanduser().resolve() for path in protected_files}:
+        raise SystemExit("--write-preregistration aliases a consumed input artifact")
+    for directory in protected_directories:
+        try:
+            output.relative_to(directory.expanduser().resolve())
+        except ValueError:
+            continue
+        raise SystemExit(
+            "--write-preregistration must not be inside a Syzygy or authenticated "
+            "replay-snapshot directory"
+        )
     try:
         output.relative_to(repo_root)
     except ValueError as exc:
@@ -1066,16 +1094,6 @@ def _write_preregistration_plan(
         raise SystemExit(f"refusing to overwrite preregistration plan {output}")
     if repo_controlled_output(output, repo_root):
         raise SystemExit("--write-preregistration must target a new untracked file")
-    if output in {path.expanduser().resolve() for path in protected_files}:
-        raise SystemExit("--write-preregistration aliases a consumed input artifact")
-    for directory in protected_directories:
-        try:
-            output.relative_to(directory.expanduser().resolve())
-        except ValueError:
-            continue
-        raise SystemExit("--write-preregistration must not be inside a Syzygy directory")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    _write_json_atomic(output, payload)
     return output
 
 
@@ -1490,6 +1508,48 @@ def _main() -> None:
             "reason": "methodology_smoke_does_not_authenticate_source_clusters",
             "rows": [],
         }
+    origin_snapshot = matched_origin_verification.get("snapshot_inventory")
+    matched_snapshot_directories = (
+        [Path(origin_snapshot["path"])]
+        if isinstance(origin_snapshot, dict)
+        and isinstance(origin_snapshot.get("path"), str)
+        and origin_snapshot["path"]
+        else []
+    )
+    if not args.methodology_smoke and not matched_snapshot_directories:
+        raise SystemExit(
+            "decision-grade matched-row verification lacks an authenticated snapshot path"
+        )
+    origin_protected_files = [
+        args.audit_set,
+        matched_path,
+        matched_report_path,
+        checkpoint_path,
+        Path(__file__),
+        Path(publication_module.__file__),
+        *([preregistration_path] if preregistration_path is not None else []),
+    ]
+    origin_protected_directories = [
+        *syzygy_directories,
+        *matched_snapshot_directories,
+    ]
+    # The authenticated snapshot path is only known after the independent
+    # matched-row readback. Re-run the complete destination check before output
+    # locks, staging, model load, or publication so neither --overwrite nor a
+    # derived manifest/lock path can damage the evidence that established the
+    # game clusters.
+    _require_safe_output_paths(
+        args.out,
+        meta_path,
+        protected_files=origin_protected_files,
+        protected_directories=origin_protected_directories,
+    )
+    if args.write_preregistration is not None:
+        _require_safe_preregistration_path(
+            args.write_preregistration,
+            protected_files=origin_protected_files,
+            protected_directories=origin_protected_directories,
+        )
     post_load_artifacts = {
         "audit_set": _artifact_if_file(args.audit_set),
         "matched_rows": _artifact_if_file(matched_path),
@@ -1755,6 +1815,7 @@ def _main() -> None:
         protected_files=[
             args.audit_set,
             matched_path,
+            matched_report_path,
             checkpoint_path,
             Path(__file__),
             Path(publication_module.__file__),
@@ -1764,7 +1825,7 @@ def _main() -> None:
             *([checkpoint_params_path] if checkpoint_params_path is not None else []),
             *([preregistration_path] if preregistration_path is not None else []),
         ],
-        protected_directories=syzygy_directories,
+        protected_directories=origin_protected_directories,
     )
     if not args.methodology_smoke and loaded_halving_rev != _PRODUCTION_GSS_HALVING_REV:
         raise SystemExit(
@@ -2156,7 +2217,7 @@ def _main() -> None:
                 Path(lc0_extension.__file__),
                 *([checkpoint_params_path] if checkpoint_params_path is not None else []),
             ],
-            protected_directories=syzygy_directories,
+            protected_directories=origin_protected_directories,
         )
         worker.close()
         print(f"[traj] wrote preregistration plan -> {written}")
