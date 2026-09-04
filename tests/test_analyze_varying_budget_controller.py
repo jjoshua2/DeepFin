@@ -4,6 +4,7 @@ import inspect
 import json
 import math
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -125,7 +126,9 @@ def test_bootstrap_resamples_group_units() -> None:
     age = rollout_policy(rows, [2], 0.0, {("a", 2, 1): -1.0, ("b", 2, 1): -1.0, ("c", 2, 1): -1.0})
     result = cluster_bootstrap_delta(budget, age, 200, 1)
     assert result["groups"] == 2
-    assert math.isclose(float(result["mean"]), 0.02 / 3.0)
+    mean = result["mean"]
+    assert mean is not None
+    assert math.isclose(float(mean), 0.02 / 3.0)
 
 
 def test_policy_delta_reports_each_horizon() -> None:
@@ -176,7 +179,9 @@ def test_loader_requires_exact_fixed_node_chunks_and_recomputes_fields(tmp_path:
     rows = [forced_row(chunk) for chunk in range(1, 9)]
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     assert len(load_trajectories(path)) == 1
-    rows[3]["nodes"] = int(rows[3]["nodes"]) + 1
+    nodes = rows[3]["nodes"]
+    assert isinstance(nodes, int)
+    rows[3]["nodes"] = nodes + 1
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     with pytest.raises(ValueError, match="fixed-node"):
         load_trajectories(path)
@@ -184,7 +189,7 @@ def test_loader_requires_exact_fixed_node_chunks_and_recomputes_fields(tmp_path:
 
 def test_collection_status_requires_preregistered_search_shape() -> None:
     rows = [trajectory("p", [0.02] * 8, group="g")]
-    manifest = {
+    manifest: dict[str, Any] = {
         "complete": True,
         "completed_positions": 1,
         "config": {
@@ -200,7 +205,9 @@ def test_collection_status_requires_preregistered_search_shape() -> None:
         "model": {"realized_search_path": "walker"},
     }
     assert collection_status(rows, manifest)["passed"] is True
-    manifest["config"]["walkers"] = 1
+    config = manifest["config"]
+    assert isinstance(config, dict)
+    config["walkers"] = 1
     assert collection_status(rows, manifest)["passed"] is False
 
 
