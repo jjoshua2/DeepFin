@@ -53,8 +53,10 @@ from scripts.analyze_chunk_controller import (
 from scripts.backtest_chunk_trajectory import (
     _acquire_output_lock,
     _acquire_output_locks,
+    _checkpoint_params_candidates,
     _open_authenticated_input,
     _load_authenticated_model_inputs,
+    _params_candidate_inventory,
     _publish_output,
     _require_new_output_pair,
     _require_safe_preregistration_path,
@@ -424,7 +426,7 @@ def test_authenticated_checkpoint_load_rejects_fixed_size_alter_load_restore(
     with pytest.raises(SystemExit, match="identity changed"):
         _load_authenticated_model_inputs(
             checkpoint,
-            None,
+            _params_candidate_inventory(checkpoint),
             loader=racing_loader,
             device="cpu",
             require_complete=True,
@@ -480,7 +482,7 @@ def test_authenticated_params_load_rejects_fixed_size_alter_load_restore(
     with pytest.raises(SystemExit, match="identity changed"):
         _load_authenticated_model_inputs(
             checkpoint,
-            params,
+            _params_candidate_inventory(checkpoint),
             loader=racing_loader,
             device="cpu",
             require_complete=True,
@@ -489,6 +491,115 @@ def test_authenticated_params_load_rejects_fixed_size_alter_load_restore(
     assert params.read_bytes() == original
     assert params.stat().st_mtime_ns == original_stat.st_mtime_ns
 
+
+def test_authenticated_model_load_rejects_late_nearer_params_candidate(
+    tmp_path: Path,
+) -> None:
+    checkpoint_dir = tmp_path / "trial" / "nested" / "checkpoint_1"
+    checkpoint_dir.mkdir(parents=True)
+    checkpoint = checkpoint_dir / "trainer.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    deeper_params = tmp_path / "trial" / "params.json"
+    deeper_params.write_text('{"model":"tiny"}')
+    initial_inventory = _params_candidate_inventory(checkpoint)
+    assert initial_inventory["selected_path"] == str(deeper_params)
+
+    nearer_params = checkpoint_dir / "params.json"
+    nearer_params.write_text('{"model":"different"}')
+    loader_called = False
+
+    def loader(_stream: Any, **_kwargs: Any) -> object:
+        nonlocal loader_called
+        loader_called = True
+        return object()
+
+    with pytest.raises(SystemExit, match="candidate inventory changed before model load"):
+        _load_authenticated_model_inputs(
+            checkpoint,
+            initial_inventory,
+            loader=loader,
+            device="cpu",
+            require_complete=True,
+        )
+    assert loader_called is False
+
+
+def test_outputs_cannot_create_an_initially_absent_params_candidate(
+    tmp_path: Path,
+) -> None:
+    checkpoint_dir = tmp_path / "trial" / "checkpoint_1"
+    checkpoint_dir.mkdir(parents=True)
+    checkpoint = checkpoint_dir / "trainer.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    candidates = list(_checkpoint_params_candidates(checkpoint))
+    nearest = candidates[0]
+    assert not nearest.exists()
+
+    with pytest.raises(SystemExit, match="aliases a consumed input artifact"):
+        _require_safe_output_paths(
+            nearest,
+            Path(str(nearest) + ".meta.json"),
+            protected_files=candidates,
+            protected_directories=[],
+        )
+    with pytest.raises(SystemExit, match="aliases a consumed input artifact"):
+        _require_safe_preregistration_path(
+            nearest,
+            protected_files=candidates,
+            protected_directories=[],
+        )
+    assert not nearest.exists()
+
+
+def test_params_inventory_records_negative_and_symlink_candidates(
+    tmp_path: Path,
+) -> None:
+    checkpoint_dir = tmp_path / "trial" / "nested" / "checkpoint_1"
+    checkpoint_dir.mkdir(parents=True)
+    checkpoint = checkpoint_dir / "trainer.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    (checkpoint_dir.parent / "params.json").mkdir()
+    target = tmp_path / "architecture.json"
+    target.write_text('{"model":"tiny"}')
+    (checkpoint_dir.parent.parent / "params.json").symlink_to(target)
+
+    inventory = _params_candidate_inventory(checkpoint)
+    assert [row["state"] for row in inventory["candidates"][:3]] == [
+        "absent", "nonregular", "symlink",
+    ]
+    assert inventory["selected_index"] == 2
+    assert inventory["candidates"][2]["resolves_to_regular_file"] is True
+    with pytest.raises(SystemExit, match="regular non-symlink"):
+        _load_authenticated_model_inputs(
+            checkpoint,
+            inventory,
+            loader=lambda *_args, **_kwargs: object(),
+            device="cpu",
+            require_complete=True,
+        )
+
+
+def test_params_inventory_detects_create_remove_restore_mtime(
+    tmp_path: Path,
+) -> None:
+    checkpoint_dir = tmp_path / "trial" / "checkpoint_1"
+    checkpoint_dir.mkdir(parents=True)
+    checkpoint = checkpoint_dir / "trainer.pt"
+    checkpoint.write_bytes(b"checkpoint")
+    before = _params_candidate_inventory(checkpoint)
+    parent_stat = checkpoint_dir.stat()
+    candidate = checkpoint_dir / "params.json"
+
+    candidate.write_text('{"model":"temporary"}')
+    candidate.unlink()
+    _restore_mtime(checkpoint_dir, parent_stat)
+
+    after = _params_candidate_inventory(checkpoint)
+    assert before != after
+    assert (
+        before["candidates"][0]["parent_path_components"][-1]["ctime_ns"]
+        != after["candidates"][0]["parent_path_components"][-1]["ctime_ns"]
+    )
 
 def test_trajectory_preimport_guard_covers_every_loaded_project_extension() -> None:
     repo_root = Path(__file__).resolve().parents[1]
@@ -930,7 +1041,7 @@ def test_recovery_source_guard_needs_no_native_extensions(tmp_path: Path) -> Non
     pending_output.write_text("completed bank\n")
     file_stat = pending_output.stat()
     manifest = {
-        "schema": "deepfin.chunk_trajectory.v5",
+        "schema": "deepfin.chunk_trajectory.v6",
         "complete": True,
         "output": {
             "path": str(output.resolve()),
@@ -1552,7 +1663,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
     )
     rows = [
         {
-            "schema": "deepfin.chunk_trajectory.v5",
+            "schema": "deepfin.chunk_trajectory.v6",
             "key": position_key(board), "source_dir": "/snapshot", "shard": "s0.zarr",
             "fen": board.fen(),
             "game_id": 3, "group_id": "/snapshot\0" + "3",
@@ -1769,8 +1880,37 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "failures": [],
         },
     }
+    params_candidate_payload = {
+        "schema": "deepfin.params_candidate_inventory.v1",
+        "search_limit": 6,
+        "selection_policy": "first_is_file_in_checkpoint_ancestor_order",
+        "trainer_pt": "/trainer.pt",
+        "candidates": [{
+            "index": 0,
+            "path": "/params.json",
+            "state": "absent",
+            "resolves_to_regular_file": False,
+            "identity": None,
+            "parent_path_components": [{
+                "path": "/", "kind": "directory", "mode": 16877,
+                "size": 1, "mtime_ns": 1, "ctime_ns": 1,
+                "device": 1, "inode": 1,
+            }],
+        }],
+        "selected_index": None,
+        "selected_path": None,
+    }
+    params_candidate_inventory = {
+        **params_candidate_payload,
+        "inventory_sha256": hashlib.sha256(json.dumps(
+            params_candidate_payload,
+            sort_keys=True,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode()).hexdigest(),
+    }
     manifest: dict[str, Any] = {
-        "schema": "deepfin.chunk_trajectory.v5",
+        "schema": "deepfin.chunk_trajectory.v6",
         "complete": True,
         "decision_grade": True,
         "analysis_scope": "fixed_node_horizons_only",
@@ -1851,8 +1991,9 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "consumption": "torch_load_from_same_open_file_description",
         },
         "checkpoint_params": None,
+        "params_candidate_inventory": params_candidate_inventory,
         "model_input_consumption": {
-            "schema": "deepfin.model_input_consumption.v1",
+            "schema": "deepfin.model_input_consumption.v2",
             "checkpoint_open": "absolute_lexical_path_o_nofollow",
             "checkpoint": "torch_load_from_same_open_file_description",
             "checkpoint_path_reopened_by_loader": False,
@@ -1862,6 +2003,17 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "params_open": "no_params_json",
             "params_path_reopened_by_loader": False,
             "params_identity_verified_before_search": True,
+            "params_selection": "first_is_file_in_checkpoint_ancestor_order",
+            "params_candidate_inventory_schema": (
+                "deepfin.params_candidate_inventory.v1"
+            ),
+            "params_candidate_inventory_sha256": params_candidate_inventory[
+                "inventory_sha256"
+            ],
+            "params_candidate_inventory_verified_before_load": True,
+            "params_candidate_inventory_verified_after_load": True,
+            "params_selected_index": None,
+            "params_selected_path": None,
             "passed": True,
         },
         "audit_set": {
@@ -2096,12 +2248,15 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "shards": synthetic_inventory["shards"],
     }, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
     preregistration = {
-        "schema": "deepfin.chunk_controller_preregistration.v2",
+        "schema": "deepfin.chunk_controller_preregistration.v3",
         "producer": {
             "source_git_sha": "9" * 40,
             "checkpoint_sha256": manifest["checkpoint"]["sha256"],
             "checkpoint_params_sha256": None,
             "model_input_consumption": manifest["model_input_consumption"],
+            "params_candidate_inventory_sha256": manifest[
+                "params_candidate_inventory"
+            ]["inventory_sha256"],
             "audit_set_sha256": manifest["audit_set"]["sha256"],
             "matched_rows_sha256": manifest["matched_rows"]["sha256"],
             "matched_rows_report_sha256": manifest["matched_rows_report"]["sha256"],
@@ -3264,6 +3419,30 @@ def test_loader_requires_resolved_checkpoint_params_provenance(tmp_path: Path) -
         load_transitions(bank)
 
 
+def test_loader_requires_complete_params_candidate_inventory(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest.pop("params_candidate_inventory")
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="checkpoint or params consumption"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_tampered_params_candidate_negative_evidence(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["params_candidate_inventory"]["candidates"][0]["state"] = "regular"
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="checkpoint or params consumption"):
+        load_transitions(bank)
+
+
 def test_loader_validates_the_final_rows_full_cluster_identity(tmp_path: Path) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)
@@ -4036,6 +4215,9 @@ def test_output_path_cannot_replace_the_bank_or_manifest(tmp_path: Path) -> None
         _require_safe_output_path(bank, meta, meta)
     manifest = {
         "checkpoint": {"path": str(checkpoint)},
+        "params_candidate_inventory": {
+            "candidates": [{"path": str(tmp_path / "absent-params.json")}],
+        },
         "matched_rows_report": {"path": str(matched_report)},
         "matched_row_origin_verification": {
             "snapshot_inventory": {"path": str(snapshot)},
@@ -4045,6 +4227,10 @@ def test_output_path_cannot_replace_the_bank_or_manifest(tmp_path: Path) -> None
     }
     with pytest.raises(ValueError, match="consumed input artifact"):
         _require_safe_output_path(bank, meta, checkpoint, manifest=manifest)
+    with pytest.raises(ValueError, match="consumed input artifact"):
+        _require_safe_output_path(
+            bank, meta, tmp_path / "absent-params.json", manifest=manifest,
+        )
     with pytest.raises(ValueError, match="consumed input artifact"):
         _require_safe_output_path(
             bank, meta, tmp_path / "preregister.json", manifest=manifest,

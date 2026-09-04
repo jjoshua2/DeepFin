@@ -416,7 +416,9 @@ _MIN_DECISION_GRADE_CHUNKS = 4
 _PANEL_SELECTION_STRATEGY = "joint_audit_source_phase_piece_round_robin_v1"
 _PANEL_REQUIRED_SOURCES = (0, 1)
 _PANEL_SOURCE_BALANCE_MAX_DIFFERENCE = 1
-_MODEL_INPUT_CONSUMPTION_SCHEMA = "deepfin.model_input_consumption.v1"
+_MODEL_INPUT_CONSUMPTION_SCHEMA = "deepfin.model_input_consumption.v2"
+_PARAMS_CANDIDATE_INVENTORY_SCHEMA = "deepfin.params_candidate_inventory.v1"
+_PARAMS_SEARCH_LIMIT = 6
 _REQUIRED_PRODUCER_SOURCE_MODULES = {
     "producer_script",
     "scripts.chunk_trajectory_publication",
@@ -996,7 +998,8 @@ def _finish_authenticated_input(
     return {
         name: opened[name]
         for name in (
-            "path", "lexical_path", "size", "mtime_ns", "ctime_ns", "device", "inode",
+            "path", "lexical_path", "mode", "size", "mtime_ns", "ctime_ns", "device",
+            "inode",
         )
     } | {
         "sha256": sha256,
@@ -1027,13 +1030,17 @@ def _authenticated_input_artifact_if_file(
 
 def _load_authenticated_model_inputs(
     checkpoint_path: Path,
-    checkpoint_params_path: Path | None,
+    expected_params_inventory: Mapping[str, Any],
     *,
     loader: Callable[..., Any],
     device: str,
     require_complete: bool,
 ) -> tuple[Any, dict[str, Any], dict[str, Any] | None, dict[str, Any]]:
-    """Load the exact checkpoint/params objects later recorded in provenance."""
+    """Select and load the exact checkpoint/params objects recorded in provenance."""
+    params_inventory_before = _params_candidate_inventory(checkpoint_path)
+    if params_inventory_before != expected_params_inventory:
+        raise SystemExit("params.json candidate inventory changed before model load")
+    checkpoint_params_path = _selected_params_candidate(params_inventory_before)
     checkpoint_stream, checkpoint_opened = _open_authenticated_input(checkpoint_path)
     params_stream: IO[bytes] | None = None
     params_opened: dict[str, Any] | None = None
@@ -1070,6 +1077,28 @@ def _load_authenticated_model_inputs(
             and params_bytes is not None
             else None
         )
+        if params_artifact is not None:
+            selected_index = params_inventory_before["selected_index"]
+            candidates = params_inventory_before["candidates"]
+            if (
+                not isinstance(selected_index, int)
+                or isinstance(selected_index, bool)
+                or not isinstance(candidates, list)
+                or not isinstance(candidates[selected_index], dict)
+                or any(
+                    params_artifact.get(name)
+                    != candidates[selected_index].get("identity", {}).get(name)
+                    for name in (
+                        "mode", "size", "mtime_ns", "ctime_ns", "device", "inode",
+                    )
+                )
+            ):
+                raise SystemExit(
+                    "loaded params.json does not match the selected candidate identity"
+                )
+        params_inventory_after = _params_candidate_inventory(checkpoint_path)
+        if params_inventory_after != params_inventory_before:
+            raise SystemExit("params.json candidate inventory changed during model load")
     finally:
         checkpoint_stream.close()
         if params_stream is not None:
@@ -1091,6 +1120,15 @@ def _load_authenticated_model_inputs(
         ),
         "params_path_reopened_by_loader": False,
         "params_identity_verified_before_search": True,
+        "params_selection": "first_is_file_in_checkpoint_ancestor_order",
+        "params_candidate_inventory_schema": _PARAMS_CANDIDATE_INVENTORY_SCHEMA,
+        "params_candidate_inventory_sha256": params_inventory_before[
+            "inventory_sha256"
+        ],
+        "params_candidate_inventory_verified_before_load": True,
+        "params_candidate_inventory_verified_after_load": True,
+        "params_selected_index": params_inventory_before["selected_index"],
+        "params_selected_path": params_inventory_before["selected_path"],
         "passed": True,
     }
     return model, checkpoint_artifact, params_artifact, proof
@@ -1442,17 +1480,135 @@ def _checkpoint_file(path: Path) -> Path:
     return candidate
 
 
-def _checkpoint_params_file(trainer_pt: Path) -> Path | None:
-    """Mirror the UCI loader's bounded, checkpoint-local params lookup."""
+def _checkpoint_params_candidates(trainer_pt: Path) -> tuple[Path, ...]:
+    """Return the complete ordered candidate set used by the UCI loader."""
     current = trainer_pt.parent
-    for _ in range(6):
-        candidate = current / "params.json"
-        if candidate.is_file():
-            return candidate
+    candidates: list[Path] = []
+    for _ in range(_PARAMS_SEARCH_LIMIT):
+        candidates.append(current / "params.json")
         if current.parent == current:
             break
         current = current.parent
-    return None
+    return tuple(candidates)
+
+
+def _params_path_component_inventory(directory: Path) -> list[dict[str, Any]]:
+    """Bind each lexical ancestor whose entry can redirect a candidate lookup."""
+    lexical = Path(os.path.abspath(directory.expanduser()))
+    components: list[dict[str, Any]] = []
+    current = Path(lexical.anchor)
+    for index, component in enumerate(lexical.parts):
+        if index:
+            current /= component
+        try:
+            observed = current.lstat()
+        except OSError as exc:
+            raise SystemExit(
+                f"cannot inspect params.json path component {current}: {exc}"
+            ) from exc
+        kind = (
+            "directory" if stat.S_ISDIR(observed.st_mode)
+            else "symlink" if stat.S_ISLNK(observed.st_mode)
+            else "non_directory"
+        )
+        components.append({
+            "path": str(current),
+            "kind": kind,
+            "mode": int(observed.st_mode),
+            "size": int(observed.st_size),
+            "mtime_ns": int(observed.st_mtime_ns),
+            "ctime_ns": int(observed.st_ctime_ns),
+            "device": int(observed.st_dev),
+            "inode": int(observed.st_ino),
+        })
+    return components
+
+
+def _params_candidate_inventory(trainer_pt: Path) -> dict[str, Any]:
+    """Snapshot every params candidate, including negative lookup evidence."""
+    candidates: list[dict[str, Any]] = []
+    selected_index: int | None = None
+    selected_path: str | None = None
+    for index, candidate in enumerate(_checkpoint_params_candidates(trainer_pt)):
+        lexical = Path(os.path.abspath(candidate.expanduser()))
+        try:
+            observed = lexical.lstat()
+        except FileNotFoundError:
+            observed = None
+        except OSError as exc:
+            raise SystemExit(f"cannot inspect params.json candidate {lexical}: {exc}") from exc
+        if observed is None:
+            state = "absent"
+            identity: dict[str, Any] | None = None
+            resolves_to_regular = False
+        else:
+            state = (
+                "regular" if stat.S_ISREG(observed.st_mode)
+                else "symlink" if stat.S_ISLNK(observed.st_mode)
+                else "nonregular"
+            )
+            identity = {
+                "mode": int(observed.st_mode),
+                "size": int(observed.st_size),
+                "mtime_ns": int(observed.st_mtime_ns),
+                "ctime_ns": int(observed.st_ctime_ns),
+                "device": int(observed.st_dev),
+                "inode": int(observed.st_ino),
+            }
+            try:
+                resolves_to_regular = lexical.is_file()
+            except OSError:
+                resolves_to_regular = False
+        if selected_index is None and resolves_to_regular:
+            selected_index = index
+            selected_path = str(lexical)
+        candidates.append({
+            "index": index,
+            "path": str(lexical),
+            "state": state,
+            "resolves_to_regular_file": resolves_to_regular,
+            "identity": identity,
+            "parent_path_components": _params_path_component_inventory(lexical.parent),
+        })
+    payload: dict[str, Any] = {
+        "schema": _PARAMS_CANDIDATE_INVENTORY_SCHEMA,
+        "search_limit": _PARAMS_SEARCH_LIMIT,
+        "selection_policy": "first_is_file_in_checkpoint_ancestor_order",
+        "trainer_pt": str(Path(os.path.abspath(trainer_pt.expanduser()))),
+        "candidates": candidates,
+        "selected_index": selected_index,
+        "selected_path": selected_path,
+    }
+    document = json.dumps(
+        payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return {**payload, "inventory_sha256": hashlib.sha256(document).hexdigest()}
+
+
+def _selected_params_candidate(inventory: Mapping[str, Any]) -> Path | None:
+    selected = inventory.get("selected_path")
+    if selected is None:
+        return None
+    if not isinstance(selected, str) or not selected:
+        raise SystemExit("params.json candidate inventory has an invalid selection")
+    candidates = inventory.get("candidates")
+    index = inventory.get("selected_index")
+    if (
+        not isinstance(candidates, list)
+        or not isinstance(index, int)
+        or isinstance(index, bool)
+        or index < 0
+        or index >= len(candidates)
+        or not isinstance(candidates[index], dict)
+        or candidates[index].get("path") != selected
+        or candidates[index].get("resolves_to_regular_file") is not True
+    ):
+        raise SystemExit("params.json candidate inventory selection is inconsistent")
+    if candidates[index].get("state") != "regular":
+        raise SystemExit(
+            "selected params.json candidate must be a regular non-symlink file"
+        )
+    return Path(selected)
 
 
 def _nvidia_driver_version(device_index: int) -> str | None:
@@ -1798,7 +1954,7 @@ def _main() -> None:
         or default_matched_rows_report_path(matched_path)
     )
     checkpoint_path = _checkpoint_file(Path(args.checkpoint))
-    checkpoint_params_path = _checkpoint_params_file(checkpoint_path)
+    checkpoint_params_candidates = list(_checkpoint_params_candidates(checkpoint_path))
     producer_git_sha, producer_git_dirty = _git_state()
     if (
         not args.methodology_smoke
@@ -1869,7 +2025,7 @@ def _main() -> None:
         meta_path,
         protected_files=[
             args.audit_set, matched_path, matched_report_path, checkpoint_path,
-            *([checkpoint_params_path] if checkpoint_params_path is not None else []),
+            *checkpoint_params_candidates,
             Path(__file__),
             Path(publication_module.__file__),
             *([preregistration_path] if preregistration_path is not None else []),
@@ -2026,7 +2182,7 @@ def _main() -> None:
         matched_path,
         matched_report_path,
         checkpoint_path,
-        *([checkpoint_params_path] if checkpoint_params_path is not None else []),
+        *checkpoint_params_candidates,
         Path(__file__),
         Path(publication_module.__file__),
         *([preregistration_path] if preregistration_path is not None else []),
@@ -2156,6 +2312,12 @@ def _main() -> None:
             print(f"[traj] provenance -> {meta_path}")
             return
 
+    # Take the authoritative negative/positive lookup snapshot only after this
+    # process's output-directory and lock creation.  From here through model
+    # loading and final publication, every candidate and redirecting ancestor
+    # must remain byte-for-byte identical.
+    initial_params_candidate_inventory = _params_candidate_inventory(checkpoint_path)
+
     provenance: dict[str, Any] = {
         "schema": _SCHEMA,
         "decision_grade": not args.methodology_smoke,
@@ -2183,6 +2345,7 @@ def _main() -> None:
         "publication_helper": initial_input_artifacts["publication_helper"],
         "checkpoint": initial_input_artifacts["checkpoint"],
         "checkpoint_params": initial_input_artifacts["checkpoint_params"],
+        "params_candidate_inventory": initial_params_candidate_inventory,
         "audit_set": initial_input_artifacts["audit_set"],
         "matched_rows": initial_input_artifacts["matched_rows"],
         "matched_rows_report": initial_input_artifacts["matched_rows_report"],
@@ -2327,12 +2490,12 @@ def _main() -> None:
             matched_path,
             matched_report_path,
             checkpoint_path,
+            *checkpoint_params_candidates,
             Path(__file__),
             Path(publication_module.__file__),
             Path(features_extension.__file__),
             Path(mcts_extension.__file__),
             Path(lc0_extension.__file__),
-            *([checkpoint_params_path] if checkpoint_params_path is not None else []),
             *([preregistration_path] if preregistration_path is not None else []),
         ],
         protected_directories=origin_protected_directories,
@@ -2351,7 +2514,7 @@ def _main() -> None:
         model_input_consumption,
     ) = _load_authenticated_model_inputs(
         checkpoint_path,
-        checkpoint_params_path,
+        initial_params_candidate_inventory,
         loader=load_model_from_checkpoint_artifacts,
         device=args.device,
         require_complete=not args.methodology_smoke,
@@ -2359,6 +2522,9 @@ def _main() -> None:
     provenance["checkpoint"] = checkpoint_artifact
     provenance["checkpoint_params"] = checkpoint_params_artifact
     provenance["model_input_consumption"] = model_input_consumption
+    checkpoint_params_path = _selected_params_candidate(
+        initial_params_candidate_inventory
+    )
     model.eval()
     # The helper raises before this point unless the exact file description
     # consumed by torch and the exact params bytes remained stable. Avoid a
@@ -2706,6 +2872,13 @@ def _main() -> None:
         "compile": compile_contract,
     }
     if args.write_preregistration is not None:
+        if _params_candidate_inventory(checkpoint_path) != (
+            initial_params_candidate_inventory
+        ):
+            worker.close()
+            raise SystemExit(
+                "params.json candidate inventory changed before preregistration write"
+            )
         written = _write_preregistration_plan(
             args.write_preregistration,
             _preregistration_payload(preregistration_manifest),
@@ -2714,15 +2887,22 @@ def _main() -> None:
                 matched_path,
                 matched_report_path,
                 checkpoint_path,
+                *checkpoint_params_candidates,
                 Path(__file__),
                 Path(publication_module.__file__),
                 Path(features_extension.__file__),
                 Path(mcts_extension.__file__),
                 Path(lc0_extension.__file__),
-                *([checkpoint_params_path] if checkpoint_params_path is not None else []),
             ],
             protected_directories=origin_protected_directories,
         )
+        if _params_candidate_inventory(checkpoint_path) != (
+            initial_params_candidate_inventory
+        ):
+            worker.close()
+            raise SystemExit(
+                "params.json candidate inventory changed during preregistration write"
+            )
         worker.close()
         print(f"[traj] wrote preregistration plan -> {written}")
         print("[traj] commit the plan, then rerun with --preregistration")
@@ -3135,6 +3315,10 @@ def _main() -> None:
         "mcts_extension": loaded_mcts_artifact,
         "lc0_extension": loaded_lc0_artifact,
     }
+    try:
+        final_params_candidate_inventory = _params_candidate_inventory(checkpoint_path)
+    except (OSError, SystemExit):
+        final_params_candidate_inventory = None
     current_artifacts = {
         "producer_script": _artifact_if_file(Path(__file__)),
         "publication_helper": _artifact_if_file(Path(publication_module.__file__)),
@@ -3172,6 +3356,11 @@ def _main() -> None:
         *checkpoint_load_changes,
         *(f"producer_source_import:{name}" for name in producer_source_import_changes),
         *(f"native_import:{module}" for module in native_import_changes),
+        *(
+            ["params_candidate_inventory"]
+            if final_params_candidate_inventory
+            != provenance["params_candidate_inventory"] else []
+        ),
         *(
             name for name, frozen in frozen_artifacts.items()
             if _artifact_identity(frozen) != _artifact_identity(current_artifacts[name])

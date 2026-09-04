@@ -327,7 +327,7 @@ from scripts.check_c_extensions_fresh import (
 from scripts.reachable_oracle import solve_reachable_oracle
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
-_SCHEMA = "deepfin.chunk_trajectory.v5"
+_SCHEMA = "deepfin.chunk_trajectory.v6"
 _CP_TO_SCORE_C = 300.0
 _ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
 _COMPLEXITY_VISIT_GAP = 0.25
@@ -364,9 +364,10 @@ _BOOTSTRAP_RESAMPLING_SEMANTICS = (
 _BOOTSTRAP_INTERVAL_SEMANTICS = (
     "unconditional_requested_replicates_with_invalid_mass_in_lower_tail_v1"
 )
-_PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v2"
+_PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v3"
 _DEEP_REFERENCE_EVIDENCE_SCHEMA = "deepfin.chunk_deep_reference_evidence.v2"
-_MODEL_INPUT_CONSUMPTION_SCHEMA = "deepfin.model_input_consumption.v1"
+_MODEL_INPUT_CONSUMPTION_SCHEMA = "deepfin.model_input_consumption.v2"
+_PARAMS_CANDIDATE_INVENTORY_SCHEMA = "deepfin.params_candidate_inventory.v1"
 # data/audit_set_v1.jsonl, whose sibling README freezes the requested
 # unhandicapped Stockfish budget at 1,000,000 nodes and MultiPV 10. Some
 # forced-mate rows legitimately terminate early, so the artifact identity—not
@@ -879,6 +880,15 @@ def _require_safe_output_path(
             for artifact in preimport_files.values():
                 if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
                     protected.add(Path(artifact["path"]).expanduser().resolve())
+        params_inventory = manifest.get("params_candidate_inventory")
+        params_candidates = (
+            params_inventory.get("candidates")
+            if isinstance(params_inventory, dict) else None
+        )
+        if isinstance(params_candidates, list):
+            for candidate in params_candidates:
+                if isinstance(candidate, dict) and isinstance(candidate.get("path"), str):
+                    protected.add(Path(candidate["path"]).expanduser().resolve())
     if output in protected:
         raise ValueError("--out must not overwrite a consumed input artifact")
     syzygy = manifest.get("syzygy") if manifest is not None else None
@@ -1475,6 +1485,7 @@ def _model_input_consumption_complete(manifest: Mapping[str, Any]) -> bool:
     """Validate that attested model inputs are the objects the loader consumed."""
     checkpoint = manifest.get("checkpoint")
     params = manifest.get("checkpoint_params")
+    inventory = manifest.get("params_candidate_inventory")
     proof = manifest.get("model_input_consumption")
 
     def stable_artifact(value: Any, consumption: str) -> bool:
@@ -1497,9 +1508,22 @@ def _model_input_consumption_complete(manifest: Mapping[str, Any]) -> bool:
         params is None
         or stable_artifact(params, "json_decode_from_exact_authenticated_bytes")
     )
+    inventory_ok = _params_candidate_inventory_complete(
+        inventory, checkpoint=checkpoint, params=params,
+    )
+    inventory_digest = (
+        inventory.get("inventory_sha256") if isinstance(inventory, dict) else None
+    )
+    selected_index = (
+        inventory.get("selected_index") if isinstance(inventory, dict) else None
+    )
+    selected_path = (
+        inventory.get("selected_path") if isinstance(inventory, dict) else None
+    )
     return bool(
         checkpoint_ok
         and params_ok
+        and inventory_ok
         and isinstance(proof, dict)
         and proof.get("schema") == _MODEL_INPUT_CONSUMPTION_SCHEMA
         and proof.get("checkpoint_open") == "absolute_lexical_path_o_nofollow"
@@ -1522,8 +1546,137 @@ def _model_input_consumption_complete(manifest: Mapping[str, Any]) -> bool:
         )
         and proof.get("params_path_reopened_by_loader") is False
         and proof.get("params_identity_verified_before_search") is True
+        and proof.get("params_selection")
+        == "first_is_file_in_checkpoint_ancestor_order"
+        and proof.get("params_candidate_inventory_schema")
+        == _PARAMS_CANDIDATE_INVENTORY_SCHEMA
+        and proof.get("params_candidate_inventory_sha256") == inventory_digest
+        and proof.get("params_candidate_inventory_verified_before_load") is True
+        and proof.get("params_candidate_inventory_verified_after_load") is True
+        and proof.get("params_selected_index") == selected_index
+        and proof.get("params_selected_path") == selected_path
         and proof.get("passed") is True
     )
+
+
+def _params_candidate_inventory_complete(
+    inventory: Any, *, checkpoint: Any, params: Any,
+) -> bool:
+    """Validate the bounded lookup's positive and negative provenance."""
+    if (
+        not isinstance(inventory, dict)
+        or inventory.get("schema") != _PARAMS_CANDIDATE_INVENTORY_SCHEMA
+        or inventory.get("search_limit") != 6
+        or inventory.get("selection_policy")
+        != "first_is_file_in_checkpoint_ancestor_order"
+        or not isinstance(checkpoint, dict)
+        or not isinstance(checkpoint.get("lexical_path"), str)
+    ):
+        return False
+    payload = {name: value for name, value in inventory.items() if name != "inventory_sha256"}
+    encoded = json.dumps(
+        payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
+    if inventory.get("inventory_sha256") != hashlib.sha256(encoded).hexdigest():
+        return False
+
+    trainer = Path(checkpoint["lexical_path"])
+    if inventory.get("trainer_pt") != str(trainer):
+        return False
+    expected_paths: list[str] = []
+    current = trainer.parent
+    for _ in range(6):
+        expected_paths.append(str(current / "params.json"))
+        if current.parent == current:
+            break
+        current = current.parent
+    candidates = inventory.get("candidates")
+    if not isinstance(candidates, list) or len(candidates) != len(expected_paths):
+        return False
+
+    first_eligible: int | None = None
+    for index, (candidate, expected_path) in enumerate(zip(candidates, expected_paths)):
+        if (
+            not isinstance(candidate, dict)
+            or candidate.get("index") != index
+            or candidate.get("path") != expected_path
+            or candidate.get("state") not in {
+                "absent", "regular", "symlink", "nonregular",
+            }
+            or not isinstance(candidate.get("resolves_to_regular_file"), bool)
+        ):
+            return False
+        state = candidate["state"]
+        identity = candidate.get("identity")
+        if state == "absent":
+            if identity is not None or candidate["resolves_to_regular_file"]:
+                return False
+        elif not _params_identity_complete(identity):
+            return False
+        if state == "regular" and candidate["resolves_to_regular_file"] is not True:
+            return False
+        if state == "nonregular" and candidate["resolves_to_regular_file"] is not False:
+            return False
+        components = candidate.get("parent_path_components")
+        if not _params_path_components_complete(components, Path(expected_path).parent):
+            return False
+        if first_eligible is None and candidate["resolves_to_regular_file"]:
+            first_eligible = index
+
+    selected_index = inventory.get("selected_index")
+    selected_path = inventory.get("selected_path")
+    if first_eligible is None:
+        return bool(selected_index is None and selected_path is None and params is None)
+    selected = candidates[first_eligible]
+    return bool(
+        selected_index == first_eligible
+        and selected_path == expected_paths[first_eligible]
+        and selected.get("state") == "regular"
+        and isinstance(params, dict)
+        and params.get("lexical_path") == selected_path
+        and all(
+            params.get(name) == selected.get("identity", {}).get(name)
+            for name in (
+                "mode", "size", "mtime_ns", "ctime_ns", "device", "inode",
+            )
+        )
+    )
+
+
+def _params_identity_complete(value: Any) -> bool:
+    return bool(
+        isinstance(value, dict)
+        and _positive_int(value.get("mode"))
+        and _nonnegative_int(value.get("size"))
+        and _nonnegative_int(value.get("mtime_ns"))
+        and _nonnegative_int(value.get("ctime_ns"))
+        and _nonnegative_int(value.get("device"))
+        and _positive_int(value.get("inode"))
+    )
+
+
+def _params_path_components_complete(value: Any, parent: Path) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    expected: list[str] = []
+    current = Path(parent.anchor)
+    for index, component in enumerate(parent.parts):
+        if index:
+            current /= component
+        expected.append(str(current))
+    if len(value) != len(expected):
+        return False
+    for component, expected_path in zip(value, expected):
+        if (
+            not isinstance(component, dict)
+            or component.get("path") != expected_path
+            or component.get("kind") not in {
+                "directory", "symlink", "non_directory",
+            }
+            or not _params_identity_complete(component)
+        ):
+            return False
+    return True
 
 
 def _producer_source_matches_revision(
@@ -1883,6 +2036,11 @@ def _preregistration_payload(manifest: dict[str, Any]) -> dict[str, Any]:
             "checkpoint_sha256": artifact_sha("checkpoint"),
             "checkpoint_params_sha256": artifact_sha("checkpoint_params"),
             "model_input_consumption": manifest.get("model_input_consumption"),
+            "params_candidate_inventory_sha256": (
+                manifest.get("params_candidate_inventory", {}).get("inventory_sha256")
+                if isinstance(manifest.get("params_candidate_inventory"), dict)
+                else None
+            ),
             "audit_set_sha256": artifact_sha("audit_set"),
             "matched_rows_sha256": artifact_sha("matched_rows"),
             "matched_rows_report_sha256": artifact_sha("matched_rows_report"),
