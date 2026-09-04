@@ -5231,6 +5231,89 @@ def test_analyzer_full_manifest_allows_output_outside_syzygy_roots(
     )
 
 
+@pytest.mark.parametrize("protected_kind", ["syzygy", "snapshot"])
+def test_analyzer_descriptor_ancestry_rejects_protected_root_after_procfs_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    protected_kind: str,
+) -> None:
+    output_parent = tmp_path / "output-parent"
+    protected_root = tmp_path / "protected-root"
+    displaced_output_parent = tmp_path / "displaced-output-parent"
+    output_parent.mkdir()
+    protected_root.mkdir()
+    evidence = protected_root / "evidence.bin"
+    evidence.write_bytes(b"authenticated protected evidence\n")
+    protected_stat = protected_root.stat()
+    protected_identity = {
+        "device": protected_stat.st_dev,
+        "inode": protected_stat.st_ino,
+    }
+    if protected_kind == "syzygy":
+        manifest = {
+            "syzygy": {
+                "directories": [{
+                    "path": str(protected_root),
+                    "root_identity": protected_identity,
+                }],
+            },
+        }
+    else:
+        manifest = {
+            "matched_row_origin_verification": {
+                "snapshot_inventory": {
+                    "path": str(protected_root),
+                    "root_identity": protected_identity,
+                },
+            },
+        }
+    output = output_parent / "analysis.json"
+    real_open_directory = controller_module._open_directory_anchored
+    real_strict_descriptor_path = controller_module._strict_descriptor_path
+    opened_protected_root = False
+    restored_decoy = False
+
+    def open_protected_root(path: Path, *, create: bool) -> int:
+        nonlocal opened_protected_root
+        assert path == output_parent
+        assert create is True
+        output_parent.rename(displaced_output_parent)
+        protected_root.rename(output_parent)
+        opened_protected_root = True
+        return real_open_directory(path, create=False)
+
+    def resolve_then_restore_decoy(fd: int, *, kind: str) -> Path:
+        nonlocal restored_decoy
+        resolved = real_strict_descriptor_path(fd, kind=kind)
+        output_parent.rename(protected_root)
+        displaced_output_parent.rename(output_parent)
+        restored_decoy = True
+        return resolved
+
+    monkeypatch.setattr(
+        controller_module, "_open_directory_anchored", open_protected_root,
+    )
+    monkeypatch.setattr(
+        controller_module, "_strict_descriptor_path", resolve_then_restore_decoy,
+    )
+
+    with (
+        pytest.raises(ValueError, match="inside a consumed protected directory"),
+        controller_module._anchored_output_target(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+            manifest=manifest,
+        ),
+    ):
+        pytest.fail("protected root reached analyzer publication")
+
+    assert opened_protected_root is True
+    assert restored_decoy is True
+    assert evidence.read_bytes() == b"authenticated protected evidence\n"
+    assert not output.exists()
+
+
 def test_analyzer_output_rejects_renamed_syzygy_directory_by_identity(
     tmp_path: Path,
 ) -> None:

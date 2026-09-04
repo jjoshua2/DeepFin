@@ -40,7 +40,7 @@ import subprocess
 import sys
 import types
 from collections import defaultdict
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from itertools import pairwise
@@ -890,6 +890,47 @@ def _strict_descriptor_path(fd: int, *, kind: str) -> Path:
     return resolved
 
 
+def _descriptor_ancestor_identities(fd: int) -> frozenset[tuple[int, int]]:
+    """Return directory ancestry without converting ``fd`` back to a pathname."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    if nofollow == 0 or directory == 0:
+        raise RuntimeError("safe analyzer output requires O_NOFOLLOW/O_DIRECTORY")
+    flags = os.O_RDONLY | os.O_CLOEXEC | nofollow | directory
+    current_fd = os.dup(fd)
+    identities: set[tuple[int, int]] = set()
+    try:
+        while True:
+            current_stat = os.fstat(current_fd)
+            if not stat.S_ISDIR(current_stat.st_mode):
+                raise RuntimeError("analyzer output ancestor is not a directory")
+            current_identity = _directory_identity(current_stat)
+            if current_identity in identities:
+                raise RuntimeError("analyzer output directory ancestry contains a cycle")
+            identities.add(current_identity)
+            parent_fd = os.open("..", flags, dir_fd=current_fd)
+            try:
+                parent_stat = os.fstat(parent_fd)
+                if not stat.S_ISDIR(parent_stat.st_mode):
+                    raise RuntimeError("analyzer output ancestor is not a directory")
+                parent_identity = _directory_identity(parent_stat)
+            except BaseException:
+                os.close(parent_fd)
+                raise
+            if parent_identity == current_identity:
+                os.close(parent_fd)
+                break
+            os.close(current_fd)
+            current_fd = parent_fd
+        return frozenset(identities)
+    except OSError as exc:
+        raise RuntimeError(
+            "could not authenticate analyzer output directory ancestry"
+        ) from exc
+    finally:
+        os.close(current_fd)
+
+
 def _stable_file_identity(stat_result: os.stat_result) -> tuple[int, ...]:
     return (
         int(stat_result.st_mode), int(stat_result.st_size),
@@ -981,6 +1022,7 @@ def _require_anchored_output_stable(target: _AnchoredOutputTarget) -> None:
     descriptor_parent_path = _strict_descriptor_path(
         target.parent_fd, kind="directory",
     )
+    descriptor_ancestors = _descriptor_ancestor_identities(target.parent_fd)
     _require_safe_output_path(
         target.input_path,
         target.meta_path,
@@ -988,6 +1030,7 @@ def _require_anchored_output_stable(target: _AnchoredOutputTarget) -> None:
         manifest=target.manifest,
         consumed_artifacts=target.consumed_artifacts,
         _resolved_output=descriptor_parent_path / target.name,
+        _anchored_ancestor_identities=descriptor_ancestors,
     )
 
 
@@ -1167,6 +1210,7 @@ def _require_safe_output_path(
     manifest: dict[str, Any] | None = None,
     consumed_artifacts: Sequence[Mapping[str, Any]] = (),
     _resolved_output: Path | None = None,
+    _anchored_ancestor_identities: Collection[tuple[int, int]] | None = None,
 ) -> None:
     if output_path is None:
         return
@@ -1274,17 +1318,21 @@ def _require_safe_output_path(
             raise ValueError(
                 "--out must not be inside an authenticated replay-snapshot directory"
             )
-    output_parent = (
-        _resolved_output.parent if _resolved_output is not None
-        else output_path.expanduser().absolute().parent
-    )
-    for parent in (output_parent, *output_parent.parents):
-        try:
-            parent_identity = _directory_identity(os.stat(parent))
-        except FileNotFoundError:
-            continue
-        if parent_identity in protected_directory_identities:
-            raise ValueError("--out must not be inside a consumed protected directory")
+    if _anchored_ancestor_identities is None:
+        output_parent = (
+            _resolved_output.parent if _resolved_output is not None
+            else output_path.expanduser().absolute().parent
+        )
+        output_ancestor_identities: set[tuple[int, int]] = set()
+        for parent in (output_parent, *output_parent.parents):
+            try:
+                output_ancestor_identities.add(_directory_identity(os.stat(parent)))
+            except FileNotFoundError:
+                continue
+    else:
+        output_ancestor_identities = set(_anchored_ancestor_identities)
+    if output_ancestor_identities & protected_directory_identities:
+        raise ValueError("--out must not be inside a consumed protected directory")
 
 
 def _require_bootstrap_resolution(samples: int, methodology_smoke: bool) -> None:
