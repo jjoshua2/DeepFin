@@ -5817,7 +5817,7 @@ def test_parent_swap_during_state_classification_is_quarantined_across_retry(
         "_manifest_recovery_is_invalid",
         install_empty_parent_after_marker_check,
     )
-    with pytest.raises(SystemExit, match="refusing to replace immutable or incomplete"):
+    with pytest.raises(SystemExit, match="cannot safely open regular evidence file"):
         publication._require_new_output_pair(output, meta, overwrite=False)
 
     assert (moved_parent / invalid.name).exists()
