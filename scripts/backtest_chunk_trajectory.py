@@ -461,6 +461,27 @@ def _git_ignored_or_outside(path: Path, repo_root: Path) -> bool:
     return True
 
 
+def _require_analyzable_source_groups(
+    group_ids: dict[str, str | None], *, methodology_smoke: bool,
+) -> None:
+    if methodology_smoke:
+        return
+    groups = {group_id for group_id in group_ids.values() if group_id}
+    if len(groups) < 2:
+        raise SystemExit(
+            "decision-grade trajectory banks require at least two distinct source games"
+        )
+
+
+def _require_nvidia_driver_provenance(
+    driver_version: str | None, *, methodology_smoke: bool,
+) -> None:
+    if not methodology_smoke and not driver_version:
+        raise RuntimeError(
+            "decision-grade trajectory banks require readable NVIDIA driver provenance"
+        )
+
+
 def _require_safe_output_paths(
     output_path: Path,
     meta_path: Path,
@@ -911,6 +932,9 @@ def main() -> None:
             if gid is None or not source_dir or not source_shard
             else "\0".join((source_dir, str(gid)))
         )
+    _require_analyzable_source_groups(
+        group_ids, methodology_smoke=bool(args.methodology_smoke),
+    )
 
     output_locks: tuple[IO[bytes], ...] = ()
     if args.write_preregistration is None:
@@ -1320,6 +1344,17 @@ def main() -> None:
     resolved_requested_device = resolve_cuda_device(str(args.device))
     resolved_evaluator_device = resolve_cuda_device(str(direct.device))
     resolved_model_devices = sorted({resolve_cuda_device(value) for value in model_devices})
+    nvidia_driver_version = (
+        _nvidia_driver_version(int(resolved_requested_device.split(":", 1)[1]))
+        if resolved_requested_device.startswith("cuda:") else None
+    )
+    try:
+        _require_nvidia_driver_provenance(
+            nvidia_driver_version, methodology_smoke=bool(args.methodology_smoke),
+        )
+    except RuntimeError:
+        worker.close()
+        raise
     runtime = {
         "python_version": platform.python_version(),
         "python_implementation": platform.python_implementation(),
@@ -1331,9 +1366,7 @@ def main() -> None:
         "torch_version": str(torch.__version__),
         "torch_cuda_version": str(torch.version.cuda),
         "cudnn_version": torch.backends.cudnn.version(),
-        "nvidia_driver_version": _nvidia_driver_version(
-            int(resolved_requested_device.split(":", 1)[1])
-        ),
+        "nvidia_driver_version": nvidia_driver_version,
         "requested_device": str(args.device),
         "evaluator_device": str(direct.device),
         "model_parameter_devices": model_devices,

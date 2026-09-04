@@ -1790,6 +1790,33 @@ def test_producer_rejects_output_artifacts_that_would_dirty_checkout(
         )
 
 
+def test_producer_requires_two_source_games_before_decision_grade_collection() -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    with pytest.raises(SystemExit, match="at least two distinct source games"):
+        producer._require_analyzable_source_groups(
+            {"a": "snapshot\0game-1", "b": "snapshot\0game-1"},
+            methodology_smoke=False,
+        )
+
+    producer._require_analyzable_source_groups(
+        {"a": "snapshot\0game-1", "b": "snapshot\0game-2"},
+        methodology_smoke=False,
+    )
+    producer._require_analyzable_source_groups(
+        {"a": None}, methodology_smoke=True,
+    )
+
+
+def test_producer_requires_driver_provenance_before_decision_grade_search() -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    with pytest.raises(RuntimeError, match="NVIDIA driver provenance"):
+        producer._require_nvidia_driver_provenance(None, methodology_smoke=False)
+    producer._require_nvidia_driver_provenance("600.1", methodology_smoke=False)
+    producer._require_nvidia_driver_provenance(None, methodology_smoke=True)
+
+
 @pytest.mark.parametrize(
     "name",
     [".bank.jsonl.lock", ".bank.jsonl.tmp-12345", "..tmp-bank.tmp-12345"],
