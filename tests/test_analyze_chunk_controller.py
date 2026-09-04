@@ -2948,7 +2948,7 @@ def test_loader_requires_provenance_but_allows_explicit_legacy_smoke(tmp_path: P
         }) + "\n",
     ]))
 
-    with pytest.raises(ValueError, match="decision-grade analysis requires"):
+    with pytest.raises(SystemExit, match="unexpected hard links"):
         load_transitions(bank)
     transitions, info = load_transitions(bank, methodology_smoke=True)
     assert transitions[0].gain == 10.0
