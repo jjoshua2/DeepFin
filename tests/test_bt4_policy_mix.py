@@ -428,6 +428,16 @@ def _write_rank_sidecar(root: Path, source_dir: Path, shard_path: Path) -> Path:
                 "top_k": 3,
                 "index_encoding": "lc0_1858",
                 "gap_definition": "rank1_effective_cp-minus-ranked_effective_cp",
+                "outputs": [
+                    {
+                        "path": shard_path.name,
+                        "rows": 2,
+                        "source_row_identity_sha256": group.attrs[
+                            "source_row_identity_sha256"
+                        ],
+                        "payload_sha256": group.attrs["payload_sha256"],
+                    }
+                ],
             }
         )
         + "\n",
@@ -827,6 +837,44 @@ def test_mix_corpus_uses_verified_sf_cp_rank_sidecar(tmp_path: Path) -> None:
     receipt = json.loads((out_dir / tool.MIX_SUMMARY).read_text(encoding="utf-8"))
     assert receipt["candidate_set_wider_rows"] == 1
     assert receipt["changed_unique_max_rows"] == 1
+
+
+def test_mix_corpus_refuses_rank_summary_receipt_drift(tmp_path: Path) -> None:
+    source_dir, shard_path, _arrays = _write_source(tmp_path)
+    sidecar_dir = _write_sidecar(tmp_path, source_dir, shard_path)
+    rank_dir = _write_rank_sidecar(tmp_path, source_dir, shard_path)
+    summary_path = rank_dir / tool.sf_ranks.SUMMARY_NAME
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["outputs"][0]["payload_sha256"] = "0" * 64
+    summary_path.write_text(json.dumps(summary) + "\n", encoding="utf-8")
+    audit_receipt = _write_audit_receipt(
+        tmp_path,
+        scope="sf-cp-window",
+        sf_rank_cap=2,
+        sf_cp_window=10.0,
+    )
+
+    with pytest.raises(ValueError, match="summary output receipt mismatch"):
+        tool.mix_corpus(
+            argparse.Namespace(
+                shards=source_dir,
+                sidecar=sidecar_dir,
+                sf_rank_sidecar=rank_dir,
+                out=tmp_path / "bad-rank-summary-mixed",
+                alpha=1.0,
+                scope="sf-cp-window",
+                bt4_temperature=1.0,
+                near_max_ratio=0.5,
+                sf_rank_cap=2,
+                sf_cp_window=10.0,
+                expected_rows=2,
+                expected_shards=1,
+                expected_source_summary_sha256=tool.file_sha256(
+                    source_dir / tool.DERIVE_SUMMARY
+                ),
+                audit_receipt=audit_receipt,
+            )
+        )
 
 
 @pytest.mark.parametrize(

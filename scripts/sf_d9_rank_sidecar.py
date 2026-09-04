@@ -20,7 +20,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import zarr
@@ -78,10 +78,28 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
 
 def d9_lines(row: Mapping[str, Any]) -> list[list[Any]]:
     """Return the one complete full-width d9 block from a run03-shaped row."""
+    phases = row.get("phases")
+    if not isinstance(phases, list):
+        raise ValueError(
+            f"row {row.get('game_id')}/{row.get('ply')} has malformed phases",
+        )
+    if not phases or not isinstance(phases[0], dict):
+        raise ValueError(
+            f"row {row.get('game_id')}/{row.get('ply')} has no phase-0 search",
+        )
+    per_depth = phases[0].get("per_depth")
+    if not isinstance(per_depth, list):
+        raise ValueError(
+            f"row {row.get('game_id')}/{row.get('ply')} has malformed phase-0 depths",
+        )
+    if not all(isinstance(block, dict) for block in per_depth):
+        raise ValueError(
+            f"row {row.get('game_id')}/{row.get('ply')} has malformed phase-0 blocks",
+        )
+    blocks = cast(list[dict[str, Any]], per_depth)
     matches = [
         block
-        for phase in row.get("phases", [])
-        for block in phase.get("per_depth", [])
+        for block in blocks
         if int(block.get("depth", -1)) == 9 and bool(block.get("complete"))
     ]
     if len(matches) != 1:
@@ -89,19 +107,26 @@ def d9_lines(row: Mapping[str, Any]) -> list[list[Any]]:
             f"row {row.get('game_id')}/{row.get('ply')} has {len(matches)} "
             "complete d9 blocks, expected exactly one",
         )
-    lines = list(matches[0].get("lines", []))
-    if not lines:
+    lines = matches[0].get("lines")
+    if not isinstance(lines, list) or not lines:
         raise ValueError(
             f"row {row.get('game_id')}/{row.get('ply')} has an empty d9 block",
         )
-    return lines
+    if not all(isinstance(line, list) for line in lines):
+        raise ValueError(
+            f"row {row.get('game_id')}/{row.get('ply')} has malformed d9 lines",
+        )
+    return cast(list[list[Any]], lines)
 
 
 def rank_observation(row: Mapping[str, Any], *, top_k: int) -> RankObservation:
     """Extract compact indices and best-minus-move effective-cp gaps."""
     if top_k <= 0:
         raise ValueError("top_k must be positive")
-    ranked = sorted(d9_lines(row), key=lambda line: int(line[0]))
+    lines = d9_lines(row)
+    if any(len(line) < 3 for line in lines):
+        raise ValueError("d9 lines must contain rank, move, and effective-cp score")
+    ranked = sorted(lines, key=lambda line: int(line[0]))
     ranks = [int(line[0]) for line in ranked]
     if ranks != list(range(1, len(ranked) + 1)):
         raise ValueError(
@@ -116,7 +141,10 @@ def rank_observation(row: Mapping[str, Any], *, top_k: int) -> RankObservation:
 
     indices = np.full((top_k,), INVALID_INDEX, dtype=np.uint16)
     gaps_cp = np.full((top_k,), np.inf, dtype=np.float32)
-    turn = str(row.get("stm")) == "w"
+    stm = row.get("stm")
+    if stm not in {"w", "b"}:
+        raise ValueError(f"row side-to-move must be 'w' or 'b', got {stm!r}")
+    turn = stm == "w"
     count = min(top_k, len(ranked))
     seen: set[int] = set()
     for offset, line in enumerate(ranked[:count]):
@@ -173,6 +201,8 @@ def _flush(
     if indices.shape != (rows, top_k) or gaps_cp.shape != (rows, top_k):
         raise ValueError("rank sidecar arrays have the wrong shape")
     valid = np.arange(top_k)[None, :] < counts[:, None]
+    if bool(np.any(counts < 1)) or bool(np.any(counts > top_k)):
+        raise ValueError("rank counts must be between one and top-k")
     if bool(np.any(indices[~valid] != INVALID_INDEX)) or not bool(
         np.all(np.isinf(gaps_cp[~valid]))
     ):
@@ -185,6 +215,11 @@ def _flush(
         raise ValueError("rank gaps must be nonnegative")
     if bool(np.any(gaps_cp[:, 0] != 0.0)):
         raise ValueError("the first-ranked move must have zero cp gap")
+    for row_index, count in enumerate(counts.astype(np.int64)):
+        if np.unique(indices[row_index, :count]).size != count:
+            raise ValueError("valid rank observations repeat a compact move index")
+        if bool(np.any(np.diff(gaps_cp[row_index, :count]) < -1e-6)):
+            raise ValueError("rank gaps must be nondecreasing")
     legal = np.asarray(source["legal_mask"][:]) != 0
     row_index = np.repeat(np.arange(rows), counts.astype(np.int64))
     compact_index = indices[valid].astype(np.int64)

@@ -55,6 +55,29 @@ def test_rank_observation_pads_short_width() -> None:
     assert bool(np.all(np.isinf(observed.gaps_cp[1:])))
 
 
+def test_d9_lines_reads_only_the_full_width_phase_zero_block() -> None:
+    row: Any = raw_row()
+    expected = row["phases"][0]["per_depth"][1]["lines"]
+    row["phases"].append(
+        {
+            "per_depth": [
+                {
+                    "depth": 9,
+                    "complete": True,
+                    "lines": [[1, "a2a3", 99.0, 50]],
+                }
+            ]
+        }
+    )
+
+    assert tool.d9_lines(row) == expected
+
+
+def test_rank_observation_refuses_unknown_side_to_move() -> None:
+    with pytest.raises(ValueError, match="side-to-move"):
+        tool.rank_observation(raw_row(stm="unknown"), top_k=3)
+
+
 def test_flush_refuses_row_order_drift(tmp_path: Path) -> None:
     rows = [
         tool.rank_observation(raw_row(), top_k=3),
@@ -101,6 +124,46 @@ def test_flush_refuses_row_order_drift(tmp_path: Path) -> None:
             order=np.asarray([1, 0]),
             source_path=source_path,
             destination=tmp_path / "bad.zarr",
+            top_k=3,
+            source_summary_sha256="a" * 64,
+            raw_config_sha256="b" * 64,
+        )
+
+    first = rows[0]
+    repeated = tool.RankObservation(
+        game_id=first.game_id,
+        ply=first.ply,
+        indices=np.asarray(
+            [first.indices[0], first.indices[0], first.indices[2]],
+            dtype=np.uint16,
+        ),
+        gaps_cp=first.gaps_cp,
+        count=3,
+    )
+    with pytest.raises(ValueError, match="repeat a compact move index"):
+        tool._flush(
+            observations=[repeated, rows[1]],
+            order=np.asarray([0, 1]),
+            source_path=source_path,
+            destination=tmp_path / "repeated.zarr",
+            top_k=3,
+            source_summary_sha256="a" * 64,
+            raw_config_sha256="b" * 64,
+        )
+
+    decreasing = tool.RankObservation(
+        game_id=first.game_id,
+        ply=first.ply,
+        indices=first.indices,
+        gaps_cp=np.asarray([0.0, 17.0, 7.0], dtype=np.float32),
+        count=3,
+    )
+    with pytest.raises(ValueError, match="gaps must be nondecreasing"):
+        tool._flush(
+            observations=[decreasing, rows[1]],
+            order=np.asarray([0, 1]),
+            source_path=source_path,
+            destination=tmp_path / "decreasing.zarr",
             top_k=3,
             source_summary_sha256="a" * 64,
             raw_config_sha256="b" * 64,

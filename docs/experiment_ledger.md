@@ -73844,3 +73844,29 @@ descriptive quantization evidence.  Keep the old stored-top-1 rule unchanged
 for `top-max-ties`.  Rerun all six cells to fresh `v2` receipts under the one
 corrected invariant before materialization; do not reuse or delete the v1
 receipts and do not change any cell parameter or scientific gate.
+
+**2026-09-04 15:17 EDT — PRE-BANK EXPANSION AMENDMENT: retain enough d9 ranks
+to widen a successful BT4 window until its gain stops.** No d9 rank sidecar,
+score-window mixed corpus, score-window optimizer step, or score-window arena
+exists at this line.  Josh requested that a useful BT4 treatment continue
+outward rather than treating top-3/20 cp as an arbitrary endpoint.
+
+- Change the one-time immutable rank bank from top 3 to **top 8**, output path
+  `data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top8`, and command flag
+  `--top-k 8`.  All other source, replay, identity, row-count, shard-count and
+  digest pins in the 17:58Z command remain unchanged.  A-F still consume only
+  their frozen first two or three ranks, so retaining ranks 4-8 cannot change
+  any current target or audit result.
+- The current paired breadth cells are the first stop test: A versus C, B
+  versus D, and E versus F hold BT4 temperature/dose fixed while moving from
+  top-2/10 cp to top-3/20 cp.  If the winning top-2 cell is not displaced by
+  its paired top-3 cell under the existing same-opening comparison, breadth
+  has stopped and there is no automatic wider train.
+- If a top-3/20 cp cell is the selected winner, freeze its alpha and BT4
+  temperature and test one breadth/window rung at a time in this order:
+  **top-4/40 cp -> top-6/80 cp -> top-8/160 cp**.  Each fresh exact-epoch train
+  compares to the last successful rung under the same no-rolling 1,000-game,
+  100-sim paired arena and the same SUCCESS rule (positive Elo with CI lower
+  bound above zero).  Stop at the first non-success; do not skip past a failed
+  rung or select a later one from audit fit.  Each rung still needs an
+  immutable audit receipt and a launch/readout amendment before execution.

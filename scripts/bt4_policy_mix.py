@@ -39,7 +39,7 @@ import os
 import shutil
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -665,6 +665,8 @@ def _validate_sf_rank_sidecar(
     counts = np.asarray(group[sf_ranks.COUNT_FIELD][:], dtype=np.uint8)
     if sf_ranks._sha_arrays(indices, gaps, counts) != attrs.get("payload_sha256"):
         raise ValueError(f"{rank_path}: payload digest mismatch")
+    if bool(np.any(counts < 1)) or bool(np.any(counts > top_k)):
+        raise ValueError(f"{rank_path}: rank counts must be between one and top-k")
     valid = np.arange(top_k)[None, :] < counts[:, None]
     if bool(np.any(indices[~valid] != sf_ranks.INVALID_INDEX)) or not bool(
         np.all(np.isinf(gaps[~valid]))
@@ -674,10 +676,26 @@ def _validate_sf_rank_sidecar(
         gaps[valid]
     ).all():
         raise ValueError(f"{rank_path}: invalid rank payload")
+    if bool(np.any(gaps[valid] < 0.0)) or bool(np.any(gaps[:, 0] != 0.0)):
+        raise ValueError(f"{rank_path}: invalid rank gaps")
+    for row_index, count in enumerate(counts.astype(np.int64)):
+        if np.unique(indices[row_index, :count]).size != count:
+            raise ValueError(f"{rank_path}: repeated ranked move")
+        if bool(np.any(np.diff(gaps[row_index, :count]) < -1e-6)):
+            raise ValueError(f"{rank_path}: rank gaps are not nondecreasing")
     legal = np.asarray(source_group["legal_mask"][:]) != 0
     row_index = np.repeat(np.arange(rows), counts.astype(np.int64))
     if not bool(np.all(legal[row_index, indices[valid].astype(np.int64)])):
         raise ValueError(f"{rank_path}: ranked move is illegal")
+    stored_policy = np.asarray(source_group[POLICY_FIELD][:], dtype=np.float32)
+    legal_policy = np.where(legal, stored_policy, -np.inf)
+    if not bool(
+        np.all(
+            legal_policy[np.arange(rows), indices[:, 0].astype(np.int64)]
+            == np.max(legal_policy, axis=1)
+        )
+    ):
+        raise ValueError(f"{rank_path}: rank-1 is not a stored-policy maximum")
     return attrs
 
 
@@ -1725,6 +1743,7 @@ def mix_corpus(args: argparse.Namespace) -> int:
 
     rank_summary_path: Path | None = None
     rank_summary_sha: str | None = None
+    rank_outputs: dict[str, Mapping[str, Any]] | None = None
     if rank_sidecar_dir is not None:
         rank_summary_path = rank_sidecar_dir / sf_ranks.SUMMARY_NAME
         if not rank_summary_path.is_file():
@@ -1752,6 +1771,18 @@ def mix_corpus(args: argparse.Namespace) -> int:
             raise SystemExit(
                 f"SF rank summary does not describe this source corpus: {rank_bad}",
             )
+        output_items = rank_summary.get("outputs")
+        if not isinstance(output_items, list) or not all(
+            isinstance(item, Mapping) for item in output_items
+        ):
+            raise SystemExit("SF rank summary has no per-shard output receipts")
+        output_names = [str(item.get("path")) for item in output_items]
+        expected_names = [path.name for path in source_paths]
+        if output_names != expected_names:
+            raise SystemExit(
+                "SF rank summary output order does not match the source shards",
+            )
+        rank_outputs = {str(item["path"]): item for item in output_items}
         rank_summary_sha = file_sha256(rank_summary_path)
 
     shutil.copytree(source_dir, writing)
@@ -1783,6 +1814,26 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     source_summary_sha256=source_summary_sha256,
                     required_top_k=sf_rank_cap,
                 )
+                if rank_outputs is None:  # pragma: no cover - guarded above
+                    raise AssertionError("rank summary receipts were not loaded")
+                summary_output = rank_outputs[source_path.name]
+                expected_output = {
+                    "path": source_path.name,
+                    "rows": int(source[POLICY_FIELD].shape[0]),
+                    "source_row_identity_sha256": rank_attrs[
+                        "source_row_identity_sha256"
+                    ],
+                    "payload_sha256": rank_attrs["payload_sha256"],
+                }
+                output_bad = {
+                    key: (summary_output.get(key), value)
+                    for key, value in expected_output.items()
+                    if summary_output.get(key) != value
+                }
+                if output_bad:
+                    raise ValueError(
+                        f"{rank_path}: summary output receipt mismatch {output_bad}",
+                    )
                 rank = zarr.open_group(str(rank_path), mode="r")
             destination_path = writing / source_path.name
             destination: Any = zarr.open_group(str(destination_path), mode="a")
