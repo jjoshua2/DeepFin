@@ -11400,6 +11400,44 @@ def test_decision_grade_loader_rejects_foreign_retained_witness(
         load_transitions(bank)
 
 
+def test_decision_grade_loader_does_not_block_on_fifo_witness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    _write_bank(bank, correct_gap=True)
+    witness = controller_module._pending_output_path(bank)
+    witness.unlink()
+    os.link(bank, tmp_path / "retained-hidden-bank-link")
+    os.mkfifo(witness)
+    real_open = publication_module.os.open
+    opened_fifo = False
+
+    def require_nonblocking_fifo_open(
+        path: Any,
+        flags: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> int:
+        nonlocal opened_fifo
+        if path == witness.name and kwargs.get("dir_fd") is not None:
+            assert flags & os.O_NONBLOCK
+            opened_fifo = True
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(
+        publication_module.os,
+        "open",
+        require_nonblocking_fifo_open,
+    )
+
+    with pytest.raises(SystemExit, match="regular"):
+        load_transitions(bank)
+
+    assert opened_fifo is True
+    assert stat.S_ISFIFO(witness.stat().st_mode)
+
+
 def test_decision_grade_loader_rejects_extra_hard_link(
     tmp_path: Path,
 ) -> None:

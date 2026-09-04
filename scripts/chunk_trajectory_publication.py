@@ -434,7 +434,12 @@ def _anchored_file(
     try:
         _require_parent(path, parent_fd)
         if owned_file:
-            flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_NOFOLLOW", 0)
+            flags = (
+                os.O_RDONLY
+                | os.O_CLOEXEC
+                | os.O_NONBLOCK
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
             try:
                 file_fd = os.open(path.name, flags, dir_fd=parent_fd)
             except OSError as exc:
