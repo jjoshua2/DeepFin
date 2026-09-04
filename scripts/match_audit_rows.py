@@ -71,7 +71,7 @@ import os
 import stat as stat_module
 import subprocess
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any
@@ -190,7 +190,11 @@ def _builder_git_provenance() -> dict[str, Any]:
     }
 
 
-def snapshot_inventory(snapshot: str | Path) -> dict[str, Any]:
+def snapshot_inventory(
+    snapshot: str | Path,
+    *,
+    reject_file_identities: Collection[tuple[int, int]] = (),
+) -> dict[str, Any]:
     """Deterministic identity inventory of every replay shard and its files.
 
     The inventory intentionally hashes filesystem identities, not an additional
@@ -270,6 +274,12 @@ def snapshot_inventory(snapshot: str | Path) -> dict[str, Any]:
                         "replay snapshot entries must be regular files or directories: "
                         f"{child}"
                     )
+                child_identity = (int(child_stat.st_dev), int(child_stat.st_ino))
+                if child_identity in reject_file_identities:
+                    raise SystemExit(
+                        "matched-row output shares an inode with replay snapshot "
+                        f"entry {child}"
+                    )
                 total_bytes += int(child_stat.st_size)
                 entries.append([
                     relative, "file", int(child_stat.st_size),
@@ -312,7 +322,7 @@ def _require_safe_matched_output_paths(
     audit_set: Path,
     snapshot: Path,
     overwrite: bool,
-) -> None:
+) -> set[tuple[int, int]]:
     """Reject destructive builder destinations before creating any directory."""
     repo_root = Path(__file__).resolve().parents[1]
     outputs = (out_path, report_path)
@@ -333,18 +343,233 @@ def _require_safe_matched_output_paths(
         except ValueError:
             continue
         raise SystemExit("matched-row outputs cannot live inside the replay snapshot")
-    existing = [path for path in resolved_outputs if path.exists()]
+    existing: list[Path] = []
+    output_identities: set[tuple[int, int]] = set()
     for lexical in outputs:
+        absolute = lexical.expanduser().absolute()
         try:
-            if lexical.expanduser().absolute().is_symlink():
-                raise SystemExit(f"matched-row output must not be a symlink: {lexical}")
+            file_stat = absolute.lstat()
+        except FileNotFoundError:
+            continue
         except OSError as exc:
             raise SystemExit(f"cannot inspect matched-row output {lexical}: {exc}") from exc
+        existing.append(absolute)
+        if stat_module.S_ISLNK(file_stat.st_mode):
+            raise SystemExit(f"matched-row output must not be a symlink: {lexical}")
+        if not stat_module.S_ISREG(file_stat.st_mode):
+            raise SystemExit(f"matched-row output must be a regular file: {lexical}")
+        output_identities.add((int(file_stat.st_dev), int(file_stat.st_ino)))
+    try:
+        audit_stat = resolved_audit.stat()
+    except OSError as exc:
+        raise SystemExit(f"cannot inspect audit-set input {resolved_audit}: {exc}") from exc
+    audit_identity = (int(audit_stat.st_dev), int(audit_stat.st_ino))
+    if audit_identity in output_identities:
+        raise SystemExit("matched-row output shares an inode with the audit-set input")
+    if len(output_identities) != len(existing):
+        raise SystemExit("matched-row output and report paths share the same inode")
     if existing and not overwrite:
         raise SystemExit(
             "refusing to overwrite existing matched-row output without --overwrite: "
             + ", ".join(str(path) for path in existing)
         )
+    return output_identities
+
+
+def _staging_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.tmp-{os.getpid()}")
+
+
+def _stage_npz(path: Path, *, arrays: Mapping[str, Any]) -> Path:
+    """Durably prepare NPZ bytes without touching the public destination."""
+    staging = _staging_path(path)
+    created = False
+    try:
+        with staging.open("xb") as file_handle:
+            created = True
+            np.savez_compressed(file_handle, **arrays)
+            file_handle.flush()
+            os.fsync(file_handle.fileno())
+        return staging
+    except BaseException:
+        if created and staging.exists():
+            staging.unlink()
+        raise
+
+
+def _stage_json(path: Path, payload: Mapping[str, Any]) -> Path:
+    """Durably prepare report bytes without touching the public destination."""
+    staging = _staging_path(path)
+    created = False
+    try:
+        with staging.open("x", encoding="utf-8") as file_handle:
+            created = True
+            json.dump(payload, file_handle, indent=1)
+            file_handle.write("\n")
+            file_handle.flush()
+            os.fsync(file_handle.fileno())
+        return staging
+    except BaseException:
+        if created and staging.exists():
+            staging.unlink()
+        raise
+
+
+def _prepared_file_artifact(staging: Path, destination: Path) -> dict[str, Any]:
+    artifact = _file_artifact(staging)
+    # Publishing by hardlink can legitimately advance ctime as link count
+    # changes. Do not attest to a pre-publication ctime that cannot remain true.
+    artifact.pop("ctime_ns", None)
+    return {**artifact, "path": str(destination.expanduser().resolve())}
+
+
+def _backup_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.tmp-backup-{os.getpid()}")
+
+
+def _publish_staged_pair(
+    staged_output: Path,
+    output_path: Path,
+    staged_report: Path,
+    report_path: Path,
+    *,
+    overwrite: bool,
+) -> None:
+    """Publish a complete pair, retaining/restoring prior bytes on failure."""
+    pairs = (
+        (staged_output, output_path),
+        (staged_report, report_path),
+    )
+    expected_output = _prepared_file_artifact(staged_output, output_path)
+    expected_report = _prepared_file_artifact(staged_report, report_path)
+    backups: dict[Path, Path] = {}
+    published: list[tuple[Path, Path]] = []
+    try:
+        if overwrite:
+            # Preserve both old artifacts before replacing either. A crash can
+            # leave these private hardlinks for manual recovery; an ordinary
+            # exception restores them below.
+            for _staged, destination in pairs:
+                if not destination.exists():
+                    continue
+                backup = _backup_path(destination)
+                os.link(destination, backup, follow_symlinks=False)
+                backups[destination] = backup
+            for staged, destination in pairs:
+                os.replace(staged, destination)
+                published.append((staged, destination))
+        else:
+            # Keep the staged links until both no-replace publications work,
+            # so a race on the second destination can remove the first safely.
+            for staged, destination in pairs:
+                try:
+                    os.link(staged, destination)
+                except FileExistsError as exc:
+                    raise SystemExit(
+                        f"refusing to replace concurrently created output {destination}"
+                    ) from exc
+                published.append((staged, destination))
+
+        actual_output = _file_artifact(output_path)
+        if _artifact_content_identity(expected_output) != _artifact_content_identity(
+            actual_output
+        ):
+            raise RuntimeError("published matched-row NPZ differs from staged bytes")
+        actual_report = _file_artifact(report_path)
+        if _artifact_content_identity(expected_report) != _artifact_content_identity(
+            actual_report
+        ):
+            raise RuntimeError("published matched-row report differs from staged bytes")
+    except BaseException:
+        for _staged, destination in reversed(published):
+            backup = backups.pop(destination, None)
+            if backup is not None:
+                os.replace(backup, destination)
+            elif (
+                destination.exists()
+                and (
+                    overwrite
+                    or (
+                        _staged.exists()
+                        and os.path.samefile(_staged, destination)
+                    )
+                )
+            ):
+                destination.unlink()
+        raise
+    else:
+        for backup in backups.values():
+            backup.unlink()
+        for staged, _destination in pairs:
+            if staged.exists():
+                staged.unlink()
+    finally:
+        for backup in backups.values():
+            if backup.exists():
+                backup.unlink()
+
+
+def _freeze_and_publish_outputs(
+    *,
+    output_path: Path,
+    report_path: Path,
+    arrays: Mapping[str, Any],
+    report: dict[str, Any],
+    audit_set: Path,
+    snapshot: Path,
+    initial_audit_artifact: Mapping[str, Any],
+    initial_snapshot_inventory: Mapping[str, Any],
+    initial_builder: Mapping[str, Any],
+    skipped_layout: Mapping[str, int],
+    overwrite: bool,
+) -> None:
+    """Freeze observations and both artifacts before touching either destination."""
+    staged_output = _stage_npz(output_path, arrays=arrays)
+    staged_report: Path | None = None
+    try:
+        final_audit_artifact = _file_artifact(audit_set)
+        final_snapshot_inventory = snapshot_inventory(snapshot)
+        final_builder = _builder_git_provenance()
+        report.update({
+            "output": _prepared_file_artifact(staged_output, output_path),
+            "input_stability": {
+                "audit_set_unchanged": (
+                    initial_audit_artifact == final_audit_artifact
+                ),
+                "snapshot_unchanged": (
+                    initial_snapshot_inventory == final_snapshot_inventory
+                ),
+                "builder_checkout_unchanged": initial_builder == final_builder,
+            },
+        })
+        report["verification_passed"] = bool(
+            report["canonicalisation_current_frame_identical"]
+            and report["canonicalisation_castling_104_107_identical"]
+            and report["legal_move_sets_identical"]
+            and report["input_stability"]["audit_set_unchanged"]
+            and report["input_stability"]["snapshot_unchanged"]
+            and report["input_stability"]["builder_checkout_unchanged"]
+            and not skipped_layout
+            and initial_builder["git_dirty"] is False
+            and initial_builder["script"]["matches_git_revision"] is True
+        )
+        if report["verification_passed"] is not True:
+            raise SystemExit(
+                "matched-row verification failed before publication; prior output/report "
+                "pair was preserved"
+            )
+        staged_report = _stage_json(report_path, report)
+        _publish_staged_pair(
+            staged_output,
+            output_path,
+            staged_report,
+            report_path,
+            overwrite=overwrite,
+        )
+    finally:
+        for staged in (staged_output, staged_report):
+            if staged is not None and staged.exists():
+                staged.unlink()
 
 
 def board_fingerprint(board: chess.Board) -> bytes:
@@ -827,7 +1052,7 @@ def main() -> None:
         args.out or default_matched_rows_path(args.audit_set)
     ).expanduser().absolute()
     report_path = default_matched_rows_report_path(requested_out)
-    _require_safe_matched_output_paths(
+    existing_output_identities = _require_safe_matched_output_paths(
         requested_out,
         report_path,
         audit_set=args.audit_set,
@@ -840,7 +1065,10 @@ def main() -> None:
         raise SystemExit("--out must end in .npz")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     initial_audit_artifact = _file_artifact(args.audit_set)
-    initial_snapshot_inventory = snapshot_inventory(args.snapshot)
+    initial_snapshot_inventory = snapshot_inventory(
+        args.snapshot,
+        reject_file_identities=existing_output_identities,
+    )
     builder = _builder_git_provenance()
 
     audit = [
@@ -1077,62 +1305,42 @@ def main() -> None:
         "scan_seconds": scan_seconds,
     }
 
-    np.savez_compressed(
-        out_path,
-        x_stored=x_stored, x_fen_only=x_fen_only, found=found,
-        key=np.array(keys), phase=np.array([int(r["phase"]) for r in audit]),
-        source=np.array([int(r["source"]) for r in audit]),
-        src_shard=np.array(src_shard), src_row=src_row,
-        game_id=src_game, has_game_id=src_has_game,
-        source_cluster_ambiguous=src_cluster_ambiguous,
-        ply_index=src_ply, is_selfplay=src_selfplay,
-        dup_count=dup_count,
-        per_plane_nonzero_fen_only=per_plane_fen,
-        per_plane_nonzero_stored=per_plane_stored,
-        input_history_encoding=np.array([STORED_HISTORY_ENCODING]),
-        input_extra_features=np.array([STORED_EXTRA_FEATURES]),
-        snapshot=np.array([str(args.snapshot)]),
-        audit_set=np.array([str(args.audit_set)]),
-    )
-    final_audit_artifact = _file_artifact(args.audit_set)
-    final_snapshot_inventory = snapshot_inventory(args.snapshot)
-    final_builder = _builder_git_provenance()
-    report.update({
-        "output": _file_artifact(out_path),
-        "input_stability": {
-            "audit_set_unchanged": initial_audit_artifact == final_audit_artifact,
-            "snapshot_unchanged": (
-                initial_snapshot_inventory == final_snapshot_inventory
-            ),
-            "builder_checkout_unchanged": builder == final_builder,
+    _freeze_and_publish_outputs(
+        output_path=out_path,
+        report_path=report_path,
+        overwrite=bool(args.overwrite),
+        audit_set=args.audit_set,
+        snapshot=args.snapshot,
+        initial_audit_artifact=initial_audit_artifact,
+        initial_snapshot_inventory=initial_snapshot_inventory,
+        initial_builder=builder,
+        skipped_layout=skipped_layout,
+        report=report,
+        arrays={
+            "x_stored": x_stored,
+            "x_fen_only": x_fen_only,
+            "found": found,
+            "key": np.array(keys),
+            "phase": np.array([int(row["phase"]) for row in audit]),
+            "source": np.array([int(row["source"]) for row in audit]),
+            "src_shard": np.array(src_shard),
+            "src_row": src_row,
+            "game_id": src_game,
+            "has_game_id": src_has_game,
+            "source_cluster_ambiguous": src_cluster_ambiguous,
+            "ply_index": src_ply,
+            "is_selfplay": src_selfplay,
+            "dup_count": dup_count,
+            "per_plane_nonzero_fen_only": per_plane_fen,
+            "per_plane_nonzero_stored": per_plane_stored,
+            "input_history_encoding": np.array([STORED_HISTORY_ENCODING]),
+            "input_extra_features": np.array([STORED_EXTRA_FEATURES]),
+            "snapshot": np.array([str(args.snapshot)]),
+            "audit_set": np.array([str(args.audit_set)]),
         },
-    })
-    report["verification_passed"] = bool(
-        report["canonicalisation_current_frame_identical"]
-        and report["canonicalisation_castling_104_107_identical"]
-        and report["legal_move_sets_identical"]
-        and report["input_stability"]["audit_set_unchanged"]
-        and report["input_stability"]["snapshot_unchanged"]
-        and report["input_stability"]["builder_checkout_unchanged"]
-        and not skipped_layout
-        and builder["git_dirty"] is False
-        and builder["script"]["matches_git_revision"] is True
     )
-    report_path.write_text(json.dumps(report, indent=1), encoding="utf-8")
     print(json.dumps(report, indent=1))
     print(f"[match] index -> {out_path}\n[match] report -> {report_path}")
-    # An audit set whose `key` and `fen` disagree would attach every per-UCI
-    # label to the wrong position while still looking like a successful build,
-    # so this is an exit code, not a printed warning.
-    if legal_mismatch:
-        raise SystemExit(
-            f"{len(legal_mismatch)} matched rows generate a different legal-move "
-            "set than their audit FEN — the audit set's own 'key' and 'fen' "
-            "disagree on those rows, so the per-UCI deep-SF labels belong to a "
-            "different position than the one being scored"
-        )
-    if not report["canonicalisation_current_frame_identical"]:
-        raise SystemExit("recovered rows are not side-to-move canonical")
 
 
 if __name__ == "__main__":

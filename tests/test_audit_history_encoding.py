@@ -537,6 +537,7 @@ def test_match_builder_requires_explicit_overwrite_for_existing_outputs(
     report = tmp_path / "matched.npz.report.json"
     output.write_bytes(b"existing")
     audit = tmp_path / "audit.jsonl"
+    audit.write_bytes(b"audit\n")
     snapshot = tmp_path / "snapshot"
 
     with pytest.raises(SystemExit, match="without --overwrite"):
@@ -554,6 +555,191 @@ def test_match_builder_requires_explicit_overwrite_for_existing_outputs(
         snapshot=snapshot,
         overwrite=True,
     )
+
+
+def test_match_builder_rejects_hardlink_to_audit_without_mutating_it(
+    tmp_path: Path,
+) -> None:
+    from scripts.match_audit_rows import _require_safe_matched_output_paths
+
+    audit = tmp_path / "audit.jsonl"
+    audit.write_bytes(b"protected audit bytes\n")
+    output = tmp_path / "matched.npz"
+    output.hardlink_to(audit)
+    report = tmp_path / "matched.npz.report.json"
+    before = audit.read_bytes()
+
+    with pytest.raises(SystemExit, match="shares an inode with the audit-set"):
+        _require_safe_matched_output_paths(
+            output,
+            report,
+            audit_set=audit,
+            snapshot=tmp_path / "snapshot",
+            overwrite=True,
+        )
+    assert audit.read_bytes() == before
+
+
+def test_match_builder_rejects_hardlink_to_snapshot_chunk_without_mutation(
+    tmp_path: Path,
+) -> None:
+    from scripts.match_audit_rows import (
+        _require_safe_matched_output_paths,
+        snapshot_inventory,
+    )
+
+    audit = tmp_path / "audit.jsonl"
+    audit.write_bytes(b"audit\n")
+    snapshot = tmp_path / "snapshot"
+    chunk = snapshot / "s0.zarr" / "game_id" / "0"
+    chunk.parent.mkdir(parents=True)
+    chunk.write_bytes(b"protected zarr chunk")
+    output = tmp_path / "matched.npz"
+    output.hardlink_to(chunk)
+    before = chunk.read_bytes()
+    output_identities = _require_safe_matched_output_paths(
+        output,
+        tmp_path / "matched.npz.report.json",
+        audit_set=audit,
+        snapshot=snapshot,
+        overwrite=True,
+    )
+
+    with pytest.raises(SystemExit, match="shares an inode with replay snapshot"):
+        snapshot_inventory(
+            snapshot,
+            reject_file_identities=output_identities,
+        )
+    assert chunk.read_bytes() == before
+
+
+def test_match_builder_rejects_output_report_same_inode(tmp_path: Path) -> None:
+    from scripts.match_audit_rows import _require_safe_matched_output_paths
+
+    audit = tmp_path / "audit.jsonl"
+    audit.write_bytes(b"audit\n")
+    output = tmp_path / "matched.npz"
+    output.write_bytes(b"old output")
+    report = tmp_path / "matched.npz.report.json"
+    report.hardlink_to(output)
+
+    with pytest.raises(SystemExit, match="output and report paths share the same inode"):
+        _require_safe_matched_output_paths(
+            output,
+            report,
+            audit_set=audit,
+            snapshot=tmp_path / "snapshot",
+            overwrite=True,
+        )
+
+
+def test_atomic_pair_overwrite_never_writes_through_hardlink(tmp_path: Path) -> None:
+    from scripts import match_audit_rows as matcher
+
+    protected = tmp_path / "protected-source.py"
+    protected.write_bytes(b"tracked source bytes\n")
+    output = tmp_path / "outside-repo-output.npz"
+    output.hardlink_to(protected)
+    report = tmp_path / "outside-repo-output.npz.report.json"
+    protected_inode = protected.stat().st_ino
+
+    staged_output = matcher._stage_npz(
+        output,
+        arrays={"value": np.asarray([7], dtype=np.int64)},
+    )
+    staged_report = matcher._stage_json(report, {"complete": True})
+    matcher._publish_staged_pair(
+        staged_output,
+        output,
+        staged_report,
+        report,
+        overwrite=True,
+    )
+
+    assert protected.read_bytes() == b"tracked source bytes\n"
+    assert protected.stat().st_ino == protected_inode
+    assert output.stat().st_ino != protected_inode
+    with np.load(output, allow_pickle=False) as data:
+        assert data["value"].tolist() == [7]
+
+
+def test_matched_pair_overwrite_rolls_back_if_report_publish_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import match_audit_rows as matcher
+
+    output = tmp_path / "matched.npz"
+    report = tmp_path / "matched.npz.report.json"
+    output.write_bytes(b"prior npz")
+    report.write_bytes(b"prior report")
+    staged_output = matcher._stage_npz(
+        output,
+        arrays={"value": np.asarray([9], dtype=np.int64)},
+    )
+    staged_report = matcher._stage_json(report, {"replacement": True})
+    real_replace = matcher.os.replace
+
+    def fail_report_publish(source: Path, destination: Path) -> None:
+        if Path(source) == staged_report and Path(destination) == report:
+            raise OSError("injected report publication failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(matcher.os, "replace", fail_report_publish)
+    with pytest.raises(OSError, match="injected report publication failure"):
+        matcher._publish_staged_pair(
+            staged_output,
+            output,
+            staged_report,
+            report,
+            overwrite=True,
+        )
+
+    assert output.read_bytes() == b"prior npz"
+    assert report.read_bytes() == b"prior report"
+    assert not list(tmp_path.glob(".*.tmp-backup-*"))
+
+
+def test_stability_failure_preserves_prior_matched_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import match_audit_rows as matcher
+
+    audit = tmp_path / "audit.jsonl"
+    audit.write_bytes(b"audit\n")
+    output = tmp_path / "matched.npz"
+    report_path = tmp_path / "matched.npz.report.json"
+    output.write_bytes(b"prior npz")
+    report_path.write_bytes(b"prior report")
+    builder = {
+        "git_dirty": False,
+        "script": {"matches_git_revision": True},
+    }
+    monkeypatch.setattr(matcher, "snapshot_inventory", lambda _path: {"new": True})
+    monkeypatch.setattr(matcher, "_builder_git_provenance", lambda: builder)
+    report = {
+        "canonicalisation_current_frame_identical": True,
+        "canonicalisation_castling_104_107_identical": True,
+        "legal_move_sets_identical": True,
+    }
+
+    with pytest.raises(SystemExit, match="failed before publication"):
+        matcher._freeze_and_publish_outputs(
+            output_path=output,
+            report_path=report_path,
+            arrays={"value": np.asarray([1], dtype=np.int64)},
+            report=report,
+            audit_set=audit,
+            snapshot=tmp_path / "snapshot",
+            initial_audit_artifact=matcher._file_artifact(audit),
+            initial_snapshot_inventory={"old": True},
+            initial_builder=builder,
+            skipped_layout={},
+            overwrite=True,
+        )
+
+    assert output.read_bytes() == b"prior npz"
+    assert report_path.read_bytes() == b"prior report"
+    assert not list(tmp_path.glob(".*.tmp-*"))
 
 
 def _matched_origin_fixture(
