@@ -5401,15 +5401,17 @@ def test_normal_pair_rejects_substituted_pending_bank_witness(
         "complete": True,
         "output": publication._prepared_output_artifact(pending_output, output),
     }
-    real_publish_output = publication._publish_output
+    real_publish = publication._publish_no_replace
 
-    def publish_then_substitute(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        result = real_publish_output(*args, **kwargs)
-        pending_output.rename(hidden)
-        pending_output.write_text("completed bank\n")
-        return result
+    def publish_then_substitute(
+        source_path: Path, destination: Path, **kwargs: Any,
+    ) -> None:
+        real_publish(source_path, destination, **kwargs)
+        if source_path == pending_output:
+            pending_output.rename(hidden)
+            pending_output.write_text("completed bank\n")
 
-    monkeypatch.setattr(publication, "_publish_output", publish_then_substitute)
+    monkeypatch.setattr(publication, "_publish_no_replace", publish_then_substitute)
     with pytest.raises(
         SystemExit, match=r"anchored regular file|unexpected hard links|not the same",
     ):
@@ -5562,6 +5564,85 @@ def test_uncertain_manifest_create_is_quarantined_across_retry(
     with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
         publication._require_new_output_pair(output, meta, overwrite=False)
     assert not output.exists()
+    assert not meta.exists()
+
+
+@pytest.mark.parametrize("operation", ["create", "recovery"])
+def test_first_manifest_name_authentication_drift_is_quarantined(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    operation: str,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    if operation == "recovery":
+        output, meta, pending_output, pending_meta, manifest = (
+            _prepare_pending_manifest_recovery(tmp_path, bank_published=False)
+        )
+    else:
+        output = tmp_path / "bank.jsonl"
+        meta = tmp_path / "bank.jsonl.meta.json"
+        pending_output = publication._pending_output_path(output)
+        pending_meta = publication._pending_manifest_path(meta)
+        pending_output.write_text("completed bank\n")
+        manifest = {
+            "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+            "complete": True,
+            "output": publication._prepared_output_artifact(
+                pending_output, output,
+            ),
+        }
+    attacker_manifest = {**manifest, "attacker": "longer"}
+    real_open = publication.os.open
+    real_stat = publication.os.stat
+    manifest_opened = False
+    injected = False
+
+    def track_manifest_open(
+        path: Any, flags: int, *args: Any, **kwargs: Any,
+    ) -> int:
+        nonlocal manifest_opened
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if path == pending_meta.name and kwargs.get("dir_fd") is not None:
+            manifest_opened = True
+        return descriptor
+
+    def mutate_on_first_name_authentication(
+        path: Any, *args: Any, **kwargs: Any,
+    ) -> os.stat_result:
+        nonlocal injected
+        if (
+            manifest_opened
+            and not injected
+            and path == pending_meta.name
+            and kwargs.get("dir_fd") is not None
+        ):
+            injected = True
+            pending_meta.write_text(json.dumps(attacker_manifest))
+            raise OSError(errno.EIO, "first manifest name authentication failed")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication.os, "open", track_manifest_open)
+    monkeypatch.setattr(publication.os, "stat", mutate_on_first_name_authentication)
+    def attempt() -> Any:
+        if operation == "recovery":
+            return publication._require_new_output_pair(
+                output, meta, overwrite=False,
+            )
+        return publication._publish_evidence_pair(
+            pending_output, output, pending_meta, meta, manifest,
+        )
+    with pytest.raises(SystemExit, match="changed during authentication"):
+        attempt()
+
+    monkeypatch.setattr(publication.os, "open", real_open)
+    monkeypatch.setattr(publication.os, "stat", real_stat)
+    assert injected is True
+    assert json.loads(pending_meta.read_text()) == attacker_manifest
+    assert publication._invalid_manifest_path(meta).exists()
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
     assert not meta.exists()
 
 
@@ -5733,7 +5814,10 @@ def test_manifest_quarantine_uses_retained_parent_during_decoy_swap(
         real_publish(tmp, destination, **kwargs)
 
     monkeypatch.setattr(publication, "_publish_no_replace", install_parent_decoy)
-    with pytest.raises(SystemExit, match="containing directory changed"):
+    with pytest.raises(
+        SystemExit,
+        match=r"containing directory changed|cannot revalidate evidence artifact",
+    ):
         publication._publish_evidence_pair(
             pending_output, output, pending_meta, meta, manifest,
         )
@@ -6171,6 +6255,70 @@ def test_disappeared_output_parent_during_acquisition_is_quarantined(
     assert json.loads(pending_meta.read_text()) == attacker_manifest
 
 
+def test_manifest_parent_initial_authentication_decoy_is_quarantined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    parent = tmp_path / "evidence"
+    held_parent = tmp_path / "held-evidence"
+    decoy_parent = tmp_path / "decoy-evidence"
+    parent.mkdir()
+    decoy_parent.mkdir()
+    output = parent / "bank.jsonl"
+    meta = parent / "bank.jsonl.meta.json"
+
+    def write_complete_pair(directory: Path, *, attacker: bool) -> None:
+        pending_output = directory / publication._pending_output_path(output).name
+        pending_meta = directory / publication._pending_manifest_path(meta).name
+        final_output = directory / output.name
+        final_meta = directory / meta.name
+        pending_output.write_text("attacker bank\n" if attacker else "authentic bank\n")
+        manifest = {
+            "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+            "complete": True,
+            "attacker": attacker,
+            "output": publication._prepared_output_artifact(
+                pending_output, output,
+            ),
+        }
+        os.link(pending_output, final_output)
+        pending_meta.write_text(json.dumps(manifest))
+        os.link(pending_meta, final_meta)
+
+    write_complete_pair(parent, attacker=False)
+    write_complete_pair(decoy_parent, attacker=True)
+    real_stat = Path.stat
+    parent_stats = 0
+    injected = False
+
+    def install_decoy_on_initial_parent_authentication(
+        path: Path, *args: Any, **kwargs: Any,
+    ) -> os.stat_result:
+        nonlocal parent_stats, injected
+        if path == parent:
+            parent_stats += 1
+            if parent_stats == 2:
+                parent.rename(held_parent)
+                decoy_parent.rename(parent)
+                injected = True
+                raise OSError(errno.EIO, "initial parent authentication failed")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", install_decoy_on_initial_parent_authentication)
+    with pytest.raises(SystemExit, match="containing directory changed"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    monkeypatch.setattr(Path, "stat", real_stat)
+    assert injected is True
+    invalid_name = publication._invalid_manifest_path(meta).name
+    assert (held_parent / invalid_name).exists()
+    assert (parent / invalid_name).exists()
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+    assert json.loads((parent / meta.name).read_text())["attacker"] is True
+
+
 def test_output_parent_swap_at_recovery_exit_is_quarantined(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6228,6 +6376,7 @@ def test_invalid_marker_stat_io_failure_cannot_publish_pending_pair(
         nonlocal injected
         if not injected and path == invalid.name and kwargs.get("dir_fd") is not None:
             injected = True
+            invalid.unlink()
             raise OSError(errno.EIO, "invalid marker stat failure")
         return real_stat(path, *args, **kwargs)
 
@@ -6236,6 +6385,7 @@ def test_invalid_marker_stat_io_failure_cannot_publish_pending_pair(
         publication._require_new_output_pair(output, meta, overwrite=False)
 
     monkeypatch.setattr(publication.os, "stat", real_stat)
+    assert invalid.exists()
     assert pending_output.exists()
     assert not output.exists()
     assert not meta.exists()
@@ -6281,6 +6431,70 @@ def test_invalid_marker_recreates_blocking_name_after_final_check_failure(
 
     monkeypatch.setattr(publication.os, "fsync", real_fsync)
     assert removed is True
+    assert invalid.exists()
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+    assert pending_output.exists()
+    assert not output.exists()
+
+
+def test_invalid_marker_repair_survives_remove_and_io_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=False)
+    )
+    pending_meta.write_text(json.dumps({**manifest, "tampered": True}))
+    invalid = publication._invalid_manifest_path(meta)
+    parent_fd = os.open(
+        meta.parent,
+        os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0),
+    )
+    real_fsync = publication.os.fsync
+    real_stat = publication.os.stat
+    marker_sync_failed = False
+    repair_stat_failed = False
+
+    def fail_initial_marker_sync(descriptor: int) -> None:
+        nonlocal marker_sync_failed
+        descriptor_stat = os.fstat(descriptor)
+        if not marker_sync_failed and stat.S_ISREG(descriptor_stat.st_mode):
+            marker_sync_failed = True
+            real_fsync(descriptor)
+            raise OSError(errno.EIO, "marker file sync failed")
+        real_fsync(descriptor)
+
+    def remove_marker_during_repair(
+        path: Any, *args: Any, **kwargs: Any,
+    ) -> os.stat_result:
+        nonlocal repair_stat_failed
+        if (
+            marker_sync_failed
+            and not repair_stat_failed
+            and path == invalid.name
+            and kwargs.get("dir_fd") == parent_fd
+        ):
+            repair_stat_failed = True
+            invalid.unlink()
+            raise OSError(errno.EIO, "marker repair stat failed")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication.os, "fsync", fail_initial_marker_sync)
+    monkeypatch.setattr(publication.os, "stat", remove_marker_during_repair)
+    try:
+        with pytest.raises(OSError, match="marker file sync failed"):
+            publication._mark_manifest_recovery_invalid(
+                meta, parent_fd=parent_fd,
+            )
+    finally:
+        os.close(parent_fd)
+
+    monkeypatch.setattr(publication.os, "fsync", real_fsync)
+    monkeypatch.setattr(publication.os, "stat", real_stat)
+    assert marker_sync_failed is True
+    assert repair_stat_failed is True
     assert invalid.exists()
     with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
         publication._require_new_output_pair(output, meta, overwrite=False)
@@ -6813,6 +7027,68 @@ def test_collection_failure_manifest_substitution_cannot_seed_recovery(
     assert replaced is True
     assert not pending_meta.exists()
     assert json.loads(invalid.read_text()) == attacker_manifest
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+    assert not output.exists()
+
+
+def test_collection_failure_stat_error_cannot_seed_pending_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    pending = tmp_path / ".bank.jsonl.tmp-pending"
+    output = tmp_path / "bank.jsonl"
+    meta = tmp_path / "bank.jsonl.meta.json"
+    pending_meta = publication._pending_manifest_path(meta)
+    pending.write_text("partial observations\n")
+    output_artifact = publication._prepared_output_artifact(pending, output)
+    attacker_manifest = {
+        "schema": publication.CHUNK_TRAJECTORY_SCHEMA,
+        "complete": True,
+        "attacker": True,
+        "output": output_artifact,
+    }
+    file_fd = os.open(pending, os.O_RDONLY | os.O_CLOEXEC)
+    parent_fd = os.open(
+        tmp_path, os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0),
+    )
+    real_stat = publication.os.stat
+    injected = False
+
+    def create_manifest_then_fail_bank_stat(
+        path: Any, *args: Any, **kwargs: Any,
+    ) -> os.stat_result:
+        nonlocal injected
+        if (
+            not injected
+            and path == pending.name
+            and kwargs.get("dir_fd") == parent_fd
+        ):
+            injected = True
+            pending_meta.write_text(json.dumps(attacker_manifest))
+            raise OSError(errno.EIO, "collection diagnostic bank stat failed")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication.os, "stat", create_manifest_then_fail_bank_stat)
+    try:
+        with pytest.raises(OSError, match="collection diagnostic bank stat failed"):
+            publication._write_invalid_recovery_diagnostic(
+                pending,
+                output,
+                meta,
+                {"failure_stage": "trajectory_collection"},
+                file_fd=file_fd,
+                parent_fd=parent_fd,
+            )
+    finally:
+        os.close(file_fd)
+        os.close(parent_fd)
+
+    monkeypatch.setattr(publication.os, "stat", real_stat)
+    assert injected is True
+    assert publication._invalid_manifest_path(meta).exists()
+    assert json.loads(pending_meta.read_text()) == attacker_manifest
     with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
         publication._require_new_output_pair(output, meta, overwrite=False)
     assert not output.exists()
@@ -8752,6 +9028,81 @@ def test_post_collection_diagnostic_substitution_cannot_seed_recovery(
     assert pending_output.read_text() == "row one\nrow two\n"
     assert not pending_meta.exists()
     assert json.loads(invalid.read_text()) == attacker_manifest
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+    assert not output.exists()
+
+
+def test_post_collection_stat_error_cannot_seed_pending_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+    from scripts import chunk_trajectory_publication as publication
+
+    output = tmp_path / "bank.jsonl"
+    pending_output = producer._pending_output_path(output)
+    meta = Path(str(output) + ".meta.json")
+    pending_meta = producer._pending_manifest_path(meta)
+    pending_output.write_text("row one\nrow two\n")
+    output_artifact = producer._prepared_output_artifact(pending_output, output)
+    attacker_manifest = {
+        "schema": producer._SCHEMA,
+        "complete": True,
+        "attacker": True,
+        "output": output_artifact,
+    }
+
+    def fail_after_collection() -> None:
+        retained_output_fd = os.open(pending_output, os.O_RDONLY | os.O_CLOEXEC)
+        retained_output_parent_fd = os.open(
+            pending_output.parent,
+            os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0),
+        )
+        producer._ACTIVE_PENDING_EVIDENCE = {
+            "collection_complete": True,
+            "pending_output": pending_output,
+            "output": output,
+            "manifest": meta,
+            "pending_manifest": pending_meta,
+            "output_artifact": output_artifact,
+            "retained_output_fd": retained_output_fd,
+            "retained_output_parent_fd": retained_output_parent_fd,
+            "output_locks": (),
+            "provenance": {"schema": producer._SCHEMA},
+            "row_count": 2,
+            "position_count": 1,
+            "requested_position_count": 1,
+            "requested_max_positions": 1,
+            "excluded_positions": [],
+            "reference_censoring_details": [],
+        }
+        raise RuntimeError("final provenance snapshot failed")
+
+    real_stat = publication.os.stat
+    bank_stats = 0
+    injected = False
+
+    def create_manifest_during_diagnostic(
+        path: Any, *args: Any, **kwargs: Any,
+    ) -> os.stat_result:
+        nonlocal bank_stats, injected
+        if path == pending_output.name and kwargs.get("dir_fd") is not None:
+            bank_stats += 1
+            if bank_stats == 2:
+                injected = True
+                pending_meta.write_text(json.dumps(attacker_manifest))
+                raise OSError(errno.EIO, "post-collection bank stat failed")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(producer, "_main", fail_after_collection)
+    monkeypatch.setattr(publication.os, "stat", create_manifest_during_diagnostic)
+    with pytest.raises(RuntimeError, match="final provenance snapshot failed"):
+        producer.main()
+
+    monkeypatch.setattr(publication.os, "stat", real_stat)
+    assert injected is True
+    assert publication._invalid_manifest_path(meta).exists()
+    assert json.loads(pending_meta.read_text()) == attacker_manifest
     with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
         publication._require_new_output_pair(output, meta, overwrite=False)
     assert not output.exists()

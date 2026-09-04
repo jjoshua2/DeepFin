@@ -4100,8 +4100,9 @@ def _preserve_post_collection_failure(exc: BaseException) -> None:
             expected_artifact=output_artifact,
         )
     except BaseException:
-        # Diagnostics must never replace the producer's original nonzero failure.
-        pass
+        publication_module._mark_manifest_recovery_invalid(
+            manifest_path, parent_fd=retained_output_parent_fd,
+        )
 
 
 def main() -> None:

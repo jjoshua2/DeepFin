@@ -57,17 +57,52 @@ def _raise_path_access_failure(exc: OSError, message: str) -> NoReturn:
     raise exc
 
 
-def _open_parent(path: Path) -> int:
+def _open_parent(
+    path: Path, *, quarantine_meta_path: Path | None = None,
+) -> int:
+    parent = path.expanduser().parent
     flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0)
+    descriptor = -1
     try:
-        descriptor = os.open(path.expanduser().parent, flags)
+        named_before = parent.stat()
+        descriptor = os.open(parent, flags)
     except OSError as exc:
         _raise_path_access_failure(
             exc, f"cannot open containing directory for {path}",
         )
-    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+    try:
+        opened = os.fstat(descriptor)
+    except OSError as exc:
+        try:
+            opened = os.fstat(descriptor)
+            named_after = parent.stat()
+        except OSError:
+            if quarantine_meta_path is not None:
+                _mark_manifest_namespace_invalid(
+                    quarantine_meta_path, parent_fd=descriptor,
+                )
+            os.close(descriptor)
+            raise
+        if _identity(named_before) != _identity(opened) or _identity(
+            named_after
+        ) != _identity(opened):
+            if quarantine_meta_path is not None:
+                _mark_manifest_namespace_invalid(
+                    quarantine_meta_path, parent_fd=descriptor,
+                )
+            os.close(descriptor)
+            raise SystemExit(
+                f"containing directory changed while being opened: {path.parent}"
+            ) from exc
         os.close(descriptor)
-        raise SystemExit(f"containing path is not a directory: {path.parent}")
+        raise
+    if not stat.S_ISDIR(opened.st_mode) or _identity(named_before) != _identity(opened):
+        if quarantine_meta_path is not None:
+            _mark_manifest_namespace_invalid(
+                quarantine_meta_path, parent_fd=descriptor,
+            )
+        os.close(descriptor)
+        raise SystemExit(f"containing directory changed while being opened: {path.parent}")
     return descriptor
 
 
@@ -80,6 +115,28 @@ def _require_parent(path: Path, parent_fd: int) -> None:
         )
     if _identity(named) != _identity(os.fstat(parent_fd)):
         raise SystemExit(f"containing directory changed during publication: {path.parent}")
+
+
+def _authenticate_initial_parent(path: Path, parent_fd: int) -> None:
+    """Recheck a newly opened parent and classify a transient first failure."""
+    opened_before = os.fstat(parent_fd)
+    try:
+        _require_parent(path, parent_fd)
+    except OSError as exc:
+        try:
+            _require_parent(path, parent_fd)
+            opened_after = os.fstat(parent_fd)
+        except OSError as authentication_exc:
+            raise RuntimeError(
+                f"cannot authenticate newly opened evidence parent: {path.parent}"
+            ) from authentication_exc
+        except (SystemExit, RuntimeError) as integrity_exc:
+            raise integrity_exc from exc
+        if _identity(opened_before) != _identity(opened_after):
+            raise SystemExit(
+                f"newly opened evidence parent changed: {path.parent}"
+            ) from exc
+        raise
 
 
 def _require_entry(
@@ -101,6 +158,44 @@ def _require_entry(
     if links is not None and int(opened.st_nlink) != links:
         raise SystemExit(f"evidence artifact has unexpected hard links: {path}")
     return opened
+
+
+def _authenticate_initial_open(
+    path: Path,
+    parent_fd: int,
+    file_fd: int,
+    *,
+    links: int | None,
+) -> None:
+    """Bind a returned descriptor to its name despite a transient first check."""
+    opened_before = os.fstat(file_fd)
+    try:
+        _require_entry(path, parent_fd, file_fd, links=links)
+        _require_parent(path, parent_fd)
+    except OSError as exc:
+        try:
+            opened_after = _require_entry(
+                path, parent_fd, file_fd, links=links,
+            )
+            _require_parent(path, parent_fd)
+        except OSError as authentication_exc:
+            raise RuntimeError(
+                f"cannot authenticate newly opened evidence: {path}"
+            ) from authentication_exc
+        except (SystemExit, RuntimeError) as integrity_exc:
+            raise integrity_exc from exc
+        stable = (
+            "st_mode", "st_dev", "st_ino", "st_nlink", "st_size",
+            "st_mtime_ns", "st_ctime_ns",
+        )
+        if any(
+            getattr(opened_before, field) != getattr(opened_after, field)
+            for field in stable
+        ):
+            raise SystemExit(
+                f"newly opened evidence changed during authentication: {path}"
+            ) from exc
+        raise
 
 
 def _artifact_from_fd(file_fd: int, path: Path) -> dict[str, Any]:
@@ -254,7 +349,7 @@ def _anchored_file(
                 _raise_path_access_failure(
                     exc, f"cannot safely open regular evidence file: {path}",
                 )
-        _require_entry(path, parent_fd, file_fd, links=links)
+        _authenticate_initial_open(path, parent_fd, file_fd, links=links)
         try:
             before = _artifact_from_fd(file_fd, artifact_path)
         except BaseException as exc:
@@ -457,7 +552,7 @@ def _open_staged_output_file(
                     f"staged-file creation had an uncertain result: {path}"
                 ) from exc
             raise
-        _require_entry(path, parent_fd, descriptor, links=1)
+        _authenticate_initial_open(path, parent_fd, descriptor, links=1)
         with os.fdopen(descriptor, "w+") as fh:
             descriptor = -1
             yield fh, parent_fd
@@ -525,8 +620,22 @@ def _retained_parent(path: Path) -> Generator[int, None, None]:
     """Keep one authenticated containing directory open across an operation."""
     parent_fd = _open_parent(path)
     try:
-        _require_parent(path, parent_fd)
+        _authenticate_initial_parent(path, parent_fd)
         yield parent_fd
+    finally:
+        os.close(parent_fd)
+
+
+@contextmanager
+def _retained_manifest_parent(meta_path: Path) -> Generator[int, None, None]:
+    """Authenticate a manifest parent inside its durable quarantine boundary."""
+    parent_fd = _open_parent(meta_path, quarantine_meta_path=meta_path)
+    try:
+        with _quarantine_manifest_recovery_on_integrity_failure(
+            meta_path, parent_fd=parent_fd,
+        ):
+            _authenticate_initial_parent(meta_path, parent_fd)
+            yield parent_fd
     finally:
         os.close(parent_fd)
 
@@ -588,20 +697,22 @@ def _write_manifest_recovery_invalid_once(
 def _ensure_manifest_recovery_invalid(meta_path: Path, *, parent_fd: int) -> None:
     """Re-establish a blocking name after a failed marker durability barrier."""
     marker = _invalid_manifest_path(meta_path)
-    try:
-        os.stat(marker.name, dir_fd=parent_fd, follow_symlinks=False)
-    except OSError as exc:
-        if exc.errno != errno.ENOENT:
-            raise
-        _write_manifest_recovery_invalid_once(meta_path, parent_fd=parent_fd)
-        return
-    os.fsync(parent_fd)
-    try:
-        os.stat(marker.name, dir_fd=parent_fd, follow_symlinks=False)
-    except OSError as exc:
-        if exc.errno != errno.ENOENT:
-            raise
-        _write_manifest_recovery_invalid_once(meta_path, parent_fd=parent_fd)
+    last_failure: BaseException | None = None
+    for _attempt in range(3):
+        try:
+            os.stat(marker.name, dir_fd=parent_fd, follow_symlinks=False)
+            os.fsync(parent_fd)
+            os.stat(marker.name, dir_fd=parent_fd, follow_symlinks=False)
+            return
+        except BaseException as exc:
+            last_failure = exc
+        try:
+            _write_manifest_recovery_invalid_once(
+                meta_path, parent_fd=parent_fd,
+            )
+        except BaseException as exc:
+            last_failure = exc
+    raise RuntimeError("cannot retain invalid-recovery marker") from last_failure
 
 
 def _mark_manifest_recovery_invalid(
@@ -620,6 +731,25 @@ def _mark_manifest_recovery_invalid(
         raise
 
 
+def _mark_manifest_namespace_invalid(meta_path: Path, *, parent_fd: int) -> None:
+    """Block both a retained parent and any concurrently installed alias."""
+    _mark_manifest_recovery_invalid(meta_path, parent_fd=parent_fd)
+    current_parent_fd = -1
+    try:
+        current_parent_fd = _open_parent(meta_path)
+        if _identity(os.fstat(current_parent_fd)) != _identity(os.fstat(parent_fd)):
+            _mark_manifest_recovery_invalid(
+                meta_path, parent_fd=current_parent_fd,
+            )
+    except (OSError, SystemExit, RuntimeError) as alias_exc:
+        raise RuntimeError(
+            "cannot quarantine the current manifest namespace"
+        ) from alias_exc
+    finally:
+        if current_parent_fd >= 0:
+            os.close(current_parent_fd)
+
+
 @contextmanager
 def _quarantine_manifest_recovery_on_integrity_failure(
     meta_path: Path, *, parent_fd: int,
@@ -629,7 +759,7 @@ def _quarantine_manifest_recovery_on_integrity_failure(
         yield
         _require_parent(meta_path, parent_fd)
     except (FileExistsError, SystemExit, RuntimeError):
-        _mark_manifest_recovery_invalid(meta_path, parent_fd=parent_fd)
+        _mark_manifest_namespace_invalid(meta_path, parent_fd=parent_fd)
         raise
 
 
@@ -681,6 +811,7 @@ def _manifest_recovery_is_invalid(meta_path: Path, *, parent_fd: int) -> bool:
     except OSError as exc:
         if exc.errno == errno.ENOENT:
             return False
+        _ensure_manifest_recovery_invalid(meta_path, parent_fd=parent_fd)
         raise
     return True
 
@@ -704,7 +835,7 @@ def _require_new_output_pair(
         raise SystemExit(
             "--overwrite is disabled for trajectory evidence; choose a new versioned --out"
         )
-    with _retained_parent(meta_path) as manifest_parent_fd:
+    with _retained_manifest_parent(meta_path) as manifest_parent_fd:
         if _manifest_recovery_is_invalid(
             meta_path, parent_fd=manifest_parent_fd,
         ):
@@ -1337,7 +1468,7 @@ def _write_invalid_recovery_diagnostic(
             parent_fd=parent_fd,
             diagnostic={**payload, "output": artifact},
         )
-    except (FileExistsError, SystemExit, RuntimeError):
+    except BaseException:
         _mark_manifest_recovery_invalid(meta_path, parent_fd=parent_fd)
         raise
     return artifact
@@ -1492,7 +1623,7 @@ def _publish_evidence_pair(
             _require_parent(meta_path, retained_output_parent_fd)
         return
     with (
-        _retained_parent(meta_path) as manifest_parent_fd,
+        _retained_manifest_parent(meta_path) as manifest_parent_fd,
         _quarantine_manifest_recovery_on_integrity_failure(
             meta_path, parent_fd=manifest_parent_fd,
         ),
@@ -1529,67 +1660,83 @@ def _publish_evidence_pair_at_parents(
     with _anchored_file(
         pending_output,
         output_path,
-        durable=True,
+        durable=False,
         links=1,
         parent_fd=output_parent_fd,
         file_fd=retained_output_fd,
         exit_links=2,
-    ) as pending_bank:
+    ) as collected_bank:
         if retained_output_artifact is not None and (
-            _publication_artifact_identity(pending_bank.artifact)
+            _publication_artifact_identity(collected_bank.artifact)
             != _publication_artifact_identity(retained_output_artifact)
         ):
             raise RuntimeError("retained trajectory bank changed after collection")
         if (
-            _publication_artifact_identity(pending_bank.artifact)
+            _publication_artifact_identity(collected_bank.artifact)
             != _publication_artifact_identity(manifest.get("output"))
         ):
             raise RuntimeError("private trajectory bank differs from its manifest")
         _write_json_staged(
             pending_meta, manifest, parent_fd=manifest_parent_fd,
         )
-        with _durably_read_pending_manifest(
-            pending_meta, parent_fd=manifest_parent_fd,
-        ) as (
-            staged_manifest,
-            pending_manifest,
-        ):
-            if staged_manifest != manifest:
-                raise SystemExit(
-                    "staged evidence manifest differs from requested manifest"
-                )
-            _publish_no_replace(
-                pending_output,
-                output_path,
-                source=pending_bank,
-                output_parent_fd=output_parent_fd,
-            )
-            published = _artifact_from_fd(pending_bank.file_fd, output_path)
+        with _anchored_file(
+            pending_output,
+            output_path,
+            durable=True,
+            links=1,
+            parent_fd=output_parent_fd,
+            file_fd=collected_bank.file_fd,
+            exit_links=2,
+        ) as pending_bank:
             if (
-                _publication_artifact_identity(published)
-                != _publication_artifact_identity(manifest.get("output"))
+                _publication_artifact_identity(pending_bank.artifact)
+                != _publication_artifact_identity(collected_bank.artifact)
             ):
-                raise RuntimeError("published trajectory bank differs from its manifest")
-            with _matching_output(
-                output_path,
-                output_path,
-                manifest,
-                expected_links=2,
-                parent_fd=output_parent_fd,
-            ) as final_bank:
-                if _identity(os.fstat(pending_bank.file_fd)) != _identity(
-                    os.fstat(final_bank.file_fd)
-                ):
+                raise SystemExit("collected trajectory bank changed before publication")
+            with _durably_read_pending_manifest(
+                pending_meta, parent_fd=manifest_parent_fd,
+            ) as (
+                staged_manifest,
+                pending_manifest,
+            ):
+                if staged_manifest != manifest:
                     raise SystemExit(
-                        "published and pending trajectory banks are not the same hard links"
+                        "staged evidence manifest differs from requested manifest"
                     )
                 _publish_no_replace(
-                    pending_meta,
-                    meta_path,
-                    source=pending_manifest,
-                    guards=((final_bank, 2), (pending_bank, 2)),
-                    output_parent_fd=manifest_parent_fd,
+                    pending_output,
+                    output_path,
+                    source=pending_bank,
+                    output_parent_fd=output_parent_fd,
                 )
+                published = _artifact_from_fd(pending_bank.file_fd, output_path)
+                if (
+                    _publication_artifact_identity(published)
+                    != _publication_artifact_identity(manifest.get("output"))
+                ):
+                    raise RuntimeError(
+                        "published trajectory bank differs from its manifest"
+                    )
+                with _matching_output(
+                    output_path,
+                    output_path,
+                    manifest,
+                    expected_links=2,
+                    parent_fd=output_parent_fd,
+                ) as final_bank:
+                    if _identity(os.fstat(pending_bank.file_fd)) != _identity(
+                        os.fstat(final_bank.file_fd)
+                    ):
+                        raise SystemExit(
+                            "published and pending trajectory banks are not the same hard links"
+                        )
+                    _publish_no_replace(
+                        pending_meta,
+                        meta_path,
+                        source=pending_manifest,
+                        guards=((final_bank, 2), (pending_bank, 2)),
+                        output_parent_fd=manifest_parent_fd,
+                    )
         _require_complete_retained_pair(
             output_path,
             meta_path,
