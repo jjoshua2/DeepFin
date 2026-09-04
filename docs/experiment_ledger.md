@@ -73640,3 +73640,91 @@ successful BT4 exact-tie net; no 25-sim games exist at this line.**
   S1 driver independently refuses to launch training if any GPU process or
   lease remains when materialization finishes, so overlap cannot contaminate
   the deciding S1/N1 arenas.
+
+**2026-09-04 16:26Z — DECISION: supersede the isolated S1/N1 full trains;
+bank raw BT4 observations on live G10 before choosing a joint soft target.**
+
+- The alpha-1 exact-tie train established that BT4 contains useful ordering,
+  while the passing S1 and N1 audits do not establish the optimum target. A
+  production target must jointly choose how to treat exact ties, how far into
+  near ties/top-2/top-3 BT4 may reach, how much selected mass it controls, and
+  whether either teacher should be softened. Therefore do not spend a full
+  18.91M training run on isolated S1 or N1. Their immutable audit receipts stay
+  as banked mechanism evidence, not launch authority for those obsolete arms.
+  The waiting extensions driver was stopped before either train began. The
+  already-running S1 CPU materialization may finish at nice 19 as a reusable
+  arithmetic artifact, but no sentinel launches its trainer.
+- Search-budget scaling is part of target selection, not an afterthought. The
+  existing 25-sim diagnostic is descriptive. Before training joint candidates,
+  freeze a small factorial/ordered screen spanning breadth, BT4 dose and target
+  softness on the 4,000-position bank; train only the candidates needed to
+  distinguish the surviving interactions, and judge their arenas at both low
+  and higher simulation counts. This later screen requires its own exact
+  preregistration before its audit observations are read.
+
+**2026-09-04 16:26Z — PREREG: streaming one-evaluation BT4 sidecars for both
+live G10 source corpora; no G10 BT4 sidecar exists at this line.**
+
+- **Purpose and non-intervention.** Bank one raw legal-normalized BT4 prior for
+  every G10 row now, because every plausible joint policy recipe needs the same
+  observation. This is the raw-prior equivalent of a one-node read: exactly one
+  batched network forward evaluation per position and zero search nodes. It
+  does not select a mixing rule, create a training target, modify either raw
+  corpus, or alter the frozen 12+4 Stockfish worker configurations.
+- **Sources and namespaces.** Read only closed shards named by the canonical
+  `derive_corpus_targets.read_progress_inventory` snapshot from
+  `data/nnue_bootstrap/run06_g10` and
+  `data/nnue_bootstrap/run07_g10_companion4`. Keep outputs beneath distinct
+  `data/lc0/bt4_policy_sidecars/g10_raw/{run06_g10,run07_g10_companion4}`
+  roots; local `game_id` values never cross those namespaces. Never read or
+  copy an unlisted in-flight shard. A shard closing after one invocation's
+  snapshot waits for a later invocation.
+- **Row and model identity.** Reconstruct each schema-3 history window with the
+  deriver's `board_from_row`, encode it under the generator's pinned
+  `lc0_root_legacy_meta` plus `v2_threats` regime, and require its BLAKE2b-128
+  tensor key to equal the row's banked `input_key` before inference. Store the
+  canonical derived-row fingerprint, raw input key, game id, ply and float32
+  compact-1858 BT4 policy. Require exact legal-move support, finite nonnegative
+  probabilities summing to one, progress-claimed row count, source compressed
+  file SHA-256, source manifest/config identity, BT4 ONNX SHA-256, resolved
+  policy output/provider and functional remap provenance. Publish each sidecar
+  by atomic directory rename, then append its progress receipt.
+- **Resumability and scheduling.** Each invocation snapshots both inventories,
+  acquires `scratchpad/gpu0_experiment.lock` before constructing the CUDA ONNX
+  session, processes at most 16 source shards, exits to release all GPU memory,
+  and is repeated by a detached low-priority driver. Thus training/arenas can
+  take the same lease at shard-group boundaries rather than waiting behind the
+  full backlog. Refuse an existing mismatched sidecar, a stale `.writing`
+  directory, a foreign source ID/path, fewer/more decoded rows than progress
+  claimed, or free disk below 150 GiB. Current measured rate on the identical
+  18.91M labeling path was about 1,019 positions/s, so a complete 100M bank is
+  about 27.3 GPU-hours and can stay well ahead of the multi-day CPU generator.
+- **Exact repeated command.** The detached driver repeatedly runs, from the
+  reviewed implementation revision, until both generators and their closed
+  inventories are complete:
+
+      CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. nice -n 10 python3 scripts/bt4_raw_corpus_sidecar.py --source run06_g10=/home/josh/projects/chess/data/nnue_bootstrap/run06_g10 --source run07_g10_companion4=/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4 --out-root /home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw --onnx /home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx --batch-size 1024 --threads 16 --gpu-mem-gb 24 --max-shards 16 --gpu-lock /home/josh/projects/chess/scratchpad/gpu0_experiment.lock --min-free-gib 150
+
+- **ONE operational yardstick.** At the final frozen 100M inventory, a full
+  verifier must report exact source/sidecar shard-name equality independently
+  for each namespace, exact claimed/decoded/sidecar row equality, exactly one
+  teacher evaluation per row, zero input-key/fingerprint/source-digest/model/
+  provider/remap mismatches, zero illegal or unnormalized policies, and no
+  `.writing` artifact. Any nonzero mismatch is **FAIL** and the raw sidecar is
+  inadmissible to derivation; all-zero at the exact frozen inventories is
+  **PASS**. Learning quality remains deliberately unjudged until a separately
+  preregistered joint-target train and arena.
+
+**2026-09-04 16:54Z — 25-SIM BT4 PERSISTENCE READOUT: PERSISTS.** The frozen
+1,000-game bank is complete and structurally valid: 500 pair IDs, exactly two
+games and both `a_is_white` values per pair, one matched opening per pair,
+candidate/reference simulations both 25, training search shape, cold trees,
+seed 42. Pentanomial from the candidate's view is `WW=96, WD_DW=144,
+DD_WL=162, LD_DL=77, LL=21`; score 0.6085; **Elo +76.6 [95% CI +59.3,
++94.3]**. This clears the preregistered PERSISTS rule. Raw bank SHA-256 is
+`01fbe80d0dd4b308be652aef51db60e320a9eacadbf088af994040917b8b8e47` at
+`scratchpad/bt4_policy_mix/arena_toptie_a100_vs_sf20m_sims25.games.jsonl`.
+The gain is already present in a shallow-search regime and is almost the same
+magnitude as the separately banked 100-sim +74.4 Elo result; this supports a
+learned-prior mechanism, but by preregistration does not choose the next mix or
+replace any joint-target yardstick.
