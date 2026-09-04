@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 import json
 import math
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -235,7 +234,9 @@ def test_collector_imports_current_search_apis() -> None:
     from chess_anti_engine.uci.__main__ import _make_evaluator_factory
     from chess_anti_engine.uci.search import SearchWorker
 
-    assert collector.CHUNK_SIMS == 2048 and collector.MAX_CHUNKS == 8 and collector.WALKERS == 2
+    assert collector.CHUNK_SIMS == 2048
+    assert collector.MAX_CHUNKS == 8
+    assert collector.WALKERS == 2
     assert "compile_mode" in inspect.signature(_make_evaluator_factory).parameters
     assert "on_chunk" in inspect.signature(SearchWorker.run).parameters
     assert hasattr(SearchWorker, "realized_search_path")
