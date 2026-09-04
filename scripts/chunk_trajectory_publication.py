@@ -34,7 +34,7 @@ class _FlushableFile(Protocol):
 
 
 def _fsync_directory(path: Path) -> None:
-    """Persist completed directory-entry transitions, or fail closed."""
+    """Fsync completed directory-entry transitions; propagate any failure."""
     flags = os.O_RDONLY | os.O_CLOEXEC | getattr(os, "O_DIRECTORY", 0)
     descriptor = os.open(path, flags)
     try:
@@ -44,14 +44,14 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _flush_fsync_file_and_parent(fh: _FlushableFile, path: Path) -> None:
-    """Flush Python buffers, then persist file bytes and its containing entry."""
+    """Flush Python buffers, then fsync the file and its containing directory."""
     fh.flush()
     os.fsync(fh.fileno())
     _fsync_directory(path.parent)
 
 
 def _unlink_durable(path: Path) -> None:
-    """Remove one name and persist that removal before returning."""
+    """Remove one name and fsync its containing directory before returning."""
     path.unlink()
     _fsync_directory(path.parent)
 
@@ -230,7 +230,7 @@ def _require_new_output_pair(
 
 
 def _publish_no_replace(tmp_path: Path, output_path: Path) -> None:
-    """Publish one durable hard link, then durably consume its recovery name.
+    """Hard-link without replacement, then consume the recovery name in order.
 
     The caller must fsync the staged file's bytes before entering this helper.
     Each directory sync is kept separate even when both names share a parent:
