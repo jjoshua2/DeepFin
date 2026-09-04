@@ -73870,3 +73870,32 @@ outward rather than treating top-3/20 cp as an arbitrary endpoint.
   bound above zero).  Stop at the first non-success; do not skip past a failed
   rung or select a later one from audit fit.  Each rung still needs an
   immutable audit receipt and a launch/readout amendment before execution.
+
+**2026-09-04 15:30 EDT — PREREG: separate rank breadth from the d9 cp safety
+window with one banked marginal scan; no such marginal result has been read at
+this line.** Josh correctly noted that rank cap and score gap are different
+questions: a fourth-ranked move can be a genuine near tie, while rank two can
+be far behind.  Do not infer their separate effects from the coupled K2/10 cp
+and K3/20 cp cells.
+
+- Reuse only the frozen 4,000-row deep-SF ruler, d9 MultiPV bank and BT4 cache;
+  run no new engine search and no training.  For each of the three already
+  frozen `(alpha, BT4 temperature)` families, compute candidate-minus-source
+  deep-SF expected regret for every distinct eligible-set breakpoint produced
+  by `rank <= K AND d9 gap <= delta`, with K from 1 through 8 and delta taken
+  directly from the observed d9 gaps.  Implement this as a cumulative
+  breakpoint scan rather than separate corpus materializations.
+- Report (1) the marginal contribution of each added rank conditional on cp
+  gap, (2) the marginal contribution of widening the cp window conditional on
+  rank cap, (3) support/changed-row counts, and (4) four deterministic
+  SHA-256-of-position-key cross-fits.  In each fold, select on the other three
+  folds and report the held-out regret at that selection.  Prefer the narrowest
+  window and lowest rank cap within one standard error of the training-fold
+  optimum.  This is a conservative shortlist calculation, not an arena gate.
+- This result cannot remove or promote any already-admitted A-F arm and cannot
+  itself authorize a 100M recipe.  It may replace the coupled top-4/40 ->
+  top-6/80 -> top-8/160 follow-up schedule only by a new amendment written
+  before any A-F arena is read.  At most two orthogonal follow-up full trains
+  may be nominated: one holding the selected cp window fixed while changing K,
+  and one holding selected K fixed while changing the window.  Every nominated
+  arm still needs the existing exact-epoch training and paired 100-sim arena.
