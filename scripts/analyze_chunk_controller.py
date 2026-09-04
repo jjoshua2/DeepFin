@@ -1180,6 +1180,12 @@ def _manifest_directory_identities(
             identity = _recorded_identity(root_identity)
             if identity is not None:
                 identities.add(identity)
+        shards = snapshot.get("shards")
+        for shard in shards if isinstance(shards, list) else []:
+            if isinstance(shard, dict):
+                identity = _recorded_identity(shard)
+                if identity is not None:
+                    identities.add(identity)
     return identities
 
 

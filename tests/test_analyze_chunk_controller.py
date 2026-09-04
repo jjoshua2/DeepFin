@@ -5378,6 +5378,50 @@ def test_analyzer_output_rejects_renamed_snapshot_root_by_identity(
     assert not output.exists()
 
 
+def test_analyzer_output_rejects_renamed_snapshot_shard_by_identity(
+    tmp_path: Path,
+) -> None:
+    snapshot = tmp_path / "snapshot"
+    shard = snapshot / "s0.zarr"
+    shard.mkdir(parents=True)
+    internal_data = shard / "positions.bin"
+    internal_data.write_bytes(b"authenticated replay data\n")
+    snapshot_stat = snapshot.stat()
+    shard_stat = shard.stat()
+    manifest = {
+        "matched_row_origin_verification": {
+            "snapshot_inventory": {
+                "path": str(snapshot),
+                "root_identity": {
+                    "device": snapshot_stat.st_dev,
+                    "inode": snapshot_stat.st_ino,
+                },
+                "shards": [{
+                    "name": shard.name,
+                    "device": shard_stat.st_dev,
+                    "inode": shard_stat.st_ino,
+                }],
+            },
+        },
+    }
+    renamed = tmp_path / "apparently-ordinary.zarr"
+    shard.rename(renamed)
+    output = renamed / "analysis.json"
+
+    with pytest.raises(ValueError, match="inside a consumed protected directory"):
+        _require_safe_output_path(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+            manifest=manifest,
+        )
+
+    assert (renamed / internal_data.name).read_bytes() == (
+        b"authenticated replay data\n"
+    )
+    assert not output.exists()
+
+
 def test_analyzer_output_rejects_renamed_tablebase_file_by_identity(
     tmp_path: Path,
 ) -> None:
