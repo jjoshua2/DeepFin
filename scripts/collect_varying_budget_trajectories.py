@@ -369,9 +369,15 @@ def main() -> None:
         "seed": int(args.seed),
     }
     old = previous.get("config")
-    if isinstance(old, dict):
-        if {key: value for key, value in old.items() if key != "requested_positions"} != {key: value for key, value in config.items() if key != "requested_positions"} or int(args.max_positions) < int(old.get("requested_positions", 0)):
-            raise SystemExit("resume configuration differs from the existing bank")
+    if (
+        isinstance(old, dict)
+        and (
+            {key: value for key, value in old.items() if key != "requested_positions"}
+            != {key: value for key, value in config.items() if key != "requested_positions"}
+            or int(args.max_positions) < int(old.get("requested_positions", 0))
+        )
+    ):
+        raise SystemExit("resume configuration differs from the existing bank")
     progress = {"config": config, "model": previous.get("model"), "complete": False, "completed_positions": len(complete), "excluded": excluded}
     _atomic_json(meta, progress)
     if len(complete) >= args.max_positions:
