@@ -1,0 +1,35 @@
+{
+ "shards_scanned": 10137,
+ "per_root": {
+  "data/lc0_rows": 9653,
+  "data/lc0_rows_heldout": 484
+ },
+ "distinct_name_sets": 1,
+ "name_sets": [
+  {
+   "n_shards": 10137,
+   "arrays": [
+    "game_id",
+    "has_game_id",
+    "has_is_network_turn",
+    "has_is_selfplay",
+    "has_legal_mask",
+    "has_moves_left",
+    "has_ply_index",
+    "has_policy",
+    "has_search_wdl",
+    "is_network_turn",
+    "is_selfplay",
+    "legal_mask",
+    "moves_left",
+    "ply_index",
+    "policy_target",
+    "priority",
+    "search_wdl",
+    "wdl_target",
+    "x"
+   ]
+  }
+ ],
+ "shards_with_any_sf_array": 0
+}

@@ -1794,11 +1794,15 @@ def run_gumbel_root_many_c(
   # closure captures loop variables (ruff B023) and widens their narrowed types
   # back to `| None`.
         target_cap = int(cfg.target_max_visit_cap)
+        store_rescale = bool(cfg.target_q_rescale)
         log_prior_store = target_log_prior(log_prior, cfg=cfg)
-        if target_cap <= 0 and log_prior_store is log_prior:
+        if target_cap <= 0 and store_rescale and log_prior_store is log_prior:
             imp_store = imp_all
         else:
-            q_store = q_play if target_cap <= 0 else _completed_q_transform(
+  # The q_play reuse is only an identity while BOTH sigma knobs are off --
+  # reusing it with `target_q_rescale` False would silently ignore the flag
+  # (the accepted-then-ignored shape), so the reuse condition names both.
+            q_store = q_play if (target_cap <= 0 and store_rescale) else _completed_q_transform(
                 actions=legal,
                 priors=pri[legal],
                 visits=visits,
@@ -1807,6 +1811,7 @@ def run_gumbel_root_many_c(
                 cfg=cfg,
                 root=True,
                 max_visit_cap=target_cap,
+                rescale=store_rescale,
             )
             imp_store = _softmax(log_prior_store + q_store)
         probs = np.zeros((POLICY_SIZE,), dtype=np.float32)

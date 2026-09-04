@@ -1,6 +1,7 @@
 """Unit tests for scripts/train_watchdog.py pure decision logic (no live PIDs)."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 from pathlib import Path
@@ -599,15 +600,48 @@ def test_a_held_marker_whose_owner_is_ALIVE_is_left_alone() -> None:
     assert v.exit_code == wd.EXIT_PAUSED_HELD
 
 
-def test_an_owned_marker_held_past_the_bound_is_recoverable() -> None:
-    """The owner can be alive and wedged. One window is bounded by the ack wait
-    (30 min) plus BUDGET_MIN=90, so 180 is 50% headroom, not a guess."""
+def test_a_LIVE_owners_marker_is_never_abandoned_by_age_alone() -> None:
+    """⚑ THE 2026-08-20 INCIDENT, inverted from the test that used to sit here.
+    The old age criterion ("owner can be alive and wedged", sized to the
+    120-min ratchet window) declared this exact snapshot ABANDONED, the loop
+    deleted a live 10-hour lc0-control window's marker at minute 185, and
+    recover_stall.sh then killed the deliberately-parked trial. A live owner
+    means an operator process is holding the pause: the age is news for a
+    human (``pause_overheld``), never grounds for a machine to delete."""
     v = wd.decide(
         _paused_snap(pause_owner_pid=4242, pause_owner_alive=True, pause_age_minutes=181.0),
         stall_minutes=90.0,
     )
-    assert v.state == wd.STATE_PAUSE_ABANDONED
-    assert "pause_abandoned=held_181min_over_180" in v.format_line()
+    assert v.state == wd.STATE_PAUSED_HELD, (
+        "a LIVE owner's marker was judged abandoned on age — the watchdog "
+        "would delete a healthy long window's marker and resume production "
+        "beside the job the pause protects"
+    )
+    assert v.exit_code == wd.EXIT_PAUSED_HELD
+    assert "pause_overheld=held_181min_over_180" in v.format_line()
+    assert "pause_abandoned" not in v.format_line()
+
+
+def test_an_UNDETERMINED_liveness_is_never_abandoned_either() -> None:
+    """``pause_owner_alive=None`` means the liveness probe did not complete.
+    A machine must not delete on a read it could not make: fail toward
+    PAUSED-HELD, however old the marker."""
+    v = wd.decide(
+        _paused_snap(pause_owner_pid=4242, pause_owner_alive=None, pause_age_minutes=10_000.0),
+        stall_minutes=90.0,
+    )
+    assert v.state == wd.STATE_PAUSED_HELD
+
+
+def test_a_live_owner_under_the_bound_has_no_overheld_annotation() -> None:
+    """The annotation must mean "past the bound", not "held at all" — an
+    always-on annotation would train the reader to ignore it."""
+    v = wd.decide(
+        _paused_snap(pause_owner_pid=4242, pause_owner_alive=True, pause_age_minutes=179.0),
+        stall_minutes=90.0,
+    )
+    assert v.state == wd.STATE_PAUSED_HELD
+    assert "pause_overheld" not in v.format_line()
 
 
 def test_an_OPERATORS_marker_is_never_abandoned_however_old() -> None:
@@ -856,6 +890,34 @@ def test_the_loop_does_NOT_clear_an_operators_marker(tmp_path: Path) -> None:
 
     assert marker.exists(), f"an operator's pause was deleted by the watchdog:\n{out}"
     assert "PAUSED-HELD" in out, out
+    assert "CLEARED" not in out, out
+    assert not recovered.exists()
+
+
+def test_the_loop_leaves_a_LIVE_owners_OLD_marker_alone(tmp_path: Path) -> None:
+    """⚑ THE 2026-08-20 INCIDENT, at the loop level. The marker names an owner
+    that is ALIVE (this test process) and its mtime is backdated past
+    --pause-max-minutes — the exact state of the lc0-control window at minute
+    185, when the loop deleted the marker and force-restarted production.
+    The marker must survive, annotated, with recover_stall.sh untouched."""
+    # The marker's own started= outranks mtime in parse_pause_marker, so the
+    # age must be written into the text; the utime is belt-and-braces for the
+    # mtime fallback path.
+    started = dt.datetime.now() - dt.timedelta(minutes=240)
+    root, marker, recovered = _loop_sandbox(
+        tmp_path,
+        f"pause_window.sh pid={os.getpid()} "
+        f"started={started.strftime('%Y-%m-%dT%H:%M:%S')}\njob=x\n",
+    )
+    os.utime(marker, (started.timestamp(), started.timestamp()))
+    out = _run_loop_once(root, tmp_path)
+
+    assert marker.exists(), (
+        f"a LIVE owner's marker was deleted on age alone — the incident this "
+        f"test pins:\n{out}"
+    )
+    assert "PAUSED-HELD" in out, out
+    assert "pause_overheld=held_240min_over_180" in out, out
     assert "CLEARED" not in out, out
     assert not recovered.exists()
 

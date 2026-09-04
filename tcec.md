@@ -230,7 +230,7 @@ replay.
 
 * **vs Lc0** — Lc0 is pure self-play, \~191 M params, C++ with custom
 CUDA backends. DeepFin is anti-engine training (always vs handicapped
-Stockfish), 63,084,128 params, Python/PyTorch with C extensions.
+Stockfish), 61,444,448 params, Python/PyTorch with C extensions.
 Architecturally Lc0-BT4-inspired (Smolgen, gating, 112 history
 planes, 4672 policy) but reimplemented from scratch — and extended
 with 34 added classical planes, four parallel policy heads, and a

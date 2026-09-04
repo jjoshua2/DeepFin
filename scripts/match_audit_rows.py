@@ -53,7 +53,17 @@ over 1463 shards, 4000/4000 matched in 24 s:
     (112..174, 0.013, downstream of those).
   - history-plane occupancy before vs after the fill (0.0 -> 0.713)
   - duplicate multiplicity (the same position can occur in several games;
-    first match in shard-name order wins, deterministically — mean 1.010, max 3)
+    first match in shard-name order supplies the stored input, deterministically
+    — mean 1.010, max 3)
+
+The first matching row is NOT used as the bootstrap cluster identity. The
+original manifest discarded row provenance, so for each audit position the
+index records every source game in which it could have originated and takes
+connected components of the audit-position/source-game bipartite graph. Two
+rows that could be siblings therefore always share ``game_cluster_id``. This
+is conservative when a position occurs in multiple games, but it cannot split
+dependent rows merely because the deterministic history join chose different
+first matches.
 
 Usage:
 
@@ -77,6 +87,7 @@ from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
 from chess_anti_engine.eval.audit import decode_board_from_planes, position_key
 from chess_anti_engine.eval.audit_history import (
+    GAME_CLUSTER_KIND,
     STORED_EXTRA_FEATURES,
     STORED_HISTORY_ENCODING,
     STORED_PLANES,
@@ -89,6 +100,79 @@ _PIECE_SLOTS = ((0, chess.WHITE), (6, chess.BLACK))
 # The 7 non-current lc0 history frames: 0% occupied FEN-only, ~71% occupied
 # from a stored row. This block IS audit-v2.
 _HISTORY_PLANES = slice(13, 104)
+
+
+GameKey = tuple[str, int]
+
+
+def source_game_key(shard_path: Path, game_id: int) -> GameKey:
+    """Corpus-wide identity for a conversion-local game id.
+
+    Snapshot directories may be flat symlink farms over several independent
+    ``lc0_data_to_rows`` outputs, each of which starts ``game_id`` at zero.
+    Resolve the shard first so equal integers from different conversion source
+    directories cannot create a false bootstrap-cluster edge.
+    """
+    return str(shard_path.resolve().parent), int(game_id)
+
+
+def candidate_game_components(
+    candidate_games: list[set[GameKey]],
+    *,
+    candidate_missing_game_id: np.ndarray,
+    found: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Conservative cluster ids for an audit-position/source-game graph.
+
+    A position can match several stored games. Unioning audit rows through
+    every candidate game guarantees that two positions sampled from the same
+    source game cannot be assigned to different bootstrap clusters. If any
+    exact match lacks an authoritative game id, no reported component is
+    usable: that unidentified game could also contain a different audit row
+    and therefore hide an edge anywhere in the graph. Global invalidation is
+    intentionally conservative and remains safe after downstream row filters.
+    """
+    n = len(candidate_games)
+    found_arr = np.asarray(found, dtype=bool)
+    missing_arr = np.asarray(candidate_missing_game_id, dtype=bool)
+    if found_arr.shape != (n,) or missing_arr.shape != (n,):
+        raise ValueError("candidate-game masks must match the audit row count")
+
+    parent = list(range(n))
+
+    def root(row: int) -> int:
+        while parent[row] != row:
+            parent[row] = parent[parent[row]]
+            row = parent[row]
+        return row
+
+    def union(a: int, b: int) -> None:
+        ra, rb = root(a), root(b)
+        if ra == rb:
+            return
+        if ra < rb:
+            parent[rb] = ra
+        else:
+            parent[ra] = rb
+
+    first_row_for_game: dict[GameKey, int] = {}
+    for row, games in enumerate(candidate_games):
+        if not found_arr[row]:
+            continue
+        for game in sorted(games):
+            previous = first_row_for_game.setdefault(game, row)
+            union(row, previous)
+
+    cluster_id = np.full(n, -1, dtype=np.int64)
+    for row, games in enumerate(candidate_games):
+        if found_arr[row] and games:
+            cluster_id[row] = root(row)
+    graph_identity_complete = not bool(np.any(found_arr & missing_arr))
+    has_cluster = np.asarray([
+        bool(graph_identity_complete and found_arr[row] and games)
+        for row, games in enumerate(candidate_games)
+    ], dtype=bool)
+    return cluster_id, has_cluster
 
 
 def board_fingerprint(board: chess.Board) -> bytes:
@@ -127,6 +211,21 @@ def require_canonical(boards: list[chess.Board]) -> None:
             f"(first at index {bad[0]}); the position-key join assumes the "
             "white-to-move canonical form build_audit_set.py writes"
         )
+
+
+def require_complete_cluster_scan(skipped_layout: dict[str, int]) -> None:
+    """Refuse cluster ids when any shard could hide a dependency edge."""
+    if not skipped_layout:
+        return
+    detail = ", ".join(
+        f"{layout}={count}" for layout, count in sorted(skipped_layout.items())
+    )
+    raise SystemExit(
+        "cannot produce complete game_cluster_id values after skipping replay "
+        f"shards with unscannable/wrong layouts ({detail}); use a uniform "
+        "snapshot or extend the scanner to recover candidate-game edges from "
+        "every layout",
+    )
 
 
 def _shard_layout(group: dict[str, Any]) -> tuple[str, int] | None:
@@ -187,9 +286,12 @@ def main() -> None:
     src_shard = ["" for _ in range(n)]
     src_row = np.full(n, -1, dtype=np.int64)
     src_game = np.full(n, -1, dtype=np.int64)
+    src_has_game = np.zeros(n, dtype=bool)
     src_ply = np.full(n, -1, dtype=np.int64)
     src_selfplay = np.full(n, -1, dtype=np.int64)
     dup_count = np.zeros(n, dtype=np.int64)
+    candidate_games: list[set[GameKey]] = [set() for _ in range(n)]
+    candidate_missing_game_id = np.zeros(n, dtype=bool)
 
     t0 = time.time()
     fp_hits = 0
@@ -222,7 +324,9 @@ def main() -> None:
                     np.asarray(group[name][:]).reshape(-1)
                     if name in group else None
                 )
-                for name in ("game_id", "ply_index", "is_selfplay")
+                for name in (
+                    "game_id", "has_game_id", "ply_index", "is_selfplay",
+                )
             }
             decoded: dict[int, str | None] = {}
             for r in sorted({r for r, _ in cand}):
@@ -235,14 +339,30 @@ def main() -> None:
                 if decoded[r] != keys[ai]:
                     continue
                 dup_count[ai] += 1
+                game = cols["game_id"]
+                has_game = cols["has_game_id"]
+                if (
+                    game is not None
+                    and has_game is not None
+                    and bool(has_game[r])
+                ):
+                    candidate_games[ai].add(source_game_key(path, int(game[r])))
+                else:
+                    candidate_missing_game_id[ai] = True
                 if found[ai]:
                     continue
                 found[ai] = True
                 x_stored[ai] = xfull[r]
                 src_shard[ai] = path.name
                 src_row[ai] = r
+                if (
+                    game is not None
+                    and has_game is not None
+                    and bool(has_game[r])
+                ):
+                    src_game[ai] = int(game[r])
+                    src_has_game[ai] = True
                 for name, target in (
-                    ("game_id", src_game),
                     ("ply_index", src_ply),
                     ("is_selfplay", src_selfplay),
                 ):
@@ -256,6 +376,18 @@ def main() -> None:
                 flush=True,
             )
     scan_seconds = time.time() - t0
+    # The selected history rows must use the frozen production layout, but the
+    # bootstrap component graph needs every possible audit-row/source-game
+    # edge. A skipped shard can duplicate one audit position and connect its
+    # unseen game to another audit row, so successful matches in the accepted
+    # subset do not make cluster ids complete. Fail before emitting an artifact
+    # that downstream code could mistake for statistically independent data.
+    require_complete_cluster_scan(skipped_layout)
+    game_cluster_id, has_game_cluster_id = candidate_game_components(
+        candidate_games,
+        candidate_missing_game_id=candidate_missing_game_id,
+        found=found,
+    )
 
     # ---- verification: canonicalisation preserved, history actually filled ----
     x_fen_only = np.stack([
@@ -314,6 +446,22 @@ def main() -> None:
         "audit_rows": n,
         "matched": int(found.sum()),
         "unmatched": int((~found).sum()),
+        "matched_rows_with_selected_source_game_id": int(
+            np.count_nonzero(found & src_has_game)
+        ),
+        "matched_rows_with_game_cluster_id": int(
+            np.count_nonzero(found & has_game_cluster_id)
+        ),
+        "game_cluster_kind": GAME_CLUSTER_KIND,
+        "game_clusters": int(np.unique(
+            game_cluster_id[has_game_cluster_id]
+        ).shape[0]),
+        "positions_with_multiple_candidate_games": int(sum(
+            len(games) > 1 for games in candidate_games
+        )),
+        "positions_with_unidentified_candidate_game": int(
+            np.count_nonzero(found & candidate_missing_game_id)
+        ),
         "shards_scanned": len(shards),
         "shards_skipped_wrong_layout": skipped_layout,
         "fingerprint_candidate_pairs": fp_hits,
@@ -352,7 +500,14 @@ def main() -> None:
         key=np.array(keys), phase=np.array([int(r["phase"]) for r in audit]),
         source=np.array([int(r["source"]) for r in audit]),
         src_shard=np.array(src_shard), src_row=src_row,
-        game_id=src_game, ply_index=src_ply, is_selfplay=src_selfplay,
+        # The selected source row identifies the history-bearing x_stored row.
+        # It is not safe as a bootstrap cluster when a position has several
+        # source matches, so the conservative component is stored separately.
+        game_id=src_game, has_game_id=src_has_game,
+        game_cluster_id=game_cluster_id,
+        has_game_cluster_id=has_game_cluster_id,
+        game_cluster_kind=np.array([GAME_CLUSTER_KIND]),
+        ply_index=src_ply, is_selfplay=src_selfplay,
         dup_count=dup_count,
         per_plane_nonzero_fen_only=per_plane_fen,
         per_plane_nonzero_stored=per_plane_stored,

@@ -1,0 +1,11 @@
+{
+  "ckpt": "/home/josh/projects/chess/data/salvage/bt4heads_iter100_20260815/seeds/slot_000/trainer.pt",
+  "n": 2000,
+  "device": "cpu",
+  "history": "lc0_root_legacy_meta",
+  "extra": "v2_threats",
+  "policy_encoding": "lc0_1858",
+  "use_dynamic_relations": false,
+  "A1_n_exact": 2000,
+  "A1_frac_exact": 1.0
+}

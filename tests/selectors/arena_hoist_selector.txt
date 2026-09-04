@@ -1,5 +1,4 @@
-# Test selector for the arena evaluator-hoist port
-# (port/arena-evaluator-hoist-to-main).
+# Test selector for the arena evaluator-hoist branch (feat/arena-evaluator-hoist).
 #
 # Run it with:
 #   CUDA_VISIBLE_DEVICES="" PYTHONPATH=. python3 -m pytest \
@@ -19,12 +18,6 @@
 # read as XPASS-failures here and as XFAIL-passes in the reviewer's environment,
 # identically on the branch point and on HEAD. Compare the two sides in ONE
 # environment; never compare a count across two.
-#
-# ⚑ Two entries of the upstream selector are absent here because the FILES
-# are: tests/test_match_resume.py (this branch has no crash-resilient game log
-# or --resume) and tests/test_audit_search_param_stamp.py. Naming a file that
-# does not exist makes pytest exit on collection, so a selector that cannot be
-# run is worse than a shorter one. They return with the machinery they cover.
 tests/test_arena.py
 tests/test_arena_fen_openings.py
 tests/test_arena_match_smoke.py
@@ -33,6 +26,7 @@ tests/test_arena_pgn_integration.py
 tests/test_arena_search_shape_plumbing.py
 tests/test_arena_standard.py
 tests/test_audit_gumbel_override_dispatch.py
+tests/test_audit_search_param_stamp.py
 tests/test_audit_search_profiles.py
 tests/test_batch_descend_puct.py
 tests/test_cpuct_scaling.py
@@ -48,6 +42,7 @@ tests/test_history_rep_fix.py
 tests/test_inert_gumbel_knobs.py
 tests/test_match_checkpoints_script.py
 tests/test_match_result_labeling.py
+tests/test_match_resume.py
 tests/test_mcts_c_tree.py
 tests/test_mcts_forced_collapse.py
 tests/test_mcts_solved_propagation.py

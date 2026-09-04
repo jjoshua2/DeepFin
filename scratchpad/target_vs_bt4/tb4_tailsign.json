@@ -1,0 +1,83 @@
+{
+  "tail_BAD_target_worse": {
+    "name": "dQ<=-0.10 target WORSE",
+    "n": 153,
+    "chance": 0.0422,
+    "P_net_eq_target": 0.6601,
+    "ci": [
+      0.582,
+      0.7304
+    ],
+    "P_net_eq_PERM": 0.0458,
+    "E_excess": 0.6144,
+    "M_excess_mass": 0.4864,
+    "mean_dQ_target_vs_sf": -0.3041,
+    "mean_Q_net_minus_target": [
+      0.0259,
+      -0.0123,
+      0.0627
+    ],
+    "mean_Q_net_minus_sfbest": [
+      -0.2782,
+      -0.3252,
+      -0.2341
+    ],
+    "ratio_argmax_vs_nontail": 1.274,
+    "ratio_mass_vs_nontail": 1.354
+  },
+  "tail_GOOD_target_better": {
+    "name": "dQ>=+0.10 target BETTER",
+    "n": 66,
+    "chance": 0.0383,
+    "P_net_eq_target": 0.6061,
+    "ci": [
+      0.4855,
+      0.715
+    ],
+    "P_net_eq_PERM": 0.0303,
+    "E_excess": 0.5758,
+    "M_excess_mass": 0.53,
+    "mean_dQ_target_vs_sf": 0.2343,
+    "mean_Q_net_minus_target": [
+      -0.08,
+      -0.1191,
+      -0.0444
+    ],
+    "mean_Q_net_minus_sfbest": [
+      0.1542,
+      0.1005,
+      0.2078
+    ],
+    "ratio_argmax_vs_nontail": 1.194,
+    "ratio_mass_vs_nontail": 1.475
+  },
+  "non_tail": {
+    "name": "|dQ|<0.10",
+    "n": 788,
+    "chance": 0.0716,
+    "P_net_eq_target": 0.5838,
+    "ci": [
+      0.549,
+      0.6177
+    ],
+    "P_net_eq_PERM": 0.1015,
+    "E_excess": 0.4822,
+    "M_excess_mass": 0.3593,
+    "mean_dQ_target_vs_sf": -0.0015,
+    "mean_Q_net_minus_target": [
+      -0.0133,
+      -0.0217,
+      -0.006
+    ],
+    "mean_Q_net_minus_sfbest": [
+      -0.0148,
+      -0.0235,
+      -0.0075
+    ]
+  },
+  "inheritance_on_BAD_tail": {
+    "mean_dQ_target_vs_sf": -0.3041,
+    "mean_dQ_NET_vs_sf": -0.2782,
+    "frac_of_target_deficit_inherited": 0.9149
+  }
+}

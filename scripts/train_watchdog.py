@@ -30,20 +30,22 @@ human notices.
 The marker itself carries the discriminator: ``pause_window.sh`` writes
 ``pid=<n> started=<iso>``, and ``graceful_restart.py`` writes prose with no
 ``pid=``. So ONLY a self-identifying marker can be judged abandoned — an
-operator's marker is never touched, whatever its age — and the criteria are
-"the owning process is gone" or "held past ``--pause-max-minutes``".
+operator's marker is never touched, whatever its age — and the criterion is
+"the owning process is gone", alone. Age is never sufficient: see below.
 
-⚑ ``--pause-max-minutes`` IS COUPLED TO ``daily_gate_ratchet.sh``'s
-``BUDGET_MIN``, ACROSS TWO FILES, WITH NOTHING BUT THIS PARAGRAPH PINNING IT.
-A window is bounded by ``CAE_PAUSE_ACK_TIMEOUT`` (30 min) plus ``BUDGET_MIN``
-(90 — a deadline for the WHOLE invocation shared by both series, not per
-series), so 120 against the default 180 leaves 50% headroom. **Raising this past
-~150 makes the age branch fire on a HEALTHY window**, because the age criterion
-applies even when the owner is alive: the watchdog would delete a live window's
-marker and resume training beside a running 16-concurrent compiled arena, which
-is the documented double-OOM cause (CLAUDE.md: one arena at a time). If
-``BUDGET_MIN`` rises, this must rise with it — and if it does not, the failure is
-silent in the dangerous direction.
+⚑ ``--pause-max-minutes`` NO LONGER CLEARS ANYTHING (2026-08-20). It used to
+be a second abandonment criterion, sized to the 120-min ratchet window (ack 30
++ BUDGET_MIN 90, 180 = 50% headroom), and the paragraph that sat here warned
+that raising the bound past ~150 would make the age branch fire on a HEALTHY
+window. The failure arrived from the other side: the WINDOW grew. The
+lc0-control pause held its marker for a planned ~10 h, and at minute 185 the
+age branch declared abandonment on a verdict whose own details read
+``pause_owner_alive=1``; ``watchdog_loop.sh`` deleted the live window's marker
+and ten minutes later force-restarted production beside the control train it
+was parked for (2026-08-20 16:02/16:12, ``scratchpad/watchdog_alerts.log``).
+How long an operator may hold a pause is a policy question, not a machine's
+call. The flag now only sets when a held marker's log line gains a
+``pause_overheld`` annotation; CLEARING requires a dead owner.
 """
 from __future__ import annotations
 
@@ -184,8 +186,9 @@ def decide(
     PAUSED-HELD requires pause.txt AND flat progress (the boundary-hold case
     appends no rows; mtime is untrustworthy because Ray metadata syncs).
     PAUSE-ABANDONED is the same state narrowed to a marker that NAMES ITS
-    OWNER and whose owner is gone (or which has been held past
-    ``pause_max_minutes``) — the only pause a machine may safely clear.
+    OWNER and whose owner is GONE — the only pause a machine may safely
+    clear. A live owner's marker stays PAUSED-HELD whatever its age; past
+    ``pause_max_minutes`` its line carries a ``pause_overheld`` annotation.
     STALLED is flat without pause for longer than ``stall_minutes``.
     Within the stall window (or after growth), the result is OK.
 
@@ -225,10 +228,22 @@ def decide(
         flat = False
 
     if flat and snap.pause_txt is not None:
-        reason = _abandoned_reason(snap, pause_max_minutes)
+        reason = _abandoned_reason(snap)
         if reason is not None:
             details["pause_abandoned"] = reason
             return Verdict(STATE_PAUSE_ABANDONED, EXIT_PAUSE_ABANDONED, details)
+        if (
+            snap.pause_age_minutes is not None
+            and snap.pause_age_minutes > pause_max_minutes
+        ):
+            # Held past the bound but not clearable (owner alive, or unowned):
+            # say so on the log line. Deliberately NOT a new state — the
+            # transition alerter already paged on entry into PAUSED-HELD, and
+            # the operator-side bound on a hung window is the pause lease.
+            details["pause_overheld"] = (
+                f"held_{snap.pause_age_minutes:.0f}min"
+                f"_over_{pause_max_minutes:.0f}"
+            )
         return Verdict(STATE_PAUSED_HELD, EXIT_PAUSED_HELD, details)
 
     if flat and snap.pause_txt is None and snap.minutes_flat > stall_minutes:
@@ -237,21 +252,25 @@ def decide(
     return Verdict(STATE_OK, EXIT_OK, details)
 
 
-def _abandoned_reason(snap: ProgressSnapshot, pause_max_minutes: float) -> str | None:
+def _abandoned_reason(snap: ProgressSnapshot) -> str | None:
     """Why this held marker is recoverable, or None if it must be left alone.
 
     ⚑ THE GATE IS ``pause_owner_pid is not None``, not the age. A marker with
     no ``pid=`` line is an operator's ``graceful_restart.py`` pause, and an
     operator's pause is allowed to outlast any bound we could pick — clearing
     it would resume the run they deliberately parked. So an unowned marker can
-    never reach either criterion below.
+    never reach the criterion below.
+
+    ⚑ A LIVE OWNER IS NEVER ABANDONED, WHATEVER THE AGE (2026-08-20). Age used
+    to be a second criterion here, and it cleared a marker whose own verdict
+    line read ``pause_owner_alive=1`` — see the module docstring for the
+    incident. An unknown liveness (``None``) is also never abandoned: a
+    machine must not delete on a read it could not complete.
     """
     if snap.pause_owner_pid is None:
         return None
     if snap.pause_owner_alive is False:
         return f"owner_pid_{snap.pause_owner_pid}_is_gone"
-    if snap.pause_age_minutes is not None and snap.pause_age_minutes > pause_max_minutes:
-        return f"held_{snap.pause_age_minutes:.0f}min_over_{pause_max_minutes:.0f}"
     return None
 
 
@@ -596,9 +615,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=DEFAULT_PAUSE_MAX_MINUTES,
         help=(
-            "A pause marker that NAMES ITS OWNER (pid=) and has been held longer "
-            f"than this is PAUSE-ABANDONED (default: {DEFAULT_PAUSE_MAX_MINUTES:g}). "
-            "An operator's unowned marker is never judged by it."
+            "A held marker older than this gains a pause_overheld annotation "
+            f"on its PAUSED-HELD line (default: {DEFAULT_PAUSE_MAX_MINUTES:g} "
+            "min). It no longer clears anything: only a marker whose pid= "
+            "owner is GONE is PAUSE-ABANDONED (2026-08-20 incident)."
         ),
     )
     ap.add_argument(

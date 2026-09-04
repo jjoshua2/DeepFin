@@ -108,6 +108,39 @@ the encoding stored in the checkpoint itself.
   rates; if a candidate's effect is smaller than that, more games — not a
   tighter prior — is the only honest fix.
 
+## A crashed match is resumable — never replay a finished game
+
+Both drivers (`scripts/arena_standard.py`, `scripts/match_vs_uci.py`) append one
+flushed JSONL record per FINISHED game to a **game log**, so a run that dies
+mid-match leaves every game that ended. 2026-08-21 is why: a 128-game compiled
+arena OOMed at ply 20 with ZERO games persisted, and its relaunch lost its first
+minutes the same way.
+
+- **Where**: `--games-out <path>`. Default for the arena is
+  `runs/arena_games/<label>.<settings-fingerprint>.games.jsonl`; for
+  `match_vs_uci` it rides `--pgn-out` when that is given, else
+  `runs/match_games/`. It is deliberately NOT derived from the arena's `--out`,
+  which is the shared append-only aggregate every arena in history writes to.
+- **Resume**: `--resume` keeps what finished and plays only the remainder, then
+  scores everything as one match. The arena keeps COMPLETE PAIRS only — a pair
+  with one coloring played is discarded and replayed, because the pentanomial's
+  sampling unit is the pair. The result record carries `resumed_pairs`,
+  `resumed_orphan_pairs` and `game_log`, so a row that is a splice of two
+  processes says so.
+- **It refuses to mix.** The log header stores a fingerprint of every setting
+  that defines the population and the ruler (nets/engines, seed, games,
+  openings, mode, sims or budget, search shape, syzygy). `--resume` onto a
+  changed one names the difference and exits. Execution knobs are deliberately
+  NOT in the fingerprint — resuming an OOMed arena at a lower
+  `--max-concurrent-games` is the main use.
+- **Without `--resume`, an existing log for the same settings is an error.**
+  Appending would silently pool two runs. `scripts/daily_gate_ratchet.sh` passes
+  `--resume` for exactly this reason: its same-day retry of a series is the same
+  invocation, and it now continues that attempt instead of replaying it.
+- ⚑ A resumed PGN keeps the discarded orphan game (append-only). Its
+  replacements carry `ResumeReplay "1"`, so for any `PairId` that has the tag,
+  the games WITHOUT it are the stale ones — drop those before a pooled fit.
+
 ## Pooled multi-player ratings (Ordo) — when 3+ arms play a round robin
 
 A paired arena answers ONE A/B. For three arms (Tier-13 A/B/C) it answers three
@@ -201,6 +234,40 @@ already produced a +112 Elo read on a null and inflated a banked +239.5 to
 point before launching**; look at partial fits freely for *operational* checks
 (is an arm crashing, are counts advancing, has the missingness flag tripped)
 and never for the sign or size of the effect.
+
+**⚑ `--sprt` is the ONE sanctioned way to stop early, and it is opt-in.**
+"Pre-commit the count and never look" is the right default and stays the
+default. The principled alternative is not to peek more carefully but to
+declare the boundary first: `scripts/arena_standard.py --sprt
+'elo0=E,elo1=E,alpha=A,beta=B'` runs a pentanomial GSPRT (Van den Bergh's
+formulation, i.e. what fishtest computes; implementation in
+`chess_anti_engine/eval/sprt.py`) whose error rates are approximately bounded by
+the alpha and beta you named — conservative Wald bounds (type-I ≤ α/(1−β),
+type-II ≤ β/(1−α)), not exact equalities — no matter how often it looks. All
+four numbers are REQUIRED — there is no default anywhere in that path, because a
+boundary the operator did not state is not a preregistration.
+
+- The unit is the PAIR, so the LLR is only ever recomputed on pairs whose two
+  colorings both finished. Rolling and matched_time look after every pair;
+  `--no-rolling` looks between chunks, which is coarser and is recorded as
+  `check_granularity` in the row.
+- `--games` becomes a HARD CAP. Reaching it without crossing is **INCONCLUSIVE**
+  and is reported as that. It is NOT a fixed-N result: the sample size was
+  chosen by the data, so re-reading it as one is the same optional stopping
+  under a different name.
+- ⚑ **The VERDICT is the deliverable.** The Elo and CI printed alongside it are
+  descriptive: a sequentially stopped point estimate is biased AWAY from zero
+  (the run stopped when the sample looked extreme) and the CI has no nominal
+  coverage. Quote the verdict, the pairs played, and the boundary — never the
+  Elo on its own. The row banks all of it under `sprt`, including the LLR
+  trajectory, so a later re-analysis has the whole path and not just its end.
+- A resumed SPRT arena recomputes the LLR over loaded + new pairs, and a run
+  that had already crossed plays zero further games. The spec is recorded in the
+  game log's header (`info.sprt`) but deliberately NOT in the resume
+  fingerprint, so resuming across specs is allowed rather than refused — it
+  prints a stderr warning naming both, because alpha and beta belong to ONE
+  preregistered boundary.
+- Absent `--sprt` nothing changes, down to the JSONL record, which grows no key.
 
 **⚑ A bootstrap cannot fix informative missingness.** If pairs complete faster
 in one matchup for a reason correlated with the arms, the pairs you HAVE are

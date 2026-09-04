@@ -17,6 +17,15 @@ production config (unique-storage count, NOT ``sum(numel())``):
 already at ~86% of BF16 peak, so there is no throughput headroom being claimed
 here — this buys CAPACITY, not speed.
 
+⚑ THAT WIDENING FIGURE IS PRE-bt4heads AND HAS NOT BEEN RE-MEASURED. Its
+baseline 63,084,128 is ``main``'s ``configs/pbt2_small.yaml``; the bt4heads
+promotion (``86492fa26``) moved the live config to 61,444,448 and nobody re-ran
+the tool against it. The heads changed, not the FFN schedule, so the absolute
++710,325 is *probably* unmoved and the percentage *probably* is not — but
+"probably" is not a measurement, so **do not requote +1.126% against the live
+net**. Re-derive it by executing this tool on a live checkpoint before any
+prereg quotes a capacity delta.
+
 FUNCTION PRESERVATION
 ---------------------
 For ``y = W2 @ mish(W1 x + b1) + b2``, a new hidden unit ``j`` contributes
@@ -621,11 +630,20 @@ def count_distinct_params(state: dict[str, Any]) -> int:
 
     ⚑ NOT ``sum(v.numel())``. Production ties one
     ``layer_smolgens.*.gen_weight.weight`` storage across 16 state_dict keys, so
-    the naive sum reports 78,812,768 against a real 63,084,128 — over by exactly
+    the naive sum reports 77,173,088 against a real 61,444,448 — over by exactly
     15 × 1,048,576 = 15,728,640. That specific wrong number is the one CLAUDE.md
     warns about and ``tests/test_param_count.py`` pins as
     ``"the wrong number CLAUDE.md warns about"``; a capacity tool printing it as
     its headline is how it gets quoted again.
+
+    ⚑ SAY WHICH BRANCH. The pair above is the LIVE production config's
+    (``ops/live-20260725``); ``main``'s copy of ``configs/pbt2_small.yaml``
+    reads 78,812,768 against 63,084,128. The bt4heads promotion (``86492fa26``)
+    moved it and ``0f5b9a6ae`` re-measured, but that commit swept only
+    ``CLAUDE.md``, ``tcec.md`` and ``tests/test_param_count.py`` — this
+    docstring kept quoting ``main``'s pair for two weeks. The OVERCOUNT is the
+    branch-invariant half: 15 × 1,048,576 holds in both worlds, because the
+    whole 1,639,680 delta landed on untied params.
 
     The dedup key matches ``tests/test_param_count.py::_count_distinct``
     (``data_ptr`` + ``storage_offset``) so the two cannot disagree about the

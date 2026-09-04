@@ -1,0 +1,32 @@
+{
+  "checkpoint": "/home/josh/projects/chess/scratchpad/gradshare_probe/ckpt158_dea5e/trainer.pt",
+  "replay_dir": "/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_dea5e_00000_0_lr=0.0000_2026-08-16_12-38-11/replay_shards",
+  "device": "cpu",
+  "rows": 240,
+  "batches": 5,
+  "eligible_frac_mean": 0.19166666666666665,
+  "identity_holds_on_every_batch": true,
+  "p1_unweighted_share_of_policy_ce_grad": 0.304652523771375,
+  "p1_weighted_share_at_dose": {
+    "dose": 0.7,
+    "share": 0.21325676663996251
+  },
+  "p2_moved_grad_magnitude_share": {
+    "0.1": 0.0,
+    "0.25": 0.2023907993881548,
+    "0.5": 0.2890007676043592,
+    "0.75": 0.4201783462788864,
+    "0.9": 0.674777897877245,
+    "1.0": 0.9292983467784592
+  },
+  "p2_gated_row_frac_of_eligible": {
+    "0.1": 0.0,
+    "0.25": 0.08888888888888888,
+    "0.5": 0.15555555555555553,
+    "0.75": 0.21818181818181817,
+    "0.9": 0.323989898989899,
+    "1.0": 0.851010101010101
+  },
+  "p2_bar": 0.1,
+  "p2_verdict_at_max_dose": "PASS"
+}

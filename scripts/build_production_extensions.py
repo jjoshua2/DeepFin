@@ -50,7 +50,11 @@ def build_environment(*, compiler: str, base: Mapping[str, str]) -> dict[str, st
         # even when distutils honors CC for compilation. LTO object formats
         # are compiler-version-specific, so force the same validated driver
         # for the shared-library link as well.
-        "LDSHARED": f"{compiler} -shared",
+        # --build-id is a DISTRO patch, not an ld default: Ubuntu's gcc spec
+        # passes it, the validated gcc-15.3 toolchain does not, so without it
+        # this script produces .so files with no GNU build-id and the nnue
+        # readouts' loaded-image provenance gate refuses them.
+        "LDSHARED": f"{compiler} -shared -Wl,--build-id=sha1",
         "CAE_EXT_NATIVE": "1",
         "CAE_EXT_LTO": "1",
     })

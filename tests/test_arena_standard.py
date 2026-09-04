@@ -464,7 +464,9 @@ def test_deadline_is_checked_after_the_reap_not_before(monkeypatch):
     )
 
 
-def _run_arena_matched_time(monkeypatch, tmp_path, *, games: int, max_seconds=None):
+def _run_arena_matched_time(
+    monkeypatch, tmp_path, *, games: int, max_seconds=None, log_name: str = "games",
+):
     """Drive run_arena's matched_time path with the UCI match stubbed out.
 
     matched_time loads no models, so this exercises the real orchestration
@@ -492,6 +494,10 @@ def _run_arena_matched_time(monkeypatch, tmp_path, *, games: int, max_seconds=No
         ms_per_move=100, max_plies=300, temperature=0.1,
         gumbel_add_noise=True, device="cpu", seed=0, out_path=None,
         max_seconds=max_seconds,
+        # Pin the per-game log into tmp_path: the default lands under repo
+        # runs/, and two calls with the same settings would (correctly) refuse
+        # to share one log.
+        game_log_path=tmp_path / f"{log_name}.games.jsonl",
     )
     return record, seen
 
@@ -506,14 +512,16 @@ def test_max_seconds_reaches_the_matched_time_loop(monkeypatch, tmp_path):
     would be the accepted-then-ignored defect this script was just fixed for.
     """
     _record, seen = _run_arena_matched_time(
-        monkeypatch, tmp_path, games=4, max_seconds=900.0,
+        monkeypatch, tmp_path, games=4, max_seconds=900.0, log_name="capped",
     )
     assert "deadline" in seen, (
         "run_arena did not pass a deadline to play_paired_games_matched_time; "
         "--max-seconds is inert under matched_time"
     )
     assert seen["deadline"] is not None
-    _record2, seen2 = _run_arena_matched_time(monkeypatch, tmp_path, games=4)
+    _record2, seen2 = _run_arena_matched_time(
+        monkeypatch, tmp_path, games=4, log_name="uncapped",
+    )
     assert seen2["deadline"] is None, "no --max-seconds must mean no deadline"
 
 

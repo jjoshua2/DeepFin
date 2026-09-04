@@ -1,0 +1,15 @@
+{
+  "shards": [
+    "shard_005571.zarr",
+    "shard_005586.zarr"
+  ],
+  "n_rows_read": 29142,
+  "n_sf_labelled": 6355,
+  "n_sampled": 2000,
+  "A1_n_exact": 2000,
+  "A1_frac_exact": 1.0,
+  "agree": 0.422,
+  "mean_top1": 0.7155664300355904,
+  "frac_not_listed": 0.139,
+  "mean_nlegal": 26.46
+}

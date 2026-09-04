@@ -157,6 +157,27 @@ def _wait_if_paused(
                     flush=True,
                 )
                 announced = True
+  # ⚑ The park exists so a pause window can run GPU work while we sleep, and
+  # a parked trainer that keeps the allocator's full activation cache resident
+  # defeats that purpose: measured 2026-08-20, the parked trial held 32,059 of
+  # 32,607 MiB (132 MiB free) and the #438 control train could not build its
+  # model. Live tensors (params/optimizer/EMA, a few GB) stay put -- this
+  # frees only cached, unallocated blocks. Resume pays first-iteration
+  # re-caching (cudaMalloc), which is noise against a multi-hour window.
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        free_b, total_b = torch.cuda.mem_get_info()
+                        print(
+                            f"[trial] parked: released CUDA cache "
+                            f"({free_b / 2**20:.0f} MiB free of "
+                            f"{total_b / 2**20:.0f})",
+                            flush=True,
+                        )
+                except Exception as exc:  # parking must survive this
+                    print(f"[trial] parked: empty_cache failed: {exc!r}", flush=True)
             time.sleep(float(poll_s))
     finally:
         _clear_pause_acks(ack_paths)
@@ -1430,9 +1451,10 @@ def _sync_trainer_weights(
             "sf_p0_policy_target / sf_volatility_target are MASKED (their "
             "sources live on other shard rows) so has_sf_p0_frac reads 0. The "
             "frozen full-pass holdout is NOT rebuilt. Proof of effect is "
-            "sf_rebuild_policy_frac in progress.csv, not this line; that "
-            "column sitting BELOW sf_rebuild_wdl_frac means desynced Stockfish "
-            "labels in the window, not rows the rebuild could not reach.",
+            "sf_rebuild_policy_frac in progress.csv, not this line. Do not "
+            "compare it with sf_rebuild_wdl_frac as a health signal: supported "
+            "sparse-policy rows rebuild WDL without a dense policy write; use "
+            "sf_labelled_no_multipv_frac for Stockfish label health.",
             want_rebuild, was_rebuild, want_params,
         )
 

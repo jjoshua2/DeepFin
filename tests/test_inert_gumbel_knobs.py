@@ -98,9 +98,18 @@ def test_the_python_gumbel_descent_has_no_puct_arm_left() -> None:
     assert "cfg.full_tree" not in code
 
 
-def test_realized_gumbel_never_reports_an_inert_knob() -> None:
-    """Fails on pre-fix `main`: realized_gumbel() iterated PLAY_SEARCH_DEFAULTS."""
-    side = resolve_search_shape("play")
+@pytest.mark.parametrize("shape", ["play", "training"])
+def test_realized_gumbel_never_reports_an_inert_knob(shape: str) -> None:
+    """Fails on pre-fix `main`: realized_gumbel() iterated PLAY_SEARCH_DEFAULTS.
+
+    ⚑ `training` is parametrized in as of the shape-derivation fix. That shape's
+    override dict is now the COMPLEMENT of the arena- and checkpoint-owned
+    fields, so it does contain the four inert knobs (at their defaults, hence
+    no-ops under `dataclasses.replace`). The reported/realized view must still
+    drop them, or a `training` row would start advertising a c_puct the Gumbel
+    search cannot act on — the exact F2 misreading this module exists to stop.
+    """
+    side = resolve_search_shape(shape)
     realized = side.realized_gumbel()
     assert not (set(realized) & INERT_GUMBEL_KNOBS)
     described = side.describe()

@@ -13,6 +13,7 @@ import os
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -41,6 +42,7 @@ from .shard import (
     shard_index,
     shard_positions,
     sparsify_chunk,
+    validate_arrays,
     zeros_for_storage_field,
 )
 from .threat_upgrade import (
@@ -59,6 +61,31 @@ _REFRESH_EMPTY_STREAK_ALARM = 50
 # Throttle for the tracked-shard load-failure line. Generous because the
 # failure it reports is per-shard and can arrive in bursts.
 _SHARD_LOAD_WARN_INTERVAL_S = 60.0
+
+# Threads used to decode ONE shuffle refresh's shards. Deliberately a module
+# constant rather than a constructor kwarg: every `DiskReplayBuffer` ctor kwarg
+# has to be classified by `assert_buffer_kwargs_are_classified`, and this is a
+# decode-scheduling detail that changes no sampled row, so it has no business
+# in the lc0-control replay pin.
+#
+# 4 is measured, not guessed. On the production path -- the refresh runs on the
+# trainer's prefetch WORKER thread -- decoding 3 shards with the validation memo
+# already in place: serial 5.409s, 2 workers 4.486s (1.21x), 4 workers 2.315s
+# (2.34x).
+#
+# ⚑ WHY THERE IS ANYTHING TO WIN AT ALL, since blosc already decompresses with 8
+# internal threads: numcodecs turns that OFF on non-main threads
+# (`_get_use_threads()` is True on the main thread, False on a worker -- measured).
+# The refresh has ALWAYS run on a worker thread, so its decode was already
+# single-threaded; this pool is what puts the parallelism back. The same fact is
+# why the outer pool is worth nothing when the caller IS the main thread (there,
+# serial gets blosc's 8 threads for free and a 4-way pool measured SLOWER), and
+# why raising this number is not free on a box that is also running selfplay.
+_REFRESH_LOAD_WORKERS = 4
+
+# How often the shard-validation memo reports its hit rate. Throttled because
+# production runs `refresh_interval` as low as 1.
+_VALIDATION_MEMO_LOG_INTERVAL_S = 300.0
 
 # Advisory lock naming the one process allowed to write shards into a window
 # dir. Two writers is not hypothetical: on 2026-07-11 two of them interleaved
@@ -325,6 +352,13 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
 
     out: dict[str, np.ndarray] = {}
     for name in _ARRAY_FIELD_ORDER:
+        present = any(name in chunk for chunk in chunks)
+        # A uniformly absent optional field has no information to merge. Skip
+        # it before synthesizing per-chunk zeros: building those arrays and a
+        # concatenated throwaway can transiently consume two full field
+        # payloads (notably another complete x tensor for x_lc0_root).
+        if not present and name not in _REQUIRED_STORAGE_FIELDS:
+            continue
         parts: list[np.ndarray] = []
         for chunk in chunks:
             n, chunk_policy_size, chunk_x_planes = _batch_dims(chunk)
@@ -341,16 +375,7 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
                     )
                 )
         merged = np.concatenate(parts, axis=0)
-  # Keep required fields explicit; drop optional fields that are uniformly absent.
-  # (There used to be a second branch here retaining a uniformly-absent VALUE
-  # array when its `has_*` flag had already been written to `out`. It could
-  # never fire: `_ARRAY_FIELD_ORDER` is `_SHARD_FIELDS`, which emits `spec.arr`
-  # BEFORE `spec.flag` for every pair, so a value name is always decided while
-  # its own flag is still unwritten. It read as a safety net holding nothing;
-  # the ordering it depended on is now pinned by
-  # tests/test_replay_field_defaults.py.)
-        if any(name in chunk for chunk in chunks) or name in _REQUIRED_STORAGE_FIELDS:
-            out[name] = merged
+        out[name] = merged
     for name in _SCALAR_METADATA_FIELDS:
         values: list[str | None] = []
         for chunk in chunks:
@@ -517,6 +542,40 @@ class DiskReplayBuffer:
         self._refresh_failed_total = 0
         self._refresh_empty_streak = 0
         self._shard_load_warned_at = 0.0
+
+  # ⚑ VALIDATION MEMO. `validate_arrays` is a pure function of the arrays it is
+  # handed, and the shuffle refresh re-reads the SAME unchanged local shards for
+  # the whole run -- at refresh_interval=5 / refresh_shards=3 over a 9.7k-step
+  # run each of ~650 shards is decoded and re-validated ~19 times. Measured on
+  # the production path (the refresh runs on the trainer's prefetch WORKER
+  # thread, warm cache, 3 shards): 7.467s with validation, 1.022s without --
+  # 7.31x. It is that lopsided off the main thread because numcodecs turns
+  # blosc's internal threading OFF on non-main threads, so the decode half is
+  # already single-threaded while `validate_arrays` is uncompensated numpy.
+  #
+  # Keyed on the shard's CONTENT FOOTPRINT, not its directory mtime: a `.zarr`
+  # shard is a DIRECTORY of ~291 chunk files, and rewriting a chunk in place
+  # leaves the directory's own mtime untouched -- so a path+dir-mtime key would
+  # be a gate that cannot fire. `_shard_validation_fingerprint` walks the tree
+  # instead (file count, total size, newest mtime_ns), measured at 3.4 ms
+  # against a 878 ms load: 0.39%.
+  #
+  # ⚑ WHAT THIS GIVES UP, STATED: a shard mutated in place with its size AND
+  # every file's mtime preserved is validated once and trusted thereafter. That
+  # is bit-rot or a deliberate forgery, not the trim/rewrite races this buffer
+  # actually sees, and both of those move the fingerprint. The memo is per
+  # INSTANCE and never persisted, so a fresh buffer re-validates from scratch.
+        self._validated_shards: dict[str, tuple[int, int, int]] = {}
+        self._validation_memo_lock = threading.Lock()
+        self._shard_validations_run = 0
+        self._shard_validations_skipped = 0
+  # ⚑ SEEDED WITH now(), NOT 0.0. With 0.0 the first line lands on the FIRST
+  # refresh -- where a hit is arithmetically impossible, because nothing has
+  # been read twice yet -- so it always reported "memo hit rate 0.0%" and a
+  # reader would conclude the memo was inert. Measured: a 100-batch run that
+  # finished at a 38% hit rate printed 0.0%. Starting the clock here means
+  # every line that IS printed describes a warmed-up buffer.
+        self._validation_memo_logged_at = time.time()
 
   # In-memory hot replay as chunked sparse arrays with logical front offsets.
   # Sampling stays random over the hot pool while trims avoid front-copy churn.
@@ -1333,15 +1392,73 @@ class DiskReplayBuffer:
         weights = shard_draw_weights(n_shards, self._shard_recency_exponent)
         chosen_idxs = rng.choice(n_shards, size=n_pick, replace=False, p=weights)
 
+  # ⚑ DECODED CONCURRENTLY, ASSEMBLED IN SUBMISSION ORDER. The shard DRAW above
+  # is a single `rng.choice` that has already happened, so the loads consume no
+  # randomness and their completion order cannot reach the sampled rows. What
+  # would reach them is the order they are appended to `loaded` -- that is the
+  # order they enter the shuffle pool -- so results are zipped back onto
+  # `picks` positionally rather than appended as futures complete.
+  # `[f.result() for f in futures]` iterates the SUBMISSION list, so a shard
+  # that finishes first still lands in its own slot. `_load_refresh_chunks` is
+  # therefore byte-identical to the serial version it replaces, which
+  # `test_parallel_refresh_decode_is_byte_identical_to_serial` pins.
+        picks = [int(idx) for idx in np.asarray(chosen_idxs, dtype=np.int64)]
+        workers = min(_REFRESH_LOAD_WORKERS, len(picks))
+  # ⚑ THE POOL IS FOR WORKER-THREAD CALLERS ONLY, and the branch is the same
+  # numcodecs fact the pool exists for. blosc's internal 8-thread decompression
+  # is enabled only on the MAIN thread, so a main-thread refresh already
+  # decodes 8-way and handing it to a 4-way outer pool measured 0.82x -- a
+  # REGRESSION. Production's refresh always runs on a worker (the trainer's
+  # prefetch pool, or this buffer's own `_prefetch_loop`), so gating costs the
+  # production path nothing and protects the offline/main-thread callers
+  # (`_seed_shuffle_pool` at construction, scripts that sample inline).
+        if threading.current_thread() is threading.main_thread():
+            workers = 1
+        if workers <= 1:
+            results = [
+                self._try_load_shard(shard_paths[idx], context=context)
+                for idx in picks
+            ]
+        else:
+  # A pool PER REFRESH, not a persistent one on the instance. Spawning
+  # `workers` threads costs well under a millisecond against a multi-second
+  # decode, and the `with` block joins them on every exit path including an
+  # exception -- whereas a long-lived pool would need its own shutdown wired
+  # into buffer teardown, which is precisely the abandoned-thread failure this
+  # module already carries scar tissue for (see `_prefetch_loop`).
+            try:
+                with ThreadPoolExecutor(
+                    max_workers=workers, thread_name_prefix="replay-refresh-load",
+                ) as pool:
+                    futures = [
+                        pool.submit(
+                            self._try_load_shard, shard_paths[idx], context=context,
+                        )
+                        for idx in picks
+                    ]
+                    results = [f.result() for f in futures]
+            except RuntimeError:
+  # ⚑ INTERPRETER TEARDOWN. `_prefetch_loop` is a DAEMON thread, so it can
+  # still be inside a refresh when `threading._shutdown` runs, after which
+  # `submit` raises "cannot schedule new futures after interpreter
+  # shutdown". Nothing is wrong with the run at that point -- the process
+  # is exiting -- so the only visible effect would be a spurious traceback
+  # on a clean shutdown. Fall back to the serial path, which needs no new
+  # threads; `_try_load_shard` swallows and accounts for its own failures,
+  # so a torn-down interpreter yields Nones rather than raising again.
+                results = [
+                    self._try_load_shard(shard_paths[idx], context=context)
+                    for idx in picks
+                ]
+
         loaded: list[dict[str, np.ndarray]] = []
-        for idx in np.asarray(chosen_idxs, dtype=np.int64):
-            arrs = self._try_load_shard(shard_paths[int(idx)], context=context)
+        for idx, arrs in zip(picks, results):
             if arrs is not None:
                 loaded.append(arrs)
                 if chosen_out is not None:
   # Appended only for shards that actually loaded, so it stays 1:1
   # with `loaded` and a vanished shard cannot shift the ranks.
-                    chosen_out.append(int(idx))
+                    chosen_out.append(idx)
 
   # The realized-vs-configured check this function never had: n_pick shards
   # were asked for, len(loaded) arrived. Only a fully empty result is worth
@@ -1399,16 +1516,129 @@ class DiskReplayBuffer:
                 return streak, self._refresh_vanished_total, self._refresh_failed_total
             return None
 
+    @staticmethod
+    def _shard_validation_fingerprint(sp: Path) -> tuple[int, int, int] | None:
+        """(file count, total bytes, newest mtime_ns) over a shard's whole tree.
+
+        A `.zarr` shard is a directory, so `stat()` on the shard path itself
+        reports the DIRECTORY's mtime -- which does not move when a chunk file
+        inside it is rewritten in place. Walking the tree is what makes the
+        memo key actually track content; it costs 3.4 ms against a 878 ms load.
+
+        Returns None if the shard cannot be stat'd at all (the window trimmer
+        deleting it mid-walk is routine), which callers treat as "cannot vouch
+        for this one" and fall back to validating.
+        """
+        try:
+            n_files = 0
+            total_size = 0
+            newest_ns = 0
+            for root, _dirs, fnames in os.walk(sp):
+                for fn in fnames:
+                    st = os.stat(os.path.join(root, fn))
+                    n_files += 1
+                    total_size += st.st_size
+                    newest_ns = max(newest_ns, st.st_mtime_ns)
+            if n_files == 0:
+  # A legacy `.npz` shard is a FILE, not a tree: os.walk yields nothing.
+                st = os.stat(sp)
+                return (1, st.st_size, st.st_mtime_ns)
+            return (n_files, total_size, newest_ns)
+        except OSError:
+            return None
+
     def _try_load_shard(
         self, sp: Path, *, context: str,
     ) -> dict[str, np.ndarray] | None:
         """Load one shard, accounting for -- rather than swallowing -- failures."""
+  # Always RESOLVED, so the staging symlink farm (`stage_shards` points N
+  # names at one converted shard) shares one entry per real shard rather than
+  # re-validating the same bytes under every alias.
+        key = str(sp.resolve())
+        before = self._shard_validation_fingerprint(sp)
+        already_validated = False
+        if before is not None:
+            with self._validation_memo_lock:
+                already_validated = self._validated_shards.get(key) == before
         try:
-            arrs, _ = load_shard_arrays(sp, lazy=False)
+            arrs, _ = load_shard_arrays(sp, lazy=False, validate=not already_validated)
         except Exception as exc:
             self._note_shard_load_failure(sp, exc, context=context)
             return None
+
+  # ⚑⚑ RE-STAT AFTER THE DECODE, AND THE PR THAT ADDED THIS MEMO GOT IT WRONG.
+  # The first cut fingerprinted only BEFORE the read and argued that could
+  # "only be conservative". It cannot: a shard rewritten in the window between
+  # the fingerprint and the decode is read as NEW bytes while
+  # `already_validated` still reflects the OLD footprint, so validation is
+  # skipped on content nothing ever checked. Review reproduced it and got 256
+  # corrupt rows into the shuffle pool. A second walk costs ~2.6 ms against an
+  # 878 ms load.
+  #
+  # The invariant is now: ONLY A FOOTPRINT THAT HELD STILL ACROSS THE WHOLE
+  # READ MAY BE MEMOIZED, because it is the only one the bytes we actually
+  # decoded can be attributed to. Anything else drops the entry, so the next
+  # read re-validates -- the safe direction.
+        after = self._shard_validation_fingerprint(sp)
+  # Carried as the FOOTPRINT ITSELF rather than a bool, so the only value that
+  # can ever be memoized below is one this line proved stable -- there is no
+  # second place where "which fingerprint do we record" could get it wrong.
+        stable = after if (after is not None and after == before) else None
+
+        revalidated = False
+        if already_validated and stable is None:
+  # We skipped `validate_arrays` on the strength of a footprint that no
+  # longer describes the file, so check what we actually decoded. This is
+  # the branch that keeps the corrupt rows out.
+            try:
+                validate_arrays(arrs)
+            except Exception as exc:
+                self._note_shard_load_failure(sp, exc, context=context)
+                with self._validation_memo_lock:
+                    self._validated_shards.pop(key, None)
+                return None
+            revalidated = True
+
+        with self._validation_memo_lock:
+            if already_validated and not revalidated:
+                self._shard_validations_skipped += 1
+            else:
+                self._shard_validations_run += 1
+            if stable is not None:
+  # Recorded only once `validate_arrays` has returned without raising for
+  # THIS footprint, so a shard that fails validation is never memoized as
+  # good.
+                self._validated_shards[key] = stable
+            else:
+                self._validated_shards.pop(key, None)
+        self._maybe_log_validation_memo()
         return arrs
+
+    def _maybe_log_validation_memo(self) -> None:
+        """Put the memo's hit/miss counts somewhere production can see them.
+
+        A counter only tests ever read is this repo's accepted-then-ignored
+        smell wearing a performance hat: if the memo silently stopped hitting
+        -- a corpus being rewritten under the run, a fingerprint that never
+        matches -- the whole 7.31x would be handed back with nothing in the log
+        saying so. Throttled rather than per-refresh because production runs
+        `refresh_interval` as low as 1.
+        """
+        now = time.time()
+        with self._validation_memo_lock:
+            if now - self._validation_memo_logged_at < _VALIDATION_MEMO_LOG_INTERVAL_S:
+                return
+            self._validation_memo_logged_at = now
+            run = self._shard_validations_run
+            skipped = self._shard_validations_skipped
+            memoized = len(self._validated_shards)
+        total = run + skipped
+        rate = (skipped / total) if total else 0.0
+        print(
+            f"[disk_buf] refresh: shard validations run={run} skipped={skipped} "
+            f"(memo hit rate {rate:.1%}, {memoized} shard(s) memoized)",
+            flush=True,
+        )
 
     def _note_shard_load_failure(
         self, sp: Path, exc: BaseException, *, context: str,
@@ -1771,7 +2001,7 @@ class DiskReplayBuffer:
   # The allocation below is `np.zeros` over the UNION of the selected chunks'
   # keys, so a field one chunk carries and another lacks arrives as zeros for
   # the second chunk's rows. For every optional field that is the schema's own
-  # default (absent flag == 0, absent target == zeros) and harmless. For the two
+  # default (absent flag == 0, absent target == zeros) and harmless. For required
   # fields whose schema default is NOT zeros it is silent corruption in the
   # direction that cannot be seen: `has_policy = 0` deletes those rows from the
   # main policy loss and its accuracy stats, and `policy_loss` then reports the
@@ -1780,8 +2010,11 @@ class DiskReplayBuffer:
   # producer path emits them) -- this exists so that if it ever becomes
   # reachable the run stops instead of quietly training on fewer rows than it
   # reports. Cost: two `in` scans over the selected chunks, not the ~60 keys.
+  # Optional non-zero defaults are initialized from the schema below instead.
         if len(selected) > 1:
             for name in sorted(NONZERO_DEFAULT_STORAGE_FIELDS):
+                if name not in _REQUIRED_STORAGE_FIELDS:
+                    continue
                 present = sum(1 for dense_rows, _ in selected if name in dense_rows)
                 if 0 < present < len(selected):
                     raise ValueError(
@@ -1793,6 +2026,8 @@ class DiskReplayBuffer:
         for k in sorted(all_keys):
             if k in proto:
                 out[k] = np.zeros((n_out, *proto[k].shape[1:]), dtype=proto[k].dtype)
+                if k in NONZERO_DEFAULT_STORAGE_FIELDS:
+                    out[k].fill(1)
         for dense_rows, mask in selected:
             for name, value in dense_rows.items():
                 if name in out:

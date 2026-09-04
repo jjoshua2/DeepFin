@@ -1656,6 +1656,18 @@ def test_dump_row_carries_every_ruler_field_paired_compare_reads() -> None:
         f"the dump row no longer unpacks the stamp builder (unpacks: {unpacks}); "
         "the stamps may still be there, but nothing can check them by execution"
     )
+  # ⚑ `batch_size` is a RULER field that rides in `search_params`, not as a
+  # literal key. That is deliberate and separately enforced:
+  # `test_audit_search_param_stamp.py` pins `tuple(stamp) == SEARCH_PARAM_FIELDS`
+  # BY EXECUTION (so the constant credited below cannot drift from the dict the
+  # row actually unpacks) and asserts the row spells NONE of those keys out
+  # beside it (so the header and the dump cannot disagree about them). Crediting
+  # the constant here is therefore a derivation, not a second restatement — and
+  # without it this gate reports `batch_size` unwritten while the row writes it.
+    assert "search_params" in unpacks, (
+        f"the dump row no longer unpacks `search_params` (unpacks: {unpacks}); "
+        "`batch_size` and the CLI-only search knobs ride in there"
+    )
     produced = set(at.dump_ruler_stamps(
         _realized_shapes_fixture(),
         at.ConfigAuthority(
@@ -1663,7 +1675,9 @@ def test_dump_row_carries_every_ruler_field_paired_compare_reads() -> None:
         ),
     ))
     assert "config_authority" in produced
-    missing = set(RULER_FIELDS) - literal_keys - produced
+    missing = (
+        set(RULER_FIELDS) - literal_keys - produced - set(at.SEARCH_PARAM_FIELDS)
+    )
     assert not missing, (
         f"paired_compare gates on {sorted(missing)}, which audit_targets' dump "
         f"row never writes. A ruler field no producer stamps is a gate that "

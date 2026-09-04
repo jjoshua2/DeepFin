@@ -37,6 +37,28 @@ Two things it is deliberate about
    bootstrap around it returns a tight interval around the wrong number. So the
    completion-order diagnostic runs ALWAYS and prints with the result. A guard
    nobody runs is not a guard.
+3. **It refuses to pool one NAME across two SEARCHES.** Ordo's player identity
+   is the name string and nothing else, so two runs that share engine names but
+   played under different binding ``--eval-max-batch`` caps are merged into one
+   player — and a binding cap is not a memory setting, it makes the C tree
+   absorb surplus leaves as root-Q pseudo-terminals instead of evaluating them,
+   which changes the moves. ``arena_standard`` stamps every game with
+   ``EvaluatorHoist``; this wrapper is what makes that tag MEAN something.
+   A tag nobody enforces is decoration.
+
+   ⚑ **The rule is deliberately asymmetric, and the asymmetry is the design.**
+   Two DIFFERENT KNOWN values under one name is a refusal: it is a fact in
+   evidence that the pool merges two searches, the operator can see it, and
+   pooling anyway silently averages them into a rating that describes neither.
+   A MISSING tag is ``unknown`` and is NOT a third value: every PGN written
+   before the tag existed has none, and the games it holds were played under
+   *some* setting we cannot retroactively recover. Refusing on unknown would
+   reject every pooled fit that includes history — a guard so strict it is
+   routinely bypassed is worse than one that is loud — and, unlike the
+   known-conflict case, there is nothing the operator could do to satisfy it.
+   So unknown-beside-known WARNS once, naming the files, and proceeds; only
+   known-vs-known refuses, and ``--allow-mixed-hoist`` is the explicit,
+   recorded way to say "I know, do it anyway".
 """
 
 from __future__ import annotations
@@ -76,6 +98,14 @@ class Game:
     plies: int | None
     duration_s: float | None
     order: int  # position in the file == completion order (games are appended)
+    # ⚑ APPENDED WITH DEFAULTS, on purpose: several tests build `Game`
+    # positionally, and inserting a field would silently shift every one of
+    # them onto the wrong attribute. `eval_hoist` None means the PGN carried no
+    # ``EvaluatorHoist`` tag — UNKNOWN, never "off"; `source` is the file it
+    # came from, kept because the refusal has to name WHICH inputs disagree
+    # (an operator holding six PGNs cannot act on "they disagree").
+    eval_hoist: str | None = None
+    source: str = "?"
 
 
 @dataclass
@@ -117,6 +147,14 @@ def read_games(paths: list[Path]) -> list[Game]:
                     continue  # Ordo drops "*" too (pgnget.c DISCARD)
                 plies = h.get("Plies")
                 dur = h.get("GameDurationSec")
+                # ⚑ Kept, not dropped. This was the whole gap: arena_standard
+                # stamps EvaluatorHoist on every game and the reader threw it
+                # away, so a provenance tag existed and nothing downstream
+                # could act on it. An EMPTY tag reads as absent rather than as
+                # the value "": a header that is present but blank tells us no
+                # more than a missing one, and treating "" as a known value
+                # would manufacture a conflict out of nothing.
+                hoist = h.get("EvaluatorHoist")
                 games.append(Game(
                     white=h.get("White", "?"),
                     black=h.get("Black", "?"),
@@ -125,9 +163,97 @@ def read_games(paths: list[Path]) -> list[Game]:
                     plies=int(plies) if plies is not None and plies.isdigit() else None,
                     duration_s=float(dur) if dur is not None else None,
                     order=order,
+                    eval_hoist=hoist or None,
+                    source=str(path),
                 ))
                 order += 1
     return games
+
+
+def hoist_by_player(
+    games: list[Game],
+) -> dict[str, dict[str | None, dict[str, int]]]:
+    """``player -> EvaluatorHoist value (None = unknown) -> {file: n games}``.
+
+    Both sides of a game get the game's value: the tag describes the ARENA that
+    produced it, and both engines in that arena searched under the same cap.
+    """
+    out: dict[str, dict[str | None, dict[str, int]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(int)))
+    for g in games:
+        for player in (g.white, g.black):
+            out[player][g.eval_hoist][g.source] += 1
+    return {p: {v: dict(f) for v, f in vals.items()} for p, vals in out.items()}
+
+
+def _fmt_hoist_files(files: dict[str, int]) -> str:
+    return ", ".join(f"{name} x{n}" for name, n in sorted(files.items()))
+
+
+def check_hoist_consistency(
+    games: list[Game], *, allow_mixed: bool = False,
+) -> bool:
+    """Refuse to pool one NAME across two KNOWN evaluator-hoist settings.
+
+    Returns True when a known conflict exists AND ``allow_mixed`` permitted it —
+    the caller stamps its output MIXED on that. Returns False when the pool is
+    clean, or clean-but-partly-unknown (a warning, see the module docstring for
+    why that asymmetry is deliberate).
+
+    Raises ``SystemExit`` on a known conflict without ``allow_mixed``.
+    """
+    by_player = hoist_by_player(games)
+    conflicts = {
+        player: {v: f for v, f in vals.items() if v is not None}
+        for player, vals in by_player.items()
+        if len({v for v in vals if v is not None}) > 1
+    }
+    if conflicts:
+        lines = [
+            f"  {player}: {len(vals)} distinct settings" + "".join(
+                f"\n      {value!r}: {_fmt_hoist_files(files)}"
+                for value, files in sorted(vals.items())
+            )
+            for player, vals in sorted(conflicts.items())
+        ]
+        detail = "\n".join(lines)
+        if not allow_mixed:
+            raise SystemExit(
+                "refusing to pool: the same player NAME appears under two "
+                "different EvaluatorHoist settings.\n"
+                f"{detail}\n"
+                "  Ordo identifies players by NAME ALONE, so these become ONE "
+                "player and the fitted rating describes neither search. A tag "
+                "of the form 'N<M' means the leaf buffer was CAPPED BELOW what "
+                "the search asked for, which changes the moves played, not "
+                "merely the memory used.\n"
+                "  Fix it by giving the arms distinct names "
+                "(--pgn-candidate-name / --pgn-reference-name in "
+                "arena_standard), or pass --allow-mixed-hoist to pool anyway "
+                "and have the output stamped MIXED."
+            )
+        print(
+            "\n⚑⚑ MIXED EVALUATOR HOIST, permitted by --allow-mixed-hoist. "
+            "The ratings below pool games played under DIFFERENT searches "
+            "under one name:\n" + detail,
+            file=sys.stderr, flush=True,
+        )
+        return True
+    # Unknown beside known: one warning, naming the files, then proceed.
+    for player, vals in sorted(by_player.items()):
+        known = {v for v in vals if v is not None}
+        if None in vals and known:
+            unknown_files = _fmt_hoist_files(vals[None])
+            print(
+                f"[ordo] WARNING: {player} pools {sorted(known)} with games "
+                f"carrying NO EvaluatorHoist tag ({unknown_files}). Those "
+                f"predate the tag, so whether they match cannot be shown — "
+                f"they are not assumed to differ, and they are not assumed to "
+                f"agree either. Refusing here would reject every fit that "
+                f"includes history; see the module docstring.",
+                file=sys.stderr, flush=True,
+            )
+    return False
 
 
 def group_pairs(games: list[Game]) -> tuple[dict[tuple[str, str], list[Pair]], int]:
@@ -154,6 +280,12 @@ def group_pairs(games: list[Game]) -> tuple[dict[tuple[str, str], list[Pair]], i
 
 
 def write_pgn(path: Path, games: list[Game]) -> None:
+    # Deliberately does NOT carry EvaluatorHoist through. This file is the
+    # temp input to Ordo, which reads {white, black, result} and ignores every
+    # other tag, so a tag here would be one more thing nothing enforces --
+    # exactly the defect `check_hoist_consistency` exists to close. The
+    # enforcement runs BEFORE any fit, so no mix can reach this function
+    # unannounced in the first place.
     with path.open("w", encoding="utf-8") as fh:
         for i, g in enumerate(games, 1):
             fh.write(
@@ -464,6 +596,16 @@ def main() -> int:
     ap.add_argument("--ordo-sims", type=int, default=1000,
                     help="Ordo's own -s replications, for comparison (default 1000)")
     ap.add_argument("--seed", type=int, default=20260813)
+    ap.add_argument("--allow-mixed-hoist", action="store_true",
+                    help="pool games whose EvaluatorHoist settings DIFFER under "
+                         "one player name. Default OFF and refused, because "
+                         "Ordo identifies players by name alone and a binding "
+                         "evaluator cap changes the moves played, not just the "
+                         "memory used — so the merged rating describes neither "
+                         "search. With this flag the fit runs and every output "
+                         "section is stamped MIXED. A MISSING tag is 'unknown', "
+                         "not a conflict, and never needed this flag: those "
+                         "games only warn.")
     args = ap.parse_args()
 
     if not args.ordo.exists():
@@ -472,6 +614,13 @@ def main() -> int:
     games = read_games(args.pgn)
     if not games:
         raise SystemExit("no decisive/drawn games found in the PGN(s)")
+    # BEFORE the point fit and before the bootstrap: a refusal that arrives
+    # after several hundred Ordo replications is one the operator has already
+    # paid for. (The binary-exists check above still runs first, deliberately —
+    # "your ordo path is wrong" is cheaper to act on than either.)
+    hoist_mixed = check_hoist_consistency(
+        games, allow_mixed=bool(args.allow_mixed_hoist))
+    mixed_tag = " [MIXED HOIST]" if hoist_mixed else ""
     by_matchup, n_unpaired = group_pairs(games)
     players = sorted({g.white for g in games} | {g.black for g in games})
     n_complete = sum(1 for ps in by_matchup.values() for p in ps if p.complete)
@@ -497,14 +646,14 @@ def main() -> int:
 
     flagged = completion_bias_report(by_matchup, rng=rng)
 
-    print(f"\n=== ratings (Ordo joint fit; ERROR = its own -s {args.ordo_sims} "
-          f"95% margin, independent-games) ===")
+    print(f"\n=== ratings{mixed_tag} (Ordo joint fit; ERROR = its own -s "
+          f"{args.ordo_sims} 95% margin, independent-games) ===")
     for name in sorted(point, key=lambda n: -point[n][0]):
         r, e = point[name]
         print(f"  {name:40s} {r:+8.1f}  +-{e:6.1f}")
 
-    print(f"\n=== pair-level block bootstrap ({args.bootstrap} reps, stratified "
-          f"by matchup, each to its own count) ===")
+    print(f"\n=== pair-level block bootstrap{mixed_tag} ({args.bootstrap} reps, "
+          f"stratified by matchup, each to its own count) ===")
     boot = block_bootstrap(args.ordo, by_matchup, reps=args.bootstrap,
                            anchor=args.anchor, rng=rng, tmp=tmp, unit="pair")
     game_boot: list[dict[str, float]] = []
@@ -538,7 +687,8 @@ def main() -> int:
     # THE number a reader acts on. Per-player rows above are against the pool
     # average / anchor; "is A better than B" is a CONTRAST, and its interval is
     # not recoverable from two per-player intervals.
-    print("\n=== pairwise contrasts (paired within bootstrap replication) ===")
+    print(f"\n=== pairwise contrasts{mixed_tag} "
+          f"(paired within bootstrap replication) ===")
     print(f"  {'contrast':44s} {'delta':>8s} {'95% CI':>22s} {'hw':>7s} "
           f"{'P(A>B)':>7s}")
     names = sorted(point, key=lambda n: -point[n][0])
@@ -558,6 +708,15 @@ def main() -> int:
           "hand. Refitting as games arrive is legitimate VISIBILITY; reading a "
           "verdict at whichever refit looks good is optional stopping, and the "
           "bootstrap does not license it. Fix the read point in advance.")
+    if hoist_mixed:
+        # Repeated at the END as well as the top: a long fit's opening banner is
+        # off the operator's screen by the time the numbers land, and this one
+        # says the numbers do not mean what they appear to.
+        print("\n⚑⚑ MIXED HOIST: --allow-mixed-hoist was passed, so at least "
+              "one player NAME above pools games played under DIFFERENT "
+              "evaluator caps, i.e. under different searches. Every rating and "
+              "contrast on this run is an average over those, and none of them "
+              "is that player's strength at either setting.")
     return 2 if flagged else 0
 
 

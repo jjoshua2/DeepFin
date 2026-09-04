@@ -105,6 +105,18 @@ MARKER="$TUNE_DIR/pause.txt"
 # train.sh. `--` is REQUIRED for pgrep/pkill: the pattern begins with `-m`.
 WORKER_PATTERN='-m chess_anti_engine\.worker( |$)'
 
+# ⚑ The pattern above is no longer handed to pgrep/pkill — NOTHING in this
+# script signals by name any more. Discovery walks /proc read-only and matches
+# the pattern against OTHER processes' cmdline, bound to `--trial-id $TRIAL_ID`
+# and ancestry-checked; signals go to explicit PIDs whose kernel start time is
+# re-verified first. The literal is retained because train.sh still uses it and
+# tests/test_pause_window.py pins the two byte-identical. Mechanism + the
+# zombie rule: scripts/pause_drain_lib.sh (2026-08-20: `kill -0` read four
+# cleanly-exited zombie workers as survivors — a parked trial cannot reap — and
+# aborted a fully drained window).
+# shellcheck source=scripts/pause_drain_lib.sh
+. "${BASH_SOURCE[0]%/*}/pause_drain_lib.sh"
+
 log() { echo "[pause-window] $*"; }
 # ⚑ EXIT 7 IS "THE WRAPPER FAILED", AND IT IS DISTINCT ON PURPOSE. The job's own
 # status is passed through untouched at the end. Sharing 1 with the ratchet made
@@ -292,9 +304,21 @@ fi
 # (`pgrep -f "-m chess..."` => "invalid option -- 'm'", rc 2). Swallowed, that
 # reads as "nothing to drain", the job runs beside a full fleet, and the
 # contended arena is recorded as a clean strength row.
-pg_rc=0
-WORKER_PIDS="$(pgrep -f -- "$WORKER_PATTERN" 2>/dev/null)" || pg_rc=$?
-[ "$pg_rc" -lt 2 ] || die "pgrep failed (rc=$pg_rc) -- the worker pattern is broken, so the drain would silently match nothing"
+BASELINE_SNAPSHOT="$(pause_worker_snapshot "$TRIAL_ID")"
+WORKER_PIDS="$(printf '%s\n' "$BASELINE_SNAPSHOT" | awk 'NF{print $1}')"
+# Ancestry gate: every worker of one trial is a child of that trial's single
+# Ray trainable. Mixed parentage means the discovery matched something that is
+# not this trial's fleet (a second trial, a stray copy) -- refuse before the
+# marker, where being wrong is free.
+if [ -n "$BASELINE_SNAPSHOT" ]; then
+    parent_count="$(printf '%s\n' "$BASELINE_SNAPSHOT" | awk 'NF{print $3}' | sort -u | wc -l)"
+    [ "$parent_count" -le 1 ] || die "worker discovery found MIXED parentage ($(printf '%s\n' "$BASELINE_SNAPSHOT" | awk 'NF{printf "%s(ppid %s) ", $1, $3}')) -- these are not one trial's fleet; NOT pausing"
+fi
+declare -A WORKER_START=()
+while read -r _pid _start _ppid; do
+    [ -n "$_pid" ] || continue
+    WORKER_START["$_pid"]="$_start"
+done <<< "$BASELINE_SNAPSHOT"
 OFFSETS="$(mktemp)"; OFFSET_WHY="$(mktemp)"; RESUME_BEFORE="$(mktemp)"
 cleanup_tmp() { rm -f "$OFFSETS" "$OFFSET_WHY" "$RESUME_BEFORE"; }
 
@@ -317,7 +341,7 @@ if [ -n "$WORKER_PIDS" ]; then
         # a LIST), so `--log-file=X` cannot occur; if it were ever LAST,
         # `getline` fails at EOF and awk re-prints `--log-file`, which then
         # fails the `[ -f ]` and degrades to could-not-verify.
-        lf="$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null \
+        lf="$(tr '\0' '\n' < "$PAUSE_PROC_ROOT/$pid/cmdline" 2>/dev/null \
               | awk '/^--log-file$/{getline; print; exit}')" || lf=""
         if [ -z "$lf" ]; then
             # worker.py defaults --log-file to None and every volunteer launch
@@ -348,7 +372,7 @@ else
     # indistinguishable from the first here, and it is the expensive one: the
     # job runs against a full fleet and the result is filed as uncontended.
     # Refuse BEFORE the marker, so the cost of being wrong is zero.
-    die "no selfplay workers matched '$WORKER_PATTERN' -- refusing to pause. Either the fleet is down (set CAE_PAUSE_ALLOW_NO_WORKERS=1 and re-run) or the pattern has drifted from the workers' argv"
+    die "no worker of trial $TRIAL_ID found in /proc (pattern '$WORKER_PATTERN' + --trial-id) -- refusing to pause. Either the fleet is down (set CAE_PAUSE_ALLOW_NO_WORKERS=1 and re-run), or the pattern/argv drifted, or the trial id is wrong"
 fi
 
 # ⚑ COUNT THE RESUME DIRS FIRST, because the drain does not know what was
@@ -382,6 +406,9 @@ release() {
         # ours we leave it and say so -- training stays parked, which is the
         # operator's stated intent and is recoverable, whereas resuming against
         # their wishes is not.
+        if [ -n "${WATCHDOG_PID:-}" ]; then
+            kill "$WATCHDOG_PID" 2>/dev/null || true
+        fi
         if [ ! -e "$MARKER" ]; then
             log "marker already gone -- nothing to clear"
         elif grep -q "pid=$$\b" "$MARKER" 2>/dev/null; then
@@ -453,9 +480,31 @@ trap on_signal INT TERM
 # is present and the loop is flat, and this PR makes that a NIGHTLY event; the
 # content is what tells "the ratchet is running" apart from "a dead window
 # parked production", which the verdict alone cannot.
+# ⚑ TMP + RENAME, because the marker has READERS with no lock: the test suite
+# polls for existence then reads, and `train_watchdog.parse_pause_marker` does
+# the same in production -- a read between the redirect's open-truncate and the
+# first printf sees an EMPTY marker, parses no owner, and files the window as
+# permanently unrecoverable. rename(2) is atomic on the same filesystem, so the
+# marker either does not exist or is complete.
 { printf 'pause_window.sh pid=%s started=%s\n' "$$" "$(date -Is)"
-  printf 'job=%s\n' "$*"; } > "$MARKER"
+  printf 'job=%s\n' "$*"; } > "$MARKER.tmp.$$"
+mv "$MARKER.tmp.$$" "$MARKER"
 log "marker set; waiting up to ${ACK_TIMEOUT}s for the trial to park"
+
+# ⚑ THE MARKER LEASE. The release trap does not fire on SIGKILL or a host
+# reboot, and a marker with no living owner parks production indefinitely --
+# the "one unrecoverable mistake". A detached watchdog clears the marker if the
+# launcher dies or a hard deadline passes; both paths are loud in the lease
+# log. Killed BY EXPLICIT PID in release(). Deadline default 21600s (6h):
+# the longest sanctioned window (the lc0 control, ~4.5h worst case) plus slack.
+LEASE_DEADLINE="${CAE_PAUSE_HARD_DEADLINE_SECONDS:-21600}"
+LEASE_LOG="${MARKER%.txt}_lease.log"
+# our own start time rides along so the watchdog can tell a recycled pid
+# wearing our number from us -- without it, cleanup after a SIGKILL+pid-reuse
+# waits for the full hard deadline.
+OWN_START="$(pause_proc_start_time "$$")" || OWN_START=""
+WATCHDOG_PID="$(pause_start_lease_watchdog "$MARKER" "$$" "$LEASE_DEADLINE" "$LEASE_LOG" "$OWN_START")"
+log "marker lease: watchdog pid $WATCHDOG_PID, hard deadline ${LEASE_DEADLINE}s, log $LEASE_LOG"
 
 # ⚑ WHEN A PRE-EXISTING ACK IS PRESENT, FAIL FAST INSTEAD OF HOLDING FOR HALF
 # AN HOUR. The likely cause is the NB1 case above: a previous window released
@@ -495,55 +544,73 @@ log "PARKED after ~${waited}s: $(tr -d '\n' < "$ACK" 2>/dev/null)"
 
 # ── Drain ────────────────────────────────────────────────────────────────────
 if [ -n "$WORKER_PIDS" ]; then
-    pkill -TERM -f -- "$WORKER_PATTERN" 2>/dev/null || true
+    # ⚑ RE-SNAPSHOT AFTER THE PARK, AND KILL THAT SET. The baseline was taken
+    # before the marker and before an ack wait that can run ACK_TIMEOUT --
+    # `_revive_fleet` is live for all of it, so a worker that died there came
+    # back under a NEW pid that is in no baseline. Revive is inert once the
+    # trial is parked, so THIS snapshot -- not the baseline -- is the complete
+    # kill set. (This replaces the old "half 2 fresh pgrep": same hazard, but
+    # the revived worker is now IN the kill set instead of merely detected.)
+    KILL_SNAPSHOT="$(pause_worker_snapshot "$TRIAL_ID")"
+    new_pids=""
+    while read -r _pid _start _ppid; do
+        [ -n "$_pid" ] || continue
+        [ -n "${WORKER_START[$_pid]:-}" ] || new_pids="$new_pids $_pid"
+        WORKER_START["$_pid"]="$_start"   # post-park start is what we signal against
+    done <<< "$KILL_SNAPSHOT"
+    [ -z "$new_pids" ] || log "worker(s)$new_pids appeared after the baseline (revive during the ack wait) -- included in the drain"
+    KILL_PIDS="$(printf '%s\n' "$KILL_SNAPSHOT" | awk 'NF{print $1}')"
+    ALL_PIDS="$(printf '%s\n%s\n' "$WORKER_PIDS" "$KILL_PIDS" | awk 'NF' | sort -u | tr '\n' ' ')"
+
+    # TERM by explicit PID only, re-verifying the kernel start time at signal
+    # moment so a recycled PID can never receive it.
+    for pid in $KILL_PIDS; do
+        pause_term_if_same_start "$pid" "${WORKER_START[$pid]}" log
+    done
+
     drained=0
-    while [ -n "$(pgrep -f -- "$WORKER_PATTERN" 2>/dev/null || true)" ]; do
+    while :; do
+        still_alive=""
+        for pid in $ALL_PIDS; do
+            [ "$(pause_worker_drain_state "$pid" "${WORKER_START[$pid]:-0}")" = "alive" ] \
+                && still_alive="$still_alive $pid"
+        done
+        [ -z "$still_alive" ] && break
         if [ "$drained" -ge "$DRAIN_TIMEOUT" ]; then
-            log "workers still alive after ${DRAIN_TIMEOUT}s"
+            log "worker(s)$still_alive still alive after ${DRAIN_TIMEOUT}s"
             break
         fi
         sleep "$POLL"; drained=$((drained + POLL))
     done
     log "drained after ~${drained}s"
 
-    # ⚑ THE DRAIN IS A GATE, NOT A BEST EFFORT -- AND IT NEEDS BOTH HALVES.
-    #
-    # Half 1, the BASELINE pids: a pattern that stopped matching cannot report a
-    # clean drain, because these pids are checked with `kill -0` and not with
-    # pgrep at all.
-    #
-    # Half 2, a FRESH pgrep: the baseline was taken at line ~187, BEFORE the
-    # marker and before an ack wait that can run CAE_PAUSE_ACK_TIMEOUT (1800s
-    # default). The trial is still running its current iteration for all of that
-    # wait, and `_revive_fleet` sits inside `_ingest_distributed_selfplay` -- so
-    # revive is live PRECISELY DURING THE WAIT. A worker that dies and is
-    # revived there gets a NEW pid, which is in no baseline. Baseline pids all
-    # dead + a revived worker alive and ignoring SIGTERM => half 1 finds nothing
-    # => the job runs beside a live selfplay worker, rc=0, and `ratchet_outcome`
-    # stamps the day as a clean strength reading. That is the exact outcome this
-    # gate exists to prevent, and an independent reviewer reproduced it against
-    # the real script: "workers still alive after 3s" ... "command exited rc=0"
-    # ... "JOB RAN BESIDE THE LIVE WORKER: True".
-    #
-    # ⚑ The loop above ALREADY SAW IT -- it printed "workers still alive" and
-    # then `break`ed into a gate that never consulted the fact. A value accepted
-    # and then silently ignored, which is this codebase's signature defect.
-    #
-    # Neither half subsumes the other: half 1 covers "the pattern drifted", half
-    # 2 covers "a worker appeared after the baseline", and half 2 is the one
-    # that runs the arena. rc>=2 is fatal here for the same reason it is at
-    # baseline; rc==0 (still matching) is fatal too.
+    # ⚑ THE DRAIN IS A GATE, NOT A BEST EFFORT -- AND A ZOMBIE IS A SUCCESSFUL
+    # TERMINATION. The parked trial cannot reap its children (reaping happens
+    # in the iteration loop, which is exactly what "parked" suspends), so a
+    # worker that exited cleanly on our SIGTERM stays visible in state Z until
+    # release. 2026-08-20: `kill -0` read four such zombies as survivors and
+    # aborted a fully drained window -- a deadlock by construction, because the
+    # zombies could not be reaped until the very release the gate was blocking.
+    # gone | zombie | pid-recycled => drained. Only a live ORIGINAL process
+    # (same kernel start time, state != Z) is a survivor.
     survivors=""
-    for pid in $WORKER_PIDS; do
-        kill -0 "$pid" 2>/dev/null && survivors="$survivors $pid"
+    for pid in $ALL_PIDS; do
+        [ "$(pause_worker_drain_state "$pid" "${WORKER_START[$pid]:-0}")" = "alive" ] \
+            && survivors="$survivors $pid"
     done
+    [ -z "$survivors" ] || die "worker(s)$survivors survived SIGTERM after ${DRAIN_TIMEOUT}s (original start time, state != Z -- a zombie would have counted as drained) -- NOT running the job; the measurement would be contended and indistinguishable from a clean one"
 
-    post_rc=0
-    STILL_MATCHING="$(pgrep -f -- "$WORKER_PATTERN" 2>/dev/null)" || post_rc=$?
-    [ "$post_rc" -lt 2 ] || die "pgrep failed (rc=$post_rc) after the drain -- the worker pattern is broken, so 'no workers left' is unverifiable; NOT running the job"
-
-    [ -z "$survivors" ] || die "worker(s)$survivors survived SIGTERM after ${DRAIN_TIMEOUT}s -- NOT running the job; the measurement would be contended and indistinguishable from a clean one"
-    [ -z "$STILL_MATCHING" ] || die "worker(s) $(echo "$STILL_MATCHING" | tr '\n' ' ')still match '$WORKER_PATTERN' after ${DRAIN_TIMEOUT}s -- NOT running the job. These are NOT in the pre-marker baseline, so they were revived during the ack wait (revive is live until the trial parks); the measurement would be contended and would be filed as clean"
+    # Fresh discovery, post-drain: a NON-ZOMBIE worker of THIS trial outside
+    # the kill set means something is spawning workers while the trial is
+    # parked, which no known mechanism does -- refuse rather than reason about
+    # it.
+    late_alive=""
+    while read -r _pid _start _ppid; do
+        [ -n "$_pid" ] || continue
+        case " $ALL_PIDS " in *" $_pid "*) continue ;; esac
+        [ "$(pause_worker_drain_state "$_pid" "$_start")" = "alive" ] && late_alive="$late_alive $_pid"
+    done <<< "$(pause_worker_snapshot "$TRIAL_ID")"
+    [ -z "$late_alive" ] || die "worker(s)$late_alive for trial $TRIAL_ID appeared AFTER the park and are alive -- NOT running the job; the measurement would be contended and would be filed as clean"
 
     # Evidence, read from the pre-drain offsets. ⚑ IT MUST BE READ HERE, BEFORE
     # THE MARKER CLEARS -- but not for the reason an earlier revision gave. It

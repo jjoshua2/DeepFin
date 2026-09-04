@@ -239,10 +239,16 @@ All default sane; none is set in production.
 ### A marker held by a dead window
 
 `train_watchdog.py` reports `PAUSE-ABANDONED` (exit **6** — 5 is `CRASHED`, taken by #371) for a marker that names its owner
-(`pid=`, written by `pause_window.sh`) whose owner is gone, or which has been held past
-`--pause-max-minutes` (default 180). `watchdog_loop.sh` then removes that marker — and
-only that kind: `graceful_restart.py`'s marker carries no `pid=` and is never touched,
-however old. `WATCHDOG_AUTO_RECOVER=0` disables this along with stall recovery. To
+(`pid=`, written by `pause_window.sh`) **whose owner is gone — that alone**. Age never
+clears: a live owner's marker held past `--pause-max-minutes` (default 180) only gains a
+`pause_overheld` annotation on its `PAUSED-HELD` log line (2026-08-20: the old age
+criterion deleted a live 10-hour window's marker at minute 185 and force-restarted
+production beside the job the pause protected). `watchdog_loop.sh` removes only the
+dead-owner kind: `graceful_restart.py`'s marker carries no `pid=` and is never touched,
+however old. `WATCHDOG_AUTO_RECOVER=0` disables this along with stall recovery.
+`recover_stall.sh` itself now refuses (exit 7) while an intentional-stop or pause marker
+is present unless passed `--force`, so the by-hand path can no longer silently undo an
+operator's stop or pause. To
 inspect one by hand, `cat runs/pbt2_small/tune/pause.txt` — it names the pid, the start
 time, and the job.
 

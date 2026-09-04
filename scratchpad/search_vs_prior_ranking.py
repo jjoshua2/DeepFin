@@ -60,6 +60,11 @@ def main() -> None:
     ap.add_argument("--topk", type=int, default=32)
     ap.add_argument("--c-scale", type=float, default=0.025)
     ap.add_argument("--vloss-weight", type=int, default=1)
+    # ⚑ ADDED 2026-08-11. This script built GumbelConfig WITHOUT policy_temp, so every
+    # row it has ever produced ran at the dataclass default 1.0 while PRODUCTION runs
+    # gumbel_policy_temp: 1.5. Rows are therefore a c_scale comparison AT T=1.0, and the
+    # ladder row previously labelled "THE LIVE SHAPE" was not the live shape.
+    ap.add_argument("--policy-temp", type=float, default=1.0)
     ap.add_argument("--gpu-mem-fraction", type=float, default=0.25)
     ap.add_argument("--out", default="scratchpad/search_vs_prior_ranking.json")
     args = ap.parse_args()
@@ -106,7 +111,7 @@ def main() -> None:
     evaluator = LocalModelEvaluator(model, device=args.device)
     cfg = GumbelConfig(
         simulations=int(args.sims), topk=int(args.topk), c_scale=float(args.c_scale),
-        add_noise=False, temperature=0.0,
+        add_noise=False, temperature=0.0, policy_temp=float(args.policy_temp),
         input_history_encoding=hist, input_extra_features=extra,
         policy_encoding=pol_enc,
     )
@@ -195,6 +200,7 @@ def main() -> None:
         "positions_scored": n_pos,
         "checkpoint": args.checkpoint,
         "shape": {"sims": args.sims, "topk": args.topk, "c_scale": args.c_scale,
+                  "policy_temp": args.policy_temp,
                   "vloss_weight": args.vloss_weight, "add_noise": False},
         "ruler": "shallow_sf multipv40 @50k nodes (NOT the frozen >=1M/mpv10 ruler)",
         "concordance": {k: float(np.mean(v)) for k, v in acc.items() if v},

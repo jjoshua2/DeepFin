@@ -71,6 +71,7 @@ from chess_anti_engine.train.target_builder import (
     SfTargetParams,
     rebuild_categorical_target_in_arrays,
     rebuild_sf_targets_in_arrays,
+    rebuild_sf_wdl_batch,
 )
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves import torch_maps
@@ -87,15 +88,19 @@ from chess_anti_engine.replay.shard import (
     sf_eval_pv_orphan_flags,
 )
 
-from .aurora import AuroraWithAuxAdam
+from .aurora import AuroraWithAuxAdam, OptimizerStepFailed
 from .compile_probe import CompileProbe, apply_compile
 from .constants import DEFAULT_GUMBEL_TOPK, normalize_gumbel_topk
 from .losses import (
+    EXACT_OBJECTIVE_NAMES,
     SfPolicyFloorParams,
     SfShapeParams,
+    align_policy_mask,
     align_policy_target,
     apply_policy_mask_to_logits,
     compute_loss,
+    _compute_sf_wdl_mask,
+    _normalize_sf_wdl_probs,
     normalize_value_blend_fracs,
     policy_target_temp_active,
     resolve_sf_regret_gate_keys,
@@ -105,6 +110,7 @@ from .losses import (
     wdl_brier_ece_from_stats,
     wdl_calibration_stats,
 )
+from .sparse_sf_ce import sparse_sf_policy_availability
 from .muon import MuonWithAuxAdam
 from .soda import SODA_STEP_KEY, SODAWeightDecayWrapper, mark_soda_weight_decay_groups
 
@@ -229,6 +235,334 @@ class _TrainBatchIterator:
         close = getattr(self._current, "close", None)
         if callable(close):
             close()
+
+
+class _DeviceLossSums:
+    """``compute_loss`` scalars accumulated ON DEVICE, one host transfer per window.
+
+    ⚑ WHAT THIS REMOVES. ``Trainer._extract_loss_scalars`` materializes its
+    stack with ``.tolist()``, and on CUDA that is a HOST SYNC: the training
+    thread blocks on everything queued so far immediately after
+    ``loss.backward()`` -- before zclip, the matrix grad norm and the optimizer
+    step have even been ENQUEUED. It is paid once per microbatch. This class
+    holds the same detached scalars as 0-dim device tensors and adds them
+    there, so the window pays ONE transfer, taken in ``train_steps`` where the
+    window's metrics are assembled.
+
+    ⚑ BIT-EXACT, NOT "close enough". Every value is cast to float64 on arrival
+    -- lossless from bf16/fp32 -- and the additions happen in the SAME ORDER
+    the host loop used: microbatches accumulate into a per-step instance,
+    per-step instances ``merge`` into the window instance. IEEE-754 double
+    addition is deterministic, so the window totals equal the ones the
+    ``float(...)`` path produced, digit for digit.
+    ``tests/test_train_window_loss_sync.py`` asserts ``==``, not ``approx``.
+
+    ⚑ THE PER-STEP INSTANCE IS NOT AN OPTIMIZATION, IT IS THE RETRY SEMANTICS.
+    ``train_steps`` throws a step's ``step_sums`` away when a transient CUDA
+    error forces a retry, and commits it only on success. Accumulating
+    straight into the window sum would double-count every retried step.
+
+    ⚑ ``_extract_loss_scalars`` ITSELF IS DELIBERATELY UNTOUCHED. It sits
+    inside ``call_closure(Trainer._compute_metrics)`` -- the frozen holdout
+    ruler's source digest -- so editing its body moves ``v1:full_pass:...`` and
+    fires a best-model handover on every running trial. This class is the
+    TRAINING path's accumulator; the eval path still calls the original, whose
+    per-batch sync is not on the hot loop (``_compute_metrics`` runs once per
+    iteration, under ``torch.no_grad``).
+    """
+
+    __slots__ = ("_names", "_vec")
+
+    def __init__(self) -> None:
+        self._names: list[str] = []
+        self._vec: torch.Tensor | None = None
+
+    def add_losses(
+        self,
+        losses: Mapping[str, torch.Tensor],
+        *,
+        total_override: torch.Tensor | None = None,
+        total_scale: float = 1.0,
+        mean_weight: float = 1.0,
+    ) -> None:
+        """One microbatch's scalars, with ``_extract_loss_scalars``' semantics.
+
+        Same key rename (``total`` -> ``loss``), same ``total_override`` /
+        ``total_scale`` treatment of the gradient-accumulation divisor -- the
+        DIVIDED loss is what gets materialized and the scale is applied after,
+        so the reported number is the undivided total either way.
+
+        ⚑ ONE ``stack`` and ONE cast per microbatch, not a cast per key (Codex
+        review, PR #496): ``compute_loss`` returns dozens of scalars, and on a
+        launch-bound step a kernel per key per microbatch is the very overhead
+        this class exists to remove. ``stack`` promotes exactly as the old
+        ``_extract_loss_scalars`` stack did, so a mixed bf16/fp32 dict lands
+        in the same dtype before the lossless widen to float64.
+        """
+        names: list[str] = []
+        scalars: list[torch.Tensor] = []
+        total_at = -1
+        for key, tensor in losses.items():
+            src = total_override if (key == "total" and total_override is not None) else tensor
+            if key == "total":
+                total_at = len(names)
+                names.append("loss")
+            else:
+                names.append(key)
+            scalars.append(src)
+        if not scalars:
+            return
+  # `detach` AFTER the stack: it is a view op, not a kernel, but it is still
+  # one dispatch per key, and the test below pins the dispatch count to be
+  # independent of the key count.
+        vec = torch.stack(scalars).detach().to(torch.float64)
+        if total_at >= 0 and float(total_scale) != 1.0:
+            vec[total_at] = vec[total_at] * float(total_scale)
+        if float(mean_weight) != 1.0:
+            # Raw numerator/denominator/count scalars are already row sums.
+            # Every other value is a batch mean and needs a row-count weight
+            # before pooling ragged exact batches. One vector multiply keeps
+            # this to a single dispatch on the exact-epoch-only path.
+            raw_keys = _RAW_SUM_LOSS_KEYS | {
+                "disarmed_nonfinite_terms", "blend_unclaimed_nonfinite_rows",
+            }
+            weights = vec.new_tensor([
+                1.0 if key in raw_keys else float(mean_weight)
+                for key in losses
+            ])
+            vec = vec * weights
+        self._accumulate(names, vec)
+
+    def merge(self, other: _DeviceLossSums) -> None:
+        """Commit a completed step's sums into this window's sums."""
+        if other._vec is not None:
+            self._accumulate(other._names, other._vec)
+
+    def _accumulate(self, names: list[str], vec: torch.Tensor) -> None:
+        if self._vec is None:
+            self._names = list(names)
+  # `+ 0.0`, not a bare store: the host fold began every key with
+  # `0.0 + v`, which turns a `-0.0` first value into `+0.0`. One elementwise
+  # kernel per instance keeps the sign of zero bit-identical too (found by the
+  # independent review's probe against the real `_extract_loss_scalars`).
+            self._vec = vec + 0.0
+            return
+        if names == self._names:
+  # One elementwise kernel: per key, the same float64 add in the same order
+  # the host fold performed -- bit-identical by construction.
+            self._vec = self._vec + vec
+            return
+  # Key sets drift only when an optional term (a channel-balance loss, a
+  # disarmed blend) appears or vanishes mid-window. Align by name and keep
+  # FIRST-SEEN order, exactly as the old dict did; a key seen for the first
+  # time lands on a 0.0 slot, and 0.0 + v == v for every finite v.
+        known = set(self._names)
+        fresh = [name for name in names if name not in known]
+        if fresh:
+            self._names = self._names + fresh
+            pad = torch.zeros(len(fresh), dtype=self._vec.dtype, device=self._vec.device)
+            self._vec = torch.cat([self._vec, pad])
+        positions = _drift_positions(tuple(self._names), tuple(names), vec.device)
+        self._vec = self._vec.index_add(0, positions, vec)
+
+    def tensor(self, name: str) -> torch.Tensor | None:
+        """The running device sum for one key, or None when it never appeared."""
+        if self._vec is None or name not in self._names:
+            return None
+        return self._vec[self._names.index(name)]
+
+    def items(self) -> list[tuple[str, torch.Tensor]]:
+        """(key, device sum) pairs in FIRST-SEEN order, matching the old dict."""
+        if self._vec is None:
+            return []
+        vec = self._vec
+        return [(name, vec[i]) for i, name in enumerate(self._names)]
+
+
+_DRIFT_POSITIONS_CACHE: dict[tuple[tuple[str, ...], tuple[str, ...], str], torch.Tensor] = {}
+
+
+def _drift_positions(all_names: tuple[str, ...], names: tuple[str, ...], device: Any) -> torch.Tensor:
+    """Slot indices of `names` inside `all_names`, as a device tensor, CACHED.
+
+    ⚑ Built once per distinct (layout, device), not per microbatch: the
+    uncached form was an unpinned host->device copy sitting between
+    `backward()` and zclip on every step whose optional keys flickered -- the
+    kind of stall this accumulator exists to remove (Grok review, PR #496).
+    Key sets are a handful of layouts per run, so the cache is tiny.
+    """
+    key = (all_names, names, str(device))
+    hit = _DRIFT_POSITIONS_CACHE.get(key)
+    if hit is None:
+        index = {name: i for i, name in enumerate(all_names)}
+        hit = torch.tensor([index[name] for name in names], device=device)
+        _DRIFT_POSITIONS_CACHE[key] = hit
+    return hit
+
+
+def _materialize_device_scalars(tensors: Sequence[torch.Tensor]) -> list[float]:
+    """One host transfer for a whole window's worth of 0-dim device scalars.
+
+    ⚑ ONE ``.tolist()``, not one per tensor: the point of the batching is that
+    the window blocks on the CUDA queue exactly once, and N separate
+    ``.item()`` calls would put N sync points back.
+    """
+    if not tensors:
+        return []
+    return [float(v) for v in torch.stack(list(tensors)).tolist()]
+
+
+#: Pipeline phase -> the metric key carrying that phase's GPU-timeline span.
+#:
+#: The phase NAME is itself a metric key and carries the CPU WALL CLOCK, so
+#: each phase publishes two numbers that mean different things: how long the
+#: training thread was inside it, and how long the GPU spent on the work it
+#: enqueued. They diverge exactly where the bubble is.
+#:
+#: ⚑ `batch_prefetch_wait_s` HAS NO GPU TWIN, on purpose. Its region is
+#: `next(batches)`: the prefetch future, then `pin_memory` + the H2D issue. A
+#: pair of events around that region would bracket the HOST wait too -- the
+#: device idles between the two records whenever the sampler is late -- so the
+#: span would report starvation as a slow copy (Codex review, PR #496). The
+#: copy itself is issued inside `_host_batch_to_tensors`, which sits in the
+#: frozen holdout-ruler digest and cannot grow a probe; a span that does not
+#: mean what its name says is worse than no span, so the twin is `None`.
+_PIPELINE_PHASE_GPU_KEY: dict[str, str | None] = {
+    "batch_prefetch_wait_s": None,
+    "fwd_loss_s": "gpu_fwd_loss_s",
+    "bwd_s": "gpu_bwd_s",
+    "gradnorm_zclip_s": "gpu_gradnorm_zclip_s",
+    "opt_step_s": "gpu_opt_step_s",
+}
+_PIPELINE_RESIDUAL_KEY = "pipeline_other_s"
+
+
+class _PipelinePhaseSpan:
+    """One timed region. Not reentrant, and never nested with itself."""
+
+    __slots__ = ("_name", "_start", "_t0", "_timer")
+
+    def __init__(self, timer: _PipelinePhaseTimer, name: str) -> None:
+        self._timer = timer
+        self._name = name
+        self._t0 = 0.0
+        self._start: Any = None
+
+    def __enter__(self) -> _PipelinePhaseSpan:
+        self._t0 = time.perf_counter()
+        self._start = self._timer.begin_gpu(self._name)
+        return self
+
+  # ⚑ Returns None, NOT False. They behave identically at runtime, and a
+  # `-> bool` return makes a type checker treat every `with` on this span as
+  # potentially SUPPRESSING the exception -- which reports every variable bound
+  # inside the block as possibly-unbound afterwards. 28 basedpyright errors
+  # came from that one annotation.
+    def __exit__(self, *_exc: Any) -> None:
+        end = self._timer.end_gpu(self._start)
+        self._timer.record(self._name, self._start, end, time.perf_counter() - self._t0)
+        self._start = None
+
+
+class _PipelinePhaseTimer:
+    """Where ONE training window's wall clock went, and where its GPU time went.
+
+    ⚑ ALWAYS ON, NO KNOB. A decomposition you have to remember to switch on is
+    a decomposition nobody has when the throughput question comes up. The cost
+    is two `perf_counter()` reads and (on CUDA) two `cudaEventRecord`s per
+    phase per optimizer step -- order 1.5 ms across a ~300 s window.
+
+    ⚑ NO `torch.cuda.synchronize()` ANYWHERE ON THE HOT PATH. Recording an
+    event is asynchronous; the elapsed times are read once, in `drain`, at the
+    point the window's loss scalars transfer anyway. An instrument that
+    serialized the pipeline to measure the pipeline would be measuring itself.
+
+    Two clocks, published side by side because the GAP between them IS the
+    bubble:
+
+    * the phase key (`fwd_loss_s`, ...) is the CPU wall clock -- how long the
+      training thread was inside that region. These five plus
+      `pipeline_other_s` PARTITION `train_time_s` by construction.
+    * `gpu_*_s` are CUDA event spans -- how long the device spent on
+      the work the region enqueued. They overlap each other and the CPU walls,
+      and they do not sum to anything.
+
+    ⚑ WITHOUT CUDA THE `gpu_*` KEYS ARE 0.0, AND 0.0 THERE MEANS "NOT
+    MEASURED", NOT "NO GPU TIME". That is exactly the shape of defect this repo
+    keeps paying for, so the window's summary line prints `gpu_events=on|off`
+    next to the numbers rather than leaving a reader to infer it.
+    """
+
+    __slots__ = ("_cpu", "_device", "_events", "cuda")
+
+    def __init__(self, *, device: Any) -> None:
+        self.cuda = str(device).startswith("cuda") and torch.cuda.is_available()
+        self._device: Any = torch.device(device) if self.cuda else None
+        self._cpu: dict[str, float] = dict.fromkeys(_PIPELINE_PHASE_GPU_KEY, 0.0)
+        self._events: list[tuple[str, Any, Any]] = []
+
+    def phase(self, name: str) -> _PipelinePhaseSpan:
+        return _PipelinePhaseSpan(self, name)
+
+    def begin_gpu(self, name: str) -> Any:
+  # The lookup runs BEFORE the CUDA check, so an unknown phase fails the same
+  # way (KeyError) on every device, not only on the one that records events.
+        if _PIPELINE_PHASE_GPU_KEY[name] is None or not self.cuda:
+            return None
+        return self._record_event()
+
+    def end_gpu(self, start: Any) -> Any:
+        if start is None:
+            return None
+        return self._record_event()
+
+    def _record_event(self) -> Any:
+  # ⚑ Recorded on the CONFIGURED device's current stream, never the bare
+  # `event.record()`: that form uses the process's CURRENT device -- `cuda:0`
+  # unless someone called `set_device` -- so a trainer built on `cuda:1`
+  # would be timing an idle GPU's stream (Codex review, PR #496).
+        event = torch.cuda.Event(enable_timing=True)
+        event.record(torch.cuda.current_stream(self._device))
+        return event
+
+    def record(self, name: str, start: Any, end: Any, elapsed_s: float) -> None:
+  # `+=` on a pre-seeded dict, NOT `.get(name, 0.0)`: a phase name that is not
+  # in `_PIPELINE_PHASE_GPU_KEY` has no metric field to land in, and a KeyError
+  # here is far better than a timing silently accumulated into nothing.
+        self._cpu[name] += float(elapsed_s)
+        if start is not None and end is not None:
+            self._events.append((name, start, end))
+
+    def drain(self, *, window_wall_s: float) -> dict[str, float]:
+        """Every phase key for this window. Call ONCE, at window end.
+
+        The single `synchronize()` is on the LAST EVENT, not the device. On
+        the stream the trainer uses, the window's loss-scalar `.tolist()` is a
+        stream-ordered memcpy, so every kernel enqueued before it -- the last
+        `opt.step()` included -- has completed by the time it returns, and the
+        event wait is redundant there. It stays because `elapsed_time` on an
+        unfinished event is an error, and because that stream-order argument
+        does not cover work a future change might enqueue on a side stream;
+        it is one wait per window either way, never per step.
+        """
+        gpu = {twin: 0.0 for twin in _PIPELINE_PHASE_GPU_KEY.values() if twin is not None}
+        if self._events:
+            self._events[-1][2].synchronize()
+            for name, start, end in self._events:
+                twin = _PIPELINE_PHASE_GPU_KEY[name]
+                if twin is None:  # `begin_gpu` never records for these, so never appended
+                    continue
+                gpu[twin] += float(start.elapsed_time(end)) / 1000.0
+            self._events.clear()
+        out = {key: float(value) for key, value in self._cpu.items()}
+        out.update(gpu)
+  # Clamped at 0: the phases are disjoint CPU regions inside the window, so the
+  # residual is non-negative in practice, and a negative one would mean the
+  # window clock and the phase clocks disagree -- report no residual rather
+  # than a negative duration.
+        out[_PIPELINE_RESIDUAL_KEY] = max(0.0, float(window_wall_s) - sum(self._cpu.values()))
+        return out
+
 
 _LC0_HISTORY_STEPS = LC0_FULL.history_len
 _LC0_PIECE_PLANES = LC0_FULL.piece_planes_per_history
@@ -961,6 +1295,36 @@ class TrainMetrics:
     opt_step_time_s: float = 0.0
     train_steps_done: int = 0
     train_samples_seen: int = 0
+  # Pipeline-bubble decomposition of ONE training window (`train_steps`), from
+  # `_PipelinePhaseTimer`. Read that class before reading these.
+  #
+  # ⚑ THESE FIVE PLUS `pipeline_other_s` PARTITION `train_time_s`. They are CPU
+  # WALL CLOCKS -- how long the training thread sat in each region -- so
+  # `gradnorm_zclip_s` being large is the normal reading, not an anomaly: that
+  # region contains the step's only host sync, so the GPU work enqueued by
+  # forward and backward is DRAINED there and shows up as its wall time.
+  # `pipeline_other_s` is the residual: the accuracy accumulators, the
+  # on-device loss adds, the SWA update, the retry bookkeeping and loop
+  # overhead. `opt_step_s` and the pre-existing `opt_step_time_s` cover the
+  # same region; the outer `opt_step_time_s` additionally spans the phase's
+  # two CUDA-event records (tens of microseconds per step), so the pair
+  # agrees to that overhead and no more. The old one is kept because
+  # `optimizer_steps_per_s` in the Ray report is derived from it.
+    batch_prefetch_wait_s: float = 0.0
+    fwd_loss_s: float = 0.0
+    bwd_s: float = 0.0
+    gradnorm_zclip_s: float = 0.0
+    opt_step_s: float = 0.0
+    pipeline_other_s: float = 0.0
+  # ⚑ GPU-TIMELINE SPANS FROM CUDA EVENTS, AND ALL-ZERO MEANS "NOT MEASURED",
+  # NOT "NO GPU TIME". They are 0.0 on any CPU-only run. The window's
+  # `[trainer] window_timing` line prints `gpu_events=on|off` beside them so
+  # the two cases cannot be confused. Unlike the block above these OVERLAP each
+  # other and the wall clocks, and they sum to nothing in particular.
+    gpu_fwd_loss_s: float = 0.0
+    gpu_bwd_s: float = 0.0
+    gpu_gradnorm_zclip_s: float = 0.0
+    gpu_opt_step_s: float = 0.0
     aurora_uw_floor: float = 0.0
   # The matrix-group LR the effective-ratio pair below was multiplied by.
   # Sampled at the sqrt_release sawtooth FLOOR (M4-2) -- ~10x under a typical
@@ -975,6 +1339,22 @@ class TrainMetrics:
     aurora_uw_floored_frac: float = 0.0
     aurora_uw_effective_ratio_min: float = 0.0
     aurora_uw_effective_ratio_median: float = 0.0
+  # Which AdamW-fallback path the iteration's LAST optimizer step ran
+  # (`AuroraWithAuxAdam.last_adamw_stats`). `adamw_foreach_params` is the
+  # take-effect column for the batched `_foreach_*` update: it counts the
+  # fallback tensors that carried a gradient (the lc0 control reads 394 of
+  # 431 in 2 buckets, the rest dead heads) with `adamw_loop_params` 0.0. A
+  # non-zero loop
+  # count means a batchability predicate sent tensors down the per-parameter
+  # path, which nothing else reports. `adamw_foreach_recoveries` counts
+  # buckets whose denominator allocation failed and were finished per tensor
+  # instead (see `_DenominatorAllocationFailed`), summed over EVERY step of
+  # the window (the optimizer's monotone counter, differenced) -- the path
+  # counts are the last step's, this one is not. 0.0 on a healthy window.
+    adamw_foreach_buckets: float = 0.0
+    adamw_foreach_params: float = 0.0
+    adamw_loop_params: float = 0.0
+    adamw_foreach_recoveries: float = 0.0
   # Polar residual of the update Aurora applied, sampled on ONE designated
   # tensor per shape class per iteration (`train.aurora.polar_convergence`).
   # `_sv_ratio_*` is sigma_min/sigma_max (1.0 = a true orthogonal step) and
@@ -1188,12 +1568,10 @@ class TrainMetrics:
   # is `has_sf_wdl` rows — the same population the offline gate
   # `eval/value_optimism.py::sf_multipv_missing_rate` divides by.
   #
-  # It reads the batch's own `has_` vectors and consults NO flag, which is the
-  # whole point: the pre-existing signal (`sf_rebuild_policy_frac` below
-  # `sf_rebuild_wdl_frac`) is definitionally the same measurement but only
-  # exists while `rebuild_sf_targets` is on, and that key defaults False and
-  # is in no config file — so it read 0.0, indistinguishable from healthy,
-  # through three separate desync episodes spanning 25 days.
+  # It reads the batch's own `has_` vectors and consults NO flag. A former
+  # dense-only heuristic compared the two rebuild coverage fractions, but
+  # supported sparse-policy rows legitimately separate them. This metric is
+  # the format-independent label-health contract.
   #
   # ⚑ NEVER READ THE RATE WITHOUT `sf_multipv_checked_frac`, which reports that
   # same denominator as a share of all batch rows. (The RATE's own denominator
@@ -1284,18 +1662,11 @@ class TrainMetrics:
   # flag is off, so a non-zero value IS the proof the flip reached the batch
   # pipeline — the transition log only proves the config push, and
   # has_sf_p0_frac -> 0 only proves it on a window that has p0 rows at all.
-  # `policy_frac` BELOW `wdl_frac` is a CONTAMINATION SIGNAL, not a coverage
-  # cost. Both fracs divide by ALL rows in the rebuilt batch, and every healthy
-  # labelled row carries `sf_label_meta` AND `sf_multipv_raw`, so the two are
-  # EQUAL on clean data and their difference is the count of rows that lost
-  # their whole MultiPV block, over ALL BATCH ROWS. That is the desync
-  # fingerprint (`selfplay/stockfish_turn.py::_SF_NO_LEGAL_PV_WARN_RATE`) and a
-  # LOWER BOUND on contamination — a desynced engine strips the block on only
-  # ~59% of the labels it poisons, so divide by ~0.59 for the true share.
-  # A gap of 5.4% was once documented here as structural; it was a 07-27 desync
-  # episode. Measured through this very accumulator: 0.000000 on clean live
-  # shards, 0.192 over the 122 quarantined 2026-08-01 (0.207 of LABELLED rows
-  # there; do not mix the two denominators). ⚑ Reads 0.0 when
+  # Policy counts dense targets actually rewritten. WDL also counts supported
+  # sparse-policy rows, so a gap is expected for healthy mixed-format corpora
+  # and must not be used as a contamination signal. Use the always-on
+  # sf_labelled_no_multipv_frac plus its checked denominator for label health.
+  # ⚑ Both rebuild fields read 0.0 when
   # `rebuild_sf_targets` is off, which is the default and is not in any config
   # — see target_builder's metric_kwargs before treating it as a live alarm.
   # `eval_full_pass` — the frozen ruler, and the only eval production runs
@@ -1624,6 +1995,45 @@ _RAW_COUNT_METRIC_FIELDS: dict[str, str] = {
     "wdl_terminal_outcome_rows": "wdl_terminal_outcome_rows",
 }
 
+# Exact-epoch-only masked diagnostics.  ``compute_loss`` emits these internal
+# numerator/denominator pairs only when the exact training path asks for them;
+# legacy training and holdout eval keep their established estimator.  The
+# ordinary whole-objective ``loss`` and unmasked ``channel_balance`` remain
+# weighted by realized batch rows through ``mean_weight``.
+_EXACT_MASKED_METRIC_FIELDS: dict[str, tuple[str, str]] = {
+    field: (f"_exact_{field}_sum", f"_exact_{field}_weight")
+    for field in (
+        "policy_loss",
+        "soft_policy_loss",
+        "future_policy_loss",
+        "wdl_loss",
+        "blended_wdl_loss",
+        "wdl_onehot_loss",
+        "sf_move_loss",
+        "sf_eval_loss",
+        "categorical_loss",
+        "volatility_loss",
+        "sf_volatility_loss",
+        "moves_left_loss",
+        "policy_loss_selfplay",
+        "policy_loss_curriculum",
+        "wdl_loss_selfplay",
+        "wdl_loss_curriculum",
+        "policy_loss_phase_open",
+        "policy_loss_phase_mid",
+        "policy_loss_phase_end",
+        "wdl_loss_phase_open",
+        "wdl_loss_phase_mid",
+        "wdl_loss_phase_end",
+        "frac_is_selfplay",
+        "frac_tagged",
+        "soft_mask_kept_frac",
+        "sf_search_agree_frac",
+        "sf_search_disagree_sf_low_frac",
+        "sf_search_disagree_sf_high_frac",
+    )
+}
+
 # The compute_loss scalars consumed by ``_ratio_metric_kwargs`` and
 # ``_raw_count_metric_kwargs``. They are already SUMS over the batch's rows, so
 # they accumulate unweighted; every other scalar is a per-batch MEAN and must be
@@ -1633,7 +2043,8 @@ _RAW_COUNT_METRIC_FIELDS: dict[str, str] = {
 # the ratio.
 _RAW_SUM_LOSS_KEYS: frozenset[str] = frozenset(
     [key for pair in _RATIO_METRIC_FIELDS.values() for key in pair]
-    + list(_RAW_COUNT_METRIC_FIELDS.values()),
+    + list(_RAW_COUNT_METRIC_FIELDS.values())
+    + [key for pair in _EXACT_MASKED_METRIC_FIELDS.values() for key in pair],
 )
 
 
@@ -1822,6 +2233,17 @@ def _ratio_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
             continue
         den = float(sums[den_key])
         out[field] = float(sums[num_key]) / den if den > 0.0 else 0.0
+    return out
+
+
+def _exact_masked_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
+    """Pool exact-epoch masked means by their own eligible observations."""
+    out: dict[str, float] = {}
+    for field, (sum_key, weight_key) in _EXACT_MASKED_METRIC_FIELDS.items():
+        if sum_key not in sums or weight_key not in sums:
+            continue
+        weight = float(sums[weight_key])
+        out[field] = float(sums[sum_key]) / weight if weight > 0.0 else 0.0
     return out
 
 
@@ -2789,10 +3211,9 @@ class Trainer:
   # window instead of waiting ~18h for it to turn over. On healthy data that is
   # ALL of them: every labelled row is written with sf_multipv_raw, so the
   # rebuild reaches 100% of the SF-labelled window and there is no mixture of
-  # two target regimes. sf_rebuild_policy_frac reports the realized rate, and
-  # any shortfall below sf_rebuild_wdl_frac is Stockfish-desync contamination
-  # (a LOWER bound on it: docs/target_rebuildability.md), not a structural cost
-  # of the rebuild.
+  # two target regimes. sf_rebuild_policy_frac reports dense targets actually
+  # rewritten; sparse-policy rows can legitimately appear only in the WDL
+  # coverage. sf_labelled_no_multipv_frac is the label-health detector.
   # False = use stored targets, bitwise identical to the pre-flag pipeline.
   # `set_sf_target_rebuild` flips it live.
         self.rebuild_sf_targets = bool(rebuild_sf_targets)
@@ -3666,27 +4087,6 @@ class Trainer:
             "sf_own_regret_unlisted_scale": 1.0,
         }
 
-    def _ruler_loss_weights(self) -> dict[str, float]:
-        """The loss weights the holdout ruler's identity is keyed on.
-
-        ⚑ DERIVED FROM `TRAINER_WEIGHT_KEYS`, WHICH IS THE ONE SOURCE OF TRUTH
-        FOR "WHICH ATTRIBUTE CAN A LIVE YAML EDIT MOVE". That tuple IS the
-        per-iteration live-push list -- `_apply_lr_gamma_weights` walks it and
-        does `setattr(trainer, key, float(config[key]))` -- so reading the same
-        tuple back off `self` covers exactly the surface the hazard has, and a
-        weight added there is covered by the ruler on the day it is added. A
-        second, hand-copied list of weight names would have to be re-drawn at
-        every addition, and this repo has already lost a ruler boundary twice
-        to exactly that (see `eval_ruler.call_closure`).
-
-        ⚑ AND IT MUST BE THE TRAINER'S ATTRIBUTES, NOT `_eval_loss_kwargs`'
-        KEYS. `w_sf_policy_floor` -- the weight this defect was found on --
-        does not appear in that dict under its own name at all: it is folded
-        into the `sf_policy_floor` params object by `_loss_kwargs`. An
-        intersection with the kwargs keys would therefore have silently omitted
-        the one key that motivated the fix, while looking derived.
-        """
-        return {key: float(getattr(self, key)) for key in TRAINER_WEIGHT_KEYS}
 
     def objective_snapshot(self) -> ObjectiveSnapshot:
         """The whole objective as ONE immutable value, taken at a single instant.
@@ -3743,12 +4143,42 @@ class Trainer:
             shape["sf_shape_temp_cp"] = float(getattr(sf_shape, "temp_cp"))
         return shape
 
+    def _ruler_loss_weights(self) -> dict[str, float]:
+        """The loss weights the holdout ruler's identity is keyed on.
+
+        ⚑ DERIVED FROM `TRAINER_WEIGHT_KEYS`, WHICH IS THE ONE SOURCE OF TRUTH
+        FOR "WHICH ATTRIBUTE CAN A LIVE YAML EDIT MOVE". That tuple IS the
+        per-iteration live-push list -- `_apply_lr_gamma_weights` walks it and
+        does `setattr(trainer, key, float(config[key]))` -- so reading the same
+        tuple back off `self` covers exactly the surface the hazard has, and a
+        weight added there is covered by the ruler on the day it is added. A
+        second, hand-copied list of weight names would have to be re-drawn at
+        every addition, and this repo has already lost a ruler boundary twice
+        to exactly that (see `eval_ruler.call_closure`).
+
+        ⚑ AND IT MUST BE THE TRAINER'S ATTRIBUTES, NOT `_eval_loss_kwargs`'
+        KEYS. `w_sf_policy_floor` -- the weight this defect was found on --
+        does not appear in that dict under its own name at all: it is folded
+        into the `sf_policy_floor` params object by `_loss_kwargs`. An
+        intersection with the kwargs keys would therefore have silently omitted
+        the one key that motivated the fix, while looking derived.
+        """
+        return {key: float(getattr(self, key)) for key in TRAINER_WEIGHT_KEYS}
+
     def _amp_context(self):
         # Pinned to bf16: training has no GradScaler, so an FP16 fallback
         # would silently underflow gradients on non-BF16 CUDA cards. The
         # ``inference_autocast`` helper would auto-fallback to FP16 there.
         return inference_autocast(device=self.device, enabled=self.use_amp, dtype="bf16")
 
+  # ⚑⚑ FROZEN SOURCE — EDIT THE BODY AND YOU MOVE THE HOLDOUT RULER.
+  # This method is inside `call_closure(Trainer._compute_metrics)`, so its
+  # source digest is part of `v1:full_pass:...` / `v1:sampled:...`. Changing
+  # a line here bumps `holdout_generation` and makes every running trial hand
+  # over its best-model record. That is why the training loop's per-microbatch
+  # sync was removed by ADDING `_DeviceLossSums` rather than by restructuring
+  # this function: the eval path (once per iteration, `torch.no_grad`) still
+  # calls it and its per-batch `.tolist()` is not on the hot loop.
     @staticmethod
     def _extract_loss_scalars(
         losses: dict[str, torch.Tensor], *,
@@ -3832,6 +4262,220 @@ class Trainer:
             policy_future_acc_top5=_acc("policy_future_acc_top5"),
             **extras,
         )
+
+    def exact_objective_mask_counter(
+        self, arrays: Mapping[str, Any],
+    ) -> Mapping[str, float]:
+        """Count corpus-wide optimizer-mask weights for an exact epoch.
+
+        The sampler calls this first on lazy zarr arrays and again on each
+        eagerly decoded shard. Work is row-chunked and normally reads only the
+        scalar flags plus the three-value SF WDL field when its fractional mask
+        is configured; input planes are never decoded. Dense policy targets are
+        also read when a legacy best-move fallback candidate lacks the modern
+        dense-target mask.
+
+        Optional TV and sparse-policy masks reuse the same target transforms as
+        ``compute_loss``. Their chunks are deliberately small so exactness does
+        not turn preflight into a second eager replay-buffer load.
+        """
+        x = arrays.get("x")
+        if x is None or getattr(x, "shape", None) is None:
+            raise ValueError("exact objective census requires the shard x shape")
+        rows = int(x.shape[0])
+        totals = dict.fromkeys(EXACT_OBJECTIVE_NAMES, 0.0)
+        dynamic_wide_mask = (
+            float(self.soft_policy_min_tv) > 0.0
+            or bool(self.sf_policy_sparse_ce)
+            or (
+                "sf_policy_target" in arrays
+                and "has_sf_move" in arrays
+            )
+        )
+        chunk_rows = 512 if dynamic_wide_mask else 65_536
+        model = getattr(self.model, "_orig_mod", self.model)
+        model_policy_width = int(getattr(model, "policy_size", POLICY_SIZE))
+
+        def _slice(
+            name: str, start: int, stop: int, *, default: float = 0.0,
+        ) -> torch.Tensor:
+            value = arrays.get(name)
+            if value is None:
+                return torch.full((stop - start,), default, dtype=torch.float32)
+            return torch.as_tensor(
+                np.asarray(value[start:stop]), dtype=torch.float32,
+            ).reshape(-1)
+
+        for start in range(0, rows, chunk_rows):
+            stop = min(rows, start + chunk_rows)
+            net = _slice("is_network_turn", start, stop, default=1.0)
+            has_policy = _slice("has_policy", start, stop, default=1.0)
+            has_soft = _slice("has_policy_soft", start, stop)
+            has_future = _slice("has_future", start, stop)
+            has_sf_p0 = _slice("has_sf_p0", start, stop)
+            has_sf_p0_regret = _slice("has_sf_p0_regret", start, stop)
+            has_sf_policy = _slice("has_sf_policy", start, stop)
+            has_sf_move = _slice("has_sf_move", start, stop)
+            dense_fallback_candidates = (
+                (has_sf_policy <= 0.0) & (has_sf_move > 0.0)
+            )
+            if (
+                bool(dense_fallback_candidates.any())
+                and "sf_policy_target" in arrays
+            ):
+                dense_target = torch.as_tensor(
+                    np.asarray(arrays["sf_policy_target"][start:stop]),
+                    dtype=torch.float32,
+                )
+                dense_target_present = (
+                    dense_target.sum(dim=-1) > 0.0
+                ).to(torch.float32)
+                has_sf_policy = torch.maximum(
+                    has_sf_policy,
+                    has_sf_move * dense_target_present,
+                )
+            has_cat = _slice("has_categorical", start, stop)
+            has_vol = _slice("has_volatility", start, stop)
+            has_sf_vol = _slice("has_sf_volatility", start, stop)
+            has_moves_left = _slice("has_moves_left", start, stop)
+            has_sf_wdl = _slice("has_sf_wdl", start, stop)
+
+            if (
+                float(self.soft_policy_min_tv) > 0.0
+                and "policy_soft_target" in arrays
+            ):
+                hard_target = align_policy_target(
+                    torch.as_tensor(
+                        np.asarray(arrays["policy_target"][start:stop]),
+                        dtype=torch.float32,
+                    ),
+                    model_policy_width,
+                )
+                soft_target = align_policy_target(
+                    torch.as_tensor(
+                        np.asarray(arrays["policy_soft_target"][start:stop]),
+                        dtype=torch.float32,
+                    ),
+                    model_policy_width,
+                )
+                shaped_hard = retemper_main_policy_target(
+                    hard_target, temp=float(self.policy_target_temp),
+                )
+                tv = 0.5 * (shaped_hard - soft_target).abs().sum(dim=-1)
+                has_soft = has_soft * (
+                    tv >= float(self.soft_policy_min_tv)
+                ).to(has_soft.dtype)
+
+            if bool(self.rebuild_sf_targets):
+                # Same unconditional cross-ply invalidation as
+                # rebuild_sf_targets_in_arrays.
+                has_sf_p0 = torch.zeros_like(has_sf_p0)
+                has_sf_vol = torch.zeros_like(has_sf_vol)
+
+            conf_power = max(0.0, float(self.sf_wdl_conf_power))
+            draw_scale = max(0.0, float(self.sf_wdl_draw_scale))
+            sf_wdl_raw = (
+                arrays.get("sf_wdl")
+                if conf_power > 0.0 or draw_scale != 1.0
+                else None
+            )
+            sf_wdl = None
+            if sf_wdl_raw is not None:
+                sf_wdl_array = np.array(
+                    sf_wdl_raw[start:stop], copy=bool(self.rebuild_sf_targets),
+                )
+                if (
+                    bool(self.rebuild_sf_targets)
+                    and "has_sf_label_meta" in arrays
+                    and "sf_label_meta" in arrays
+                ):
+                    has_meta = np.asarray(
+                        arrays["has_sf_label_meta"][start:stop], dtype=bool,
+                    )
+                    if bool(has_meta.any()):
+                        rebuilt_wdl, ok_wdl = rebuild_sf_wdl_batch(
+                            np.asarray(
+                                arrays["sf_label_meta"][start:stop],
+                            )[has_meta],
+                            self.sf_target_params,
+                        )
+                        write = np.flatnonzero(has_meta)[ok_wdl]
+                        sf_wdl_array[write] = rebuilt_wdl[ok_wdl]
+                sf_wdl = torch.as_tensor(sf_wdl_array, dtype=torch.float32)
+            wdl_target = (
+                _slice("wdl_target", start, stop)
+                if draw_scale != 1.0 else torch.zeros_like(net)
+            )
+            sf_eval_mask = _compute_sf_wdl_mask(
+                net_mask=net,
+                has_sf_wdl=has_sf_wdl,
+                sf_wdl_probs=_normalize_sf_wdl_probs(
+                    sf_wdl, temperature=float(self.sf_wdl_temperature),
+                ),
+                wdl_target=wdl_target,
+                conf_power=conf_power,
+                draw_scale=draw_scale,
+            )
+            if (
+                bool(self.sf_policy_sparse_ce)
+                and bool(getattr(model, "enable_policy_sf_head", True))
+            ):
+                sparse_keys = (
+                    "sf_multipv_raw",
+                    "has_sf_multipv_raw",
+                    "sf_legal_mask",
+                    "has_sf_legal_mask",
+                    "sf_move_index",
+                    "has_sf_move",
+                )
+                sparse_batch = {
+                    name: torch.as_tensor(np.asarray(arrays[name][start:stop]))
+                    for name in sparse_keys
+                    if name in arrays
+                }
+                legal = sparse_batch.get("sf_legal_mask")
+                if legal is not None:
+                    sparse_available = sparse_sf_policy_availability(
+                        sparse_batch,
+                        params=self.sf_target_params,
+                        legal_aligned=align_policy_mask(
+                            legal, model_policy_width,
+                        ),
+                        dst_width=model_policy_width,
+                    )
+                    has_sf_policy = torch.maximum(
+                        has_sf_policy, sparse_available.to(torch.float32),
+                    )
+            no_rows = torch.zeros_like(net)
+            sf_p0_mask = (
+                net * has_sf_p0
+                if "sf_p0_policy_target" in arrays else no_rows
+            )
+            sf_p0_regret_mask = (
+                net * has_sf_p0_regret
+                if "sf_p0_regret" in arrays else no_rows
+            )
+            masks = {
+                "policy": net * has_policy,
+                "soft_policy": net * has_soft,
+                "future_policy": net * has_future,
+                "sf_own": sf_p0_mask,
+                "sf_own_regret": sf_p0_regret_mask,
+                "wdl": net,
+                "sf_move": net * has_sf_policy,
+                "sf_eval": sf_eval_mask,
+                "categorical": net * has_cat,
+                "volatility": net * has_vol,
+                "sf_volatility": net * has_sf_vol,
+                "moves_left": net * has_moves_left,
+                "sf_policy_floor": sf_p0_regret_mask,
+                "sf_shape": sf_p0_regret_mask,
+            }
+            if tuple(masks) != EXACT_OBJECTIVE_NAMES:
+                raise AssertionError("objective census names drifted from loss terms")
+            for name, mask in masks.items():
+                totals[name] += float(mask.to(torch.float64).sum().item())
+        return totals
 
     def _prepare_host_arrays(
         self,
@@ -4009,6 +4653,52 @@ class Trainer:
                         coverage=coverage,
                     )
                 yield self._host_batch_to_tensors(host_batch)
+
+    def _iter_training_batches(
+        self,
+        buf: ReplayBuffer,
+        *,
+        batch_size: int,
+        mirror_prob: float,
+        count: int,
+        coverage: _SfRebuildCoverageAccumulator | None = None,
+    ) -> Iterator[dict[str, torch.Tensor]]:
+        """Training batches, serialized when exact replay owns a hard cap."""
+        if not bool(getattr(buf, "exact_without_replacement", False)):
+            if coverage is None:
+                yield from self._iter_prefetched_batches(
+                    buf,
+                    batch_size=batch_size,
+                    mirror_prob=mirror_prob,
+                    count=count,
+                )
+            else:
+                yield from self._iter_prefetched_batches(
+                    buf,
+                    batch_size=batch_size,
+                    mirror_prob=mirror_prob,
+                    count=count,
+                    coverage=coverage,
+                )
+            return
+
+        # The exact planner prices one materialized host batch at a time.  The
+        # ordinary prefetch path retains batch N while assembling N+1, so exact
+        # training deliberately gives up that overlap to keep the cap hard.
+        for _ in range(max(0, int(count))):
+            host_batch = self._sample_batch_host(
+                buf,
+                batch_size=batch_size,
+                mirror_prob=mirror_prob,
+                coverage=coverage,
+            )
+            device_batch = self._host_batch_to_tensors(host_batch)
+            del host_batch
+            yield device_batch
+            # A suspended generator retains its locals.  Drop the yielded
+            # mapping before constructing the next host batch; on CPU its
+            # tensors may alias the NumPy storage directly.
+            del device_batch
 
     def _full_pass_host_batch(
         self, buf: ReplayBuffer, *, start: int, stop: int,
@@ -4363,10 +5053,10 @@ class Trainer:
         the edit (~18h for a 1.5M-row window to turn over at the current ingest
         rate). On healthy data that is every one of them — a labelled row is
         written with ``sf_multipv_raw`` — so the window does NOT become a
-        mixture of two target regimes. ``sf_rebuild_policy_frac`` reports the
-        realized rate; it falling below ``sf_rebuild_wdl_frac`` means desynced
-        Stockfish rows, not a bound on what the rebuild can reach — and it
-        UNDERCOUNTS them, since only ~59% of poisoned rows lose the block.
+        mixture of two target regimes. ``sf_rebuild_policy_frac`` reports
+        dense targets actually rewritten. It may legitimately fall below
+        ``sf_rebuild_wdl_frac`` when sparse-policy rows are present; use the
+        always-on ``sf_labelled_no_multipv_frac`` label-health detector.
 
         ``sf_target_params`` is written only when a CONSUMER is active — this
         rebuild, or ``sf_policy_sparse_ce``, which reads the same field as
@@ -4687,7 +5377,7 @@ class Trainer:
 
     def _run_optimizer_step(
         self, *,
-        step_sums: dict[str, float],
+        step_sums: _DeviceLossSums,
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
         step_opt_stats: dict[str, float],
         buf: ReplayBuffer,
@@ -4695,44 +5385,109 @@ class Trainer:
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Iterator[dict[str, torch.Tensor]] | None = None,
+        timer: _PipelinePhaseTimer | None = None,
     ) -> tuple[int, float]:
         """Run accum_steps microbatches, do zclip + opt.step + lr update.
 
         Mutates step_sums/step_acc_sums/step_opt_stats in place. Returns
         (step_n_micro, opt_step_time_s).
+
+        ⚑ ``step_sums`` is a ``_DeviceLossSums``, NOT a ``dict[str, float]``:
+        the loss scalars stay on the device until ``train_steps`` drains the
+        whole window. Everything in ``step_opt_stats`` is still a host float,
+        including the two grad norms the non-finite guard below branches on --
+        that sync is DELIBERATELY KEPT, see the guard's own comment.
+
+        ``timer`` accumulates this step's phase spans into the caller's window.
+        A direct caller that passes none still runs the spans, into a throwaway
+        CPU-only timer -- the instrumentation is never conditional, only its
+        destination is.
         """
+        phases = timer if timer is not None else _PipelinePhaseTimer(device="cpu")
         self.opt.zero_grad(set_to_none=True)
         step_n_micro = 0
+        step_samples_seen = 0
         batches = batch_iter
         if batches is None:
-            batches = self._iter_prefetched_batches(
+            batches = self._iter_training_batches(
                 buf,
                 batch_size=batch_size,
                 mirror_prob=self.mirror_prob,
                 count=self.accum_steps,
             )
         for _ in range(self.accum_steps):
-            batch = next(batches)
-            self._apply_feature_group_dropout(batch["x"])
-            with self._amp_context():
-                _rel = batch.get("relations")
-  # kwarg only when present: TinyNet's forward has no relations param.
-                out = self.model(batch["x"], relations=_rel) if _rel is not None else self.model(batch["x"])
-                losses = compute_loss(out, batch, **self._loss_kwargs)
-                balance_loss = getattr(self.model, "_last_channel_balance_loss", None)
-                if balance_loss is not None and self.resid_channel_balance_weight > 0.0:
-                    losses["channel_balance"] = balance_loss
-                    losses["total"] = losses["total"] + self.resid_channel_balance_weight * balance_loss
-                loss = losses["total"] / self.accum_steps
-            loss.backward()
-
-            scalars = self._extract_loss_scalars(
-                losses,
-                total_override=loss,
-                total_scale=float(self.accum_steps),
+  # ⚑ THE STARVATION PHASE. Everything the loop waits for to get a batch: the
+  # prefetch thread's sample (`future.result()`) and then `pin_memory` + the
+  # H2D issue. Deliberately no GPU twin -- see `_PIPELINE_PHASE_GPU_KEY`.
+            with phases.phase("batch_prefetch_wait_s"):
+                batch = next(batches)
+            # Shape metadata is available without a device synchronization.
+            # Count what the buffer actually returned: an exact finite epoch
+            # deliberately spreads a remainder over near-full ragged batches,
+            # so ``n_micro * requested batch_size`` is not generally true.
+            realized_batch_rows = int(batch["x"].shape[0])
+            step_samples_seen += realized_batch_rows
+            exact_epoch = bool(
+                getattr(buf, "exact_without_replacement", False)
             )
-            for k, v in scalars.items():
-                step_sums[k] = step_sums.get(k, 0.0) + v
+            with phases.phase("fwd_loss_s"):
+                self._apply_feature_group_dropout(batch["x"])
+                with self._amp_context():
+                    _rel = batch.get("relations")
+  # kwarg only when present: TinyNet's forward has no relations param.
+                    out = self.model(batch["x"], relations=_rel) if _rel is not None else self.model(batch["x"])
+                    losses = compute_loss(
+                        out,
+                        batch,
+                        report_exact_masked_sums=exact_epoch,
+                        exact_corpus_rows=(
+                            getattr(buf, "exact_corpus_rows", None)
+                            if exact_epoch else None
+                        ),
+                        exact_objective_mask_weights=(
+                            getattr(buf, "exact_objective_mask_weights", None)
+                            if exact_epoch else None
+                        ),
+                        **self._loss_kwargs,
+                    )
+                    balance_loss = getattr(self.model, "_last_channel_balance_loss", None)
+                    if balance_loss is not None and self.resid_channel_balance_weight > 0.0:
+                        losses["channel_balance"] = balance_loss
+                        losses["total"] = losses["total"] + self.resid_channel_balance_weight * balance_loss
+                    # ``compute_loss`` returns a row mean. Exact preflight
+                    # refuses a long game that would force extra undersized
+                    # optimizer steps; every accepted schedule is at least 99%
+                    # full (the production plan is 511/512). Preserve a constant
+                    # 1/requested_batch_size gradient
+                    # coefficient per row before Aurora/AdamW transforms it;
+                    # ordinary replacement replay keeps its historical scale.
+                    exact_row_scale = (
+                        float(realized_batch_rows) / float(batch_size)
+                        if exact_epoch
+                        else 1.0
+                    )
+                    loss = (
+                        losses["total"] * exact_row_scale / self.accum_steps
+                    )
+            with phases.phase("bwd_s"):
+                loss.backward()
+
+  # ⚑ ON-DEVICE, so no `.tolist()` sync lands between `backward()` and the
+  # zclip/optimizer work below. Same keys, same values, same accumulation
+  # order as the `_extract_loss_scalars` path this replaced -- see
+  # `_DeviceLossSums`. The window pays one transfer, in `train_steps`.
+            step_sums.add_losses(
+                losses,
+                # Metrics remain the unscaled per-row loss. The row-fraction
+                # factor above is optimizer normalization, not a ruler change.
+                total_override=losses["total"] / self.accum_steps,
+                total_scale=float(self.accum_steps),
+                mean_weight=(
+                    float(realized_batch_rows)
+                    if exact_epoch
+                    else 1.0
+                ),
+            )
 
             with torch.no_grad():
                 for name, (n_, d_) in self._policy_accuracy_stats(out, batch).items():
@@ -4740,6 +5495,14 @@ class Trainer:
                     step_acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
 
             step_n_micro += 1
+            # Release the consumed tensor mapping before ``next(batches)`` asks
+            # the exact sampler to materialize another host batch.  Assignment
+            # evaluates its RHS first, so merely reusing the name on the next
+            # loop iteration would otherwise keep this batch alive throughout
+            # construction of its successor.
+            del batch, out, losses, loss, _rel
+
+        step_opt_stats["samples_seen"] = float(step_samples_seen)
 
   # Collect on EVERY step, not just tb_log_interval ones: the stats are
   # pure Python arithmetic over floats zclip already materialized, and a
@@ -4748,9 +5511,14 @@ class Trainer:
   # Measured BEFORE the clip, which is a distinction without a difference
   # while the matrix group is outside the clip scope, and the honest
   # pre-clip reading if it ever is not.
-        zclip_stats_before = self._zclip_stats_snapshot()
-        matrix_grad_norm = self._matrix_grad_norm()
-        grad_norm, zclip_stats = self._zclip_step(collect_stats=True)
+  # ⚑ THE STEP'S ONLY REMAINING HOST SYNC LIVES IN THIS PHASE, so its wall
+  # clock is where the forward and backward GPU work gets DRAINED. A large
+  # `gradnorm_zclip_s` next to a small `gpu_gradnorm_zclip_s` is the normal
+  # reading and says "the loop is GPU-bound", not "zclip is slow".
+        with phases.phase("gradnorm_zclip_s"):
+            zclip_stats_before = self._zclip_stats_snapshot()
+            matrix_grad_norm = self._matrix_grad_norm()
+            grad_norm, zclip_stats = self._zclip_step(collect_stats=True)
         if zclip_stats is not None:
             step_opt_stats.update(zclip_stats)
         step_opt_stats["grad_norm"] = float(grad_norm)
@@ -4761,6 +5529,16 @@ class Trainer:
   # RuntimeError mid-iteration. Guard the clipped group too — zclip never
   # protected it either (`clip_coef = cap / (nan + 1e-6)` leaves `nan > cap`
   # False, so the whole non-finite gradient passes through unscaled).
+  #
+  # ⚑⚑ THE KEPT SYNC. `_matrix_grad_norm` and `_zclip_step` return HOST floats,
+  # i.e. one device->host transfer per optimizer step, and this line BRANCHES on
+  # them: it decides whether `self.opt.step()` runs at all, whether zclip's EMA
+  # is rolled back, and whether the step is counted as skipped. It therefore
+  # cannot be batched to the end of the window the way the LOSS scalars were --
+  # a window-batched safety check would apply a non-finite update ~88 times
+  # before noticing. Do not "finish the optimization" by moving it.
+  # `tests/test_train_window_loss_sync.py::test_the_nonfinite_gradient_guard_is_
+  # still_read_every_step` pins that it is consulted once per step.
         if not (math.isfinite(matrix_grad_norm) and math.isfinite(grad_norm)):
             logging.getLogger(__name__).warning(
                 "non-finite gradient at step %d (matrix ||g||=%r, clipped "
@@ -4775,6 +5553,12 @@ class Trainer:
             step_opt_stats["nonfinite_grad"] = 1.0
             step_opt_stats["lr"] = float(self.opt.param_groups[0]["lr"])
             self.opt.zero_grad(set_to_none=True)
+            if bool(getattr(buf, "exact_without_replacement", False)):
+                raise RuntimeError(
+                    "exact without-replacement training cannot discard a "
+                    "non-finite-gradient update after consuming its rows; "
+                    "restart the deterministic epoch after correcting the fault",
+                )
             if update_lr:
                 self._update_lr()
             return step_n_micro, 0.0
@@ -4793,16 +5577,42 @@ class Trainer:
   # "what LR is the trunk training at" under sqrt_release (I19).
         step_opt_stats["lr"] = float(self.opt.param_groups[0]["lr"])
         opt_step_start = time.perf_counter()
-        set_collect_uw_stats = getattr(self.opt, "set_collect_uw_stats", None)
-        if callable(set_collect_uw_stats):
-            set_collect_uw_stats(bool(collect_optimizer_stats))
+        with phases.phase("opt_step_s"):
+            set_collect_uw_stats = getattr(self.opt, "set_collect_uw_stats", None)
+            if callable(set_collect_uw_stats):
+                set_collect_uw_stats(bool(collect_optimizer_stats))
   # Polar residual rides the same one-step-per-iteration gate. It is
   # scale-invariant and carries no `lr` factor, so unlike the uw-effective
   # pair (M4-2) sampling at the sawtooth floor does not bias it.
-        set_collect_polar_stats = getattr(self.opt, "set_collect_polar_stats", None)
-        if callable(set_collect_polar_stats):
-            set_collect_polar_stats(bool(collect_optimizer_stats))
-        self.opt.step()
+            set_collect_polar_stats = getattr(self.opt, "set_collect_polar_stats", None)
+            if callable(set_collect_polar_stats):
+                set_collect_polar_stats(bool(collect_optimizer_stats))
+  # ⚑ THE OPTIMIZER-STEP BOUNDARY. Anything that escapes `opt.step()` -- the
+  # Aurora / AdamW paths in `AuroraWithAuxAdam`, a wrapper's post-step work
+  # (`SODAWeightDecayWrapper`), a chained child, a plain torch optimizer --
+  # may have left moments and parameters partially advanced, and
+  # `train_steps`' CUDA retry would double-apply them (PR #495 measured this
+  # on both AdamW paths). So it leaves here as `OptimizerStepFailed`, which
+  # that retry explicitly does not catch, keyed by CLASS at this boundary and
+  # not by the "CUDA" substring: a non-CUDA failure inside the step is just as
+  # unretryable. `AuroraWithAuxAdam` already raises the class with the
+  # tensor / bucket named; this fills in the step index it cannot know, and
+  # wraps everything else with the index alone.
+            failed_step_index = self.step + 1
+            try:
+                self.opt.step()
+            except OptimizerStepFailed as exc:
+                if exc.step_index is None:
+                    exc.step_index = failed_step_index
+                raise
+            except Exception as exc:
+                raise OptimizerStepFailed(
+                    f"inside {type(self.opt).__name__}.step(): {type(exc).__name__}: {exc}",
+                    step_index=failed_step_index,
+                ) from exc
+  # Unchanged boundaries: `opt_step_time_s` is still the wall clock of exactly
+  # this region, because `optimizer_steps_per_s` in the Ray report divides by
+  # it and a redefinition would move that column without moving the run.
         opt_step_time_s = time.perf_counter() - opt_step_start
         if update_lr:
             self._update_lr()
@@ -4826,13 +5636,28 @@ class Trainer:
         #     byte-identical.
         self._assert_gated_heads_exist()
         self.model.train()
+  # Always on, one instance per window, no config key. See
+  # `_PipelinePhaseTimer` for why there is no switch and what the two clocks
+  # mean.
+        phase_timer = _PipelinePhaseTimer(device=self.device)
         train_wall_start = time.perf_counter()
 
-        sums: dict[str, float] = {}
+  # ⚑ DEVICE-RESIDENT until the window ends. `sums` (the host dict every
+  # downstream consumer reads) is built below, after the loop, from ONE
+  # transfer. See `_DeviceLossSums`.
+        window_sums = _DeviceLossSums()
+  # (step at which it was logged, device tensor for that step's mean total
+  # loss). The per-step `train/loss` TB series is PRESERVED EXACTLY -- same
+  # values, same step numbers -- by deferring the WRITE to the window's single
+  # transfer instead of dropping the series or replacing it with a mean. A
+  # scalar is written with an explicit `global_step`, so writing it late is
+  # indistinguishable in the event file from writing it on time.
+        pending_step_loss: list[tuple[int, torch.Tensor]] = []
         acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         n_micro = 0
         opt_step_time_s = 0.0
         train_steps_done = 0
+        train_samples_seen = 0
   # Committed only on a successful step, so a retried CUDA-error attempt
   # can't double-count (same discipline as step_sums).
         grad_norms: list[float] = []
@@ -4843,13 +5668,17 @@ class Trainer:
             "nonfinite_grad": 0,
         }
         transient_cuda_retry_batches = 0
+  # Window baseline for the optimizer's monotone recovery counter; the row
+  # publishes the DIFFERENCE, i.e. every recovery in this window, where the
+  # last-step-only `last_adamw_stats` would drop all but the final step's.
+        adamw_recoveries_at_start = int(getattr(self.opt, "adamw_foreach_recoveries_total", 0))
 
         _log = logging.getLogger(__name__)
 
         requested_steps = int(steps)
         effective_cycle_steps = max(1, requested_steps)
         batch_iter = _TrainBatchIterator(
-            lambda count: self._iter_prefetched_batches(
+            lambda count: self._iter_training_batches(
                 buf,
                 batch_size=batch_size,
                 mirror_prob=self.mirror_prob,
@@ -4861,7 +5690,7 @@ class Trainer:
         try:
             for _ in range(requested_steps):
               for _attempt in range(3):
-                step_sums: dict[str, float] = {}
+                step_sums = _DeviceLossSums()
                 step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
                 step_opt_stats: dict[str, float] = {}
                 consumed_before_attempt = batch_iter.consumed
@@ -4879,9 +5708,30 @@ class Trainer:
                         update_lr=not local_release_cycle,
                         collect_optimizer_stats=train_steps_done + 1 >= requested_steps,
                         batch_iter=batch_iter,
+                        timer=phase_timer,
                     )
                     opt_step_time_s += this_opt_time
+  # ⚑ NOT RETRYABLE, and the clause is written out so a reader sees it: the
+  # optimizer has (or may have) partially mutated its moments and parameters
+  # by the time it raises, and a replacement batch on top of that state is
+  # the double application PR #495 measured. Its message still says "CUDA"
+  # when the cause did, so the substring test below would take it. Ordering
+  # is the whole mechanism -- this clause must stay above the `RuntimeError`
+  # one, and `OptimizerStepFailed` IS a `RuntimeError`.
+                except OptimizerStepFailed:
+                    raise
                 except RuntimeError as exc:
+                    # An exact finite-corpus epoch cannot replace a consumed
+                    # batch without silently leaving those rows unused.  The
+                    # rolling replay sampler is allowed to retry from a fresh
+                    # draw; a without-replacement sampler must fail closed so
+                    # the whole epoch can be restarted from its deterministic
+                    # seed.  This check is deliberately before the generic
+                    # CUDA retry branch -- otherwise the first fault advances
+                    # the one-shot iterator and the run can still report a
+                    # complete step count over an incomplete corpus.
+                    if bool(getattr(buf, "exact_without_replacement", False)):
+                        raise
                     if "CUDA" not in str(exc) or _attempt >= 2:
                         raise
                     _retry_batches = batch_iter.consumed - consumed_before_attempt
@@ -4898,12 +5748,12 @@ class Trainer:
                     continue
 
   # Success — commit metrics from this step.
-                for k, v in step_sums.items():
-                    sums[k] = sums.get(k, 0.0) + v
+                window_sums.merge(step_sums)
                 for name, (n_, d_) in step_acc_sums.items():
                     prev = acc_sums.get(name)
                     acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
                 n_micro += step_n_micro
+                train_samples_seen += int(step_opt_stats.get("samples_seen", 0.0))
                 if "grad_norm" in step_opt_stats:
                     grad_norms.append(step_opt_stats["grad_norm"])
                     for flag in clip_counts:
@@ -4921,7 +5771,25 @@ class Trainer:
                     self._swa_model.update_parameters(self.model)
 
                 if self._should_log_step_scalars():
-                    self.writer.add_scalar("train/loss", float(step_sums.get("loss", 0.0) / max(1, step_n_micro)), self.step)
+  # ⚑ QUEUED, NOT DROPPED. The value is `step_sums["loss"] / step_n_micro`
+  # exactly as before; only the host read moves to the window's single
+  # transfer, and the `global_step` is captured HERE so the series lands on
+  # the same x-axis it always did. The absent-key case still publishes the
+  # literal 0.0 the old `.get("loss", 0.0)` produced, immediately, because
+  # there is nothing to transfer.
+                    step_loss = step_sums.tensor("loss")
+                    if step_loss is None:
+                        self.writer.add_scalar("train/loss", 0.0, self.step)
+                    else:
+                        step_loss_denominator = (
+                            int(step_opt_stats.get("samples_seen", 0.0))
+                            if bool(getattr(buf, "exact_without_replacement", False))
+                            else step_n_micro
+                        )
+                        pending_step_loss.append((
+                            int(self.step),
+                            step_loss / float(max(1, step_loss_denominator)),
+                        ))
                     self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
                 self.step += 1
                 train_steps_done += 1
@@ -4929,8 +5797,58 @@ class Trainer:
         finally:
             batch_iter.close()
 
+  # ⚑⚑ THE WINDOW'S ONE HOST TRANSFER, and the only one the loss scalars now
+  # cost. Every per-microbatch `.tolist()` this replaced was a full CUDA sync
+  # immediately after `backward()`; here the window's accumulated sums AND the
+  # deferred per-step `train/loss` series ride out together in a single
+  # `torch.stack(...).tolist()`.
+  #
+  # ⚑ Taken BEFORE `train_time_s` is read, deliberately. The syncs it replaces
+  # were inside the loop and therefore inside the window's wall clock, so
+  # counting the replacement keeps `train_time_s` (and everything derived from
+  # it -- `steps_per_s`, `samples_per_s`, the phase decomposition's residual)
+  # measuring the same thing it did before.
+        _sum_items = window_sums.items()
+        _flat = _materialize_device_scalars(
+            [t for _, t in _sum_items] + [t for _, t in pending_step_loss],
+        )
+        sums: dict[str, float] = {
+            key: _flat[i] for i, (key, _) in enumerate(_sum_items)
+        }
+        for (_logged_step, _), _value in zip(
+            pending_step_loss, _flat[len(_sum_items):], strict=True,
+        ):
+            self.writer.add_scalar("train/loss", _value, _logged_step)
+
         train_time_s = time.perf_counter() - train_wall_start
-        train_samples_seen = int(n_micro * batch_size)
+  # ⚑ ONE `elapsed_time` sweep for the whole window, taken here because the
+  # transfer above has already drained the CUDA queue -- so the events are
+  # complete and reading them costs nothing. `pipeline_other_s` is whatever of
+  # `train_time_s` the phases did not claim.
+        phase_timings = phase_timer.drain(window_wall_s=train_time_s)
+  # print(), NOT logging.info() -- the trial actor installs no logging handler;
+  # see the `export_swa` comment. One line per window, unconditional: a
+  # throughput decomposition that only appears when someone remembers to ask
+  # for it is not there on the day the throughput question comes up.
+  # ⚑ `gpu_events=` is part of the reading, not decoration: without it a
+  # CPU-only run's all-zero `gpu_*` columns are indistinguishable from a GPU
+  # that did no work.
+        print(
+            f"[trainer] window_timing steps={train_steps_done} "
+            f"train_time_s={train_time_s:.3f} "
+            f"batch_prefetch_wait_s={phase_timings['batch_prefetch_wait_s']:.3f} "
+            f"fwd_loss_s={phase_timings['fwd_loss_s']:.3f} "
+            f"bwd_s={phase_timings['bwd_s']:.3f} "
+            f"gradnorm_zclip_s={phase_timings['gradnorm_zclip_s']:.3f} "
+            f"opt_step_s={phase_timings['opt_step_s']:.3f} "
+            f"pipeline_other_s={phase_timings['pipeline_other_s']:.3f} "
+            f"gpu_fwd_loss_s={phase_timings['gpu_fwd_loss_s']:.3f} "
+            f"gpu_bwd_s={phase_timings['gpu_bwd_s']:.3f} "
+            f"gpu_gradnorm_zclip_s={phase_timings['gpu_gradnorm_zclip_s']:.3f} "
+            f"gpu_opt_step_s={phase_timings['gpu_opt_step_s']:.3f} "
+            f"gpu_events={'on' if phase_timer.cuda else 'off'}",
+            flush=True,
+        )
   # ⚑ ANNOUNCE THE NaN THE ZERO-WEIGHT GUARD SWALLOWED. A term at weight 0.0 is
   # skipped by `compute_loss`'s assembly, so a NaN in it never reaches `total`
   # and never trips the non-finite-GRADIENT guard in `_run_optimizer_step`: it
@@ -4966,8 +5884,13 @@ class Trainer:
                 "is still a shard defect -- +-inf and NaN both count here.",
                 blend_unclaimed, n_micro,
             )
+        metric_denominator = (
+            train_samples_seen
+            if bool(getattr(buf, "exact_without_replacement", False))
+            else n_micro
+        )
         metrics = self._build_metrics(
-            sums, acc_sums, float(max(1, n_micro)),
+            sums, acc_sums, float(max(1, metric_denominator)),
             train_time_s=float(train_time_s),
             opt_step_time_s=float(opt_step_time_s),
             train_steps_done=int(train_steps_done),
@@ -4979,11 +5902,24 @@ class Trainer:
   # disagree on it did not sample the same rows, whatever their shard pools say.
             batches_drawn=float(batch_iter.consumed),
             transient_cuda_retry_batches=float(transient_cuda_retry_batches),
+            **phase_timings,
             **_grad_clip_metric_kwargs(grad_norms, clip_counts, aurora_grad_norms),
             **self._sf_rebuild_coverage.drain(),
             **getattr(self.opt, "last_uw_stats", {}),
             **getattr(self.opt, "last_polar_stats", {}),
+            **{
+                **getattr(self.opt, "last_adamw_stats", {}),
+                "adamw_foreach_recoveries": float(
+                    int(getattr(self.opt, "adamw_foreach_recoveries_total", 0))
+                    - adamw_recoveries_at_start
+                ),
+            },
         )
+        if bool(getattr(buf, "exact_without_replacement", False)):
+            metrics = dataclasses.replace(
+                metrics,
+                **_exact_masked_metric_kwargs(sums),
+            )
         self._warn_if_grad_norm_median_past_watch(metrics)
         self._warn_if_value_blend_leaks_to_outcome(metrics)
         self._log_metrics(metrics, "train_avg")
@@ -5691,10 +6627,15 @@ class Trainer:
             elif n_ckpt_params < n_model_params:
                 remapped = self._remap_optimizer_state_for_new_params(opt_state)
                 if remapped is not None:
-                    logging.getLogger(__name__).info(
-                        "Spliced %d fresh parameter slot(s) into the donor "
-                        "optimizer state (zero-init warm start)",
-                        n_model_params - n_ckpt_params,
+                    # print, not logging.info: the Ray actor has no handler, so
+                    # INFO is dropped and a successful splice would be silent
+                    # while only the reinit WARNING below is loud (audit
+                    # 2026-08-12). Same channel as the tolerant-load report.
+                    print(
+                        "[resume] Spliced "
+                        f"{n_model_params - n_ckpt_params} fresh parameter "
+                        "slot(s) into the donor optimizer state "
+                        "(zero-init warm start)"
                     )
                     opt_state = remapped
             self.opt.load_state_dict(opt_state)

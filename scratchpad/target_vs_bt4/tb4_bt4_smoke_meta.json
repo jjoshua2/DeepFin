@@ -1,0 +1,12 @@
+{
+  "net": "data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
+  "tag": "smoke",
+  "n_rows": 24,
+  "n_unique_children": 75,
+  "n_terminal_children": 0,
+  "parent_wdl_mean": [
+    0.32819727063179016,
+    0.3824993073940277,
+    0.28930342197418213
+  ]
+}

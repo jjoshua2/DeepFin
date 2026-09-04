@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -50,38 +51,71 @@ def _sandbox(tmp_path: Path, *, workers: bool = False) -> tuple[Path, Path, Path
     calls = tmp_path / "calls.log"
     ack = tune / f".paused_{TRIAL_ID}.ack"
 
-    # pgrep: reports one fake pid until pkill runs, then nothing -- so the
-    # script's drain-wait loop terminates the way it would in production.
-    (bin_dir / "pgrep").write_text(
-        "#!/bin/sh\n"
-        f'if [ "{int(workers)}" = "1" ] && [ ! -f "{tmp_path}/killed" ]; then echo 424242; exit 0; fi\n'
-        "exit 1\n",
-    )
+    # ⚑ THE SCRIPT NO LONGER RUNS pgrep OR pkill AT ALL (2026-08-20: `kill -0`
+    # read four cleanly-exited ZOMBIE workers as survivors -- a parked trial
+    # cannot reap -- and pattern-signalling is banned since the 08-10 outage).
+    # Discovery walks $CAE_PAUSE_PROC_ROOT read-only; signals go to explicit
+    # PIDs through $CAE_PAUSE_KILL_CMD. The sandbox provides a fake proc tree
+    # and a kill stub with the same observability the old PATH stubs gave.
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    if workers:
+        _fake_worker(proc_root, FAKE_PID)
+
     # ⚑ RECORD THE ACK'S CONTENT, NOT ITS EXISTENCE.
     # This stub used to ask only `[ -e "$ack" ]`. That is the same defect the
     # script it tests exists to prevent, one level up: with the stale-ack
-    # removal DELETED, the pre-existing ack satisfies the wait instantly, pkill
-    # fires immediately, and an existence check still sees an ack and writes
-    # "pkill after_ack" -- the exact string the passing assertion demanded. A
-    # reviewer deleted `pause_window.sh:111-114` and the test SURVIVED.
-    # The content distinguishes them: the trial's real ack says `next_iter=7`,
-    # every stale one planted below says something else.
-    (bin_dir / "pkill").write_text(
+    # removal DELETED, the pre-existing ack satisfies the wait instantly, the
+    # TERM fires immediately, and an existence check still sees an ack and
+    # writes the exact string the passing assertion demanded. The content
+    # distinguishes them: the trial's real ack says `next_iter=7`, every stale
+    # one planted below says something else.
+    # The stub is called `-TERM <pid>` per worker; it removes THAT pid's proc
+    # entry, the way a real TERM ends a real worker, so the drain loop ends.
+    (bin_dir / "killstub").write_text(
         "#!/bin/sh\n"
-        f'if [ -e "{ack}" ]; then echo "pkill ack:$(tr -d \'\\n\' < "{ack}")" >> "{calls}"; '
-        f'else echo "pkill NO_ack" >> "{calls}"; fi\n'
+        f'if [ -e "{ack}" ]; then echo "term ack:$(tr -d \'\\n\' < "{ack}")" >> "{calls}"; '
+        f'else echo "term NO_ack" >> "{calls}"; fi\n'
+        f'rm -rf "{proc_root}/$2"\n'
         f'touch "{tmp_path}/killed"\n'
         "exit 0\n",
     )
-    for f in ("pgrep", "pkill"):
-        (bin_dir / f).chmod(0o755)
+    (bin_dir / "killstub").chmod(0o755)
     return work, bin_dir, calls
+
+
+FAKE_PID = 424242
+FAKE_START = 5555
+FAKE_PPID = 1000
+
+
+def _fake_worker(
+    proc_root: Path, pid: int, *, trial: str = TRIAL_ID, ppid: int = FAKE_PPID,
+    start: int = FAKE_START, state: str = "S", extra_argv: tuple[str, ...] = (),
+) -> Path:
+    """One /proc-shaped worker entry: cmdline (NUL argv), stat, status.
+
+    stat's fields after the parenthesised comm begin at state (overall field
+    3), so starttime -- overall field 22, the kernel's identity stamp for this
+    incarnation of the pid -- is post-comm field 20, which is where the lib
+    reads it.
+    """
+    d = proc_root / str(pid)
+    d.mkdir(parents=True)
+    argv = ["python3", "-m", "chess_anti_engine.worker", "--trial-id", trial, *extra_argv]
+    (d / "cmdline").write_bytes("\0".join(argv).encode() + b"\0")
+    rest = [state, str(ppid)] + ["0"] * 13 + ["20", "0", "1", "0", str(start), "0", "0"]
+    (d / "stat").write_text(f"{pid} (python3) " + " ".join(rest) + "\n")
+    (d / "status").write_text(f"Name:\tpython3\nState:\t{state} (x)\n")
+    return d
 
 
 def _run(work: Path, bin_dir: Path, *cmd: str, timeout: int = 90, **kw: str):
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}:{env['PATH']}"
     env["CAE_PAUSE_POLL_SECONDS"] = "1"
+    env["CAE_PAUSE_PROC_ROOT"] = str(bin_dir.parent / "proc")
+    env["CAE_PAUSE_KILL_CMD"] = str(bin_dir / "killstub")
   # Most sandboxes here run with `workers=False` because what they exercise is
   # the marker/ack/trap machinery, not the drain. Zero matched workers is now a
   # REFUSAL (a pattern that stopped matching is indistinguishable from a fleet
@@ -149,7 +183,7 @@ def test_the_drain_never_starts_before_the_trial_has_parked(tmp_path: Path) -> N
     finally:
         proc.wait()
     assert r.returncode == 0, r.stderr
-    assert calls.read_text().strip() == f"pkill ack:trial={TRIAL_ID} next_iter=7", (
+    assert calls.read_text().strip() == f"term ack:trial={TRIAL_ID} next_iter=7", (
         f"the drain raced the pause: {calls.read_text()!r}"
     )
 
@@ -170,7 +204,7 @@ def test_a_stale_ack_from_a_DIFFERENT_trial_does_not_satisfy_the_wait(
     finally:
         proc.wait()
     assert r.returncode == 0, r.stderr
-    assert calls.read_text().strip() == f"pkill ack:trial={TRIAL_ID} next_iter=7", (
+    assert calls.read_text().strip() == f"term ack:trial={TRIAL_ID} next_iter=7", (
         f"a foreign trial's stale ack was accepted as this trial's park signal: "
         f"{calls.read_text()!r}"
     )
@@ -198,7 +232,7 @@ def test_a_preexisting_ack_for_this_trial_is_ignored_until_it_is_refreshed(
         proc.wait()
     assert r.returncode == 0, r.stderr
     recorded = calls.read_text().strip()
-    assert recorded == f"pkill ack:trial={TRIAL_ID} next_iter=7", (
+    assert recorded == f"term ack:trial={TRIAL_ID} next_iter=7", (
         f"a pre-existing ack for this trial was trusted instead of discarded: {recorded!r}"
     )
   # Explicit, because this is the assertion the earlier existence-only version
@@ -270,13 +304,13 @@ def test_the_resume_baseline_is_taken_before_the_drain(tmp_path: Path) -> None:
         (d / f"g{i}.npz").write_bytes(b"x")
     # The drain banks in-flight games INTO this directory; a baseline taken
     # after it would count them as though they had been there all along.
-    (bin_dir / "pkill").write_text(
-        (bin_dir / "pkill").read_text().replace(
+    (bin_dir / "killstub").write_text(
+        (bin_dir / "killstub").read_text().replace(
             "exit 0\n",
             f'for i in 3 4 5 6 7; do : > "{d}/banked_$i.npz"; done\nexit 0\n',
         ),
     )
-    (bin_dir / "pkill").chmod(0o755)
+    (bin_dir / "killstub").chmod(0o755)
 
     proc = _ack_after(work / "tune", 2.0)
     try:
@@ -457,26 +491,24 @@ def test_the_window_can_be_switched_off(tmp_path: Path) -> None:
 # clean strength reading. Three ways in, three gates.
 
 
-def test_a_pgrep_usage_error_is_not_read_as_no_workers(tmp_path: Path) -> None:
-    """`|| true` erased pgrep's status. A dropped `--` makes the pattern look
-    like options (`pgrep -f "-m chess..."` => "invalid option -- 'm'", rc 2),
-    which then reads as "nothing to drain" -- the mutation a reviewer made,
-    which SURVIVED because the stubs ignored their arguments. rc>=2 is now
-    fatal, and it fires before the marker is ever touched."""
+def test_mixed_parentage_is_refused_before_the_marker(tmp_path: Path) -> None:
+    """Every worker of one trial is a child of that trial's single Ray
+    trainable. Two ppids in one snapshot means the discovery matched something
+    that is not this trial's fleet -- a second trial, a stray copy -- and
+    signalling into that set is exactly the 2026-08-10 outage shape. Refuse
+    BEFORE the marker, where being wrong is free. (This replaces the pgrep
+    usage-error gate: there is no pgrep any more.)"""
     work, bin_dir, calls = _sandbox(tmp_path, workers=True)
-    (bin_dir / "pgrep").write_text(
-        "#!/bin/sh\necho \"pgrep: invalid option -- 'm'\" >&2\nexit 2\n",
-    )
-    (bin_dir / "pgrep").chmod(0o755)
+    _fake_worker(tmp_path / "proc", FAKE_PID + 1, ppid=FAKE_PPID + 1000)
 
     ran = tmp_path / "ran"
     r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_ALLOW_NO_WORKERS="0")
 
-    assert r.returncode != 0, "a broken worker pattern was accepted"
-    assert "pattern is broken" in r.stderr, r.stderr
-    assert not ran.exists(), "the job ran without any drain having happened"
+    assert r.returncode != 0, "a mixed-parentage snapshot was accepted as one fleet"
+    assert "MIXED parentage" in r.stderr, r.stderr
+    assert not ran.exists(), "the job ran on an unsafe discovery"
     assert not (work / "tune" / "pause.txt").exists(), "production was parked for nothing"
-    assert not calls.exists(), "pkill was called despite pgrep failing"
+    assert not calls.exists(), "something was signalled despite the refusal"
 
 
 def test_zero_matched_workers_refuses_before_touching_the_marker(tmp_path: Path) -> None:
@@ -490,7 +522,7 @@ def test_zero_matched_workers_refuses_before_touching_the_marker(tmp_path: Path)
     r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_ALLOW_NO_WORKERS="0")
 
     assert r.returncode != 0
-    assert "no selfplay workers matched" in r.stderr, r.stderr
+    assert "no worker of trial" in r.stderr, r.stderr
     assert not ran.exists()
     assert not (work / "tune" / "pause.txt").exists(), (
         "refused, but only after parking production"
@@ -498,17 +530,16 @@ def test_zero_matched_workers_refuses_before_touching_the_marker(tmp_path: Path)
 
 
 def test_a_worker_that_survives_sigterm_stops_the_job(tmp_path: Path) -> None:
-    """The other half of the same gate. A worker that ignores SIGTERM still
-    holds its server lease and still plays; the old code logged "continuing
-    anyway" and ran the job beside it. The check reads the pids taken at
-    BASELINE rather than re-running pgrep, so a pattern that stopped matching
-    cannot report a clean drain either."""
-    work, bin_dir, _ = _sandbox(tmp_path, workers=True)
-  # A real process, so `kill -0` has something true to say. pkill is stubbed,
-  # so nothing actually signals it -- which is precisely the case under test.
-    victim = subprocess.Popen(["sleep", "120"])
-    (bin_dir / "pgrep").write_text(f"#!/bin/sh\necho {victim.pid}\nexit 0\n")
-    (bin_dir / "pgrep").chmod(0o755)
+    """A worker that ignores SIGTERM still holds its server lease and still
+    plays; the old code logged "continuing anyway" and ran the job beside it.
+    The kill stub here records the TERM but leaves the proc entry alive
+    (state S, original start time) -- the one combination that IS a survivor
+    under the zombie-aware rule."""
+    work, bin_dir, calls = _sandbox(tmp_path, workers=True)
+    (bin_dir / "killstub").write_text(
+        f'#!/bin/sh\necho "term $2" >> "{tmp_path}/calls.log"\nexit 0\n',
+    )
+    (bin_dir / "killstub").chmod(0o755)
 
     ran = tmp_path / "ran"
     ack = _ack_after(work / "tune", 2.0)
@@ -516,45 +547,63 @@ def test_a_worker_that_survives_sigterm_stops_the_job(tmp_path: Path) -> None:
         r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_DRAIN_TIMEOUT="2")
     finally:
         ack.wait()
-        victim.terminate()
-        victim.wait()
 
     assert r.returncode != 0, "an undrained fleet was treated as drained"
     assert "survived SIGTERM" in r.stderr, r.stderr
+    assert f"term {FAKE_PID}" in calls.read_text(), "the survivor was never even signalled"
     assert not ran.exists(), "the job ran beside a live worker"
     assert not (work / "tune" / "pause.txt").exists(), "died holding the marker"
 
 
-def test_the_double_dash_is_required_by_the_REAL_pgrep() -> None:
-    """⚑ PINS THE PREMISE THE STUB CANNOT.
-
-    The gate above proves "rc>=2 aborts". That is only worth having if a
-    realistic mistake actually produces rc>=2, and the stubs in this file
-    ignore their arguments -- which is exactly why a reviewer's mutation
-    dropping `--` SURVIVED the whole suite. So ask the real binary.
-
-    The pattern begins with `-m`, so without the separator pgrep parses it as
-    options. Run against the actual `WORKER_PATTERN` this script uses, not a
-    paraphrase of it.
+def test_a_zombie_worker_counts_as_drained(tmp_path: Path) -> None:
+    """⚑ THE 2026-08-20 REGRESSION TEST. A parked trial cannot reap its
+    children (reaping happens in the iteration loop, which is exactly what
+    "parked" suspends), so a worker that exits cleanly on SIGTERM stays in
+    state Z until release. `kill -0` succeeds on a zombie, so the old gate read
+    four fully-drained workers as survivors and aborted a clean window -- a
+    deadlock by construction, because the zombies could not be reaped until the
+    very release the gate was blocking. gone | zombie | pid-recycled must all
+    count as drained; the kill stub flips the entry to Z and LEAVES it there.
     """
-    pattern = re.findall(r"^WORKER_PATTERN='([^']+)'", SCRIPT.read_text(), re.M)[0]
+    work, bin_dir, calls = _sandbox(tmp_path, workers=True)
+    status = tmp_path / "proc" / str(FAKE_PID) / "status"
+    (bin_dir / "killstub").write_text(
+        "#!/bin/sh\n"
+        f'echo "term $2" >> "{calls}"\n'
+        f"printf 'Name:\\tpython3\\nState:\\tZ (zombie)\\n' > \"{status}\"\n"
+        "exit 0\n",
+    )
+    (bin_dir / "killstub").chmod(0o755)
 
-    without = subprocess.run(
-        ["pgrep", "-f", pattern], capture_output=True, text=True, check=False,
-    )
-    assert without.returncode >= 2, (
-        "pgrep tolerated a leading-dash pattern without `--`; the abort this "
-        f"suite relies on would never fire (rc={without.returncode})"
-    )
-    assert "invalid option" in without.stderr, without.stderr
+    ran = tmp_path / "ran"
+    ack = _ack_after(work / "tune", 2.0)
+    try:
+        r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_DRAIN_TIMEOUT="4")
+    finally:
+        ack.wait()
 
-    with_sep = subprocess.run(
-        ["pgrep", "-f", "--", pattern], capture_output=True, text=True, check=False,
+    assert r.returncode == 0, (
+        f"a fully drained (zombie) fleet was refused -- the 2026-08-20 deadlock "
+        f"is back:\n{r.stderr}"
     )
-    assert with_sep.returncode in (0, 1), (
-        "with `--` pgrep must either match (0) or not match (1), never error: "
-        f"rc={with_sep.returncode} {with_sep.stderr!r}"
-    )
+    assert ran.exists(), "the job never ran despite a clean drain"
+    assert f"term {FAKE_PID}" in calls.read_text()
+    assert not (work / "tune" / "pause.txt").exists()
+
+
+def test_nothing_in_the_script_signals_by_name() -> None:
+    """⚑ THE STANDING BAN, PINNED. `pgrep -f`/`pkill -f` self-matched a
+    wait-loop's own shell on 2026-08-10 (4h46m outage), and this script's
+    pattern-then-signal path was removed on 2026-08-20. Executable lines in the
+    script and its lib must never reacquire either tool; comments may mention
+    them. (Replaces test_the_double_dash_is_required_by_the_REAL_pgrep, which
+    pinned a property of the removed mechanism.)"""
+    for path in (SCRIPT, SCRIPT.parent / "pause_drain_lib.sh"):
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            code = line.split("#", 1)[0]
+            assert not re.search(r"\b(pgrep|pkill)\b", code), (
+                f"{path.name}:{n} executes {line.strip()!r}"
+            )
 
 
 def test_a_never_refreshed_ack_aborts_FAST_instead_of_holding_the_marker(
@@ -607,47 +656,34 @@ _SUSPEND = "selfplay resume: suspended games=93 records=6378 skipped=0"
 
 
 def _worker_with_argv(tmp_path: Path, *extra: str) -> int:
-    """A real process whose /proc/<pid>/cmdline carries `extra`. Returns its pid.
+    """A SECOND fake worker whose cmdline carries `extra`. Returns its pid.
 
-    Real, because the parse reads /proc -- a stub could only test a paraphrase
-    of the thing under test.
-
-    ⚑ DOUBLE-FORKED ON PURPOSE. As a direct child of pytest it would sit as an
-    unreaped ZOMBIE after the drain kills it, `kill -0` on a zombie SUCCEEDS,
-    and the script's survived-SIGTERM gate would fire on every one of these
-    tests. Backgrounded from a bash that then exits, it is reparented to init
-    and really does disappear.
+    Used to be a real double-forked process, because the parse read the real
+    /proc; discovery now reads $CAE_PAUSE_PROC_ROOT, so the fake entry IS the
+    thing under test -- and nothing real ever has to be signalled or reaped.
     """
-    pidfile = tmp_path / f"worker_{len(extra)}_{abs(hash(extra)) % 10**6}.pid"
-    subprocess.run(
-        ["bash", "-c",
-         'python3 -c "import time; time.sleep(300)" '
-         f'{shlex.join(extra)} & echo $! > {shlex.quote(str(pidfile))}'],
-        check=True,
-    )
-    return int(pidfile.read_text().strip())
-
-
-def _reap(pid: int) -> None:
-    try:
-        os.kill(pid, 9)
-    except ProcessLookupError:
-        pass
+    pid = FAKE_PID + 9
+  # REPLACES the harness worker, exactly as the old per-test pgrep stub
+  # overrode the harness stub: these scenarios are about ONE worker's log
+  # evidence, and a second no-log worker would print its own third-state line.
+    shutil.rmtree(tmp_path / "proc" / str(FAKE_PID), ignore_errors=True)
+    _fake_worker(tmp_path / "proc", pid, extra_argv=tuple(extra))
+    return pid
 
 
 def _drain_stub(bin_dir: Path, tmp_path: Path, victim: int, *, append_to: Path | None = None):
-    """pgrep reports `victim`; pkill really kills it and appends the suspend
-    line to `append_to`, the way a worker's own handler writes it."""
-    (bin_dir / "pgrep").write_text(
-        "#!/bin/sh\n"
-        f'if [ ! -f "{tmp_path}/killed" ]; then echo {victim}; exit 0; fi\nexit 1\n',
-    )
+    """Kill stub: appends the suspend line to `append_to`, the way a worker's
+    own SIGTERM handler writes it, and removes the signalled pid's entry."""
+    calls = tmp_path / "calls.log"
     write = f'printf "%s\\n" "{_SUSPEND}" >> "{append_to}"\n' if append_to else ""
-    (bin_dir / "pkill").write_text(
-        f'#!/bin/sh\n{write}kill -TERM {victim} 2>/dev/null\ntouch "{tmp_path}/killed"\nexit 0\n',
+    (bin_dir / "killstub").write_text(
+        "#!/bin/sh\n"
+        f'echo "term $2 (scenario victim {victim})" >> "{calls}"\n'
+        f"{write}"
+        f'rm -rf "{tmp_path}/proc/$2"\n'
+        "exit 0\n",
     )
-    for f in ("pgrep", "pkill"):
-        (bin_dir / f).chmod(0o755)
+    (bin_dir / "killstub").chmod(0o755)
 
 
 def test_the_log_file_parse_is_anchored_like_train_sh(tmp_path: Path) -> None:
@@ -671,7 +707,6 @@ def test_the_log_file_parse_is_anchored_like_train_sh(tmp_path: Path) -> None:
         r = _run(work, bin_dir, "true")
     finally:
         proc.wait()
-        _reap(victim)
 
     assert r.returncode == 0, r.stderr
     assert "banked: suspended games=93 records=6378 skipped=0" in r.stdout, (
@@ -697,7 +732,6 @@ def test_a_worker_with_no_log_file_says_so_LOUDLY(tmp_path: Path) -> None:
         r = _run(work, bin_dir, "true")
     finally:
         proc.wait()
-        _reap(victim)
 
     assert r.returncode == 0, r.stderr
     assert "no --log-file in its argv" in r.stdout, (
@@ -720,7 +754,6 @@ def test_a_missing_log_file_is_distinguished_from_a_missing_flag(tmp_path: Path)
         r = _run(work, bin_dir, "true")
     finally:
         proc.wait()
-        _reap(victim)
 
     assert r.returncode == 0, r.stderr
     assert "log file does not exist" in r.stdout, r.stdout
@@ -867,13 +900,15 @@ def test_a_well_formed_trial_dir_still_resolves(tmp_path: Path) -> None:
             [str(SCRIPT), "--work-dir", str(work), "--", "true"],
             capture_output=True, text=True, timeout=90, cwd=REPO, check=False,
             env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}",
-                 "CAE_PAUSE_POLL_SECONDS": "1"},
+                 "CAE_PAUSE_POLL_SECONDS": "1",
+                 "CAE_PAUSE_PROC_ROOT": str(tmp_path / "proc"),
+                 "CAE_PAUSE_KILL_CMD": str(bin_dir / "killstub")},
         )
     finally:
         proc.wait()
     assert env_free.returncode == 0, env_free.stderr
     assert f"trial={TRIAL_ID}" in env_free.stdout, env_free.stdout
-    assert calls.read_text().strip().startswith("pkill ack:"), calls.read_text()
+    assert calls.read_text().strip().startswith("term ack:"), calls.read_text()
 
 
 def test_the_default_work_dir_matches_the_ratchets_single_source() -> None:
@@ -897,99 +932,50 @@ def test_the_default_work_dir_matches_the_ratchets_single_source() -> None:
     )
 
 
-def test_a_worker_REVIVED_during_the_ack_wait_stops_the_job(tmp_path: Path) -> None:
-    """⚑ B1: THE OTHER HALF OF THE DRAIN GATE, and the half that runs the arena.
+def test_a_worker_REVIVED_during_the_ack_wait_is_drained_too(tmp_path: Path) -> None:
+    """⚑ B1, RESOLVED INSTEAD OF DETECTED. The baseline is taken before an ack
+    wait that can run CAE_PAUSE_ACK_TIMEOUT, and `_revive_fleet` is live for
+    exactly that wait: a worker that dies and comes back there has a pid in NO
+    baseline. The old gate could only detect this (fresh pgrep, abort). The
+    kill set is now a RE-SNAPSHOT taken after the park -- revive is inert once
+    the trial is parked -- so the revived worker is signalled and drained like
+    any other, and the window proceeds.
 
-    The baseline pids are captured BEFORE the marker and before an ack wait that
-    can run `CAE_PAUSE_ACK_TIMEOUT` (1800s default). `_revive_fleet` lives inside
-    the ingest phase, so it is live for exactly that wait: a worker that dies and
-    comes back there has a pid in NO baseline. With the gate checking only the
-    baseline, every baseline pid is dead, the survivor check finds nothing, and
-    the job runs beside a live selfplay worker with rc=0 -- which
-    `ratchet_outcome` then stamps as a clean strength reading.
-
-    An independent reviewer reproduced precisely this against the real script.
-    The drain-wait loop even PRINTS `workers still alive after Ns` first, and the
-    old gate never consulted it: a value accepted and then ignored.
-
-    The stub reproduces the revive: `pgrep` reports the OLD pid until `pkill`
-    runs, and a NEW live pid forever after. `pkill` signals nothing, so the
-    revived worker ignores SIGTERM the way a wedged one would.
+    The ack writer plays the reviver: a bash helper creates the new entry and
+    only then acks, exactly the ordering the driver produces.
     """
-    work, bin_dir, _ = _sandbox(tmp_path, workers=True)
-    revived = subprocess.Popen(["sleep", "120"])
-    try:
-        (bin_dir / "pgrep").write_text(
-            "#!/bin/sh\n"
-            f'if [ -f "{tmp_path}/killed" ]; then echo {revived.pid}; exit 0; fi\n'
-            "echo 424242\nexit 0\n",
-        )
-        (bin_dir / "pkill").write_text(
-            f'#!/bin/sh\ntouch "{tmp_path}/killed"\nexit 0\n',
-        )
-        for f in ("pgrep", "pkill"):
-            (bin_dir / f).chmod(0o755)
-
-        ran = tmp_path / "the_arena_ran"
-        ack = _ack_after(work / "tune", 2.0)
-        try:
-            r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_DRAIN_TIMEOUT="2")
-        finally:
-            ack.wait()
-    finally:
-        revived.terminate()
-        revived.wait()
-
-    assert not ran.exists(), (
-        "THE JOB RAN BESIDE A LIVE WORKER. The baseline pid died, so the "
-        "survivor check passed, and the worker revived during the ack wait was "
-        "never looked for -- a contended arena, about to be filed as clean"
+    work, bin_dir, calls = _sandbox(tmp_path, workers=True)
+    revived_pid = FAKE_PID + 5
+    revived_dir = tmp_path / "proc" / str(revived_pid)
+    ack = work / "tune" / f".paused_{TRIAL_ID}.ack"
+  # `\\0` stays TEXT until bash's printf %b expands it -- a real NUL in argv
+  # is rejected by Popen ("embedded null byte").
+    cmdline = "python3\\0-m\\0chess_anti_engine.worker\\0--trial-id\\0" + TRIAL_ID + "\\0"
+    stat = f"{revived_pid} (python3) S {FAKE_PPID} " + " ".join(["0"] * 13) + " 20 0 1 0 7777 0 0"
+    script = (
+        "sleep 2\n"
+        f"mkdir -p {shlex.quote(str(revived_dir))}\n"
+        f"printf '%b' {shlex.quote(cmdline)} > {shlex.quote(str(revived_dir / 'cmdline'))}\n"
+        f"echo {shlex.quote(stat)} > {shlex.quote(str(revived_dir / 'stat'))}\n"
+        f"printf 'Name:\\tpython3\\nState:\\tS (x)\\n' > {shlex.quote(str(revived_dir / 'status'))}\n"
+        f"echo 'trial={TRIAL_ID} next_iter=7' > {shlex.quote(str(ack))}\n"
     )
-    assert r.returncode != 0, "an undrained fleet exited 0"
-    assert "still match" in r.stderr, r.stderr
-    assert not (work / "tune" / "pause.txt").exists(), "died holding the marker"
-
-
-def test_a_pgrep_usage_error_AFTER_the_drain_is_also_fatal(tmp_path: Path) -> None:
-    """The post-drain pgrep needs its status checked for the same reason the
-    pre-drain one does: rc>=2 means the pattern is broken, so "nothing matched"
-    is not a measurement of anything."""
-    work, bin_dir, _ = _sandbox(tmp_path, workers=True)
-    (bin_dir / "pgrep").write_text(
-        "#!/bin/sh\n"
-        f'if [ -f "{tmp_path}/killed" ]; then echo "pgrep: invalid option" >&2; exit 2; fi\n'
-        "echo 424242\nexit 0\n",
-    )
-    (bin_dir / "pkill").write_text(f'#!/bin/sh\ntouch "{tmp_path}/killed"\nexit 0\n')
-    for f in ("pgrep", "pkill"):
-        (bin_dir / f).chmod(0o755)
+    reviver = subprocess.Popen(["bash", "-c", script])
 
     ran = tmp_path / "ran"
-    ack = _ack_after(work / "tune", 2.0)
     try:
-        r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_DRAIN_TIMEOUT="2")
+        r = _run(work, bin_dir, "touch", str(ran), CAE_PAUSE_DRAIN_TIMEOUT="4")
     finally:
-        ack.wait()
+        reviver.wait()
 
-    assert r.returncode != 0
-    assert "after the drain" in r.stderr, r.stderr
-    assert not ran.exists(), "ran the job on an unverifiable drain"
+    assert r.returncode == 0, r.stderr
+    assert ran.exists(), "a fully drained window (baseline + revived) was refused"
+    assert "appeared after the baseline" in r.stdout, r.stdout
+    assert calls.read_text().count("term ack:") == 2, (
+        f"both workers should have been signalled once each: {calls.read_text()!r}"
+    )
+    assert not revived_dir.exists(), "the revived worker was never drained"
 
-
-# ── B3: the producer/consumer contract, ROUND-TRIPPED ────────────────────────
-# `pause_window.sh` WRITES `pid=<n> started=<iso>`; `train_watchdog.py` READS it
-# with `_PAUSE_OWNER_RE`. Every `pid=` elsewhere in this suite is a literal typed
-# into a test file, so the two halves were pinned only by both files happening to
-# contain the same four characters. An independent reviewer's mutant changing
-# `pid=%s` to `owner=%s` IN THE SCRIPT ALONE survived all 166 tests -- and it
-# makes every abandoned window PERMANENTLY unrecoverable (unowned marker =>
-# `_abandoned_reason` returns None => PAUSED-HELD forever => production parked
-# until a human notices). Same defect class as the worker pattern, which this PR
-# already closed with a byte-identity test; the same technique was available here
-# and was not used.
-#
-# So: run the real script far enough to create a real marker, then hand that file
-# to the real consumer. No literal is shared between the two sides.
 
 _WATCHDOG = load_script_module("train_watchdog.py", "train_watchdog_contract")
 
@@ -1321,10 +1307,8 @@ def _selector_sandbox(tmp_path: Path, live: str, dead: str):
     )
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    (bin_dir / "pgrep").write_text("#!/bin/sh\nexit 1\n")
-    (bin_dir / "pkill").write_text("#!/bin/sh\nexit 0\n")
-    for f in ("pgrep", "pkill"):
-        (bin_dir / f).chmod(0o755)
+  # No stubs: the script no longer runs pgrep/pkill, and these sandboxes carry
+  # no fake workers -- the resolver tests run with CAE_PAUSE_ALLOW_NO_WORKERS=1.
     return work, bin_dir, live_d, dead_d
 
 
@@ -1759,3 +1743,162 @@ def test_an_interrupt_during_the_ACK_WAIT_is_not_a_wrapper_failure(
     assert rc == 130, f"an interrupt must report 130, got {rc}"
     assert not ran.exists(), "the job ran despite the interrupt"
     assert not (work / "tune" / "pause.txt").exists(), "interrupted holding the marker"
+
+
+# ── review findings on 20f271ad3: two guarantees previously pinned only by an
+# uncommitted synthetic script ────────────────────────────────────────────────
+
+
+def _run_lib(body: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    """Source the drain lib with WORKER_PATTERN defined and run `body`."""
+    e = dict(os.environ)
+    e.update(env or {})
+    return subprocess.run(
+        ["bash", "-c",
+         "set -u; WORKER_PATTERN='-m chess_anti_engine\\.worker( |$)'; "
+         f". {shlex.quote(str(SCRIPT.parent / 'pause_drain_lib.sh'))}; {body}"],
+        capture_output=True, text=True, timeout=60, env=e, check=False,
+    )
+
+
+def test_a_recycled_pid_is_never_signalled(tmp_path: Path) -> None:
+    """⚑ THE HEADLINE IDENTITY GUARANTEE, COMMITTED. `pause_term_if_same_start`
+    re-reads the kernel start time at signal moment; a pid whose start time no
+    longer matches the banked value is a RECYCLED pid -- the original worker is
+    gone, and our TERM would land on a stranger. Review mutation (b) deleted
+    the re-verification and the suite stayed green; this is the test that
+    mutation now fails."""
+    proc = tmp_path / "proc"
+    _fake_worker(proc, FAKE_PID, start=FAKE_START)
+    calls = tmp_path / "kills.log"
+    stub = tmp_path / "killstub"
+    stub.write_text(f'#!/bin/sh\necho "$@" >> "{calls}"\n')
+    stub.chmod(0o755)
+    env = {"CAE_PAUSE_PROC_ROOT": str(proc), "CAE_PAUSE_KILL_CMD": str(stub)}
+
+    # banked start differs from the entry's -> recycled -> MUST NOT signal
+    r = _run_lib(
+        f'pause_term_if_same_start {FAKE_PID} {FAKE_START + 1} :', env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    assert not calls.exists(), (
+        f"a recycled pid was signalled: {calls.read_text() if calls.exists() else ''!r}"
+    )
+
+    # matching start -> the ORIGINAL worker -> must signal exactly once
+    r = _run_lib(
+        f'pause_term_if_same_start {FAKE_PID} {FAKE_START} :', env=env,
+    )
+    assert r.returncode == 0, r.stderr
+    assert calls.read_text() == f"-TERM {FAKE_PID}\n", calls.read_text()
+
+
+def test_a_proc_entry_that_vanishes_mid_walk_is_skipped_silently(tmp_path: Path) -> None:
+    """⚑ MANIFESTED LIVE 2026-08-20: `/proc/516049/cmdline: No such file or
+    directory` leaked into the window log during the drain snapshot. Bash
+    processes redirections left to right, so in `tr < file 2>/dev/null` the
+    failed open is reported BEFORE stderr is silenced -- `|| continue` already
+    handled the vanished pid correctly; only the noise escaped. The reorder
+    puts `2>/dev/null` first. A numeric dir with no cmdline is exactly what a
+    pid that exited between the glob and the read looks like."""
+    proc = tmp_path / "proc"
+    (proc / "516049").mkdir(parents=True)          # vanished: dir, no files
+    _fake_worker(proc, FAKE_PID)                   # the walk must continue past it
+    r = _run_lib(f"pause_worker_snapshot {TRIAL_ID}",
+                 env={"CAE_PAUSE_PROC_ROOT": str(proc)})
+    assert r.returncode == 0, r.stderr
+    assert f"{FAKE_PID} {FAKE_START} {FAKE_PPID}" in r.stdout, r.stdout
+    assert r.stderr == "", f"drain snapshot leaked to stderr: {r.stderr!r}"
+
+
+def test_the_lease_watchdog_never_touches_a_foreign_marker(tmp_path: Path) -> None:
+    """⚑ THE REVIEW'S BLOCKING FINDING. The watchdog used to `rm -f` whatever
+    sat at the marker path once its owner died -- demonstrated live against a
+    marker naming a DIFFERENT pid. Removing someone else's marker resumes
+    training mid-their-window: the contended-measurement-filed-as-clean
+    direction this whole script exists to prevent. The rule is release()'s:
+    ONLY REMOVE A MARKER THAT IS STILL OURS; a foreign marker means someone
+    replaced it, and the watchdog's job is to stop watching, not to clean up."""
+    marker = tmp_path / "pause.txt"
+    wlog = tmp_path / "lease.log"
+    # a dead-owner pid that is certainly not running: spawn-and-reap our own
+    dead = subprocess.Popen(["true"])
+    dead.wait()
+
+    # foreign marker: names some OTHER pid
+    marker.write_text("pause_window.sh pid=999999 started=x\njob=other window\n")
+    r = _run_lib(
+        f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {dead.pid} '
+        f'600 {shlex.quote(str(wlog))}); sleep 4; kill "$wd" 2>/dev/null; wait 2>/dev/null; echo done',
+        env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+    )
+    assert r.returncode == 0, r.stderr
+    assert marker.exists(), (
+        f"the watchdog removed a marker it does not own; lease log: "
+        f"{wlog.read_text() if wlog.exists() else '(empty)'!r}"
+    )
+
+    # our OWN marker with a dead owner: must still be cleaned up (the lease's
+    # entire purpose) -- the ownership check must not break the good path
+    marker.write_text(f"pause_window.sh pid={dead.pid} started=x\njob=ours\n")
+    r = _run_lib(
+        f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {dead.pid} '
+        f'600 {shlex.quote(str(wlog))}); '
+        'for i in $(seq 1 20); do [ -e ' + shlex.quote(str(marker)) + ' ] || break; sleep 0.5; done; '
+        'kill "$wd" 2>/dev/null; echo done',
+        env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+    )
+    assert r.returncode == 0, r.stderr
+    assert not marker.exists(), "the lease no longer cleans up our own orphaned marker"
+    assert "launcher pid" in wlog.read_text(), wlog.read_text()
+
+
+def test_the_lease_watchdogs_owner_identity_is_start_time_pinned(tmp_path: Path) -> None:
+    """⚑ REVIEW M4. The owner-identity branch compares the owner pid's CURRENT
+    kernel start time to the banked one; inverting the comparison (`=` -> `!=`)
+    survived the whole suite while un-parking every production window ~30s in,
+    logging "launcher ... is GONE" about a living launcher. The branch cannot
+    be driven from the fake proc root (the detached shell's inline parse reads
+    the real /proc, deliberately), so the owner here is a REAL self-spawned
+    process, killed by explicit pid.
+
+    Half A kills the `!=` mutant: live owner, CORRECT banked start -> the
+    marker must survive several polls. Half B kills branch deletion: live
+    owner, WRONG banked start = a recycled pid wearing our number -> the real
+    launcher is gone and the marker must be cleaned promptly, not at the 6h
+    deadline."""
+    marker = tmp_path / "pause.txt"
+    wlog = tmp_path / "lease.log"
+    owner = subprocess.Popen(["sleep", "300"])
+    try:
+        marker.write_text(f"pause_window.sh pid={owner.pid} started=x\njob=ours\n")
+        r = _run_lib(
+            f'start="$(pause_proc_start_time {owner.pid})" || exit 9; '
+            f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {owner.pid} '
+            f'600 {shlex.quote(str(wlog))} "$start"); '
+            'sleep 4; kill "$wd" 2>/dev/null; echo done',
+            env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+        )
+        assert r.returncode == 0, r.stderr
+        assert marker.exists(), (
+            "a LIVE owner with a MATCHING start time was treated as gone -- "
+            f"every window would un-park at the first poll; lease log: "
+            f"{wlog.read_text() if wlog.exists() else '(empty)'!r}"
+        )
+
+        r = _run_lib(
+            f'start="$(pause_proc_start_time {owner.pid})" || exit 9; '
+            f'wd=$(pause_start_lease_watchdog {shlex.quote(str(marker))} {owner.pid} '
+            f'600 {shlex.quote(str(wlog))} "$((start + 1))"); '
+            'for i in $(seq 1 20); do [ -e ' + shlex.quote(str(marker)) + ' ] || break; sleep 0.5; done; '
+            'kill "$wd" 2>/dev/null; echo done',
+            env={"CAE_PAUSE_LEASE_POLL_SECONDS": "1"},
+        )
+        assert r.returncode == 0, r.stderr
+        assert not marker.exists(), (
+            "a start-time mismatch (recycled launcher pid) was not treated as "
+            "owner-gone; cleanup would wait the full hard deadline"
+        )
+    finally:
+        owner.terminate()
+        owner.wait()
