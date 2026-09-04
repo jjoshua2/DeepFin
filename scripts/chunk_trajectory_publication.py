@@ -185,7 +185,7 @@ def _authenticate_initial_open(
     file_fd: int,
     *,
     links: int | None,
-) -> None:
+) -> os.stat_result:
     """Bind a returned descriptor to its name despite a transient first check."""
     try:
         opened_before = os.fstat(file_fd)
@@ -194,7 +194,7 @@ def _authenticate_initial_open(
             f"cannot snapshot newly opened evidence: {path}"
         ) from exc
     try:
-        _require_entry(path, parent_fd, file_fd, links=links)
+        opened = _require_entry(path, parent_fd, file_fd, links=links)
         _require_parent(path, parent_fd)
     except OSError as exc:
         try:
@@ -220,10 +220,19 @@ def _authenticate_initial_open(
                 f"newly opened evidence changed during authentication: {path}"
             ) from exc
         raise
+    return opened
 
 
-def _artifact_from_fd(file_fd: int, path: Path) -> dict[str, Any]:
-    before = os.fstat(file_fd)
+def _artifact_from_fd(
+    file_fd: int, path: Path, *, before: os.stat_result | None = None,
+) -> dict[str, Any]:
+    if before is None:
+        try:
+            before = os.fstat(file_fd)
+        except OSError as exc:
+            raise RuntimeError(
+                f"cannot snapshot evidence artifact: {path}"
+            ) from exc
     digest = hashlib.sha256()
     offset = 0
     try:
@@ -244,8 +253,24 @@ def _artifact_from_fd(file_fd: int, path: Path) -> dict[str, Any]:
         ):
             raise SystemExit(f"evidence artifact changed during failed read: {path}") from exc
         raise
-    after = os.fstat(file_fd)
     stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    try:
+        after = os.fstat(file_fd)
+    except OSError as exc:
+        try:
+            after_failure = os.fstat(file_fd)
+        except OSError as authentication_exc:
+            raise RuntimeError(
+                f"cannot authenticate evidence after failed snapshot: {path}"
+            ) from authentication_exc
+        if any(
+            getattr(before, field) != getattr(after_failure, field)
+            for field in stable
+        ):
+            raise SystemExit(
+                f"evidence artifact changed during failed snapshot: {path}"
+            ) from exc
+        raise
     if any(getattr(before, field) != getattr(after, field) for field in stable):
         raise SystemExit(f"evidence artifact changed while being read: {path}")
     return {
@@ -259,9 +284,17 @@ def _artifact_from_fd(file_fd: int, path: Path) -> dict[str, Any]:
     }
 
 
-def _read_stable_bytes_fd(file_fd: int, path: Path) -> bytes:
+def _read_stable_bytes_fd(
+    file_fd: int, path: Path, *, before: os.stat_result | None = None,
+) -> bytes:
     """Read exact bytes while rejecting a concurrent inode-content change."""
-    before = os.fstat(file_fd)
+    if before is None:
+        try:
+            before = os.fstat(file_fd)
+        except OSError as exc:
+            raise RuntimeError(
+                f"cannot snapshot evidence bytes: {path}"
+            ) from exc
     chunks: list[bytes] = []
     offset = 0
     try:
@@ -282,8 +315,24 @@ def _read_stable_bytes_fd(file_fd: int, path: Path) -> bytes:
         ):
             raise SystemExit(f"evidence artifact changed during failed read: {path}") from exc
         raise
-    after = os.fstat(file_fd)
     stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+    try:
+        after = os.fstat(file_fd)
+    except OSError as exc:
+        try:
+            after_failure = os.fstat(file_fd)
+        except OSError as authentication_exc:
+            raise RuntimeError(
+                f"cannot authenticate evidence after failed byte snapshot: {path}"
+            ) from authentication_exc
+        if any(
+            getattr(before, field) != getattr(after_failure, field)
+            for field in stable
+        ):
+            raise SystemExit(
+                f"evidence bytes changed during failed snapshot: {path}"
+            ) from exc
+        raise
     if any(getattr(before, field) != getattr(after, field) for field in stable):
         raise SystemExit(f"evidence artifact changed while being read: {path}")
     return b"".join(chunks)
@@ -373,9 +422,11 @@ def _anchored_file(
                 _raise_path_access_failure(
                     exc, f"cannot safely open regular evidence file: {path}",
                 )
-        _authenticate_initial_open(path, parent_fd, file_fd, links=links)
+        opened = _authenticate_initial_open(
+            path, parent_fd, file_fd, links=links,
+        )
         try:
-            before = _artifact_from_fd(file_fd, artifact_path)
+            before = _artifact_from_fd(file_fd, artifact_path, before=opened)
         except BaseException as exc:
             try:
                 _require_entry(path, parent_fd, file_fd, links=links)
@@ -600,15 +651,21 @@ def _write_json_staged(
             _require_entry(path, parent_fd, fh.fileno(), links=1)
             os.fsync(fh.fileno())
             os.fsync(parent_fd)
-            _require_entry(path, parent_fd, fh.fileno(), links=1)
+            opened = _require_entry(path, parent_fd, fh.fileno(), links=1)
             _require_parent(path, parent_fd)
-            if _read_stable_bytes_fd(fh.fileno(), path) != expected_bytes:
+            if (
+                _read_stable_bytes_fd(fh.fileno(), path, before=opened)
+                != expected_bytes
+            ):
                 raise SystemExit(f"staged JSON differs from requested payload: {path}")
         except BaseException as exc:
             try:
-                _require_entry(path, parent_fd, fh.fileno(), links=1)
+                opened = _require_entry(path, parent_fd, fh.fileno(), links=1)
                 _require_parent(path, parent_fd)
-                if _read_stable_bytes_fd(fh.fileno(), path) != expected_bytes:
+                if (
+                    _read_stable_bytes_fd(fh.fileno(), path, before=opened)
+                    != expected_bytes
+                ):
                     raise SystemExit(
                         f"staged JSON differs from requested payload: {path}"
                     )
