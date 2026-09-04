@@ -11228,6 +11228,49 @@ def test_decision_grade_loader_rejects_bank_change_during_consumption(
         load_transitions(bank)
 
 
+def test_unrelated_analyzer_failure_does_not_invalidate_sound_evidence(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    marker = controller_module._invalid_manifest_path(meta)
+
+    def fail_inside_evidence_context() -> None:
+        with controller_module._retained_decision_grade_evidence(
+            bank, meta,
+        ) as evidence_guard:
+            evidence_guard.require_unchanged()
+            raise RuntimeError("unrelated analyzer failure")
+
+    with pytest.raises(RuntimeError, match="unrelated analyzer failure"):
+        fail_inside_evidence_context()
+
+    assert not marker.exists()
+    with controller_module._retained_decision_grade_evidence(
+        bank, meta,
+    ) as evidence_guard:
+        evidence_guard.require_unchanged()
+
+
+def test_guard_detected_mutation_durably_invalidates_evidence(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    marker = controller_module._invalid_manifest_path(meta)
+
+    def mutate_inside_evidence_context() -> None:
+        with controller_module._retained_decision_grade_evidence(bank, meta):
+            bank.write_text('{"tampered":true}\n')
+
+    with pytest.raises(SystemExit, match="changed"):
+        mutate_inside_evidence_context()
+
+    assert marker.exists()
+    with pytest.raises(SystemExit, match="invalidated"):
+        load_transitions(bank)
+
+
 def test_walker_manifest_omits_gumbel_only_minibatch_setting(tmp_path: Path) -> None:
     bank = tmp_path / "bank.jsonl"
     meta = _write_bank(bank, correct_gap=True)

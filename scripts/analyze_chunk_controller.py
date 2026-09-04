@@ -43,7 +43,7 @@ import sys
 import types
 from collections import defaultdict
 from collections.abc import Callable, Collection, Generator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass, replace
 from itertools import pairwise
 from pathlib import Path, PurePosixPath
@@ -347,6 +347,7 @@ from scripts.chunk_trajectory_publication import (
     _manifest_recovery_is_invalid,
     _pending_manifest_path,
     _pending_output_path,
+    _quarantine_manifest_recovery_on_integrity_failure,
     _read_stable_bytes_fd,
     _require_anchored_artifact_unchanged,
     _require_entry as _require_evidence_entry,
@@ -1032,6 +1033,12 @@ class _RetainedEvidenceInputs:
         """Reauthenticate the live four-name evidence state and marker absence."""
         if not self.active:
             raise RuntimeError("retained decision-grade evidence guard is closed")
+        with _quarantine_manifest_recovery_on_integrity_failure(
+            self.meta_path, parent_fd=self.manifest_parent_fd,
+        ):
+            self._require_unchanged()
+
+    def _require_unchanged(self) -> None:
         if _manifest_recovery_is_invalid(
             self.meta_path, parent_fd=self.manifest_parent_fd,
         ):
@@ -1083,65 +1090,73 @@ def _retained_decision_grade_evidence(
     meta_path = meta_path.expanduser().absolute()
     pending_input = _pending_output_path(input_path)
     pending_meta = _pending_manifest_path(meta_path)
-    with (
-        _retained_manifest_parent(meta_path) as manifest_parent_fd,
-        _retained_output_parent(
+    with _retained_manifest_parent(meta_path) as acquired_manifest_parent_fd:
+        manifest_parent_fd = os.dup(acquired_manifest_parent_fd)
+    try:
+        output_parent_context = _retained_output_parent(
             input_path,
             meta_path,
             manifest_parent_fd=manifest_parent_fd,
-        ) as output_parent_fd,
-    ):
-        if _manifest_recovery_is_invalid(
-            meta_path, parent_fd=manifest_parent_fd,
-        ):
-            raise SystemExit(
-                f"decision-grade evidence was invalidated: "
-                f"{_invalid_manifest_path(meta_path)}"
-            )
-        with (
-            _anchored_evidence_file(
-                input_path,
-                input_path,
-                durable=False,
-                links=2,
-                parent_fd=output_parent_fd,
-            ) as bank,
-            _anchored_evidence_file(
-                pending_input,
-                input_path,
-                durable=False,
-                links=2,
-                parent_fd=output_parent_fd,
-            ) as bank_witness,
-            _anchored_evidence_file(
-                meta_path,
-                meta_path,
-                durable=False,
-                links=2,
-                parent_fd=manifest_parent_fd,
-            ) as manifest,
-            _anchored_evidence_file(
-                pending_meta,
-                meta_path,
-                durable=False,
-                links=2,
-                parent_fd=manifest_parent_fd,
-            ) as manifest_witness,
-        ):
-            _require_evidence_entry(
-                input_path, output_parent_fd, bank.file_fd, links=2,
-            )
-            _require_evidence_entry(
-                pending_input, output_parent_fd, bank.file_fd, links=2,
-            )
-            _require_evidence_entry(
-                meta_path, manifest_parent_fd, manifest.file_fd, links=2,
-            )
-            _require_evidence_entry(
-                pending_meta, manifest_parent_fd, manifest.file_fd, links=2,
-            )
-            input_bytes = _read_stable_bytes_fd(bank.file_fd, input_path)
-            meta_bytes = _read_stable_bytes_fd(manifest.file_fd, meta_path)
+        )
+        with output_parent_context as output_parent_fd, ExitStack() as anchors:
+            with _quarantine_manifest_recovery_on_integrity_failure(
+                meta_path, parent_fd=manifest_parent_fd,
+            ):
+                try:
+                    if _manifest_recovery_is_invalid(
+                        meta_path, parent_fd=manifest_parent_fd,
+                    ):
+                        raise SystemExit(
+                            f"decision-grade evidence was invalidated: "
+                            f"{_invalid_manifest_path(meta_path)}"
+                        )
+                    bank = anchors.enter_context(_anchored_evidence_file(
+                        input_path,
+                        input_path,
+                        durable=False,
+                        links=2,
+                        parent_fd=output_parent_fd,
+                    ))
+                    bank_witness = anchors.enter_context(_anchored_evidence_file(
+                        pending_input,
+                        input_path,
+                        durable=False,
+                        links=2,
+                        parent_fd=output_parent_fd,
+                    ))
+                    manifest = anchors.enter_context(_anchored_evidence_file(
+                        meta_path,
+                        meta_path,
+                        durable=False,
+                        links=2,
+                        parent_fd=manifest_parent_fd,
+                    ))
+                    manifest_witness = anchors.enter_context(
+                        _anchored_evidence_file(
+                            pending_meta,
+                            meta_path,
+                            durable=False,
+                            links=2,
+                            parent_fd=manifest_parent_fd,
+                        )
+                    )
+                    _require_evidence_entry(
+                        input_path, output_parent_fd, bank.file_fd, links=2,
+                    )
+                    _require_evidence_entry(
+                        pending_input, output_parent_fd, bank.file_fd, links=2,
+                    )
+                    _require_evidence_entry(
+                        meta_path, manifest_parent_fd, manifest.file_fd, links=2,
+                    )
+                    _require_evidence_entry(
+                        pending_meta, manifest_parent_fd, manifest.file_fd, links=2,
+                    )
+                    input_bytes = _read_stable_bytes_fd(bank.file_fd, input_path)
+                    meta_bytes = _read_stable_bytes_fd(manifest.file_fd, meta_path)
+                except BaseException:
+                    anchors.close()
+                    raise
             consumed_artifacts = (
                 _consumed_evidence_record(
                     bank, input_path, input_bytes, role="trajectory_bank",
@@ -1184,7 +1199,15 @@ def _retained_decision_grade_evidence(
                 try:
                     guard.require_unchanged()
                 finally:
-                    guard.active = False
+                    try:
+                        with _quarantine_manifest_recovery_on_integrity_failure(
+                            meta_path, parent_fd=manifest_parent_fd,
+                        ):
+                            anchors.close()
+                    finally:
+                        guard.active = False
+    finally:
+        os.close(manifest_parent_fd)
 
 
 def _open_directory_anchored(path: Path, *, create: bool) -> int:
