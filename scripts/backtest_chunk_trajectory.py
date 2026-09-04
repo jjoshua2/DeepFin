@@ -109,6 +109,7 @@ from scripts.analyze_chunk_controller import (
     _PRODUCTION_WALKERS,
     _canonical_cuda_device_string,
     _complexity_continue,
+    _deep_reference_evidence_summary,
     _preregistration_payload,
     _preregistered_design_failures,
     _reference_censoring_summary,
@@ -188,6 +189,19 @@ def _panel_position_metadata(position: AuditPosition) -> tuple[int, int, int, bo
         _panel_piece_bucket(piece_count),
         int(position.phase) == realized_phase,
     )
+
+
+def _deep_reference_position_fields(position: AuditPosition) -> dict[str, Any]:
+    """Raw frozen-ruler evidence copied into every banked position record."""
+    return {
+        "deep_reference_nodes": int(position.sf_nodes),
+        "deep_reference_depth": int(position.sf_depth),
+        "deep_reference_scored_multipv": len(position.move_cp),
+        "deep_reference_best_cp": float(position.best_cp),
+        "deep_reference_move_cp": {
+            str(uci): float(cp) for uci, cp in position.move_cp.items()
+        },
+    }
 
 
 def _round_robin_panel_source(
@@ -636,10 +650,7 @@ def _excluded_position_evidence(
         "group_id": group_id,
         "phase": position.phase,
         "source": position.source,
-        "deep_reference_best_cp": float(position.best_cp),
-        "deep_reference_move_cp": {
-            str(uci): float(cp) for uci, cp in position.move_cp.items()
-        },
+        **_deep_reference_position_fields(position),
         "chunks_observed": len(snapshots),
         "chunks_required": chunks_required,
         "reason": reason,
@@ -1021,6 +1032,25 @@ def _main() -> None:
     _require_decision_grade_panel_selection(
         panel_selection, methodology_smoke=bool(args.methodology_smoke),
     )
+    audit_set_artifact = initial_input_artifacts["audit_set"]
+    assert isinstance(audit_set_artifact, dict)
+    deep_reference_evidence = _deep_reference_evidence_summary([
+        {
+            "key": position.key,
+            "fen": position.fen,
+            **_deep_reference_position_fields(position),
+        }
+        for position in positions
+    ], audit_set_sha256=audit_set_artifact.get("sha256"))
+    if not args.methodology_smoke and deep_reference_evidence["passed"] is not True:
+        failures = deep_reference_evidence["failing_positions"]
+        first = failures[0] if isinstance(failures, list) and failures else None
+        raise SystemExit(
+            "decision-grade trajectory banks require every selected audit row "
+            "to come from the approved frozen 1M-node/MultiPV-10 audit set and "
+            "carry positive observed nodes/depth plus complete MultiPV coverage "
+            f"evidence (first failure: {first!r})"
+        )
     matched: MatchedAuditRows | None = None
     if matched_path.exists():
         matched = MatchedAuditRows(matched_path)
@@ -1117,6 +1147,7 @@ def _main() -> None:
         "root_tree_state": "fresh_per_position_no_cross_move_reuse",
         "game_group_kind": "source_dir:game_id",
         "panel_selection": panel_selection,
+        "deep_reference_evidence": deep_reference_evidence,
         "complexity_predicate": {
             "kind": "clock_free_visit_gap_and_stability",
             "minimum_stable_chunks": int(_ABORT_MIN_STABLE_CHUNKS),
@@ -1943,10 +1974,7 @@ def _main() -> None:
                         "nodes": s["nodes"], "elapsed_ms": s["elapsed_ms"],
                         "emitted_action": s["emitted_action"], "uci": s["uci"],
                         "regret_cp": s["regret_cp"], "regret_score": s["regret_score"],
-                        "deep_reference_best_cp": s["deep_reference_best_cp"],
-                        "deep_reference_move_cp": {
-                            str(uci): float(cp) for uci, cp in pos.move_cp.items()
-                        },
+                        **_deep_reference_position_fields(pos),
                         "visit_gap": s["visit_gap"], "visit_entropy": s["visit_entropy"],
                         "q_gap": s["q_gap"],
                         "root_q": s["root_q"], "root_actions": s["actions"],
@@ -2124,6 +2152,7 @@ def _main() -> None:
             not args.methodology_smoke
             and not preregistration_failures
             and panel_selection["decision_grade_passed"] is True
+            and deep_reference_evidence["passed"] is True
             and not excluded_positions
             and incomplete_exclusions == 0
             and completed_positions > 0

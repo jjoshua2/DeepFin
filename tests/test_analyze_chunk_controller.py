@@ -854,10 +854,22 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
     action_reference = [80.0] * len(actions)
     action_reference[emitted_index] = 90.0
     action_reference[actions.index(reference_best)] = 100.0
+    deep_reference_move_cp = {
+        "e2e4": 100.0,
+        "a2a3": 90.0,
+        "b2b3": 80.0,
+        "b2b4": 80.0,
+        "c2c3": 80.0,
+        "c2c4": 80.0,
+        "d2d3": 80.0,
+        "d2d4": 80.0,
+        "g1f3": 80.0,
+        "b1c3": 80.0,
+    }
     action_listed = [False] * len(actions)
-    action_listed[emitted_index] = True
-    action_listed[alternative_index] = True
-    action_listed[actions.index(reference_best)] = True
+    for uci in deep_reference_move_cp:
+        action = int(move_to_index(chess.Move.from_uci(uci), board))
+        action_listed[actions.index(action)] = True
     entropy = float(-(0.4 * np.log(0.4) + 0.6 * np.log(0.6)))
     best_cp = 100.0
     regret_cp = 10.0
@@ -867,17 +879,18 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
     )
     rows = [
         {
-            "schema": "deepfin.chunk_trajectory.v3",
+            "schema": "deepfin.chunk_trajectory.v4",
             "key": position_key(board), "source_dir": "/snapshot", "shard": "s0.zarr",
             "fen": board.fen(),
             "game_id": 3, "group_id": "/snapshot\0" + "3",
             "chunk": chunk, "nodes": chunk * 50,
             "elapsed_ms": float(chunk), "regret_cp": regret_cp,
             "regret_score": regret_score, "regret_vs_final_cp": 0.0,
+            "deep_reference_nodes": 1_000_000,
+            "deep_reference_depth": 30,
+            "deep_reference_scored_multipv": len(deep_reference_move_cp),
             "deep_reference_best_cp": best_cp,
-            "deep_reference_move_cp": {
-                "e2e4": 100.0, "a2a3": 90.0, "b2b3": 80.0,
-            },
+            "deep_reference_move_cp": deep_reference_move_cp,
             "visit_gap": -0.2 if correct_gap else 0.2,
             "root_actions": actions,
             "root_visits": [visit * chunk for visit in visits],
@@ -946,8 +959,12 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "current_inputs_match_revision": True,
             "matches_producer_revision": True,
         }
+    audit_set_sha256 = controller_module._APPROVED_AUDIT_SET_SHA256
+    deep_reference_evidence = controller_module._deep_reference_evidence_summary(
+        [rows[0]], audit_set_sha256=audit_set_sha256,
+    )
     manifest: dict[str, Any] = {
-        "schema": "deepfin.chunk_trajectory.v3",
+        "schema": "deepfin.chunk_trajectory.v4",
         "complete": True,
         "decision_grade": True,
         "analysis_scope": "fixed_node_horizons_only",
@@ -969,6 +986,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "root_position_history": "fen_only_from_audit_fen",
         "root_tree_state": "fresh_per_position_no_cross_move_reuse",
         "game_group_kind": "source_dir:game_id",
+        "deep_reference_evidence": deep_reference_evidence,
         "panel_selection": {
             "strategy": "joint_audit_source_phase_piece_round_robin_v1",
             "selection_mode": "full_set",
@@ -1023,7 +1041,8 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         },
         "checkpoint_params": None,
         "audit_set": {
-            "path": "/audit.jsonl", "size": 1, "mtime_ns": 1, "sha256": "c" * 64,
+            "path": "/audit.jsonl", "size": 1, "mtime_ns": 1,
+            "sha256": audit_set_sha256,
         },
         "matched_rows": {
             "path": "/matched.npz", "size": 1, "mtime_ns": 1, "sha256": "d" * 64,
@@ -1193,7 +1212,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "output": {"sha256": digest, "size": path.stat().st_size},
     }
     preregistration = {
-        "schema": "deepfin.chunk_controller_preregistration.v1",
+        "schema": "deepfin.chunk_controller_preregistration.v2",
         "producer": {
             "source_git_sha": "9" * 40,
             "checkpoint_sha256": manifest["checkpoint"]["sha256"],
@@ -1202,6 +1221,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "matched_rows_sha256": manifest["matched_rows"]["sha256"],
             "max_positions": manifest["requested_max_positions"],
             "panel_selection": manifest["panel_selection"],
+            "deep_reference_evidence": manifest["deep_reference_evidence"],
             "requested_search": manifest["requested_search"],
             "requested_model_search_contract": manifest[
                 "requested_model_search_contract"
@@ -1319,8 +1339,17 @@ def _sync_test_panel_selection(
         ),
     }
     manifest["panel_selection"] = selection
+    manifest["deep_reference_evidence"] = (
+        controller_module._deep_reference_evidence_summary(
+            position_rows,
+            audit_set_sha256=manifest["audit_set"]["sha256"],
+        )
+    )
     preregistration = json.loads(manifest["preregistration_document"])
     preregistration["producer"]["panel_selection"] = selection
+    preregistration["producer"]["deep_reference_evidence"] = manifest[
+        "deep_reference_evidence"
+    ]
     document = json.dumps(
         preregistration, sort_keys=True, separators=(",", ":"),
     ) + "\n"
@@ -1329,6 +1358,98 @@ def _sync_test_panel_selection(
     manifest["preregistration"]["sha256"] = hashlib.sha256(document.encode()).hexdigest()
     relative_path = manifest["preregistration"]["repo_relative_path"]
     _TEST_GIT_FILES[relative_path] = document.encode()
+
+
+def test_deep_reference_evidence_pins_the_approved_frozen_ruler() -> None:
+    forced_board = chess.Board(
+        "rn3bnr/ppp1k2p/5pp1/Pb1pp3/1P3PPq/B7/N1PPP1BP/R2QK1NR w KQ - 4 14"
+    )
+    forced_move = next(iter(forced_board.legal_moves)).uci()
+    assert forced_board.legal_moves.count() == 1
+    position = {
+        "key": position_key(forced_board),
+        "fen": forced_board.fen(),
+        "deep_reference_nodes": 1_522,
+        "deep_reference_depth": 245,
+        "deep_reference_scored_multipv": 1,
+        "deep_reference_move_cp": {forced_move: 100_000.0},
+    }
+
+    approved = controller_module._deep_reference_evidence_summary(
+        [position],
+        audit_set_sha256=controller_module._APPROVED_AUDIT_SET_SHA256,
+    )
+    substituted = controller_module._deep_reference_evidence_summary(
+        [position], audit_set_sha256="0" * 64,
+    )
+
+    assert approved["passed"] is True
+    assert approved["positions_below_requested_nodes"] == [position["key"]]
+    assert substituted["audit_set_identity_passed"] is False
+    assert substituted["passed"] is False
+
+
+def test_loader_rejects_a_shallow_one_move_reference(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    for row in rows:
+        row.update({
+            "deep_reference_nodes": 1,
+            "deep_reference_depth": 1,
+            "deep_reference_scored_multipv": 1,
+            "deep_reference_best_cp": 90.0,
+            "deep_reference_move_cp": {"a2a3": 90.0},
+        })
+    _rewrite_bank(bank, meta, rows)
+
+    with pytest.raises(ValueError, match="frozen ruler requires 10"):
+        load_transitions(bank)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [
+        ("deep_reference_nodes", 0, "observed nodes must be positive"),
+        ("deep_reference_depth", 0, "depth must be a positive integer"),
+        ("deep_reference_scored_multipv", 9, "count disagrees"),
+    ],
+)
+def test_loader_rejects_tampered_deep_reference_evidence(
+    tmp_path: Path, field: str, value: int, match: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    rows[0][field] = value
+    _rewrite_bank(bank, meta, rows)
+
+    with pytest.raises(ValueError, match=match):
+        load_transitions(bank)
+
+
+def test_loader_recomputes_positive_deep_reference_evidence_tampering(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    rows[0]["deep_reference_nodes"] = 999_999
+    _rewrite_bank(bank, meta, rows)
+
+    with pytest.raises(ValueError, match="evidence disagrees with raw selected-position"):
+        load_transitions(bank)
+
+
+def test_manifest_rejects_substituted_audit_set_identity(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["deep_reference_evidence"]["audit_set_sha256"] = "0" * 64
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="deep-reference ruler evidence"):
+        load_transitions(bank)
 
 
 def test_loader_refuses_leader_gap_for_nonleading_emitted_action(tmp_path: Path) -> None:
@@ -1858,7 +1979,18 @@ def test_loader_validates_the_final_rows_full_cluster_identity(tmp_path: Path) -
         ("game_id", 99),
         (
             "deep_reference_move_cp",
-            {"e2e4": 100.0, "a2a3": 90.0, "b2b3": 80.0, "c2c3": 80.0},
+            {
+                "e2e4": 100.0,
+                "a2a3": 90.0,
+                "b2b3": 80.0,
+                "b2b4": 80.0,
+                "c2c3": 85.0,
+                "c2c4": 80.0,
+                "d2d3": 80.0,
+                "d2d4": 80.0,
+                "g1f3": 80.0,
+                "b1c3": 80.0,
+            },
         ),
     ],
 )
@@ -1875,10 +2007,14 @@ def test_loader_requires_trajectory_identity_and_labels_to_stay_fixed(
             str(rows[-1]["game_id"]),
         ))
     if field == "deep_reference_move_cp":
+        assert isinstance(value, dict)
         board = chess.Board(str(rows[-1]["fen"]))
         newly_listed = int(move_to_index(chess.Move.from_uci("c2c3"), board))
         listed_index = rows[-1]["root_actions"].index(newly_listed)
         rows[-1]["root_action_reference_listed"][listed_index] = True
+        rows[-1]["root_action_reference_cp"][listed_index] = value["c2c3"]
+        rows[-1]["root_action_regret_cp"][listed_index] = 15.0
+        rows[-1]["deep_reference_scored_multipv"] = len(value)
     _rewrite_bank(bank, meta, rows)
 
     with pytest.raises(ValueError, match="trajectory-invariant fields change"):
@@ -1899,6 +2035,13 @@ def _mark_emitted_reference_unlisted(row: dict[str, object]) -> None:
     move_cp = row["deep_reference_move_cp"]
     assert isinstance(move_cp, dict)
     move_cp.pop(str(row["uci"]))
+    replacement_uci = "g1h3"
+    move_cp[replacement_uci] = min(float(value) for value in move_cp.values())
+    board = chess.Board(str(row["fen"]))
+    replacement_action = int(move_to_index(chess.Move.from_uci(replacement_uci), board))
+    replacement_index = actions.index(replacement_action)
+    listed[replacement_index] = True
+    row["deep_reference_scored_multipv"] = len(move_cp)
 
 
 @pytest.mark.parametrize(
@@ -2082,6 +2225,7 @@ def test_loader_requires_every_trajectory_to_have_all_manifest_chunks(
             "root_action_reference_listed": [True],
             "deep_reference_best_cp": 90.0,
             "deep_reference_move_cp": {other_move.uci(): 90.0},
+            "deep_reference_scored_multipv": 1,
             "regret_cp": 0.0, "regret_score": 0.0,
             "emitted_action": other_action, "uci": other_move.uci(),
             "pv_actions": [other_action], "pv_uci": [other_move.uci()],
@@ -2134,6 +2278,7 @@ def test_loader_accepts_production_forced_move_stability_semantics(tmp_path: Pat
             "root_action_reference_listed": [True],
             "deep_reference_best_cp": 90.0,
             "deep_reference_move_cp": {forced_move.uci(): 90.0},
+            "deep_reference_scored_multipv": 1,
             "regret_cp": 0.0, "regret_score": 0.0,
             "emitted_action": forced_action, "uci": forced_move.uci(),
             "pv_actions": [forced_action], "pv_uci": [forced_move.uci()],
@@ -2329,6 +2474,7 @@ def test_gumbel_zero_visit_exception_accepts_a_truly_forced_position(
         "root_action_regret_cp": [0.0], "root_action_reference_cp": [90.0],
         "root_action_reference_listed": [True],
         "deep_reference_best_cp": 90.0, "deep_reference_move_cp": {move.uci(): 90.0},
+        "deep_reference_scored_multipv": 1,
         "regret_cp": 0.0, "regret_score": 0.0, "regret_vs_final_cp": 0.0,
         "emitted_action": action, "uci": move.uci(), "pv_actions": [action],
         "pv_uci": [move.uci()], "visit_gap": 0.0, "visit_entropy": 0.0,
@@ -2426,8 +2572,13 @@ def test_loader_rejects_source_balanced_panel_after_terminal_exclusion(
         "phase": phase_bucket(chess.popcount(terminal_board.occupied)),
         "source": 1,
         "piece_count": chess.popcount(terminal_board.occupied),
+        "deep_reference_nodes": 1_000_000,
+        "deep_reference_depth": 30,
         "deep_reference_best_cp": 0.0,
-        "deep_reference_move_cp": {"b1b7": 0.0},
+        "deep_reference_move_cp": {
+            move.uci(): 0.0 for move in list(terminal_board.legal_moves)[:10]
+        },
+        "deep_reference_scored_multipv": 10,
         "chunks_observed": 0,
         "chunks_required": 4,
         "partial_observations": [],
@@ -3170,6 +3321,8 @@ def test_excluded_position_evidence_preserves_partial_raw_snapshots() -> None:
         source=2,
         best_cp=42,
         move_cp={"e2e4": 42, "d2d4": 31},
+        sf_nodes=1_000_000,
+        sf_depth=30,
     )
     snapshots = [{
         "nodes": 50,
@@ -3195,6 +3348,9 @@ def test_excluded_position_evidence_preserves_partial_raw_snapshots() -> None:
     assert evidence["chunks_observed"] == 1
     assert evidence["partial_observations"] == snapshots
     assert evidence["deep_reference_move_cp"] == {"e2e4": 42.0, "d2d4": 31.0}
+    assert evidence["deep_reference_nodes"] == 1_000_000
+    assert evidence["deep_reference_depth"] == 30
+    assert evidence["deep_reference_scored_multipv"] == 2
     assert evidence["search_result"] == {"nodes": 50}
 
 

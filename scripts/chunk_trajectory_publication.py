@@ -20,7 +20,7 @@ from typing import IO, Any
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
 
-CHUNK_TRAJECTORY_SCHEMA = "deepfin.chunk_trajectory.v3"
+CHUNK_TRAJECTORY_SCHEMA = "deepfin.chunk_trajectory.v4"
 
 
 def _artifact(path: Path, *, require_file: bool) -> dict[str, Any]:

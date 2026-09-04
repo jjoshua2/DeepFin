@@ -59,7 +59,7 @@ from scripts.check_c_extensions_fresh import (
 from scripts.reachable_oracle import solve_reachable_oracle
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 
-_SCHEMA = "deepfin.chunk_trajectory.v3"
+_SCHEMA = "deepfin.chunk_trajectory.v4"
 _CP_TO_SCORE_C = 300.0
 _ALPHAS = (0.01, 0.1, 1.0, 10.0, 100.0)
 _COMPLEXITY_VISIT_GAP = 0.25
@@ -89,7 +89,18 @@ _BOOTSTRAP_RESAMPLING_SEMANTICS = (
 _BOOTSTRAP_INTERVAL_SEMANTICS = (
     "unconditional_requested_replicates_with_invalid_mass_in_lower_tail_v1"
 )
-_PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v1"
+_PREREGISTRATION_SCHEMA = "deepfin.chunk_controller_preregistration.v2"
+_DEEP_REFERENCE_EVIDENCE_SCHEMA = "deepfin.chunk_deep_reference_evidence.v1"
+# data/audit_set_v1.jsonl, whose sibling README freezes the requested
+# unhandicapped Stockfish budget at 1,000,000 nodes and MultiPV 10. Some
+# forced-mate rows legitimately terminate early, so the artifact identity—not
+# a false per-row observed-node floor—is the authority for that request.
+_APPROVED_AUDIT_SET_SHA256 = (
+    "d8e26efa0b010450abf9374693afc45027db6d146571785ab897af5061144df2"
+)
+_DEEP_REFERENCE_REQUESTED_NODES = 1_000_000
+_DEEP_REFERENCE_MIN_MULTIPV = 10
+_DEEP_REFERENCE_COVERAGE = "min(minimum_multipv,legal_move_count)_unique_scored_moves"
 _PANEL_SELECTION_STRATEGY = "joint_audit_source_phase_piece_round_robin_v1"
 _PANEL_REQUIRED_SOURCES = (0, 1)
 _PANEL_SOURCE_BALANCE_MAX_DIFFERENCE = 1
@@ -576,6 +587,200 @@ def _nonnegative_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def _deep_reference_evidence_summary(
+    positions: Sequence[Mapping[str, Any]], *, audit_set_sha256: Any,
+) -> dict[str, Any]:
+    """Summarize the raw teacher budget and finite-MultiPV coverage per position.
+
+    The approved audit-set digest authenticates how the teacher was invoked.
+    Actual nodes may be below the requested million on forced terminal searches,
+    so they are banked as diagnostics rather than incorrectly treated as a
+    per-row minimum. ``minimum_multipv`` is a coverage requirement: positions
+    with fewer than ten legal moves must list every legal move.
+    """
+    records: list[dict[str, int | str]] = []
+    failures: list[dict[str, Any]] = []
+    for position in positions:
+        key = position.get("key")
+        fen = position.get("fen")
+        nodes = position.get("deep_reference_nodes")
+        depth = position.get("deep_reference_depth")
+        recorded_count = position.get("deep_reference_scored_multipv")
+        move_cp = position.get("deep_reference_move_cp")
+        if not isinstance(key, str) or not key:
+            raise ValueError("deep-reference evidence has no position key")
+        if not isinstance(fen, str) or not fen:
+            raise ValueError(f"{key}: deep-reference evidence has no FEN")
+        try:
+            board = chess.Board(fen)
+        except ValueError as exc:
+            raise ValueError(f"{key}: deep-reference evidence has an invalid FEN") from exc
+        if not _nonnegative_int(nodes) or not _nonnegative_int(depth):
+            raise ValueError(f"{key}: deep-reference nodes/depth must be integers")
+        if not _nonnegative_int(recorded_count) or not isinstance(move_cp, dict):
+            raise ValueError(f"{key}: deep-reference MultiPV evidence is malformed")
+        assert isinstance(nodes, int)
+        assert isinstance(depth, int)
+        assert isinstance(recorded_count, int)
+        scored_count = len(move_cp)
+        legal_move_count = board.legal_moves.count()
+        required_count = min(_DEEP_REFERENCE_MIN_MULTIPV, legal_move_count)
+        record = {
+            "key": key,
+            "nodes": nodes,
+            "depth": depth,
+            "scored_multipv": scored_count,
+            "recorded_scored_multipv": recorded_count,
+            "legal_move_count": legal_move_count,
+            "required_scored_multipv": required_count,
+        }
+        records.append(record)
+        reasons: list[str] = []
+        if nodes <= 0:
+            reasons.append("nodes_not_positive")
+        if depth <= 0:
+            reasons.append("depth_not_positive")
+        if recorded_count != scored_count:
+            reasons.append("recorded_multipv_count_mismatch")
+        if scored_count < required_count:
+            reasons.append("insufficient_multipv_coverage")
+        if reasons:
+            failures.append({"key": key, "reasons": reasons})
+
+    records.sort(key=lambda row: str(row["key"]))
+    failures.sort(key=lambda row: str(row["key"]))
+    evidence_bytes = json.dumps(
+        records, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode("utf-8")
+    return {
+        "schema": _DEEP_REFERENCE_EVIDENCE_SCHEMA,
+        "label_source": "frozen_unhandicapped_stockfish_audit_set",
+        "approved_audit_set_sha256": _APPROVED_AUDIT_SET_SHA256,
+        "audit_set_sha256": audit_set_sha256,
+        "audit_set_identity_passed": audit_set_sha256 == _APPROVED_AUDIT_SET_SHA256,
+        "requested_nodes": _DEEP_REFERENCE_REQUESTED_NODES,
+        "observed_nodes_semantics": "actual_nodes_may_stop_early_on_forced_terminal_search",
+        "positive_depth_required": True,
+        "minimum_multipv": _DEEP_REFERENCE_MIN_MULTIPV,
+        "multipv_coverage_requirement": _DEEP_REFERENCE_COVERAGE,
+        "per_position_fields": [
+            "deep_reference_nodes",
+            "deep_reference_depth",
+            "deep_reference_scored_multipv",
+            "deep_reference_move_cp",
+        ],
+        "position_count": len(records),
+        "position_evidence_sha256": hashlib.sha256(evidence_bytes).hexdigest(),
+        "minimum_observed_nodes": min(
+            (int(row["nodes"]) for row in records), default=0,
+        ),
+        "minimum_observed_depth": min(
+            (int(row["depth"]) for row in records), default=0,
+        ),
+        "minimum_observed_scored_multipv": min(
+            (int(row["scored_multipv"]) for row in records), default=0,
+        ),
+        "positions_below_requested_nodes": [
+            str(row["key"])
+            for row in records
+            if int(row["nodes"]) < _DEEP_REFERENCE_REQUESTED_NODES
+        ],
+        "failing_position_count": len(failures),
+        "failing_positions": failures,
+        "passed": bool(
+            records
+            and audit_set_sha256 == _APPROVED_AUDIT_SET_SHA256
+            and not failures
+        ),
+    }
+
+
+def _valid_deep_reference_evidence(value: Any) -> bool:
+    """Validate the versioned ruler contract before trajectory rows are read."""
+    if not isinstance(value, dict) or set(value) != {
+        "schema",
+        "label_source",
+        "approved_audit_set_sha256",
+        "audit_set_sha256",
+        "audit_set_identity_passed",
+        "requested_nodes",
+        "observed_nodes_semantics",
+        "positive_depth_required",
+        "minimum_multipv",
+        "multipv_coverage_requirement",
+        "per_position_fields",
+        "position_count",
+        "position_evidence_sha256",
+        "minimum_observed_nodes",
+        "minimum_observed_depth",
+        "minimum_observed_scored_multipv",
+        "positions_below_requested_nodes",
+        "failing_position_count",
+        "failing_positions",
+        "passed",
+    }:
+        return False
+    failures = value.get("failing_positions")
+    early_stops = value.get("positions_below_requested_nodes")
+    if (
+        value.get("schema") != _DEEP_REFERENCE_EVIDENCE_SCHEMA
+        or value.get("label_source")
+        != "frozen_unhandicapped_stockfish_audit_set"
+        or value.get("approved_audit_set_sha256") != _APPROVED_AUDIT_SET_SHA256
+        or value.get("audit_set_sha256") != _APPROVED_AUDIT_SET_SHA256
+        or value.get("audit_set_identity_passed") is not True
+        or value.get("requested_nodes") != _DEEP_REFERENCE_REQUESTED_NODES
+        or value.get("observed_nodes_semantics")
+        != "actual_nodes_may_stop_early_on_forced_terminal_search"
+        or value.get("positive_depth_required") is not True
+        or value.get("minimum_multipv") != _DEEP_REFERENCE_MIN_MULTIPV
+        or value.get("multipv_coverage_requirement") != _DEEP_REFERENCE_COVERAGE
+        or value.get("per_position_fields") != [
+            "deep_reference_nodes",
+            "deep_reference_depth",
+            "deep_reference_scored_multipv",
+            "deep_reference_move_cp",
+        ]
+        or not _positive_int(value.get("position_count"))
+        or not _valid_sha256(value.get("position_evidence_sha256"))
+        or not _nonnegative_int(value.get("minimum_observed_nodes"))
+        or not _nonnegative_int(value.get("minimum_observed_depth"))
+        or not _nonnegative_int(value.get("minimum_observed_scored_multipv"))
+        or not isinstance(early_stops, list)
+        or any(not isinstance(key, str) or not key for key in early_stops)
+        or early_stops != sorted(set(early_stops))
+        or not _nonnegative_int(value.get("failing_position_count"))
+        or not isinstance(failures, list)
+        or value.get("failing_position_count") != len(failures)
+        or not isinstance(value.get("passed"), bool)
+        or value.get("passed") is not (len(failures) == 0)
+    ):
+        return False
+    previous_key = ""
+    for failure in failures:
+        if (
+            not isinstance(failure, dict)
+            or set(failure) != {"key", "reasons"}
+            or not isinstance(failure.get("key"), str)
+            or not failure.get("key")
+            or failure["key"] <= previous_key
+            or not isinstance(failure.get("reasons"), list)
+            or not failure["reasons"]
+            or any(
+                reason not in {
+                    "nodes_not_positive",
+                    "depth_not_positive",
+                    "recorded_multipv_count_mismatch",
+                    "insufficient_multipv_coverage",
+                }
+                for reason in failure["reasons"]
+            )
+        ):
+            return False
+        previous_key = failure["key"]
+    return True
+
+
 def _panel_key_digest(keys: Sequence[str]) -> str:
     payload = json.dumps(
         sorted(keys), sort_keys=True, separators=(",", ":"), ensure_ascii=True,
@@ -977,6 +1182,7 @@ def _preregistration_payload(manifest: dict[str, Any]) -> dict[str, Any]:
             "matched_rows_sha256": artifact_sha("matched_rows"),
             "max_positions": manifest.get("requested_max_positions"),
             "panel_selection": manifest.get("panel_selection"),
+            "deep_reference_evidence": manifest.get("deep_reference_evidence"),
             "requested_search": manifest.get("requested_search"),
             "requested_model_search_contract": manifest.get(
                 "requested_model_search_contract"
@@ -1395,6 +1601,12 @@ def _validate_decision_grade_row(
     source = row.get("source")
     if not isinstance(source, int) or isinstance(source, bool) or source not in (0, 1):
         raise ValueError(f"{key}: source must be audit source 0 or 1")
+    if not _positive_int(row.get("deep_reference_nodes")):
+        raise ValueError(f"{key}: deep reference observed nodes must be positive")
+    if not _positive_int(row.get("deep_reference_depth")):
+        raise ValueError(f"{key}: deep reference depth must be a positive integer")
+    if not _positive_int(row.get("deep_reference_scored_multipv")):
+        raise ValueError(f"{key}: deep reference MultiPV count must be positive")
     if not _nonnegative_int(row.get("stable_chunks")):
         raise ValueError(f"{key}: stable_chunks must be a non-negative integer")
     if int(row["stable_chunks"]) >= int(row["chunk"]):
@@ -1510,6 +1722,14 @@ def _validate_decision_grade_row(
         rel_tol=1e-10, abs_tol=1e-12,
     ):
         raise ValueError(f"{key}: deep reference best CP disagrees with move values")
+    required_multipv = min(_DEEP_REFERENCE_MIN_MULTIPV, board.legal_moves.count())
+    if int(row["deep_reference_scored_multipv"]) != len(move_cp):
+        raise ValueError(f"{key}: deep reference MultiPV count disagrees with move values")
+    if len(move_cp) < required_multipv:
+        raise ValueError(
+            f"{key}: deep reference has {len(move_cp)} scored unique moves; "
+            f"the frozen ruler requires {required_multipv}"
+        )
     try:
         if any(not 0 <= action < POLICY_SIZE for action in actions):
             bad = next(action for action in actions if not 0 <= action < POLICY_SIZE)
@@ -1611,6 +1831,14 @@ def _require_manifest(
         and reference_censoring.get("passed") is not True
     ):
         failures.append("finite-MultiPV censoring affects decision labels")
+    deep_reference_evidence = manifest.get("deep_reference_evidence")
+    if not _valid_deep_reference_evidence(deep_reference_evidence):
+        failures.append("deep-reference ruler evidence is incomplete")
+    elif (
+        manifest.get("decision_grade") is True
+        and deep_reference_evidence.get("passed") is not True
+    ):
+        failures.append("selected positions do not satisfy the deep-reference ruler")
     if manifest.get("elapsed_measurement") != {
         "kind": "callback_instrumented_wall_time",
         "usable_for_controller_or_cost_analysis": False,
@@ -2015,6 +2243,8 @@ def _recomputed_trajectory_state(
         "key", "fen", "source_dir", "shard", "game_id", "group_id",
         "phase", "source", "piece_count", "legal_move_count",
         "deep_reference_best_cp", "deep_reference_move_cp",
+        "deep_reference_nodes", "deep_reference_depth",
+        "deep_reference_scored_multipv",
     )
     for index, row in enumerate(trajectory):
         key = str(row.get("key"))
@@ -2270,6 +2500,25 @@ def load_transitions(
         if recomputed_censoring != manifest.get("reference_censoring"):
             raise ValueError(
                 "finite-MultiPV reference censoring disagrees with raw trajectory rows"
+            )
+        reference_positions = [
+            trajectory[0] for trajectory in by_key.values()
+        ]
+        excluded_reference_positions = manifest.get("excluded_positions")
+        if not isinstance(excluded_reference_positions, list):
+            raise ValueError("deep-reference ruler exclusions are malformed")
+        reference_positions.extend(excluded_reference_positions)
+        audit_artifact = manifest.get("audit_set")
+        recomputed_deep_reference = _deep_reference_evidence_summary(
+            reference_positions,
+            audit_set_sha256=(
+                audit_artifact.get("sha256")
+                if isinstance(audit_artifact, dict) else None
+            ),
+        )
+        if recomputed_deep_reference != manifest.get("deep_reference_evidence"):
+            raise ValueError(
+                "deep-reference ruler evidence disagrees with raw selected-position rows"
             )
     excluded_keys = {
         str(entry["key"])
