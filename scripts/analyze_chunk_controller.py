@@ -856,7 +856,7 @@ def _analyzer_provenance(
     }
 
 
-@dataclass(frozen=True)
+@dataclass
 class _AnchoredOutputTarget:
     lexical_path: Path
     parent_fd: int
@@ -865,6 +865,8 @@ class _AnchoredOutputTarget:
     meta_path: Path
     manifest: dict[str, Any] | None
     consumed_artifacts: tuple[Mapping[str, Any], ...]
+    published_fd: int | None = None
+    published_bytes: bytes | None = None
 
     @property
     def name(self) -> str:
@@ -1279,7 +1281,12 @@ def _anchored_output_target(
         _require_anchored_output_stable(target)
         _require_fresh_output_leaf(target)
         yield target
+        _require_anchored_output_stable(target)
+        if target.published_fd is not None:
+            _require_published_output_stable(target)
     finally:
+        if target.published_fd is not None:
+            os.close(target.published_fd)
         os.close(parent_fd)
 
 
@@ -1296,6 +1303,32 @@ def _require_fresh_output_leaf(target: _AnchoredOutputTarget) -> None:
         f"analyzer output already exists; choose a fresh --out path: "
         f"{target.lexical_path}"
     )
+
+
+def _require_published_output_stable(target: _AnchoredOutputTarget) -> None:
+    """Bind the requested report name to the retained exact rendered bytes."""
+    if target.published_fd is None or target.published_bytes is None:
+        raise RuntimeError("published analyzer output identity is unavailable")
+    opened = _require_evidence_entry(
+        target.lexical_path,
+        target.parent_fd,
+        target.published_fd,
+        links=1,
+    )
+    content = _read_stable_bytes_fd(
+        target.published_fd,
+        target.lexical_path,
+        before=opened,
+    )
+    if content != target.published_bytes:
+        raise RuntimeError("published analyzer output differs from rendered report")
+    _require_evidence_entry(
+        target.lexical_path,
+        target.parent_fd,
+        target.published_fd,
+        links=1,
+    )
+    _require_anchored_output_stable(target)
 
 
 def _link_anonymous_file_no_replace(
@@ -1332,6 +1365,9 @@ def _write_json_atomic(
     evidence_check: Callable[[], None] | None = None,
 ) -> None:
     """Publish fresh JSON without clobbering through the validated directory fd."""
+    if target.published_fd is not None:
+        raise RuntimeError("an analyzer output target may be published only once")
+    expected_bytes = (rendered + "\n").encode("utf-8")
     staging_fd: int | None = None
     try:
         _require_anchored_output_stable(target)
@@ -1341,16 +1377,19 @@ def _write_json_atomic(
             raise RuntimeError("safe analyzer output requires Linux O_TMPFILE")
         staging_fd = os.open(
             ".",
-            os.O_WRONLY | os.O_CLOEXEC | anonymous,
+            os.O_RDWR | os.O_CLOEXEC | anonymous,
             0o666,
             dir_fd=target.parent_fd,
         )
         staging_identity = os.fstat(staging_fd)
-        with os.fdopen(os.dup(staging_fd), "w", encoding="utf-8") as fh:
-            fh.write(rendered)
-            fh.write("\n")
+        with os.fdopen(os.dup(staging_fd), "wb") as fh:
+            fh.write(expected_bytes)
             fh.flush()
             os.fsync(fh.fileno())
+        if _read_stable_bytes_fd(
+            staging_fd, target.lexical_path, before=os.fstat(staging_fd),
+        ) != expected_bytes:
+            raise RuntimeError("staged analyzer output differs from rendered report")
         _require_anchored_output_stable(target)
         if evidence_check is not None:
             evidence_check()
@@ -1375,8 +1414,15 @@ def _write_json_atomic(
         )
         if not _same_file_identity(final_destination, staging_identity):
             raise RuntimeError("published analyzer output changed after publication")
+        if _read_stable_bytes_fd(
+            staging_fd, target.lexical_path, before=os.fstat(staging_fd),
+        ) != expected_bytes:
+            raise RuntimeError("published analyzer output differs from rendered report")
         if evidence_check is not None:
             evidence_check()
+        target.published_fd = staging_fd
+        target.published_bytes = expected_bytes
+        staging_fd = None
     finally:
         if staging_fd is not None:
             os.close(staging_fd)

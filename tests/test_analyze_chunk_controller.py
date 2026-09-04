@@ -8691,6 +8691,84 @@ def test_analyzer_anonymous_json_preserves_preexisting_staging_file(
     assert output.read_text() == "{}\n"
 
 
+def test_analyzer_rejects_same_inode_anonymous_report_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "analysis.json"
+    real_fsync = controller_module.os.fsync
+    rewritten = False
+
+    def rewrite_anonymous_inode_after_fsync(fd: int) -> None:
+        nonlocal rewritten
+        real_fsync(fd)
+        if not rewritten and os.fstat(fd).st_nlink == 0:
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, b"attacker report\n", 0)
+            real_fsync(fd)
+            rewritten = True
+
+    with controller_module._anchored_output_target(
+        tmp_path / "bank.jsonl",
+        tmp_path / "bank.jsonl.meta.json",
+        output,
+    ) as target:
+        monkeypatch.setattr(
+            controller_module.os, "fsync", rewrite_anonymous_inode_after_fsync,
+        )
+        with pytest.raises(RuntimeError, match="differs from rendered report"):
+            controller_module._write_json_atomic(target, "{}")
+
+    assert rewritten is True
+    assert not output.exists()
+
+
+def test_analyzer_revalidates_separate_report_parent_on_context_exit(
+    tmp_path: Path,
+) -> None:
+    report_parent = tmp_path / "reports"
+    report_parent.mkdir()
+    displaced_parent = tmp_path / "displaced-reports"
+    output = report_parent / "analysis.json"
+
+    def publish_then_swap_parent() -> None:
+        with controller_module._anchored_output_target(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+        ) as target:
+            controller_module._write_json_atomic(target, "{}")
+            report_parent.rename(displaced_parent)
+            report_parent.mkdir()
+            output.write_text("attacker report\n")
+
+    with pytest.raises(RuntimeError, match="output parent changed"):
+        publish_then_swap_parent()
+
+    assert output.read_text() == "attacker report\n"
+    assert (displaced_parent / output.name).read_text() == "{}\n"
+
+
+def test_analyzer_revalidates_report_leaf_on_context_exit(tmp_path: Path) -> None:
+    output = tmp_path / "analysis.json"
+    displaced = tmp_path / "authentic-analysis.json"
+
+    def publish_then_swap_leaf() -> None:
+        with controller_module._anchored_output_target(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+        ) as target:
+            controller_module._write_json_atomic(target, "{}")
+            output.rename(displaced)
+            output.write_text("attacker report\n")
+
+    with pytest.raises(SystemExit, match="anchored regular file"):
+        publish_then_swap_leaf()
+
+    assert output.read_text() == "attacker report\n"
+    assert displaced.read_text() == "{}\n"
+
+
 def test_analyzer_atomic_json_requires_fresh_ordinary_output(
     tmp_path: Path,
 ) -> None:
