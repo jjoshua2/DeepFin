@@ -1358,6 +1358,47 @@ def _require_published_output_stable(target: _AnchoredOutputTarget) -> None:
         for field in namespace_fields
     ):
         raise RuntimeError("analyzer output namespace changed during validation")
+    _require_requested_output_linearized(target)
+
+
+def _require_requested_output_linearized(target: _AnchoredOutputTarget) -> None:
+    """Linearize the final report check through the requested pathname."""
+    if target.published_fd is None or target.published_bytes is None:
+        raise RuntimeError("published analyzer output identity is unavailable")
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if nofollow == 0:
+        raise RuntimeError("safe analyzer output requires O_NOFOLLOW")
+    try:
+        requested_fd = os.open(
+            target.lexical_path,
+            os.O_RDONLY | os.O_CLOEXEC | nofollow,
+        )
+    except OSError as exc:
+        raise RuntimeError(
+            "requested analyzer output changed during validation"
+        ) from exc
+    try:
+        requested = os.fstat(requested_fd)
+        published = os.fstat(target.published_fd)
+        if (
+            not stat.S_ISREG(requested.st_mode)
+            or requested.st_nlink != 1
+            or not _same_file_identity(requested, published)
+        ):
+            raise RuntimeError(
+                "requested analyzer output changed during validation"
+            )
+        content = _read_stable_bytes_fd(
+            requested_fd,
+            target.lexical_path,
+            before=requested,
+        )
+        if content != target.published_bytes:
+            raise RuntimeError(
+                "requested analyzer output differs from rendered report"
+            )
+    finally:
+        os.close(requested_fd)
 
 
 def _link_anonymous_file_no_replace(

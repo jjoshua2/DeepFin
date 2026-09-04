@@ -8809,6 +8809,133 @@ def test_analyzer_brackets_report_leaf_validation_with_parent_namespace(
     assert displaced.read_text() == "{}\n"
 
 
+def test_analyzer_linearizes_report_after_final_parent_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_parent = tmp_path / "reports"
+    report_parent.mkdir()
+    displaced_parent = tmp_path / "authentic-reports"
+    output = report_parent / "analysis.json"
+    real_require_stable = controller_module._require_anchored_output_stable
+    real_fstat = controller_module.os.fstat
+    stable_checks = 0
+    armed = False
+    swapped = False
+    target_parent_fd = -1
+
+    def arm_after_last_parent_check(
+        target: controller_module._AnchoredOutputTarget,
+    ) -> None:
+        nonlocal armed, stable_checks
+        real_require_stable(target)
+        stable_checks += 1
+        if stable_checks == 4:
+            armed = True
+
+    def swap_after_retained_parent_snapshot(fd: int) -> os.stat_result:
+        nonlocal armed, swapped
+        result = real_fstat(fd)
+        if armed and fd == target_parent_fd:
+            report_parent.rename(displaced_parent)
+            report_parent.mkdir()
+            output.write_text("attacker report\n")
+            armed = False
+            swapped = True
+        return result
+
+    def publish_then_swap_after_parent_snapshot() -> None:
+        nonlocal target_parent_fd
+        with controller_module._anchored_output_target(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+        ) as target:
+            controller_module._write_json_atomic(target, "{}")
+            target_parent_fd = target.parent_fd
+            monkeypatch.setattr(
+                controller_module,
+                "_require_anchored_output_stable",
+                arm_after_last_parent_check,
+            )
+            monkeypatch.setattr(
+                controller_module.os,
+                "fstat",
+                swap_after_retained_parent_snapshot,
+            )
+
+    with pytest.raises(RuntimeError, match="requested analyzer output changed"):
+        publish_then_swap_after_parent_snapshot()
+
+    assert stable_checks == 4
+    assert swapped is True
+    assert output.read_text() == "attacker report\n"
+    assert (displaced_parent / output.name).read_text() == "{}\n"
+
+
+def test_analyzer_linearizes_report_bytes_before_final_parent_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "analysis.json"
+    real_require_stable = controller_module._require_anchored_output_stable
+    real_fstat = controller_module.os.fstat
+    real_fsync = controller_module.os.fsync
+    stable_checks = 0
+    armed = False
+    rewritten = False
+    target_parent_fd = -1
+    published_fd = -1
+
+    def arm_after_last_parent_check(
+        target: controller_module._AnchoredOutputTarget,
+    ) -> None:
+        nonlocal armed, stable_checks
+        real_require_stable(target)
+        stable_checks += 1
+        if stable_checks == 4:
+            armed = True
+
+    def rewrite_before_retained_parent_snapshot(fd: int) -> os.stat_result:
+        nonlocal armed, rewritten
+        if armed and fd == target_parent_fd:
+            os.ftruncate(published_fd, 0)
+            os.pwrite(published_fd, b"attacker report\n", 0)
+            real_fsync(published_fd)
+            armed = False
+            rewritten = True
+        return real_fstat(fd)
+
+    def publish_then_rewrite_before_parent_snapshot() -> None:
+        nonlocal published_fd, target_parent_fd
+        with controller_module._anchored_output_target(
+            tmp_path / "bank.jsonl",
+            tmp_path / "bank.jsonl.meta.json",
+            output,
+        ) as target:
+            controller_module._write_json_atomic(target, "{}")
+            assert target.published_fd is not None
+            published_fd = target.published_fd
+            target_parent_fd = target.parent_fd
+            monkeypatch.setattr(
+                controller_module,
+                "_require_anchored_output_stable",
+                arm_after_last_parent_check,
+            )
+            monkeypatch.setattr(
+                controller_module.os,
+                "fstat",
+                rewrite_before_retained_parent_snapshot,
+            )
+
+    with pytest.raises(RuntimeError, match="differs from rendered report"):
+        publish_then_rewrite_before_parent_snapshot()
+
+    assert stable_checks == 4
+    assert rewritten is True
+    assert output.read_text() == "attacker report\n"
+
+
 def test_analyzer_atomic_json_requires_fresh_ordinary_output(
     tmp_path: Path,
 ) -> None:
