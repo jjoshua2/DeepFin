@@ -336,6 +336,10 @@ _MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES = 1000
 _PRODUCTION_WDL_FILES = 875
 _PRODUCTION_DTZ_FILES = 510
 _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
+_TABLEBASE_INVENTORY_SCHEMA = "deepfin.syzygy_inventory.v2"
+_TABLEBASE_FILE_IDENTITY_FIELDS = (
+    "name", "size", "mtime_ns", "ctime_ns", "device", "inode",
+)
 _PRODUCTION_GSS_HALVING_REV = 3
 _PRODUCTION_WALKERS = 2
 _MIN_DECISION_GRADE_CHUNKS = 4
@@ -2082,6 +2086,96 @@ def _tablebase_component_counts(rows: Any) -> tuple[tuple[int, int], ...]:
         return ()
 
 
+def _valid_tablebase_directory_inventory(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    root_identity = value.get("root_identity")
+    file_identities = value.get("file_identities")
+    if (
+        not isinstance(value.get("path"), str)
+        or not value.get("path")
+        or not isinstance(root_identity, dict)
+        or not _nonnegative_int(root_identity.get("device"))
+        or not _positive_int(root_identity.get("inode"))
+        or not _nonnegative_int(root_identity.get("mtime_ns"))
+        or not _nonnegative_int(root_identity.get("ctime_ns"))
+        or value.get("file_identity_fields")
+        != list(_TABLEBASE_FILE_IDENTITY_FIELDS)
+        or not isinstance(file_identities, list)
+        or value.get("file_identity_count") != len(file_identities)
+        or not _positive_int(value.get("rtbw_count"))
+        or not _positive_int(value.get("rtbz_count"))
+        or not _positive_int(value.get("total_bytes"))
+        or not _valid_sha256(value.get("inventory_sha256"))
+    ):
+        return False
+    seen_names: set[str] = set()
+    wdl_count = 0
+    dtz_count = 0
+    total_bytes = 0
+    for row in file_identities:
+        if not isinstance(row, list) or len(row) != len(_TABLEBASE_FILE_IDENTITY_FIELDS):
+            return False
+        name, size, mtime_ns, ctime_ns, device, inode = row
+        if (
+            not isinstance(name, str)
+            or not name
+            or Path(name).name != name
+            or name in seen_names
+            or Path(name).suffix not in (".rtbw", ".rtbz")
+            or not _positive_int(size)
+            or not _nonnegative_int(mtime_ns)
+            or not _nonnegative_int(ctime_ns)
+            or not _nonnegative_int(device)
+            or not _positive_int(inode)
+        ):
+            return False
+        seen_names.add(name)
+        if Path(name).suffix == ".rtbw":
+            wdl_count += 1
+        else:
+            dtz_count += 1
+        total_bytes += int(size)
+    if (
+        value["file_identity_count"] != wdl_count + dtz_count
+        or value["rtbw_count"] != wdl_count
+        or value["rtbz_count"] != dtz_count
+        or value["total_bytes"] != total_bytes
+    ):
+        return False
+    identity_document = json.dumps(
+        {
+            "root_identity": root_identity,
+            "file_identity_fields": list(_TABLEBASE_FILE_IDENTITY_FIELDS),
+            "file_identities": file_identities,
+        },
+        sort_keys=True,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(identity_document).hexdigest() == value["inventory_sha256"]
+
+
+def _valid_tablebase_inventory(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    directories = value.get("directories")
+    if (
+        value.get("schema") != _TABLEBASE_INVENTORY_SCHEMA
+        or value.get("identity_method")
+        != "no_follow_device_inode_size_mtime_ctime"
+        or not isinstance(directories, list)
+        or not directories
+        or not all(_valid_tablebase_directory_inventory(row) for row in directories)
+        or not _valid_sha256(value.get("inventory_sha256"))
+    ):
+        return False
+    document = json.dumps(
+        directories, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(document).hexdigest() == value["inventory_sha256"]
+
+
 def _valid_root_tb_control(value: Any) -> bool:
     control_fen = "7k/8/8/8/8/8/8/KQ6 w - - 0 1"
     if not isinstance(value, dict) or value.get("fen") != control_fen:
@@ -2809,7 +2903,8 @@ def _require_manifest(
         else ()
     )
     if (
-        not isinstance(syzygy, dict)
+        not _valid_tablebase_inventory(syzygy)
+        or not isinstance(syzygy, dict)
         or not isinstance(syzygy.get("path"), str)
         or not syzygy.get("path")
         or not isinstance(directories, list)
@@ -2824,15 +2919,6 @@ def _require_manifest(
         or not isinstance(syzygy.get("rtbz_count"), int)
         or int(syzygy.get("rtbz_count", 0)) < _PRODUCTION_DTZ_FILES
         or syzygy.get("rtbz_count") != directory_dtz_count
-        or any(
-            not isinstance(directory, dict)
-            or not isinstance(directory.get("path"), str)
-            or not _positive_int(directory.get("rtbw_count"))
-            or not _positive_int(directory.get("rtbz_count"))
-            or not _positive_int(directory.get("total_bytes"))
-            or not _valid_sha256(directory.get("inventory_sha256"))
-            for directory in (directories or [])
-        )
     ):
         failures.append("production Syzygy provenance is incomplete")
     requested = manifest.get("requested_search")

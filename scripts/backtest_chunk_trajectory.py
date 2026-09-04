@@ -404,6 +404,10 @@ _SCHEMA = CHUNK_TRAJECTORY_SCHEMA
 _PRODUCTION_WDL_FILES = 875
 _PRODUCTION_DTZ_FILES = 510
 _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
+_TABLEBASE_INVENTORY_SCHEMA = "deepfin.syzygy_inventory.v2"
+_TABLEBASE_FILE_IDENTITY_FIELDS = (
+    "name", "size", "mtime_ns", "ctime_ns", "device", "inode",
+)
 _PRODUCTION_GSS_HALVING_REV = 3
 _MIN_DECISION_GRADE_CHUNKS = 4
 _PANEL_SELECTION_STRATEGY = "joint_audit_source_phase_piece_round_robin_v1"
@@ -939,40 +943,211 @@ def _read_tracked_preregistration(
     return {**before, "repo_relative_path": relative_path}, document
 
 
+def _open_directory_no_follow(path: Path) -> tuple[int, Path]:
+    """Open every directory component without ever traversing a symlink."""
+    lexical = Path(os.path.abspath(os.fspath(path.expanduser())))
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    current_fd = os.open(os.sep, flags)
+    try:
+        for component in lexical.parts[1:]:
+            try:
+                component_stat = os.stat(
+                    component, dir_fd=current_fd, follow_symlinks=False,
+                )
+            except OSError as exc:
+                raise SystemExit(
+                    f"cannot inspect Syzygy directory component {lexical}: {exc}"
+                ) from exc
+            if stat.S_ISLNK(component_stat.st_mode):
+                raise SystemExit(
+                    f"Syzygy directory path must not contain a symlink: {lexical}"
+                )
+            if not stat.S_ISDIR(component_stat.st_mode):
+                raise SystemExit(
+                    f"Syzygy directory path component is not a directory: {lexical}"
+                )
+            try:
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+            except OSError as exc:
+                raise SystemExit(
+                    f"cannot open Syzygy directory without following symlinks "
+                    f"{lexical}: {exc}"
+                ) from exc
+            opened_stat = os.fstat(next_fd)
+            observed_identity = (
+                int(component_stat.st_mode), int(component_stat.st_dev),
+                int(component_stat.st_ino),
+            )
+            opened_identity = (
+                int(opened_stat.st_mode), int(opened_stat.st_dev),
+                int(opened_stat.st_ino),
+            )
+            if opened_identity != observed_identity:
+                os.close(next_fd)
+                raise SystemExit(
+                    f"Syzygy directory changed while it was being opened: {lexical}"
+                )
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd, lexical
+    except BaseException:
+        os.close(current_fd)
+        raise
+
+
+def _tablebase_directory_identity(value: os.stat_result) -> dict[str, int]:
+    return {
+        "device": int(value.st_dev),
+        "inode": int(value.st_ino),
+        "mtime_ns": int(value.st_mtime_ns),
+        "ctime_ns": int(value.st_ctime_ns),
+    }
+
+
 def _tablebase_inventory(path_value: str) -> dict[str, Any]:
-    """Cheap, durable identity for the large production tablebase directories."""
+    """No-follow filesystem identity for the 220 GiB production tablebases.
+
+    Full byte hashing would read the corpus twice per run (roughly 440 GiB) and
+    interfere with the search being measured.  Instead, the initial and final
+    inventories bind every table file's device, inode, size, mtime, and ctime.
+    Ctime deliberately makes an in-place same-size edit visible even if mtime is
+    restored.  The opened root identity also makes directory replacement visible.
+    """
     directories: list[dict[str, Any]] = []
     for raw_directory in path_value.split(SEPARATOR):
-        directory = Path(raw_directory.strip()).expanduser().resolve()
-        digest = hashlib.sha256()
-        counts = {"rtbw": 0, "rtbz": 0}
-        total_bytes = 0
-        files = sorted(
-            entry for entry in directory.iterdir()
-            if entry.is_file() and entry.suffix in (".rtbw", ".rtbz")
+        if not raw_directory.strip():
+            raise SystemExit("Syzygy path contains an empty directory component")
+        directory_fd, directory = _open_directory_no_follow(
+            Path(raw_directory.strip()),
         )
-        for entry in files:
-            stat = entry.stat()
-            counts[entry.suffix[1:]] += 1
-            total_bytes += int(stat.st_size)
-            digest.update(entry.name.encode())
-            digest.update(b"\0")
-            digest.update(str(stat.st_size).encode())
-            digest.update(b"\0")
-            digest.update(str(stat.st_mtime_ns).encode())
-            digest.update(b"\n")
-        directories.append({
-            "path": str(directory),
-            "rtbw_count": counts["rtbw"],
-            "rtbz_count": counts["rtbz"],
-            "total_bytes": total_bytes,
-            "inventory_sha256": digest.hexdigest(),
-        })
+        try:
+            root_before = os.fstat(directory_fd)
+            root_identity = _tablebase_directory_identity(root_before)
+
+            def scan_table_files(
+                directory_fd: int = directory_fd,
+                directory: Path = directory,
+            ) -> tuple[dict[str, int], int, list[list[object]]]:
+                counts = {"rtbw": 0, "rtbz": 0}
+                total_bytes = 0
+                identities: list[list[object]] = []
+                try:
+                    with os.scandir(directory_fd) as iterator:
+                        entries = sorted(iterator, key=lambda entry: entry.name)
+                except OSError as exc:
+                    raise SystemExit(
+                        f"cannot inventory Syzygy directory {directory}: {exc}"
+                    ) from exc
+                for entry in entries:
+                    try:
+                        entry_stat = entry.stat(follow_symlinks=False)
+                    except OSError as exc:
+                        raise SystemExit(
+                            f"cannot inspect Syzygy directory entry "
+                            f"{directory / entry.name}: {exc}"
+                        ) from exc
+                    if stat.S_ISLNK(entry_stat.st_mode):
+                        raise SystemExit(
+                            "Syzygy directory entries must not be symlinks: "
+                            f"{directory / entry.name}"
+                        )
+                    if not stat.S_ISREG(entry_stat.st_mode):
+                        raise SystemExit(
+                            "Syzygy directory entries must be regular files: "
+                            f"{directory / entry.name}"
+                        )
+                    suffix = Path(entry.name).suffix
+                    if suffix not in (".rtbw", ".rtbz"):
+                        continue
+                    file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+                    try:
+                        file_fd = os.open(
+                            entry.name, file_flags, dir_fd=directory_fd,
+                        )
+                    except OSError as exc:
+                        raise SystemExit(
+                            f"cannot open Syzygy file without following symlinks "
+                            f"{directory / entry.name}: {exc}"
+                        ) from exc
+                    try:
+                        opened_stat = os.fstat(file_fd)
+                    finally:
+                        os.close(file_fd)
+                    entry_identity = (
+                        int(entry_stat.st_mode), int(entry_stat.st_size),
+                        int(entry_stat.st_mtime_ns), int(entry_stat.st_ctime_ns),
+                        int(entry_stat.st_dev), int(entry_stat.st_ino),
+                    )
+                    opened_identity = (
+                        int(opened_stat.st_mode), int(opened_stat.st_size),
+                        int(opened_stat.st_mtime_ns), int(opened_stat.st_ctime_ns),
+                        int(opened_stat.st_dev), int(opened_stat.st_ino),
+                    )
+                    if opened_identity != entry_identity or not stat.S_ISREG(
+                        opened_stat.st_mode,
+                    ):
+                        raise SystemExit(
+                            f"Syzygy file changed while it was being inventoried: "
+                            f"{directory / entry.name}"
+                        )
+                    counts[suffix[1:]] += 1
+                    total_bytes += int(opened_stat.st_size)
+                    identities.append([
+                        entry.name,
+                        int(opened_stat.st_size),
+                        int(opened_stat.st_mtime_ns),
+                        int(opened_stat.st_ctime_ns),
+                        int(opened_stat.st_dev),
+                        int(opened_stat.st_ino),
+                    ])
+                return counts, total_bytes, identities
+
+            counts, total_bytes, file_identities = scan_table_files()
+            repeated_scan = scan_table_files()
+            if repeated_scan != (counts, total_bytes, file_identities):
+                raise SystemExit(
+                    f"Syzygy files changed while they were inventoried: {directory}"
+                )
+            root_after = os.fstat(directory_fd)
+            if _tablebase_directory_identity(root_after) != root_identity:
+                raise SystemExit(
+                    f"Syzygy directory changed while it was inventoried: {directory}"
+                )
+            identity_document = json.dumps(
+                {
+                    "root_identity": root_identity,
+                    "file_identity_fields": list(_TABLEBASE_FILE_IDENTITY_FIELDS),
+                    "file_identities": file_identities,
+                },
+                sort_keys=True,
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            directories.append({
+                "path": str(directory),
+                "root_identity": root_identity,
+                "rtbw_count": counts["rtbw"],
+                "rtbz_count": counts["rtbz"],
+                "file_identity_count": len(file_identities),
+                "file_identity_fields": list(_TABLEBASE_FILE_IDENTITY_FIELDS),
+                "file_identities": file_identities,
+                "total_bytes": total_bytes,
+                "inventory_sha256": hashlib.sha256(identity_document).hexdigest(),
+            })
+        finally:
+            os.close(directory_fd)
+    canonical_path = SEPARATOR.join(str(row["path"]) for row in directories)
+    inventory_document = json.dumps(
+        directories, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
     return {
-        "path": path_value,
+        "schema": _TABLEBASE_INVENTORY_SCHEMA,
+        "identity_method": "no_follow_device_inode_size_mtime_ctime",
+        "path": canonical_path,
         "directories": directories,
         "rtbw_count": sum(int(row["rtbw_count"]) for row in directories),
         "rtbz_count": sum(int(row["rtbz_count"]) for row in directories),
+        "inventory_sha256": hashlib.sha256(inventory_document).hexdigest(),
     }
 
 

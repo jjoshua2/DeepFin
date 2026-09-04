@@ -8,6 +8,7 @@ import json
 import os
 import py_compile
 import shutil
+import stat
 import subprocess
 import sys
 import sysconfig
@@ -57,6 +58,7 @@ from scripts.backtest_chunk_trajectory import (
     _require_safe_preregistration_path,
     _require_safe_output_paths,
     _require_search_take_effect,
+    _tablebase_inventory,
     _validate_registry_search_values,
 )
 from scripts.check_c_extensions_fresh import extension_spec
@@ -1298,6 +1300,76 @@ def test_bootstrap_refits_exclude_the_target_fold_and_horizon(
     assert seen == 9
 
 
+def _synthetic_tablebase_directory(
+    path: str, *, wdl_count: int, dtz_count: int, inode_offset: int,
+) -> dict[str, Any]:
+    root_identity = {
+        "device": 1,
+        "inode": inode_offset,
+        "mtime_ns": 1,
+        "ctime_ns": 1,
+    }
+    identities = [
+        [f"w{index:03d}.rtbw", 1, 1, 1, 1, inode_offset + index + 1]
+        for index in range(wdl_count)
+    ] + [
+        [
+            f"z{index:03d}.rtbz", 1, 1, 1, 1,
+            inode_offset + wdl_count + index + 1,
+        ]
+        for index in range(dtz_count)
+    ]
+    identity_fields = [
+        "name", "size", "mtime_ns", "ctime_ns", "device", "inode",
+    ]
+    identity_document = json.dumps(
+        {
+            "root_identity": root_identity,
+            "file_identity_fields": identity_fields,
+            "file_identities": identities,
+        },
+        sort_keys=True,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "path": path,
+        "root_identity": root_identity,
+        "rtbw_count": wdl_count,
+        "rtbz_count": dtz_count,
+        "file_identity_count": len(identities),
+        "file_identity_fields": identity_fields,
+        "file_identities": identities,
+        "total_bytes": len(identities),
+        "inventory_sha256": hashlib.sha256(identity_document).hexdigest(),
+    }
+
+
+def _synthetic_syzygy_inventory() -> dict[str, Any]:
+    directories = [
+        _synthetic_tablebase_directory(
+            "/tb/syzygy_3-4-5", wdl_count=510, dtz_count=145,
+            inode_offset=10,
+        ),
+        _synthetic_tablebase_directory(
+            "/tb/syzygy_6", wdl_count=365, dtz_count=365,
+            inode_offset=10_000,
+        ),
+    ]
+    inventory_document = json.dumps(
+        directories, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "schema": "deepfin.syzygy_inventory.v2",
+        "identity_method": "no_follow_device_inode_size_mtime_ctime",
+        "path": "/tb/syzygy_3-4-5:/tb/syzygy_6",
+        "rtbw_count": 875,
+        "rtbz_count": 510,
+        "directories": directories,
+        "inventory_sha256": hashlib.sha256(inventory_document).hexdigest(),
+    }
+
+
 def _write_bank(path: Path, *, correct_gap: bool) -> Path:
     board = chess.Board()
     _ucis, legal_actions = legal_full_indices(board)
@@ -1738,17 +1810,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "passed": True, "changed": [], "final_git_sha": "a" * 40,
             "final_git_dirty": False,
         },
-        "syzygy": {
-            "path": "/tb/syzygy_3-4-5:/tb/syzygy_6",
-            "rtbw_count": 875,
-            "rtbz_count": 510,
-            "directories": [
-                {"path": "/tb/syzygy_3-4-5", "rtbw_count": 510, "rtbz_count": 145,
-                 "total_bytes": 1, "inventory_sha256": "f" * 64},
-                {"path": "/tb/syzygy_6", "rtbw_count": 365, "rtbz_count": 365,
-                 "total_bytes": 1, "inventory_sha256": "1" * 64},
-            ],
-        },
+        "syzygy": _synthetic_syzygy_inventory(),
         "row_count": 4,
         "chunk_count": 4,
         "position_count": 1,
@@ -2806,6 +2868,148 @@ def test_loader_records_actual_walker_tablebase_semantics(
     meta.write_text(json.dumps(manifest))
 
     with pytest.raises(ValueError, match="production Syzygy probe"):
+        load_transitions(bank)
+
+
+def test_tablebase_inventory_binds_restored_mtime_content_mutation(
+    tmp_path: Path,
+) -> None:
+    tablebases = tmp_path / "tablebases"
+    tablebases.mkdir()
+    table_file = tablebases / "KQvK.rtbw"
+    table_file.write_bytes(b"first identity")
+    before_stat = table_file.stat()
+    before = _tablebase_inventory(str(tablebases))
+
+    table_file.write_bytes(b"other identity")
+    os.utime(
+        table_file,
+        ns=(before_stat.st_atime_ns, before_stat.st_mtime_ns),
+        follow_symlinks=False,
+    )
+    after_stat = table_file.stat()
+    after = _tablebase_inventory(str(tablebases))
+
+    assert after_stat.st_size == before_stat.st_size
+    assert after_stat.st_mtime_ns == before_stat.st_mtime_ns
+    assert after_stat.st_ctime_ns != before_stat.st_ctime_ns
+    assert after != before
+    assert (
+        after["directories"][0]["file_identities"][0][3]
+        != before["directories"][0]["file_identities"][0][3]
+    )
+
+
+def test_tablebase_inventory_rejects_symlinked_root(tmp_path: Path) -> None:
+    tablebases = tmp_path / "tablebases"
+    tablebases.mkdir()
+    (tablebases / "KQvK.rtbw").write_bytes(b"table")
+    alias = tmp_path / "tablebase-alias"
+    alias.symlink_to(tablebases, target_is_directory=True)
+
+    with pytest.raises(SystemExit, match="symlink"):
+        _tablebase_inventory(str(alias))
+
+
+def test_tablebase_inventory_rejects_symlinked_parent_directory(
+    tmp_path: Path,
+) -> None:
+    real_parent = tmp_path / "real-parent"
+    tablebases = real_parent / "tablebases"
+    tablebases.mkdir(parents=True)
+    (tablebases / "KQvK.rtbw").write_bytes(b"table")
+    alias = tmp_path / "parent-alias"
+    alias.symlink_to(real_parent, target_is_directory=True)
+
+    with pytest.raises(SystemExit, match="symlink"):
+        _tablebase_inventory(str(alias / "tablebases"))
+
+
+@pytest.mark.parametrize("target_is_directory", [False, True])
+def test_tablebase_inventory_rejects_symlinked_entries(
+    tmp_path: Path, target_is_directory: bool,
+) -> None:
+    tablebases = tmp_path / "tablebases"
+    tablebases.mkdir()
+    if target_is_directory:
+        target = tmp_path / "other-tablebases"
+        target.mkdir()
+        alias = tablebases / "other"
+    else:
+        target = tmp_path / "other.rtbw"
+        target.write_bytes(b"table")
+        alias = tablebases / "KQvK.rtbw"
+    alias.symlink_to(target, target_is_directory=target_is_directory)
+
+    with pytest.raises(SystemExit, match="symlink"):
+        _tablebase_inventory(str(tablebases))
+
+
+def test_tablebase_inventory_rejects_nonregular_entries(tmp_path: Path) -> None:
+    tablebases = tmp_path / "tablebases"
+    tablebases.mkdir()
+    (tablebases / "nested").mkdir()
+
+    with pytest.raises(SystemExit, match="regular files"):
+        _tablebase_inventory(str(tablebases))
+
+
+def test_tablebase_inventory_rejects_directory_change_during_traversal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tablebases = tmp_path / "tablebases"
+    tablebases.mkdir()
+    (tablebases / "KQvK.rtbw").write_bytes(b"table")
+    target_inode = tablebases.stat().st_ino
+    real_fstat = os.fstat
+    target_calls = 0
+
+    def changing_fstat(file_descriptor: int) -> os.stat_result | SimpleNamespace:
+        nonlocal target_calls
+        observed = real_fstat(file_descriptor)
+        if stat.S_ISDIR(observed.st_mode) and observed.st_ino == target_inode:
+            target_calls += 1
+            if target_calls == 3:
+                return SimpleNamespace(
+                    st_mode=observed.st_mode,
+                    st_size=observed.st_size,
+                    st_mtime_ns=observed.st_mtime_ns,
+                    st_ctime_ns=observed.st_ctime_ns + 1,
+                    st_dev=observed.st_dev,
+                    st_ino=observed.st_ino,
+                )
+        return observed
+
+    monkeypatch.setattr(os, "fstat", changing_fstat)
+
+    with pytest.raises(SystemExit, match="changed while it was inventoried"):
+        _tablebase_inventory(str(tablebases))
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["schema", "root_identity", "file_identity", "directory_digest", "global_digest"],
+)
+def test_loader_rejects_malformed_syzygy_identity_inventory(
+    tmp_path: Path, tamper: str,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    syzygy = manifest["syzygy"]
+    if tamper == "schema":
+        syzygy["schema"] = "deepfin.syzygy_inventory.v1"
+    elif tamper == "root_identity":
+        syzygy["directories"][0]["root_identity"].pop("ctime_ns")
+    elif tamper == "file_identity":
+        syzygy["directories"][0]["file_identities"][0][3] += 1
+    elif tamper == "directory_digest":
+        syzygy["directories"][0]["inventory_sha256"] = "0" * 64
+    else:
+        syzygy["inventory_sha256"] = "0" * 64
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="production Syzygy provenance"):
         load_transitions(bank)
 
 
