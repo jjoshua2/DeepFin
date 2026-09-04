@@ -73515,3 +73515,32 @@ independent review; no N1/S1 audit or training observation exists yet.**
   require mean drift at most 0.0002 and maximum drift at most 0.005; otherwise
   the arm fails closed before training. This quantization rule is shared by N1
   and S1 and does not create an axis difference.
+
+**2026-09-04 15:02Z — N1/S1 FROZEN-AUDIT READOUT: both PASS and are admitted
+to their separately preregistered full-corpus trains.**
+
+- **N1 breadth (`near-max-ratio=0.50`, BT4 temperature 1.0):** candidate minus
+  source expected deep-SF regret is **-3.0584 cp [95% CI -4.0939, -2.1283]**;
+  top-1 regret is **-5.1820 cp [-7.0251, -3.4942]**. The set is wider than
+  exact ties on 43/4,000 rows and changes 28 unique-source-maximum rows, so the
+  intended breadth axis is realized. Mean/max post-float16 selected-mass drift
+  is 0.00000961/0.00024414, inside the frozen bounds. Verdict
+  `graduate_win`, treatment invariants pass, and `training_permitted: true`.
+  Immutable receipt
+  `/home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_near050_t100_v1.json`,
+  SHA-256 `8abca4a97d8fa5da9917c182a456c0331583fa67ff7dfff0dcb0b9f5e5577223`.
+- **S1 sharpness (exact ties, BT4 temperature 0.50):** candidate minus source
+  expected regret is **-3.9424 cp [-5.2252, -2.7807]**; top-1 regret is
+  **-5.0575 cp [-6.8955, -3.3827]**. It changes zero unique-source-maximum
+  rows and has zero stored top-1 mismatches versus temperature 1.0. Mean/max
+  post-float16 selected-mass drift is 0.00000913/0.00036621. Verdict
+  `graduate_win`, treatment invariants pass, and `training_permitted: true`.
+  Immutable receipt
+  `/home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_toptie_t050_v1.json`,
+  SHA-256 `8cde6a10e35a23e91134850fa7d07ee8d5a0e9fd72e597b4c5e7a4bdfd4700ed`.
+- Mechanism-only context, not the deciding yardstick: versus the already
+  admitted unsharpened top-tie audit, N1 improves expected regret by another
+  0.194 cp and top-1 regret by 0.125 cp; S1 improves expected regret by another
+  1.078 cp while leaving top-1 regret exactly unchanged, as a ranking-preserving
+  sharpness change should. The preregistered 1,000-game arenas, not these
+  incremental audit differences, decide whether either arm advances.
