@@ -473,14 +473,7 @@ def _require_new_output_pair(
         raise SystemExit(
             "--overwrite is disabled for trajectory evidence; choose a new versioned --out"
         )
-    with (
-        _retained_parent(meta_path) as manifest_parent_fd,
-        _retained_output_parent(
-            output_path,
-            meta_path,
-            manifest_parent_fd=manifest_parent_fd,
-        ) as output_parent_fd,
-    ):
+    with _retained_parent(meta_path) as manifest_parent_fd:
         if _manifest_recovery_is_invalid(
             meta_path, parent_fd=manifest_parent_fd,
         ):
@@ -488,13 +481,23 @@ def _require_new_output_pair(
                 f"manifest recovery was invalidated for {output_path}; "
                 "choose a new versioned --out"
             )
-        return _require_new_output_pair_at_parent(
-            output_path,
-            meta_path,
-            overwrite=overwrite,
-            manifest_parent_fd=manifest_parent_fd,
-            output_parent_fd=output_parent_fd,
-        )
+        with (
+            _quarantine_manifest_recovery_on_integrity_failure(
+                meta_path, parent_fd=manifest_parent_fd,
+            ),
+            _retained_output_parent(
+                output_path,
+                meta_path,
+                manifest_parent_fd=manifest_parent_fd,
+            ) as output_parent_fd,
+        ):
+            return _require_new_output_pair_at_parent(
+                output_path,
+                meta_path,
+                overwrite=overwrite,
+                manifest_parent_fd=manifest_parent_fd,
+                output_parent_fd=output_parent_fd,
+            )
 
 
 def _require_new_output_pair_at_parent(

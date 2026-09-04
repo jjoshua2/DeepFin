@@ -5752,6 +5752,46 @@ def test_disappeared_manifest_parent_is_quarantined_across_retry(
     assert json.loads(pending_meta.read_text()) == attacker_manifest
 
 
+def test_disappeared_output_parent_during_acquisition_is_quarantined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import chunk_trajectory_publication as publication
+
+    output, meta, pending_output, pending_meta, manifest = (
+        _prepare_pending_manifest_recovery(tmp_path, bank_published=False)
+    )
+    output_parent = output.parent
+    moved_parent = tmp_path / "moved-bank"
+    real_open_parent = publication._open_parent
+    injected = False
+
+    def disappear_before_output_parent_open(path: Path) -> int:
+        nonlocal injected
+        if not injected and path == output:
+            injected = True
+            output_parent.rename(moved_parent)
+        return real_open_parent(path)
+
+    monkeypatch.setattr(publication, "_open_parent", disappear_before_output_parent_open)
+    with pytest.raises(SystemExit, match="cannot open containing directory"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    invalid = publication._invalid_manifest_path(meta)
+    assert invalid.exists()
+    moved_parent.rename(output_parent)
+    attacker_manifest = {**manifest, "tampered": True}
+    pending_meta.write_text(json.dumps(attacker_manifest))
+    monkeypatch.setattr(publication, "_open_parent", real_open_parent)
+
+    with pytest.raises(SystemExit, match="manifest recovery was invalidated"):
+        publication._require_new_output_pair(output, meta, overwrite=False)
+
+    assert pending_output.exists()
+    assert not output.exists()
+    assert not meta.exists()
+    assert json.loads(pending_meta.read_text()) == attacker_manifest
+
+
 def test_invalid_marker_stat_io_failure_cannot_publish_pending_pair(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
