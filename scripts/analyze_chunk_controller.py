@@ -33,7 +33,7 @@ import platform
 import subprocess
 import sys
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from itertools import pairwise
 from pathlib import Path, PurePosixPath
@@ -102,6 +102,148 @@ def _score(cp: float) -> float:
         return 1.0 / (1.0 + math.exp(-exponent))
     exp_value = math.exp(exponent)
     return exp_value / (1.0 + exp_value)
+
+
+def _trajectory_reference_censoring(
+    key: str, rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    """Describe finite-MultiPV censoring without discarding any observations."""
+    listed_rows: list[bool] = []
+    unlisted_rows: list[dict[str, Any]] = []
+    for index, row in enumerate(rows, start=1):
+        actions = row.get("root_actions", row.get("actions"))
+        listed = row.get(
+            "root_action_reference_listed", row.get("action_reference_listed"),
+        )
+        emitted = row.get("emitted_action")
+        if (
+            not isinstance(actions, list)
+            or not isinstance(listed, list)
+            or len(actions) != len(listed)
+            or any(not isinstance(value, bool) for value in listed)
+            or not isinstance(emitted, int)
+            or isinstance(emitted, bool)
+        ):
+            raise ValueError(f"{key}: malformed emitted-reference censoring evidence")
+        try:
+            emitted_index = actions.index(emitted)
+        except ValueError as exc:
+            raise ValueError(f"{key}: emitted action is absent from root actions") from exc
+        emitted_listed = listed[emitted_index]
+        explicit = row.get("emitted_reference_listed")
+        if not isinstance(explicit, bool) or explicit is not emitted_listed:
+            raise ValueError(f"{key}: emitted-reference censoring flag disagrees with root data")
+        listed_rows.append(emitted_listed)
+        if not emitted_listed:
+            unlisted_rows.append({
+                "chunk": int(row.get("chunk", index)),
+                "nodes": int(row["nodes"]),
+                "emitted_action": emitted,
+                "uci": str(row["uci"]),
+            })
+    censored_transitions = [
+        {
+            "from_chunk": int(lower.get("chunk", index)),
+            "to_chunk": int(upper.get("chunk", index + 1)),
+            "horizon_nodes": int(upper["nodes"]),
+        }
+        for index, (lower, upper) in enumerate(pairwise(rows), start=1)
+        if not listed_rows[index - 1] or not listed_rows[index]
+    ]
+    if not unlisted_rows:
+        return None
+    return {
+        "key": key,
+        "unlisted_emitted_rows": unlisted_rows,
+        "censored_transitions": censored_transitions,
+    }
+
+
+def _reference_censoring_summary(
+    affected_trajectories: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Return deterministic bank-level diagnostics for censored decision labels."""
+    affected = sorted(
+        (dict(entry) for entry in affected_trajectories),
+        key=lambda entry: str(entry["key"]),
+    )
+    unlisted_rows = sum(len(entry["unlisted_emitted_rows"]) for entry in affected)
+    censored_transitions = sum(len(entry["censored_transitions"]) for entry in affected)
+    return {
+        "kind": "finite_multipv_unlisted_emitted_move",
+        "scope": "completed_trajectory_decision_labels",
+        "decision_labels_require_listed_emitted_moves": True,
+        "passed": not affected,
+        "affected_trajectory_count": len(affected),
+        "unlisted_emitted_row_count": unlisted_rows,
+        "censored_transition_count": censored_transitions,
+        "affected_trajectories": affected,
+    }
+
+
+def _valid_reference_censoring(value: Any) -> bool:
+    """Validate the self-contained finite-MultiPV censoring audit trail."""
+    if (
+        not isinstance(value, dict)
+        or value.get("kind") != "finite_multipv_unlisted_emitted_move"
+        or value.get("scope") != "completed_trajectory_decision_labels"
+        or value.get("decision_labels_require_listed_emitted_moves") is not True
+        or not isinstance(value.get("passed"), bool)
+        or not _nonnegative_int(value.get("affected_trajectory_count"))
+        or not _nonnegative_int(value.get("unlisted_emitted_row_count"))
+        or not _nonnegative_int(value.get("censored_transition_count"))
+        or not isinstance(value.get("affected_trajectories"), list)
+    ):
+        return False
+    affected = value["affected_trajectories"]
+    if (
+        value["affected_trajectory_count"] != len(affected)
+        or value["passed"] is not (len(affected) == 0)
+    ):
+        return False
+    keys: list[str] = []
+    unlisted_count = 0
+    transition_count = 0
+    for trajectory in affected:
+        if (
+            not isinstance(trajectory, dict)
+            or not isinstance(trajectory.get("key"), str)
+            or not trajectory.get("key")
+            or not isinstance(trajectory.get("unlisted_emitted_rows"), list)
+            or not trajectory["unlisted_emitted_rows"]
+            or not isinstance(trajectory.get("censored_transitions"), list)
+        ):
+            return False
+        keys.append(trajectory["key"])
+        for row in trajectory["unlisted_emitted_rows"]:
+            if (
+                not isinstance(row, dict)
+                or not _positive_int(row.get("chunk"))
+                or not _positive_int(row.get("nodes"))
+                or not isinstance(row.get("emitted_action"), int)
+                or isinstance(row.get("emitted_action"), bool)
+                or not isinstance(row.get("uci"), str)
+                or not row.get("uci")
+            ):
+                return False
+        for transition in trajectory["censored_transitions"]:
+            if (
+                not isinstance(transition, dict)
+                or not _positive_int(transition.get("from_chunk"))
+                or not _positive_int(transition.get("to_chunk"))
+                or not _positive_int(transition.get("horizon_nodes"))
+            ):
+                return False
+            if int(transition["to_chunk"]) != int(transition["from_chunk"]) + 1:
+                return False
+        unlisted_count += len(trajectory["unlisted_emitted_rows"])
+        transition_count += len(trajectory["censored_transitions"])
+    return bool(
+        len(keys) == len(set(keys))
+        and keys == sorted(keys)
+        and value["unlisted_emitted_row_count"] == unlisted_count
+        and value["censored_transition_count"] == transition_count
+    )
 
 
 @dataclass(frozen=True)
@@ -1092,6 +1234,21 @@ def _validate_decision_grade_row(
         action_reference_values, expected_reference, rtol=1e-10, atol=1e-12,
     ):
         raise ValueError(f"{key}: action references disagree with raw deep reference")
+    try:
+        emitted_index = actions.index(int(row["emitted_action"]))
+    except ValueError as exc:
+        raise ValueError(f"{key}: emitted action is absent from root actions") from exc
+    emitted_reference_listed = row.get("emitted_reference_listed")
+    if (
+        not isinstance(emitted_reference_listed, bool)
+        or emitted_reference_listed is not expected_listed[emitted_index]
+    ):
+        raise ValueError(f"{key}: emitted-reference censoring flag is invalid")
+    if not emitted_reference_listed:
+        raise ValueError(
+            f"{key}: emitted move is absent from the finite MultiPV deep reference; "
+            "the decision label is censored"
+        )
     if require_full_root_support:
         expected_actions = {int(action) for action in legal_full_indices(board)[1]}
         if set(actions) != expected_actions:
@@ -1148,6 +1305,14 @@ def _require_manifest(
         failures.append(f"analysis_scope={manifest.get('analysis_scope')!r}")
     if manifest.get("clock_conditioning_available") is not False:
         failures.append("clock scope is ambiguous")
+    reference_censoring = manifest.get("reference_censoring")
+    if not _valid_reference_censoring(reference_censoring):
+        failures.append("reference censoring provenance is incomplete")
+    elif (
+        manifest.get("decision_grade") is True
+        and reference_censoring.get("passed") is not True
+    ):
+        failures.append("finite-MultiPV censoring affects decision labels")
     if manifest.get("elapsed_measurement") != {
         "kind": "callback_instrumented_wall_time",
         "usable_for_controller_or_cost_analysis": False,
@@ -1779,6 +1944,21 @@ def load_transitions(
         by_key[str(row["key"])].append(row)
     if not methodology_smoke and len(by_key) != manifest.get("position_count"):
         raise ValueError("unique trajectory count disagrees with manifest position_count")
+    if not methodology_smoke:
+        censoring_details = [
+            detail
+            for key, trajectory in sorted(by_key.items())
+            if (
+                detail := _trajectory_reference_censoring(
+                    key, sorted(trajectory, key=lambda row: int(row["chunk"])),
+                )
+            ) is not None
+        ]
+        recomputed_censoring = _reference_censoring_summary(censoring_details)
+        if recomputed_censoring != manifest.get("reference_censoring"):
+            raise ValueError(
+                "finite-MultiPV reference censoring disagrees with raw trajectory rows"
+            )
     excluded_keys = {
         str(entry["key"])
         for entry in manifest.get("excluded_positions", [])
@@ -1899,6 +2079,7 @@ def load_transitions(
         "analysis_scope": "fresh_tree_fixed_node_horizons_only",
         "clock_conditioning_tested": False,
         "cross_move_tree_reuse_tested": False,
+        "reference_censoring": manifest.get("reference_censoring"),
         "manifest": manifest,
     }
     return transitions, info
@@ -2002,34 +2183,57 @@ def _evaluation_fold_ids(
     return result
 
 
+def _grouped_analysis_preflight(
+    transitions: Sequence[Transition], n_folds: int,
+) -> dict[str, Any]:
+    """Explain whether grouped held-horizon rollout analysis is structurally valid."""
+    reasons: list[str] = []
+    groups = np.asarray([transition.group_id for transition in transitions], dtype=str)
+    if len(set(groups.tolist())) < 2:
+        reasons.append("insufficient_source_game_groups")
+    horizons = sorted({transition.horizon for transition in transitions})
+    if len(horizons) < 2:
+        reasons.append("insufficient_held_horizons")
+    if transitions:
+        try:
+            _rollout_layout(transitions)
+        except ValueError:
+            reasons.append("nonrectangular_key_by_horizon_layout")
+    if not reasons:
+        for horizon in horizons:
+            target_indices = np.flatnonzero(
+                np.asarray([transition.horizon == horizon for transition in transitions])
+            )
+            try:
+                folds = grouped_folds(groups[target_indices].tolist(), n_folds)
+            except ValueError:
+                reasons.append("insufficient_horizon_source_game_groups")
+                break
+            for test_local in folds:
+                test_groups = set(groups[target_indices[test_local]].tolist())
+                training_rows = sum(
+                    transition.horizon != horizon
+                    and transition.group_id not in test_groups
+                    for transition in transitions
+                )
+                if training_rows < 2:
+                    reasons.append("insufficient_held_horizon_training_rows")
+                    break
+            if reasons:
+                break
+    return {
+        "passed": not reasons,
+        "reasons": reasons,
+        "source_game_group_count": len(set(groups.tolist())),
+        "horizon_count": len(horizons),
+    }
+
+
 def _grouped_analysis_possible(
     transitions: Sequence[Transition], n_folds: int,
 ) -> bool:
-    """Whether held-horizon grouped fitting has enough rows in every split."""
-    groups = np.asarray([transition.group_id for transition in transitions], dtype=str)
-    if len(set(groups.tolist())) < 2:
-        return False
-    horizons = sorted({transition.horizon for transition in transitions})
-    if len(horizons) < 2:
-        return False
-    for horizon in horizons:
-        target_indices = np.flatnonzero(
-            np.asarray([transition.horizon == horizon for transition in transitions])
-        )
-        try:
-            folds = grouped_folds(groups[target_indices].tolist(), n_folds)
-        except ValueError:
-            return False
-        for test_local in folds:
-            test_groups = set(groups[target_indices[test_local]].tolist())
-            training_rows = sum(
-                transition.horizon != horizon
-                and transition.group_id not in test_groups
-                for transition in transitions
-            )
-            if training_rows < 2:
-                return False
-    return True
+    """Whether held-horizon grouped fitting has a valid rollout layout and splits."""
+    return bool(_grouped_analysis_preflight(transitions, n_folds)["passed"])
 
 
 def _inner_alpha(
@@ -3031,7 +3235,8 @@ def main() -> None:
         source_game_group_count >= _MIN_DECISION_GRADE_SOURCE_GAMES
     )
     result: dict[str, Any]
-    grouped_analysis_possible = _grouped_analysis_possible(transitions, args.folds)
+    grouped_analysis_preflight = _grouped_analysis_preflight(transitions, args.folds)
+    grouped_analysis_possible = bool(grouped_analysis_preflight["passed"])
     if grouped_analysis_possible:
         result = analyze(
             transitions,
@@ -3044,13 +3249,13 @@ def main() -> None:
             min_bootstrap_valid_fraction=args.min_bootstrap_valid_fraction,
         )
     else:
-        # One source game cannot form even a methodology-only grouped split.
+        reasons = grouped_analysis_preflight["reasons"]
         result = {
             "statistical_gate_passed": False,
             "scope": "fresh_tree_fixed_node_horizons_only",
             "clock_controller_authorized": False,
             "cross_move_tree_reuse_tested": False,
-            "analysis_skipped": "insufficient_source_game_groups",
+            "analysis_skipped": reasons[0] if reasons else "grouped_analysis_unavailable",
         }
     analyzer = _analyzer_provenance(
         analyzer_start_sources, analyzer_start_git_sha, analyzer_start_git_dirty,
@@ -3086,6 +3291,8 @@ def main() -> None:
     result["analyzer_matches_producer_commit"] = analyzer_matches_producer_commit
     result["source_game_group_count"] = source_game_group_count
     result["grouped_analysis_possible"] = grouped_analysis_possible
+    result["grouped_analysis_preflight"] = grouped_analysis_preflight
+    result["reference_censoring"] = info.get("reference_censoring")
     result["minimum_decision_grade_source_games"] = _MIN_DECISION_GRADE_SOURCE_GAMES
     result["source_group_resolution_passed"] = source_group_resolution_passed
     result["evidence_decision_grade"] = decision_grade

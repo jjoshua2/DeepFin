@@ -321,7 +321,7 @@ def test_source_game_group_unifies_one_game_split_across_shards() -> None:
 def test_trajectory_producer_uses_production_evaluator_stack_and_readback() -> None:
     from scripts import backtest_chunk_trajectory as producer
 
-    source = inspect.getsource(producer.main)
+    source = inspect.getsource(producer._main)
     module_source = inspect.getsource(producer)
     assert "LocalModelEvaluator" not in source
     assert "DirectGPUEvaluator" in source
@@ -572,6 +572,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
             "root_action_regret_cp": action_regret,
             "root_action_reference_cp": action_reference,
             "root_action_reference_listed": action_listed,
+            "emitted_reference_listed": True,
             "emitted_action": emitted, "uci": "a2a3", "bestmove_flip": False,
             "pv_actions": [emitted], "pv_uci": ["a2a3"],
             "stable_chunks": 0, "visit_entropy": entropy, "q_gap": -0.1,
@@ -622,6 +623,16 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "decision_grade": True,
         "analysis_scope": "fixed_node_horizons_only",
         "clock_conditioning_available": False,
+        "reference_censoring": {
+            "kind": "finite_multipv_unlisted_emitted_move",
+            "scope": "completed_trajectory_decision_labels",
+            "decision_labels_require_listed_emitted_moves": True,
+            "passed": True,
+            "affected_trajectory_count": 0,
+            "unlisted_emitted_row_count": 0,
+            "censored_transition_count": 0,
+            "affected_trajectories": [],
+        },
         "elapsed_measurement": {
             "kind": "callback_instrumented_wall_time",
             "usable_for_controller_or_cost_analysis": False,
@@ -1256,6 +1267,135 @@ def test_loader_requires_trajectory_identity_and_labels_to_stay_fixed(
     _rewrite_bank(bank, meta, rows)
 
     with pytest.raises(ValueError, match="trajectory-invariant fields change"):
+        load_transitions(bank)
+
+
+def _mark_emitted_reference_unlisted(row: dict[str, object]) -> None:
+    actions = row["root_actions"]
+    listed = row["root_action_reference_listed"]
+    references = row["root_action_reference_cp"]
+    assert isinstance(actions, list)
+    assert isinstance(listed, list)
+    assert isinstance(references, list)
+    emitted_index = actions.index(row["emitted_action"])
+    listed[emitted_index] = False
+    references[emitted_index] = min(float(value) for value in references)
+    row["emitted_reference_listed"] = False
+    move_cp = row["deep_reference_move_cp"]
+    assert isinstance(move_cp, dict)
+    move_cp.pop(str(row["uci"]))
+
+
+@pytest.mark.parametrize(
+    ("listed", "expected_unlisted_rows"),
+    [((True, False), 1), ((False, False), 2)],
+    ids=("listed-unlisted", "unlisted-unlisted"),
+)
+def test_reference_censoring_marks_each_adjacent_unlisted_pair_once(
+    listed: tuple[bool, bool], expected_unlisted_rows: int,
+) -> None:
+    rows = [
+        {
+            "chunk": chunk,
+            "nodes": chunk * 50,
+            "actions": [7],
+            "action_reference_listed": [is_listed],
+            "emitted_action": 7,
+            "emitted_reference_listed": is_listed,
+            "uci": "a2a3",
+        }
+        for chunk, is_listed in enumerate(listed, start=1)
+    ]
+
+    details = controller_module._trajectory_reference_censoring("position", rows)
+
+    assert details is not None
+    summary = controller_module._reference_censoring_summary([details])
+    assert summary["unlisted_emitted_row_count"] == expected_unlisted_rows
+    assert summary["censored_transition_count"] == 1
+    assert details["censored_transitions"] == [{
+        "from_chunk": 1, "to_chunk": 2, "horizon_nodes": 100,
+    }]
+
+
+@pytest.mark.parametrize(
+    ("unlisted_indices", "expected_unlisted_rows", "expected_censored_transitions"),
+    [
+        ((1,), 1, 2),
+        ((0, 1), 2, 2),
+    ],
+    ids=("listed-unlisted", "unlisted-unlisted"),
+)
+def test_finite_multipv_censoring_preserves_rows_but_disqualifies_the_bank(
+    tmp_path: Path,
+    unlisted_indices: tuple[int, ...],
+    expected_unlisted_rows: int,
+    expected_censored_transitions: int,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    rows = [json.loads(line) for line in bank.read_text().splitlines()]
+    for index in unlisted_indices:
+        _mark_emitted_reference_unlisted(rows[index])
+    details = controller_module._trajectory_reference_censoring(
+        str(rows[0]["key"]), rows,
+    )
+    assert details is not None
+    censoring = controller_module._reference_censoring_summary([details])
+    assert censoring["unlisted_emitted_row_count"] == expected_unlisted_rows
+    assert censoring["censored_transition_count"] == expected_censored_transitions
+    assert censoring["passed"] is False
+    _rewrite_bank(bank, meta, rows)
+    manifest = json.loads(meta.read_text())
+    manifest["decision_grade"] = False
+    manifest["reference_censoring"] = censoring
+    meta.write_text(json.dumps(manifest))
+
+    transitions, info = load_transitions(bank, methodology_smoke=True)
+
+    assert len(transitions) == 3
+    assert info["decision_grade"] is False
+    assert info["reference_censoring"] == censoring
+    assert len(bank.read_text().splitlines()) == 4
+
+
+def test_decision_grade_row_rejects_an_unlisted_emitted_move(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    _write_bank(bank, correct_gap=True)
+    row = json.loads(bank.read_text().splitlines()[0])
+    _mark_emitted_reference_unlisted(row)
+
+    with pytest.raises(ValueError, match="decision label is censored"):
+        controller_module._validate_decision_grade_row(
+            row, 1, require_full_root_support=True,
+        )
+
+
+def test_decision_grade_manifest_rejects_finite_multipv_censoring(tmp_path: Path) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    manifest["reference_censoring"] = {
+        "kind": "finite_multipv_unlisted_emitted_move",
+        "scope": "completed_trajectory_decision_labels",
+        "decision_labels_require_listed_emitted_moves": True,
+        "passed": False,
+        "affected_trajectory_count": 1,
+        "unlisted_emitted_row_count": 1,
+        "censored_transition_count": 1,
+        "affected_trajectories": [{
+            "key": "position",
+            "unlisted_emitted_rows": [{
+                "chunk": 1, "nodes": 50, "emitted_action": 1, "uci": "a2a3",
+            }],
+            "censored_transitions": [{
+                "from_chunk": 1, "to_chunk": 2, "horizon_nodes": 100,
+            }],
+        }],
+    }
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="finite-MultiPV censoring"):
         load_transitions(bank)
 
 
@@ -2305,6 +2445,57 @@ def test_excluded_position_evidence_preserves_partial_raw_snapshots() -> None:
     assert evidence["search_result"] == {"nodes": 50}
 
 
+def test_post_collection_failure_preserves_complete_pending_bank_with_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import backtest_chunk_trajectory as producer
+
+    output = tmp_path / "bank.jsonl"
+    pending_output = producer._pending_output_path(output)
+    meta = Path(str(output) + ".meta.json")
+    pending_meta = producer._pending_manifest_path(meta)
+    pending_output.write_text("row one\nrow two\n")
+    censoring = controller_module._reference_censoring_summary([])
+
+    def fail_after_collection() -> None:
+        producer._ACTIVE_PENDING_EVIDENCE = {
+            "collection_complete": True,
+            "pending_output": pending_output,
+            "output": output,
+            "pending_manifest": pending_meta,
+            "output_locks": (),
+            "provenance": {"schema": producer._SCHEMA},
+            "row_count": 2,
+            "position_count": 1,
+            "requested_position_count": 1,
+            "requested_max_positions": 1,
+            "excluded_positions": [],
+            "reference_censoring_details": [],
+        }
+        raise RuntimeError("final provenance snapshot failed")
+
+    monkeypatch.setattr(producer, "_main", fail_after_collection)
+
+    with pytest.raises(RuntimeError, match="final provenance snapshot failed"):
+        producer.main()
+
+    assert pending_output.read_text() == "row one\nrow two\n"
+    manifest = json.loads(pending_meta.read_text())
+    assert manifest["decision_grade"] is False
+    assert manifest["complete"] is False
+    assert manifest["trajectory_collection_complete"] is True
+    assert manifest["failure_stage"] == "post_collection_finalization"
+    assert manifest["finalization_error"] == {
+        "type": "RuntimeError",
+        "message": "final provenance snapshot failed",
+    }
+    assert manifest["raw_observations_preserved"] is True
+    assert manifest["reference_censoring"] == censoring
+    assert manifest["output"] == producer._prepared_output_artifact(
+        pending_output, output,
+    )
+
+
 def test_producer_rejects_foreign_loaded_python_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2669,6 +2860,72 @@ def test_grouped_analysis_requires_multiple_held_horizon_training_rows() -> None
     assert controller_module._grouped_analysis_possible(
         two_games_one_horizon, 2,
     ) is False
+
+
+def test_analyzer_main_reports_nonrectangular_smoke_bank_without_entering_rollout(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
+) -> None:
+    uneven = [
+        _transition(key, game, horizon, float(game), current=True)
+        for key, game, horizons in (
+            ("first", 1, (100, 150, 200)),
+            ("second", 2, (100, 150, 200)),
+            ("short", 3, (100, 150)),
+        )
+        for horizon in horizons
+    ]
+    info = {
+        "decision_grade": False,
+        "preregistered_design": False,
+        "manifest": {"producer_git_sha": "a" * 40},
+    }
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "analyze_chunk_controller",
+            "--in", str(tmp_path / "bank.jsonl"),
+            "--meta", str(tmp_path / "bank.jsonl.meta.json"),
+            "--methodology-smoke",
+            "--folds", "2",
+            "--bootstrap-samples", "1",
+            "--allocation-fraction", "0.5",
+        ],
+    )
+    monkeypatch.setattr(controller_module, "_analyzer_source_artifacts", dict)
+    monkeypatch.setattr(controller_module, "_git_state", lambda: ("b" * 40, False))
+    monkeypatch.setattr(controller_module, "_require_safe_output_path", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        controller_module,
+        "load_transitions",
+        lambda *_a, **_k: (uneven, info),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "analyze",
+        lambda *_a, **_k: pytest.fail("nonrectangular bank entered grouped rollout"),
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "_analyzer_provenance",
+        lambda *_a: {
+            "decision_grade": True,
+            "git_sha": "b" * 40,
+            "final_git_sha": "b" * 40,
+        },
+    )
+
+    controller_module.main()
+
+    analysis = json.loads(capsys.readouterr().out)["analysis"]
+    assert analysis["analysis_skipped"] == "nonrectangular_key_by_horizon_layout"
+    assert analysis["grouped_analysis_possible"] is False
+    assert analysis["grouped_analysis_preflight"] == {
+        "passed": False,
+        "reasons": ["nonrectangular_key_by_horizon_layout"],
+        "source_game_group_count": 3,
+        "horizon_count": 3,
+    }
 
 
 def test_analyze_cannot_advance_with_an_undersampled_interval(

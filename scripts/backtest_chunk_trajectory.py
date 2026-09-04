@@ -104,7 +104,9 @@ from scripts.analyze_chunk_controller import (
     _complexity_continue,
     _preregistration_payload,
     _preregistered_design_failures,
+    _reference_censoring_summary,
     _score,
+    _trajectory_reference_censoring,
     _update_stability,
 )
 from scripts.backtest_time_value import _stratified
@@ -126,6 +128,7 @@ _REQUIRED_PRODUCER_SOURCE_MODULES = {
     "chess_anti_engine.uci.search",
     "chess_anti_engine.uci.model_loader",
 }
+_ACTIVE_PENDING_EVIDENCE: Any = None
 
 
 def _entropy(shares: np.ndarray) -> float:
@@ -532,7 +535,8 @@ def _find_direct_evaluator(evaluator: Any) -> Any:
     return current
 
 
-def main() -> None:
+def _main() -> None:
+    global _ACTIVE_PENDING_EVIDENCE
     ap = argparse.ArgumentParser(prog="backtest_chunk_trajectory")
     ap.add_argument("--checkpoint", default=None)
     ap.add_argument(
@@ -1448,12 +1452,25 @@ def main() -> None:
     n_rows = 0
     completed_positions = 0
     completed_group_ids: dict[str, str] = {}
+    reference_censoring_details: list[dict[str, Any]] = []
     excluded_positions: list[dict[str, Any]] = []
     started = time.perf_counter()
     collection_started = False
     active_position: Any | None = None
     active_snapshots: list[dict[str, Any]] = []
     active_search_result: dict[str, Any] | None = None
+    _ACTIVE_PENDING_EVIDENCE = {
+        "collection_complete": False,
+        "pending_output": tmp_path,
+        "output": args.out,
+        "pending_manifest": pending_meta_path,
+        "output_locks": output_locks,
+        "provenance": provenance,
+        "requested_position_count": len(positions),
+        "requested_max_positions": int(args.max_positions),
+        "excluded_positions": excluded_positions,
+        "reference_censoring_details": reference_censoring_details,
+    }
     try:
         with tmp_path.open("x") as fh:
             collection_started = True
@@ -1561,6 +1578,7 @@ def main() -> None:
                         )
                     regret_cp = _regret_by_action[int(best)]
                     emitted_reference_cp = _reference_by_action[int(best)][0]
+                    emitted_reference_listed = _reference_by_action[int(best)][1]
                     _s.append({
                         "nodes": total_nodes, "elapsed_ms": (time.perf_counter() - _t0) * 1000.0,
                         "emitted_action": int(best), "uci": uci,
@@ -1577,6 +1595,7 @@ def main() -> None:
                         "action_regret_cp": action_regret_cp,
                         "action_reference_cp": action_reference_cp,
                         "action_reference_listed": action_reference_listed,
+                        "emitted_reference_listed": emitted_reference_listed,
                         "pv_actions": pv_actions,
                         "pv_uci": pv_uci,
                         "tb_probes": int(getattr(installed_tb_probe, "probes", 0)),
@@ -1634,7 +1653,7 @@ def main() -> None:
                 final_regret = float(snaps[-1]["regret_cp"])
                 abort_last_best = -1
                 stable_chunks = 0
-                position_rows: list[str] = []
+                position_rows: list[dict[str, Any]] = []
                 for k, s in enumerate(snaps):
                     prev = snaps[k - 1] if k > 0 else None
                     flip = bool(prev is not None and s["uci"] != prev["uci"])
@@ -1681,6 +1700,7 @@ def main() -> None:
                         "root_action_regret_cp": s["action_regret_cp"],
                         "root_action_reference_cp": s["action_reference_cp"],
                         "root_action_reference_listed": s["action_reference_listed"],
+                        "emitted_reference_listed": s["emitted_reference_listed"],
                         "pv_actions": s["pv_actions"], "pv_uci": s["pv_uci"],
                         "tb_probes": s["tb_probes"], "tb_hits": s["tb_hits"],
                         "bestmove_flip": flip, "stable_chunks": stable_chunks,
@@ -1693,8 +1713,13 @@ def main() -> None:
                         "changes_to_final": bool(s["uci"] != final_uci),
                         "regret_vs_final_cp": float(s["regret_cp"]) - final_regret,
                     }
-                    position_rows.append(json.dumps(row, sort_keys=True) + "\n")
-                fh.write("".join(position_rows))
+                    position_rows.append(row)
+                censoring = _trajectory_reference_censoring(pos.key, position_rows)
+                if censoring is not None:
+                    reference_censoring_details.append(censoring)
+                fh.write("".join(
+                    json.dumps(row, sort_keys=True) + "\n" for row in position_rows
+                ))
                 n_rows += len(position_rows)
                 completed_positions += 1
                 completed_group_id = group_ids[pos.key]
@@ -1707,6 +1732,11 @@ def main() -> None:
                     print(f"[traj] {pi + 1}/{len(positions)}", flush=True)
                     if str(args.device).startswith("cuda"):
                         torch.cuda.empty_cache()
+        _ACTIVE_PENDING_EVIDENCE.update({
+            "collection_complete": True,
+            "row_count": n_rows,
+            "position_count": completed_positions,
+        })
     except BaseException as exc:
         if not collection_started:
             raise
@@ -1739,6 +1769,9 @@ def main() -> None:
                     "failure_stage": "trajectory_collection",
                     "collection_error": collection_error,
                     "raw_observations_preserved": True,
+                    "reference_censoring": _reference_censoring_summary(
+                        reference_censoring_details,
+                    ),
                     "row_count": n_rows,
                     "position_count": completed_positions,
                     "excluded_positions": excluded_positions,
@@ -1759,6 +1792,7 @@ def main() -> None:
     source_group_resolution_passed = _source_group_resolution_passed(
         completed_group_ids,
     )
+    reference_censoring = _reference_censoring_summary(reference_censoring_details)
     frozen_artifacts = {
         "producer_script": provenance["producer_script"],
         "publication_helper": provenance["publication_helper"],
@@ -1835,6 +1869,7 @@ def main() -> None:
             and incomplete_exclusions == 0
             and completed_positions > 0
             and source_group_resolution_passed
+            and reference_censoring["passed"]
             and artifact_stability["passed"]
         ),
         "complete": True,
@@ -1848,6 +1883,7 @@ def main() -> None:
         "source_game_group_count": source_game_group_count,
         "minimum_decision_grade_source_games": _MIN_DECISION_GRADE_SOURCE_GAMES,
         "source_group_resolution_passed": source_group_resolution_passed,
+        "reference_censoring": reference_censoring,
         "chunk_count": int(args.max_chunks),
         "runtime_seconds": time.perf_counter() - started,
         "elapsed_measurement": {
@@ -1909,6 +1945,78 @@ def main() -> None:
 
     print(f"[traj] wrote {n_rows} rows -> {args.out}")
     print(f"[traj] provenance -> {meta_path}")
+
+
+def _preserve_post_collection_failure(exc: BaseException) -> None:
+    """Best-effort diagnostic sidecar for a fully collected unpublished bank."""
+    state = _ACTIVE_PENDING_EVIDENCE
+    if not state or state.get("collection_complete") is not True:
+        return
+    pending_output = state.get("pending_output")
+    output = state.get("output")
+    pending_manifest = state.get("pending_manifest")
+    if (
+        not isinstance(pending_output, Path)
+        or not isinstance(output, Path)
+        or not isinstance(pending_manifest, Path)
+        or not pending_output.is_file()
+        or pending_manifest.exists()
+    ):
+        return
+    provenance = state.get("provenance")
+    excluded_positions = state.get("excluded_positions")
+    censoring_details = state.get("reference_censoring_details")
+    if (
+        not isinstance(provenance, dict)
+        or not isinstance(excluded_positions, list)
+        or not isinstance(censoring_details, list)
+    ):
+        return
+    try:
+        _write_json_staged(
+            pending_manifest,
+            {
+                **provenance,
+                "decision_grade": False,
+                "complete": False,
+                "trajectory_collection_complete": True,
+                "failure_stage": "post_collection_finalization",
+                "finalization_error": {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+                "raw_observations_preserved": True,
+                "row_count": state.get("row_count"),
+                "position_count": state.get("position_count"),
+                "requested_position_count": state.get("requested_position_count"),
+                "requested_max_positions": state.get("requested_max_positions"),
+                "excluded_position_count": len(excluded_positions),
+                "excluded_positions": excluded_positions,
+                "reference_censoring": _reference_censoring_summary(censoring_details),
+                "output": _prepared_output_artifact(pending_output, output),
+            },
+        )
+    except BaseException:
+        # Diagnostics must never replace the producer's original nonzero failure.
+        pass
+
+
+def main() -> None:
+    """Run collection while retaining complete pending evidence on late failures."""
+    global _ACTIVE_PENDING_EVIDENCE
+    _ACTIVE_PENDING_EVIDENCE = None
+    try:
+        _main()
+    except BaseException as exc:
+        _preserve_post_collection_failure(exc)
+        raise
+    finally:
+        state = _ACTIVE_PENDING_EVIDENCE
+        locks = state.get("output_locks") if isinstance(state, dict) else None
+        if isinstance(locks, tuple):
+            for output_lock in reversed(locks):
+                output_lock.close()
+        _ACTIVE_PENDING_EVIDENCE = None
 
 
 if __name__ == "__main__":
