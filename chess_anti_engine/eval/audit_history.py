@@ -269,6 +269,20 @@ class MatchedAuditRows:
         self._stored = data[stored_key]
         self._game_id = np.asarray(data["game_id"], dtype=np.int64)
         found = np.asarray(data["found"], dtype=bool)
+        # Older matched-row artifacts predate game-clustered readouts. They
+        # carry game_id values but not the authoritative optional-field mask;
+        # a storage fill value of zero is indistinguishable from real game 0,
+        # so those artifacts must be rebuilt before supplying cluster IDs.
+        self._has_game_id = (
+            np.asarray(data["has_game_id"], dtype=bool)
+            if "has_game_id" in data
+            else np.zeros(found.shape, dtype=bool)
+        )
+        if self._game_id.shape != found.shape or self._has_game_id.shape != found.shape:
+            raise SystemExit(
+                f"matched-rows index {self.path} has inconsistent game_id, "
+                "has_game_id, and found shapes"
+            )
         all_keys = [str(k) for k in data["key"]]
         self._index: dict[str, int] = {
             k: i for i, k in enumerate(all_keys) if found[i]
@@ -291,9 +305,22 @@ class MatchedAuditRows:
 
         Audit positions from the same game are not independent draws; a
         bootstrap that resamples positions rather than games understates its
-        own CI. -1 when the shard did not carry `game_id`.
+        own CI. This accessor is deliberately fail-closed: the value array's
+        fill is not evidence that the optional field was present, and making
+        every caller remember a separate mask check recreates that hazard.
         """
-        return int(self._game_id[self._row(key)])
+        row = self._row(key)
+        if not self._has_game_id[row]:
+            raise SystemExit(
+                f"matched-rows index {self.path} has no explicit game_id for "
+                f"{key!r}; rebuild it with the current match_audit_rows.py "
+                "before using game-clustered evidence"
+            )
+        return int(self._game_id[row])
+
+    def has_game_id(self, key: str) -> bool:
+        """Whether the source shard explicitly supplied this row's game ID."""
+        return bool(self._has_game_id[self._row(key)])
 
     def _row(self, key: str) -> int:
         i = self._index.get(str(key))

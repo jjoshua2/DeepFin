@@ -72881,7 +72881,7 @@ The sign reverses between τ lanes; the Round-3 "d11+ DEAD" line was a τ.02-lan
 - Hypothesis: the champion's rows trained on ZERO history while play fills 8 frames (`3db96659a`: 46.5% top-1 flips, +20.2 cp OOD penalty). Retraining the SAME rows with their true history repaired (schema 3, labels unchanged) either recovers strength (history was a bottleneck) or does not (history was a correctness bug only). Prereg: "LEGACY REPAIR PREREG v2" PRIMARY causal arm (:72322) + §5 ARM-B PIVOT (:72707) — decision table and co-requirements pinned there, unchanged here.
 - ONE deciding yardstick — stage 3: `arena_standard.py --mode matched_sims --search-shape training --sims 100 --games 400 --no-rolling --games-out …` B (`runs/armB/qtemp_0.0005_hist/checkpoint.pt`, 9,680 steps, seed 0) vs A (`runs/nnue_ladder_20260829/qtemp_0.0005/checkpoint.pt`). Pre-committed: **< +75 or CI LB ≤ −30 ⇒ correctness fix, position-source ablation, NO 20M · +75..+200 ⇒ ablation BEFORE scaling · ≥ +200 AND CI LB > +100 ⇒ re-anchor vs g1586 and lc0-LAST2x, then decide 20M.** Co-requirements: (a) probe `reg_hist` B−A < 0 with the game-cluster 95% CI excluding 0; (b) B's |Δregret(hist − FEN)| CI includes 0 or ≤ +3 cp. Without BOTH, an arena "recovery" is NOT accepted as a history effect.
 - Stages: 0 preconditions (repair stamps, shard-listing equality vs `read_progress_inventory`, quarantine walk over the first 5.5M rows, code vintage by feature) → 1 derive `--scheme uniform-d9 --temp 0.0005 --limit 5500000 --seed 0 --workers 7` with take-effect gates (`input_key_verified == rows_written`, `history_slots_nonzero_max == 8`, every shard `.zattrs` `zero_history: false` / `corpus_complete: true` / `derive_corpus_row_schema: 3`; REFUSE unless `rows_written == 4,894,143`) → 2 train `lc0_control_train.py --config configs/lc0_positive_control.yaml --steps 9680 --seed 0 --allow-invalid-control` (NO `--allow-mixed-history` / `--allow-partial-corpus`: the history preflight must PASS) → 3 arena → 4 history probe + `value_regret.py` + stage-5 BT4 → 5 print the table ("NO DECISION TAKEN BY THIS SCRIPT").
-- Code: detached worktree `/home/josh/projects/chess-armB` at `ffde0f6ef` (`ARMB_CODE_WT`) with the four production `.so` copied in (source-identical, above); arena from `/home/josh/projects/chess-ladderarena` (`12d010d2c`, as every ladder h2h). GPU idle until stage 2; nothing else on the GPU during stages 2-4.
+- Code: detached worktree `~/projects/chess-armB` at `ffde0f6ef` (`ARMB_CODE_WT`) with the four production `.so` copied in (source-identical, above); arena from `~/projects/chess-ladderarena` (`12d010d2c`, as every ladder h2h). GPU idle until stage 2; nothing else on the GPU during stages 2-4.
 - Confounds: (1) deriver `--workers 7` vs the champion's sequential derivation — content-identical by the deriver's contract, and stage 1 refuses on any row-count drift; (2) trainer code vintage `ffde0f6ef` (post #495 foreach AdamW, #499, #497) vs the champion's `956eff877` — #495 proved bitwise-identical on 10/10 real-gradient steps (phase-0b), #499 touches only the failure path, #497 IS the treatment; the trainer-recipe pin in `lc0_control_train.py` refuses loudly on any recipe drift at stage 2; (3) 1,204 repaired shards vs the champion's `manifest+progress (run_finished=False)` record — row order is the deriver's name-sorted enumeration both times, equality checked in stage 0.
 - Readout the same session as stage 5, judged by the table above only. Expected wall: derive ~35 min, train ~3 h 45, arena ~30 min, probes ~40 min.
 
@@ -72889,7 +72889,7 @@ The sign reverses between τ lanes; the Round-3 "d11+ DEAD" line was a τ.02-lan
 **2026-09-02 07:05Z — R1 REPAIR COMPLETE (production mode) · ARM B stage 0 PASS · stage 1 PASS (one driver key corrected) · stages 2-5 LAUNCHED on the GPU**
 
 - **Repair verdict — COMPLETE, whole inventory, zero quarantines.** `repair_corpus_history.py` on `ffde0f6ef`, 05:19:58Z → 05:52:34Z (32.6 min, 8 procs, 1,534 rows/s/core): rows in 9,863,168 = out 9,863,168, games 51,321, class `repaired` 100.000%, `quarantined` 0. `summary.json`: `run_finished: true`, `production: true`, `row_schema: 3`, `history_rep_fix: true`. `repair_manifest.json`: `audit_only: false`, `production: true`, `relabel.mode: off` (0 rows), `input.dir = data/nnue_bootstrap/run02_snap_20260829`, `input.manifest_sha256 78ee0246…`, `rows_claimed 9,863,168`, `listed_shards 1,204`, 28 unlisted in-flight shards recorded and skipped, 28 row-map files. Book: `sha256 70d0dfa5…` (9,663,653 B), `matches_production_pin: true`, `expected_from: production_pin`, and the pin block carries `historical_hash 70d0dfa5…` with `historical_hash_source` = the worker-cache `opening2_<sha>_…` download (ctime 2026-05-28 17:54:28, cmp-identical) plus the functional evidence (505/505 and 158/158 ply-0 FENs reproduced). History kinds: chained 9,354,192 · chained+book 505,827 · chained+book+bridged 2,810 · chained+bridged 339; book games exact 50,996, bridged_from_start 325. Label regimes: `carried_tt_history_blind` 9,851,816 · `cold_tt_history_blind` 11,352 (the per-row `cold_tt_retry` correction, 0.115%). Tags: `rep_in_frames8` 71,588 (0.726%), `rep_in_segment` 160,710 (1.629%), `cur_position_repeat_count≥2` 22,091 (0.224%). Labels byte-for-byte (no relabel). Output `data/nnue_bootstrap/run02_snap_20260829_s3`; log `scratchpad/armB/repair_run02_snap.log`.
-- **Stage 0 PASS (05:53Z, 21 s)**: code `ffde0f6ef` in the detached worktree `/home/josh/projects/chess-armB`; arena code `12d010d2c`; reference checkpoints sha256 `85aed8b7…` (A, `qtemp_0.0005`) and `c9173b5d…` (`qtemp_0.0005_ext`); both anchors present. Repaired-corpus gates PASS; row-identity gates PASS: source `read_progress_inventory` (1,204 listed, torn []) vs repaired `read_corpus_record` (record=summary, 1,204) — **shard list + order IDENTICAL**; row maps walked 9,863,168 rows, non-repaired total 0, inside the first 5,500,000: 0. `ARMB_ALLOW_ROW_SHIFT` not used. Output `scratchpad/armB/driver_stage0.out`.
+- **Stage 0 PASS (05:53Z, 21 s)**: code `ffde0f6ef` in the detached worktree `~/projects/chess-armB`; arena code `12d010d2c`; reference checkpoints sha256 `85aed8b7…` (A, `qtemp_0.0005`) and `c9173b5d…` (`qtemp_0.0005_ext`); both anchors present. Repaired-corpus gates PASS; row-identity gates PASS: source `read_progress_inventory` (1,204 listed, torn []) vs repaired `read_corpus_record` (record=summary, 1,204) — **shard list + order IDENTICAL**; row maps walked 9,863,168 rows, non-repaired total 0, inside the first 5,500,000: 0. `ARMB_ALLOW_ROW_SHIFT` not used. Output `scratchpad/armB/driver_stage0.out`.
 - ⚑ **Ops hazard, twice**: the harness stopped two background wrappers mid-run (05:53Z–06:08Z window and again ~06:24Z); the first took the deriver down with it (only a `spill` scratch dir remained — removed, 3.2 G). Relaunched with `setsid nohup` so the job is not a child of the wrapper; the deriver then survived the second wrapper stop. Every long arm-B stage now runs detached and is watched by sentinel-file polling, never by the wrapper's own exit.
 - **Stage 1 PASS (derive 06:08:40Z → ~06:27Z, 7 workers at ~92-100% CPU each, then the ordered shard write)**: `rows_read 5,500,000 → rows_written 4,894,143` (dropped no-result 605,857), **delta vs the champion +0**; `history_slots_nonzero_max 8`, `history_slots_filled {'8': 4,894,143}` (the champion's derivation read `<=1`), `input_key_verified 4,894,143 == rows_written`, `row_schema_counts {'3': 4,894,143}`, `history_root_reason_counts {'irreversible': all}`, base/value depths {9}; summary `corpus.corpus_complete true`, `corpus_record "summary"`, `input.zero_history false`, `input.history_rep_fix true`; scheme uniform-d9, temp 0.0005, seed 0, limit 5,500,000. Every one of the 598 shard `.zattrs`: `zero_history false`, `corpus_complete true`, `derive_run_finalized true`, `derive_state "committed"`, `corpus_run_finished_claim true`, `derive_identity_format 1`, `derive_corpus_row_schema 3` (tabulated over all 598: one tuple, 598 shards). Deriver log tail: temp recovered from the emitted policy n=4,398,653 min 0.000488 max 0.000501 (closed-form two-move), x planes 175, policy width 1858. Output `data/nnue_derived/armB/qtemp_0.0005_hist`, log `scratchpad/armB/derive_armB.log`.
   - ⚑ **Driver correction (NOT a gate loosening)**: the driver's per-shard check was written against a pre-final #497 head and required `derive_in_progress is False`; the merged deriver never writes that key (its P1 fix stamps `derive_state`/`derive_run_finalized` per shard at commit), so the first stage-1 run REFUSED with "598/598 shards carry a wrong history/complete stamp" while every substantive gate passed. The check now requires exactly the merged launcher's `REQUIRED_MARKED_KEYS` contract (`lc0_control_train.py` IDENTITY_KEYS + COMPLETENESS_KEYS): `zero_history false`, `corpus_complete true`, `derive_run_finalized true`, `derive_state committed`, `corpus_run_finished_claim true`, `derive_identity_format 1`, `derive_corpus_row_schema 3` — strictly more keys than before. An explicit `ARMB_STAGE1_GATES_ONLY=1` re-ran the gates on the finished derivation (default behaviour unchanged: an existing derived dir still refuses; nothing was re-derived). Gate output `scratchpad/armB/driver_stage1_gates.out`.
@@ -72922,7 +72922,7 @@ Stages 2-5 of the 05:35Z LAUNCH line, all from `scratchpad/armB/decision_table.t
 - ONE deciding yardstick: paired arena **B_ext vs A_ext, 400 games**, matched_sims 100, training shape, `--no-rolling`, banked. Pre-committed, same cuts as §5: **≥ +200 with CI LB > +100 = the history effect holds at matched 19,360 steps; +75..+200 = holds but shrinks (report, no scaling claim from it); < +75 or CI LB ≤ −30 = the gain does NOT survive the second pass — a repeat-pass artifact must then be suspected before any 20M point.** Anchors for context only (200 games each, floor-saturated as above): B_ext vs lc0-LAST2x, B_ext vs g1586.
 - Confounds: none new (same rows, same derived shards, same code, same seed; only the donor differs, as for A_ext). Expected wall: train ~1 h 31, arenas ~35 min.
 
-- **CORRECTION to the B_ext launch line (09:00Z)**: `--init-from` is NOT on the merged branch (`lc0_control_train.py` on ffde0f6ef rejects it: "unrecognized arguments"); it lives only on `feat/lc0-continuation` (956eff877, worktree `/home/josh/chess-438-merge-review`), which is exactly the code A_ext was trained with. The ext leg therefore trains from 956eff877 — the faithful mirror of A_ext, and a code vintage whose optimizer #495 proved bitwise-identical — while its arenas run from `chess-ladderarena` (that worktree's `DO_NOT_RUN_ARENAS.md`: pre-evaluator-hoist code OOMs arenas; training is unaffected). First attempt failed at argparse in 4 s (`ext_train.fail`, sentinel removed); relaunched 08:59:56Z, preflight: init-from step 9,680, sha256 `4ed7bc8c…`, all three pins match. Confound added: B_ext's second pass runs on 956eff877, B's first on ffde0f6ef; A's two passes both on 956eff877.
+- **CORRECTION to the B_ext launch line (09:00Z)**: `--init-from` is NOT on the merged branch (`lc0_control_train.py` on ffde0f6ef rejects it: "unrecognized arguments"); it lives only on `feat/lc0-continuation` (956eff877, worktree `~/chess-438-merge-review`), which is exactly the code A_ext was trained with. The ext leg therefore trains from 956eff877 — the faithful mirror of A_ext, and a code vintage whose optimizer #495 proved bitwise-identical — while its arenas run from `chess-ladderarena` (that worktree's `DO_NOT_RUN_ARENAS.md`: pre-evaluator-hoist code OOMs arenas; training is unaffected). First attempt failed at argparse in 4 s (`ext_train.fail`, sentinel removed); relaunched 08:59:56Z, preflight: init-from step 9,680, sha256 `4ed7bc8c…`, all three pins match. Confound added: B_ext's second pass runs on 956eff877, B's first on ffde0f6ef; A's two passes both on 956eff877.
 
 
 **2026-09-02 11:40Z — ⚑⚑ B_ext VERDICT: B_ext vs A_ext = +358.8 Elo [+318.6, +407.8] (400 games) — the history effect HOLDS at matched 19,360 steps (top row). Anchors: vs lc0-LAST2x −619 (A_ext) → −443 (B) → −301 (B_ext); vs production still at the floor. GPU idle. 20M decision framed below — NOT launched.**
@@ -73137,3 +73137,481 @@ sentinel, or primary-run interruption. The concurrent BT4 trainer continued
 through windows 99--101 in its existing approximately 53--58 s/window band.
 The 12.9-day aggregate 100M projection remains a preregistered linear planning
 estimate until closed companion shards provide a measured rate.
+**2026-09-02 21:53Z — GAME-AWARE EXACT-EPOCH SAMPLER (PREREG; CODE ONLY, DEFAULT OFF, UNREAD): use every row once without placing two positions from one game in an optimizer batch.**
+
+- **Hypothesis.** Frozen supervised corpora should not use the rolling replay
+  sampler's replacement draws: at one nominal exposure they leave about 36.8%
+  of rows unseen, repeat others, and admit several correlated plies from one
+  game into one batch. The candidate independently shuffles each shard-local
+  segment of a game's rows, samples at most one row per game per batch, replaces
+  exhausted games, preserves the corpus's natural WDL distribution, and refuses
+  any step budget that does not consume the complete planned epoch.
+  `replacement` remains the default so the in-flight 20M run and historical
+  controls are untouched.
+- **Mechanism/negative controls.** The plan and realized schedule carry
+  independently accumulated SHA-256 receipts; completion additionally requires
+  all planned rows, games, decoded chunks and shards to close exactly, with
+  `same_game_repeats_max = 0`. Each decoded shard segment's position order uses
+  an RNG stream separate from trainer augmentation; games split at a fixed shard
+  boundary drain those independently shuffled segments in shard-load order.
+  Independent conversion outputs namespace their
+  source-local `game_id` by resolved shard parent. The launcher requires
+  `accum_steps = 1`, making the scheduler's batch the complete optimizer batch
+  covered by that uniqueness invariant. CUDA retry and discarded non-finite
+  updates are fail-closed: replacing or skipping an already-consumed
+  exact-epoch batch would leave rows unused, so the run must restart from its
+  deterministic seed and any partial MID checkpoint is removed.
+- **Pre-training structural/cost screen (banked this session, no GPU).** On the
+  frozen 20M corpus at
+  `runs/armB/qtemp_0.0005_hist_20m/staged_shards`: **18,910,484 rows / 97,968
+  games / 2,309 shards → 36,935 batches**, 36,699×512 + 236×511, minimum 511.
+  The first naïve replacement-on-exhaustion plan was rejected before launch:
+  37,171 batches, 334 undersized tail batches, last 20 all size 1. The
+  deadline-aware plan removes that overweighted tail. Metadata planning with
+  16 threads took 134.8 s beside the active GPU/Stockfish jobs (96.2 s scan +
+  38.6 s schedule); this is one-time launch work. A production-shaped 50-shard
+  full CPU drain used every one of 409,600 rows, zero same-game repeats,
+  **11,661 rows/s / 43.9 ms per batch**, and 6.9 GiB process peak; compaction
+  bounded live decoded storage at 228,917 rows rather than retaining the whole
+  corpus. These are plumbing observations, not the learning verdict.
+- **ONE deciding yardstick — broad value regret, two-seed offline A/B per rule
+  6.** At the next clean GPU boundary, train both samplers from scratch on the
+  frozen 4,894,143-row real-history corpus for the same **9,559 optimizer
+  steps** (the candidate's exact plan), same config and seed within each pair:
+
+      for seed in 0 1; do
+        PYTHONPATH=. python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --shards ~/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist --out-dir runs/game_epoch_ab/s${seed}_replacement --steps 9559 --batch-size 512 --sampling-mode replacement --seed "$seed" --device cuda --train-window-steps 88 --allow-invalid-control
+        PYTHONPATH=. python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --shards ~/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist --out-dir runs/game_epoch_ab/s${seed}_game_epoch --steps 0 --batch-size 512 --sampling-mode game_epoch --seed "$seed" --device cuda --train-window-steps 88 --allow-invalid-control
+      done
+      PYTHONPATH=. python3 scripts/match_audit_rows.py --audit-set data/audit_set_v1.jsonl --snapshot runs/parallel_candidate_replay_snapshots/current_live_20260602_202037_v2threats --out scratchpad/game_epoch_ab/audit_set_v1.matched_rows.npz
+      for seed in 0 1; do for mode in replacement game_epoch; do
+        PYTHONPATH=. python3 scripts/value_regret.py --checkpoint runs/game_epoch_ab/s${seed}_${mode}/checkpoint.pt --max-positions 4000 --min-pieces 0 --batch-size 128 --gpu-mem-fraction 0.15 --matched-rows scratchpad/game_epoch_ab/audit_set_v1.matched_rows.npz --dump-per-position scratchpad/game_epoch_ab/s${seed}_${mode}.jsonl
+      done; done
+      for seed in 0 1; do
+        PYTHONPATH=. python3 scripts/paired_compare.py scratchpad/game_epoch_ab/s${seed}_game_epoch.jsonl scratchpad/game_epoch_ab/s${seed}_replacement.jsonl --label-a game_epoch --label-b replacement --cluster-key game_id --require-n 4000
+      done
+
+  The matched-row artifact contributes source `game_id` only; scoring remains
+  the preregistered FEN-only ruler. `--min-pieces 0` makes the stated full-set
+  n=4,000 executable rather than applying the tool's 7-man exclusion default.
+  Sign is `game_epoch - replacement`, so negative regret is better.
+  **SUCCESS:** the arithmetic mean of the two paired mean deltas is ≤ 0 cp and
+  neither seed's paired game-cluster 95% CI lies wholly above 0. **KILL:** mean delta > 0 cp
+  or either seed significantly regresses. A split-sign result that does not
+  trigger KILL is MIXED, not permission to use the sampler for 100M.
+- **Operational gate (not a second learning yardstick).** Both exact summaries
+  must say `complete: true`, planned hash = realized hash, all 4,894,143 rows
+  realized, and zero same-game repeats. Using the already-emitted pipeline
+  timers over the same 9,559 steps, candidate median steps/s must be at least
+  0.90× its same-seed replacement control; otherwise optimize the loader before
+  the 100M run even if the learning verdict succeeds. Bank and read every
+  `summary.json.train_window_metrics` row, not only total wall time or the
+  final-window compatibility view in `summary.json.metrics`. The currently
+  running 20M replacement job is useful operational context but is **not** one
+  of these preregistered paired arms.
+- **Confounds/revert.** The samplers necessarily see different row sequences;
+  that is the intervention. Batch sizes are 511/512 in the exact arm versus
+  512 in replacement; the one-row spread is the price of avoiding a single
+  overweighted remainder update and is banked in the receipt. No live state or
+  corpus is modified. Revert is to omit `--sampling-mode game_epoch` (the
+  default remains `replacement`); no replay rollback is needed because this is
+  an offline finite-corpus driver.
+
+**2026-09-03 04:20Z — PREREG: BT4 RAW-PRIOR TOP-TIE TEACHER ON THE EXISTING 18.91M d9 CORPUS; code/pre-training audit only, no labeling or optimizer launch while the sampler A/B owns the GPU.**
+
+- **Question and isolated intervention.** Does BT4 contain useful move-ordering
+  information exactly where the universal full-width d9 Stockfish target
+  cannot distinguish its stored maxima? Use the completed
+  `data/nnue_derived/armB/qtemp_0.0005_hist_20m` bank: **18,910,484 rows / 2,309
+  shards**, all schema 3, true eight-slot history, uniform d9 policy/value and
+  `search_wdl` coverage. The candidate changes only `policy_target`. Every
+  value column and stored priority stays byte-identical, so replacement
+  sampling with the same seed follows the control's schedule independently of
+  the new policy target. Reference is the already-completed replacement run
+  `runs/armB/qtemp_0.0005_hist_20m/checkpoint.pt`, 36,960 steps, seed 0
+  (checkpoint SHA-256 `91a5ca4349094852fdeb88eefe0e8590985509c250756093b18cf248a52937b6`).
+- **The treatment is NOT one-hot and NOT a global blend.** For a row with more
+  than one exactly equal legal maximum in the stored float16 SF target,
+  preserve the target's total probability mass on that tied set and
+  redistribute only **alpha = 0.20** of that mass in proportion to BT4's raw
+  legal prior. Example: SF `[.50,.50]`, BT4 `[.10,.90]` becomes
+  `[.42,.58]`, not `[0,1]`. A unique-Max row is copied byte-for-byte. No mass
+  moves from a non-max SF move into the max set or vice versa. This isolates
+  BT4 tie information without globally sharpening the already-sharp tau
+  0.0005 target; entropy and `top1 >= .99` rates are banked before training.
+- **Why the literal 80/20 proposal was narrowed before training.** A free read
+  of already-banked observations on the frozen 4,000-position audit showed
+  global `0.8*SF + 0.2*BT4` improves top-1 regret by **-5.0765 cp** but worsens
+  expected deep-SF regret by **+4.4328 cp [3.9647, 4.9013]** and therefore
+  fails the standing audit-first rule. The top-tie 20% treatment passes:
+  candidate-minus-source expected regret **-0.5729 cp [-0.7763, -0.3931]**;
+  top-1 regret **-5.0575 cp [-6.8955, -3.3827]**; source top tied on 9.375%
+  and chosen top-1 changed on 6.475%. Mean target entropy moves only
+  0.17710 to 0.17604 nats and the `top1 >= .99` fraction is unchanged at
+  85.0%. Receipt with every paired row:
+  `scratchpad/bt4_policy_mix/audit_top_ties_a020_v4.json`. The audit uses the
+  same dev-20260825 d9 engine as run03, full legal width, d9 q mapping
+  (slope .006, draw width 120, tau .0005) and the existing full-legal-width
+  BT4 audit cache; the frozen audit has no game ids, so its bootstrap unit is
+  position. BT4 is necessarily FEN-only on this ruler; the corpus labeling
+  below uses the stronger true-history input.
+- **Reusable raw observations and immutable materialization.** At the next
+  clean idle-GPU boundary, run exactly one batched BT4 network evaluation per
+  source row (the raw-prior equivalent of a one-node LC0 read) from the row's
+  stored true-history planes. Bank float32 legal-normalized priors plus a
+  16-byte source-row fingerprint in a separate resumable Zarr sidecar; stamp
+  ONNX hash, resolved output, provider and remap provenance. Then copy the
+  source corpus through a `.writing` directory and mutate only
+  `policy_target`, publishing by atomic rename after every source/sidecar
+  fingerprint matches. Exact commands:
+
+      CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. python3 scripts/bt4_policy_mix.py label --shards /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m --out /home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m --onnx /home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx --batch-size 1024 --threads 16 --gpu-mem-gb 24 --resume
+      PYTHONPATH=. nice -n 10 python3 scripts/bt4_policy_mix.py mix --shards /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m --sidecar /home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m --out /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_a020 --scope top-max-ties --alpha 0.2 --audit-receipt /home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_top_ties_a020_v4.json
+
+  Admission requires exactly 18,910,484 sidecar/candidate rows and 2,309
+  shards, one teacher evaluation per row, zero fingerprint/provider/output
+  mismatches, `changed_rows > 0`, `changed_unique_max_rows == 0`, and copied
+  `wdl_target` / `search_wdl` bytes. Any failure preserves the unpublished
+  `.writing` artifact for diagnosis; it does not partially replace a corpus.
+- **Matched training recipe.** Only after the sampler A/B releases the GPU and
+  the admission gates pass:
+
+      CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --shards /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_a020 --out-dir /home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a020 --steps 36960 --batch-size 512 --sampling-mode replacement --seed 0 --device cuda --train-window-steps 88 --allow-invalid-control
+
+  This deliberately retains replacement for the first target-only A/B because
+  the existing control used that default. Exact-epoch is a separate
+  intervention and its in-flight two-seed A/B decides its own promotion; a
+  later G10/100M run may carry both winners, but this readout does not conflate
+  them.
+- **ONE deciding yardstick.** Candidate versus the exact 20M control in a
+  **1,000-game paired matched-sims arena**, training search shape, sims 100:
+
+      PYTHONPATH=. python3 scripts/arena_standard.py --candidate /home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a020/checkpoint.pt --reference /home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m/checkpoint.pt --games 1000 --mode matched_sims --search-shape training --sims 100 --label bt4_toptie_a020_vs_sf20m --games-out /home/josh/projects/chess/scratchpad/bt4_policy_mix/arena_toptie_a020_vs_sf20m.games.jsonl
+
+  **SUCCESS / carry the treatment into the later G10 scale run:** Elo > 0 and
+  the pentanomial 95% CI lower bound > 0. **KILL:** Elo < 0 and its CI upper
+  bound < 0. Otherwise **INCONCLUSIVE** and do not compound it into the final
+  100M recipe without a larger pre-registered arena. As required context, bank
+  frozen-holdout policy/WDL loss on one common target set and the protocol's
+  1,000-game matched-time arena; neither overrides the single matched-sims
+  decision. The treatment does not alter model size or inference throughput,
+  so any matched-time/sims disagreement is reported rather than explained as
+  an architecture cost.
+- **Revert/confounds.** Revert is to use the untouched source corpus/control;
+  no live replay rollback is involved. Known limitation: the deep-SF direct
+  ruler is favorable to the SF leg and BT4's cached audit input lacks true
+  history, while the final arena is the anti-Stockfish objective. Known scope:
+  this tests a 20% tie redistribution on the 18.91M d9 bank, not whether tau
+  .0005 remains optimal at 100M or 1B. Distribution sharpness at those scales
+  remains a separate target-temperature experiment; this arm neither resolves
+  nor silently claims it.
+
+**2026-09-03 04:33Z — BT4 TOP-TIE WEIGHT AMENDMENT, before corpus labeling or training and before reading the amended audit: replace alpha 0.20 with full conditional BT4 redistribution (alpha 1.0) inside the frozen SF maximum set.**
+
+- **Reason and frozen treatment.** The user's mechanistic objection is correct:
+  when the two BT4 raw priors on an SF tie are 10% and 8%, their conditional
+  probabilities are `[.556,.444]`, and alpha 0.20 would train on only
+  `[.511,.489]`. That is enough to change an argmax but needlessly weak as a
+  soft training signal. Freeze alpha **1.0**, with no intermediate-weight
+  sweep: retain the source target's total mass on its exactly tied legal maxima
+  and allocate that mass by BT4's conditional distribution on those moves.
+  Thus `[.50,.50]` with raw BT4 10%/8% becomes `[.556,.444]`, not one-hot.
+  Every unique-Max source row remains byte-identical, and every non-tied move
+  keeps its SF probability. This is a parameter-free tie-break rather than a
+  global teacher blend.
+- **Audit and sharpness gates.** Run the already specified frozen deep-SF audit
+  once at alpha 1.0 and bank
+  `scratchpad/bt4_policy_mix/audit_top_ties_a100_v5.json`; do not inspect a
+  ladder of alphas or select one from this ruler. The earlier alpha-0.20 receipt
+  remains historical design evidence, not the admission receipt. The unchanged
+  kill rule is a paired expected-regret 95% interval wholly above zero. Corpus
+  materialization must additionally bank source/candidate mean entropy and
+  `top1 >= .99` fractions over all 18,910,484 rows, alongside the existing
+  requirement that zero unique-Max rows change.
+- **Amended executable names only; all other controls and the one deciding
+  yardstick are unchanged.** Use `--scope top-max-ties --alpha 1.0
+  --audit-receipt /home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_top_ties_a100_v5.json`,
+  materialize to
+  `data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100`, train to
+  `runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100`, and label the 1,000-game
+  matched-sims arena `bt4_toptie_a100_vs_sf20m`. The existing 20M replacement
+  checkpoint remains the control. No GPU work is authorized while the sampler
+  A/B owns it.
+
+**2026-09-03 04:35Z — FULL CONDITIONAL BT4 TOP-TIE AUDIT READOUT: PASS; code and receipt may proceed to the idle-GPU labeling boundary, but no GPU job launched.**
+
+- Exact frozen treatment `top-max-ties`, alpha 1.0, n=4,000. Candidate minus
+  source expected deep-SF regret is **-2.8647 cp [-3.8816, -1.9657]** and top-1
+  regret is **-5.0575 cp [-6.8955, -3.3827]**. Both intervals are wholly below
+  zero, so the unchanged pre-training gate returns `graduate_win` /
+  `training_permitted: true`. Source ties occur on 9.375% and the chosen top-1
+  changes on 6.475%; as expected, top-1 is identical to the alpha-0.20 arm
+  while the soft expected-value signal is five times stronger.
+- Shape diagnostic: mean entropy moves **0.17709 -> 0.15370 nats**; the
+  `top1 >= .99` fraction moves only **85.000% -> 85.125%**. Thus full
+  conditional redistribution sharpens the tied subset, but does not create a
+  broad one-hot jump on this ruler. The 18.91M materialization must report the
+  same corpus-wide diagnostics; this audit does not answer the separate
+  100M/1B temperature question.
+- Immutable receipt:
+  `/home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_top_ties_a100_v5.json`,
+  SHA-256 `41df826173a1d565a1bcf0577f25ce29d5fba43a54ec28afe64655c5bc4bd8d7`.
+
+**2026-09-03 04:43Z — STORAGE-EXACT TOP-TIE CONFORMANCE CORRECTION, before labeling/training and before reading the corrected audit: preserve non-tied float16 probabilities byte-for-byte instead of renormalizing the entire tied row.**
+
+- Code review found that the v5 implementation first normalized the stored SF
+  row in float64. Because a float16 probability row need not sum to exactly
+  one, that could move every non-tied probability by a rounding-scale amount,
+  contradicting the frozen treatment even though the intended top-tie mass and
+  all unique-Max rows were preserved. The corrected arithmetic begins with the
+  stored source bytes, replaces only entries in the tied maximum set, and
+  preserves that set's stored mass exactly. It refuses nonzero source mass on
+  illegal moves and a degenerate zero-BT4-mass tie set.
+- Receipt v5 remains an immutable record of the pre-correction implementation
+  check but is not admissible for materialization. Re-run the identical alpha
+  1.0 frozen audit once under corrected storage arithmetic as
+  `audit_top_ties_a100_v6.json`; same sources, bootstrap, gate and no alpha
+  sweep. The corrected receipt alone may admit corpus construction. This is an
+  implementation-fidelity correction, not a response to the favorable v5
+  result.
+- Operational hardening in the same review: resume and materialization verify
+  sidecar array dtype/shape plus one-eval/no-search/remap stamps, and corpus
+  copying dereferences any source symlink before editing so a destination write
+  cannot mutate the source through an inherited link.
+
+**2026-09-03 04:45Z — STORAGE-EXACT FULL CONDITIONAL AUDIT READOUT: PASS; v6 supersedes v5 for admission.**
+
+- Corrected candidate minus source expected regret is **-2.8647 cp [-3.8816,
+  -1.9658]**; top-1 regret remains **-5.0575 cp [-6.8955, -3.3827]**.
+  Gate verdict remains `graduate_win`, `training_permitted: true`. The
+  correction changes 178 per-position numeric records only at rounding scale;
+  tie incidence 9.375% and top-1 changes 6.475% are unchanged.
+- Mean candidate entropy is **0.153705 nats** versus source 0.177090;
+  `top1 >= .99` is **85.125%** versus 85.000%. Corrected immutable receipt:
+  `/home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_top_ties_a100_v6.json`,
+  SHA-256 `0dbd8e54d264c3cfe901610a9655b9ae36504c2e17862397ba33ab331f87c98a`.
+  All later mix commands must name v6, never v5.
+
+**2026-09-03 04:45Z — AUDIT-ALGORITHM STAMP AMENDMENT, before any corpus labeling/materialization/training and before reading v7.** The v6 calculation is the corrected scientific result, but its receipt names only scope and alpha, so a materializer cannot distinguish it mechanically from the pre-correction v5 receipt. Require treatment algorithm stamp `stored-top-set-only-v1` in both audit receipt and materialized corpus, making v5/v6 fail closed. Re-run the identical corrected audit as `audit_top_ties_a100_v7.json` solely to carry that stamp; no data, arithmetic, bootstrap, gate or candidate changed. Only v7 may admit materialization.
+
+**2026-09-03 04:47Z — STAMPED v7 AUDIT READOUT: PASS and numerically identical to v6.** Treatment now reads `{scope: top-max-ties, alpha: 1.0, algorithm: stored-top-set-only-v1}`; every scientific field and every per-position record is identical to v6. Immutable admission receipt `/home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_top_ties_a100_v7.json`, SHA-256 `d4dec48b77c628364dd08963682b610451326fcd9932e1397f0a81fc67bf4003`. This is the only receipt accepted by the planned mix command.
+
+**2026-09-03 04:54Z — BT4 a100 PIPELINE QUEUED BEHIND THE COMPLETE TWO-SEED SAMPLER A/B; no overlap and no scientific readout by the driver.**
+
+- Detached driver `scratchpad/bt4_policy_mix/a100_pipeline.sh` first waits for
+  `scratchpad/scale20m_g10/after_train_pipeline.done`, refuses its fail sentinel,
+  and then waits for an empty GPU process list. It pins experiment-code commit
+  `a81836bc1c88325a1646891143f5a425995badac`, source derive-summary SHA-256
+  `391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef`,
+  and v7 receipt SHA-256
+  `d4dec48b77c628364dd08963682b610451326fcd9932e1397f0a81fc67bf4003`.
+  The 12 G10 Stockfish workers remain independent at nice 19.
+- Sequence: resume-safe one-eval BT4 sidecar using true history and at most 16
+  ONNX host threads (`BLOSC_NTHREADS=4`) -> storage-exact a100 materialization
+  -> admission check for 18,910,484 rows / 2,309 shards / CUDA provider / exact
+  algorithm and receipt / zero changed unique-Max rows -> the frozen 36,960-step
+  seed-0 replacement candidate -> the deciding matched-sims arena. The arena
+  adds `--no-rolling` so the preregistered **1,000 games** means exactly 1,000
+  rather than permitting an early sequential stop; all other arena settings
+  remain frozen. Every stage has its own log/done sentinel and any failure
+  stops the chain with `a100_pipeline.fail`.
+- The driver banks outputs only. It does not parse the arena into a carry/kill
+  decision or update the ledger. Context matched-time and common-holdout scores
+  remain post-arena obligations. Current sampler-arm cadence projects the BT4
+  label stage no earlier than roughly 11:30Z; its prior measured raw-inference
+  rate projects about 1.6 GPU-hours for the 18.91M sidecar, after which
+  materialization and candidate training determine the later ETA.
+
+**2026-09-03 13:08Z — OPERATIONAL RECOVERY: sampler A/B failed closed; release the idle GPU to the already-preregistered independent BT4 pipeline.**
+
+- Seed-0 replacement completed all 9,559 steps and its checkpoint/summary are
+  preserved. Seed-0 `game_epoch` failed after its first 88-step window at
+  batch 147: planned resident decoded bytes `3039549040` disagreed with
+  retained bytes `3039352998`. The partial candidate has no final checkpoint
+  or summary and is inadmissible. The remaining sampler arms and deciding
+  audits never ran; therefore there is **no sampler verdict**. Preserve all
+  failure logs and artifacts. Do not resume the partial candidate: a repaired
+  exact-epoch arm must restart from seed 0 under one reviewed code revision so
+  its plan and weights remain reproducible.
+- The original BT4 watcher observed the sampler failure sentinel at 05:38Z and
+  correctly exited before creating a sidecar, mixed corpus, run, or arena
+  bank. Because the BT4 target-only experiment uses the frozen 18.91M corpus
+  and replacement sampler, it has no scientific dependency on a successful
+  `game_epoch` readout. Re-arm that same frozen BT4 pipeline at the now-clean
+  GPU boundary with distinct recovery log/sentinels, retaining the failed
+  watcher's sentinel as provenance. Commands, code/source/receipt hashes,
+  treatment, training recipe, admission gates, and deciding yardstick remain
+  byte-for-byte unchanged; only the obsolete upstream-wait gate is bypassed.
+  The 12 nice-19 G10 workers continue independently.
+
+**2026-09-03 13:11Z — 20M DECIDING ARENA READOUT: SUCCESS by a wide margin.**
+
+- The immutable bank contains exactly 400 games / 200 complete opening pairs.
+  Candidate 18.91M-row one-view net versus B_ext produced pentanomial counts
+  `WW=75, WD_DW=68, DD_WL=45, LD_DL=9, LL=3`, score 0.7538, and **+194.3 Elo
+  [95% CI +164.5, +227.0]**. This clears the preregistered success thresholds
+  of Elo at least +100 and CI lower bound above +50. Verdict: **WORKED;
+  continue scaling and use G10 as the next corpus family.** Raw observations
+  remain in `scratchpad/scale20m_g10/arena_armB20m_vs_Bext.games.jsonl`.
+- Scope remains exactly the preregistered one: this is a production-choice
+  result, not a clean row-scaling coefficient, because scale and source corpus
+  changed together. The training-shape arena also used its documented flat
+  root-noise setting. Neither caveat changes the fixed pass-rule verdict.
+
+**2026-09-03 13:11Z — QUEUE repaired sampler A/B after the BT4 pipeline reaches either terminal state; no sampler optimizer step launched here.**
+
+- PR #502 is merged at `a9615efef7a5d1380289e39c313315f57f087938` with
+  test, lint, and pext-sliders checks green. Restart the complete two-seed A/B
+  from scratch under that one revision in new roots
+  `runs/game_epoch_ab_a9615efe` and `scratchpad/game_epoch_ab_a9615efe`.
+  Rerun replacement as well as exact-epoch: the preserved b4af seed-0 control
+  is useful failure context but is not paired evidence against materially
+  revised exact-epoch/trainer code.
+- The detached recovery driver waits for BT4's recovery **done or fail**
+  sentinel and an empty GPU, then runs the already-preregistered four arms and
+  exact matched-row value-regret commands. A BT4 failure releases rather than
+  strands the independent sampler queue. All original learning and operational
+  thresholds remain unchanged; the driver banks results and makes no verdict.
+
+**2026-09-04 14:37Z — BT4 FULL-CONDITIONAL TOP-TIE READOUT: SUCCESS; carry
+the treatment and use it as the control for incremental BT4-policy arms.**
+
+- The immutable matched-sims bank contains exactly 1,000 games / 500 complete
+  opening pairs. The 18.91M-row `top-max-ties`, alpha-1.0 candidate versus the
+  plain 18.91M d9 control produced pentanomial counts
+  `WW=95, WD_DW=157, DD_WL=144, LD_DL=72, LL=32`, score 0.6055, and **+74.4
+  Elo [95% CI +56.4, +92.8]**. This clears the preregistered success rule of
+  Elo above zero with CI lower bound above zero. Verdict: **WORKED**. Raw games
+  remain `scratchpad/bt4_policy_mix/arena_toptie_a100_vs_sf20m.games.jsonl`.
+- Materialization changed 3,433,606 / 18,910,484 rows (18.157%) and zero
+  unique-SF-maximum rows. Candidate mean entropy was 0.51382 versus 0.56897
+  nats, and candidate top-1 agreed with BT4 on 62.45% versus 49.37% for the
+  source. Value arrays remained byte-identical. The full raw BT4 policy
+  sidecar is now reusable for every policy-only follow-up without another
+  network evaluation.
+
+**2026-09-04 14:37Z — PREREG: two independent BT4 extensions on the same
+18.91M bank, near-tie breadth and teacher sharpness; no audit, materialization,
+optimizer step, or arena has run for either treatment at this line.**
+
+- **Shared control and isolation.** Both candidates start from the untouched
+  `qtemp_0.0005_hist_20m` source and the completed raw BT4 sidecar; each changes
+  only `policy_target`, trains from scratch for 36,960 replacement-sampled
+  steps at batch 512 / seed 0, and is judged against the successful
+  `qtemp_0.0005_hist_20m_bt4_toptie_a100/checkpoint.pt`. Do not chain one mixed
+  corpus into the other. Every value/feature/priority array and training option
+  stays identical. The two axes are read separately before any combined arm.
+- **N1, breadth only.** Define the stored-SF near-maximum set as all legal moves
+  with stored probability at least **0.50 times the row maximum**. Preserve the
+  set's total stored SF mass and every probability outside it byte-for-byte;
+  redistribute that mass by the unmodified BT4 prior (teacher temperature 1.0,
+  alpha 1.0). A one-move set is an exact identity row. This strictly contains
+  the successful exact-max-tie treatment while changing neither its BT4
+  sharpness nor any non-policy field. Paths use suffix `bt4_near050_t100`.
+- **S1, sharpness only.** Retain the successful exact stored-SF maximum set and
+  alpha 1.0, but transform BT4 legal probabilities with teacher temperature
+  **0.50** (equivalently square positive probabilities before conditioning on
+  the tied set). Unique-SF-maximum rows remain byte-identical and BT4 ranking
+  is unchanged; only the strength of its soft preference inside exact ties
+  changes. Paths use suffix `bt4_toptie_t050`.
+- **Audit-first admission.** Implement both treatments with explicit algorithm,
+  ratio, and teacher-temperature stamps in every audit, shard, and corpus
+  summary. Before materialization, run each once on the same frozen 4,000-row
+  deep-SF bank and preserve all per-position observations. Kill an arm if its
+  candidate-minus-source expected-regret 95% interval is wholly above zero.
+  N1 must change at least one unique-maximum audit row and report a candidate
+  set wider than the exact-tie set; S1 must change zero unique-maximum rows and
+  preserve the alpha-1.0 top-1 choices. Materialization requires 18,910,484
+  rows / 2,309 shards, matching source/sidecar fingerprints, a nonzero target
+  change, exact treatment stamps, and byte-identical `wdl_target` and
+  `search_wdl`.
+- **ONE deciding yardstick per arm.** After a passing audit and full training,
+  run a no-rolling 1,000-game paired `matched_sims` arena at training search
+  shape / 100 sims against the successful top-tie checkpoint. **SUCCESS** =
+  candidate Elo above zero and pentanomial 95% CI lower bound above zero.
+  **KILL** = Elo below zero and CI upper bound below zero. Otherwise the arm is
+  **INCONCLUSIVE** and does not graduate. Raw game records are mandatory; no
+  matched-time or holdout diagnostic overrides this rule. N1 and S1 run
+  sequentially and never overlap another GPU job.
+- **Precommitted escalation, not a post-hoc grid.** If N1 succeeds, widen the
+  stored-SF ratio in order **0.50 -> 0.25 -> 0.125**, always comparing the next
+  fresh full train to the last successful breadth arm and stopping at the first
+  non-success. If S1 succeeds, sharpen teacher temperature in order
+  **1.0 -> 0.50 -> 0.25 -> 0.125**, always comparing to the last successful
+  sharpness arm and stopping at the first non-success. Each later rung still
+  requires its own launch/readout ledger amendment and audit receipt. Combining
+  breadth and sharpness is a separate later experiment, authorized only if both
+  isolated axes succeed.
+- **Scheduling and storage.** The existing sidecar avoids repeated BT4 GPU
+  inference. Corpus materialization is CPU/disk work at nice 10; training and
+  its arena own the GPU. At launch refuse an existing output/sentinel, code or
+  source identity drift, any active GPU process, or free disk below 150 GiB.
+  Current source/mixed corpora are about 12 GB each against about 605 GiB free,
+  while the 16 nice-19 G10 workers continue independently.
+
+**2026-09-04 14:49Z — PRE-AUDIT IMPLEMENTATION-FIDELITY AMENDMENT after
+independent review; no N1/S1 audit or training observation exists yet.**
+
+- Audit admission must enforce, not merely print, the treatment-specific
+  invariants above. N1 requires at least one wider candidate set and at least
+  one changed unique-SF-maximum row on the frozen audit. S1 recomputes the
+  temperature-1.0 treatment on every audit row and requires exactly zero
+  stored-policy top-1 mismatches, in addition to zero changed unique-maximum
+  rows. A receipt lacking these observations or a true aggregate invariant
+  flag is inadmissible.
+- Materialization now pins the exact source derive-summary SHA-256
+  `391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef`,
+  exactly 18,910,484 rows and exactly 2,309 shards; agreement with an arbitrary
+  self-consistent source/sidecar pair is insufficient.
+- Clarify the mass statement at the actual trainer boundary: redistribution
+  preserves selected-set mass exactly in arithmetic, then the target is cast
+  to the source's required float16 storage. Exact arbitrary BT4 ratios and an
+  exact pre-existing float16 sum are not always jointly representable; forcing
+  equality can move probabilities by tenths rather than rounding scale. Keep
+  the nearest float16 target, preserve every outside-set value byte-for-byte,
+  and bank absolute selected-mass drift per row. Audit and materialization
+  require mean drift at most 0.0002 and maximum drift at most 0.005; otherwise
+  the arm fails closed before training. This quantization rule is shared by N1
+  and S1 and does not create an axis difference.
+
+**2026-09-04 15:02Z — N1/S1 FROZEN-AUDIT READOUT: both PASS and are admitted
+to their separately preregistered full-corpus trains.**
+
+- **N1 breadth (`near-max-ratio=0.50`, BT4 temperature 1.0):** candidate minus
+  source expected deep-SF regret is **-3.0584 cp [95% CI -4.0939, -2.1283]**;
+  top-1 regret is **-5.1820 cp [-7.0251, -3.4942]**. The set is wider than
+  exact ties on 43/4,000 rows and changes 28 unique-source-maximum rows, so the
+  intended breadth axis is realized. Mean/max post-float16 selected-mass drift
+  is 0.00000961/0.00024414, inside the frozen bounds. Verdict
+  `graduate_win`, treatment invariants pass, and `training_permitted: true`.
+  Immutable receipt
+  `/home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_near050_t100_v1.json`,
+  SHA-256 `8abca4a97d8fa5da9917c182a456c0331583fa67ff7dfff0dcb0b9f5e5577223`.
+- **S1 sharpness (exact ties, BT4 temperature 0.50):** candidate minus source
+  expected regret is **-3.9424 cp [-5.2252, -2.7807]**; top-1 regret is
+  **-5.0575 cp [-6.8955, -3.3827]**. It changes zero unique-source-maximum
+  rows and has zero stored top-1 mismatches versus temperature 1.0. Mean/max
+  post-float16 selected-mass drift is 0.00000913/0.00036621. Verdict
+  `graduate_win`, treatment invariants pass, and `training_permitted: true`.
+  Immutable receipt
+  `/home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_toptie_t050_v1.json`,
+  SHA-256 `8cde6a10e35a23e91134850fa7d07ee8d5a0e9fd72e597b4c5e7a4bdfd4700ed`.
+- Mechanism-only context, not the deciding yardstick: versus the already
+  admitted unsharpened top-tie audit, N1 improves expected regret by another
+  0.194 cp and top-1 regret by 0.125 cp; S1 improves expected regret by another
+  1.078 cp while leaving top-1 regret exactly unchanged, as a ranking-preserving
+  sharpness change should. The preregistered 1,000-game arenas, not these
+  incremental audit differences, decide whether either arm advances.
+
+**2026-09-04 15:08Z — PRE-MATERIALIZATION PROVENANCE-COMPATIBILITY
+AMENDMENT; both audits are banked, but no N1/S1 corpus exists and no training
+has begun.** The first S1 materialization attempt failed closed before
+`copytree`: the immutable sidecar records repository HEAD `ce0b3cf4e`, while
+the current audited implementation is `55bfcf6fc`; its pinned LC0/remap commit,
+clean flag, and all three remap-source blob hashes are identical. Repository
+HEAD changes on ledger, tests, or this mixing tool even when the remap itself
+does not. Admit a sidecar by the functional remap identity `{commit, dirty,
+blobs}` and continue recording, but do not compare, the descriptive
+`git_head`. Any remap commit/blob/clean-state mismatch still fails closed.
+This repairs immutable-artifact reuse only; it changes neither N1/S1 target
+arithmetic nor either banked audit observation.

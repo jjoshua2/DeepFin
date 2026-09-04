@@ -1417,6 +1417,35 @@ def test_a_cuda_failure_before_the_optimizer_step_still_gets_the_retry(
     assert trainer.step == 2
 
 
+def test_an_exact_epoch_refuses_to_discard_a_batch_for_a_cuda_retry(
+    tmp_path: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A replacement retry is valid for rolling replay and data loss for a
+    one-shot corpus. The exact-epoch marker must make the SAME pre-optimizer
+    CUDA fault end the run before `_TrainBatchIterator.add_retry_batches` can
+    advance to a new batch."""
+    trainer, retries = _boundary_trainer(tmp_path, monkeypatch)
+    real_matrix_norm = trainer._matrix_grad_norm
+    calls: list[int] = []
+
+    def flaky_matrix_norm() -> float:
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise RuntimeError("CUDA transient exact-epoch test failure")
+        return real_matrix_norm()
+
+    class ExactEpoch:
+        exact_without_replacement = True
+
+    monkeypatch.setattr(trainer, "_matrix_grad_norm", flaky_matrix_norm)
+    with pytest.raises(RuntimeError, match="CUDA transient exact-epoch"):
+        trainer.train_steps(cast(Any, ExactEpoch()), batch_size=1, steps=2)
+
+    assert len(calls) == 1
+    assert retries == []
+    assert trainer.step == 0
+
+
 def test_a_denominator_allocation_failure_is_recovered_without_a_retry(
     tmp_path: object, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

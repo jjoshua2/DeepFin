@@ -139,10 +139,18 @@ VERDICT.
 
 Usage
 -----
+    # Historical replacement-sampled control:
     PYTHONPATH=. python3 scripts/lc0_control_train.py \\
         --config configs/lc0_positive_control.yaml \\
         --shards <converted-dir> [<converted-dir> ...] \\
         --steps 20 --out-dir <run-dir>
+
+    # Frozen-corpus training (every row exactly once):
+    PYTHONPATH=. python3 scripts/lc0_control_train.py \\
+        --config configs/lc0_positive_control.yaml \\
+        --shards <converted-dir> [<converted-dir> ...] \\
+        --sampling-mode game_epoch --steps 0 --out-dir <run-dir> \\
+        --allow-invalid-control
 """
 from __future__ import annotations
 
@@ -175,6 +183,11 @@ from chess_anti_engine.eval.lc0_control_rows import (
 from chess_anti_engine.model import build_model, model_config_from_flat_config
 from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
+from chess_anti_engine.replay.game_epoch import (
+    DEFAULT_LOAD_WORKERS as GAME_EPOCH_LOAD_WORKERS,
+    DEFAULT_PLAN_WORKERS as GAME_EPOCH_PLAN_WORKERS,
+    GameAwareEpochBuffer,
+)
 from chess_anti_engine.replay.shard import iter_shard_paths
 from chess_anti_engine.train import trainer as trainer_module
 from chess_anti_engine.train.losses import normalize_value_blend_fracs
@@ -1467,10 +1480,18 @@ class SaveMidBudgetCheckpoint:
     ``train_steps``'s CUDA-error loop is not counted twice.
     """
 
-    def __init__(self, trainer: Trainer, *, at_step: int, path: Path) -> None:
+    def __init__(
+        self,
+        trainer: Trainer,
+        *,
+        at_step: int,
+        path: Path,
+        delete_on_error: bool = False,
+    ) -> None:
         self.trainer = trainer
         self.at_step = int(at_step)
         self.path = path
+        self.delete_on_error = bool(delete_on_error)
         self.steps_done = 0
         self.saved_at_step: int | None = None
         self._original = trainer._run_optimizer_step
@@ -1500,6 +1521,9 @@ class SaveMidBudgetCheckpoint:
         _exc: BaseException | None,
         _tb: TracebackType | None,
     ) -> None:
+        if _exc_type is not None and self.delete_on_error:
+            self.path.unlink(missing_ok=True)
+            self.saved_at_step = None
   # ⚑ DELETE the instance attribute rather than rebinding to the original.
   # Rebinding leaves a permanent per-instance slot holding a bound method --
   # a reference cycle, and a trainer that no longer resolves the method through
@@ -1521,6 +1545,18 @@ def _metric_fields(metrics: Any, predicate: Any) -> list[tuple[str, Any]]:
         for field in sorted(dataclasses.fields(type(metrics)), key=lambda f: f.name)
         if predicate(field.name)
     ]
+
+
+def _scalar_metric_record(metrics: Any) -> dict[str, Any]:
+    """JSON-safe scalar fields from one ``Trainer.train_steps`` window."""
+    return {
+        field.name: getattr(metrics, field.name)
+        for field in dataclasses.fields(type(metrics))
+        if isinstance(
+            getattr(metrics, field.name),
+            (int, float, bool, type(None)),
+        )
+    }
 
 
 def print_realized(capture: _LossCapture, metrics: Any) -> None:
@@ -1755,7 +1791,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, default=Path("configs/lc0_positive_control.yaml"))
     parser.add_argument("--shards", type=Path, nargs="+", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--steps", type=int, required=True)
+    parser.add_argument(
+        "--steps", type=int, required=True,
+        help="optimizer steps. With --sampling-mode game_epoch, 0 resolves to "
+             "the exact one-epoch step count and any positive value must equal "
+             "it; the sampler never truncates or wraps a corpus.",
+    )
+    parser.add_argument(
+        "--sampling-mode", choices=("replacement", "game_epoch"),
+        default="replacement",
+        help="replacement reproduces the historical DiskReplayBuffer control. "
+             "game_epoch is for a frozen finite corpus: every row exactly once "
+             "and at most one row per game per batch.",
+    )
+    parser.add_argument(
+        "--epoch-plan-workers", type=int, default=GAME_EPOCH_PLAN_WORKERS,
+        help="threads used only to scan game_id metadata before a game_epoch "
+             f"run (default {GAME_EPOCH_PLAN_WORKERS}; no full rows decoded).",
+    )
+    parser.add_argument(
+        "--epoch-load-workers", type=int, default=GAME_EPOCH_LOAD_WORKERS,
+        help="parallel full-shard decoders used when game_epoch refills its "
+             f"bounded active pool (default {GAME_EPOCH_LOAD_WORKERS}).",
+    )
     parser.add_argument(
         "--batch-size", type=int, default=0,
         help="0 = config batch_size. ⚑ Any other value changes the examples per "
@@ -1982,20 +2040,94 @@ def main(argv: list[str] | None = None) -> int:
   # review F6's defect (certified, then overwritten, with nothing in the
   # artifact saying so); the realized values are banked in summary.json.
     replay_kwargs = apply_control_deviations(replay_kwargs_signature(cfg))
-    buf = DiskReplayBuffer(
-        capacity=10**9,
-        shard_dir=out_dir / "staged_shards",
-        rng=np.random.default_rng(int(args.seed)),
-  # ⚑ NEVER False here. See stage_shards: a writable buffer enforces its
-  # window in __init__ and would delete the converted shards through the
-  # symlinks.
-        read_only=True,
-        **replay_kwargs,
-    )
-    print(f"[data] replay buffer: {len(buf)} rows in the hot shuffle pool "
-          f"over {staged} shard(s)")
-    print("[data] replay kwargs (realized): "
-          + " ".join(f"{k}={v!r}" for k, v in sorted(replay_kwargs.items())))
+    realized_replay: dict[str, Any]
+    if args.sampling_mode == "game_epoch":
+        if int(args.epoch_plan_workers) <= 0 or int(args.epoch_load_workers) <= 0:
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --epoch-plan-workers and "
+                "--epoch-load-workers must both be positive",
+            )
+        epoch_input_planes = replay_kwargs.get("input_planes")
+        buf: Any = GameAwareEpochBuffer(
+            shard_dir=out_dir / "staged_shards",
+            batch_size=batch_size,
+            seed=int(args.seed),
+            input_planes=(
+                None if epoch_input_planes is None else int(epoch_input_planes)
+            ),
+            plan_workers=int(args.epoch_plan_workers),
+            load_workers=int(args.epoch_load_workers),
+        )
+        accum_steps = int(trainer.accum_steps)
+        if accum_steps != 1:
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --sampling-mode game_epoch currently "
+                "requires Trainer.accum_steps=1 so its one-row-per-game rule "
+                "covers the complete optimizer batch, not merely each "
+                f"microbatch; realized accum_steps={accum_steps}.",
+            )
+        epoch_steps = buf.num_batches
+        if int(args.steps) == 0:
+            args.steps = epoch_steps
+            print(f"[data] --steps 0 resolved to exact epoch: {epoch_steps} "
+                  f"optimizer steps / {buf.num_batches} microbatches")
+        elif int(args.steps) != epoch_steps:
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --sampling-mode game_epoch planned "
+                f"{buf.plan.rows} rows in {buf.num_batches} microbatches = "
+                f"{epoch_steps} optimizer steps at accum_steps={accum_steps}, "
+                f"but --steps requested {int(args.steps)}. That would stop "
+                "before every row was used or ask the one-shot sampler to wrap. "
+                "Pass --steps 0 (recommended) or the exact planned count.",
+            )
+        print(
+            f"[data] game-aware exact epoch: {buf.plan.rows} rows, "
+            f"{buf.plan.game_count} games, {buf.plan.batches} batches "
+            f"({buf.plan.full_batches} full, min {buf.plan.min_batch_rows} rows), "
+            f"{staged} shard(s), "
+            f"plan={buf.plan.plan_sha256}",
+        )
+        realized_replay = {
+            "sampling_mode": "game_epoch",
+            "applied": {
+                "input_planes": epoch_input_planes,
+                "batch_size": batch_size,
+                "seed": int(args.seed),
+                "plan_workers": int(args.epoch_plan_workers),
+                "load_workers": int(args.epoch_load_workers),
+            },
+            # Guard 0d still compares the historical replay signature so this
+            # intervention cannot masquerade as that control. These settings
+            # are deliberately NOT forwarded to GameAwareEpochBuffer, and the
+            # artifact must not label dead configuration as realized.
+            "ignored_disk_replay_kwargs": {
+                key: value
+                for key, value in replay_kwargs.items()
+                if key != "input_planes"
+            },
+        }
+    else:
+        if int(args.steps) <= 0:
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --steps must be positive under "
+                "--sampling-mode replacement; 0 is only the exact-epoch "
+                "auto-budget spelling",
+            )
+        buf = DiskReplayBuffer(
+            capacity=10**9,
+            shard_dir=out_dir / "staged_shards",
+            rng=np.random.default_rng(int(args.seed)),
+      # ⚑ NEVER False here. See stage_shards: a writable buffer enforces its
+      # window in __init__ and would delete the converted shards through the
+      # symlinks.
+            read_only=True,
+            **replay_kwargs,
+        )
+        print(f"[data] replacement replay buffer: {len(buf)} rows in the hot "
+              f"shuffle pool over {staged} shard(s)")
+        realized_replay = dict(replay_kwargs)
+    print("[data] replay settings (realized): "
+          + json.dumps(realized_replay, sort_keys=True))
 
     window_steps, n_windows, cadence_problem = train_window_plan(
         steps=int(args.steps), window=int(args.train_window_steps),
@@ -2058,6 +2190,14 @@ def main(argv: list[str] | None = None) -> int:
                             or _LIVE_FILE_UNREAD in trainer_provenance),
         live_game_frac=live_game_frac,
     )
+    if args.sampling_mode == "game_epoch":
+        planned_problems.append(
+            "sampling mode game_epoch intentionally differs from the historical "
+            "DiskReplayBuffer control (without replacement, natural corpus WDL "
+            "mix, and at most one row per game per batch). It is a sampler "
+            "intervention, not a valid continuation of replacement-sampled "
+            "control results",
+        )
     if planned_problems and not args.allow_invalid_control:
         raise SystemExit(
             "REFUSING TO LAUNCH — this run cannot be a valid control, and every "
@@ -2072,11 +2212,15 @@ def main(argv: list[str] | None = None) -> int:
     if planned_problems:
         print("⚑⚑ --allow-invalid-control: THIS RUN IS NOT A VALID CONTROL and "
               "its artifact cannot be quoted:\n  " + "\n  ".join(planned_problems))
+    train_window_metrics: list[dict[str, Any]] = []
     with CaptureRealizedLosses(
         rebuild_categorical=bool(kwargs["rebuild_categorical_target"]),
         categorical_params=kwargs["categorical_target_params"],
     ) as capture, SaveMidBudgetCheckpoint(
-        trainer, at_step=mid_step, path=mid_ckpt,
+        trainer,
+        at_step=mid_step,
+        path=mid_ckpt,
+        delete_on_error=isinstance(buf, GameAwareEpochBuffer),
     ) as mid:
   # ⚑⚑ WINDOWED AT PRODUCTION'S CADENCE, NOT ONE MONOLITHIC CALL. See
   # `PRODUCTION_TRAIN_WINDOW_STEPS`: with `lr_release_cycle_steps: 0` the release
@@ -2119,6 +2263,12 @@ def main(argv: list[str] | None = None) -> int:
                 steps=this_window,
             )
             steps_done += this_window
+            train_window_metrics.append({
+                "window_index": int(window_index + 1),
+                "steps_requested": int(this_window),
+                "steps_cumulative": int(steps_done),
+                **_scalar_metric_record(metrics),
+            })
             if n_windows > 1:
                 # flush=True is load-bearing: stdout redirected to a file is
                 # 8KB block-buffered, and at ~60 bytes/line ~136 windows sat
@@ -2136,6 +2286,26 @@ def main(argv: list[str] | None = None) -> int:
         )
     if capture.calls == 0:
         raise SystemExit("compute_loss was never called — no step ran")
+
+    if isinstance(buf, GameAwareEpochBuffer):
+        sampling_receipt = buf.receipt()
+        if not sampling_receipt["complete"]:
+            if mid.saved_at_step is not None:
+                mid_ckpt.unlink(missing_ok=True)
+            raise SystemExit(
+                "EXACT-EPOCH GUARD FAILED — no checkpoint written (including "
+                "the mid-budget one): " + json.dumps(sampling_receipt, sort_keys=True),
+            )
+    else:
+        sampling_receipt = {
+            "mode": "replacement",
+            "with_replacement": True,
+            "sampled_examples_nominal": (
+                int(args.steps) * int(trainer.accum_steps) * batch_size
+            ),
+            "sampled_batches_nominal": int(args.steps) * int(trainer.accum_steps),
+            "complete": None,
+        }
 
     print_realized(capture, metrics)
 
@@ -2209,6 +2379,14 @@ def main(argv: list[str] | None = None) -> int:
                             or _LIVE_FILE_UNREAD in trainer_provenance),
         live_game_frac=live_game_frac,
     )
+    if args.sampling_mode == "game_epoch":
+        validity_problems.append(
+            "sampling mode game_epoch intentionally differs from the historical "
+            "DiskReplayBuffer control (without replacement, natural corpus WDL "
+            "mix, and at most one row per game per batch). It is a sampler "
+            "intervention, not a valid continuation of replacement-sampled "
+            "control results",
+        )
     summary = {
         "steps": int(args.steps),
   # ⚑ THE STEPS THAT ACTUALLY RAN. `steps` above is the REQUEST; a windowed loop
@@ -2252,7 +2430,11 @@ def main(argv: list[str] | None = None) -> int:
   # realized values go in the artifact for the same reason
   # `realized_after_guard` does one entry down: a recipe that is certified and
   # then changed must not be able to look identical to one that was not.
-        "realized_replay_after_guard": replay_kwargs,
+        "realized_replay_after_guard": realized_replay,
+        # Exact-epoch mode banks both the pre-training plan hash and the
+        # independently accumulated realized hash. A completed step count is
+        # not evidence that every row was used; this receipt is.
+        "sampling": sampling_receipt,
         "mid_checkpoint": (
             None if mid.saved_at_step is None else {
                 "path": str(mid_ckpt.resolve()),
@@ -2304,11 +2486,12 @@ def main(argv: list[str] | None = None) -> int:
         "compute_loss_calls": capture.calls,
         "realized": dict(readout.as_table()),
         "realized_categorical": dict(capture.worst_categorical.as_table()),
-        "metrics": {
-            f.name: getattr(metrics, f.name)
-            for f in dataclasses.fields(type(metrics))
-            if isinstance(getattr(metrics, f.name), (int, float, bool, type(None)))
-        },
+        # ``metrics`` remains the end-of-run/final-window compatibility view.
+        # The preregistered throughput gate needs the median over EVERY window,
+        # so bank the complete per-window series in the run-owned artifact too;
+        # stdout and the shared default TensorBoard directory are not receipts.
+        "metrics": _scalar_metric_record(metrics),
+        "train_window_metrics": train_window_metrics,
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     if mid.saved_at_step is not None:
