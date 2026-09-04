@@ -5327,7 +5327,9 @@ def test_producer_atomic_json_preserves_preexisting_staging_file(tmp_path: Path)
     assert not output.exists()
 
 
-def test_analyzer_atomic_json_preserves_preexisting_staging_file(tmp_path: Path) -> None:
+def test_analyzer_anonymous_json_preserves_preexisting_staging_file(
+    tmp_path: Path,
+) -> None:
     output = tmp_path / "analysis.json"
     staging = output.with_name(f".{output.name}.tmp-{os.getpid()}")
     staging.write_text("other process staging\n")
@@ -5336,11 +5338,11 @@ def test_analyzer_atomic_json_preserves_preexisting_staging_file(tmp_path: Path)
         tmp_path / "bank.jsonl",
         tmp_path / "bank.jsonl.meta.json",
         output,
-    ) as target, pytest.raises(FileExistsError):
+    ) as target:
         controller_module._write_json_atomic(target, "{}")
 
     assert staging.read_text() == "other process staging\n"
-    assert not output.exists()
+    assert output.read_text() == "{}\n"
 
 
 def test_analyzer_atomic_json_requires_fresh_ordinary_output(
@@ -5389,13 +5391,13 @@ def test_analyzer_no_clobber_when_consumed_bank_appears_at_output_leaf(
         bank, role="trajectory_bank",
     )
     output = output_directory / "analysis.json"
-    real_link = controller_module.os.link
+    real_publish = controller_module._link_anonymous_file_no_replace
 
-    def move_bank_before_link(
-        source: str, destination: str, **kwargs: Any,
+    def move_bank_before_publish(
+        source_fd: int, parent_fd: int, name: str,
     ) -> None:
         bank.rename(output)
-        real_link(source, destination, **kwargs)
+        real_publish(source_fd, parent_fd, name)
 
     with controller_module._anchored_output_target(
         bank,
@@ -5403,47 +5405,129 @@ def test_analyzer_no_clobber_when_consumed_bank_appears_at_output_leaf(
         output,
         consumed_artifacts=(consumed,),
     ) as target:
-        monkeypatch.setattr(controller_module.os, "link", move_bank_before_link)
+        monkeypatch.setattr(
+            controller_module,
+            "_link_anonymous_file_no_replace",
+            move_bank_before_publish,
+        )
         with pytest.raises(FileExistsError, match="appeared during publication"):
             controller_module._write_json_atomic(target, "{}")
 
     assert not bank.exists()
     assert output.read_bytes() == bank_bytes
-    assert not output.with_name(f".{output.name}.tmp-{os.getpid()}").exists()
     with pytest.raises(OSError, match="Bad file descriptor"):
         os.fstat(target.parent_fd)
 
 
-def test_analyzer_cleanup_preserves_replaced_staging_entry(
+def test_analyzer_publication_never_name_unlinks_consumed_or_foreign_entries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    evidence_directory = tmp_path / "evidence"
     output_directory = tmp_path / "reports"
+    evidence_directory.mkdir()
     output_directory.mkdir()
+    bank = evidence_directory / "bank.jsonl"
+    bank.write_bytes(b"authenticated trajectory bank\n")
+    bank_bytes, consumed = controller_module._read_consumed_artifact(
+        bank, role="trajectory_bank",
+    )
     output = output_directory / "analysis.json"
     staging = output.with_name(f".{output.name}.tmp-{os.getpid()}")
+    staging.write_bytes(b"foreign staging entry\n")
+    real_unlink = controller_module.os.unlink
+    unlink_calls = 0
 
-    def replace_staging_then_fail(
-        source: str, destination: str, **kwargs: Any,
-    ) -> None:
-        del source, destination, kwargs
-        staging.unlink()
-        staging.write_bytes(b"foreign staging entry\n")
-        raise RuntimeError("injected publication failure")
+    def destroy_bank_at_unlink(path: str | bytes | int, **kwargs: Any) -> None:
+        nonlocal unlink_calls
+        unlink_calls += 1
+        bank.replace(staging)
+        real_unlink(path, **kwargs)
+
+    with controller_module._anchored_output_target(
+        bank,
+        tmp_path / "bank.jsonl.meta.json",
+        output,
+        consumed_artifacts=(consumed,),
+    ) as target:
+        monkeypatch.setattr(controller_module.os, "unlink", destroy_bank_at_unlink)
+        controller_module._write_json_atomic(target, "{}")
+
+    assert unlink_calls == 0
+    assert bank.read_bytes() == bank_bytes
+    assert staging.read_bytes() == b"foreign staging entry\n"
+    assert output.read_text() == "{}\n"
+    with pytest.raises(OSError, match="Bad file descriptor"):
+        os.fstat(target.parent_fd)
+
+
+def test_analyzer_fails_closed_without_anonymous_tmpfile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "analysis.json"
+    monkeypatch.delattr(controller_module.os, "O_TMPFILE")
 
     with controller_module._anchored_output_target(
         tmp_path / "bank.jsonl",
         tmp_path / "bank.jsonl.meta.json",
         output,
-    ) as target:
-        monkeypatch.setattr(
-            controller_module.os, "link", replace_staging_then_fail,
-        )
-        with pytest.raises(RuntimeError, match="injected publication failure"):
-            controller_module._write_json_atomic(target, "{}")
+    ) as target, pytest.raises(RuntimeError, match="requires Linux O_TMPFILE"):
+        controller_module._write_json_atomic(target, "{}")
 
-    assert staging.read_bytes() == b"foreign staging entry\n"
     assert not output.exists()
+
+
+def test_analyzer_fails_closed_without_linkat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "analysis.json"
+    monkeypatch.setattr(
+        controller_module.ctypes,
+        "CDLL",
+        lambda *_args, **_kwargs: SimpleNamespace(),
+    )
+
+    with controller_module._anchored_output_target(
+        tmp_path / "bank.jsonl",
+        tmp_path / "bank.jsonl.meta.json",
+        output,
+    ) as target, pytest.raises(RuntimeError, match="requires Linux linkat"):
+        controller_module._write_json_atomic(target, "{}")
+
+    assert not output.exists()
+
+
+def test_analyzer_anonymous_tmpfile_fd_closes_on_publication_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "analysis.json"
+    anonymous_fds: list[int] = []
+
+    def fail_publication(source_fd: int, parent_fd: int, name: str) -> None:
+        del parent_fd, name
+        anonymous_fds.append(source_fd)
+        raise RuntimeError("injected anonymous publication failure")
+
+    monkeypatch.setattr(
+        controller_module,
+        "_link_anonymous_file_no_replace",
+        fail_publication,
+    )
+    with controller_module._anchored_output_target(
+        tmp_path / "bank.jsonl",
+        tmp_path / "bank.jsonl.meta.json",
+        output,
+    ) as target, pytest.raises(RuntimeError, match="injected anonymous"):
+        controller_module._write_json_atomic(target, "{}")
+
+    assert not output.exists()
+    assert anonymous_fds
+    for anonymous_fd in anonymous_fds:
+        with pytest.raises(OSError, match="Bad file descriptor"):
+            os.fstat(anonymous_fd)
     with pytest.raises(OSError, match="Bad file descriptor"):
         os.fstat(target.parent_fd)
 
@@ -5461,14 +5545,14 @@ def test_analyzer_parent_symlink_swap_cannot_replace_checkpoint(
     alias.symlink_to(safe_parent, target_is_directory=True)
     output = alias / checkpoint.name
     manifest = {"checkpoint": {"path": str(checkpoint)}}
-    real_link = controller_module.os.link
+    real_publish = controller_module._link_anonymous_file_no_replace
 
-    def swap_parent_before_link(
-        source: str, destination: str, **kwargs: Any,
+    def swap_parent_before_publish(
+        source_fd: int, parent_fd: int, name: str,
     ) -> None:
         alias.unlink()
         alias.symlink_to(protected_parent, target_is_directory=True)
-        real_link(source, destination, **kwargs)
+        real_publish(source_fd, parent_fd, name)
 
     with controller_module._anchored_output_target(
         tmp_path / "bank.jsonl",
@@ -5476,12 +5560,16 @@ def test_analyzer_parent_symlink_swap_cannot_replace_checkpoint(
         output,
         manifest=manifest,
     ) as target:
-        monkeypatch.setattr(controller_module.os, "link", swap_parent_before_link)
+        monkeypatch.setattr(
+            controller_module,
+            "_link_anonymous_file_no_replace",
+            swap_parent_before_publish,
+        )
         with pytest.raises(RuntimeError, match="output parent changed"):
             controller_module._write_json_atomic(target, "{}")
 
     assert checkpoint.read_bytes() == b"authenticated checkpoint\n"
-    assert not (safe_parent / checkpoint.name).exists()
+    assert (safe_parent / checkpoint.name).read_text() == "{}\n"
 
 
 def test_analyzer_parent_symlink_swap_cannot_replace_analyzer_source(
@@ -5494,26 +5582,30 @@ def test_analyzer_parent_symlink_swap_cannot_replace_analyzer_source(
     alias = tmp_path / "output-parent"
     alias.symlink_to(safe_parent, target_is_directory=True)
     output = alias / analyzer_source.name
-    real_link = controller_module.os.link
+    real_publish = controller_module._link_anonymous_file_no_replace
 
-    def swap_parent_before_link(
-        source: str, destination: str, **kwargs: Any,
+    def swap_parent_before_publish(
+        source_fd: int, parent_fd: int, name: str,
     ) -> None:
         alias.unlink()
         alias.symlink_to(analyzer_source.parent, target_is_directory=True)
-        real_link(source, destination, **kwargs)
+        real_publish(source_fd, parent_fd, name)
 
     with controller_module._anchored_output_target(
         tmp_path / "bank.jsonl",
         tmp_path / "bank.jsonl.meta.json",
         output,
     ) as target:
-        monkeypatch.setattr(controller_module.os, "link", swap_parent_before_link)
+        monkeypatch.setattr(
+            controller_module,
+            "_link_anonymous_file_no_replace",
+            swap_parent_before_publish,
+        )
         with pytest.raises(RuntimeError, match="output parent changed"):
             controller_module._write_json_atomic(target, "{}")
 
     assert analyzer_source.read_bytes() == original_source
-    assert not (safe_parent / analyzer_source.name).exists()
+    assert (safe_parent / analyzer_source.name).read_text() == "{}\n"
 
 
 def test_analyzer_pre_anchor_bank_symlink_swap_keeps_consumed_target_protected(

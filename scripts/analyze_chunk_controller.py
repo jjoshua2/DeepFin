@@ -30,6 +30,8 @@ preloads ``scripts/__init__.py`` before the entrypoint can snapshot project sour
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import hashlib
 import json
 import math
@@ -854,10 +856,6 @@ class _AnchoredOutputTarget:
     def name(self) -> str:
         return self.lexical_path.name
 
-    @property
-    def staging_name(self) -> str:
-        return f".{self.name}.tmp-{os.getpid()}"
-
 
 def _directory_identity(stat_result: os.stat_result) -> tuple[int, int]:
     return int(stat_result.st_dev), int(stat_result.st_ino)
@@ -865,6 +863,7 @@ def _directory_identity(stat_result: os.stat_result) -> tuple[int, int]:
 
 _PROC_SELF_FD = Path("/proc/self/fd")
 _MAX_OUTPUT_ANCESTOR_DEPTH = 1024
+_AT_EMPTY_PATH = 0x1000
 
 
 def _strict_descriptor_path(fd: int, *, kind: str) -> Path:
@@ -1089,36 +1088,45 @@ def _require_fresh_output_leaf(target: _AnchoredOutputTarget) -> None:
     )
 
 
-def _unlink_owned_output_entry(
-    target: _AnchoredOutputTarget,
+def _link_anonymous_file_no_replace(
+    source_fd: int,
+    parent_fd: int,
     name: str,
-    expected: os.stat_result,
-) -> bool:
-    """Remove an analyzer-created entry, never a different observed inode."""
+) -> None:
+    """Publish an anonymous inode with Linux ``linkat(AT_EMPTY_PATH)``."""
     try:
-        current = os.stat(name, dir_fd=target.parent_fd, follow_symlinks=False)
-    except FileNotFoundError:
-        return False
-    if not _same_file_identity(current, expected):
-        return False
-    try:
-        os.unlink(name, dir_fd=target.parent_fd)
-    except FileNotFoundError:
-        return False
-    return True
+        process: Any = ctypes.CDLL(None, use_errno=True)
+        linkat = process.linkat
+        linkat.argtypes = [
+            ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p,
+            ctypes.c_int,
+        ]
+        linkat.restype = ctypes.c_int
+    except (AttributeError, OSError) as exc:
+        raise RuntimeError(
+            "safe analyzer output requires Linux linkat(AT_EMPTY_PATH)"
+        ) from exc
+    if linkat(source_fd, b"", parent_fd, os.fsencode(name), _AT_EMPTY_PATH) == 0:
+        return
+    error_number = ctypes.get_errno()
+    error = OSError(error_number, os.strerror(error_number), name)
+    if error_number == errno.EEXIST:
+        raise FileExistsError(error_number, os.strerror(error_number), name) from error
+    raise RuntimeError("could not atomically publish anonymous analyzer output") from error
 
 
 def _write_json_atomic(target: _AnchoredOutputTarget, rendered: str) -> None:
     """Publish fresh JSON without clobbering through the validated directory fd."""
     staging_fd: int | None = None
-    staging_identity: os.stat_result | None = None
-    destination_is_ours = False
     try:
         _require_anchored_output_stable(target)
         _require_fresh_output_leaf(target)
+        anonymous = getattr(os, "O_TMPFILE", 0)
+        if anonymous == 0:
+            raise RuntimeError("safe analyzer output requires Linux O_TMPFILE")
         staging_fd = os.open(
-            target.staging_name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+            ".",
+            os.O_WRONLY | os.O_CLOEXEC | anonymous,
             0o666,
             dir_fd=target.parent_fd,
         )
@@ -1128,19 +1136,10 @@ def _write_json_atomic(target: _AnchoredOutputTarget, rendered: str) -> None:
             fh.write("\n")
             fh.flush()
             os.fsync(fh.fileno())
-        staged = os.stat(
-            target.staging_name, dir_fd=target.parent_fd, follow_symlinks=False,
-        )
-        if not _same_file_identity(staged, staging_identity):
-            raise RuntimeError("analyzer output staging entry changed before publication")
         _require_anchored_output_stable(target)
         try:
-            os.link(
-                target.staging_name,
-                target.name,
-                src_dir_fd=target.parent_fd,
-                dst_dir_fd=target.parent_fd,
-                follow_symlinks=False,
+            _link_anonymous_file_no_replace(
+                staging_fd, target.parent_fd, target.name,
             )
         except FileExistsError as exc:
             raise FileExistsError(
@@ -1152,8 +1151,6 @@ def _write_json_atomic(target: _AnchoredOutputTarget, rendered: str) -> None:
         )
         if not _same_file_identity(destination, staging_identity):
             raise RuntimeError("published analyzer output differs from its staging file")
-        destination_is_ours = True
-        _unlink_owned_output_entry(target, target.staging_name, staging_identity)
         os.fsync(target.parent_fd)
         _require_anchored_output_stable(target)
         final_destination = os.stat(
@@ -1161,22 +1158,6 @@ def _write_json_atomic(target: _AnchoredOutputTarget, rendered: str) -> None:
         )
         if not _same_file_identity(final_destination, staging_identity):
             raise RuntimeError("published analyzer output changed after publication")
-    except BaseException:
-        directory_changed = False
-        if destination_is_ours and staging_identity is not None:
-            directory_changed = _unlink_owned_output_entry(
-                target, target.name, staging_identity,
-            )
-        if staging_identity is not None:
-            directory_changed = (
-                _unlink_owned_output_entry(
-                    target, target.staging_name, staging_identity,
-                )
-                or directory_changed
-            )
-        if directory_changed:
-            os.fsync(target.parent_fd)
-        raise
     finally:
         if staging_fd is not None:
             os.close(staging_fd)
