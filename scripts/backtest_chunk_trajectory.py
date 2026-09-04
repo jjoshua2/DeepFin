@@ -340,6 +340,20 @@ from scripts.chunk_trajectory_publication import (
     _write_json_atomic,
     _write_json_staged as _write_json_staged,
 )
+from scripts.approved_syzygy import (
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_DTZ_COUNT,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRY_COUNT,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_NAME,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_SIZE,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_WDL_COUNT,
+    APPROVED_SYZYGY_COMPONENTS,
+    APPROVED_SYZYGY_FILENAME_SIZE_ENCODING,
+    APPROVED_SYZYGY_LAYOUT_SCHEMA,
+    checksum_catalog_entries_sha256,
+    filename_size_sha256,
+)
 from scripts.repo_output_guard import repo_controlled_output, reserved_output_path
 from scripts.match_audit_rows import (
     MATCHED_ROWS_REPORT_SCHEMA,
@@ -404,7 +418,8 @@ _SCHEMA = CHUNK_TRAJECTORY_SCHEMA
 _PRODUCTION_WDL_FILES = 875
 _PRODUCTION_DTZ_FILES = 510
 _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
-_TABLEBASE_INVENTORY_SCHEMA = "deepfin.syzygy_inventory.v3"
+_TABLEBASE_INVENTORY_SCHEMA = "deepfin.syzygy_inventory.v4"
+_APPROVED_SYZYGY_COMPONENTS = APPROVED_SYZYGY_COMPONENTS
 _TABLEBASE_FILE_IDENTITY_FIELDS = (
     "name", "size", "mtime_ns", "ctime_ns", "device", "inode",
 )
@@ -425,6 +440,7 @@ _REQUIRED_PRODUCER_SOURCE_MODULES = {
     "scripts.analyze_chunk_controller",
     "scripts.repo_output_guard",
     "scripts.match_audit_rows",
+    "scripts.approved_syzygy",
     "chess_anti_engine.eval.audit",
     "chess_anti_engine.mcts.search_options",
     "chess_anti_engine.uci.search",
@@ -1218,11 +1234,27 @@ def _read_tracked_preregistration(
     return {**before, "repo_relative_path": relative_path}, document
 
 
+def _canonical_syzygy_directory_path(path: str | Path) -> Path:
+    """Reject spellings whose kernel traversal can differ after normalization."""
+    raw_path = os.fspath(path)
+    if (
+        not os.path.isabs(raw_path)
+        or raw_path.startswith("//")
+        or os.path.expanduser(raw_path) != raw_path
+        or os.path.normpath(raw_path) != raw_path
+    ):
+        raise SystemExit(
+            "Syzygy directories must use canonical absolute paths without '.', '..', "
+            "'~', duplicate separators, or trailing separators"
+        )
+    return Path(raw_path)
+
+
 def _open_directory_no_follow(
     path: Path,
 ) -> tuple[int, Path, list[dict[str, int | str]]]:
     """Open and bind every directory component without traversing a symlink."""
-    lexical = Path(os.path.abspath(os.fspath(path.expanduser())))
+    lexical = _canonical_syzygy_directory_path(path)
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
     current_fd = os.open(os.sep, flags)
     try:
@@ -1294,7 +1326,277 @@ def _tablebase_directory_identity(value: os.stat_result) -> dict[str, int]:
     }
 
 
-def _tablebase_inventory(path_value: str) -> dict[str, Any]:
+def _tablebase_checksum_catalog(
+    directory_fd: int,
+    directory: Path,
+    entry_name: str,
+    entry_stat: os.stat_result,
+) -> tuple[dict[str, Any], tuple[tuple[str, str], ...]]:
+    """Read the small official checksum catalog from one stable no-follow FD."""
+    file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        file_fd = os.open(entry_name, file_flags, dir_fd=directory_fd)
+    except OSError as exc:
+        raise SystemExit(
+            f"cannot open Syzygy checksum catalog without following symlinks "
+            f"{directory / entry_name}: {exc}"
+        ) from exc
+    try:
+        opened_before = os.fstat(file_fd)
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(file_fd, 64 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        opened_after = os.fstat(file_fd)
+    finally:
+        os.close(file_fd)
+    identity = (
+        int(entry_stat.st_mode), int(entry_stat.st_size),
+        int(entry_stat.st_mtime_ns), int(entry_stat.st_ctime_ns),
+        int(entry_stat.st_dev), int(entry_stat.st_ino),
+    )
+    if identity != (
+        int(opened_before.st_mode), int(opened_before.st_size),
+        int(opened_before.st_mtime_ns), int(opened_before.st_ctime_ns),
+        int(opened_before.st_dev), int(opened_before.st_ino),
+    ) or identity != (
+        int(opened_after.st_mode), int(opened_after.st_size),
+        int(opened_after.st_mtime_ns), int(opened_after.st_ctime_ns),
+        int(opened_after.st_dev), int(opened_after.st_ino),
+    ):
+        raise SystemExit(
+            f"Syzygy checksum catalog changed while it was read: "
+            f"{directory / entry_name}"
+        )
+    content = b"".join(chunks)
+    try:
+        lines = content.decode("ascii", errors="strict").splitlines()
+    except UnicodeError as exc:
+        raise SystemExit("Syzygy checksum catalog is not ASCII") from exc
+    rows: list[tuple[str, str]] = []
+    seen_names: set[str] = set()
+    for line_number, line in enumerate(lines, start=1):
+        fields = line.split()
+        if len(fields) != 2:
+            raise SystemExit(
+                "Syzygy checksum catalog row is malformed at line "
+                f"{line_number}"
+            )
+        digest, name = fields
+        if (
+            len(digest) != 32
+            or any(character not in "0123456789abcdefABCDEF" for character in digest)
+            or not name
+            or Path(name).name != name
+            or Path(name).suffix not in (".rtbw", ".rtbz")
+            or name in seen_names
+        ):
+            raise SystemExit(
+                "Syzygy checksum catalog row is invalid at line "
+                f"{line_number}"
+            )
+        seen_names.add(name)
+        rows.append((name, digest.lower()))
+    canonical_rows = tuple(sorted(rows))
+    raw_sha256 = hashlib.sha256(content).hexdigest()
+    entries_sha256 = checksum_catalog_entries_sha256(canonical_rows)
+    wdl_count = sum(name.endswith(".rtbw") for name, _digest in canonical_rows)
+    dtz_count = sum(name.endswith(".rtbz") for name, _digest in canonical_rows)
+    approved = bool(
+        raw_sha256 == APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256
+        and len(canonical_rows) == APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRY_COUNT
+        and len(content) == APPROVED_SYZYGY_CHECKSUM_CATALOG_SIZE
+        and wdl_count == APPROVED_SYZYGY_CHECKSUM_CATALOG_WDL_COUNT
+        and dtz_count == APPROVED_SYZYGY_CHECKSUM_CATALOG_DTZ_COUNT
+        and entries_sha256 == APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256
+    )
+    return ({
+        "schema": "deepfin.syzygy_checksum_catalog.v1",
+        "component": directory.name,
+        "name": entry_name,
+        "size": len(content),
+        "mtime_ns": int(opened_after.st_mtime_ns),
+        "ctime_ns": int(opened_after.st_ctime_ns),
+        "device": int(opened_after.st_dev),
+        "inode": int(opened_after.st_ino),
+        "raw_sha256": raw_sha256,
+        "algorithm": "md5",
+        "entry_count": len(canonical_rows),
+        "rtbw_count": wdl_count,
+        "rtbz_count": dtz_count,
+        "canonical_entries_sha256": entries_sha256,
+        "entries": [list(row) for row in canonical_rows],
+        "approved": approved,
+    }, canonical_rows)
+
+
+def _content_verification_rows(
+    directories: list[dict[str, Any]],
+    expected_md5: Mapping[str, str],
+) -> list[list[object]]:
+    """Bind every approved checksum to the exact physical file identity."""
+    return [
+        [
+            str(directory["approved_layout"]["component"]),
+            str(identity[0]),
+            int(identity[1]),
+            int(identity[2]),
+            int(identity[3]),
+            int(identity[4]),
+            int(identity[5]),
+            expected_md5[str(identity[0])],
+        ]
+        for directory in directories
+        for identity in directory["file_identities"]
+    ]
+
+
+def _verify_tablebase_contents(
+    directories: list[dict[str, Any]],
+    catalog_rows: tuple[tuple[str, str], ...],
+) -> dict[str, Any]:
+    """Stream each physical table once and compare it with the approved MD5."""
+    expected_md5 = dict(catalog_rows)
+    verification_rows = _content_verification_rows(directories, expected_md5)
+    bytes_hashed = 0
+    files_hashed = 0
+    for directory in directories:
+        directory_fd, opened_path, path_components = _open_directory_no_follow(
+            Path(str(directory["path"])),
+        )
+        try:
+            if (
+                opened_path != Path(str(directory["path"]))
+                or path_components != directory["path_components"]
+                or _tablebase_directory_identity(os.fstat(directory_fd))
+                != directory["root_identity"]
+            ):
+                raise SystemExit(
+                    f"Syzygy directory changed before content verification: "
+                    f"{directory['path']}"
+                )
+            for identity in directory["file_identities"]:
+                name = str(identity[0])
+                expected_identity = tuple(int(value) for value in identity[1:])
+                try:
+                    file_fd = os.open(
+                        name, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
+                        dir_fd=directory_fd,
+                    )
+                except OSError as exc:
+                    raise SystemExit(
+                        f"cannot open Syzygy file for content verification "
+                        f"{opened_path / name}: {exc}"
+                    ) from exc
+                try:
+                    before = os.fstat(file_fd)
+                    observed_identity = (
+                        int(before.st_size), int(before.st_mtime_ns),
+                        int(before.st_ctime_ns), int(before.st_dev),
+                        int(before.st_ino),
+                    )
+                    if (
+                        not stat.S_ISREG(before.st_mode)
+                        or observed_identity != expected_identity
+                    ):
+                        raise SystemExit(
+                            "Syzygy file changed before content verification: "
+                            f"{opened_path / name}"
+                        )
+                    digest = hashlib.md5(usedforsecurity=False)
+                    file_bytes = 0
+                    while True:
+                        chunk = os.read(file_fd, 8 * 1024 * 1024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                        file_bytes += len(chunk)
+                    after = os.fstat(file_fd)
+                finally:
+                    os.close(file_fd)
+                if (
+                    (
+                        int(after.st_size), int(after.st_mtime_ns),
+                        int(after.st_ctime_ns), int(after.st_dev), int(after.st_ino),
+                    )
+                    != expected_identity
+                    or file_bytes != expected_identity[0]
+                ):
+                    raise SystemExit(
+                        f"Syzygy file changed during content verification: "
+                        f"{opened_path / name}"
+                    )
+                expected_digest = expected_md5.get(name)
+                if expected_digest is None or digest.hexdigest() != expected_digest:
+                    raise SystemExit(
+                        f"Syzygy content checksum mismatch: {opened_path / name}"
+                    )
+                bytes_hashed += file_bytes
+                files_hashed += 1
+        finally:
+            os.close(directory_fd)
+    document = json.dumps(
+        verification_rows, sort_keys=False, ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "schema": "deepfin.syzygy_content_verification.v1",
+        "method": "single_pass_md5_against_approved_catalog",
+        "identity_binding_fields": [
+            "component", "name", "size", "mtime_ns", "ctime_ns", "device",
+            "inode", "approved_md5",
+        ],
+        "file_count": files_hashed,
+        "bytes_hashed": bytes_hashed,
+        "file_identity_checksum_sha256": hashlib.sha256(document).hexdigest(),
+        "passed": True,
+    }
+
+
+def _reuse_tablebase_content_verification(
+    directories: list[dict[str, Any]],
+    catalog_rows: tuple[tuple[str, str], ...],
+    prior: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Revalidate one-pass evidence against the final metadata inventory."""
+    expected_md5 = dict(catalog_rows)
+    try:
+        verification_rows = _content_verification_rows(directories, expected_md5)
+    except KeyError as exc:
+        raise SystemExit("Syzygy checksum catalog does not cover every table") from exc
+    document = json.dumps(
+        verification_rows, sort_keys=False, ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    expected = {
+        "schema": "deepfin.syzygy_content_verification.v1",
+        "method": "single_pass_md5_against_approved_catalog",
+        "identity_binding_fields": [
+            "component", "name", "size", "mtime_ns", "ctime_ns", "device",
+            "inode", "approved_md5",
+        ],
+        "file_count": sum(
+            int(directory["file_identity_count"]) for directory in directories
+        ),
+        "bytes_hashed": sum(int(directory["total_bytes"]) for directory in directories),
+        "file_identity_checksum_sha256": hashlib.sha256(document).hexdigest(),
+        "passed": True,
+    }
+    if dict(prior) != expected:
+        raise SystemExit(
+            "Syzygy filesystem identities no longer match the initial content "
+            "verification"
+        )
+    return expected
+
+
+def _tablebase_inventory(
+    path_value: str, *, require_approved: bool = False,
+    verify_contents: bool = False,
+    prior_content_verification: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """No-follow filesystem identity for the 220 GiB production tablebases.
 
     Full byte hashing would read the corpus twice per run (roughly 440 GiB) and
@@ -1302,14 +1604,26 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
     inventories bind the absolute-root anchor, every traversed directory, and
     every table file's device, inode, size, mtime, and ctime.  Ctime deliberately
     makes an in-place same-size edit or swap-and-restore visible even if mtime is
-    restored.
+    restored.  Decision-grade calls additionally require the portable sorted
+    filename/size digest and official checksum catalog pinned in
+    ``scripts.approved_syzygy``.  A decision-grade run streams every physical
+    table once before search; its final inventory reuses that identity-bound
+    proof instead of performing a second corpus-sized pass.
     """
     directories: list[dict[str, Any]] = []
+    checksum_catalogs: list[
+        tuple[dict[str, Any], tuple[tuple[str, str], ...]]
+    ] = []
+    approved_by_name = {
+        component.directory_name: component
+        for component in _APPROVED_SYZYGY_COMPONENTS
+    }
     for raw_directory in path_value.split(SEPARATOR):
-        if not raw_directory.strip():
+        if not raw_directory or raw_directory != raw_directory.strip():
             raise SystemExit("Syzygy path contains an empty directory component")
+        canonical_directory = _canonical_syzygy_directory_path(raw_directory)
         directory_fd, directory, path_components = _open_directory_no_follow(
-            Path(raw_directory.strip()),
+            canonical_directory,
         )
         try:
             root_before = os.fstat(directory_fd)
@@ -1325,10 +1639,14 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
             def scan_table_files(
                 directory_fd: int = directory_fd,
                 directory: Path = directory,
-            ) -> tuple[dict[str, int], int, list[list[object]]]:
+            ) -> tuple[
+                dict[str, int], int, list[list[str | int]],
+                tuple[dict[str, Any], tuple[tuple[str, str], ...]] | None,
+            ]:
                 counts = {"rtbw": 0, "rtbz": 0}
                 total_bytes = 0
-                identities: list[list[object]] = []
+                identities: list[list[str | int]] = []
+                checksum_catalog = None
                 try:
                     with os.scandir(directory_fd) as iterator:
                         entries = sorted(iterator, key=lambda entry: entry.name)
@@ -1353,6 +1671,10 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
                         raise SystemExit(
                             "Syzygy directory entries must be regular files: "
                             f"{directory / entry.name}"
+                        )
+                    if entry.name == APPROVED_SYZYGY_CHECKSUM_CATALOG_NAME:
+                        checksum_catalog = _tablebase_checksum_catalog(
+                            directory_fd, directory, entry.name, entry_stat,
                         )
                     suffix = Path(entry.name).suffix
                     if suffix not in (".rtbw", ".rtbz"):
@@ -1398,11 +1720,13 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
                         int(opened_stat.st_dev),
                         int(opened_stat.st_ino),
                     ])
-                return counts, total_bytes, identities
+                return counts, total_bytes, identities, checksum_catalog
 
-            counts, total_bytes, file_identities = scan_table_files()
+            counts, total_bytes, file_identities, checksum_catalog = scan_table_files()
             repeated_scan = scan_table_files()
-            if repeated_scan != (counts, total_bytes, file_identities):
+            if repeated_scan != (
+                counts, total_bytes, file_identities, checksum_catalog,
+            ):
                 raise SystemExit(
                     f"Syzygy files changed while they were inventoried: {directory}"
                 )
@@ -1411,6 +1735,29 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
                 raise SystemExit(
                     f"Syzygy directory changed while it was inventoried: {directory}"
                 )
+            filename_sizes = [
+                (str(row[0]), int(row[1])) for row in file_identities
+            ]
+            layout_sha256 = filename_size_sha256(filename_sizes)
+            approved_component = approved_by_name.get(directory.name)
+            approved_layout = {
+                "schema": APPROVED_SYZYGY_LAYOUT_SCHEMA,
+                "component": directory.name,
+                "canonical_encoding": APPROVED_SYZYGY_FILENAME_SIZE_ENCODING,
+                "rtbw_count": counts["rtbw"],
+                "rtbz_count": counts["rtbz"],
+                "file_count": len(file_identities),
+                "total_bytes": total_bytes,
+                "filename_size_sha256": layout_sha256,
+                "passed": bool(
+                    approved_component is not None
+                    and counts["rtbw"] == approved_component.rtbw_count
+                    and counts["rtbz"] == approved_component.rtbz_count
+                    and len(file_identities) == approved_component.file_count
+                    and total_bytes == approved_component.total_bytes
+                    and layout_sha256 == approved_component.filename_size_sha256
+                ),
+            }
             identity_document = json.dumps(
                 {
                     "root_identity": root_identity,
@@ -1438,18 +1785,74 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
                 "file_identity_fields": list(_TABLEBASE_FILE_IDENTITY_FIELDS),
                 "file_identities": file_identities,
                 "total_bytes": total_bytes,
+                "approved_layout": approved_layout,
                 "inventory_sha256": hashlib.sha256(identity_document).hexdigest(),
             })
+            if checksum_catalog is not None:
+                checksum_catalogs.append(checksum_catalog)
         finally:
             os.close(directory_fd)
+    if verify_contents and prior_content_verification is not None:
+        raise SystemExit(
+            "Syzygy content verification cannot be both recomputed and reused"
+        )
+    catalog_artifacts = [artifact for artifact, _rows in checksum_catalogs]
+    catalog_rows = checksum_catalogs[0][1] if len(checksum_catalogs) == 1 else ()
+    observed_names = {
+        str(identity[0])
+        for directory in directories
+        for identity in directory["file_identities"]
+    }
+    catalog_names = {name for name, _digest in catalog_rows}
+    checksum_catalog = catalog_artifacts[0] if len(catalog_artifacts) == 1 else None
+    checksum_catalog_passed = bool(
+        isinstance(checksum_catalog, dict)
+        and checksum_catalog.get("approved") is True
+        and observed_names == catalog_names
+    )
+    approved_component_order = tuple(
+        str(directory["approved_layout"]["component"])
+        for directory in directories
+    )
+    expected_component_order = tuple(
+        component.directory_name for component in _APPROVED_SYZYGY_COMPONENTS
+    )
+    approved_layout_passed = bool(
+        approved_component_order == expected_component_order
+        and all(
+            directory["approved_layout"]["passed"] is True
+            for directory in directories
+        )
+        and checksum_catalog_passed
+    )
+    if require_approved and not approved_layout_passed:
+        raise SystemExit(
+            "decision-grade trajectory banks require the exact approved production "
+            "Syzygy filename/size layout and checksum catalog"
+        )
+    content_verification = None
+    if approved_layout_passed and verify_contents:
+        content_verification = _verify_tablebase_contents(
+            directories, catalog_rows,
+        )
+    elif approved_layout_passed and prior_content_verification is not None:
+        content_verification = _reuse_tablebase_content_verification(
+            directories, catalog_rows, prior_content_verification,
+        )
+    if require_approved and not (
+        isinstance(content_verification, dict)
+        and content_verification.get("passed") is True
+    ):
+        raise SystemExit(
+            "decision-grade trajectory banks require a one-pass content checksum "
+            "verification bound to the current Syzygy file identities"
+        )
     canonical_path = SEPARATOR.join(str(row["path"]) for row in directories)
-    inventory_document = json.dumps(
-        directories, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
-    ).encode("utf-8")
-    return {
+    result = {
         "schema": _TABLEBASE_INVENTORY_SCHEMA,
         "identity_method": (
-            "no_follow_path_components_and_file_device_inode_size_mtime_ctime"
+            "approved_filename_size_plus_no_follow_path_components_and_"
+            "file_device_inode_size_mtime_ctime"
         ),
         "path_anchor_semantics": (
             "absolute_root_and_each_lexical_directory_component_no_follow"
@@ -1458,8 +1861,18 @@ def _tablebase_inventory(path_value: str) -> dict[str, Any]:
         "directories": directories,
         "rtbw_count": sum(int(row["rtbw_count"]) for row in directories),
         "rtbz_count": sum(int(row["rtbz_count"]) for row in directories),
-        "inventory_sha256": hashlib.sha256(inventory_document).hexdigest(),
+        "approved_layout_schema": APPROVED_SYZYGY_LAYOUT_SCHEMA,
+        "approved_component_order": list(approved_component_order),
+        "approved_layout_passed": approved_layout_passed,
+        "checksum_catalog": checksum_catalog,
+        "checksum_catalog_covers_logical_table_names": checksum_catalog_passed,
+        "content_verification": content_verification,
     }
+    inventory_document = json.dumps(
+        result, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
+    result["inventory_sha256"] = hashlib.sha256(inventory_document).hexdigest()
+    return result
 
 
 def _checkpoint_file(path: Path) -> Path:
@@ -2017,7 +2430,10 @@ def _main() -> None:
         "preregistration": preregistration_artifact,
     }
     syzygy_directories = (
-        [Path(part.strip()) for part in str(args.syzygy_path).split(SEPARATOR)]
+        [
+            _canonical_syzygy_directory_path(part)
+            for part in str(args.syzygy_path).split(SEPARATOR)
+        ]
         if args.syzygy_path else []
     )
     _require_safe_output_paths(
@@ -2064,13 +2480,12 @@ def _main() -> None:
             "decision-grade trajectory banks require production "
             "torch.compile mode max-autotune"
         )
-    if args.syzygy_path or not args.methodology_smoke:
-        try:
-            require_tablebases(args.syzygy_path, what="trajectory --syzygy-path")
-        except ValueError as exc:
-            raise SystemExit(str(exc)) from exc
     syzygy_inventory = (
-        _tablebase_inventory(str(args.syzygy_path)) if args.syzygy_path else None
+        _tablebase_inventory(
+            str(args.syzygy_path), require_approved=not args.methodology_smoke,
+            verify_contents=not args.methodology_smoke,
+        )
+        if args.syzygy_path else None
     )
     syzygy_components = (
         tuple(
@@ -2086,6 +2501,7 @@ def _main() -> None:
             or int(syzygy_inventory["rtbw_count"]) < _PRODUCTION_WDL_FILES
             or int(syzygy_inventory["rtbz_count"]) < _PRODUCTION_DTZ_FILES
             or syzygy_components != _PRODUCTION_TB_COMPONENTS
+            or syzygy_inventory.get("approved_layout_passed") is not True
         )
     ):
         raise SystemExit(
@@ -2093,6 +2509,16 @@ def _main() -> None:
             f"Syzygy pair ({_PRODUCTION_WDL_FILES} WDL and "
             f"{_PRODUCTION_DTZ_FILES} DTZ files)"
         )
+    if isinstance(syzygy_inventory, dict):
+        # The engine and final inventory must consume exactly the no-follow,
+        # canonical paths whose identities were approved above—not a raw
+        # spelling with different kernel traversal semantics.
+        args.syzygy_path = syzygy_inventory["path"]
+    if args.syzygy_path or not args.methodology_smoke:
+        try:
+            require_tablebases(args.syzygy_path, what="trajectory --syzygy-path")
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     gumbel_defaults = {
         "c_scale": float(PLAY_SEARCH_DEFAULTS["c_scale"]),
         "c_visit": float(PLAY_SEARCH_DEFAULTS["c_visit"]),
@@ -3399,7 +3825,17 @@ def _main() -> None:
             changed_artifacts.append("matched_rows_snapshot")
     try:
         current_syzygy_inventory = (
-            _tablebase_inventory(str(args.syzygy_path)) if args.syzygy_path else None
+            _tablebase_inventory(
+                str(args.syzygy_path),
+                require_approved=not args.methodology_smoke,
+                prior_content_verification=(
+                    provenance["syzygy"].get("content_verification")
+                    if not args.methodology_smoke
+                    and isinstance(provenance.get("syzygy"), dict)
+                    else None
+                ),
+            )
+            if args.syzygy_path else None
         )
     except OSError:
         current_syzygy_inventory = None

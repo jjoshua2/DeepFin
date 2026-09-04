@@ -30,6 +30,15 @@ from chess_anti_engine.eval.audit import (
 )
 from chess_anti_engine.moves import move_to_index
 from scripts import analyze_chunk_controller as controller_module
+from scripts import backtest_chunk_trajectory as trajectory_module
+from scripts.approved_syzygy import (
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256,
+    APPROVED_SYZYGY_COMPONENTS,
+    ApprovedSyzygyComponent,
+    checksum_catalog_entries_sha256,
+    filename_size_sha256,
+)
 from scripts.analyze_chunk_controller import (
     Transition,
     _complexity_continue,
@@ -71,9 +80,56 @@ from scripts.check_c_extensions_fresh import extension_spec
 _TEST_GIT_FILES: dict[str, bytes] = {}
 
 
+def test_approved_syzygy_layout_constants_match_production_inventory() -> None:
+    assert (
+        ApprovedSyzygyComponent(
+            "syzygy_3-4-5", 510, 145, 655, 73_818_025_392,
+            "796607668b96e5128e5493cb6fcbb8c0b1155ffd1f686a6e7e12b4a4fea61b78",
+        ),
+        ApprovedSyzygyComponent(
+            "syzygy_6", 365, 365, 730, 160_225_616_032,
+            "32b67df63f6005216c29778f3176d242a1f531aa1f225e4916bbc5a1ccfa6618",
+        ),
+    ) == APPROVED_SYZYGY_COMPONENTS
+    assert APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256 == (
+        "e5039f7d0a63bb8607cc2342357353f162f40ae601853f116e763809003683ab"
+    )
+    assert APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256 == (
+        "4e2a2577cc0bdae8025f71dc64b69bf0caec422ee220f2a2995f0ca122ad0d62"
+    )
+
+
 @pytest.fixture(autouse=True)
 def _authenticate_test_preregistration(monkeypatch: pytest.MonkeyPatch) -> None:
     _TEST_GIT_FILES.clear()
+    approved_components, catalog_rows = _synthetic_approved_syzygy_contract()
+    catalog_entries_sha256 = checksum_catalog_entries_sha256(catalog_rows)
+    catalog_wdl_count = sum(name.endswith(".rtbw") for name, _digest in catalog_rows)
+    catalog_dtz_count = sum(name.endswith(".rtbz") for name, _digest in catalog_rows)
+    for module in (controller_module, trajectory_module):
+        monkeypatch.setattr(module, "_APPROVED_SYZYGY_COMPONENTS", approved_components)
+        monkeypatch.setattr(
+            module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256", "a" * 64,
+        )
+        monkeypatch.setattr(
+            module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_SIZE", 1,
+        )
+        monkeypatch.setattr(
+            module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRY_COUNT",
+            len(catalog_rows),
+        )
+        monkeypatch.setattr(
+            module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_WDL_COUNT",
+            catalog_wdl_count,
+        )
+        monkeypatch.setattr(
+            module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_DTZ_COUNT",
+            catalog_dtz_count,
+        )
+        monkeypatch.setattr(
+            module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256",
+            catalog_entries_sha256,
+        )
     monkeypatch.setattr(
         controller_module,
         "_git_file_at_commit",
@@ -1555,6 +1611,9 @@ def _synthetic_tablebase_directory(
     identity_fields = [
         "name", "size", "mtime_ns", "ctime_ns", "device", "inode",
     ]
+    portable_digest = filename_size_sha256(
+        (str(row[0]), int(row[1])) for row in identities
+    )
     identity_document = json.dumps(
         {
             "root_identity": root_identity,
@@ -1582,8 +1641,62 @@ def _synthetic_tablebase_directory(
         "file_identity_fields": identity_fields,
         "file_identities": identities,
         "total_bytes": len(identities),
+        "approved_layout": {
+            "schema": "deepfin.approved_syzygy_layout.v1",
+            "component": Path(path).name,
+            "canonical_encoding": (
+                "sorted_compact_ascii_json_array_of_filename_and_decimal_size"
+            ),
+            "rtbw_count": wdl_count,
+            "rtbz_count": dtz_count,
+            "file_count": len(identities),
+            "total_bytes": len(identities),
+            "filename_size_sha256": portable_digest,
+            "passed": True,
+        },
         "inventory_sha256": hashlib.sha256(identity_document).hexdigest(),
     }
+
+
+def _synthetic_approved_syzygy_contract() -> tuple[
+    tuple[ApprovedSyzygyComponent, ...], tuple[tuple[str, str], ...],
+]:
+    directories = [
+        _synthetic_tablebase_directory(
+            "/tb/syzygy_3-4-5", wdl_count=510, dtz_count=145,
+            inode_offset=10,
+        ),
+        _synthetic_tablebase_directory(
+            "/tb/syzygy_6", wdl_count=365, dtz_count=365,
+            inode_offset=10_000,
+        ),
+    ]
+    components = tuple(
+        ApprovedSyzygyComponent(
+            directory_name=str(row["approved_layout"]["component"]),
+            rtbw_count=int(row["rtbw_count"]),
+            rtbz_count=int(row["rtbz_count"]),
+            file_count=int(row["file_identity_count"]),
+            total_bytes=int(row["total_bytes"]),
+            filename_size_sha256=str(
+                row["approved_layout"]["filename_size_sha256"]
+            ),
+        )
+        for row in directories
+    )
+    names = sorted({
+        str(identity[0])
+        for directory in directories
+        for identity in directory["file_identities"]
+    })
+    catalog_rows = tuple(
+        (
+            name,
+            hashlib.md5(name.encode("ascii"), usedforsecurity=False).hexdigest(),
+        )
+        for name in names
+    )
+    return components, catalog_rows
 
 
 def _synthetic_syzygy_inventory() -> dict[str, Any]:
@@ -1597,13 +1710,70 @@ def _synthetic_syzygy_inventory() -> dict[str, Any]:
             inode_offset=10_000,
         ),
     ]
-    inventory_document = json.dumps(
-        directories, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    _components, catalog_rows = _synthetic_approved_syzygy_contract()
+    catalog = {
+        "schema": "deepfin.syzygy_checksum_catalog.v1",
+        "component": "syzygy_6",
+        "name": "3-4-5-6.md5",
+        "size": controller_module.APPROVED_SYZYGY_CHECKSUM_CATALOG_SIZE,
+        "mtime_ns": 1,
+        "ctime_ns": 1,
+        "device": 1,
+        "inode": 20_000,
+        "raw_sha256": (
+            controller_module.APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256
+        ),
+        "algorithm": "md5",
+        "entry_count": len(catalog_rows),
+        "rtbw_count": sum(
+            name.endswith(".rtbw") for name, _digest in catalog_rows
+        ),
+        "rtbz_count": sum(
+            name.endswith(".rtbz") for name, _digest in catalog_rows
+        ),
+        "canonical_entries_sha256": checksum_catalog_entries_sha256(catalog_rows),
+        "entries": [list(row) for row in catalog_rows],
+        "approved": True,
+    }
+    expected_md5 = dict(catalog_rows)
+    verification_rows = [
+        [
+            str(directory["approved_layout"]["component"]),
+            str(identity[0]),
+            int(identity[1]),
+            int(identity[2]),
+            int(identity[3]),
+            int(identity[4]),
+            int(identity[5]),
+            expected_md5[str(identity[0])],
+        ]
+        for directory in directories
+        for identity in directory["file_identities"]
+    ]
+    verification_document = json.dumps(
+        verification_rows, ensure_ascii=True, separators=(",", ":"),
     ).encode("utf-8")
-    return {
-        "schema": "deepfin.syzygy_inventory.v3",
+    content_verification = {
+        "schema": "deepfin.syzygy_content_verification.v1",
+        "method": "single_pass_md5_against_approved_catalog",
+        "identity_binding_fields": [
+            "component", "name", "size", "mtime_ns", "ctime_ns", "device",
+            "inode", "approved_md5",
+        ],
+        "file_count": sum(
+            int(directory["file_identity_count"]) for directory in directories
+        ),
+        "bytes_hashed": sum(int(directory["total_bytes"]) for directory in directories),
+        "file_identity_checksum_sha256": hashlib.sha256(
+            verification_document
+        ).hexdigest(),
+        "passed": True,
+    }
+    result = {
+        "schema": "deepfin.syzygy_inventory.v4",
         "identity_method": (
-            "no_follow_path_components_and_file_device_inode_size_mtime_ctime"
+            "approved_filename_size_plus_no_follow_path_components_and_"
+            "file_device_inode_size_mtime_ctime"
         ),
         "path_anchor_semantics": (
             "absolute_root_and_each_lexical_directory_component_no_follow"
@@ -1612,8 +1782,94 @@ def _synthetic_syzygy_inventory() -> dict[str, Any]:
         "rtbw_count": 875,
         "rtbz_count": 510,
         "directories": directories,
-        "inventory_sha256": hashlib.sha256(inventory_document).hexdigest(),
+        "approved_layout_schema": "deepfin.approved_syzygy_layout.v1",
+        "approved_component_order": ["syzygy_3-4-5", "syzygy_6"],
+        "approved_layout_passed": True,
+        "checksum_catalog": catalog,
+        "checksum_catalog_covers_logical_table_names": True,
+        "content_verification": content_verification,
     }
+    inventory_document = json.dumps(
+        result, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
+    result["inventory_sha256"] = hashlib.sha256(inventory_document).hexdigest()
+    return result
+
+
+def _refresh_synthetic_syzygy_integrity(syzygy: dict[str, Any]) -> None:
+    for directory in syzygy["directories"]:
+        identities = directory["file_identities"]
+        wdl_count = sum(str(row[0]).endswith(".rtbw") for row in identities)
+        dtz_count = sum(str(row[0]).endswith(".rtbz") for row in identities)
+        total_bytes = sum(int(row[1]) for row in identities)
+        directory["rtbw_count"] = wdl_count
+        directory["rtbz_count"] = dtz_count
+        directory["file_identity_count"] = len(identities)
+        directory["total_bytes"] = total_bytes
+        layout_digest = filename_size_sha256(
+            (str(row[0]), int(row[1])) for row in identities
+        )
+        directory["approved_layout"].update({
+            "rtbw_count": wdl_count,
+            "rtbz_count": dtz_count,
+            "file_count": len(identities),
+            "total_bytes": total_bytes,
+            "filename_size_sha256": layout_digest,
+            "passed": True,
+        })
+        identity_document = json.dumps(
+            {
+                "root_identity": directory["root_identity"],
+                "path_component_identity_fields": directory[
+                    "path_component_identity_fields"
+                ],
+                "path_components": directory["path_components"],
+                "file_identity_fields": directory["file_identity_fields"],
+                "file_identities": identities,
+            },
+            sort_keys=True,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        directory["inventory_sha256"] = hashlib.sha256(
+            identity_document
+        ).hexdigest()
+    expected_md5 = {
+        str(row[0]): str(row[1]) for row in syzygy["checksum_catalog"]["entries"]
+    }
+    verification_rows = [
+        [
+            str(directory["approved_layout"]["component"]),
+            str(identity[0]),
+            int(identity[1]),
+            int(identity[2]),
+            int(identity[3]),
+            int(identity[4]),
+            int(identity[5]),
+            expected_md5[str(identity[0])],
+        ]
+        for directory in syzygy["directories"]
+        for identity in directory["file_identities"]
+    ]
+    verification_document = json.dumps(
+        verification_rows, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
+    syzygy["content_verification"].update({
+        "file_count": sum(
+            int(row["file_identity_count"]) for row in syzygy["directories"]
+        ),
+        "bytes_hashed": sum(
+            int(row["total_bytes"]) for row in syzygy["directories"]
+        ),
+        "file_identity_checksum_sha256": hashlib.sha256(
+            verification_document
+        ).hexdigest(),
+    })
+    payload = dict(syzygy)
+    payload.pop("inventory_sha256", None)
+    syzygy["inventory_sha256"] = hashlib.sha256(json.dumps(
+        payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")).hexdigest()
 
 
 def _write_bank(path: Path, *, correct_gap: bool) -> Path:
@@ -1709,6 +1965,7 @@ def _write_bank(path: Path, *, correct_gap: bool) -> Path:
         "scripts.analyze_chunk_controller": "scripts/analyze_chunk_controller.py",
         "scripts.repo_output_guard": "scripts/repo_output_guard.py",
         "scripts.match_audit_rows": "scripts/match_audit_rows.py",
+        "scripts.approved_syzygy": "scripts/approved_syzygy.py",
         "scripts.source_only_import": "scripts/source_only_import.py",
         "chess_anti_engine.eval.audit": "chess_anti_engine/eval/audit.py",
         "chess_anti_engine.mcts.search_options": (
@@ -3208,6 +3465,127 @@ def test_tablebase_inventory_binds_restored_mtime_content_mutation(
     )
 
 
+def test_tablebase_inventory_hashes_approved_contents_once_and_reuses_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = tmp_path / "syzygy_3-4-5"
+    second = tmp_path / "syzygy_6"
+    first.mkdir()
+    second.mkdir()
+    wdl_bytes = b"approved wdl"
+    dtz_bytes = b"approved dtz"
+    (first / "KQvK.rtbw").write_bytes(wdl_bytes)
+    (second / "KQvK.rtbw").write_bytes(wdl_bytes)
+    dtz_path = second / "KQvK.rtbz"
+    dtz_path.write_bytes(dtz_bytes)
+    catalog_rows = (
+        (
+            "KQvK.rtbw",
+            hashlib.md5(wdl_bytes, usedforsecurity=False).hexdigest(),
+        ),
+        (
+            "KQvK.rtbz",
+            hashlib.md5(dtz_bytes, usedforsecurity=False).hexdigest(),
+        ),
+    )
+    catalog_bytes = "".join(
+        f"{digest}  {name}\n" for name, digest in catalog_rows
+    ).encode("ascii")
+    (second / "3-4-5-6.md5").write_bytes(catalog_bytes)
+
+    components = tuple(
+        ApprovedSyzygyComponent(
+            directory_name=directory.name,
+            rtbw_count=sum(path.suffix == ".rtbw" for path in directory.iterdir()),
+            rtbz_count=sum(path.suffix == ".rtbz" for path in directory.iterdir()),
+            file_count=len([
+                path for path in directory.iterdir()
+                if path.suffix in (".rtbw", ".rtbz")
+            ]),
+            total_bytes=sum(
+                path.stat().st_size for path in directory.iterdir()
+                if path.suffix in (".rtbw", ".rtbz")
+            ),
+            filename_size_sha256=filename_size_sha256(
+                (path.name, path.stat().st_size) for path in directory.iterdir()
+                if path.suffix in (".rtbw", ".rtbz")
+            ),
+        )
+        for directory in (first, second)
+    )
+    monkeypatch.setattr(
+        trajectory_module, "_APPROVED_SYZYGY_COMPONENTS", components,
+    )
+    monkeypatch.setattr(
+        trajectory_module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_SIZE",
+        len(catalog_bytes),
+    )
+    monkeypatch.setattr(
+        trajectory_module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256",
+        hashlib.sha256(catalog_bytes).hexdigest(),
+    )
+    monkeypatch.setattr(
+        trajectory_module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRY_COUNT", 2,
+    )
+    monkeypatch.setattr(
+        trajectory_module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_WDL_COUNT", 1,
+    )
+    monkeypatch.setattr(
+        trajectory_module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_DTZ_COUNT", 1,
+    )
+    monkeypatch.setattr(
+        trajectory_module, "APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256",
+        checksum_catalog_entries_sha256(catalog_rows),
+    )
+    path_value = f"{first}{os.pathsep}{second}"
+    initial = _tablebase_inventory(
+        path_value, require_approved=True, verify_contents=True,
+    )
+    assert initial["content_verification"] == {
+        **initial["content_verification"],
+        "file_count": 3,
+        "bytes_hashed": 2 * len(wdl_bytes) + len(dtz_bytes),
+        "passed": True,
+    }
+    final = _tablebase_inventory(
+        path_value,
+        require_approved=True,
+        prior_content_verification=initial["content_verification"],
+    )
+    assert final == initial
+
+    before = dtz_path.stat()
+    dtz_path.write_bytes(b"corrupt dtz!")
+    assert dtz_path.stat().st_size == before.st_size
+    os.utime(
+        dtz_path, ns=(before.st_atime_ns, before.st_mtime_ns),
+        follow_symlinks=False,
+    )
+    with pytest.raises(SystemExit, match="content checksum mismatch"):
+        _tablebase_inventory(
+            path_value, require_approved=True, verify_contents=True,
+        )
+
+
+def test_tablebase_inventory_rejects_noncanonical_parent_traversal(
+    tmp_path: Path,
+) -> None:
+    lexical = tmp_path / "lexical"
+    alternate = tmp_path / "alternate"
+    lexical.mkdir()
+    (alternate / "child").mkdir(parents=True)
+    (lexical / "link").symlink_to(alternate / "child", target_is_directory=True)
+    raw = f"{lexical}/link/../tablebases"
+
+    with pytest.raises(SystemExit, match="canonical absolute paths"):
+        _tablebase_inventory(raw)
+
+
+def test_tablebase_inventory_rejects_double_leading_separator() -> None:
+    with pytest.raises(SystemExit, match="canonical absolute paths"):
+        _tablebase_inventory("//server/tables")
+
+
 def test_tablebase_inventory_binds_ancestor_swap_and_restore(
     tmp_path: Path,
 ) -> None:
@@ -3367,6 +3745,62 @@ def test_loader_rejects_partial_syzygy_inventory(tmp_path: Path) -> None:
     manifest["syzygy"]["directories"][0]["rtbw_count"] = 500
     manifest["syzygy"]["directories"][1]["rtbw_count"] = 375
     meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="production Syzygy provenance"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_self_consistent_wrong_syzygy_component_name(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    syzygy = manifest["syzygy"]
+    first = syzygy["directories"][0]
+    dtz = next(row for row in first["file_identities"] if row[0] == "z000.rtbz")
+    dtz[0] = "z200.rtbz"
+    _refresh_synthetic_syzygy_integrity(syzygy)
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="production Syzygy provenance"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_self_consistent_wrong_syzygy_file_size(
+    tmp_path: Path,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    meta = _write_bank(bank, correct_gap=True)
+    manifest = json.loads(meta.read_text())
+    syzygy = manifest["syzygy"]
+    syzygy["directories"][0]["file_identities"][0][1] += 1
+    _refresh_synthetic_syzygy_integrity(syzygy)
+    meta.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="production Syzygy provenance"):
+        load_transitions(bank)
+
+
+def test_loader_rejects_self_consistent_forged_syzygy_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bank = tmp_path / "bank.jsonl"
+    _write_bank(bank, correct_gap=True)
+    monkeypatch.setattr(
+        controller_module, "_APPROVED_SYZYGY_COMPONENTS",
+        APPROVED_SYZYGY_COMPONENTS,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256",
+        APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256,
+    )
+    monkeypatch.setattr(
+        controller_module,
+        "APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256",
+        APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256,
+    )
 
     with pytest.raises(ValueError, match="production Syzygy provenance"):
         load_transitions(bank)

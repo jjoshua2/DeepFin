@@ -320,6 +320,20 @@ from chess_anti_engine.eval.audit import (
 )
 from chess_anti_engine.mcts import search_options as search_options_module
 from chess_anti_engine.moves import ActionDecodeError, POLICY_SIZE, index_to_move_strict
+from scripts.approved_syzygy import (
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_DTZ_COUNT,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRY_COUNT,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_NAME,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_SIZE,
+    APPROVED_SYZYGY_CHECKSUM_CATALOG_WDL_COUNT,
+    APPROVED_SYZYGY_COMPONENTS,
+    APPROVED_SYZYGY_FILENAME_SIZE_ENCODING,
+    APPROVED_SYZYGY_LAYOUT_SCHEMA,
+    checksum_catalog_entries_sha256,
+    filename_size_sha256,
+)
 from scripts.check_c_extensions_fresh import (
     native_build_attestation,
     native_build_dependency_paths,
@@ -336,7 +350,8 @@ _MIN_DECISION_GRADE_BOOTSTRAP_SAMPLES = 1000
 _PRODUCTION_WDL_FILES = 875
 _PRODUCTION_DTZ_FILES = 510
 _PRODUCTION_TB_COMPONENTS = ((510, 145), (365, 365))
-_TABLEBASE_INVENTORY_SCHEMA = "deepfin.syzygy_inventory.v3"
+_TABLEBASE_INVENTORY_SCHEMA = "deepfin.syzygy_inventory.v4"
+_APPROVED_SYZYGY_COMPONENTS = APPROVED_SYZYGY_COMPONENTS
 _TABLEBASE_FILE_IDENTITY_FIELDS = (
     "name", "size", "mtime_ns", "ctime_ns", "device", "inode",
 )
@@ -2310,6 +2325,7 @@ def _valid_tablebase_directory_inventory(value: Any) -> bool:
     root_identity = value.get("root_identity")
     path_components = value.get("path_components")
     file_identities = value.get("file_identities")
+    approved_layout = value.get("approved_layout")
     if (
         not isinstance(value.get("path"), str)
         or not value.get("path")
@@ -2330,6 +2346,7 @@ def _valid_tablebase_directory_inventory(value: Any) -> bool:
         or not _positive_int(value.get("rtbz_count"))
         or not _positive_int(value.get("total_bytes"))
         or not _valid_sha256(value.get("inventory_sha256"))
+        or not isinstance(approved_layout, dict)
     ):
         return False
     expected_parent: Path | None = None
@@ -2396,6 +2413,27 @@ def _valid_tablebase_directory_inventory(value: Any) -> bool:
         or value["total_bytes"] != total_bytes
     ):
         return False
+    expected_by_name = {
+        component.directory_name: component
+        for component in _APPROVED_SYZYGY_COMPONENTS
+    }
+    component_name = Path(str(value["path"])).name
+    expected = expected_by_name.get(component_name)
+    portable_digest = filename_size_sha256(
+        (str(row[0]), int(row[1])) for row in file_identities
+    )
+    if expected is None or approved_layout != {
+        "schema": APPROVED_SYZYGY_LAYOUT_SCHEMA,
+        "component": component_name,
+        "canonical_encoding": APPROVED_SYZYGY_FILENAME_SIZE_ENCODING,
+        "rtbw_count": expected.rtbw_count,
+        "rtbz_count": expected.rtbz_count,
+        "file_count": expected.file_count,
+        "total_bytes": expected.total_bytes,
+        "filename_size_sha256": expected.filename_size_sha256,
+        "passed": True,
+    } or portable_digest != expected.filename_size_sha256:
+        return False
     identity_document = json.dumps(
         {
             "root_identity": root_identity,
@@ -2413,24 +2451,161 @@ def _valid_tablebase_directory_inventory(value: Any) -> bool:
     return hashlib.sha256(identity_document).hexdigest() == value["inventory_sha256"]
 
 
+def _valid_tablebase_checksum_catalog(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    entries = value.get("entries")
+    if (
+        value.get("schema") != "deepfin.syzygy_checksum_catalog.v1"
+        or value.get("component") != _APPROVED_SYZYGY_COMPONENTS[-1].directory_name
+        or value.get("name") != APPROVED_SYZYGY_CHECKSUM_CATALOG_NAME
+        or value.get("size") != APPROVED_SYZYGY_CHECKSUM_CATALOG_SIZE
+        or not _nonnegative_int(value.get("mtime_ns"))
+        or not _nonnegative_int(value.get("ctime_ns"))
+        or not _nonnegative_int(value.get("device"))
+        or not _positive_int(value.get("inode"))
+        or value.get("raw_sha256")
+        != APPROVED_SYZYGY_CHECKSUM_CATALOG_RAW_SHA256
+        or value.get("algorithm") != "md5"
+        or value.get("entry_count")
+        != APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRY_COUNT
+        or value.get("rtbw_count")
+        != APPROVED_SYZYGY_CHECKSUM_CATALOG_WDL_COUNT
+        or value.get("rtbz_count")
+        != APPROVED_SYZYGY_CHECKSUM_CATALOG_DTZ_COUNT
+        or value.get("canonical_entries_sha256")
+        != APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256
+        or value.get("approved") is not True
+        or not isinstance(entries, list)
+        or len(entries) != APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRY_COUNT
+    ):
+        return False
+    parsed: list[tuple[str, str]] = []
+    seen_names: set[str] = set()
+    for row in entries:
+        if not isinstance(row, list) or len(row) != 2:
+            return False
+        name, digest = row
+        if (
+            not isinstance(name, str)
+            or not name
+            or Path(name).name != name
+            or Path(name).suffix not in (".rtbw", ".rtbz")
+            or name in seen_names
+            or not isinstance(digest, str)
+            or len(digest) != 32
+            or digest != digest.lower()
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            return False
+        seen_names.add(name)
+        parsed.append((name, digest))
+    return bool(
+        parsed == sorted(parsed)
+        and sum(name.endswith(".rtbw") for name, _digest in parsed)
+        == APPROVED_SYZYGY_CHECKSUM_CATALOG_WDL_COUNT
+        and sum(name.endswith(".rtbz") for name, _digest in parsed)
+        == APPROVED_SYZYGY_CHECKSUM_CATALOG_DTZ_COUNT
+        and checksum_catalog_entries_sha256(parsed)
+        == APPROVED_SYZYGY_CHECKSUM_CATALOG_ENTRIES_SHA256
+    )
+
+
+def _valid_tablebase_content_verification(
+    value: Any, directories: list[dict[str, Any]], catalog: dict[str, Any],
+) -> bool:
+    if not isinstance(value, dict):
+        return False
+    entries = catalog.get("entries")
+    if not isinstance(entries, list):
+        return False
+    expected_md5 = {
+        str(row[0]): str(row[1])
+        for row in entries
+        if isinstance(row, list) and len(row) == 2
+    }
+    try:
+        verification_rows = [
+            [
+                str(directory["approved_layout"]["component"]),
+                str(identity[0]),
+                int(identity[1]),
+                int(identity[2]),
+                int(identity[3]),
+                int(identity[4]),
+                int(identity[5]),
+                expected_md5[str(identity[0])],
+            ]
+            for directory in directories
+            for identity in directory["file_identities"]
+        ]
+    except (KeyError, TypeError, ValueError):
+        return False
+    document = json.dumps(
+        verification_rows, sort_keys=False, ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return value == {
+        "schema": "deepfin.syzygy_content_verification.v1",
+        "method": "single_pass_md5_against_approved_catalog",
+        "identity_binding_fields": [
+            "component", "name", "size", "mtime_ns", "ctime_ns", "device",
+            "inode", "approved_md5",
+        ],
+        "file_count": sum(int(row["file_identity_count"]) for row in directories),
+        "bytes_hashed": sum(int(row["total_bytes"]) for row in directories),
+        "file_identity_checksum_sha256": hashlib.sha256(document).hexdigest(),
+        "passed": True,
+    }
+
+
 def _valid_tablebase_inventory(value: Any) -> bool:
     if not isinstance(value, dict):
         return False
     directories = value.get("directories")
+    checksum_catalog = value.get("checksum_catalog")
+    expected_component_order = [
+        component.directory_name for component in _APPROVED_SYZYGY_COMPONENTS
+    ]
     if (
         value.get("schema") != _TABLEBASE_INVENTORY_SCHEMA
         or value.get("identity_method")
-        != "no_follow_path_components_and_file_device_inode_size_mtime_ctime"
+        != (
+            "approved_filename_size_plus_no_follow_path_components_and_"
+            "file_device_inode_size_mtime_ctime"
+        )
         or value.get("path_anchor_semantics")
         != "absolute_root_and_each_lexical_directory_component_no_follow"
         or not isinstance(directories, list)
-        or not directories
+        or len(directories) != len(_APPROVED_SYZYGY_COMPONENTS)
         or not all(_valid_tablebase_directory_inventory(row) for row in directories)
+        or value.get("approved_layout_schema") != APPROVED_SYZYGY_LAYOUT_SCHEMA
+        or value.get("approved_component_order") != expected_component_order
+        or value.get("approved_layout_passed") is not True
+        or value.get("checksum_catalog_covers_logical_table_names") is not True
+        or not _valid_tablebase_checksum_catalog(checksum_catalog)
+        or not isinstance(checksum_catalog, dict)
+        or not _valid_tablebase_content_verification(
+            value.get("content_verification"), directories, checksum_catalog,
+        )
         or not _valid_sha256(value.get("inventory_sha256"))
     ):
         return False
+    observed_names = {
+        str(identity[0])
+        for directory in directories
+        for identity in directory["file_identities"]
+    }
+    catalog_names = {
+        str(row[0]) for row in checksum_catalog["entries"]
+        if isinstance(row, list) and len(row) == 2
+    }
+    if observed_names != catalog_names:
+        return False
+    payload = dict(value)
+    payload.pop("inventory_sha256", None)
     document = json.dumps(
-        directories, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+        payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(document).hexdigest() == value["inventory_sha256"]
 
