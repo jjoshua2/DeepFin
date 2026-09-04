@@ -73544,3 +73544,16 @@ to their separately preregistered full-corpus trains.**
   1.078 cp while leaving top-1 regret exactly unchanged, as a ranking-preserving
   sharpness change should. The preregistered 1,000-game arenas, not these
   incremental audit differences, decide whether either arm advances.
+
+**2026-09-04 15:08Z — PRE-MATERIALIZATION PROVENANCE-COMPATIBILITY
+AMENDMENT; both audits are banked, but no N1/S1 corpus exists and no training
+has begun.** The first S1 materialization attempt failed closed before
+`copytree`: the immutable sidecar records repository HEAD `ce0b3cf4e`, while
+the current audited implementation is `55bfcf6fc`; its pinned LC0/remap commit,
+clean flag, and all three remap-source blob hashes are identical. Repository
+HEAD changes on ledger, tests, or this mixing tool even when the remap itself
+does not. Admit a sidecar by the functional remap identity `{commit, dirty,
+blobs}` and continue recording, but do not compare, the descriptive
+`git_head`. Any remap commit/blob/clean-state mismatch still fails closed.
+This repairs immutable-artifact reuse only; it changes neither N1/S1 target
+arithmetic nor either banked audit observation.

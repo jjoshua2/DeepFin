@@ -420,6 +420,25 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def functional_remap_identity(provenance: object) -> dict[str, Any]:
+    """Return remap-relevant provenance, excluding unrelated repository HEAD."""
+    if not isinstance(provenance, dict):
+        raise ValueError("remap provenance must be a dictionary")
+    commit = provenance.get("commit")
+    dirty = provenance.get("dirty")
+    blobs = provenance.get("blobs")
+    if not isinstance(commit, str) or not commit:
+        raise ValueError("remap provenance has no commit")
+    if not isinstance(dirty, bool):
+        raise ValueError("remap provenance has no boolean dirty flag")
+    if not isinstance(blobs, dict) or not blobs or not all(
+        isinstance(path, str) and isinstance(blob, str) and path and blob
+        for path, blob in blobs.items()
+    ):
+        raise ValueError("remap provenance has no valid source blob map")
+    return {"commit": commit, "dirty": dirty, "blobs": blobs}
+
+
 def _sidecar_identity(
     source_group: Any,
     source_path: Path,
@@ -1399,7 +1418,6 @@ def mix_corpus(args: argparse.Namespace) -> int:
         "teacher_evaluations_per_position": 1,
         "search_nodes": 0,
         "stored_dtype": "float32",
-        "remap": remap_provenance(),
     }
     side_bad = {
         key: (side_summary.get(key), value)
@@ -1409,6 +1427,13 @@ def mix_corpus(args: argparse.Namespace) -> int:
     if side_bad:
         raise SystemExit(
             f"sidecar summary does not describe this source corpus: {side_bad}"
+        )
+    side_remap = functional_remap_identity(side_summary.get("remap"))
+    current_remap = functional_remap_identity(remap_provenance())
+    if side_remap != current_remap:
+        raise SystemExit(
+            "sidecar remap implementation does not match the current code: "
+            f"{side_remap} != {current_remap}"
         )
     side_onnx = side_summary.get("onnx")
     if not isinstance(side_onnx, dict) or not isinstance(side_onnx.get("sha256"), str):

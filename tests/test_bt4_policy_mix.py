@@ -162,6 +162,23 @@ def test_top_tie_break_refuses_zero_bt4_mass_on_tied_moves() -> None:
         )
 
 
+def test_functional_remap_identity_ignores_only_repository_head() -> None:
+    current = tool.remap_provenance()
+    older_head = dict(current)
+    older_head["git_head"] = "0" * 40
+
+    assert tool.functional_remap_identity(older_head) == (
+        tool.functional_remap_identity(current)
+    )
+
+    changed_blob = json.loads(json.dumps(current))
+    first_source = next(iter(changed_blob["blobs"]))
+    changed_blob["blobs"][first_source] = "different"
+    assert tool.functional_remap_identity(changed_blob) != (
+        tool.functional_remap_identity(current)
+    )
+
+
 def _write_source(root: Path) -> tuple[Path, Path, dict[str, np.ndarray]]:
     source_dir = root / "source"
     shard_path = source_dir / "shard_000000.zarr"
