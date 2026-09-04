@@ -343,6 +343,18 @@ def _retained_parent(path: Path) -> Generator[int, None, None]:
         os.close(parent_fd)
 
 
+@contextmanager
+def _retained_output_parent(
+    output_path: Path, meta_path: Path, *, manifest_parent_fd: int,
+) -> Generator[int, None, None]:
+    """Reuse one descriptor when both evidence names share a parent."""
+    if output_path.expanduser().parent == meta_path.expanduser().parent:
+        yield manifest_parent_fd
+        return
+    with _retained_parent(output_path) as output_parent_fd:
+        yield output_parent_fd
+
+
 def _mark_manifest_recovery_invalid(meta_path: Path, *, parent_fd: int) -> None:
     """Durably quarantine a version whose manifest integrity check failed."""
     marker = _invalid_manifest_path(meta_path)
@@ -463,7 +475,11 @@ def _require_new_output_pair(
         )
     with (
         _retained_parent(meta_path) as manifest_parent_fd,
-        _retained_parent(output_path) as output_parent_fd,
+        _retained_output_parent(
+            output_path,
+            meta_path,
+            manifest_parent_fd=manifest_parent_fd,
+        ) as output_parent_fd,
     ):
         if _manifest_recovery_is_invalid(
             meta_path, parent_fd=manifest_parent_fd,

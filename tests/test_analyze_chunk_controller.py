@@ -5928,6 +5928,7 @@ def test_parent_aba_during_state_inventory_cannot_create_a_retry_window(
     real_name_exists = publication._entry_name_exists
     invalid_checks = 0
     inventory_checks = 0
+    inventory_parent_fds: set[int] = set()
 
     def install_empty_parent_after_marker_check(
         path: Path, *, parent_fd: int,
@@ -5942,6 +5943,7 @@ def test_parent_aba_during_state_inventory_cannot_create_a_retry_window(
 
     def restore_parent_after_inventory(path: Path, *, parent_fd: int) -> bool:
         nonlocal inventory_checks
+        inventory_parent_fds.add(parent_fd)
         result = real_name_exists(path, parent_fd=parent_fd)
         inventory_checks += 1
         if inventory_checks == 4:
@@ -5961,6 +5963,7 @@ def test_parent_aba_during_state_inventory_cannot_create_a_retry_window(
         publication._require_new_output_pair(output, meta, overwrite=False)
 
     assert first_result is True
+    assert len(inventory_parent_fds) == 1
     assert json.loads(meta.read_text()) == manifest
     assert not pending_output.exists()
     assert not pending_meta.exists()
