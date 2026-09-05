@@ -28,6 +28,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from functools import partial
 
 import pytest
 
@@ -234,7 +235,9 @@ def test_the_lock_is_released_when_a_holder_dies(tmp_path: Path) -> None:
     assert load_users(db)["alice"].disabled is False
 
 
-def test_hashing_is_not_done_while_the_lock_is_held(tmp_path: Path) -> None:
+def test_hashing_is_not_done_while_the_lock_is_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """PBKDF2 is ~50ms; the lock is cross-process and shared with the server.
 
     Hashing inside it would serialise the KDF between the operator's CLI and
@@ -255,15 +258,15 @@ def test_hashing_is_not_done_while_the_lock_is_held(tmp_path: Path) -> None:
         hashed_while_locked.append(holding.is_set())
         return real_hash(password, **kw)
 
-    auth_mod.hash_password = spy
-    try:
-        with users_db_lock(db):
-            holding.set()
-            with pytest.raises(UsersDbBusy):
-                auth_mod.upsert_user(db, username="bob", password="bob-password")
-            holding.clear()
-    finally:
-        auth_mod.hash_password = real_hash
+    monkeypatch.setattr(auth_mod, "hash_password", spy)
+    # Keep real contention; this ordering check need not exhaust the production
+    # ten-second acquisition budget to observe the expected refusal.
+    monkeypatch.setattr(auth_mod, "users_db_lock", partial(users_db_lock, timeout_s=0.2))
+    with users_db_lock(db):
+        holding.set()
+        with pytest.raises(UsersDbBusy):
+            auth_mod.upsert_user(db, username="bob", password="bob-password")
+        holding.clear()
 
     assert hashed_while_locked == [True], (
         "upsert_user did not hash before trying the lock: the KDF is inside the "

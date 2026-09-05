@@ -565,12 +565,20 @@ def test_plan_ranges_refuses_a_lane_count_below_one() -> None:
 # ── identity, scheme by scheme ───────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("value_scheme", ["search", "qz50", "qzphase", "qzsegment"])
-@pytest.mark.parametrize("workers", [2, 3, 7])
+@pytest.mark.parametrize(("value_scheme", "workers"), [
+    ("search", 2),
+    ("qz50", 3),
+    ("qzphase", 3),
+    ("qzsegment", 9),  # More requested workers than the seven input shards.
+])
 def test_the_parallel_read_derives_the_sequential_corpus(
     tmp_path: Path, value_scheme: str, workers: int,
 ) -> None:
-    """Every arm, every lane count, over shard cuts that fall INSIDE games."""
+    """Every value arm across mid-game cuts, with ordinary and excess workers.
+
+    Lane planning and the boundary tests below cover partition edge cases
+    independently of this per-scheme end-to-end identity check.
+    """
     rows = [row for gid in range(20) for row in game(gid, 11 + gid % 5)]
     # 40-row cuts against 11-15-row games: no cut lands on a game boundary.
     cuts = [40] * (len(rows) // 40)
