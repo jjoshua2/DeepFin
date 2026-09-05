@@ -5135,18 +5135,23 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     double swdl_coth = 0.0, swdl_csch = 0.0;
     if (swdl_draw_mode == SWDL_DRAW_PARAMETRIC_Q) {
         if (!(swdl_cp_slope > 0.0) || !(swdl_cp_draw_width > 0.0)) {
-            PyErr_Format(PyExc_ValueError,
+            /* PyErr_Format does not support floating-point conversions. */
+            char message[256];
+            PyOS_snprintf(message, sizeof(message),
                          "swdl_draw_mode=parametric_q requires cp_slope>0 and "
                          "cp_draw_width>0, got %g and %g",
                          swdl_cp_slope, swdl_cp_draw_width);
+            PyErr_SetString(PyExc_ValueError, message);
             return NULL;
         }
         double sw = swdl_cp_slope * swdl_cp_draw_width;
         double sh = sinh(sw);
         if (!(sh > 0.0) || !isfinite(sh)) {
-            PyErr_Format(PyExc_ValueError,
+            char message[256];
+            PyOS_snprintf(message, sizeof(message),
                          "swdl_draw_mode=parametric_q: slope*draw_width_cp=%g is "
                          "outside the representable range of sinh", sw);
+            PyErr_SetString(PyExc_ValueError, message);
             return NULL;
         }
         swdl_coth = cosh(sw) / sh;

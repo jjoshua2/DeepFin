@@ -19,6 +19,14 @@ def main() -> None:
     if is_gil_enabled is None:
         raise SystemExit("FAIL: this interpreter cannot report free-threading status")
 
+    gil_initial = bool(is_gil_enabled())
+    print(f"python={sys.version.split()[0]} gil_initial={gil_initial}")
+    if gil_initial:
+        raise SystemExit(
+            "FAIL: the GIL is enabled at startup; this diagnostic requires a "
+            "free-threaded interpreter starting with the GIL disabled"
+        )
+
     modules = [
         "numpy",
         "torch",
@@ -29,13 +37,13 @@ def main() -> None:
         "chess_anti_engine.encoding._features_ext",
         "chess_anti_engine.encoding._lc0_ext",
         "chess_anti_engine.mcts._mcts_tree",
+        "chess_anti_engine.nnue._nnue_ext",
     ]
     if args.include_training:
         modules.append("ray")
 
-    print(f"python={sys.version.split()[0]} gil_initial={bool(is_gil_enabled())}")
     failures: list[str] = []
-    gil_was_enabled = bool(is_gil_enabled())
+    gil_was_enabled = gil_initial
     for module_name in modules:
         try:
             importlib.import_module(module_name)

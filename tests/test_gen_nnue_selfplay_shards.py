@@ -32,6 +32,7 @@ from typing import Any
 import chess
 import numpy as np
 import pytest
+import torch
 
 from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding._lc0_ext import CBoard
@@ -74,6 +75,16 @@ CHECK_CHAIN_FEN = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
 # needs before it prunes anything.
 DRAW_CAPTURE_FEN = "4k3/8/8/4b3/8/5N2/8/4K3 w - - 0 1"
 DRAW_CAPTURE_MOVE = "f3e5"
+
+
+@pytest.fixture(autouse=True)
+def _restore_torch_threads() -> Iterator[None]:
+    """In-process worker calls must not leak their child-process thread setting."""
+    previous = torch.get_num_threads()
+    try:
+        yield
+    finally:
+        torch.set_num_threads(previous)
 
 
 @pytest.fixture(autouse=True)
