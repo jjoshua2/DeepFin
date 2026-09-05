@@ -3,8 +3,8 @@
 # Repository-root paths are relative and the worker login is a placeholder.
 # The original unmodified configuration remains in the source commit.
 # Verify paths, credentials, resume state and experimental settings before use.
-# THIS IS THE LIVE PRODUCTION CONFIG. train.sh IS pointed at this file, and the running
-# trial re-reads it every iteration.
+# Historical notes below describe the original live configs/pbt2_small.yaml.
+# This snapshot is not the file read by the running trial.
 #
 # It BEGAN life as the 2026-08-04 restart proposal (header below), was deployed at that
 # restart and again at the 2026-08-06 reduced-SF relaunch, and the "NOT A LIVE CONFIG /

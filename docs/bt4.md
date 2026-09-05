@@ -133,12 +133,15 @@ Our value tower already matches BT4's **shape exactly** — 128 per-square proje
 
 `categorical_head_coupled` (PR #397) implements BT4's topology exactly:
 `nn.Linear(value_wdl.hidden_dim=128, CATEGORICAL_HEAD_BINS=32)` = **4,128 params**, matching BT4's
-4,096 + 32 parameter for parameter, at **271× less** than our standalone head. **The flag is
-currently off** (`categorical_head_coupled` default; `w_categorical: 0.0` in the live yaml).
+4,096 + 32 parameter for parameter, at **271× less** than our standalone head. The main
+configuration template leaves coupling off and sets `w_categorical: 0.3`; its categorical
+loss therefore trains the independent tower described above.
 
-By BT4's precedent the correct attachment point is a **q-like** head, not a game-result head. Our
-`value_wdl` trains on a blend that is 0% game outcome (`sf_wdl_frac` 0.69 / `search_wdl_frac` 0.31),
-so it is q-like and is the right target.
+The template's `value_wdl` blend is 50% SF, 20% search and 30% game outcome. The historical
+live bundle preserved in [`configs/snapshots/live_20260904.yaml`](../configs/snapshots/live_20260904.yaml)
+enables coupling and uses 69% SF plus 31% search, with no game-outcome component when
+both labels are available. That bundle makes the shared representation more like BT4's
+q-target tower. It is a separate experiment configuration, not the main template's defaults.
 
 ## 7. What this file does NOT establish
 

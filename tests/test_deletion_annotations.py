@@ -88,9 +88,7 @@ re-derived either claim.
 
 Widening the ``DEAD KEY`` re-derivation itself — every raw-text mention of the
 key must be cited by the annotation — was measured before being rejected:
-**318 line-surfaces over 156 (key, file) pairs** for the 27 keys annotated when
-that measurement was taken (this branch annotates 28; the counts are quoted as the
-historical measurement they are, not re-derived), with
+**318 line-surfaces over 156 (key, file) pairs** for the 27 annotated keys, with
 ``use_nla`` alone at **37 lines across 21 files**, most of them bench scripts
 passing the name through as a kwarg. An annotation that must cite 21 files is
 not read, so that widening buys nothing.
@@ -120,9 +118,8 @@ Stated so the coverage is not overread:
 * the annotation's REASON, in prose. Every surface being cited is not the
   sentence about that surface being true. Two parts of the reason ARE now
   re-derived — the resolved-value claim (``EXPECTED_VALUE_CLAIMS``) and the
-  whole retention rationale for the retained keys — five on ``main``, two on this
-  branch (``RETENTION_MECHANISMS``) — but the sentences around those numbers are
-  not.
+  whole retention rationale for the five retained keys
+  (``RETENTION_MECHANISMS``) — but the sentences around those numbers are not.
 * which annotation block belongs to which key, beyond the value claim. Swapping
   the header keys of two blocks whose stated values differ is caught by
   ``EXPECTED_VALUE_CLAIMS``; swapping two that state the SAME value (both GPBT
@@ -137,25 +134,13 @@ Stated so the coverage is not overread:
   ``LIVE_TRAINER_PIN``. Registering a module here therefore certifies its
   module-level collections and nothing else about that file.
 * ``.c``/``.h``/``.pyx``/``.toml``/``.json`` and ``.sh`` outside ``scripts/``,
-  for both scans. Verified moot for all 28 keys annotated today, the 28th
-  (``games_per_iter_ramp_iters``) re-checked when it was added.
-
-⚑ THE PINS HERE DESCRIBE **THIS BRANCH'S** ``configs/pbt2_small.yaml``
-------------------------------------------------------------------------
-The live-ops branch and ``main`` ship two different files of that name, and the
-difference is not drift to be reconciled away. ``67191f995`` (the 2026-08-04
-minimal-core bundle) deleted four keys from the live yaml that ``main``
-retains — ``games_per_iter_start``, ``games_per_iter_ramp_iters``, ``lr_T0``,
-``lr_T_mult`` — and ``534b6397d`` re-affirmed those four while RESTORING
-``sf_search_dampen_sf_low``/``_high``, which the same bundle had over-deleted.
-So this branch annotates 28 keys, 26 ``DELETED`` and 2 ``RETAINED``; ``main``
-annotates 27, 22 and 5. Copying ``main``'s pins here makes the guard describe a
-file that does not exist, which is how it went red. The COST of each extra
-deletion is stated in that key's annotation rather than absorbed: deleting
-``lr_T0``/``lr_T_mult`` moves ``scripts/train_bootstrap.py`` off 999999/1 onto
-its own 2000/2, and deleting ``games_per_iter_start`` removes the standing guard
-against a live yaml edit arming the ramp.
+  for both scans. Verified moot for all 27 keys annotated today.
 """
+
+# The reconciliation retains main's production template. These pins describe
+# its annotations, not the different deployment settings preserved under
+# configs/snapshots/. The source scans below still inspect the reconciled code,
+# so imported consumers must be accounted for even when the config is unchanged.
 
 from __future__ import annotations
 
@@ -188,15 +173,9 @@ GATE_TOKENS: dict[tuple[str, str], str] = {
     ("sf_wdl_temperature", "chess_anti_engine/train/losses.py"): "temperature != 1.0",
   # The buffer field drops the `replay_` prefix the yaml key carries.
     ("replay_sf_gap_priority_weight", "chess_anti_engine/replay/disk_buffer.py"): "sf_gap_priority_weight",
-  # argparse spells the flag with hyphens. The bootstrap_* and min_replay_size
-  # entries are exactly the surfaces the source-name grep missed; see the module
-  # docstring.
+  # argparse spells the flag with hyphens. The three entries after the first are
+  # exactly the surfaces the source-name grep missed; see the module docstring.
     ("games_per_iter_start", "chess_anti_engine/run.py"): "games-per-iter-start",
-  # ⚑ run.py names the ramp key ONLY as the hyphenated flag. The trap: the
-  # --games-per-iter-ramp-iters help text spells `games_per_iter_start`, so a grep
-  # for the underscore form finds that line and reads as if run.py mentioned the
-  # ramp key by name. It does not.
-    ("games_per_iter_ramp_iters", "chess_anti_engine/run.py"): "games-per-iter-ramp-iters",
     ("bootstrap_max_positions", "chess_anti_engine/run.py"): "bootstrap-max-positions",
     ("bootstrap_train_steps", "chess_anti_engine/run.py"): "bootstrap-train-steps",
     ("min_replay_size", "chess_anti_engine/run.py"): "min-replay-size",
@@ -218,28 +197,12 @@ EXPECTED_CITATIONS: dict[str, tuple[str, ...]] = {
     "bootstrap_max_positions": ("chess_anti_engine/run.py", "chess_anti_engine/utils/config_yaml.py"),
     "bootstrap_train_steps": ("chess_anti_engine/run.py", "chess_anti_engine/utils/config_yaml.py"),
     "drift_threshold": ("chess_anti_engine/tune/trainable.py", "chess_anti_engine/tune/trial_config.py"),
-  # ⚑ Both games_per_iter_* blocks gained [tune/trainable_metrics.py] when they were
-  # reclassified DELETED for this branch (67191f995 deleted both keys from the live yaml;
-  # 534b6397d re-affirmed it): the DELETED reason is that the ramp branch there is the only
-  # reader of `start`, so the reader has to be cited, not just the resolvers.
-    "games_per_iter_ramp_iters": (
-        "chess_anti_engine/run.py",
-        "chess_anti_engine/tune/trainable_metrics.py",
-        "chess_anti_engine/tune/trial_config.py",
-    ),
-    "games_per_iter_start": (
-        "chess_anti_engine/run.py",
-        "chess_anti_engine/tune/trainable_metrics.py",
-        "chess_anti_engine/tune/trial_config.py",
-    ),
+    "games_per_iter_start": ("chess_anti_engine/run.py", "chess_anti_engine/tune/trial_config.py"),
     "gpbt_inertia_weight": ("chess_anti_engine/tune/harness.py",),
     "gpbt_quantile_fraction": ("chess_anti_engine/tune/harness.py",),
     "gpbt_resample_probability": ("chess_anti_engine/tune/gpbt.py", "chess_anti_engine/tune/harness.py"),
     "gpbt_winner_weight": ("chess_anti_engine/tune/harness.py",),
-  # ⚑ lr_T0 lost its duplicate [train/trainer.py] citation when it was reclassified DELETED
-  # for this branch (67191f995): the RETAINED block cited the cosine branch and the
-  # lr_schedule default separately, the DELETED block states both in one clause.
-    "lr_T0": ("chess_anti_engine/train/trainer.py", "scripts/train_bootstrap.py"),
+    "lr_T0": ("chess_anti_engine/train/trainer.py", "chess_anti_engine/train/trainer.py", "scripts/train_bootstrap.py"),
     "lr_T_mult": ("chess_anti_engine/train/trainer.py", "scripts/train_bootstrap.py"),
     "min_replay_size": ("chess_anti_engine/run.py", "chess_anti_engine/utils/config_yaml.py"),
     "no_amp": ("chess_anti_engine/run.py", "scripts/train_bootstrap.py"),
@@ -264,9 +227,7 @@ EXPECTED_CITATIONS: dict[str, tuple[str, ...]] = {
 # same reason one step down: names alone let `lr_T0`'s marker flip
 # `⚑ RETAINED` -> `# DELETED`, the key be removed, and the absent-key test
 # simply take its other arm — silently restoring the 999999 -> 2000 bootstrap
-# drift the key was retained to prevent. ⚑ On THIS branch that reclassification
-# is the SHIPPED state, made deliberately and with the drift written down; the
-# guard's job here is that it took a pin edit with an evidence sha to get there.
+# drift this PR retained the key to prevent.
 EXPECTED_ANNOTATIONS: dict[str, str] = {
   # DELETED: inert on every resolution path, reason and citations in the config.
     "adjusted_wdl_regret_cap": "DELETED",
@@ -276,22 +237,10 @@ EXPECTED_ANNOTATIONS: dict[str, str] = {
     "bootstrap_max_positions": "DELETED",
     "bootstrap_train_steps": "DELETED",
     "drift_threshold": "DELETED",
-  # ⚑ THE FOUR KEYS BELOW ARE `DELETED` ON THIS BRANCH AND `RETAINED` ON main, and that is a
-  # real divergence between two live configs of the same name, not a drifted pin. The live
-  # yaml deleted all four in 67191f995 (the 2026-08-04 minimal-core bundle) and re-affirmed
-  # the deletion in 534b6397d, whose message states the reasoning key by key. The same commit
-  # RESTORED sf_search_dampen_sf_low/_high, which is why those two are still RETAINED below.
-  # The cost is recorded in each annotation rather than absorbed: deleting lr_T0/lr_T_mult
-  # moves scripts/train_bootstrap.py off 999999/1 onto its own 2000/2, and deleting
-  # games_per_iter_start removes the guard against a live edit arming the ramp.
-    "games_per_iter_ramp_iters": "DELETED",
-    "games_per_iter_start": "DELETED",
     "gpbt_inertia_weight": "DELETED",
     "gpbt_quantile_fraction": "DELETED",
     "gpbt_resample_probability": "DELETED",
     "gpbt_winner_weight": "DELETED",
-    "lr_T0": "DELETED",
-    "lr_T_mult": "DELETED",
     "min_replay_size": "DELETED",
     "no_amp": "DELETED",
     "opening_fen_prob": "DELETED",
@@ -306,9 +255,10 @@ EXPECTED_ANNOTATIONS: dict[str, str] = {
   # RETAINED: a live consumer that either falls back to a DIFFERENT value than
   # the one shipped, or refuses to run without the key at all. Protected by
   # being present, not by a comment. Each one's mechanism is re-derived from
-  # source by RETENTION_MECHANISMS below. On THIS branch both surviving
-  # retentions are the `requires_presence` kind; see 534b6397d, which restored
-  # them after the minimal-core bundle had over-deleted them.
+  # source by RETENTION_MECHANISMS below.
+    "games_per_iter_start": "RETAINED",
+    "lr_T0": "RETAINED",
+    "lr_T_mult": "RETAINED",
     "sf_search_dampen_sf_high": "RETAINED",
     "sf_search_dampen_sf_low": "RETAINED",
 }
@@ -320,18 +270,11 @@ EXPECTED_ANNOTATIONS: dict[str, str] = {
 # between two blocks stating the SAME value; see the docstring.
 EXPECTED_VALUE_CLAIMS: dict[str, tuple[str, ...]] = {
     "drift_threshold": ("0.0",),
-    "games_per_iter_ramp_iters": ("0",),
     "games_per_iter_start": ("0",),
     "gpbt_inertia_weight": ("1.0",),
     "gpbt_quantile_fraction": ("0.25",),
     "gpbt_resample_probability": ("0.05",),
     "gpbt_winner_weight": ("1.0",),
-  # ⚑ These two are the DRIFTING half of a deletion, pinned for that reason: the number is
-  # what [scripts/train_bootstrap.py] resolves to with the key absent (int(flat.get("lr_T0",
-  # 2000)) / int(flat.get("lr_T_mult", 2))), NOT what the shipped value was (999999 / 1) and
-  # NOT the training path's own unreachable default. Deleted on this branch by 67191f995.
-    "lr_T0": ("2000",),
-    "lr_T_mult": ("2",),
     "pb2_perturbation_interval": ("10",),
     "search_optimizer_choices": ("None",),
 }
@@ -343,7 +286,7 @@ _VALUE_CLAIM = re.compile(r"(?:[Rr]esolves unchanged at|resolves to(?: the argpa
 #
 # Blind spots, stated rather than implied: this cannot see a reader in `.c`,
 # `.h` or `.pyx`, in a `.sh` outside `scripts/`, or in `.toml`/`.json`. That is
-# verified moot for all 28 keys annotated today, but the next `DEAD KEY` will be
+# verified moot for all 27 keys annotated today, but the next `DEAD KEY` will be
 # about a different key — widen the globs rather than trusting this comment.
 # The scan is also filesystem-based, not git-based, so an UNTRACKED scratch
 # script under `scripts/` that names a key fails this locally while CI is green.
@@ -411,7 +354,6 @@ KEY_LITERAL_SURFACES: dict[str, tuple[str, ...]] = {
     "bootstrap_max_positions": ("chess_anti_engine/utils/config_yaml.py",),
     "bootstrap_train_steps": ("chess_anti_engine/utils/config_yaml.py",),
     "drift_threshold": ("chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py"),
-    "games_per_iter_ramp_iters": ("chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py", "scripts/audit_realized_config.py"),
     "games_per_iter_start": ("chess_anti_engine/tune/trial_config.py", "chess_anti_engine/utils/config_yaml.py", "scripts/audit_realized_config.py", "scripts/profile_distributed.py"),
     "gpbt_inertia_weight": ("chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
     "gpbt_quantile_fraction": ("chess_anti_engine/tune/harness.py", "chess_anti_engine/tune/trainable_config_ops.py", "chess_anti_engine/utils/config_yaml.py"),
@@ -463,7 +405,7 @@ MODULE_LEVEL_KEY_COLLECTIONS: dict[tuple[str, str], tuple[str, ...]] = {
   # unknown-key path, and deleting a yaml key does not touch it.
     ("chess_anti_engine/utils/config_yaml.py", "_CORE_KEYS"): ("bootstrap_dir", "bootstrap_max_positions", "bootstrap_train_steps", "shared_shards_dir"),
     ("chess_anti_engine/utils/config_yaml.py", "_MODEL_PASSTHROUGH"): ("use_nla",),
-    ("chess_anti_engine/utils/config_yaml.py", "_SELFPLAY_KEYS"): ("games_per_iter_ramp_iters", "games_per_iter_start", "opening_fen_prob"),
+    ("chess_anti_engine/utils/config_yaml.py", "_SELFPLAY_KEYS"): ("games_per_iter_start", "opening_fen_prob"),
     ("chess_anti_engine/utils/config_yaml.py", "_TRAIN_KEYS"): ("adjusted_wdl_regret_cap", "adjusted_wdl_regret_scale", "adjusted_wdl_regret_source", "lr_T0", "lr_T_mult", "no_amp", "resid_channel_balance_weight", "resid_channel_dropout"),
     ("chess_anti_engine/utils/config_yaml.py", "_TUNE_KEYS"): ("drift_threshold", "gpbt_inertia_weight", "gpbt_quantile_fraction", "gpbt_resample_probability", "gpbt_winner_weight", "min_replay_size", "pb2_perturbation_interval", "replay_sf_gap_priority_weight", "search_optimizer_choices"),
   # Runtime-mutable trainer attributes. Both consumers loop `if k in config`
@@ -482,12 +424,7 @@ MODULE_LEVEL_KEY_COLLECTIONS: dict[tuple[str, str], tuple[str, ...]] = {
   # NOT presence-requiring: nothing here indexes the flat config by this name.
     ("chess_anti_engine/eval/lc0_control_replay.py", "CONFIG_KWARGS"): ("replay_sf_gap_priority_weight",),
     ("chess_anti_engine/tune/trainable_config_ops.py", "_DRIVER_LAUNCH_FIXED_KEYS"): ("gpbt_inertia_weight", "gpbt_quantile_fraction", "gpbt_resample_probability", "gpbt_winner_weight", "pb2_perturbation_interval", "search_optimizer_choices"),
-  # A key -> explanation map, consulted ONLY inside the `elif in_yaml:` arm of the reco/yaml
-  # cross-check (audit_realized_config.py), so a key absent from the yaml never reaches it:
-  # no index, no raise. NOT presence-requiring. `games_per_iter_ramp_iters` joined
-  # `games_per_iter_start` here when the ramp key was annotated for this branch; the verdict
-  # is the same for both because the mechanism is the branch, not the key.
-    ("scripts/audit_realized_config.py", "_RECO_SERVER_RESOLVED"): ("games_per_iter_ramp_iters", "games_per_iter_start"),
+    ("scripts/audit_realized_config.py", "_RECO_SERVER_RESOLVED"): ("games_per_iter_start",),
   # A FROZEN LITERAL. `LIVE_TRAINER_PIN` is a recorded snapshot of
   # `trainer_kwargs_from_config`'s output; it reads no config at any point, so no
   # yaml key's absence can change what IT does. That — not "the resolver has a
@@ -498,21 +435,17 @@ MODULE_LEVEL_KEY_COLLECTIONS: dict[tuple[str, str], tuple[str, ...]] = {
   # key" does not give "absence cannot change what the consumer does": absence
   # SUBSTITUTES the default for the shipped value. It only coincides when the two
   # are equal, which is a fact about today's config, not a property of the code.
+  # Measured on THIS tree's `configs/pbt2_small.yaml`: deleting `lr_T0` moves the
+  # resolved kwarg 999999 -> 5000 and `lr_T_mult` moves 1 -> 2. Absence is not
+  # inert for those two.
   #
-  # ⚑ AND THE MEASUREMENT IS A FACT ABOUT ONE BRANCH'S FILE. An earlier revision
-  # resolved a DIFFERENT branch's `configs/pbt2_small.yaml` of the same name and
-  # reported "6 absent / 2 present, drift NONE in 11 runs" — 8 keys, not 10,
-  # describing no single config. The revision after it re-derived "6 absent /
-  # 4 present, 2 of 10 DRIFT" against `main`'s file, where `lr_T0` (999999) and
-  # `lr_T_mult` (1) are still set.
-  # ⚑ THIS BRANCH'S FILE IS NOT THAT FILE, so it is re-derived again here, by
-  # running `trainer_kwargs_from_config` over `flatten_run_config_defaults` of
-  # `configs/pbt2_small.yaml` and popping one key at a time (2026-08-29):
-  #     8 absent / 2 present (`sf_search_dampen_sf_high`, `sf_search_dampen_sf_low`)
-  #     0 of 10 DRIFT when deleted one at a time; 0 of 10 RAISE
-  # DRIFT went 2 -> 0 because `lr_T0`/`lr_T_mult` are ALREADY absent here
-  # (67191f995): there is no shipped value left for absence to substitute, and the
-  # two keys that ARE present both ship 0.0, which is their resolver default.
+  # ⚑ AND THE EARLIER MEASUREMENT READ THE WRONG FILE. It resolved the LIVE
+  # WORKING TREE's `configs/pbt2_small.yaml` — a different branch's file of the
+  # same name — and reported "6 absent / 2 present, drift NONE in 11 runs". That
+  # is 8 keys, not 10, and it describes no single config.
+  # Re-derived here against the file this guard actually reads:
+  #     6 absent / 4 present (`lr_T0`, `lr_T_mult`, `sf_search_dampen_sf_high/low`)
+  #     2 of 10 DRIFT when deleted one at a time; 0 of 10 RAISE
   # The classification is unchanged because the criterion is RAISES, not DRIFTS:
   # all ten are read as `.get(key, default)` — none by subscript — so nothing here
   # can make `from_dict` throw. `sf_search_dampen_sf_*` are RETAINED for
@@ -555,13 +488,10 @@ PRESENCE_REQUIRING_COLLECTIONS: frozenset[tuple[str, str]] = frozenset({
 #   requires_presence  the consumer raises when the key is absent
 #
 # (kind, repo-relative consumer file, expected fallback as source text).
-# ⚑ Only `requires_presence` has entries ON THIS BRANCH. The `flat_get` (lr_T0, lr_T_mult)
-# and `argparse_default` (games_per_iter_start) rows lived here while those three keys were
-# RETAINED; 67191f995 deleted all three from the live yaml and 534b6397d re-affirmed it, so
-# they are DELETED above and a row here would fail the `stale` check. The two branches are
-# kept wired, not deleted with the rows: `main` still retains all five, and the drift each
-# mechanism measures is now stated in the DELETED annotations instead of guarded by presence.
 RETENTION_MECHANISMS: dict[str, tuple[str, str, str]] = {
+    "lr_T0": ("flat_get", "scripts/train_bootstrap.py", "2000"),
+    "lr_T_mult": ("flat_get", "scripts/train_bootstrap.py", "2"),
+    "games_per_iter_start": ("argparse_default", "chess_anti_engine/run.py", "0"),
     "sf_search_dampen_sf_low": ("requires_presence", "scripts/value_optimism.py", ""),
     "sf_search_dampen_sf_high": ("requires_presence", "scripts/value_optimism.py", ""),
 }
@@ -925,7 +855,7 @@ def test_dead_key_annotations_cite_every_surface_that_mentions_the_key() -> None
 def test_every_annotated_key_has_its_literal_surface_pinned() -> None:
     """The completeness re-derivation, for EVERY key, over the literal surface.
 
-    The ``DEAD KEY`` phrase gate re-derives three keys. This re-derives all 28,
+    The ``DEAD KEY`` phrase gate re-derives three keys. This re-derives all 27,
     and it is the check that would have caught ``scripts/value_optimism.py``
     reading ``sf_search_dampen_sf_low``: that file is in the key's literal
     surface, so pinning the surface forces someone to look at it.

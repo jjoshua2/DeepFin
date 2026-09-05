@@ -290,9 +290,9 @@ def main() -> None:
     # arm drags mass OFF a move we had right. Josh's clause 3 exists for this.
     harm: dict[str, dict[str, float]] = defaultdict(dict)
     cpm: dict[str, dict[str, float]] = defaultdict(dict)
-    # ⚑ THE FLOOR IS INERT WHERE SF's BEST IS ALREADY SEARCHED. tau = 1/gumbel_topk
-    # = 0.0625 guarantees root inclusion (ledger ae2ea797b), so rows with
-    # p_ours[sf_best] >= 0.0625 get NOTHING from the floor. Do any arms help THERE?
+    # Split at the historical 1/topk probability threshold (topk=16).
+    # This is a shared population split, not a claim that any arm is inactive:
+    # each arm's floor can still bind above 0.0625 when its own tau is larger.
     pull_hi: dict[str, dict[str, float]] = defaultdict(dict)
     pull_lo: dict[str, dict[str, float]] = defaultdict(dict)
     # ⚑ ORACLE CEILING for a "when to trust SF" gate. Split the pull population by
@@ -549,8 +549,8 @@ def main() -> None:
     report["argmax_pull"] = prow
     print()
 
-    for lbl, acc in (("FLOOR-INERT  p_ours[sf_best] >= 1/topk (floor does nothing)", pull_hi),
-                     ("FLOOR-ACTIVE p_ours[sf_best] <  1/topk (floor's own rows)", pull_lo)):
+    for lbl, acc in (("HIGH PRIOR  p_ours[sf_best] >= 0.0625", pull_hi),
+                     ("LOW PRIOR   p_ours[sf_best] <  0.0625", pull_lo)):
         print(f"═══ ARGMAX PULL — {lbl} ═══")
         print(f"{'arm':<20} {'n':>6} {'mean pull':>11} {'frac>0':>8}   "
               f"{'vs C_RANDOM (paired)':>26}")
@@ -633,8 +633,9 @@ def main() -> None:
     # arm is faithfully executing a wrong label -- that is label error, not an
     # arm defect. Where they AGREE the arm has no excuse.
     ag = np.array(list(label_agree.values()))
+    agreement_pct = f"{100*ag.mean():.1f}%" if ag.size else "n/a"
     print(f"═══ DO-NO-HARM SPLIT — shallow label agrees with deep ruler on "
-          f"{100*ag.mean():.1f}% of n={ag.size} ═══")
+          f"{agreement_pct} of n={ag.size} ═══")
     print(f"{'arm':<20} {'mean|AGREE':>11} {'frac<0':>8} {'silent':>8}   "
           f"{'mean|DISAGREE':>14} {'frac<0':>8}")
     srow: dict = {}
@@ -642,15 +643,26 @@ def main() -> None:
         da, dd = harm_ag.get(name) or {}, harm_dis.get(name) or {}
         if not da and not dd:
             continue
-        a = np.array(list(da.values())) if da else np.array([np.nan])
-        b = np.array(list(dd.values())) if dd else np.array([np.nan])
-        srow[name] = {"n_agree": int(a.size), "mean_agree": float(a.mean()),
-                      "frac_neg_agree": float((a < 0).mean()),
-                      "frac_zero_agree": float((a == 0).mean()),
-                      "n_dis": int(b.size), "mean_dis": float(b.mean()),
-                      "frac_neg_dis": float((b < 0).mean())}
-        print(f"{name:<20} {a.mean():>+11.5f} {100*(a<0).mean():>7.1f}% "
-              f"{100*(a==0).mean():>7.1f}%   {b.mean():>+14.5f} {100*(b<0).mean():>7.1f}%")
+        a = np.array(list(da.values()))
+        b = np.array(list(dd.values()))
+        srow[name] = {
+            "n_agree": int(a.size),
+            "mean_agree": float(a.mean()) if a.size else None,
+            "frac_neg_agree": float((a < 0).mean()) if a.size else None,
+            "frac_zero_agree": float((a == 0).mean()) if a.size else None,
+            "n_dis": int(b.size),
+            "mean_dis": float(b.mean()) if b.size else None,
+            "frac_neg_dis": float((b < 0).mean()) if b.size else None,
+        }
+        agree_text = (
+            f"{a.mean():>+11.5f} {100*(a<0).mean():>7.1f}% {100*(a==0).mean():>7.1f}%"
+            if a.size else f"{'n/a':>11} {'n/a':>8} {'n/a':>8}"
+        )
+        disagree_text = (
+            f"{b.mean():>+14.5f} {100*(b<0).mean():>7.1f}%"
+            if b.size else f"{'n/a':>14} {'n/a':>8}"
+        )
+        print(f"{name:<20} {agree_text}   {disagree_text}")
     report["do_no_harm_split"] = srow
     print()
 

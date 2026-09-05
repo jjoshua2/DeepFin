@@ -451,15 +451,9 @@ _RESEARCH_REASON = _YAML_HAS_NO_SELF_LOCATION
 # `test_no_tracked_file_leaks`, under-budget fails
 # `test_every_allowlist_entry_is_still_needed`, and both are telling the truth.
 _CONFIGS = (
-    # 12 (the #441 pin, still `main`'s count) + 5 acquired on the live branch:
-    #   `salvage_seed_pool_dir` — its value AND the commented example above it;
-    #   `stockfish_syzygy_path` — it became the same colon-separated PAIR as
-    #     `syzygy_path`, so one line now carries two occurrences;
-    #   `era_probe_path`, `era_probe_inwindow_path` — the era-probe re-point.
-    # Every one is functional and points outside the checkout or at runtime
-    # output, so `_YAML_HAS_NO_SELF_LOCATION` covers them exactly as it covers
-    # the original 12.
-    ("configs/pbt2_small.yaml", 17),
+    # Main retains the #441 template and its 12 functional runtime paths.
+    # The portable live snapshot does not add exceptions to this budget.
+    ("configs/pbt2_small.yaml", 12),
     ("configs/scratch_pc.yaml", 11),
     ("configs/bt4_aurora_asha.yaml", 9),
     ("configs/exp_cat_search.yaml", 9),

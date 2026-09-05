@@ -49,7 +49,11 @@ production can remain on that revision until adoption is authorized.
 The reconciliation starts from main `ac0dff588` and published live `d529afefc`.
 The running checkout at `a38988814` is deliberately left in place. Main's newer search,
 UCI, worker and server fixes are retained alongside the live corpus, replay, training
-and match tools. The reviewed instruction and Grok workflows are incorporated too.
+and match tools. The reviewed instruction and Grok workflows, G10 policy, varying-horizon instruments
+and empty-batch relation fix are incorporated too. Four local diagnostic edits are
+preserved without altering the original checkout: live-config authority in the control
+driver, temperature-matched prior ranking, calibration controls and support-geometry
+reporting. Their preservation does not claim a new experiment result.
 
 `configs/pbt2_small.yaml` remains the supported main template; the published live
 configuration is preserved at [snapshots/live_20260904.yaml](../configs/snapshots/live_20260904.yaml).

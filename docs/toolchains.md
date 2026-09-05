@@ -29,6 +29,10 @@ PYTHONPATH=. python scripts/repair_corpus_history.py --help
 PYTHONPATH=. python scripts/lc0_control_train.py --help
 ```
 
+The generator also supports the validated G10 staircase policy, with its decision
+rule stamped through generation, derivation and repair. A policy flag must not change
+an existing corpus identity during resume.
+
 Repair is conditional on a known corpus defect; it is not an obligatory stage for a
 new healthy corpus. Never mutate a populated corpus to reuse its identity for different
 worker or teacher settings. Keep a companion corpus separate when scaling changes the
@@ -49,7 +53,11 @@ epoch consumption without wrapping or silently truncating. Follow
 | Fixed handicapped-Stockfish opponent | `scripts/match_vs_handicapped_sf.py` |
 | Joint PGN rating estimate | `scripts/ordo_pooled_fit.py` |
 | Bank or inspect foreign BT4 policy/history behavior | `scripts/bt4_policy_dump.py`, `scripts/bt4_history_sensitivity.py` |
+| Bank and analyze varying-horizon continuation trajectories | `scripts/collect_varying_budget_trajectories.py`, `scripts/analyze_varying_budget_controller.py` |
 | Relabel/reconstruct RVG targets and shadow readout | `scripts/rvg_label_pass.py`, `scripts/nnue_shadow_label_readout.py` |
+
+The varying-horizon tools follow their [staged protocol](experiments/varying_horizon_online_controller.md),
+including grouped source identities and limits on interpretation.
 
 Use [evaluation](eval_protocol.md) to select the deciding measure and budget. A frozen
 handicapped-opponent match is different from a production curriculum winrate whose
@@ -65,3 +73,7 @@ snapshot; the `deepfin-grok-review` Skill documents invocation and interpretatio
 implementation and leaves its diff for inspection. Neither workflow deploys or merges
 its result. Useful changes from either route still target main under the
 [branch lifecycle](branch_lifecycle.md).
+
+Dated `scratchpad/` drivers preserve experiment history and may contain old absolute
+paths or run selections. Inspect and adapt those before use; the supported entry points
+above expose their current interfaces through `--help`.
