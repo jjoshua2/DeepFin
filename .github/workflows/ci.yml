@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version-file: ".python-version"
           cache: pip
       # Resolve the dev pin against the CPU index in the same transaction.
       # The suite hard-requires its deps (no optional-dep skips), so [dev] pulls
@@ -61,7 +61,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version-file: ".python-version"
           cache: pip
       # ⚑ FAIL, never skip. A skip here would silently restore the exact hole
       # this job closes, and read green while doing it. GitHub's ubuntu runners
@@ -113,7 +113,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version-file: ".python-version"
           cache: pip
       - name: Install package + dev deps
         run: |
