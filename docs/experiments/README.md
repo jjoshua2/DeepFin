@@ -8,6 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
+| [TailRL-inspired policy coverage](2026-09-05-tailrl-policy-coverage.md) | Frozen-cohort checkpoint diagnostic and isolated upper-tail loss prototype; no training readout |
 | [Varying-horizon online controller](varying_horizon_online_controller.md) | Preregistration and staged evaluation of online search continuation |
 | [Value head architecture](value_head_arch.md) | Historical April 2026 experiments |
 | [Historical ledger](../experiment_ledger.md) | Frozen July–September 2026 record, including yardsticks, gotchas and recovery snapshots |
