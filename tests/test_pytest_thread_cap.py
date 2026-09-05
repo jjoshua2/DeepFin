@@ -65,6 +65,7 @@ def test_conftest_caps_or_preserves_a_controlled_baseline(setting: str, expected
         env[var] = "4"
     code = (
         "import torch; "
+        "torch.set_num_threads(4); "
         "baseline = torch.get_num_threads(); "
         "assert baseline == 4, f'controlled baseline was {baseline}, expected 4'; "
         "import tests.conftest; "
@@ -72,9 +73,10 @@ def test_conftest_caps_or_preserves_a_controlled_baseline(setting: str, expected
     )
     out = subprocess.run(
         [sys.executable, "-c", code],
-        capture_output=True, text=True, env=env, timeout=300, check=True,
+        capture_output=True, text=True, env=env, timeout=300, check=False,
         cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     )
+    assert out.returncode == 0, f"controlled child failed:\n{out.stdout}\n{out.stderr}"
     assert int(out.stdout.strip()) == expected, (
         f"conftest with CAE_TEST_THREADS={setting!r} changed a four-thread "
         f"baseline to {out.stdout.strip()} threads; expected {expected}"
