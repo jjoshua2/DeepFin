@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run the registered six BT4 near-tie arms, preserving E0's training runtime.
+"""Run the registered global BT4 screen, preserving the frozen training runtime.
 
 This is an opt-in experiment driver, not a test or a live deployment command.
-The parent publishes A externally. Run with --execute once that job is started;
-without it this prints the stage plan only. STOP in the state directory requests
+Select --phase baseline to train S0, then --phase treatments for global arms.
+Without --execute this prints the stage plan only. STOP in the state directory requests
 termination of owned jobs. Partial corpora/training are preserved and need explicit
 recovery; arenas resume through arena_standard's own fingerprint checks.
 """
@@ -28,27 +28,27 @@ from contextlib import contextmanager
 
 LIVE = Path("/home/josh/projects/chess")
 TRAIN = LIVE / ".dev/worktree/wise-cloud"
-MIX = Path("/home/josh/projects/chess-bt4-joint-targets")
+MIX = Path("/tmp/deepfin-bt4-toolchain")
+MIX_PYTHON = str(MIX / ".venv/bin/python")
 PYTHON = "/usr/bin/python3"
 OPS = LIVE / "scratchpad/bt4_joint20"
-STATE = OPS / "af_run01"
+ROOT_STATE = OPS / "global_run01"
+STATE = ROOT_STATE / "baseline"
+PREREGISTRATION = ROOT_STATE / "preregistration.md"
+PHASE = "baseline"
 SOURCE = LIVE / "data/nnue_derived/armB/qtemp_0.0005_hist_20m"
 SIDECAR = LIVE / "data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m"
-RANKS = LIVE / "data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top8"
 E0 = LIVE / "runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3"
 OPENINGS = LIVE / (
     "data/opening_books/"
     "8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip"
 )
 ROWS, SHARDS, BATCHES = 18_910_484, 2309, 36_935
-ARMS = [
-    ("A", 2, 10, 1.0, 0.5),
-    ("B", 2, 10, 1.0, 2.0),
-    ("C", 3, 20, 1.0, 0.5),
-    ("D", 3, 20, 1.0, 2.0),
-    ("E", 2, 10, 0.5, 2.0),
-    ("F", 3, 20, 0.5, 2.0),
-]
+ARMS = [("S0", 0.0, 1.0), ("G20T1", 0.2, 1.0), ("G20T05", 0.2, 0.5)]
+BUDGETS = (25, 100, 400)
+GPU_BUDGET_SECONDS = 30 * 3600
+# Conservative admission estimates; actual process time is charged on exit.
+STAGE_ALLOWANCE = {"train": 4 * 3600, 25: 1800, 100: 3600, 400: 4 * 3600}
 SOURCE_SHA = "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef"
 PINS = {
     TRAIN
@@ -57,8 +57,6 @@ PINS = {
     / "configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
     TRAIN
     / "chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
-    MIX
-    / "scripts/bt4_policy_mix.py": "ba7221c7b669c7c228f263320bbf4006cb1847e508c6fce5418a13a5928e38a5",
     SOURCE / "derive_targets_summary.json": SOURCE_SHA,
     E0
     / "checkpoint.pt": "c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817",
@@ -89,13 +87,12 @@ def require(condition, message):
 
 
 def names(arm):
-    letter, cap, gap, alpha, temperature = arm
-    suffix = f"{letter}_k{cap}_g{gap}_a{round(alpha * 100):03d}_t{round(temperature * 100):03d}"
-    base = f"qtemp_0.0005_hist_20m_bt4_joint_{suffix}"
+    letter, _, _ = arm
+    base = f"qtemp_0.0005_hist_20m_bt4_global_{letter}"
     return (
-        SOURCE.parent / base,
+        SOURCE if letter == "S0" else SOURCE.parent / base,
         LIVE / "runs/armB" / (base + "_epoch_v1"),
-        OPS / f"audit_{suffix}_v2.json",
+        ROOT_STATE / f"audit_{letter}.json",
     )
 
 
@@ -141,8 +138,13 @@ class Driver:
         self.lock_fd = lock_fd
         self.stop = threading.Event()
         self.manifest = {}
+        self.gpu_deadline = None
 
     def guard(self):
+        require(
+            self.gpu_deadline is None or time.monotonic() < self.gpu_deadline,
+            "GPU screen budget exhausted; preserving partial outputs",
+        )
         require(
             not self.stop.is_set() and not (STATE / "STOP").exists(),
             "stop requested; preserving partial outputs",
@@ -164,7 +166,7 @@ class Driver:
 
     def identities(self):
         heads = {}
-        for root in (TRAIN, MIX):
+        for root in (TRAIN,) if PHASE == "baseline" else (TRAIN, MIX):
             require(
                 not subprocess.check_output(
                     [
@@ -185,11 +187,17 @@ class Driver:
         paths = [
             *list(PINS),
             SIDECAR / "bt4_policy_sidecar_summary.json",
-            RANKS / "sf_d9_rank_sidecar_summary.json",
             E0 / "summary.json",
             OPENINGS,
+            PREREGISTRATION,
+            Path(__file__).resolve(),
         ]
-        paths += [names(arm)[2] for arm in ARMS]
+        if PHASE == "treatments":
+            paths += [names(arm)[2] for arm in ARMS[1:]]
+            paths += [
+                MIX / "scripts/bt4_policy_mix.py",
+                names(ARMS[0])[1] / "checkpoint.pt",
+            ]
         hashes = {str(path): sha(path) for path in paths}
         for path, expected in PINS.items():
             require(hashes[str(path)] == expected, f"identity mismatch: {path}")
@@ -232,7 +240,7 @@ class Driver:
         env = dict(
             os.environ,
             PYTHONPATH=str(cwd),
-            CUDA_VISIBLE_DEVICES="0",
+            CUDA_VISIBLE_DEVICES="0" if gpu_fd is not None else "",
             PYTHONUNBUFFERED="1",
             BLOSC_NTHREADS="4",
         )
@@ -283,7 +291,7 @@ class Driver:
         self.status(stage, "command_complete", elapsed_seconds=time.monotonic() - start)
 
     @contextmanager
-    def gpu(self, stage):
+    def gpu(self, stage, allowance):
         self.status(stage, "waiting_for_gpu")
         with (LIVE / "scratchpad/gpu0_experiment.lock").open("a") as lock:
             while True:
@@ -301,27 +309,49 @@ class Driver:
                     break
                 fcntl.flock(lock, fcntl.LOCK_UN)
                 self.stop.wait(10)
+            used = 0.0
+            for charge in ROOT_STATE.glob("*/*.gpu-charge.json"):
+                record = read(charge)
+                require(
+                    record.get("complete") is True,
+                    f"{charge}: interrupted GPU charge needs reconciliation",
+                )
+                used += float(record["seconds"])
+            require(
+                used + allowance <= GPU_BUDGET_SECONDS,
+                f"{stage}: remaining GPU budget needs prospective amendment",
+            )
+            started = time.monotonic()
+            charge_path = STATE / f"{stage}.{time.time_ns()}.gpu-charge.json"
+            charge = {
+                "stage": stage,
+                "complete": False,
+                "started_unix": time.time(),
+                "owner_pid": os.getpid(),
+            }
+            write(charge_path, charge)
+            self.gpu_deadline = started + GPU_BUDGET_SECONDS - used
             try:
                 yield lock.fileno()
             finally:
+                self.gpu_deadline = None
+                # A killed coordinator leaves an explicit unresolved charge.
+                write(
+                    charge_path,
+                    dict(charge, complete=True, seconds=time.monotonic() - started),
+                )
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
     def mix(self, arm):
-        letter, cap, gap, alpha, temperature = arm
+        letter, alpha, temperature = arm
         corpus, _, audit = names(arm)
         stage = f"{letter}.mix"
-        if letter == "A" and not corpus.exists():
-            self.status(stage, "waiting_for_external_publication")
-            while not corpus.exists():
-                self.guard()
-                pid = int((STATE / "A.mix.pid").read_text().strip())
-                os.kill(pid, 0)
-                self.stop.wait(10)
+        require(letter != "S0", "the control uses the untouched source corpus")
         if not corpus.exists():
             require(
                 shutil.disk_usage(LIVE).free
                 >= 150 * 1024**3 + self.manifest["source_footprint_bytes"],
-                f"{letter}: insufficient space for one full corpus copy plus 150 GiB reserve",
+                f"{letter}: insufficient space for a corpus copy plus reserve",
             )
             require(
                 not corpus.with_name(corpus.name + ".writing").exists(),
@@ -333,7 +363,7 @@ class Driver:
                     "nice",
                     "-n",
                     "19",
-                    PYTHON,
+                    MIX_PYTHON,
                     "scripts/bt4_policy_mix.py",
                     "mix",
                     "--shards",
@@ -343,17 +373,11 @@ class Driver:
                     "--out",
                     str(corpus),
                     "--scope",
-                    "sf-cp-window",
+                    "global",
                     "--alpha",
                     str(alpha),
                     "--bt4-temperature",
                     str(temperature),
-                    "--sf-rank-sidecar",
-                    str(RANKS),
-                    "--sf-rank-cap",
-                    str(cap),
-                    "--sf-cp-window",
-                    str(gap),
                     "--expected-rows",
                     str(ROWS),
                     "--expected-shards",
@@ -362,22 +386,24 @@ class Driver:
                     SOURCE_SHA,
                     "--audit-receipt",
                     str(audit),
+                    "--sf-audit-mode",
+                    "descriptive",
+                    "--experiment-record",
+                    str(PREREGISTRATION),
                 ],
                 MIX,
             )
         summary = read(corpus / "bt4_policy_mix_summary.json")
         expected = {
-            "kind": "sf-cp-window",
+            "kind": "global",
             "alpha": alpha,
             "bt4_temperature": temperature,
-            "sf_rank_cap": cap,
-            "sf_cp_window": gap,
             "rows": ROWS,
             "shards": SHARDS,
             "source_dir": str(SOURCE),
             "source_derive_summary_sha256": SOURCE_SHA,
             "sidecar_dir": str(SIDECAR),
-            "sf_rank_sidecar_dir": str(RANKS),
+            "sf_rank_sidecar_dir": None,
             "mutated_arrays": ["policy_target"],
         }
         require(
@@ -387,7 +413,6 @@ class Driver:
         for field, path in [
             ("audit_receipt", audit),
             ("sidecar_summary", SIDECAR / "bt4_policy_sidecar_summary.json"),
-            ("sf_rank_sidecar_summary", RANKS / "sf_d9_rank_sidecar_summary.json"),
         ]:
             require(
                 summary[field]["sha256"]
@@ -424,7 +449,7 @@ class Driver:
         require(
             not run.exists(), f"{run}: existing training requires explicit recovery"
         )
-        with self.gpu(stage) as gpu_fd:
+        with self.gpu(stage, STAGE_ALLOWANCE["train"]) as gpu_fd:
             self.run(
                 stage,
                 [
@@ -461,9 +486,10 @@ class Driver:
         write(receipt, result)
         self.status(stage, "complete", **result)
 
-    def arena(self, arm):
-        _, run, _ = names(arm)
-        stage = f"{arm[0]}.arena"
+    def arena(self, arm, sims):
+        run = E0 if arm[0] == "E0" else names(arm)[1]
+        reference = names(ARMS[0])[1]
+        stage = f"{arm[0]}.s{sims}.arena"
         games = STATE / f"{stage}.games.jsonl"
         receipt = STATE / f"{stage}.complete.json"
         if receipt.exists():
@@ -478,7 +504,7 @@ class Driver:
             "--candidate",
             str(run / "checkpoint.pt"),
             "--reference",
-            str(E0 / "checkpoint.pt"),
+            str(reference / "checkpoint.pt"),
             "--games",
             "1000",
             "--mode",
@@ -486,7 +512,7 @@ class Driver:
             "--search-shape",
             "training",
             "--sims",
-            "100",
+            str(sims),
             "--seed",
             "42",
             "--openings",
@@ -505,7 +531,7 @@ class Driver:
             "on",
             "--no-rolling",
             "--label",
-            f"bt4_joint_{arm[0]}_vs_E0",
+            f"bt4_global_{arm[0]}_vs_S0_s{sims}",
             "--games-out",
             str(games),
             "--out",
@@ -513,7 +539,7 @@ class Driver:
         ]
         if games.exists():
             command.append("--resume")
-        with self.gpu(stage) as gpu_fd:
+        with self.gpu(stage, STAGE_ALLOWANCE[sims]) as gpu_fd:
             self.run(stage, command, TRAIN, gpu_fd)
         # Use the producing arena's resume semantics, preserving its append-only bank.
         sys.path.insert(0, str(TRAIN))
@@ -549,10 +575,10 @@ class Driver:
             "mode": "matched_sims",
             "games": 1000,
             "seed": 42,
-            "sims_candidate": 100,
-            "sims_reference": 100,
+            "sims_candidate": sims,
+            "sims_reference": sims,
             "candidate": str(run / "checkpoint.pt"),
-            "reference": str(E0 / "checkpoint.pt"),
+            "reference": str(reference / "checkpoint.pt"),
             "opening_plies": 16,
             "max_plies": 300,
             "temperature": 0.1,
@@ -575,7 +601,7 @@ class Driver:
         result = {
             "games_sha256": sha(games),
             "checkpoint_sha256": sha(run / "checkpoint.pt"),
-            "reference_sha256": sha(E0 / "checkpoint.pt"),
+            "reference_sha256": sha(reference / "checkpoint.pt"),
             "readout": "unread",
             "raw_rows": len(bank.games),
             "replaced_orphan_rows": len(bank.games) - len(rows),
@@ -587,6 +613,12 @@ class Driver:
         self.guard()
         identities = self.identities()
         training_complete(E0)
+        if PHASE == "treatments":
+            require(
+                read(ROOT_STATE / "baseline/S0.train.complete.json")
+                == training_complete(names(ARMS[0])[1]),
+                "S0 completion identity differs",
+            )
         runtime = subprocess.check_output(
             [
                 PYTHON,
@@ -624,6 +656,8 @@ class Driver:
             "identities": identities,
             "runtime": info,
             "arms": ARMS,
+            "phase": PHASE,
+            "budgets": BUDGETS,
             "source_footprint_bytes": footprint,
         }
         # JSON normalization makes tuples compare consistently across restarts.
@@ -638,17 +672,23 @@ class Driver:
             write(path, manifest)
         self.manifest = manifest
         try:
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(self.mix, ARMS[0])
-                try:
-                    for index, arm in enumerate(ARMS):
-                        future.result()
-                        if index + 1 < len(ARMS):
-                            future = executor.submit(self.mix, ARMS[index + 1])
-                        self.train(arm)
-                        self.arena(arm)
-                finally:
-                    self.stop.set()
+            if PHASE == "baseline":
+                self.train(ARMS[0])
+            else:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(self.mix, ARMS[1])
+                    try:
+                        for sims in BUDGETS:
+                            self.arena(("E0", 0.0, 1.0), sims)
+                        for index, arm in enumerate(ARMS[1:], start=1):
+                            future.result()
+                            if index + 1 < len(ARMS):
+                                future = executor.submit(self.mix, ARMS[index + 1])
+                            self.train(arm)
+                            for sims in BUDGETS:
+                                self.arena(arm, sims)
+                    finally:
+                        self.stop.set()
         except BaseException as error:
             self.status("driver", "failed", error=str(error))
             raise
@@ -658,11 +698,17 @@ class Driver:
 
 
 def main():
+    global PHASE, STATE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--execute", action="store_true", help="launch the registered A-F stages"
+        "--phase", choices=("baseline", "treatments"), default="baseline"
+    )
+    parser.add_argument(
+        "--execute", action="store_true", help="launch the registered phase"
     )
     args = parser.parse_args()
+    PHASE = args.phase
+    STATE = ROOT_STATE / PHASE
     if not args.execute:
         print(
             json.dumps(
@@ -674,7 +720,7 @@ def main():
                             "corpus": str(names(arm)[0]),
                             "run": str(names(arm)[1]),
                         }
-                        for arm in ARMS
+                        for arm in (ARMS[:1] if PHASE == "baseline" else ARMS[1:])
                     ],
                 },
                 indent=2,

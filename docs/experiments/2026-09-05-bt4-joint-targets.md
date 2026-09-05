@@ -1,5 +1,10 @@
 # BT4 near-tie policy targets for the NNUE restart
 
+**Superseded before A-F training:** Josh reopened this design on September5.
+The coordinator was intentionally stopped; preserve its artifacts. The active
+plan is [global BT4 mixing and search scaling](2026-09-05-bt4-global-search-scaling.md).
+The historical plan and diagnostic below remain evidence, not queued work.
+
 ## Objective and authorization
 
 Continue the September 4 six-arm experiment using its completed E0 control and
