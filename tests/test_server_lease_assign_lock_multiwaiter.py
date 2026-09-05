@@ -38,7 +38,6 @@ from chess_anti_engine.server.app import _LeaseAssignBusy, _LeaseAssignLock
 # above the ~10ms a round actually needs.
 _ROUND_DEADLINE_S = 60.0
 _WAITERS = 16
-_ROUNDS = 30
 _SECTION_S = 0.003
 
 
@@ -122,7 +121,7 @@ def _hammer(lock_path: Path, census: _Census, *, waiters: int) -> None:
 
 
 def _run_rounds(
-    lock_path: Path, *, pid_source, rounds: int = _ROUNDS, waiters: int = _WAITERS,
+    lock_path: Path, *, pid_source, rounds: int, waiters: int = _WAITERS,
 ) -> _Census:
     census = _Census()
     for _ in range(rounds):
@@ -176,18 +175,120 @@ def test_live_holder_admits_nobody(tmp_path: Path) -> None:
 
 
 def test_many_waiters_stealing_one_dead_holders_lock_never_overlap(tmp_path: Path) -> None:
-    """#417: FAILS on origin/main (peak 8 of 16 inside the section at once).
+    """All waiters observe a dead owner; stale attempts must preserve its successor."""
+    lock_path = tmp_path / ".assign.lock"
+    _plant(lock_path, pid=_dead_pid())
+    observed = threading.Barrier(_WAITERS)
+    owner_ready = threading.Event()
+    followers_done = threading.Event()
+    state_lock = threading.Lock()
+    census = _Census()
+    initial_identities: dict[int, tuple[Any, ...]] = {}
+    initial_results: dict[int, bool] = {}
+    failures: list[tuple[int, BaseException]] = []
+    completed_followers = 0
 
-    With the holder pid gone every waiter judges the same file stale, so every
-    waiter reaches the steal path simultaneously. Exactly one may end up holding
-    the lock at any instant.
-    """
-    census = _run_rounds(tmp_path / ".assign.lock", pid_source=_dead_pid)
+    class ScheduledLock(_LeaseAssignLock):
+        def _steal(self, identity: tuple[Any, ...], reason: str) -> bool:
+            index = locks.index(self)
+            first_attempt = index not in initial_identities
+            if first_attempt:
+                with state_lock:
+                    initial_identities[index] = identity
+                observed.wait(timeout=_ROUND_DEADLINE_S)
+                if index != 0:
+                    assert owner_ready.wait(timeout=_ROUND_DEADLINE_S)
+            result = super()._steal(identity, reason)
+            if first_attempt:
+                with state_lock:
+                    initial_results[index] = result
+            return result
 
-    assert census.peak == 1, (
-        f"lease-assign lock admitted {census.peak} concurrent holders "
-        f"({census.entries} entries, {census.busy} refusals over {_ROUNDS} rounds)"
+    locks = [ScheduledLock(lock_path, timeout_s=1.0, stale_after_s=1e9) for _ in range(_WAITERS)]
+
+    def waiter(index: int) -> None:
+        nonlocal completed_followers
+        try:
+            with locks[index]:
+                census.enter()
+                try:
+                    if index == 0:
+                        successor = locks[index]._snapshot()
+                        assert successor.holder["token"] == locks[index]._token
+                        assert successor.identity != initial_identities[index]
+                        owner_ready.set()
+                        assert followers_done.wait(timeout=_ROUND_DEADLINE_S)
+                        # Check the owner itself, even if scheduling happened to
+                        # hide simultaneous occupancy after an invalid steal.
+                        after = locks[index]._snapshot()
+                        assert after.identity == successor.identity
+                        assert after.holder["token"] == locks[index]._token
+                finally:
+                    census.leave()
+        except _LeaseAssignBusy:
+            census.refused()
+        except BaseException as exc:
+            with state_lock:
+                failures.append((index, exc))
+        finally:
+            if index != 0:
+                with state_lock:
+                    completed_followers += 1
+                    if completed_followers == _WAITERS - 1:
+                        followers_done.set()
+
+    # Keep the old inode allocated while the successor is created. The next
+    # test separately covers indistinguishable inode/stat fields.
+    with lock_path.open("rb"):
+        threads = [threading.Thread(target=waiter, args=(i,), daemon=True) for i in range(_WAITERS)]
+        try:
+            for thread in threads:
+                thread.start()
+            deadline = time.monotonic() + _ROUND_DEADLINE_S
+            for thread in threads:
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        finally:
+            observed.abort()
+            owner_ready.set()
+            followers_done.set()
+            deadline = time.monotonic() + 5.0
+            for thread in threads:
+                if thread.ident is not None:
+                    thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
+    assert not any(thread.is_alive() for thread in threads), "lease-lock waiter survived cleanup"
+    assert not failures, failures
+    assert len(initial_identities) == _WAITERS
+    assert len(set(initial_identities.values())) == 1
+    assert initial_results == {i: i == 0 for i in range(_WAITERS)}
+    assert census.entries == 1
+    assert census.busy == _WAITERS - 1
+    assert census.peak == 1
+    assert not lock_path.exists()
+
+
+def test_stale_identity_preserves_a_new_token_on_the_same_inode(tmp_path: Path) -> None:
+    """Ownership must distinguish replacements even when filesystem fields match."""
+    lock_path = tmp_path / ".assign.lock"
+    _plant(lock_path, pid=os.getpid(), token="owner-a")
+    probe = _LeaseAssignLock(lock_path, timeout_s=1.0, stale_after_s=1e9)
+    old = probe._snapshot()
+    assert old.identity is not None
+    assert old.st is not None
+    before = lock_path.read_bytes()
+    replacement = before.replace(b"owner-a", b"owner-b")
+    assert replacement != before
+    lock_path.write_bytes(replacement)
+    os.utime(lock_path, ns=(old.st.st_atime_ns, old.st.st_mtime_ns))
+    current = probe._snapshot()
+    assert current.st is not None
+    assert (current.st.st_dev, current.st.st_ino, current.st.st_mtime_ns, current.st.st_size) == (
+        old.st.st_dev, old.st.st_ino, old.st.st_mtime_ns, old.st.st_size,
     )
+    assert current.holder["token"] == "owner-b"
+    assert current.identity != old.identity
+    assert probe._steal(old.identity, "superseded test observation") is False
+    assert lock_path.read_bytes() == replacement
 
 
 def test_stealing_still_makes_progress_and_does_not_starve_waiters(tmp_path: Path) -> None:

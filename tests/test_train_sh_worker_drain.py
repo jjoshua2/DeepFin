@@ -18,6 +18,10 @@ import pytest
 
 TRAIN_SH = Path(__file__).resolve().parents[1] / "scripts" / "train.sh"
 
+# Deliberately non-exiting victims only need one real two-second drain poll.
+# Keep longer deadlines in clean-exit tests so scheduling delays can be retried.
+_TIMEOUT_GRACE = 2
+
 _BEGIN = "── Drain selfplay BEFORE anything is killed"
 _END = 'echo "Stopping PID $pid ..."'
 
@@ -420,11 +424,11 @@ def test_workers_are_signalled_and_the_wait_ends_when_they_exit() -> None:
 
 
 def test_a_worker_that_ignores_sigterm_warns_instead_of_hanging() -> None:
-    r = _run(_harness(_victim(1, action="ignore"), grace=4))
+    r = _run(_harness(_victim(1, action="ignore"), grace=_TIMEOUT_GRACE))
     # If the victim were signalled before it installed SIG_IGN it would die and
     # this would silently become a different case, asserting nothing.
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
-    assert "still running after 4s" in r.stdout, r.stdout + r.stderr
+    assert f"still running after {_TIMEOUT_GRACE}s" in r.stdout, r.stdout + r.stderr
     assert "NO suspend recorded" in r.stdout, r.stdout
     assert "WARNING" in r.stdout, r.stdout + r.stderr
     assert "DISCARDED" in r.stdout, r.stdout
@@ -539,7 +543,7 @@ def test_orphaned_workers_are_drained_after_ray_teardown() -> None:
 def test_an_orphan_that_ignores_sigterm_is_killed_not_left_running() -> None:
     """Unlike the first pass, this one must never leave a survivor: there is no
     later stage to catch it, and `train.sh start` would race it."""
-    r = _run(_orphan_harness(_victim(1, action="ignore"), grace=4))
+    r = _run(_orphan_harness(_victim(1, action="ignore"), grace=_TIMEOUT_GRACE))
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "Force killing orphaned workers" in r.stdout, r.stdout + r.stderr
     assert "STILL_ALIVE" not in r.stdout, r.stdout
@@ -636,7 +640,7 @@ def test_extraction_markers_exist(marker: str) -> None:
 def test_a_worker_that_banked_its_games_is_not_reported_as_discarded() -> None:
     """THE 2026-07-31 REGRESSION. Still running at the deadline, but it
     suspended 23 games — that is a success, not a loss."""
-    r = _run(_harness(_victim(1, action="bank_and_stay", suspend=23), grace=6),
+    r = _run(_harness(_victim(1, action="bank_and_stay", suspend=23), grace=_TIMEOUT_GRACE),
              timeout=40)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "suspended 23 in-flight game(s)" in r.stdout, r.stdout + r.stderr
@@ -700,7 +704,7 @@ def test_a_suspend_line_from_BEFORE_the_drain_is_not_credited() -> None:
     restart too, so a whole-file grep would find an hours-old line and read it
     as proof THIS drain worked. The block records each log's byte offset before
     signalling; this test fails if that offset is dropped."""
-    r = _run(_harness(_victim(1, action="ignore", stale=99), grace=6), timeout=40)
+    r = _run(_harness(_victim(1, action="ignore", stale=99), grace=_TIMEOUT_GRACE), timeout=40)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     # NOT a bare `"99" not in r.stdout`, which is what this assertion used to
     # be: every line of the output carries a pid, and pid 2399696 failed it
@@ -726,7 +730,7 @@ def test_a_worker_with_no_log_file_is_could_not_verify_not_a_loss() -> None:
     README.md omits it, so there is simply no evidence to read. Reporting that
     as DISCARDED is a lie an operator cannot check; reporting it as a clean
     drain is worse. It gets its own state and its own message."""
-    r = _run(_harness(_victim(1, action="ignore", log_file=False), grace=6),
+    r = _run(_harness(_victim(1, action="ignore", log_file=False), grace=_TIMEOUT_GRACE),
              timeout=40)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "COULD NOT VERIFY" in r.stdout, r.stdout + r.stderr
@@ -740,7 +744,7 @@ def test_a_worker_with_no_log_file_is_could_not_verify_not_a_loss() -> None:
 def test_a_worker_whose_log_is_missing_is_could_not_verify() -> None:
     """Second route into the same state: `--log-file` is in the argv but the
     file is not there when the offset is taken."""
-    r = _run(_harness(_victim(1, action="ignore", missing_log=True), grace=6),
+    r = _run(_harness(_victim(1, action="ignore", missing_log=True), grace=_TIMEOUT_GRACE),
              timeout=40)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "COULD NOT VERIFY" in r.stdout, r.stdout + r.stderr
@@ -760,10 +764,10 @@ def test_a_worker_that_banks_on_the_orphan_pass_is_credited() -> None:
     worker_02 finished suspending with 4s of margin on a 90s grace.
     """
     victim = _victim(1, action="bank_on_second", suspend=7)
-    r = _run(_harness(victim, grace=4, orphan_pass=True, orphan_grace=10),
+    r = _run(_harness(victim, grace=_TIMEOUT_GRACE, orphan_pass=True, orphan_grace=10),
              timeout=60)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
-    assert "still running after 4s" in r.stdout, r.stdout + r.stderr
+    assert f"still running after {_TIMEOUT_GRACE}s" in r.stdout, r.stdout + r.stderr
     assert "Draining orphaned workers" in r.stdout, r.stdout + r.stderr
     assert "suspended 7 in-flight game(s)" in r.stdout, r.stdout + r.stderr
     assert "WARNING" not in r.stdout, r.stdout
@@ -912,10 +916,12 @@ mktemp() {
 
 def test_a_log_that_vanishes_between_snapshot_and_verdict_is_could_not_verify() -> None:
     """Present when the offset was taken, gone when the evidence is read."""
-    victim = _victim(1, action="ignore") + """
-( sleep 2; rm -f "$WLOG1" ) >/dev/null 2>&1 </dev/null &
-"""
-    r = _run(_harness(victim, grace=6), timeout=40)
+    # Delete at a known teardown boundary instead of racing snapshot capture
+    # with a timer. The real drain has already recorded the log's offset.
+    r = _run(_harness(
+        _victim(1, action="ignore"), grace=_TIMEOUT_GRACE,
+        post_drain='rm -f "$WLOG1"',
+    ), timeout=40)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "COULD NOT VERIFY" in r.stdout, r.stdout + r.stderr
     assert "log disappeared during teardown" in r.stdout, r.stdout
