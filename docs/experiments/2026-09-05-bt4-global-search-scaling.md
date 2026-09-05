@@ -180,3 +180,27 @@ found all16 non-policy arrays identical,8,138 changed policy rows,161,350 newly
 positive policy entries, zero illegal positive entries, and maximum total-mass
 error0.000350. This confirms the broad-tail intervention reaches real output.
 Evidence is `G20T1.first-shard-integrity.json` in the new state directory.
+
+### September 5 WSL restart and recovery
+
+The kernel restarted at16:52:06Z (boot ID changed and uptime reset), terminating
+all prior processes. S0's last logged progress was50/420 windows /4,400 steps;
+its output contains staged shards but no checkpoint or optimizer/sampler state.
+This attempt cannot resume an exact epoch. Preserve it under its original v1
+path and restart from scratch into `_epoch_v2`, with the same seed and settings.
+The new coordinator state is `global_run02`; the scientific preregistration and
+audit bytes remain unchanged. No unfinished run becomes a negative result.
+
+The original incomplete GPU charge remains in run01. Run02 carries a reconciled
+copy charging1,441.670314 seconds through the next kernel's boot time, a
+conservative elapsed-time upper bound. That cost counts against the existing
+30-hour allowance; the reboot does not reset the budget.
+
+Both G10 generators resumed through their existing `--resume` path with their
+exact manifest settings and unchanged verified generator/encoding/Stockfish code.
+Before resume, preserve manifests, progress files and all16 unlisted interrupted
+shards under `scratchpad/reboot_recovery_20260905`. Published inventory before
+resume was14,377,828 primary rows plus2,796,072 companion rows, totaling17,173,900.
+Closed shards remain authoritative; in-flight games are replayed by the existing
+deterministic recovery protocol. The unchanged G10 BT4 banker resumed after its
+output was checked for partial sidecars and CUDA availability was verified.

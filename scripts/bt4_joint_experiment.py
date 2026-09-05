@@ -32,9 +32,9 @@ MIX = Path("/tmp/deepfin-bt4-toolchain")
 MIX_PYTHON = str(MIX / ".venv/bin/python")
 PYTHON = "/usr/bin/python3"
 OPS = LIVE / "scratchpad/bt4_joint20"
-ROOT_STATE = OPS / "global_run01"
+ROOT_STATE = OPS / "global_run02"
 STATE = ROOT_STATE / "baseline"
-PREREGISTRATION = ROOT_STATE / "preregistration.md"
+PREREGISTRATION = OPS / "global_run01/preregistration.md"
 PHASE = "baseline"
 SOURCE = LIVE / "data/nnue_derived/armB/qtemp_0.0005_hist_20m"
 SIDECAR = LIVE / "data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m"
@@ -91,7 +91,7 @@ def names(arm):
     base = f"qtemp_0.0005_hist_20m_bt4_global_{letter}"
     return (
         SOURCE if letter == "S0" else SOURCE.parent / base,
-        LIVE / "runs/armB" / (base + "_epoch_v1"),
+        LIVE / "runs/armB" / (base + "_epoch_v2"),
         ROOT_STATE / f"audit_{letter}.json",
     )
 
