@@ -560,26 +560,11 @@ train:
     assert config["lr_schedule"] == "sqrt_release"
 
 
-#: Keys this instrument CANNOT observe, because perturbing them one at a time
-#: makes the whole document invalid rather than exercising the reloader's
-#: per-key branch.
-#:
-#: ⚑ These are NOT restart-required, and must never be added to
-#: ``restart_required_config_keys()`` to make the test green: all five are
-#: live-reloadable. ``c5d1b4882`` (2026-08-10, PR #390) added a CROSS-KEY
-#: coherence rule to ``utils/config_yaml.py``
-#: (``_check_target_only_knobs_require_zero_temperature``): the target-only
-#: knobs ``gumbel_target_max_visit_cap`` / ``gumbel_target_untempered_prior``
-#: are only isolated from PLAY while every move temperature is 0.0, so setting
-#: one of them together with a positive temperature is a hard ``ValueError``.
-#: The live ``configs/pbt2_small.yaml`` arms both knobs and pins all five
-#: temperatures at 0.0 explicitly, so this loop's ``0.0 -> 1.0`` perturbation
-#: builds exactly the combination the validator refuses, and
-#: ``_reload_yaml_into_config`` rejects the ENTIRE reload -- leaving the old
-#: value in place for the reason the docstring below already warns about.
-#: (``main``'s copy of the yaml sets neither knob, so the guard is inert there
-#: and this set is empty on that branch -- hence the branch-local red.)
-_PERTURBATION_MAKES_THE_DOCUMENT_INVALID = frozenset({
+# Positive move temperatures conflict with either armed target-only knob.
+# Whether a one-key perturbation creates that conflict depends on the input
+# configuration: main's template leaves both knobs off, while a live experiment
+# may arm them. Neither case changes these keys' live-reloadability.
+_TARGET_ONLY_MOVE_TEMPERATURES = frozenset({
     "selfplay_temperature",
     "selfplay_temperature_endgame",
     "temperature",
@@ -617,7 +602,7 @@ def test_restart_required_keys_match_the_reloader(
     exists to catch, pointed at the instrument instead of the code. So the
     loop now asks the reloader WHICH thing it did: a per-key decline is an
     observation, a whole-reload rejection is a void reading and is excluded and
-    pinned by name (``_PERTURBATION_MAKES_THE_DOCUMENT_INVALID``). Answering it
+    pinned by name for the tested configuration. Answering it
     the other way -- declaring the keys restart-required -- would make the
     suite green by writing down something false about production.
     """
@@ -634,6 +619,11 @@ def test_restart_required_keys_match_the_reloader(
     production = Path(__file__).resolve().parents[1] / "configs" / "pbt2_small.yaml"
     raw = load_yaml_file(str(production))
     flat = flatten_run_config_defaults(raw)
+    target_only_armed = (
+        max(0, int(flat.get("gumbel_target_max_visit_cap", 0))) > 0
+        or bool(flat.get("gumbel_target_untempered_prior", False))
+    )
+    expected_invalid = _TARGET_ONLY_MOVE_TEMPERATURES if target_only_armed else frozenset()
     # Where each key lives in the nested document, so the edit round-trips
     # through the validator instead of being rejected wholesale.
     section_of: dict[str, str | None] = {}
@@ -686,6 +676,7 @@ def test_restart_required_keys_match_the_reloader(
         # per-key decline. Only the latter is an observation about `key`.
         if any(r.getMessage().startswith("YAML reload failed")
                for r in caplog.records):
+            assert config == flat, f"a rejected document changed config while testing {key}"
             rejected_whole_reload.add(key)
             continue
         exercised.add(key)
@@ -702,14 +693,13 @@ def test_restart_required_keys_match_the_reloader(
     # operator into the one action that turns a silent no-op into a crash.
     observed_restart_required -= dead_config_keys()
 
-    # The void readings, pinned by name so the exclusion cannot quietly widen
-    # into a way of hiding a real disagreement. A key joining this set means a
-    # new cross-key validator landed; a key leaving it means one was relaxed.
-    # Either way it is a deliberate edit, not a green run.
-    assert rejected_whole_reload == _PERTURBATION_MAKES_THE_DOCUMENT_INVALID, (
+    # Pin invalid perturbations for this input, independently of the observed
+    # warnings. A different template can arm the guard without changing either
+    # the validator or which keys need a restart.
+    assert rejected_whole_reload == expected_invalid, (
         "the set of keys whose one-at-a-time perturbation invalidates the whole "
-        f"document moved: now-void={sorted(rejected_whole_reload - _PERTURBATION_MAKES_THE_DOCUMENT_INVALID)} "
-        f"now-observable={sorted(_PERTURBATION_MAKES_THE_DOCUMENT_INVALID - rejected_whole_reload)}"
+        f"document moved: now-void={sorted(rejected_whole_reload - expected_invalid)} "
+        f"now-observable={sorted(expected_invalid - rejected_whole_reload)}"
     )
     # ...and they are excluded because the reading is void, NOT because they
     # need a restart. If one ever genuinely becomes restart-required, this
@@ -730,6 +720,58 @@ def test_restart_required_keys_match_the_reloader(
     assert len(observed_restart_required) < len(exercised) // 2
     assert "opening_fen_dole_per_iter" not in declared, \
         "the key that made params.json look stale must be live-reloadable"
+
+
+@pytest.mark.parametrize("temperature_key", sorted(_TARGET_ONLY_MOVE_TEMPERATURES))
+@pytest.mark.parametrize(("target_key", "armed_value"), [
+    ("gumbel_target_max_visit_cap", 5),
+    ("gumbel_target_untempered_prior", True),
+])
+def test_target_only_temperature_conflict_rejects_the_whole_reload(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+    temperature_key: str, target_key: str, armed_value: int | bool,
+) -> None:
+    """Exercise the armed and unarmed worlds regardless of production defaults."""
+    import yaml
+
+    from chess_anti_engine.utils import flatten_run_config_defaults
+
+    doc = {
+        "selfplay": {**dict.fromkeys(_TARGET_ONLY_MOVE_TEMPERATURES, 0), target_key: armed_value},
+        "train": {"w_policy": 1},
+    }
+    config = flatten_run_config_defaults(doc)
+    original = dict(config)
+    yaml_path = tmp_path / "target_only.yaml"
+    doc["selfplay"][temperature_key] = 1
+    doc["train"]["w_policy"] = 2
+    yaml_path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+    assert config == original, "the invalid document must not even change unrelated weights"
+    assert any(
+        r.getMessage().startswith("YAML reload failed")
+        and "positive move temperature" in r.getMessage()
+        for r in caplog.records
+    )
+
+    # Fixing the conflicting temperature permits the entire document to apply.
+    caplog.clear()
+    doc["selfplay"][temperature_key] = 0
+    yaml_path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+    assert config["w_policy"] == 2
+    assert config[target_key] == armed_value
+    assert not any(r.getMessage().startswith("YAML reload failed") for r in caplog.records)
+
+    # A positive temperature is live-reloadable when the target-only knob is off.
+    doc["selfplay"][target_key] = 0
+    doc["selfplay"][temperature_key] = 1
+    yaml_path.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+    assert config[temperature_key] == 1
+    assert config[target_key] == 0
 
 
 # --- audit T4: a deletion from the live yaml reverts nothing, silently -----

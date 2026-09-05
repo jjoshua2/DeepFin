@@ -16,7 +16,7 @@ replay → training → checkpoint → model publication to workers.
 - [Development](docs/development.md): setup, commands, validation and code map.
 - [Toolchains](docs/toolchains.md): corpus, offline training, match and agent entry points.
 - [Branch lifecycle](docs/branch_lifecycle.md): main owns development; live pins deployment.
-- [Experiment navigation](docs/experiments/README.md): find prior decisions and artifacts.
+- [Experiment records](docs/experiments/README.md): preregistrations, readouts and prior evidence.
 - [Evaluation](docs/eval_protocol.md): decide what a measurement can establish.
 - [Model heads](docs/model_heads.md): head/target/loss semantics; read before changing them.
 - [Operations](docs/operations.md): training, pause/recovery, config reload and deployment.
@@ -64,9 +64,11 @@ two torch threads for this reason; keep that default on a shared machine.
 
 ## Experiments and evidence
 
-The [ledger](docs/experiment_ledger.md) records hypotheses, readouts and revert
-points. Search relevant entries and the “Protocol gotchas” before an experiment;
-there is no need to load the whole ledger for routine code work.
+Use [experiment records](docs/experiments/README.md) as the primary index. Each new
+experiment gets `docs/experiments/YYYY-MM-DD-slug.md`, with its preregistration and
+subsequent readouts together, plus a link in the index. The old
+[ledger](docs/experiment_ledger.md) is frozen historical evidence: search relevant
+entries and gotchas, without loading the whole file or appending new work there.
 
 Before committing training compute or changing the live distribution, record the
 hypothesis, baseline/control, deciding metric, success/kill rule, compute budget,

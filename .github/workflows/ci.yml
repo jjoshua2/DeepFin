@@ -20,13 +20,13 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      # CPU torch first so the dev install doesn't pull the large CUDA wheel.
-      - name: Install CPU torch
-        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      # Resolve the dev pin against the CPU index in the same transaction.
       # The suite hard-requires its deps (no optional-dep skips), so [dev] pulls
       # in every extra; this also builds the C extensions (encoding + mcts).
       - name: Install package + dev deps
-        run: pip install -e ".[dev]"
+        run: |
+          pip install -e ".[dev]" --extra-index-url https://download.pytorch.org/whl/cpu
+          python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
       # GPU-only tests skip on the CPU runner; `slow` stress tests are excluded
       # from the default run per pyproject's marker.
       #
@@ -73,8 +73,6 @@ jobs:
             echo "::error::runner CPU lacks BMI2; the PEXT slider arm cannot be built or run here"
             exit 1
           }
-      - name: Install CPU torch
-        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       # -mbmi2 rather than -march=native, deliberately: native would also define
       # a __znverN__/__bdverN__ family macro, and the gate in
       # _slider_attacks_impl.h excludes the families where PEXT is microcoded —
@@ -84,7 +82,9 @@ jobs:
       - name: Install package + dev deps (BMI2 / PEXT slider arm)
         env:
           CFLAGS: "-mbmi2"
-        run: pip install -e ".[dev]"
+        run: |
+          pip install -e ".[dev]" --extra-index-url https://download.pytorch.org/whl/cpu
+          python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
       # CAE_EXPECT_SLIDER_BACKEND turns "we intended to build PEXT" into an
       # assertion that we did. Without it a flag that stopped taking effect
       # would leave this leg green and meaningless.
@@ -115,10 +115,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install CPU torch
-        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Install package + dev deps
-        run: pip install -e ".[dev]"
+        run: |
+          pip install -e ".[dev]" --extra-index-url https://download.pytorch.org/whl/cpu
+          python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
       # ruff is per-file and deterministic, so it gates the whole repo.
       - name: ruff (whole repo)
         run: ruff check chess_anti_engine scripts tests
