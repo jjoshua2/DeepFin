@@ -8,6 +8,7 @@ PEXT requires a separately built BMI2 extension set; this command never rebuilds
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import importlib
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ import platform
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +63,20 @@ def validation_environment(suite: str, threads: str, backend: str) -> dict[str, 
         for name in THREAD_VARS:
             env[name] = env["CAE_TEST_THREADS"]
     return env
+
+
+def configure_compile_environment(env: dict[str, str], cache_root: Path) -> None:
+    """Keep test compilation away from live artifacts and compiler overrides."""
+    env["DEEPFIN_COMPILE_CACHE"] = str(cache_root)
+    env["TORCHINDUCTOR_CACHE_DIR"] = str(cache_root / "compile_cache" / "torchinductor")
+    env["TRITON_CACHE_DIR"] = str(cache_root / "compile_cache" / "triton")
+    env["TORCHINDUCTOR_COMPILE_THREADS"] = "1"
+    env["MAX_JOBS"] = "1"
+    # A newer compiler placed on PATH can emit libstdc++ requirements the
+    # installed Torch runtime cannot load. Prefer Linux's system compiler;
+    # retain an explicit CXX when validating a deliberately chosen toolchain.
+    if sys.platform.startswith("linux") and os.access("/usr/bin/c++", os.X_OK):
+        env.setdefault("CXX", "/usr/bin/c++")
 
 
 def preflight(suite: str, backend: str, require_cpu_wheel: bool) -> None:
@@ -126,9 +142,15 @@ def main(argv: list[str] | None = None) -> int:
           f"expected_backend={backend} CUDA_VISIBLE_DEVICES={env['CUDA_VISIBLE_DEVICES']!r}", flush=True)
     print(f"command: {shlex.join(command)}", flush=True)
     try:
-        preflight(args.suite, backend, args.require_cpu_wheel)
-        result = subprocess.run(command, cwd=ROOT, env=env, check=False)
-        code = result.returncode
+        with ExitStack() as stack:
+            if args.suite != "lint":
+                cache_root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="deepfin-validate-")))
+                configure_compile_environment(env, cache_root)
+                print(f"compile_cache={cache_root} CXX={env.get('CXX', 'PATH default')} "
+                      "compile_threads=1 MAX_JOBS=1", flush=True)
+            preflight(args.suite, backend, args.require_cpu_wheel)
+            result = subprocess.run(command, cwd=ROOT, env=env, check=False)
+            code = result.returncode
     except (ImportError, OSError, RuntimeError) as exc:
         print(f"validation preflight/launch failed: {exc}", file=sys.stderr, flush=True)
         code = 1

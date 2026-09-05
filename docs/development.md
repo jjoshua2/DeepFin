@@ -77,6 +77,11 @@ is also supported. Invalid values retain the cap. In CI YAML, quote string value
 The shared validator prints the interpreter, Torch build, requested thread count,
 native backend, elapsed time and failing command. CPU suites hide GPUs even in a CUDA
 environment; `--require-cpu-wheel` additionally verifies CI's actual dependency variant.
+Each test invocation owns a temporary compilation cache, so it neither consumes nor
+modifies live worker artifacts. Compiler jobs are limited to one. On Linux, validation
+defaults to `/usr/bin/c++` rather than a newer compiler shadowing it on `PATH`; an
+explicit `CXX` is respected and reported. A custom compiler still needs a compatible
+C++ runtime. Native builds and Python dependencies alone do not establish that pairing.
 The `capped` suite always uses two threads, including when CI inherits `auto`, and
 checks the cap after in-process worker tests. Direct pytest retains its permissive
 thread-setting aliases; the validator accepts a positive count or `auto`.

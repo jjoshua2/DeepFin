@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -12,6 +13,64 @@ import pytest
 import torch
 
 from scripts import validate
+
+
+@pytest.mark.parametrize("suite", ["cpu", "pext", "capped"])
+def test_each_test_run_isolates_inherited_caches_and_cleans_up_after_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suite: str,
+) -> None:
+    shared_cache = tmp_path / "live-cache"
+    shared_cache.mkdir()
+    sentinel = shared_cache / "active-artifact"
+    sentinel.write_text("preserve")
+    for name in ("DEEPFIN_COMPILE_CACHE", "TORCHINDUCTOR_CACHE_DIR", "TRITON_CACHE_DIR"):
+        monkeypatch.setenv(name, str(shared_cache))
+    monkeypatch.setenv("TORCHINDUCTOR_COMPILE_THREADS", "16")
+    monkeypatch.setenv("MAX_JOBS", "16")
+    monkeypatch.setattr(validate, "preflight", lambda *_args: None)
+    report = tmp_path / "child-environment.json"
+    reported_keys = (
+        "DEEPFIN_COMPILE_CACHE", "TORCHINDUCTOR_CACHE_DIR", "TRITON_CACHE_DIR",
+        "TORCHINDUCTOR_COMPILE_THREADS", "MAX_JOBS",
+    )
+    caches: list[Path] = []
+    for exit_code in (0, 7):
+        code = (
+            "import json, os; from pathlib import Path; "
+            "root = Path(os.environ['DEEPFIN_COMPILE_CACHE']); "
+            "assert root.is_dir(); "
+            "(root / 'test-artifact').write_text('temporary'); "
+            f"Path({str(report)!r}).write_text(json.dumps({{key: os.environ[key] for key in {reported_keys!r}}})); "
+            f"raise SystemExit({exit_code})"
+        )
+        monkeypatch.setattr(validate, "suite_command", lambda _suite, code=code: [sys.executable, "-c", code])
+        assert validate.main([suite, "--threads", "2", "--expect-backend",
+                              "pext" if suite == "pext" else "magic"]) == exit_code
+        env = json.loads(report.read_text())
+        cache = Path(env["DEEPFIN_COMPILE_CACHE"])
+        assert cache != shared_cache
+        assert env["TORCHINDUCTOR_CACHE_DIR"] == str(cache / "compile_cache" / "torchinductor")
+        assert env["TRITON_CACHE_DIR"] == str(cache / "compile_cache" / "triton")
+        assert env["TORCHINDUCTOR_COMPILE_THREADS"] == env["MAX_JOBS"] == "1"
+        assert not cache.exists()
+        caches.append(cache)
+    assert caches[0] != caches[1]
+    assert sentinel.read_text() == "preserve"
+    assert list(shared_cache.iterdir()) == [sentinel]
+    assert os.environ["DEEPFIN_COMPILE_CACHE"] == str(shared_cache)
+
+
+@pytest.mark.parametrize("explicit_compiler", [None, "/chosen/toolchain/c++"])
+def test_linux_compile_environment_avoids_path_compiler_but_respects_explicit_choice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, explicit_compiler: str | None,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(os, "access", lambda *_args: True)
+    env = {"PATH": "/newer-gcc/bin:/usr/bin"}
+    if explicit_compiler is not None:
+        env["CXX"] = explicit_compiler
+    validate.configure_compile_environment(env, tmp_path)
+    assert env["CXX"] == (explicit_compiler or "/usr/bin/c++")
 
 
 def test_capped_regression_overrides_ci_auto_and_child_thread_settings(
