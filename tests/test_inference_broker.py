@@ -35,6 +35,17 @@ from chess_anti_engine.model import ModelConfig, build_model
 from chess_anti_engine.utils import sha256_file as _sha256_file
 
 
+def _install_loaded_model(broker: SlotBroker, model: torch.nn.Module) -> None:
+    """Represent an already-loaded publication without waiting for a missing manifest."""
+    broker._model = model
+    broker._model_sha = "test"
+    # Exercise _ensure_model's ordinary unchanged-publication path. These
+    # transport tests provide the model directly; load/reload tests use files.
+    (broker.publish_dir / "manifest.json").write_text(
+        json.dumps({"model": {"sha256": "test"}}), encoding="utf-8",
+    )
+
+
 def test_slot_inference_client_sends_dense_bf16_bits() -> None:
     slot_name = f"cae-bf16-{uuid.uuid4().hex}"
     layout = _SlotLayout.compute(8)
@@ -167,8 +178,7 @@ def test_slot_broker_returns_compact_legal_bf16_logits(
         slot_prefix=f"cae-legal-broker-{uuid.uuid4().hex}",
     )
     try:
-        broker._model = _TinyPolicy().to(device).eval()
-        broker._model_sha = "test"
+        _install_loaded_model(broker, _TinyPolicy().to(device).eval())
         slot = broker._slots[0]
         x = np.zeros((2, 146, 8, 8), dtype=np.uint16)
         legal_counts = np.array([2, 2], dtype=np.int32)
@@ -228,8 +238,7 @@ def test_slot_broker_uses_model_legal_policy_forward(tmp_path: Path) -> None:
     )
     try:
         model = _TinyLegalPolicy().eval()
-        broker._model = model
-        broker._model_sha = "test"
+        _install_loaded_model(broker, model)
         slot = broker._slots[0]
         legal_counts = np.array([2, 2], dtype=np.int32)
         legal_flat = np.array([0, 5, 7, 4671], dtype=np.int32)
@@ -298,8 +307,7 @@ def test_slot_broker_uses_padded_legal_rows_forward(
     )
     try:
         model = _TinyLegalRowsPolicy().to(device).eval()
-        broker._model = model
-        broker._model_sha = "test"
+        _install_loaded_model(broker, model)
         slot = broker._slots[0]
         legal_counts = np.array([2, 2], dtype=np.int32)
         legal_flat = np.array([0, 5, 7, 4671], dtype=np.int32)
@@ -1000,8 +1008,7 @@ def _compact_legal_broker(tmp_path: Path, label: str) -> SlotBroker:
         batch_wait_ms=0.0,
         slot_prefix=f"cae-{label}-{uuid.uuid4().hex}",
     )
-    broker._model = _TinyPolicy().eval()
-    broker._model_sha = "test"
+    _install_loaded_model(broker, _TinyPolicy().eval())
     return broker
 
 
@@ -1014,6 +1021,31 @@ def _submit_compact_legal(slot: _InferenceSlot, counts: list[int], flat: list[in
     slot.batch_size = bsz
     slot.request_mode = _MODE_LEGAL_BF16
     slot.state = _STATE_REQUEST
+
+
+def test_missing_manifest_deadline_preserves_the_loaded_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from chess_anti_engine import inference
+
+    broker = _compact_legal_broker(tmp_path, "missing-manifest")
+    model, identity = broker._model, broker._model_sha
+    (broker.publish_dir / "manifest.json").unlink()
+    # Advance the real loader's deadline without sleeping. A bounded iterator
+    # also fails if polling stops respecting the deadline.
+    ticks = iter(range(1000))
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(inference, "time", SimpleNamespace(
+                monotonic=lambda: float(next(ticks)), sleep=lambda _seconds: None,
+            ))
+            broker._ensure_model()
+        assert broker._model is model
+        assert broker._model_sha == identity
+    finally:
+        broker.shutdown()
 
 
 def test_process_batch_snapshots_metadata_against_a_client_resubmit(
