@@ -54,6 +54,7 @@ epoch consumption without wrapping or silently truncating. Follow
 | Joint PGN rating estimate | `scripts/ordo_pooled_fit.py` |
 | Bank or inspect foreign BT4 policy/history behavior | `scripts/bt4_policy_dump.py`, `scripts/bt4_history_sensitivity.py` |
 | Bank and analyze varying-horizon continuation trajectories | `scripts/collect_varying_budget_trajectories.py`, `scripts/analyze_varying_budget_controller.py` |
+| Observe fenlist and SF-refute outcomes without inferring playing strength | `scripts/monitor_sf_refute_outcomes.py` |
 | Relabel/reconstruct RVG targets and shadow readout | `scripts/rvg_label_pass.py`, `scripts/nnue_shadow_label_readout.py` |
 
 The varying-horizon tools follow their [staged protocol](experiments/varying_horizon_online_controller.md),

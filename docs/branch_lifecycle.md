@@ -64,3 +64,20 @@ Research code, preregistrations and ledger readouts remain available. Generated 
 and log files newly present only on live remain recoverable from `d529afefc` and the
 original artifact directories, rather than being copied into main's working tree.
 See [toolchains](toolchains.md) for the supported entry points.
+
+### Untracked live-side diagnostics
+
+The outcome monitor `scripts/monitor_sf_refute_outcomes.py` is promoted with trial-qualified
+CSV records and explicit missing outcomes. Four other untracked scripts were inspected
+and remain preserved in the original live checkout as historical experiment material:
+
+| Historical script | Why it is not a supported entry point |
+| --- | --- |
+| `bench_aot_startup_lazy.py` | Its load and steady-state arms choose different package buckets; defaults select an old trial and compilation can consume GPU resources. |
+| `vr_game_ply_breakdown.py` | July-specific thresholds and incomplete game-identity filtering need correction before reuse. |
+| `vr_loss_share.py` | Fixed July checkpoint/replay paths and selected loss terms do not measure the complete current objective. |
+| `topup_c17_post_arm.sh` | A dated C17 copy loop can mistake an interrupted destination directory for a completed copy. |
+
+These are not dependencies of the supported toolchains. Reusing one requires a scoped
+main-targeted change with appropriate inputs and measurement checks; their historical
+presence is not evidence that they are safe to launch against a current run.
