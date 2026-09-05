@@ -140,3 +140,43 @@ an identified boundary.
 UNREAD. No S0/global training or playing result existed when this plan was recorded.
 Independent design review found the three new trainings adequate for the initial
 screen, subject to the interpretation and confirmation limits above.
+
+### September 5 execution evidence
+
+The active immutable preregistration snapshot has SHA256
+`0efd4e6e5217237b90ebeffa33edf400019b02b360258b32233a2e3366bc1565`.
+A prior snapshot is retained as `preregistration.before_runtime_correction.md`;
+the correction identified the CPU materialization interpreter before successful
+audits or training. Two failed Python3.10 audit logs are preserved; they failed
+at import because the new worktree's native extensions target Python3.13.
+
+The corrected mixer and raw/rank tools reached main in PR519, merge
+`7aa2ec3317932451ec9ebc94b1a5d3433c038fc8`, after independent review,
+69 focused CPU tests, whole-repository lint and green CI. Materialization remains
+pinned to its clean `4394bd2cddc05ea780ce303a1f731730a1f4dfff` checkout.
+
+Both descriptive audits passed integrity on the4,000-position frozen ruler:
+
+| Treatment | Expected SF regret delta cp (95% CI) | Top-1 regret delta cp (95% CI) |
+| --- | --- | --- |
+| G20T1 | +4.4328 [+3.9645,+4.9014] | -5.0760 [-6.9180,-3.4019] |
+| G20T05 | -0.0634 [-0.5575,+0.4263] | -5.1050 [-6.9483,-3.4272] |
+
+These are descriptive results, not strength admissions or verdicts. Receipts
+`audit_G20T1.json` and `audit_G20T05.json` retain the SF comparison verdict
+separately from fidelity and the hashed descriptive-admission rationale.
+
+S0's coordinator started at16:25Z and the trainer acquired the GPU at16:28Z;
+the existing G10 labeler yielded and now waits on the shared lease. The baseline
+driver SHA256 is `da9afa748f7f947986fd096c38d7dc2536932728d33322c0a3288ed2055ce205`.
+Source rows, trainer target temperature1.0 and unchanged61,444,448-parameter
+architecture were observed at launch. Subsequent windows reached approximately
+23 seconds per88 steps after startup. This is progress, not a completed result.
+
+The obsolete A materializer was interrupted at16:26Z; its partial `.writing`
+corpus remains unpublished and preserved. G20T1 preparation started alongside
+S0 using the CPU environment. Independent readback of its first8,192-row shard
+found all16 non-policy arrays identical,8,138 changed policy rows,161,350 newly
+positive policy entries, zero illegal positive entries, and maximum total-mass
+error0.000350. This confirms the broad-tail intervention reaches real output.
+Evidence is `G20T1.first-shard-integrity.json` in the new state directory.
