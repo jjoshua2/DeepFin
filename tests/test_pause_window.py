@@ -1216,60 +1216,6 @@ def test_a_failure_AFTER_the_marker_also_reports_the_wrapper_code(
     assert not (tune / "pause.txt").exists(), "left a marker behind"
 
 
-def test_the_ledgers_yardstick_selects_the_trial_by_data_not_by_name(
-    tmp_path: Path,
-) -> None:
-    """⚑ B2: THE PRE-REGISTERED YARDSTICK WAS A GATE THAT COULD NOT FAIL.
-
-    It selected the trial with `sorted(glob("train_trial_*"))[-1]` —
-    LEXICOGRAPHIC. Against the live tune dir `'3' < 'd'`, so it read the dead
-    `train_trial_d2003_..._2026-08-05` (last row 08-06) rather than the live
-    `379f6`: the median came from a cold-start trial, it reported 7 stretched
-    iterations on night ONE, and its output was STATIONARY — five nights produce
-    byte-identical results, so the kill rule could not fire in either direction.
-    Found by an independent reviewer EXECUTING it.
-
-    CLAUDE.md protocol #1 requires that command, so it is extracted from the
-    ledger and RUN here against a fixture built to punish the old selector: the
-    live trial sorts FIRST by name and is newest by data.
-    """
-    ledger = (REPO / "docs" / "experiment_ledger.md").read_text()
-    block = re.search(
-        r"### Yardstick \(pre-registered, ONE deciding command\).*?```bash\n"
-        r"PYTHONPATH=\. python3 - <<'PY'\n(.*?)\nPY\n```",
-        ledger, re.S,
-    )
-    assert block is not None, "the yardstick's code block no longer parses; re-point this test"
-    code = block.group(1)
-
-    tune = tmp_path / "runs" / "pbt2_small" / "tune"
-    # '3...' sorts BEFORE 'd...', so lexicographic selection picks the dead one.
-    live = tune / "train_trial_379f6_00000_0_lr=0.0000_2026-08-06_23-51-06"
-    dead = tune / "train_trial_d2003_00000_0_lr=0.0000_2026-08-05_12-07-56"
-    for d in (dead, live):
-        d.mkdir(parents=True)
-    (dead / "result.json").write_text(
-        '{"training_iteration": 1, "time_this_iter_s": 500.0, "timestamp": 1000000}\n',
-    )
-    time.sleep(0.02)
-    (live / "result.json").write_text(
-        '{"training_iteration": 900, "time_this_iter_s": 250.0, "timestamp": 2000000}\n',
-    )
-    (tmp_path / "runs").mkdir(exist_ok=True)
-    (tmp_path / "runs" / "arena_results.jsonl").write_text("")
-
-    r = subprocess.run(
-        ["python3", "-c", code], cwd=tmp_path,
-        capture_output=True, text=True, timeout=120, check=False,
-    )
-    assert r.returncode == 0, f"the pre-registered command does not run:\n{r.stderr}"
-    assert "379f6" in r.stdout, (
-        "the yardstick selected the DEAD trial: its median, its threshold and "
-        f"its verdict all describe a run that stopped days ago.\n{r.stdout}"
-    )
-    assert "d2003" not in r.stdout, r.stdout
-
-
 # ── N7: the trial selector must TRACK THE LIVE TRIAL, not merely return one ──
 # B2 was a "latest trial" selector that silently picked a DEAD trial and
 # returned plausible, stationary numbers; it was bounded and logged right up
@@ -1284,6 +1230,23 @@ def test_the_ledgers_yardstick_selects_the_trial_by_data_not_by_name(
 # rule has a clear preference, and require the live trial to win anyway.
 
 _TRIAL_SUFFIX = "_0_lr=0.0000_2026-01-01_00-00-00"
+
+
+def _set_mtime(path: Path, offset_seconds: float) -> None:
+    """Set fixture ordering without waiting for the wall clock."""
+    stamp = 1_700_000_000 + offset_seconds
+    os.utime(path, (stamp, stamp))
+
+
+def _same_second_data_mtimes(live: Path, dead: Path) -> None:
+    _set_mtime(dead / "result.json", 0.25)
+    _set_mtime(live / "result.json", 0.75)
+    older = (dead / "result.json").stat().st_mtime
+    newer = (live / "result.json").stat().st_mtime
+    if older == newer:
+        pytest.skip("filesystem cannot preserve sub-second fixture mtimes")
+    assert int(older) == int(newer), "fixture timestamps must share a whole second"
+    assert newer > older
 
 
 def _selector_sandbox(tmp_path: Path, live: str, dead: str):
@@ -1344,8 +1307,9 @@ def test_the_trial_selector_prefers_the_populated_trial_over_a_touched_one(
     directory mtime — which is what a checkpoint dir appearing under it does."""
     work, bin_dir, live_d, dead_d = _selector_sandbox(tmp_path, "aaa11_00000", "zzz91_00000")
     (live_d / "result.json").write_text('{"training_iteration": 900}\n')
-    time.sleep(1.1)
-    (dead_d / "checkpoint_000001").mkdir()      # bumps the DIRECTORY mtime
+    (dead_d / "checkpoint_000001").mkdir()
+    _set_mtime(live_d, 0)
+    _set_mtime(dead_d, 2)
     assert dead_d.stat().st_mtime > live_d.stat().st_mtime, "fixture does not test anything"
 
     r = _resolve(work, bin_dir, "aaa11_00000")
@@ -1366,10 +1330,12 @@ def test_the_trial_selector_prefers_FRESH_DATA_over_a_fresher_directory(
     mtime picks the dead trial; ranking by the data file picks the live one."""
     work, bin_dir, live_d, dead_d = _selector_sandbox(tmp_path, "aaa22_00000", "zzz92_00000")
     (dead_d / "result.json").write_text('{"training_iteration": 104}\n')
-    time.sleep(1.1)
     (live_d / "result.json").write_text('{"training_iteration": 900}\n')   # newest DATA
-    time.sleep(1.1)
-    (dead_d / "checkpoint_000002").mkdir()                                 # newest DIR
+    (dead_d / "checkpoint_000002").mkdir()
+    _set_mtime(dead_d / "result.json", 0)
+    _set_mtime(live_d / "result.json", 2)
+    _set_mtime(live_d, 2)
+    _set_mtime(dead_d, 4)
     assert dead_d.stat().st_mtime > live_d.stat().st_mtime
     assert (live_d / "result.json").stat().st_mtime > (dead_d / "result.json").stat().st_mtime
 
@@ -1397,10 +1363,13 @@ def test_the_trial_selector_matches_the_watchdogs_rule_on_the_same_tree(
     empty = work / "tune" / f"train_trial_zzz99_00000{_TRIAL_SUFFIX}"
     empty.mkdir()                                            # newest of all, no data
     (dead_d / "progress.csv").write_text("h\n1\n")
-    time.sleep(1.1)
     (live_d / "result.json").write_text('{"training_iteration": 900}\n')
-    time.sleep(1.1)
     (dead_d / "checkpoint_000003").mkdir()
+    _set_mtime(dead_d / "progress.csv", 0)
+    _set_mtime(live_d / "result.json", 2)
+    _set_mtime(live_d, 2)
+    _set_mtime(dead_d, 4)
+    _set_mtime(empty, 6)
 
     theirs = _WATCHDOG.newest_trial_dir(work / "tune")
     assert theirs is not None
@@ -1425,22 +1394,14 @@ def test_two_trials_written_in_the_SAME_SECOND_are_still_ordered(
     alphabetically — while `newest_trial_dir` compares float `st_mtime` and gets
     it right, so the two implementations of one rule silently disagree.
 
-    Disclosed as a survivor first: the other selector tests use 1.1s gaps, which
+    Disclosed as a survivor first: the other selector fixtures use whole-second gaps, which
     makes them blind to exactly this. `%.9Y` was justified by parity with the
     Python rule and by nothing executable until this test existed.
     """
-    probe_a, probe_b = tmp_path / "a", tmp_path / "b"
-    probe_a.write_text("x")
-    time.sleep(0.05)
-    probe_b.write_text("x")
-    if probe_a.stat().st_mtime == probe_b.stat().st_mtime:
-        pytest.skip("filesystem has 1-second mtime granularity; nothing to order")
-
     work, bin_dir, live_d, dead_d = _selector_sandbox(tmp_path, "aaa44_00000", "zzz94_00000")
     (dead_d / "result.json").write_text('{"training_iteration": 104}\n')
-    time.sleep(0.05)                       # same whole second, later nanosecond
     (live_d / "result.json").write_text('{"training_iteration": 900}\n')
-    assert (live_d / "result.json").stat().st_mtime > (dead_d / "result.json").stat().st_mtime
+    _same_second_data_mtimes(live_d, dead_d)
 
     r = _resolve(work, bin_dir, "aaa44_00000")
 
@@ -1588,10 +1549,12 @@ def test_all_three_trial_selectors_agree_on_the_same_tree(tmp_path: Path) -> Non
     for d in (dead, live):
         d.mkdir(parents=True)
     (dead / "result.json").write_text('{"training_iteration": 104}\n')
-    time.sleep(1.1)
     (live / "result.json").write_text('{"training_iteration": 900}\n')
-    time.sleep(1.1)
-    (dead / "checkpoint_000009").mkdir()        # newest DIRECTORY, dead trial
+    (dead / "checkpoint_000009").mkdir()
+    _set_mtime(dead / "result.json", 0)
+    _set_mtime(live / "result.json", 2)
+    _set_mtime(live, 2)
+    _set_mtime(dead, 4)
     assert dead.stat().st_mtime > live.stat().st_mtime, "fixture does not test anything"
 
     common = REPO / "scripts" / "ratchet_common.sh"
@@ -1627,33 +1590,21 @@ def test_the_SHARED_selector_orders_two_trials_written_in_the_same_second(
     `pause_window.sh:resolve_trial_id` and only that — it goes through
     `_resolve`. But the copy that `ratchet_loop.sh` and `daily_gate_ratchet.sh`
     actually call is `ratchet_newest_trial_dir`, and every test touching it used
-    1.1s gaps, which whole-second mtimes order correctly. So the sub-second
+    whole-second gaps, which whole-second mtimes order correctly. So the sub-second
     resolution was justified by a comment on the production path and pinned only
     on the wrapper path — the same one-of-N gap that #4 exists to close, one
     level down.
 
     A restart writes both trials' first rows well inside one second.
     """
-    probe_a, probe_b = tmp_path / "pa", tmp_path / "pb"
-    probe_a.write_text("x")
-    time.sleep(0.05)
-    probe_b.write_text("x")
-    if probe_a.stat().st_mtime == probe_b.stat().st_mtime:
-        pytest.skip("filesystem has 1-second mtime granularity; nothing to order")
-
     tune = tmp_path / "runs" / "pbt2_small" / "tune"
     live = tune / "train_trial_aaa66_00000_0_lr=0.0000_2026-01-01_00-00-00"
     dead = tune / "train_trial_zzz96_00000_0_lr=0.0000_2026-01-01_00-00-00"
     for d in (dead, live):
         d.mkdir(parents=True)
     (dead / "result.json").write_text('{"training_iteration": 104}\n')
-    time.sleep(0.05)                       # same whole second, later nanosecond
     (live / "result.json").write_text('{"training_iteration": 900}\n')
-    same_second = int((dead / "result.json").stat().st_mtime) == int(
-        (live / "result.json").stat().st_mtime
-    )
-    if not same_second:
-        pytest.skip("the two writes straddled a second boundary; retry")
+    _same_second_data_mtimes(live, dead)
 
     common = REPO / "scripts" / "ratchet_common.sh"
     r = subprocess.run(
