@@ -19,20 +19,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version-file: ".python-version"
-          cache: pip
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          activate-environment: true
       - name: Install package + dev deps
         run: |
-          pip install -e ".[dev]" --extra-index-url https://download.pytorch.org/whl/cpu
+          uv sync --locked --extra dev --extra cpu
           python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
       # Override the pins with latest — this is the whole point of the canary.
       - name: Upgrade lint tools + numpy to latest
-        run: pip install -U ruff basedpyright vulture numpy
+        run: uv pip install --python .venv/bin/python -U ruff basedpyright vulture numpy
       - name: Tool versions
         run: |
           ruff --version
           basedpyright --version
           python -c "import numpy; print('numpy', numpy.__version__)"
-      - name: ruff (whole repo, latest)
-        run: ruff check chess_anti_engine scripts tests
-      - name: basedpyright (whole repo, latest)
-        run: basedpyright
+      - name: Static validation (latest tools)
+        run: python scripts/validate.py lint --require-cpu-wheel

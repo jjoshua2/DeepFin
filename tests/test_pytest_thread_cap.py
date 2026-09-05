@@ -1,16 +1,7 @@
-"""The suite's torch thread cap must actually take effect.
+"""Verify realized torch limits, child inheritance and reported thread settings.
 
-⚑ A cap that is configured and then ignored is worse than no cap: it produces a
-header line claiming the box is protected while the run takes every core anyway.
-That is this codebase's signature defect (a value accepted and silently
-dropped), so the cap gets a test that reads the REALIZED thread count rather
-than the configured one.
-
-⚑ And a test that only asserts ``get_num_threads() == cap`` can pass on a
-2-core machine where torch would have chosen 2 unaided — the assertion would be
-true and would prove nothing. So binding-ness is checked first
-(``check_the_resource_is_binding``): when the machine has no more cores than the
-cap, the test SKIPS with the reason stated instead of banking a free pass.
+A controlled four-thread baseline distinguishes capping from a no-op even when
+the host's default happens to equal the cap. No tensor work is needed.
 """
 from __future__ import annotations
 
@@ -27,12 +18,6 @@ from tests.conftest import classify_thread_cap, resolve_thread_cap, thread_cap_r
 def test_the_configured_cap_is_the_realized_cap(thread_cap: int | None) -> None:
     if thread_cap is None:
         pytest.skip("CAE_TEST_THREADS asks for no cap; nothing to assert")
-    cores = os.cpu_count() or 1
-    if cores <= thread_cap:
-        pytest.skip(
-            f"cap {thread_cap} is not binding on a {cores}-core machine — "
-            "asserting it here would pass without testing anything"
-        )
     assert torch.get_num_threads() == thread_cap
 
 
@@ -69,37 +54,32 @@ def test_resolve_thread_cap(
     assert resolve_thread_cap() == expected
 
 
-def test_an_uncapped_session_really_is_uncapped() -> None:
-    """The NEGATIVE CONTROL: prove the cap is what constrains torch, not the box.
-
-    Without this, `test_the_configured_cap_is_the_realized_cap` is consistent
-    with a conftest that does nothing on a machine that happens to default to 2.
-    A child process with the cap lifted must report MORE threads than the cap.
-
-    ⚑ What actually does the lifting here is the env SCRUB below, not the
-    ``CAE_TEST_THREADS="auto"`` we hand the child: the child is bare `python -c`,
-    never loads this conftest, and so never reads that variable. It is set only
-    so the child's environment states the intent it is running under. Removing
-    the scrub makes this test FAIL rather than silently pass, which is the
-    property that makes it a control at all.
-    """
-    cap = resolve_thread_cap()
-    cores = os.cpu_count() or 1
-    if cap is None or cores <= cap:
-        pytest.skip("no cap configured, or the cap is not binding on this machine")
-    env = dict(os.environ, CAE_TEST_THREADS="auto")
+@pytest.mark.parametrize(("setting", "expected"), [("2", 2), ("auto", 4)])
+def test_conftest_caps_or_preserves_a_controlled_baseline(setting: str, expected: int) -> None:
+    """Import the real cap after torch starts at four threads, on any CPU size."""
+    env = dict(os.environ, CAE_TEST_THREADS=setting)
     for var in (
         "OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
         "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
     ):
-        env.pop(var, None)
-    out = subprocess.run(
-        [sys.executable, "-c", "import torch; print(torch.get_num_threads())"],
-        capture_output=True, text=True, env=env, timeout=300, check=True,
+        env[var] = "4"
+    code = (
+        "import torch; "
+        "torch.set_num_threads(4); "
+        "baseline = torch.get_num_threads(); "
+        "assert baseline == 4, f'controlled baseline was {baseline}, expected 4'; "
+        "import tests.conftest; "
+        "print(torch.get_num_threads())"
     )
-    assert int(out.stdout.strip()) > cap, (
-        "an uncapped torch chose no more threads than the cap, so this machine "
-        "cannot distinguish a working cap from a broken one"
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True, env=env, timeout=300, check=False,
+        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    )
+    assert out.returncode == 0, f"controlled child failed:\n{out.stdout}\n{out.stderr}"
+    assert int(out.stdout.strip()) == expected, (
+        f"conftest with CAE_TEST_THREADS={setting!r} changed a four-thread "
+        f"baseline to {out.stdout.strip()} threads; expected {expected}"
     )
 
 
@@ -114,9 +94,8 @@ def test_a_child_process_inherits_the_cap() -> None:
     this half silently un-caps the processes that do the most work.
     """
     cap = resolve_thread_cap()
-    cores = os.cpu_count() or 1
-    if cap is None or cores <= cap:
-        pytest.skip("no cap configured, or the cap is not binding on this machine")
+    if cap is None:
+        pytest.skip("CAE_TEST_THREADS asks for no cap; nothing to assert")
     assert os.environ.get("OMP_NUM_THREADS") == str(cap), (
         "conftest did not export OMP_NUM_THREADS; child processes will not be capped"
     )

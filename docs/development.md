@@ -6,21 +6,29 @@ setup and verification; [operations](operations.md) covers an existing live run.
 ## Environment and commands
 
 Use standard, GIL-enabled Python 3.13 for development and CI, with a current patch
-release. `.python-version` is the shared version selector. Install into an isolated
-environment:
+release. `.python-version` is the shared version selector. Install the uv version
+specified by `tool.uv.required-version` in `pyproject.toml` (currently 0.12.10), then
+create the locked CPU development environment in a fresh worktree:
 
 ```bash
-python3.13 -m venv .venv
+uv sync --locked --extra dev --extra cpu
 . .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[dev]' --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
 The `dev` extra supplies the server, training, tuning, ONNX and test dependencies.
-`.[worker]` is the lighter client install. Dependency pins and build requirements live
-in `pyproject.toml`; don't infer them from another checkout's environment. An old
-setuptools without PEP 660 can fail editable installation; build isolation uses the
-project's build requirements. Avoid upgrading an environment used by active jobs.
+`uv.lock` records their complete resolved dependency graph and wheel hashes;
+`--locked` fails if the project requirements and lock disagree. CI uses the same
+command. The lock targets Linux x86-64 with Python 3.13, our development/CI platform.
+Other platforms and older workers retain the ordinary package installation path,
+such as `python -m pip install -e '.[worker]'`; those installs do not use this lock.
+Build dependencies are constrained in `pyproject.toml`, and native sources, headers
+and build flags participate in uv's build cache key.
+
+Use a separate checkout/environment for each accelerator or native build variant:
+editable installations share the checkout's in-place extensions. Avoid syncing an
+environment or rebuilding extensions used by active jobs. After activating, use
+`python` directly (or `uv run --no-sync`) so a later command cannot silently resync
+away the selected extras.
 
 The package's older Python floor is retained for existing workers; it is not the
 recommended development interpreter. Python 3.14 needs separate dependency work:
@@ -34,10 +42,17 @@ Exercise checkpoint restoration and Ray in disposable state before moving an exi
 run; pickled runtime state and compiled artifacts are not an interpreter migration
 contract. Changing the development default does not migrate running jobs.
 
-For CUDA development on the RTX 5090, use the official `cu130` index instead of `cpu`
-in the install command. Both variants resolve the Torch version from the same dev pin;
-CI also checks that it actually installed the CPU variant. Installing unpinned Torch
-first can be undone by the later dev install, silently changing versions and variants.
+For CUDA development on the RTX 5090, replace `--extra cpu` with `--extra cu130`.
+These extras are mutually exclusive in uv and select the official PyTorch index
+explicitly. Generic dependencies still come from PyPI. CI checks the installed Torch
+variant as well. This follows [uv's PyTorch integration](https://docs.astral.sh/uv/guides/integration/pytorch/).
+
+To update a dependency, change its constraint if pinned, run
+`uv lock --upgrade-package PACKAGE`, sync the relevant profile with `--locked`, and
+validate the affected paths. Commit the lock with the change. A broad `uv lock
+--upgrade` is an intentional dependency upgrade, not a routine setup step. The weekly
+lint canary starts from the lock and deliberately upgrades its selected tools outside
+it; a canary result is not evidence that the locked environment changed.
 
 Validate Torch upgrades in a separate environment with model/loss/optimizer tests and
 an actual GPU forward/backward and compiled-inference check. Existing AOT packages and
@@ -48,15 +63,65 @@ From the repository root:
 
 ```bash
 python -m pytest tests/test_param_count.py       # example focused CPU check
-python -m pytest -m 'not slow'                   # ordinary CI suite
+python scripts/validate.py cpu                  # ordinary CI suite, GPU hidden
+python scripts/validate.py capped               # worker tests preserve the local cap
 ./scripts/lint.sh tests/test_param_count.py      # focused static feedback
-./scripts/lint.sh                               # whole-repo static gate
+python scripts/validate.py lint                 # same whole-repo gate as CI
 ```
 
 `tests/conftest.py` caps torch at two threads by default. The terminal summary reports
 the regime, including under `-q`. Use `CAE_TEST_THREADS=auto` only on a dedicated
 runner or during a confirmed pause with no competing work; an explicit thread count
 is also supported. Invalid values retain the cap. In CI YAML, quote string values.
+
+The shared validator prints the interpreter, Torch build, requested thread count,
+native backend, elapsed time and failing command. CPU suites hide GPUs even in a CUDA
+environment; `--require-cpu-wheel` additionally verifies CI's actual dependency variant.
+Each test invocation owns a temporary compilation cache, so it neither consumes nor
+modifies live worker artifacts. Compiler jobs are limited to one. On Linux, validation
+defaults to `/usr/bin/c++` rather than a newer compiler shadowing it on `PATH`; an
+explicit `CXX` is respected and reported. A custom compiler still needs a compatible
+C++ runtime. Native builds and Python dependencies alone do not establish that pairing.
+The `capped` suite always uses two threads, including when CI inherits `auto`, and
+checks the cap after in-process worker tests. Direct pytest retains its permissive
+thread-setting aliases; the validator accepts a positive count or `auto`.
+
+The PEXT suite needs a separate checkout built with `CFLAGS=-mbmi2`:
+
+```bash
+CFLAGS=-mbmi2 uv sync --locked --extra dev --extra cpu
+. .venv/bin/activate
+python scripts/validate.py pext
+```
+
+The validator checks native freshness and the actual backend before pytest; it never
+rebuilds an extension while another process may be using it. Keep the same `CFLAGS`
+on later syncs of that checkout. CI covers both the portable magic build and this
+PEXT build. Both local and CI lint run `scripts/lint.sh`, including vulture.
+
+## Runtime upgrade smokes
+
+Run these explicitly when qualifying Python, Torch or Ray changes, after budgeting
+resources alongside existing work:
+
+```bash
+python scripts/runtime_smoke.py ray --report /tmp/deepfin-ray-smoke.json
+# In the CUDA profile, with available GPU capacity:
+python scripts/runtime_smoke.py gpu --report /tmp/deepfin-gpu-smoke.json
+```
+
+The Ray check starts its own disposable one-CPU, zero-GPU local cluster, restores a
+persisted Tuner and continues a checkpoint. The GPU check uses a tiny project model
+for BF16 backward, fused AdamW, model/optimizer roundtrip and compiled/eager parity.
+Its default allocator fraction is 0.08, with two CPU threads and one compiler worker;
+the fraction neither reserves memory nor guarantees safety beside a live workload.
+Both commands report the failing stage and exit nonzero on failure. They are opt-in,
+not part of ordinary pytest. For a basic CUDA multiprocessing diagnostic, the existing
+`scripts/cuda_sanity_check.py` remains available.
+
+These synthetic checks qualify the exercised runtime paths. They do not prove that
+an existing live Ray directory, production checkpoint or compiled artifact migrates;
+validate a copied artifact separately before adopting an upgrade.
 
 Scripts that import the package need installation or `PYTHONPATH=.`. CLI modes are
 `train`, `tune` and `salvage`. `--mode train` is a single distributed trial, including

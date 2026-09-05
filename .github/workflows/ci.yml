@@ -19,31 +19,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version-file: ".python-version"
-          cache: pip
-      # Resolve the dev pin against the CPU index in the same transaction.
-      # The suite hard-requires its deps (no optional-dep skips), so [dev] pulls
-      # in every extra; this also builds the C extensions (encoding + mcts).
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          activate-environment: true
+      # Same locked dependencies and native build constraints as local setup.
       - name: Install package + dev deps
         run: |
-          pip install -e ".[dev]" --extra-index-url https://download.pytorch.org/whl/cpu
+          uv sync --locked --extra dev --extra cpu
           python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
-      # GPU-only tests skip on the CPU runner; `slow` stress tests are excluded
-      # from the default run per pyproject's marker.
-      #
-      # ⚑ CAE_TEST_THREADS=auto lifts `tests/conftest.py`'s 2-thread cap. That cap
-      # exists to stop a local test run stealing cores from LIVE TRAINING, which
-      # is a condition no CI runner is ever in — and this job has a 30-minute
-      # timeout, so capping torch here would buy nothing and spend headroom.
-      # CAE_EXPECT_SLIDER_BACKEND pins which slider arm this leg built. A
-      # portable build defines no __BMI2__, so the CBoard extensions select the
-      # magic backend — correct and expected here; the pext leg below covers the
-      # other arm. Pinning it means "CI tested the sliders" can never quietly
-      # become "CI tested whichever sliders the runner happened to produce".
-      - name: Run tests
+      # Keep a capped regression even though ordinary CI can use all cores.
+      # Worker tests run in-process and must restore their one-thread setting.
+      - name: Capped local regression
         env:
           CAE_TEST_THREADS: auto
           CAE_EXPECT_SLIDER_BACKEND: magic
-        run: python -m pytest -m "not slow"
+        run: python scripts/validate.py capped --require-cpu-wheel
+      - name: Ordinary CPU suite
+        env:
+          CAE_TEST_THREADS: auto
+          CAE_EXPECT_SLIDER_BACKEND: magic
+        run: python scripts/validate.py cpu --require-cpu-wheel
 
   # ⚑ WHY THIS LEG EXISTS. The two slider backends are chosen by the
   # PREPROCESSOR, so each build contains exactly one of them and the other is
@@ -62,7 +57,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version-file: ".python-version"
-          cache: pip
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          activate-environment: true
       # ⚑ FAIL, never skip. A skip here would silently restore the exact hole
       # this job closes, and read green while doing it. GitHub's ubuntu runners
       # (Intel Skylake+ / AMD EPYC Zen 3) have had BMI2 throughout; if that ever
@@ -83,7 +80,7 @@ jobs:
         env:
           CFLAGS: "-mbmi2"
         run: |
-          pip install -e ".[dev]" --extra-index-url https://download.pytorch.org/whl/cpu
+          uv sync --locked --extra dev --extra cpu
           python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
       # CAE_EXPECT_SLIDER_BACKEND turns "we intended to build PEXT" into an
       # assertion that we did. Without it a flag that stopped taking effect
@@ -92,19 +89,7 @@ jobs:
         env:
           CAE_TEST_THREADS: auto
           CAE_EXPECT_SLIDER_BACKEND: pext
-        run: |
-          python -m pytest -m "not slow" \
-            tests/test_slider_tables.py \
-            tests/test_perft.py \
-            tests/test_cboard_move_parity.py \
-            tests/test_cboard_terminal.py \
-            tests/test_check_resolver.py \
-            tests/test_fastq_see.py \
-            tests/test_fastq_search.py \
-            tests/test_qsearch_dag_parity.py \
-            tests/test_nnue_position_dag.py \
-            tests/test_fuzz_smoke.py \
-            tests/test_c_extension_freshness.py
+        run: python scripts/validate.py pext --require-cpu-wheel
 
   lint:
     runs-on: ubuntu-latest
@@ -114,20 +99,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version-file: ".python-version"
-          cache: pip
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          activate-environment: true
       - name: Install package + dev deps
         run: |
-          pip install -e ".[dev]" --extra-index-url https://download.pytorch.org/whl/cpu
+          uv sync --locked --extra dev --extra cpu
           python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
-      # ruff is per-file and deterministic, so it gates the whole repo.
-      - name: ruff (whole repo)
-        run: ruff check chess_anti_engine scripts tests
-      # The repo is kept at zero basedpyright findings with NO baseline, so the
-      # type gate runs on the whole repo (scope from pyrightconfig.json) — a
-      # changed-files gate lets pre-existing errors hide until an unrelated PR
-      # touches the file. (vulture/skylos are subset-sensitive and their exit
-      # codes fold in advisory circular-dependency notes, so they stay the local
-      # scripts/lint.sh gate rather than a CI blocker. pylint was removed
-      # 2026-07-02 — its checks migrated to ruff + basedpyright.)
-      - name: basedpyright (whole repo)
-        run: basedpyright
+      # The same whole-repo gate as local: ruff, basedpyright and vulture.
+      - name: Static validation
+        run: python scripts/validate.py lint --require-cpu-wheel
