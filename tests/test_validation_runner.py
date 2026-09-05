@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 from typing import Any
+import xml.etree.ElementTree as ET
 
 import pytest
 import torch
@@ -45,7 +46,8 @@ def test_each_test_run_isolates_inherited_caches_and_cleans_up_after_failure(
         )
         monkeypatch.setattr(validate, "suite_command", lambda _suite, code=code: [sys.executable, "-c", code])
         assert validate.main([suite, "--threads", "2", "--expect-backend",
-                              "pext" if suite == "pext" else "magic"]) == exit_code
+                              "pext" if suite == "pext" else "magic",
+                              "--report-dir", str(tmp_path / "reports")]) == exit_code
         env = json.loads(report.read_text())
         cache = Path(env["DEEPFIN_COMPILE_CACHE"])
         assert cache != shared_cache
@@ -92,7 +94,7 @@ def test_capped_regression_overrides_ci_auto_and_child_thread_settings(
 
 @pytest.mark.parametrize("suite", ["cpu", "pext", "capped", "lint"])
 def test_runner_propagates_real_child_failure_and_prints_regime(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], suite: str,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path, suite: str,
 ) -> None:
     monkeypatch.delenv("CAE_TEST_THREADS", raising=False)
     monkeypatch.delenv("CAE_EXPECT_SLIDER_BACKEND", raising=False)
@@ -100,7 +102,7 @@ def test_runner_propagates_real_child_failure_and_prints_regime(
     # A real failed child demonstrates that the runner cannot print PASS after
     # a failed lint/test command, including an otherwise empty child stdout.
     monkeypatch.setattr(validate, "suite_command", lambda _suite: [sys.executable, "-c", "raise SystemExit(7)"])
-    assert validate.main([suite]) == 7
+    assert validate.main([suite, "--report-dir", str(tmp_path / "reports")]) == 7
     out = capsys.readouterr()
     assert f"{suite}: FAIL" in out.out
     assert "threads=2" in out.out
@@ -114,10 +116,14 @@ def test_missing_native_build_stops_before_pytest(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(validate, "ROOT", tmp_path)
+    report = tmp_path / "artifacts/validation/cpu.xml"
+    report.parent.mkdir(parents=True)
+    report.write_text("stale passing result")
     called: list[object] = []
     monkeypatch.setattr(subprocess, "run", lambda *args, **_kwargs: called.append(args))
     assert validate.main(["cpu", "--threads", "2", "--expect-backend", "magic"]) == 1
     assert not called
+    assert not report.exists()
     assert "freshness check failed" in capsys.readouterr().err
 
 
@@ -184,12 +190,39 @@ def test_backend_mismatch_fails_before_test_execution(monkeypatch: pytest.Monkey
 
 def test_named_commands_keep_whole_repo_lint_and_full_cpu_scope() -> None:
     assert validate.suite_command("lint") == ["bash", "scripts/lint.sh"]
-    assert validate.suite_command("cpu") == [sys.executable, "-m", "pytest", "-m", "not slow", "--tb=short"]
+    command = validate.suite_command("cpu")
+    assert command[:3] == [sys.executable, "-m", "pytest"]
+    assert command[command.index("-m", 3) + 1] == "not slow"
+    assert not any(arg.startswith("tests/") for arg in command)
     command = validate.suite_command("pext")
-    assert len(command[6:]) == 11
-    assert all((validate.ROOT / path).is_file() for path in command[6:])
+    paths = [arg for arg in command if arg.startswith("tests/")]
+    assert paths
+    assert all((validate.ROOT / path).is_file() for path in paths)
     assert "tests/test_slider_tables.py" in command
     assert "tests/test_c_extension_freshness.py" in command
+
+
+@pytest.mark.parametrize("passes", [True, False])
+def test_runner_saves_real_pytest_results_and_timings_even_on_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, passes: bool,
+) -> None:
+    probe = tmp_path / "test_probe.py"
+    probe.write_text(f"def test_observed_behavior():\n    assert {passes!r}\n")
+    previous = tmp_path / "artifacts/validation/cpu.xml"
+    previous.parent.mkdir(parents=True)
+    previous.write_text("previous run")
+    command = [*validate.suite_command("cpu"), str(probe)]
+    monkeypatch.setattr(validate, "ROOT", tmp_path)
+    monkeypatch.setattr(validate, "preflight", lambda *_args: None)
+    monkeypatch.setattr(validate, "suite_command", lambda _suite: command.copy())
+    assert validate.main(["cpu", "--threads", "2", "--report-dir", "results"]) == (0 if passes else 1)
+    report = ET.parse(tmp_path / "results/cpu.xml")
+    cases = report.findall(".//testcase")
+    assert len(cases) == 1
+    assert cases[0].get("name") == "test_observed_behavior"
+    assert float(cases[0].attrib["time"]) >= 0
+    assert (cases[0].find("failure") is None) == passes
+    assert previous.read_text() == "previous run"
 
 
 def test_ci_invokes_shared_suites_and_canary_keeps_same_lint_scope() -> None:

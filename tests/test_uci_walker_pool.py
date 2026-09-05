@@ -52,7 +52,7 @@ def _spawn_engine(checkpoint: Path, *extra: str) -> subprocess.Popen[str]:
     env.setdefault("PYTHONPATH", ".")
     return subprocess.Popen(
         [sys.executable, "-u", "-m", "chess_anti_engine.uci",
-         "--checkpoint", str(checkpoint), "--device", "cpu", *extra],
+         "--checkpoint", str(checkpoint), "--device", "cpu", "--no-compile", *extra],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1, env=env,
     )
@@ -72,14 +72,16 @@ def test_walkers_flag_produces_bestmove(tiny_checkpoint: Path) -> None:
         _send(proc, "position startpos")
         _send(proc, "go nodes 64")
         lines = reader.read_until("bestmove", timeout_s=30.0)
+        assert not any("search error:" in line or "bestmove_fallback_used=" in line for line in lines), "\n".join(lines)
         bestmove_line = next(l for l in lines if l.startswith("bestmove "))
         bestmove = bestmove_line.split()[1]
-        assert len(bestmove) >= 4
+        assert chess.Move.from_uci(bestmove) in chess.Board().legal_moves
         _send(proc, "quit")
         proc.wait(timeout=5)
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=5)
 
 
 def test_walker_pool_accumulates_visits() -> None:

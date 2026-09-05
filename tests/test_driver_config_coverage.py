@@ -450,29 +450,8 @@ def test_a_healthy_key_is_silent_and_a_flip_flop_is_reported(caplog) -> None:
     ), "a key toggled off, on, off must warn both times"
 
 
-def test_the_lazy_helper_calls_the_declined_off_warning() -> None:
-    """Pins the WIRING, not just the helper.
-
-    A correct `_warn_declined_off` that nothing calls is this codebase's
-    signature defect wearing a fix's clothes, and the helper's own tests
-    cannot see it.
-    """
-    src = (_ROOT / "tune" / "trainable.py").read_text(encoding="utf-8")
-    body = src[src.index("def _lazy_construct_iter_helpers(") : src.index("def _log_iter_phase_split(")]
-    assert body.count("_warn_declined_off(") == 2, body.count("_warn_declined_off(")
-    for key in ("distributed_prefetch_shards", "distributed_async_test_eval"):
-        assert f'"{key}", tc.{key}' in body, f"{key} not passed to the warning"
-
-
 def test_the_declined_off_warning_fires_through_the_real_helper() -> None:
-    """L2. Drives `_lazy_construct_iter_helpers` end to end.
-
-    ⚑ THE WIRING TEST ABOVE COUNTS SOURCE STRINGS, so it cannot see reachability:
-    a call MOVED INSIDE the `if ... is None:` construction branch would keep the
-    count at 2, keep every other test green, and never fire in the declined case
-    — which is the only case that matters. This drives the real helper with a
-    real `TrialConfig` instead.
-    """
+    """Warn once per declined setting when its helper is already running."""
     import logging
 
     from chess_anti_engine.tune import trainable as trainable_mod
@@ -503,6 +482,10 @@ def test_the_declined_off_warning_fires_through_the_real_helper() -> None:
         assert out == (running_prefetcher, running_eval)
         warned = [r for r in records if r.levelno >= logging.WARNING]
         assert len(warned) == 2, [r.getMessage() for r in warned]
+        for key in ("distributed_prefetch_shards", "distributed_async_test_eval"):
+            assert sum(key in r.getMessage() for r in warned) == 1, (
+                key, [r.getMessage() for r in warned],
+            )
 
         # Negative control on the same path: nothing constructed yet -> silent.
         records.clear()

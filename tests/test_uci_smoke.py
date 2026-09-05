@@ -4,9 +4,8 @@ Builds a TinyNet model, serialises a minimal checkpoint, spawns the
 ``chess_anti_engine.uci`` entry point as a subprocess, drives it through
 a basic handshake + search + quit, asserts on the output lines.
 
-We use TinyNet to keep the test fast — we're validating wiring, not
-strength. The search budget is a handful of nodes so the test runs in
-a couple of seconds on CPU.
+TinyNet and small search budgets keep protocol checks cheap. One handshake
+case also exercises the default compiled CPU path; the rest run eagerly.
 """
 from __future__ import annotations
 
@@ -17,6 +16,7 @@ import sys
 import time
 from pathlib import Path
 
+import chess
 import pytest
 import torch
 
@@ -41,21 +41,30 @@ def tiny_checkpoint(tmp_path: Path) -> Path:
     return _make_tiny_checkpoint(tmp_path)
 
 
-def _spawn_engine(checkpoint: Path) -> subprocess.Popen[str]:
+def _spawn_engine(checkpoint: Path, *, compiled: bool = False) -> subprocess.Popen[str]:
     env = os.environ.copy()
     env.setdefault("PYTHONPATH", ".")
+    if compiled:
+        # This case qualifies compilation even when a developer's shell has
+        # disabled it or allowed Torch to hide compiler errors with eager fallback.
+        for key in ("TORCH_COMPILE_DISABLE", "TORCHDYNAMO_DISABLE"):
+            env[key] = "0"
+        # Torch interprets any nonempty SUPPRESS_ERRORS value, including "0", as true.
+        env.pop("TORCHDYNAMO_SUPPRESS_ERRORS", None)
     # -u: unbuffered stdout so info/bestmove lines flush in real time when
     # stdout is a pipe rather than a tty.
     return subprocess.Popen(
         [sys.executable, "-u", "-m", "chess_anti_engine.uci",
-         "--checkpoint", str(checkpoint), "--device", "cpu"],
+         "--checkpoint", str(checkpoint), "--device", "cpu",
+         "--compile" if compiled else "--no-compile"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, bufsize=1, env=env,
     )
 
 
-def test_handshake_and_search(tiny_checkpoint: Path) -> None:
-    proc = _spawn_engine(tiny_checkpoint)
+@pytest.mark.parametrize("compiled", [False, True], ids=["eager", "compiled"])
+def test_handshake_and_search(tiny_checkpoint: Path, compiled: bool) -> None:
+    proc = _spawn_engine(tiny_checkpoint, compiled=compiled)
     reader = _LineReader(proc)
     try:
         _send(proc, "uci")
@@ -63,22 +72,30 @@ def test_handshake_and_search(tiny_checkpoint: Path) -> None:
         assert any(l.startswith("id name ") for l in lines)
         assert any(l.startswith("id author ") for l in lines)
 
+        transcript = list(lines)
         _send(proc, "isready")
-        reader.read_until("readyok")
+        transcript.extend(reader.read_until("readyok", timeout_s=120.0 if compiled else 60.0))
 
         _send(proc, "ucinewgame")
         _send(proc, "position startpos")
         _send(proc, "go nodes 8")
         lines = reader.read_until("bestmove")
+        transcript.extend(lines)
+        assert not any(
+            marker in line
+            for line in transcript
+            for marker in ("search error:", "bestmove_fallback_used=", "engine load failed:")
+        ), "\n".join(transcript)
         bestmove_line = next(l for l in lines if l.startswith("bestmove "))
         bestmove = bestmove_line.split()[1]
-        assert len(bestmove) >= 4  # e.g. "e2e4"
+        assert chess.Move.from_uci(bestmove) in chess.Board().legal_moves
 
         _send(proc, "quit")
         proc.wait(timeout=5)
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=5)
 
 
 def test_position_fen_and_search(tiny_checkpoint: Path) -> None:
@@ -100,6 +117,7 @@ def test_position_fen_and_search(tiny_checkpoint: Path) -> None:
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=5)
 
 
 def test_bestmove_omits_ponder_suffix_by_default(tiny_checkpoint: Path) -> None:
@@ -123,6 +141,7 @@ def test_bestmove_omits_ponder_suffix_by_default(tiny_checkpoint: Path) -> None:
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=5)
 
 
 def test_ponderhit_converts_to_timed_search(tiny_checkpoint: Path) -> None:
@@ -145,6 +164,7 @@ def test_ponderhit_converts_to_timed_search(tiny_checkpoint: Path) -> None:
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=5)
 
 
 def test_stop_during_ponder(tiny_checkpoint: Path) -> None:
@@ -168,6 +188,7 @@ def test_stop_during_ponder(tiny_checkpoint: Path) -> None:
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=5)
 
 
 def test_go_depth_terminates(tiny_checkpoint: Path) -> None:
@@ -188,6 +209,7 @@ def test_go_depth_terminates(tiny_checkpoint: Path) -> None:
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=5)
 
 
 def test_position_extension_reuses_tree(tiny_checkpoint: Path) -> None:
@@ -214,6 +236,7 @@ def test_position_extension_reuses_tree(tiny_checkpoint: Path) -> None:
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=5)
 
 
 def test_stop_interrupts_search(tiny_checkpoint: Path) -> None:
@@ -235,3 +258,4 @@ def test_stop_interrupts_search(tiny_checkpoint: Path) -> None:
     finally:
         if proc.poll() is None:
             proc.kill()
+        proc.wait(timeout=5)

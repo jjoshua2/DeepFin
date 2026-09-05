@@ -48,7 +48,7 @@ def suite_command(suite: str) -> list[str]:
     if suite == "lint":
         return ["bash", "scripts/lint.sh"]
     paths = PEXT_TESTS if suite == "pext" else CAPPED_TESTS if suite == "capped" else ()
-    return [sys.executable, "-m", "pytest", "-m", "not slow", "--tb=short", *paths]
+    return [sys.executable, "-m", "pytest", "-m", "not slow", "--tb=short", "--durations=20", *paths]
 
 
 def validation_environment(suite: str, threads: str, backend: str) -> dict[str, str]:
@@ -128,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
                         default=os.environ.get("CAE_EXPECT_SLIDER_BACKEND"),
                         help="Defaults to magic, or pext for the pext suite.")
     parser.add_argument("--require-cpu-wheel", action="store_true")
+    parser.add_argument("--report-dir", type=Path, default=Path("artifacts/validation"),
+                        help="JUnit XML directory, relative to the checkout unless absolute; one file per suite.")
     args = parser.parse_args(argv)
     if args.threads != "auto" and (not args.threads.isdecimal() or int(args.threads) < 1):
         parser.error("--threads must be a positive integer or auto")
@@ -140,15 +142,21 @@ def main(argv: list[str] | None = None) -> int:
     print(f"suite={args.suite} root={ROOT}\npython={sys.executable} {platform.python_version()} "
           f"platform={platform.platform()}\nthreads={env['CAE_TEST_THREADS']} "
           f"expected_backend={backend} CUDA_VISIBLE_DEVICES={env['CUDA_VISIBLE_DEVICES']!r}", flush=True)
-    print(f"command: {shlex.join(command)}", flush=True)
     try:
         with ExitStack() as stack:
             if args.suite != "lint":
+                report = ROOT / args.report_dir / f"{args.suite}.xml"
+                report.parent.mkdir(parents=True, exist_ok=True)
+                # A preflight failure must not leave an earlier PASS report.
+                report.unlink(missing_ok=True)
+                command.append(f"--junitxml={report}")
+                print(f"junit_report={report}", flush=True)
                 cache_root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="deepfin-validate-")))
                 configure_compile_environment(env, cache_root)
                 print(f"compile_cache={cache_root} CXX={env.get('CXX', 'PATH default')} "
                       "compile_threads=1 MAX_JOBS=1", flush=True)
             preflight(args.suite, backend, args.require_cpu_wheel)
+            print(f"executing: {shlex.join(command)}", flush=True)
             result = subprocess.run(command, cwd=ROOT, env=env, check=False)
             code = result.returncode
     except (ImportError, OSError, RuntimeError) as exc:

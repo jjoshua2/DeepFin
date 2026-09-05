@@ -39,6 +39,13 @@ jobs:
           CAE_TEST_THREADS: auto
           CAE_EXPECT_SLIDER_BACKEND: magic
         run: python scripts/validate.py cpu --require-cpu-wheel
+      - name: Upload test timings and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpu-test-results
+          path: artifacts/validation/*.xml
+          if-no-files-found: warn
 
   # ⚑ WHY THIS LEG EXISTS. The two slider backends are chosen by the
   # PREPROCESSOR, so each build contains exactly one of them and the other is
@@ -90,6 +97,13 @@ jobs:
           CAE_TEST_THREADS: auto
           CAE_EXPECT_SLIDER_BACKEND: pext
         run: python scripts/validate.py pext --require-cpu-wheel
+      - name: Upload PEXT timings and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pext-test-results
+          path: artifacts/validation/*.xml
+          if-no-files-found: warn
 
   lint:
     runs-on: ubuntu-latest
