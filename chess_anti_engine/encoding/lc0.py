@@ -586,18 +586,87 @@ def _check_repetitions(board, stack, stack_len, n_steps, out, rep_base, *, rep_s
     Builds a set of all position keys seen before the history window,
     then checks each history position against it (O(1) per lookup).
     """
+    # Keys mirror python-chess's own repetition key, Board._transposition_key():
+    #
+    #     return (self.pawns, self.knights, self.bishops, self.rooks,
+    #             self.queens, self.kings,
+    #             self.occupied_co[WHITE], self.occupied_co[BLACK],
+    #             self.turn, self.clean_castling_rights(),
+    #             self.ep_square if self.has_legal_en_passant() else None)
+    #
+    # ⚑ ep_square is kept when an ep capture is LEGAL and dropped otherwise --
+    # it is not dropped unconditionally. Omitting it entirely (as this did) is a
+    # false POSITIVE: a position with a legal ep then compares equal to the same
+    # pieces/turn/castling without it, and the C path agreed only because it had
+    # the same defect. Reusing python-chess's own predicate here keeps the two
+    # paths on one ruler and makes that ruler the correct one.
+
+    # One reusable probe board, built lazily. A stack entry is a _BoardState,
+    # not a Board, so python-chess cannot be asked the legality question about
+    # it directly -- it has to be restored into a Board first.
+    #
+    # ⚑ Both the laziness and the reuse are load-bearing, not tidiness.
+    # ``Board.copy()`` is far more expensive than the key build, so copying per
+    # entry cost 36% of encode_position throughput. ``restore`` overwrites the
+    # whole position, so one probe serves every entry, and boards with no ep
+    # square anywhere never allocate it at all.
+    #
+    # ⚑ What that optimisation does NOT do is make this function free, and an
+    # earlier version of this comment implied it did. Measured paired and
+    # interleaved (review finding B3): asking python-chess the legality question
+    # still costs **1.6x-2.1x** of _check_repetitions at 17%-37% ep density, and
+    # 1.1x-1.4x of a whole encode_position. That is accepted, not overlooked:
+    #
+    #   - it is NOT a training cost. Production runs
+    #     ``input_history_encoding: lc0_root_legacy_meta``, so
+    #     ``uses_lc0_root_history`` is true, selfplay/network_turn.py's
+    #     encode_position call is gated OFF, and the batch encode goes through C
+    #     ``encode_full_batch``. This function is reached from eval/puzzles.py,
+    #     mcts/puct.py, mcts/gumbel.py and model/__init__.py -- eval and
+    #     Python-search paths;
+    #   - the alternative is hand-rolling ep legality in Python, which
+    #     reintroduces exactly the two-implementations-drifting defect this key
+    #     was fixed for. The reference path should ask the reference.
+    probe: list[chess.Board] = []
+
+    def _state_has_legal_ep(s) -> bool:
+        if s.ep_square is None:
+            return False
+        # Cheap pseudo-legal pre-filter, mirroring the C path's early-out and
+        # built from python-chess's OWN tables (the body of
+        # generate_pseudo_legal_ep) rather than hand-rolled file masks. An ep
+        # square is set on ~9% of stack entries but a pawn actually attacks it
+        # on far fewer, so this keeps the restore off almost every entry.
+        #
+        # It is only ever a filter: it can reject, never accept. Anything that
+        # survives it is answered by python-chess itself below, so a
+        # conservative pre-filter cannot make the verdict wrong.
+        if chess.BB_SQUARES[s.ep_square] & s.occupied:
+            return False
+        our_occ = s.occupied_w if s.turn else s.occupied_b
+        capturers = (
+            s.pawns & our_occ
+            & chess.BB_PAWN_ATTACKS[not s.turn][s.ep_square]
+            & chess.BB_RANKS[4 if s.turn else 3]
+        )
+        if not capturers:
+            return False
+        if not probe:
+            probe.append(board.copy(stack=False))
+        s.restore(probe[0])
+        return probe[0].has_legal_en_passant()
+
     def _skey(s):
-  # Omit ep_square: python-chess is_repetition ignores EP when no EP
-  # capture is legal. Excluding it avoids false negatives and matches
-  # the old behavior. False positives are extremely rare and harmless.
         return (s.pawns, s.knights, s.bishops, s.rooks, s.queens, s.kings,
-                s.occupied_w, s.occupied_b, s.turn, s.castling_rights)
+                s.occupied_w, s.occupied_b, s.turn, s.castling_rights,
+                s.ep_square if _state_has_legal_ep(s) else None)
 
     def _bkey():
         return (board.pawns, board.knights, board.bishops, board.rooks,
                 board.queens, board.kings, int(board.occupied_co[chess.WHITE]),
                 int(board.occupied_co[chess.BLACK]), board.turn,
-                board.castling_rights)
+                board.castling_rights,
+                board.ep_square if board.has_legal_en_passant() else None)
 
   # The history window covers stack indices [earliest_si .. stack_len-1] + current board.
   # earliest_si is the index corresponding to hist_idx = n_steps - 1.
@@ -726,3 +795,76 @@ def fill_lc0_history_repeat(planes: np.ndarray) -> np.ndarray:
         if empty.any():
             planes[empty, f * s:f * s + f] = planes[empty, 0:f]
     return planes
+
+
+def x_to_lc0_planes(
+    x: np.ndarray, *, input_history_encoding: str,
+) -> np.ndarray:
+    """Our stored input tensor -> the 112-plane input an LC0/BT4 net reads.
+
+    Production stores ``x`` as ``(175, 8, 8)`` under ``lc0_root_legacy_meta``
+    (``configs/pbt2_small.yaml``: ``input_history_encoding`` /
+    ``input_extra_features: v2_threats``). The first 112 planes are the LC0
+    block and everything past them is our extra-feature block, which no
+    foreign net consumes. Crucially the stored tensor carries **TRUE history**
+    -- 8 root-POV slots of 12 piece planes + 1 repetition plane, written by
+    :func:`encode_lc0_full_root` -- so converting it feeds BT4 the real move
+    history instead of the repeat-filled fake a FEN-only rebuild produces.
+
+    Accepts ``(P, 8, 8)`` or ``(B, P, 8, 8)``; returns float32 with the leading
+    shape preserved. The source tensor is never modified.
+
+    Every convention below was verified against the writer rather than assumed:
+
+    ``0..103`` history, PASS-THROUGH
+        8 slots x 13 planes (12 piece + 1 repetition), **newest first**
+        (``encode_lc0_full_root``'s ``hist_idx == 0`` branch reads the live
+        board, and slot ``i`` is written at ``i * 13``). Every slot is encoded
+        from the ROOT side-to-move POV, which is what LC0 does, and the
+        orientation is ``[rank][file]`` with the black rank-flip already
+        applied -- the same tensor layout the BT4 adapter confirmed.
+    ``104..107`` castling, PASS-THROUGH
+        ``(us_Q, us_K, them_Q, them_K)``, i.e. LC0's
+        ``us_ooo, us_oo, them_ooo, them_oo``.
+    ``108`` side to move, PASS-THROUGH
+        1.0 when the root side to move is black, as in LC0.
+    ``109`` rule50, RESCALED
+        ⚑ The ONLY numeric conversion. ``lc0_root`` writes the RAW ply count,
+        but ``lc0_root_legacy_meta`` overrides it with
+        ``min(clock, 100) / 100`` (:func:`apply_lc0_root_legacy_meta_planes`),
+        while LC0 nets are trained on the raw count. Passing our production
+        tensor through unchanged would tell BT4 that a 70-ply-stale position
+        is 0.7 plies old -- accepted silently, since the plane is a valid
+        float either way.
+    ``110`` movecount, ZEROED
+        ⚑ The second legacy-meta override packs the EN-PASSANT FILE into this
+        plane. LC0's classical 112-plane input has no en-passant plane at all
+        (it conveys en passant through the history frames) and leaves this
+        plane zero, so our EP column is dropped rather than handed to the net
+        as a movecount it would misread.
+    ``111`` ones, SET
+        All-ones bias plane.
+    """
+    hist_enc = normalize_lc0_history_encoding(input_history_encoding)
+    if not uses_lc0_root_history(hist_enc):
+        raise ValueError(
+            f"x_to_lc0_planes needs an LC0-root layout; got {input_history_encoding!r}. "
+            "The 'legacy' layout appends its repetition planes instead of "
+            "interleaving them, so planes 0..103 are NOT LC0's history block."
+        )
+    arr = np.asarray(x)
+    if arr.shape[-3] < LC0_FULL.num_planes:
+        raise ValueError(
+            f"need at least {LC0_FULL.num_planes} planes; got {arr.shape[-3]}",
+        )
+    out = arr[..., :LC0_FULL.num_planes, :, :].astype(np.float32, copy=True)
+    base = LC0_FULL.root_metadata_base
+    if hist_enc == LC0_HISTORY_ROOT_LEGACY_META:
+        # Undo the /100 scaling; round because float16 storage makes e.g.
+        # 0.07 -> 6.9999 and BT4 was trained on integral ply counts.
+        out[..., base + 5, :, :] = np.round(
+            np.clip(out[..., base + 5, :, :], 0.0, 1.0) * 100.0,
+        )
+    out[..., base + 6, :, :] = 0.0
+    out[..., LC0_FULL.ones_plane, :, :] = 1.0
+    return out

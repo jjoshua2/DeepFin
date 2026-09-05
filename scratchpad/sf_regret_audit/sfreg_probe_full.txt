@@ -1,0 +1,10 @@
+[era] n=2048  keys=12
+  policy_eregret (reproduced) = 0.069640
+    fabricated component      = 0.028745  (0.4128 of the metric)
+    real-SF component         = 0.040895  (0.5872)
+    net prob mass on uncovered moves = 0.0653
+[inwindow] n=2048  keys=12
+  policy_eregret (reproduced) = 0.067193
+    fabricated component      = 0.029570  (0.4401 of the metric)
+    real-SF component         = 0.037623  (0.5599)
+    net prob mass on uncovered moves = 0.0732

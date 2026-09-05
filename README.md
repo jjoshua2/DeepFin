@@ -5,19 +5,19 @@ A Python/PyTorch self-play training loop for a transformer chess model that trai
 The core **self-improving loop is working end-to-end**:
 1) generate games (`selfplay`) using MCTS + the current network vs Stockfish
 2) write positions into a replay buffer
-3) train the network for a fixed number of gradient steps
+3) train the network with a step budget derived from ingested positions
 4) repeat for N outer iterations, checkpointing along the way
 
 It also includes several spec-critical stabilizers:
 - compact LC0 `lc0_1858` policy encoding in production (+ legal-move masking); legacy `az_4672` import/conversion paths retained
 - soft-target losses for Stockfish WDL + MultiPV-derived soft policy targets
-- adaptive Stockfish difficulty PID controller (changes SF node budget by winrate)
+- adaptive Stockfish difficulty PID controller (including the allowed WDL regret)
 - opening diversification: optional opening book (`.bin` / `.pgn` / `.pgn.zip`) and/or random-start plies
 - AlphaZero/LC0-style temperature sampling from MCTS visits, with optional linear decay schedule
 - ONNX export + parity smoke test
 
 Evaluation and experiment tooling (see `docs/eval_protocol.md` for the full
-protocol — every training-target candidate is audited there FIRST):
+protocol and staged screening criteria):
 - `scripts/arena_standard.py` — standardized paired-opening arena with
   pentanomial Elo + CI, JSONL result log (matched_sims / matched_time)
 - `scripts/build_audit_set.py` + `scripts/audit_targets.py` — frozen
@@ -26,13 +26,19 @@ protocol — every training-target candidate is audited there FIRST):
 - `scripts/probe_policy_targets.py`, `scripts/retarget_retrain.py` — replay
   target diagnostics and offline SF-target retuning (sparse MultiPV labels)
 - flag-gated, default-off research bets with their own `configs/exp_*.yaml`:
-  v2_threats input planes, dynamic board-relation attention bias,
+  dynamic board-relation attention bias,
   soft-policy ablation, sparse SF-policy CE, volatility-aware Gumbel search
 
-What's still missing for a more "production" self-improving pipeline:
-- distributed hardening (quotas, manifests/versioning, arenas vs multiple baselines, etc.)
+Production uses `v2_threats` input planes (175 planes). The server implements
+manifests, worker version checks and quotas; inspect the current implementation
+before treating an old roadmap item as missing.
 
-See `future_ideas.md` for longer-term ideas like opponent mixing / league training.
+See [development](docs/development.md) for setup and validation,
+[experiment navigation](docs/experiments/README.md) for prior results, and
+[project guidance](CLAUDE.md) for agent instructions. `future_ideas.md` preserves
+dated proposals rather than current deployment instructions.
+
+See [toolchain entry points](docs/toolchains.md) and [branch lifecycle](docs/branch_lifecycle.md) for development and production adoption.
 
 ## Setup
 ```bash
@@ -266,5 +272,5 @@ Notes:
 
 ## Run tests
 ```bash
-pytest
+python -m pytest -m 'not slow'
 ```

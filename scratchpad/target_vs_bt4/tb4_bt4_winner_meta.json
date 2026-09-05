@@ -1,0 +1,12 @@
+{
+  "net": "data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
+  "tag": "winner",
+  "n_rows": 2000,
+  "n_unique_children": 6556,
+  "n_terminal_children": 0,
+  "parent_wdl_mean": [
+    0.3358198404312134,
+    0.3334338366985321,
+    0.33074477314949036
+  ]
+}

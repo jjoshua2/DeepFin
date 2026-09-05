@@ -1,0 +1,200 @@
+{
+  "candidate_order": [
+    "tgt",
+    "sf",
+    "foreign",
+    "rand"
+  ],
+  "tie_rate_all_finite": 0.421,
+  "P1_C_not_listed_nomask": {
+    "n": 325,
+    "C": 0.7815,
+    "ci95": [
+      0.7354,
+      0.8246
+    ],
+    "banked": 0.7815
+  },
+  "C_listed_nomask": {
+    "n": 833,
+    "C": 0.5342,
+    "ci95": [
+      0.5006,
+      0.5678
+    ],
+    "banked": 0.534
+  },
+  "P2_confidence_bins_nomask": [
+    {
+      "band": "[0,0.5)",
+      "n": 366,
+      "C": 0.7022,
+      "ci95": [
+        0.6557,
+        0.7486
+      ],
+      "mean_dQ": -0.0329
+    },
+    {
+      "band": "[0.5,0.9)",
+      "n": 543,
+      "C": 0.5783,
+      "ci95": [
+        0.5359,
+        0.6188
+      ],
+      "mean_dQ": -0.0471
+    },
+    {
+      "band": "[0.9,0.99)",
+      "n": 170,
+      "C": 0.5765,
+      "ci95": [
+        0.5,
+        0.6529
+      ],
+      "mean_dQ": -0.0158
+    },
+    {
+      "band": "[0.99,1.01)",
+      "n": 79,
+      "C": 0.3797,
+      "ci95": [
+        0.2785,
+        0.4937
+      ],
+      "mean_dQ": 0.0225
+    }
+  ],
+  "primary_population": {
+    "n_disagree_trained_finite": 1007,
+    "n_not_listed": 282,
+    "n_listed": 725
+  },
+  "P4_median_top1_mass": {
+    "not_listed": 0.4311,
+    "listed": 0.7206
+  },
+  "cross_tab": [
+    {
+      "band": "[0,0.5)",
+      "not_listed": {
+        "n": 155,
+        "C": 0.8323,
+        "ci95": [
+          0.7742,
+          0.8903
+        ],
+        "mean_dQ": -0.026
+      },
+      "listed": {
+        "n": 160,
+        "C": 0.5875,
+        "ci95": [
+          0.5125,
+          0.6625
+        ],
+        "mean_dQ": -0.0305
+      }
+    },
+    {
+      "band": "[0.5,0.9)",
+      "not_listed": {
+        "n": 94,
+        "C": 0.7128,
+        "ci95": [
+          0.617,
+          0.7979
+        ],
+        "mean_dQ": -0.069
+      },
+      "listed": {
+        "n": 380,
+        "C": 0.5474,
+        "ci95": [
+          0.4974,
+          0.5974
+        ],
+        "mean_dQ": -0.0436
+      }
+    },
+    {
+      "band": "[0.9,0.99)",
+      "not_listed": {
+        "n": 25,
+        "C": 0.96,
+        "ci95": [
+          0.88,
+          1.0
+        ],
+        "mean_dQ": -0.1071
+      },
+      "listed": {
+        "n": 125,
+        "C": 0.504,
+        "ci95": [
+          0.416,
+          0.592
+        ],
+        "mean_dQ": 0.0071
+      }
+    },
+    {
+      "band": "[0.99,1.01)",
+      "not_listed": {
+        "n": 8,
+        "C": 0.25,
+        "ci95": [
+          0.0,
+          0.625
+        ],
+        "mean_dQ": 0.0795
+      },
+      "listed": {
+        "n": 60,
+        "C": 0.4,
+        "ci95": [
+          0.2833,
+          0.5167
+        ],
+        "mean_dQ": 0.0144
+      }
+    }
+  ],
+  "deciding_statistic": {
+    "definition": "C(not_listed & top1<0.5) - C(not_listed & top1>=0.9)",
+    "n_low": 155,
+    "n_high": 33,
+    "n_smaller_cell": 33,
+    "resolution_floor": 30,
+    "dC": 0.0444,
+    "ci95": [
+      -0.0981,
+      0.2068
+    ],
+    "VERDICT": "REDUNDANT"
+  },
+  "P7_signed_split_not_listed": {
+    "bt4_prefers_ours": {
+      "n": 60,
+      "mean_dQ": 0.0303,
+      "ci95": [
+        0.012,
+        0.0569
+      ]
+    },
+    "bt4_prefers_sf": {
+      "n": 222,
+      "mean_dQ": -0.0647,
+      "ci95": [
+        -0.0887,
+        -0.0444
+      ]
+    }
+  },
+  "P8_downweight_share_of_all_rows": {
+    "cascade_not_listed_and_bt4_corroborates": 0.1273,
+    "blanket_not_listed_drop": 0.1617,
+    "denominator_n": 1744
+  }
+}

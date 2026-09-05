@@ -32,12 +32,18 @@ class FakeStockfish(StockfishUCI):
         fen: str,
         *,
         nodes: int | None = None,
+        depth: int | None = None,
         syzygy_path: str | None = None,
         fresh: bool = False,
         searchmoves: Sequence[str] | None = None,
     ) -> StockfishResult:
         del syzygy_path
         del nodes
+        # `depth` joins `nodes` in being ignored for the same reason: this
+        # double returns a fixed WDL and the first allowed legal move, so
+        # neither search limit can change its answer. It is accepted because
+        # the signature has to stay substitutable for the real driver's.
+        del depth
         del fresh
         board = chess.Board(fen)
         # `searchmoves` is HONOURED, not `del`'d like the rest: a double that

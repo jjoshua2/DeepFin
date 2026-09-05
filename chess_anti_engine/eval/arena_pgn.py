@@ -11,8 +11,10 @@ Two things this module is deliberate about:
   If a game cannot say WHICH checkpoint and WHICH search shape produced it,
   merging it is how a "same name, different population" error gets in — two
   arms whose PGNs both say ``White "candidate"`` silently become one player.
-  So every game carries the engine identities, ``ConfigHash``, ``GitSha`` and
-  the realized search shape of BOTH sides.
+  So every game carries the engine identities, ``ConfigHash``, ``GitSha``, the
+  realized search shape of BOTH sides, and the effective evaluator-hoist state
+  (``EvaluatorHoist``) — a cap below the search's leaf buffer changes which
+  moves are played, so two runs that differ only in it are two players.
 * **Pair identity.** Ordo's per-game state is exactly
   ``{whiteplayer, blackplayer, score}`` (``mytypes.h:90``) — the opening never
   enters its likelihood, and its ``-s`` resampler regenerates each game

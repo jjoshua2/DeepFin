@@ -6,6 +6,7 @@ import numpy as np
 
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.replay.sample import ReplaySample as ReplaySample
+from chess_anti_engine.replay.shard import NONZERO_DEFAULT_STORAGE_FIELDS
 
 # Scalar encoding-identity markers. Two chunks that disagree on any of these
 # describe DIFFERENT input or policy encodings, so the rows cannot be merged
@@ -253,6 +254,9 @@ class ArrayReplayBuffer:
             k: np.zeros((idx.shape[0], *proto[k].shape[1:]), dtype=dtypes[k])
             for k in sorted(all_keys) if k in proto
         }
+        for key in NONZERO_DEFAULT_STORAGE_FIELDS:
+            if key in out:
+                out[key].fill(1)
         for dense_rows, mask in selected:
             for k, value in dense_rows.items():
                 if k in out:

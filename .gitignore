@@ -38,6 +38,7 @@ htmlcov/
 # Local tooling
 .claude/*
 !.claude/skills
+!.claude/agents/
 .codex
 .skylos/
 .merge_ts
@@ -72,3 +73,4 @@ crash-*
 .env
 .env.*
 .ratchet_disabled
+.monitor_fen_disabled

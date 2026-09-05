@@ -15,6 +15,7 @@ Lines starting with '#' or blank lines are skipped.
 from __future__ import annotations
 
 import csv
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +28,9 @@ from chess_anti_engine.encoding import encode_position_for_model
 from chess_anti_engine.mcts import MCTSConfig, run_mcts_many
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.moves.encode import index_to_move_strict, move_to_index_for_encoding
+from chess_anti_engine.utils.bitboards import unsearchable_king_reason
+
+_log = logging.getLogger(__name__)
 
 # Default rating buckets for Lichess-style evaluation, matching the LC0 blog
 # (https://lczero.org/blog/2024/02/...) coarse buckets.
@@ -113,6 +117,15 @@ def load_epd(path: str | Path) -> PuzzleSuite:
         raise FileNotFoundError(f"Puzzle file not found: {p}")
 
     puzzles: list[Puzzle] = []
+  # Per-reason skip accounting, mirroring selfplay/opening.py::_load_fen_list.
+  # puzzle_total surfaces the resulting denominator, but a denominator does not
+  # say WHY a line went missing -- and a guard that silently eats input is how
+  # a corpus quietly shrinks. One warning, reasons and counts, at the end.
+    skipped: dict[str, int] = {}
+
+    def _skip(reason: str) -> None:
+        skipped[reason] = skipped.get(reason, 0) + 1
+
     for raw in p.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -121,7 +134,8 @@ def load_epd(path: str | Path) -> PuzzleSuite:
   # EPD: everything before "bm" is the FEN (possibly 4-field or 6-field).
         bm_idx = line.find(" bm ")
         if bm_idx < 0:
-            continue  # skip lines without bm opcode
+            _skip("no bm opcode")
+            continue
 
         fen_part = line[:bm_idx].strip()
         rest = line[bm_idx + 4:]  # after " bm "
@@ -129,6 +143,7 @@ def load_epd(path: str | Path) -> PuzzleSuite:
   # FEN may have 4 or 6 fields.  python-chess needs at least 4.
         fen_fields = fen_part.split()
         if len(fen_fields) < 4:
+            _skip("FEN has fewer than 4 fields")
             continue
   # Pad to 6 fields if needed (halfmove=0, fullmove=1).
         while len(fen_fields) < 6:
@@ -138,6 +153,20 @@ def load_epd(path: str | Path) -> PuzzleSuite:
         try:
             board = chess.Board(fen)
         except ValueError:
+            _skip("unparseable FEN")
+            continue
+  # chess.Board() is a structural parse -- it accepts positions the C board and
+  # python-chess would answer king-safety questions about differently (see
+  # unsearchable_king_reason). Skipping conforms to this loop's established
+  # policy for every other unusable line ("except ValueError: continue",
+  # "if not best_moves: continue"), so it invents no new behaviour.
+  # ⚑ NOT an offline-only path: load_epd is imported by tune/trainable.py and
+  # run_puzzle_eval by tune/trainable_phases.py, called from
+  # _run_puzzle_eval_if_due INSIDE the training loop. It is inert by CONFIG
+  # (puzzle_epd: null, puzzle_interval: 0), which is a different claim.
+        king_reason = unsearchable_king_reason(board)
+        if king_reason is not None:
+            _skip(f"unsearchable position ({king_reason})")
             continue
 
   # Parse best moves: everything up to the first ";" that's followed by
@@ -152,6 +181,7 @@ def load_epd(path: str | Path) -> PuzzleSuite:
                 best_moves.append(m)
 
         if not best_moves:
+            _skip("no parseable bm move")
             continue
 
   # Try to extract puzzle id.
@@ -162,6 +192,12 @@ def load_epd(path: str | Path) -> PuzzleSuite:
 
         puzzles.append(Puzzle(board=board, best_moves=best_moves, puzzle_id=pid))
 
+    if skipped:
+        _log.warning(
+            "puzzle EPD %s: skipped %d unusable line(s):\n  %s",
+            p, sum(skipped.values()),
+            "\n  ".join(f"{n} x {reason}" for reason, n in sorted(skipped.items())),
+        )
     return PuzzleSuite(puzzles=puzzles, name=p.stem)
 
 
@@ -205,7 +241,16 @@ def _parse_setup_and_best(
         return None
     if setup not in board.legal_moves:
         return None
+    if unsearchable_king_reason(board) is not None:
+        return None
     board.push(setup)
+    post_setup_reason = unsearchable_king_reason(board)
+  # ⚑ SAME SHAPE AS THE UCI MOVE LOOP: legal is not enough. python-chess's
+  # legal_moves includes capturing the enemy king when the side not to move is
+  # in check, so a setup move can walk an accepted FEN into a board whose kings
+  # the two halves disagree about. Checked after the push, not before.
+    if post_setup_reason is not None:
+        return None
     try:
         best = chess.Move.from_uci(move_tokens[1])
     except (ValueError, chess.InvalidMoveError):

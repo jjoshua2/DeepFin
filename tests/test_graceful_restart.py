@@ -187,6 +187,55 @@ def test_wait_if_paused_writes_ack_while_held_and_clears_on_resume(tmp_path: Pat
     assert not ack.exists(), "ack must be cleared on resume"
 
 
+def test_wait_if_paused_releases_the_cuda_cache_on_park(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """⚑ MEASURED 2026-08-20: a parked trial held 32,059 of 32,607 MiB and the
+    pause window's GPU job had 132 MiB to build in. The park exists so a
+    window can run GPU work while the trial sleeps, so parking must hand back
+    the allocator cache. Release happens exactly once, at park -- a poll that
+    never sees a marker must not touch the allocator."""
+    import torch
+
+    calls: list[str] = []
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: calls.append("ec"))
+    monkeypatch.setattr(
+        torch.cuda, "mem_get_info", lambda: (30 * 2**30, 32 * 2**30),
+    )
+
+    marker = tmp_path / "pause.txt"
+    marker.write_text("pause")
+    done = threading.Event()
+
+    def run() -> None:
+        _wait_if_paused(
+            pause_marker_paths=[marker], poll_seconds=1,
+            trial_id="trial_cache", iteration=7,
+        )
+        done.set()
+
+    th = threading.Thread(target=run, daemon=True)
+    th.start()
+    for _ in range(50):
+        if calls:
+            break
+        time.sleep(0.1)
+    marker.unlink()
+    th.join(timeout=5)
+    assert done.is_set(), "trial must resume once the marker is gone"
+    assert calls == ["ec"], (
+        f"cache must be released exactly once, at park; saw {calls}"
+    )
+
+    calls.clear()
+    _wait_if_paused(
+        pause_marker_paths=[tmp_path / "absent.txt"], poll_seconds=1,
+        trial_id="trial_cache", iteration=8,
+    )
+    assert calls == [], "the no-marker fast path must not touch the allocator"
+
+
 def test_resume_preflight_reports_blockers_from_the_checker(monkeypatch) -> None:
     """A failing freshness check must surface its lines, not just an exit code."""
     import subprocess as _sp

@@ -137,6 +137,11 @@ Stated so the coverage is not overread:
   for both scans. Verified moot for all 27 keys annotated today.
 """
 
+# The reconciliation retains main's production template. These pins describe
+# its annotations, not the different deployment settings preserved under
+# configs/snapshots/. The source scans below still inspect the reconciled code,
+# so imported consumers must be accounted for even when the config is unchanged.
+
 from __future__ import annotations
 
 import ast

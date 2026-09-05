@@ -465,9 +465,9 @@ class SfRebuildCoverage:
     Returned rather than discarded because a rebuild whose coverage cannot be
     observed is unfalsifiable: the transition log proves the config PUSH, not
     the effect, and `has_sf_p0_frac -> 0` only proves it on a window that has
-    p0 rows at all. `sf_rebuild_policy_frac` is the number that shows the flip
-    took effect, and — see `metric_kwargs` — the number that detects poisoned
-    SF labels in the window it ran on.
+    p0 rows at all. `sf_rebuild_policy_frac` is the number that shows how many
+    dense policy targets were actually rewritten. Label health is reported by
+    the always-on `sf_labelled_no_multipv_frac` metric instead.
     """
 
     rows: int = 0
@@ -507,79 +507,26 @@ class SfRebuildCoverage:
         a one-row transient (docs/target_rebuildability.md, "Before flipping
         the flag live").
 
-        ⚑⚑ THIS ALARM IS DISCONNECTED IN PRODUCTION, AND ITS ZERO IS NOT A
-        PASS. Everything below is conditional on ``rebuild_sf_targets`` being
-        ON. It defaults False and appears in NO config file, so today all five
+        ⚑⚑ THIS COVERAGE IS DISCONNECTED IN PRODUCTION, AND ITS ZERO DOES
+        NOT PROVE THE REBUILD RAN. Everything below is conditional on
+        ``rebuild_sf_targets`` being ON. It defaults False and appears in NO
+        config file, so today all five
         columns read exactly 0.0 by construction — byte-identical to a perfectly
         healthy window. **Do not put "watch this for a gap" on an operator's
         dashboard.** Making it live is NOT as cheap as flipping the flag — the
         flag is training-affecting (it masks the ``w_sf_own`` /
         ``w_sf_volatility`` legs) and needs a ledger entry.
 
-        **The in-loop replacement now exists and is what an operator should
-        watch: ``sf_labelled_no_multipv_frac``** (with
-        ``sf_multipv_checked_frac``, which reports that same denominator as a
-        share of all batch rows — the RATE itself divides by the SF-labelled
-        rows, not by all batch rows), built
-        in ``train/losses.py::sf_multipv_presence_counts`` from the batch's own
-        presence flags and therefore gated on nothing. It is the same
-        measurement over the same rows — verified 0.207461 against the 122
-        shards quarantined 2026-08-01, where the ``policy``/``wdl`` gap here is
-        0.191973 over its own wider denominator — but it is reported every
-        iteration instead of only while a rebuild experiment runs. The other
-        always-on detectors are the worker's own ``sf label health`` log line
-        (`selfplay/stockfish_turn.py::_report_sf_label_health`) and the offline
-        gate `eval/value_optimism.py::sf_multipv_missing_rate`; this pair is
-        now purely a free cross-check.
-
-        ⚑ WITH THE FLAG ON, ``sf_rebuild_policy_frac`` BELOW
-        ``sf_rebuild_wdl_frac`` IS A DESYNC ALARM, NOT A COVERAGE COST. The
-        selfplay writer stamps ``sf_multipv_raw`` and ``sf_label_meta`` on a
-        labelled row TOGETHER (`selfplay/stockfish_turn.py::
-        _stamp_sparse_sf_labels`). The dominant way a row gets meta but no raw
-        is ``_collect_sparse_pv_rows`` returning None — not ONE of Stockfish's
-        MultiPV moves was legal at the position queried, the fingerprint of a
-        desynced UCI engine answering a DIFFERENT position
-        (`_SF_NO_LEGAL_PV_WARN_RATE`, and `eval/value_optimism.py::
-        sf_multipv_missing_rate`, the offline twin of the same measurement).
-
-        ⚑ IT IS A LOWER BOUND ON CONTAMINATION, NOT THE POISONED SHARE. The
-        difference counts only rows that lost their WHOLE MultiPV block. A
-        desynced engine poisons every label it touches but strips the block on
-        only ~59 % of them (`scripts/quarantine_desync_shards.py`, and
-        ``_SF_NO_LEGAL_PV_WARN_RATE``'s 0.074 = 0.125 x 0.59 for one engine in
-        eight), so the other ~41 % of poisoned rows read CLEAN here. Divide by
-        ~0.59 — about 1.7x — for the true share. Over the 122 shards
-        quarantined 2026-08-01 the gap is 0.192, implying ~0.33 of batch rows
-        (~0.35 of labelled rows) actually poisoned. Visible without the
-        constant too: the worst shard of the 2026-07-27 episode still has 47 %
-        of its labelled rows carrying a MultiPV block.
-
-        ⚑ DENOMINATOR: both columns divide by ALL rows in the rebuilt batch,
-        not by labelled rows, so the difference is fully-stripped rows over ALL
-        batch rows. To read it against the labelled population divide by
-        ``sf_rebuild_wdl_frac``: on the quarantined set 0.191973 / 0.925347 =
-        0.207 of labelled rows. Quoting one number against the other's
-        denominator is how "5.4 %" and "0.92" ended up in the same document
-        describing different populations.
-
-        ⚑ LATENT NON-DESYNC DIVERGENCE. ``policy_frac`` counts SUCCESSFUL
-        rebuilds, not the presence flag, and ``ok`` depends on
-        ``SfTargetParams``: with ``sf_wdl_use_cp_logistic`` False a PV entry is
-        scoreable only if it carries native WDL, with it True cp/mate entries
-        count too (``_batch_row_scores``). One clean row with both flags set
-        reads gap +0.0000 at True and +1.0000 at False. Latent today — 2.75M
-        stored PV entries checked on the live window, ZERO without native WDL,
-        because `stockfish/uci.py` hardcodes ``UCI_ShowWDL true`` — but that
-        knob is the dataclass default AND one of the five params the rebuild
-        exists to sweep, so a sweep of it would turn this "detector" into a
-        readout of the sweep.
-
-        Measured over 6,535 shards / 11.05M labelled rows: exactly 0.000000 on
-        every clean stretch, 0.192 over the 122 shards quarantined 2026-08-01.
-        This column was previously documented as reporting a ~5.4% structural
-        gap; that figure came from a 10-shard sample drawn inside a 2026-07-27
-        desync episode. There is no structural floor — it is zero.
+        **The in-loop detector an operator should watch is
+        ``sf_labelled_no_multipv_frac``**, paired with
+        ``sf_multipv_checked_frac``. It is computed unconditionally from the
+        batch's presence flags. Do not compare the two rebuild fractions as a
+        health signal: ``policy_rebuilt`` counts dense policy targets actually
+        rewritten, while ``wdl_rebuilt`` also counts supported sparse-policy
+        rows. A healthy sparse-only row therefore contributes 0 to the former
+        and 1 to the latter. The other independent detectors are the worker's
+        ``sf label health`` log line and the offline
+        ``eval/value_optimism.py::sf_multipv_missing_rate`` gate.
 
         ``sf_rebuild_masked_p0_frac`` / ``_volatility_frac`` decompose
         ``sf_rebuild_masked_frac`` per flag, and are PRE-mask presence
@@ -603,16 +550,23 @@ def rebuild_sf_targets_in_arrays(
 ) -> tuple[dict[str, np.ndarray], SfRebuildCoverage]:
     """Recompute ``sf_policy_target`` / ``sf_wdl`` in a sampled batch dict.
 
-    Only rows carrying sparse labels are rebuilt; rows without them keep their
-    stored targets. Returns ``(arrs, coverage)`` — ``arrs`` mutated in place on
-    fresh copies of the touched fields.
+    Only rows carrying sparse labels and pre-rebuild dense-policy eligibility
+    are rebuilt; rows without them keep their stored targets. This row-level gate
+    is load-bearing for mixed-schema batches: union concatenation may create a
+    zero-filled ``sf_policy_target`` field for a sparse-only row, and rebuilding
+    that row would make dense-objective eligibility depend on which other shard
+    happened to share its batch. Returns ``(arrs, coverage)`` — ``arrs`` mutated
+    in place on fresh copies of the touched fields.
 
-    Coverage over SF-LABELLED rows is TOTAL on healthy data — every labelled
-    row is written with ``sf_multipv_raw`` — so a params change is a clean swap
-    over the labelled window, not a mixture of two target regimes. The caller
-    still reports coverage, because a shortfall is the alarm: see
-    ``SfRebuildCoverage.metric_kwargs``. (Coverage over ALL rows is ~97 %, the
-    SF-labelled fraction; the un-labelled rows have no SF target to rebuild.)
+    ``policy_rebuilt`` counts dense targets actually rewritten; supported
+    sparse-only rows remain on sparse CE and are intentionally outside it.
+    ``wdl_rebuilt`` has no corresponding dense-policy gate, so the two coverage
+    fractions are not a desynchronization detector for mixed-format corpora.
+    Use the always-on ``sf_labelled_no_multipv_frac`` detector for that signal.
+    Coverage over DENSE SF-labelled rows remains total on healthy data, so a
+    params change is a clean swap rather than a mixture of two target regimes.
+    (With dense recording enabled, coverage over ALL rows is ~97 %, the
+    SF-labelled fraction; unlabelled rows have no SF target to rebuild.)
 
     Fully vectorized: ~13 ms per 512-row batch at policy width 1858 on the
     host prefetch thread, against a ~90 ms/step training budget (was ~275 ms
@@ -651,29 +605,49 @@ def rebuild_sf_targets_in_arrays(
     has_raw = np.asarray(arrs.get("has_sf_multipv_raw", ()), dtype=bool)
     if has_raw.size and has_raw.any() and "sf_multipv_raw" in arrs and "sf_policy_target" in arrs:
         pol = np.array(arrs["sf_policy_target"], copy=True)
+        # Preserve the row's pre-concatenation objective provenance. Modern
+        # shards carry ``has_sf_policy``; positive stored mass also admits
+        # legacy dense shards whose mask predates that field. Crucially,
+        # ``has_sf_move`` alone is not enough: sparse-only shards carry it too,
+        # and a union-created zero target must remain zero after rebuilding.
+        has_dense = np.asarray(
+            arrs.get("has_sf_policy", np.zeros(has_raw.shape, dtype=bool)),
+            dtype=bool,
+        )
+        stored_dense = np.asarray(
+            pol.sum(axis=1, dtype=np.float32) > 0.0,
+            dtype=bool,
+        )
+        rebuild_rows = has_raw & (has_dense | stored_dense)
         policy_size = int(pol.shape[1])
         legal_dense = arrs.get("sf_legal_mask")
-        legal_rows = None if legal_dense is None else np.asarray(legal_dense)[has_raw]
-        rebuilt, ok = rebuild_sf_policy_targets_batch(
-            np.asarray(arrs["sf_multipv_raw"])[has_raw],
-            legal_dense=legal_rows,
-            policy_size=policy_size,
-            params=params,
-        )
-        rows_idx = np.flatnonzero(has_raw)
-        # No astype before the write: fancy-index assignment casts f32 to the
-        # stored dtype (fp16 in shards) element-by-element with the same
-        # rounding astype uses, so a pre-cast only materialises an extra
-        # (B, width) temporary (~0.9 ms + 1.9 MB/batch measured) for a
-        # bit-identical result (test_rebuild_in_arrays_writeback_matches_astype).
-        if bool(ok.all()):
-            # Common case: every labelled row rebuilt. Skip the `[ok]` gather,
-            # which at policy width 1858 is a full copy of the output.
-            pol[rows_idx] = rebuilt
-        else:
-            pol[rows_idx[ok]] = rebuilt[ok]
+        if bool(rebuild_rows.any()):
+            legal_rows = (
+                None
+                if legal_dense is None
+                else np.asarray(legal_dense)[rebuild_rows]
+            )
+            rebuilt, ok = rebuild_sf_policy_targets_batch(
+                np.asarray(arrs["sf_multipv_raw"])[rebuild_rows],
+                legal_dense=legal_rows,
+                policy_size=policy_size,
+                params=params,
+            )
+            rows_idx = np.flatnonzero(rebuild_rows)
+            # No astype before the write: fancy-index assignment casts f32 to
+            # the stored dtype (fp16 in shards) element-by-element with the
+            # same rounding astype uses, so a pre-cast only materialises an
+            # extra (B, width) temporary (~0.9 ms + 1.9 MB/batch measured) for
+            # a bit-identical result
+            # (test_rebuild_in_arrays_writeback_matches_astype).
+            if bool(ok.all()):
+                # Common case: every dense labelled row rebuilt. Skip the
+                # `[ok]` gather, which at policy width 1858 is a full copy.
+                pol[rows_idx] = rebuilt
+            else:
+                pol[rows_idx[ok]] = rebuilt[ok]
+            n_policy = int(np.count_nonzero(ok))
         arrs["sf_policy_target"] = pol
-        n_policy = int(np.count_nonzero(ok))
 
     has_meta = np.asarray(arrs.get("has_sf_label_meta", ()), dtype=bool)
     if has_meta.size and has_meta.any() and "sf_label_meta" in arrs and "sf_wdl" in arrs:

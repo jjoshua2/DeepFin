@@ -1196,7 +1196,20 @@ def test_the_inclusion_guarantee_holds_at_the_production_fast_ply_budget() -> No
     topk = int(cfg["selfplay"]["gumbel_topk"])
     budgets = (int(cfg["selfplay"]["mcts_simulations"]), int(cfg["selfplay"]["fast_simulations"]))
     assert topk == 16
-    assert budgets == (256, 32)
+    # ⚑ Pin the PROPERTY, not the literals. This assertion used to read
+    # `budgets == (256, 32)`, which is main's yaml; the live branch runs
+    # `mcts_simulations: 100` and `progressive_mcts` ramps between the two, so the
+    # literal pin failed on a branch where the guarantee is perfectly intact --
+    # a test reporting a config difference as a broken invariant.
+    # What must actually hold is that the SIM BUDGET never binds the candidate
+    # width: m = max(2, min(topk, n_legal, max(2, (sims+1)//2))), so the budget
+    # binds only when (sims+1)//2 < topk, i.e. sims < 31 at topk 16.
+    for sims in budgets:
+        assert (sims + 1) // 2 >= topk, (
+            f"sim budget {sims} binds the candidate width at gumbel_topk={topk}: "
+            f"(sims+1)//2 = {(sims + 1) // 2} < {topk}, so tau = 1/topk no longer "
+            "guarantees a root-candidate slot and the floor becomes a ranking nudge."
+        )
 
     import numpy as np
 

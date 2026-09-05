@@ -1,0 +1,1263 @@
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from itertools import pairwise
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+import zarr
+
+from chess_anti_engine.replay import game_epoch as game_epoch_module
+from chess_anti_engine.replay import disk_buffer as disk_buffer_module
+from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
+from chess_anti_engine.replay.buffer import ReplaySample
+from chess_anti_engine.replay import game_epoch as epoch_tool
+from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
+from chess_anti_engine.replay.shard import (
+    SF_EVAL_PV_CHECKED_FIELD,
+    SF_EVAL_PV_ORPHAN_FIELD,
+    ShardMeta,
+    load_shard_arrays,
+    samples_to_arrays,
+    save_local_shard_arrays,
+)
+from chess_anti_engine.train.trainer import Trainer, _SfRebuildCoverageAccumulator
+
+
+def _sample(*, game: int | None, row: int, planes: int = 146) -> ReplaySample:
+    policy = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.float32)
+    policy[row % COMPACT_POLICY_SIZE] = 1.0
+    legal = np.zeros_like(policy, dtype=np.uint8)
+    legal[row % COMPACT_POLICY_SIZE] = 1
+    return ReplaySample(
+        x=np.full((planes, 8, 8), row % 17, dtype=np.float32),
+        policy_target=policy,
+        legal_mask=legal,
+        wdl_target=row % 3,
+        priority=float(row + 1),
+        has_policy=True,
+        game_id=game,
+        ply_index=row,
+    )
+
+
+def _write(
+    shard_dir: Path,
+    shards: Sequence[Sequence[tuple[int | None, int]]],
+    *,
+    planes: int = 146,
+    input_history_encoding: str | None = None,
+    history_rep_fix: bool = False,
+) -> Path:
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    for index, rows in enumerate(shards):
+        samples = [_sample(game=game, row=row, planes=planes) for game, row in rows]
+        for sample in samples:
+            sample.input_history_encoding = input_history_encoding
+            sample.history_rep_fix = bool(history_rep_fix)
+        save_local_shard_arrays(
+            shard_dir / f"shard_{index:06d}.zarr",
+            arrs=samples_to_arrays(samples),
+            meta=ShardMeta(
+                positions=len(samples),
+                policy_encoding="lc0_1858",
+                policy_size=COMPACT_POLICY_SIZE,
+                input_history_encoding=input_history_encoding,
+                history_rep_fix=bool(history_rep_fix),
+            ),
+        )
+    return shard_dir
+
+
+def _open(
+    shard_dir: Path,
+    *,
+    seed: int = 7,
+    batch_size: int = 4,
+    input_planes: int = 146,
+    load_workers: int = 2,
+    input_history_encoding: str = "legacy",
+    history_rep_fix: bool = False,
+    mirror_augmentation: bool = False,
+    max_working_set_bytes: int | None = None,
+    objective_mask_counter: (
+        Callable[[Mapping[str, Any]], Mapping[str, float]] | None
+    ) = None,
+) -> GameAwareEpochBuffer:
+    kwargs = {}
+    if max_working_set_bytes is not None:
+        kwargs["max_working_set_bytes"] = int(max_working_set_bytes)
+    return GameAwareEpochBuffer(
+        shard_dir=shard_dir,
+        batch_size=batch_size,
+        seed=seed,
+        input_planes=input_planes,
+        input_history_encoding=input_history_encoding,
+        history_rep_fix=history_rep_fix,
+        mirror_augmentation=mirror_augmentation,
+        plan_workers=2,
+        load_workers=load_workers,
+        objective_mask_counter=objective_mask_counter,
+        **kwargs,
+    )
+
+
+def _drain(buf: GameAwareEpochBuffer) -> list[list[tuple[int, int]]]:
+    batches: list[list[tuple[int, int]]] = []
+    for _ in range(buf.num_batches):
+        arrays = buf.sample_batch_arrays(buf.plan.batch_size)
+        games = np.asarray(arrays["game_id"], dtype=np.int64)
+        rows = np.asarray(arrays["ply_index"], dtype=np.int64)
+        batches.append(list(zip(games.tolist(), rows.tolist(), strict=True)))
+    return batches
+
+
+def test_game_choice_is_independent_of_active_dictionary_insertion_order() -> None:
+    """Planner and decoded-loader insertion order cannot move the schedule."""
+    counts = {0: 1, 1: 8, 2: 4, 3: 11}
+    planner_order = dict(counts)
+    loader_order = {key: counts[key] for key in reversed(counts)}
+
+    planned = epoch_tool._choose_games(
+        planner_order,
+        3,
+        epoch_tool._seeded_rng(0, 1),
+        remaining=dict(counts),
+        forced={0},
+    )
+    realized = epoch_tool._choose_games(
+        loader_order,
+        3,
+        epoch_tool._seeded_rng(0, 1),
+        remaining=dict(counts),
+        forced={0},
+    )
+
+    np.testing.assert_array_equal(realized, planned)
+
+
+def test_exact_epoch_uses_every_row_once_and_never_repeats_a_game_in_batch(
+    tmp_path: Path,
+) -> None:
+    expected = [(game, row) for game in range(7) for row in range(game * 3, game * 3 + 3)]
+    shard_dir = _write(tmp_path / "replay", [expected[:9], expected[9:16], expected[16:]])
+    buf = _open(shard_dir, batch_size=3)
+
+    batches = _drain(buf)
+
+    for batch in batches:
+        games = [game for game, _ in batch]
+        assert len(games) == len(set(games))
+    realized = [row for batch in batches for row in batch]
+    assert sorted(realized) == sorted(expected)
+    assert len(realized) == len(set(realized))
+    assert sum(buf.plan.batch_rows.tolist()) == len(expected)
+    receipt = buf.receipt()
+    expected_receipt = {
+        **buf.plan.as_dict(),
+        "plan_workers": 2,
+        "load_workers": 2,
+        "rows_realized": len(expected),
+        "batches_realized": buf.num_batches,
+        "same_game_repeats_max": 0,
+        "realized_sha256": buf.plan.plan_sha256,
+        "complete": True,
+    }
+    assert {key: receipt[key] for key in expected_receipt} == expected_receipt
+    assert int(receipt["peak_decoded_rows"]) <= len(expected)
+    assert int(receipt["peak_decoded_shards"]) <= 3
+    assert receipt["decoded_rows_resident"] == 0
+    with pytest.raises(StopIteration, match="exhausted"):
+        buf.sample_batch_arrays(3)
+
+
+def test_schedule_is_seed_deterministic_and_augmentation_rng_cannot_move_it(
+    tmp_path: Path,
+) -> None:
+    rows = [(game, game * 10 + ply) for game in range(12) for ply in range(4)]
+    shard_dir = _write(tmp_path / "replay", [rows[:16], rows[16:32], rows[32:]])
+    first = _open(shard_dir, seed=11)
+    second = _open(shard_dir, seed=11)
+    changed = _open(shard_dir, seed=12)
+
+    # Trainer consumes this public stream for mirror augmentation. It is not a
+    # schedule stream, so arbitrary augmentation draws cannot change the epoch.
+    first.rng.random(10_000)
+    first_batches = _drain(first)
+    second_batches = _drain(second)
+    changed_batches = _drain(changed)
+
+    assert first_batches == second_batches
+    assert first.plan.plan_sha256 == second.plan.plan_sha256
+    assert changed_batches != first_batches
+    assert changed.plan.plan_sha256 != first.plan.plan_sha256
+
+
+def test_positions_are_shuffled_within_each_shard_game_segment(
+    tmp_path: Path,
+) -> None:
+    """Mutation target: deleting `_row_rng.shuffle(indices)` makes every
+    game's observed plies monotonically increasing and turns successive
+    batches into opening/middlegame/endgame bands."""
+    rows = [(game, game * 100 + ply) for game in range(16) for ply in range(12)]
+    buf = _open(_write(tmp_path / "replay", [rows]), seed=19, batch_size=8)
+
+    by_game: dict[int, list[int]] = {}
+    batches = _drain(buf)
+    for batch in batches:
+        # Absolute ply is encoded as game*100 + within-game ply so the returned
+        # row remains unique while this reads the actual within-game phase.
+        phases = [row % 100 for _, row in batch]
+        if len(batch) == 8:
+            assert len(set(phases)) >= 4
+        for game, row in batch:
+            by_game.setdefault(game, []).append(row % 100)
+
+    non_monotonic = sum(
+        sequence != sorted(sequence) for sequence in by_game.values()
+    )
+    assert non_monotonic >= 14, by_game
+
+
+def test_cross_shard_game_order_reports_its_segment_local_shuffle_contract(
+    tmp_path: Path,
+) -> None:
+    first_segment = [(0, ply) for ply in range(4)]
+    second_segment = [(0, 100 + ply) for ply in range(4)]
+    # Singleton games give every batch enough independent rows while game 0
+    # crosses the same fixed row-count boundary used by the converter.
+    fillers = [(game, 1_000 + game) for game in range(1, 25)]
+    buf = _open(
+        _write(tmp_path / "replay", [first_segment, second_segment + fillers]),
+        seed=7,
+        batch_size=4,
+    )
+
+    batches = _drain(buf)
+    game_zero_rows = [
+        row for batch in batches for game, row in batch if game == 0
+    ]
+    segment_ids = [int(row >= 100) for row in game_zero_rows]
+
+    # Rows are shuffled inside each loaded segment, but the bounded sequential
+    # loader deliberately does not turn a split game into random shard reads.
+    assert sum(a != b for a, b in pairwise(segment_ids)) == 1
+    assert buf.receipt()["row_order"] == (
+        "seeded_shuffle_within_shard_game_segments"
+    )
+
+
+def test_long_game_cannot_force_extra_undersized_optimizer_steps(
+    tmp_path: Path,
+) -> None:
+    rows = [(0, ply) for ply in range(6)] + [(1, 100 + ply) for ply in range(2)]
+    shard_dir = _write(tmp_path / "replay", [rows])
+
+    with pytest.raises(
+        ValueError,
+        match=r"need 6 batches.*ceil\(8/4\)=2.*undersized Aurora/AdamW",
+    ):
+        _open(shard_dir, batch_size=4)
+
+
+def test_evenly_undersized_optimizer_steps_are_refused() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"513 rows as 2 optimizer batches.*50\.000% minimum fill.*99% floor",
+    ):
+        game_epoch_module._balanced_batch_rows(
+            rows=513, batch_size=512, max_game_rows=2,
+        )
+
+
+def test_single_undersized_optimizer_step_is_refused() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"1 rows as 1 optimizer batches.*0\.195% minimum fill.*99% floor",
+    ):
+        game_epoch_module._balanced_batch_rows(
+            rows=1, batch_size=512, max_game_rows=1,
+        )
+
+
+def test_production_batch_shape_clears_the_optimizer_fill_floor() -> None:
+    sizes = game_epoch_module._balanced_batch_rows(
+        rows=18_910_484,
+        batch_size=512,
+        max_game_rows=1,
+    )
+
+    assert sizes.shape == (36_935,)
+    assert int(np.count_nonzero(sizes == 512)) == 36_699
+    assert int(np.count_nonzero(sizes == 511)) == 236
+    assert float(sizes.min()) / 512.0 >= (
+        game_epoch_module.MIN_OPTIMIZER_BATCH_FILL_RATIO
+    )
+
+
+def test_long_games_are_deadline_scheduled_with_full_batches(
+    tmp_path: Path,
+) -> None:
+    rows = [(0, ply) for ply in range(4)] + [
+        (game, 100 + game) for game in range(1, 13)
+    ]
+    buf = _open(_write(tmp_path / "replay", [rows]), batch_size=4)
+
+    batches = _drain(buf)
+
+    assert [len(batch) for batch in batches] == [4, 4, 4, 4]
+    assert all(0 in {game for game, _ in batch} for batch in batches)
+    assert buf.plan.min_batch_rows == 4
+
+
+def test_deadline_forced_game_is_loaded_directly_not_through_unrelated_prefix(
+    tmp_path: Path,
+) -> None:
+    # Seed 3 initially puts shard 0 last in the six-shard permutation. Game 0
+    # has one row due in every batch, so a sequential-prefix implementation
+    # decodes the entire corpus before it can return batch 0.
+    shards = [
+        [(0, 0), (0, 1), (0, 2)],
+        [(1, 10), (6, 60)],
+        [(2, 20)],
+        [(3, 30)],
+        [(4, 40)],
+        [(5, 50)],
+    ]
+    buf = _open(_write(tmp_path / "replay", shards), seed=3, batch_size=3)
+
+    first = buf.sample_batch_arrays(3)
+
+    assert 0 in np.asarray(first["game_id"], dtype=np.int64)
+    assert int(buf.plan.load_counts[0]) == 3
+    assert int(buf.receipt()["peak_decoded_rows"]) == 5
+    assert int(buf.receipt()["peak_decoded_rows"]) < buf.plan.rows
+
+
+def test_multiple_deadline_games_are_brought_forward_and_plan_still_closes(
+    tmp_path: Path,
+) -> None:
+    shards = [
+        [(0, 0), (0, 1), (0, 2)],
+        [(1, 10), (1, 11), (1, 12)],
+        [(2, 20), (6, 60)],
+        [(3, 30), (7, 70)],
+        [(4, 40)],
+        [(5, 50)],
+    ]
+    buf = _open(_write(tmp_path / "replay", shards), seed=3, batch_size=4)
+
+    first = buf.sample_batch_arrays(4)
+
+    assert {0, 1}.issubset(set(np.asarray(first["game_id"], dtype=np.int64)))
+    assert int(buf.plan.load_counts[0]) == 3
+    assert int(buf.receipt()["peak_decoded_rows"]) == 8
+    remaining = []
+    for _ in range(buf.num_batches - 1):
+        arrays = buf.sample_batch_arrays(buf.plan.batch_size)
+        remaining.append(list(zip(
+            np.asarray(arrays["game_id"], dtype=np.int64).tolist(),
+            np.asarray(arrays["ply_index"], dtype=np.int64).tolist(),
+            strict=True,
+        )))
+    assert sum(len(batch) for batch in remaining) + len(first["x"]) == buf.plan.rows
+    assert buf.receipt()["realized_sha256"] == buf.plan.plan_sha256
+    assert buf.receipt()["complete"] is True
+
+
+def test_duplicate_only_prefix_is_skipped_for_diversity_and_refill_is_bounded(
+    tmp_path: Path,
+) -> None:
+    # Seed 3's first 21 paths all carry the same deadline-forced game. The 63
+    # remaining one-row shards each introduce a singleton. A prefix walk loads
+    # 24 full shards to build batch 0; progress ordering needs exactly four.
+    seed = 3
+    shard_count = 84
+    path_order = np.random.default_rng(
+        np.random.SeedSequence([seed, 0]),
+    ).permutation(shard_count)
+    duplicate_paths = {int(index) for index in path_order[:21]}
+    next_game = 1
+    shards: list[list[tuple[int, int]]] = []
+    for index in range(shard_count):
+        if index in duplicate_paths:
+            shards.append([(0, index)])
+        else:
+            shards.append([(next_game, 1_000 + index)])
+            next_game += 1
+
+    shard_dir = _write(tmp_path / "replay", shards)
+    probe = _open(shard_dir, seed=seed, batch_size=4, load_workers=4)
+
+    assert int(probe.plan.load_counts[0]) == 4
+    assert int(probe.plan.load_counts.max(initial=0)) <= 4
+    tight_limit = int(probe.plan.peak_working_set_bytes)
+    bounded = _open(
+        shard_dir,
+        seed=seed,
+        batch_size=4,
+        load_workers=4,
+        max_working_set_bytes=tight_limit,
+    )
+    batches = _drain(bounded)
+
+    assert sum(len(batch) for batch in batches) == shard_count
+    receipt = bounded.receipt()
+    assert receipt["complete"] is True
+    assert receipt["realized_sha256"] == bounded.plan.plan_sha256
+    assert int(receipt["peak_working_set_bytes"]) <= tight_limit
+
+
+def test_parallel_validation_groups_retain_prior_group_payloads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Isolate the validated-load grouping from the separately covered host
+    # preparation/collation reserve.
+    monkeypatch.setattr(game_epoch_module, "COLLATION_BATCH_COPIES", 1)
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(game, game)] for game in range(8)],
+    )
+    probe = _open(shard_dir, batch_size=4, load_workers=2)
+    decoded = int(probe._records[0].decoded_bytes)
+    expected_peak = int(
+        2 * decoded
+        + game_epoch_module.VALIDATED_LOAD_PAYLOAD_COPIES * 2 * decoded
+    )
+
+    assert int(probe.plan.load_counts[0]) == 4
+    assert probe.plan.load_workers == 2
+    assert probe.plan.peak_working_set_bytes == expected_peak
+    bounded = _open(
+        shard_dir,
+        batch_size=4,
+        load_workers=2,
+        max_working_set_bytes=expected_peak,
+    )
+    _drain(bounded)
+    assert bounded.receipt()["peak_working_set_bytes"] == expected_peak
+    assert bounded.receipt()["complete"] is True
+
+
+def test_multichunk_assembly_skips_unstored_fields_at_its_exact_cap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0)], [(1, 1)]])
+    # Isolate the no-mirror assembly peak from the separately covered eager
+    # validation reserve. Two touched chunks require the two-copy assembly
+    # allowance: selected parts plus the concatenated result.
+    monkeypatch.setattr(game_epoch_module, "VALIDATED_LOAD_PAYLOAD_COPIES", 1)
+    original_default = disk_buffer_module.zeros_for_storage_field
+
+    def no_unstored_x_default(
+        name: str,
+        *,
+        n: int,
+        x_planes: int,
+        policy_size: int,
+        categorical_bins: int,
+    ) -> np.ndarray:
+        if name == "x_lc0_root":
+            raise AssertionError("uniformly absent x_lc0_root was allocated")
+        return original_default(
+            name,
+            n=n,
+            x_planes=x_planes,
+            policy_size=policy_size,
+            categorical_bins=categorical_bins,
+        )
+
+    monkeypatch.setattr(
+        disk_buffer_module, "zeros_for_storage_field", no_unstored_x_default,
+    )
+    probe = _open(shard_dir, batch_size=2, load_workers=2)
+    exact_peak = int(probe.plan.peak_working_set_bytes)
+    with pytest.raises(ValueError, match="batch 0 materialization"):
+        _open(
+            shard_dir,
+            batch_size=2,
+            load_workers=2,
+            max_working_set_bytes=exact_peak - 1,
+        )
+
+    bounded = _open(
+        shard_dir,
+        batch_size=2,
+        load_workers=2,
+        max_working_set_bytes=exact_peak,
+    )
+    assert _drain(bounded) == [[(0, 0), (1, 1)]]
+    assert bounded.receipt()["peak_working_set_bytes"] == exact_peak
+    assert bounded.receipt()["complete"] is True
+
+
+def test_skewed_long_game_corpus_is_refused_before_memory_preflight(
+    tmp_path: Path,
+) -> None:
+    shards = [
+        [(0, index * 100 + ply) for ply in range(8)]
+        + [(index + 1, 10_000 + index)]
+        for index in range(20)
+    ]
+    shard_dir = _write(tmp_path / "replay", shards)
+
+    with pytest.raises(
+        ValueError,
+        match=r"need 160 batches.*ceil\(180/2\)=90.*undersized Aurora/AdamW",
+    ):
+        _open(shard_dir, seed=3, batch_size=2, load_workers=4)
+
+
+def test_single_shard_larger_than_memory_cap_is_refused_before_decode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(game, game) for game in range(4)]],
+    )
+    probe = _open(shard_dir, batch_size=4)
+    limit = int(probe._records[0].decoded_bytes - 1)
+
+    def unexpected_decode(
+        _self: GameAwareEpochBuffer, _record: object,
+    ) -> dict[str, np.ndarray]:
+        raise AssertionError("oversized shard must fail during metadata planning")
+
+    monkeypatch.setattr(GameAwareEpochBuffer, "_load_one", unexpected_decode)
+    with pytest.raises(ValueError, match="working-set preflight"):
+        _open(
+            shard_dir,
+            batch_size=4,
+            load_workers=4,
+            max_working_set_bytes=limit,
+        )
+
+
+def test_epoch_slice_returns_each_single_take_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arrays = {
+        "x": np.arange(24, dtype=np.float32).reshape(6, 4),
+        "game_id": np.arange(6, dtype=np.int64),
+        "_policy_size": np.asarray(1858, dtype=np.int64),
+    }
+    allocated: dict[int, np.ndarray] = {}
+    original_take = np.take
+
+    def tracked_take(
+        value: np.ndarray, indices: np.ndarray, *, axis: int,
+    ) -> np.ndarray:
+        result = original_take(value, indices, axis=axis)
+        allocated[id(value)] = result
+        return result
+
+    monkeypatch.setattr(game_epoch_module.np, "take", tracked_take)
+    sliced = game_epoch_module._slice_epoch_arrays(
+        arrays, np.asarray([4, 1, 3], dtype=np.int64),
+    )
+
+    # The object allocated by np.take is the returned field itself. Wrapping
+    # advanced indexing in np.array(copy=True) would return a second object and
+    # transiently consume twice the batch/compaction bytes priced by the plan.
+    assert sliced["x"] is allocated[id(arrays["x"])]
+    assert sliced["game_id"] is allocated[id(arrays["game_id"])]
+    assert sliced["x"].flags.owndata
+    assert not np.shares_memory(sliced["x"], arrays["x"])
+    assert not np.shares_memory(sliced["_policy_size"], arrays["_policy_size"])
+
+
+def test_single_shard_validation_scratch_obeys_exact_modeled_peak(
+    tmp_path: Path,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(game, game) for game in range(8)]],
+    )
+    probe = _open(shard_dir, batch_size=4)
+    record = probe._records[0]
+    batch_bytes = int(4 * record.row_bytes + record.scalar_bytes)
+    payload_only_peak = int(record.decoded_bytes + batch_bytes)
+    exact_peak = int(
+        game_epoch_module.VALIDATED_LOAD_PAYLOAD_COPIES * record.decoded_bytes
+    )
+
+    assert probe.plan.peak_working_set_bytes == exact_peak
+    assert exact_peak > payload_only_peak
+    with pytest.raises(ValueError, match="batch 0 validated load"):
+        _open(
+            shard_dir,
+            batch_size=4,
+            max_working_set_bytes=payload_only_peak,
+        )
+    bounded = _open(
+        shard_dir, batch_size=4, max_working_set_bytes=exact_peak,
+    )
+    batches = _drain(bounded)
+
+    assert [len(batch) for batch in batches] == [4, 4]
+    assert bounded.receipt()["peak_working_set_bytes"] == exact_peak
+    assert bounded.receipt()["validated_load_payload_copies"] == 5
+    assert bounded.receipt()["complete"] is True
+
+
+def test_single_chunk_host_pipeline_copies_are_preflighted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Isolate the post-gather host pipeline from the separately covered eager
+    # validation reserve. One source chunk still needs room for trainer-derived
+    # arrays and the accumulating pinned copy made by CUDA collation.
+    monkeypatch.setattr(game_epoch_module, "VALIDATED_LOAD_PAYLOAD_COPIES", 1)
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(game, game) for game in range(8)]],
+    )
+    probe = _open(shard_dir, batch_size=4, load_workers=1)
+    record = probe._records[0]
+    batch_bytes = int(4 * record.row_bytes + record.scalar_bytes)
+    one_copy_peak = int(record.decoded_bytes + batch_bytes)
+    exact_peak = int(
+        record.decoded_bytes
+        + game_epoch_module.COLLATION_BATCH_COPIES * batch_bytes
+    )
+
+    assert game_epoch_module.COLLATION_BATCH_COPIES == 3
+    assert exact_peak > one_copy_peak
+    assert probe.plan.peak_working_set_bytes == exact_peak
+    assert probe.plan.collation_working_set_batch_copies == 3
+    with pytest.raises(ValueError, match="batch 0 materialization"):
+        _open(
+            shard_dir,
+            batch_size=4,
+            load_workers=1,
+            max_working_set_bytes=exact_peak - 1,
+        )
+    bounded = _open(
+        shard_dir,
+        batch_size=4,
+        load_workers=1,
+        max_working_set_bytes=exact_peak,
+    )
+
+    _drain(bounded)
+
+    assert bounded.receipt()["peak_working_set_bytes"] == exact_peak
+    assert bounded.receipt()["collation_working_set_batch_copies"] == 3
+    assert bounded.receipt()["complete"] is True
+
+
+def test_host_pipeline_reserve_covers_trainer_derived_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(game_epoch_module, "VALIDATED_LOAD_PAYLOAD_COPIES", 1)
+    rows = [(game, game) for game in range(16)]
+    shard_dir = _write(tmp_path / "replay", [rows])
+    buf = _open(shard_dir, batch_size=8, load_workers=1)
+    record = buf._records[0]
+    planned_batch_bytes = int(8 * record.row_bytes + record.scalar_bytes)
+    arrays = buf.sample_batch_arrays(8)
+    sampled_bytes = buf._arrays_nbytes(arrays)
+
+    trainer = object.__new__(Trainer)
+    trainer._sf_rebuild_coverage = _SfRebuildCoverageAccumulator()
+    trainer.rebuild_sf_targets = False
+    trainer.rebuild_categorical_target = False
+    trainer.sf_policy_sparse_ce = False
+    trainer._input_history_encoding = "legacy"
+    prepared = trainer._prepare_host_arrays(
+        arrays, rng=np.random.default_rng(0), mirror_prob=0.0,
+    )
+    prepared_bytes = buf._arrays_nbytes(prepared)
+
+    assert SF_EVAL_PV_ORPHAN_FIELD in prepared
+    assert SF_EVAL_PV_CHECKED_FIELD in prepared
+    assert sampled_bytes == planned_batch_bytes
+    assert prepared_bytes == sampled_bytes + 2 * 8 * np.dtype(np.float32).itemsize
+    assert 2 * prepared_bytes > 2 * planned_batch_bytes
+    assert 2 * prepared_bytes <= (
+        game_epoch_module.COLLATION_BATCH_COPIES * planned_batch_bytes
+    )
+
+
+def test_tight_cap_keeps_multichunk_compaction_in_lockstep_with_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Isolate the compaction decision from the independently tested validation
+    # reserve, which intentionally dominates these two large shard loads.
+    monkeypatch.setattr(game_epoch_module, "VALIDATED_LOAD_PAYLOAD_COPIES", 1)
+    shards = [
+        [(0, ply) for ply in range(100)] + [(1, 10_000)],
+        [(2, 20_000 + ply) for ply in range(100)] + [(3, 30_000)],
+    ]
+    shard_dir = _write(tmp_path / "replay", shards)
+    probe = _open(shard_dir, seed=3, batch_size=2)
+    record = probe._records[0]
+    planned_batch_bytes = int(2 * record.row_bytes + 2 * record.scalar_bytes)
+    first_compaction_peak = int(
+        2 * record.decoded_bytes
+        + planned_batch_bytes
+        + 25 * np.dtype(np.int64).itemsize
+        + record.scalar_bytes
+        + 25 * record.row_bytes
+    )
+    assert probe.plan.peak_working_set_bytes == first_compaction_peak
+    exact = _open(
+        shard_dir,
+        seed=3,
+        batch_size=2,
+        max_working_set_bytes=first_compaction_peak,
+    )
+    _drain(exact)
+    assert exact.receipt()["peak_working_set_bytes"] == first_compaction_peak
+    assert exact.receipt()["complete"] is True
+
+    # One byte below the first optional compaction peak makes the planner skip
+    # it at batch 75. The realized multi-chunk batch is slightly smaller than
+    # its conservative per-shard scalar budget; using that smaller value at
+    # runtime would compact anyway and immediately diverge from preflight.
+    limit = first_compaction_peak - 1
+    bounded = _open(
+        shard_dir,
+        seed=3,
+        batch_size=2,
+        max_working_set_bytes=limit,
+    )
+    actual_batch_bytes = 0
+    for batch_index in range(77):
+        batch = bounded.sample_batch_arrays(2)
+        if batch_index == 75:
+            actual_batch_bytes = bounded._arrays_nbytes(batch)
+            assert actual_batch_bytes < planned_batch_bytes
+            assert bounded._resident_bytes == 2 * record.decoded_bytes
+        assert bounded._resident_bytes == int(
+            bounded.plan.resident_bytes_after_batch[batch_index],
+        )
+
+    assert actual_batch_bytes > 0
+    assert bounded._resident_bytes < 2 * record.decoded_bytes
+    for _ in range(bounded.num_batches - 77):
+        bounded.sample_batch_arrays(2)
+    assert bounded.receipt()["peak_working_set_bytes"] == (
+        bounded.plan.peak_working_set_bytes
+    )
+    assert int(bounded.receipt()["peak_working_set_bytes"]) <= limit
+    assert bounded.receipt()["complete"] is True
+
+
+def test_consumed_rows_are_compacted_out_of_long_lived_shards(tmp_path: Path) -> None:
+    rows = [(game, game * 100 + ply) for game in range(10) for ply in range(10)]
+    buf = _open(_write(tmp_path / "replay", [rows]), batch_size=5)
+
+    for _ in range(15):
+        buf.sample_batch_arrays(5)
+
+    receipt = buf.receipt()
+    assert receipt["peak_decoded_rows"] == 100
+    assert receipt["decoded_rows_resident"] == 25
+
+
+def test_game_ids_are_namespaced_across_independent_conversion_outputs(
+    tmp_path: Path,
+) -> None:
+    first = _write(tmp_path / "source_a", [[(0, 0), (0, 1), (1, 10), (1, 11)]])
+    second = _write(tmp_path / "source_b", [[(0, 20), (0, 21), (1, 30), (1, 31)]])
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    (staged / "shard_000000.zarr").symlink_to(
+        first / "shard_000000.zarr",
+    )
+    (staged / "shard_000001.zarr").symlink_to(
+        second / "shard_000000.zarr",
+    )
+
+    buf = _open(staged, batch_size=4)
+    first_batch = buf.sample_batch_arrays(4)
+
+    # The immutable shards retain source-local ids; the sampled batch exposes
+    # the corpus-wide identity used by the scheduler. Treating raw ids as
+    # global would see only games {0, 1} and return two rows here.
+    assert buf.plan.source_count == 2
+    assert buf.plan.game_count == 4
+    assert first_batch["x"].shape[0] == 4
+    assert sorted(np.asarray(first_batch["game_id"]).tolist()) == [0, 1, 2, 3]
+    assert buf.receipt()["same_game_repeats_max"] == 0
+
+
+def test_duplicate_resolved_shard_is_refused_before_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _write(tmp_path / "source", [[(0, 0), (1, 1)]])
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    target = source / "shard_000000.zarr"
+    (staged / "shard_000000.zarr").symlink_to(target)
+    (staged / "shard_000001.zarr").symlink_to(target)
+    monkeypatch.setattr(
+        game_epoch_module,
+        "_scan_shard",
+        lambda _path: pytest.fail("duplicates must be rejected before shard scans"),
+    )
+
+    with pytest.raises(ValueError, match="duplicate resolved shard paths"):
+        _open(staged, batch_size=2)
+
+
+def test_active_orphaned_optional_field_is_refused_during_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0), (1, 1)]])
+    shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
+    shard.create_dataset(
+        "has_moves_left",
+        data=np.array([1, 0], dtype=np.uint8),
+        overwrite=True,
+    )
+    monkeypatch.setattr(
+        GameAwareEpochBuffer,
+        "_load_one",
+        lambda *_args, **_kwargs: pytest.fail(
+            "active orphan fields must be rejected before training",
+        ),
+    )
+
+    with pytest.raises(ValueError, match=r"has_moves_left.*moves_left"):
+        _open(shard_dir, batch_size=2)
+
+
+def test_partially_missing_game_identity_is_refused_during_plan(tmp_path: Path) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0), (None, 1), (1, 2)]])
+
+    with pytest.raises(ValueError, match="without game_id"):
+        _open(shard_dir)
+
+
+def test_zero_row_index_reservation_is_not_scheduled(tmp_path: Path) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0), (1, 1), (2, 2), (3, 3)]],
+    )
+    arrs, _ = load_shard_arrays(shard_dir / "shard_000000.zarr")
+    rows = int(arrs["x"].shape[0])
+    empty = {
+        name: (
+            np.asarray(value)[:0]
+            if np.asarray(value).ndim >= 1
+            and np.asarray(value).shape[0] == rows
+            else np.asarray(value)
+        )
+        for name, value in arrs.items()
+    }
+    save_local_shard_arrays(shard_dir / "shard_000001.zarr", arrs=empty)
+
+    buf = _open(shard_dir, batch_size=4)
+
+    batches = _drain(buf)
+
+    assert len(batches) == 1
+    assert sorted(batches[0]) == [(0, 0), (1, 1), (2, 2), (3, 3)]
+    assert buf.plan.shard_count == 1
+    assert buf.receipt()["complete"] is True
+
+
+def test_batch_size_and_input_shape_are_frozen_by_the_plan(tmp_path: Path) -> None:
+    rows = [(game, game) for game in range(4)]
+    shard_dir = _write(tmp_path / "replay", [rows], planes=175)
+    with pytest.raises(ValueError, match="carries 175 input planes"):
+        GameAwareEpochBuffer(
+            shard_dir=shard_dir,
+            batch_size=4,
+            seed=0,
+            input_planes=146,
+            input_history_encoding="legacy",
+            history_rep_fix=False,
+            mirror_augmentation=False,
+            plan_workers=1,
+            load_workers=1,
+        )
+
+    correct = GameAwareEpochBuffer(
+        shard_dir=shard_dir,
+        batch_size=4,
+        seed=0,
+        input_planes=175,
+        input_history_encoding="legacy",
+        history_rep_fix=False,
+        mirror_augmentation=False,
+        plan_workers=1,
+        load_workers=1,
+    )
+    with pytest.raises(ValueError, match="planned for batch_size=4"):
+        correct.sample_batch_arrays(3)
+
+
+def test_mixed_input_plane_corpus_is_refused_before_any_decode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0), (1, 1)]],
+        planes=175,
+    )
+    legacy = [_sample(game=2, row=2, planes=146)]
+    save_local_shard_arrays(
+        shard_dir / "shard_000001.zarr",
+        arrs=samples_to_arrays(legacy),
+        meta=ShardMeta(
+            positions=1,
+            policy_encoding="lc0_1858",
+            policy_size=COMPACT_POLICY_SIZE,
+        ),
+    )
+
+    def unexpected_decode(
+        _self: GameAwareEpochBuffer, _record: object,
+    ) -> dict[str, np.ndarray]:
+        raise AssertionError("plane mismatch must fail before a full decode")
+
+    monkeypatch.setattr(GameAwareEpochBuffer, "_load_one", unexpected_decode)
+    with pytest.raises(ValueError, match="carries 146 input planes"):
+        GameAwareEpochBuffer(
+            shard_dir=shard_dir,
+            batch_size=2,
+            seed=0,
+            input_planes=175,
+            input_history_encoding="legacy",
+            history_rep_fix=False,
+            mirror_augmentation=False,
+            plan_workers=1,
+            load_workers=1,
+        )
+
+
+@pytest.mark.parametrize(
+    ("second_encoding", "second_rep_fix", "error"),
+    [
+        ("lc0_root", True, "input_history_encoding"),
+        ("lc0_root_legacy_meta", False, "history_rep_fix"),
+    ],
+)
+def test_mixed_input_history_identity_is_refused_before_any_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    second_encoding: str,
+    second_rep_fix: bool,
+    error: str,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0)]],
+        planes=175,
+        input_history_encoding="lc0_root_legacy_meta",
+        history_rep_fix=True,
+    )
+    second = _sample(game=1, row=1, planes=175)
+    second.input_history_encoding = second_encoding
+    second.history_rep_fix = second_rep_fix
+    save_local_shard_arrays(
+        shard_dir / "shard_000001.zarr",
+        arrs=samples_to_arrays([second]),
+        meta=ShardMeta(
+            positions=1,
+            policy_encoding="lc0_1858",
+            policy_size=COMPACT_POLICY_SIZE,
+            input_history_encoding=second_encoding,
+            history_rep_fix=second_rep_fix,
+        ),
+    )
+
+    def unexpected_decode(
+        _self: GameAwareEpochBuffer, _record: object,
+    ) -> dict[str, np.ndarray]:
+        raise AssertionError("history mismatch must fail before a full decode")
+
+    monkeypatch.setattr(GameAwareEpochBuffer, "_load_one", unexpected_decode)
+    with pytest.raises(ValueError, match=error):
+        GameAwareEpochBuffer(
+            shard_dir=shard_dir,
+            batch_size=1,
+            seed=0,
+            input_planes=175,
+            input_history_encoding="lc0_root_legacy_meta",
+            history_rep_fix=True,
+            mirror_augmentation=False,
+            plan_workers=1,
+            load_workers=1,
+        )
+
+
+def test_input_history_identity_is_banked_and_rechecked_at_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0)]],
+        planes=175,
+        input_history_encoding="lc0_root_legacy_meta",
+        history_rep_fix=True,
+    )
+    buf = _open(
+        shard_dir,
+        batch_size=1,
+        input_planes=175,
+        input_history_encoding="lc0_root_legacy_meta",
+        history_rep_fix=True,
+    )
+    assert buf.plan.input_history_encoding == "lc0_root_legacy_meta"
+    assert buf.plan.history_rep_fix is True
+    receipt = buf.receipt()
+    assert receipt["input_history_encoding"] == "lc0_root_legacy_meta"
+    assert receipt["history_rep_fix"] is True
+
+    shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
+    shard.attrs["input_history_encoding"] = "lc0_root"
+    monkeypatch.setattr(
+        game_epoch_module,
+        "_shard_content_sha256",
+        lambda _path: buf._records[0].content_sha256,
+    )
+    with pytest.raises(RuntimeError, match="changed input history identity"):
+        buf.sample_batch_arrays(1)
+
+
+def test_shard_content_fingerprint_rejects_same_schema_rewrite(
+    tmp_path: Path,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0), (1, 1)]])
+    buf = _open(shard_dir, batch_size=2, load_workers=1)
+    assert len(buf.plan.corpus_sha256) == 64
+    assert buf.receipt()["corpus_identity"] == game_epoch_module.CORPUS_IDENTITY
+
+    shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
+    shard["x"][0, 0, 0, 0] = np.float16(7.0)
+
+    with pytest.raises(RuntimeError, match="before full decode"):
+        buf.sample_batch_arrays(2)
+    assert buf.receipt()["complete"] is False
+
+
+def test_shard_content_fingerprint_freezes_staging_symlink_target(
+    tmp_path: Path,
+) -> None:
+    first = _write(tmp_path / "source_a", [[(0, 10), (1, 11)]])
+    second = _write(tmp_path / "source_b", [[(0, 20), (1, 21)]])
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    link = staged / "shard_000000.zarr"
+    link.symlink_to(first / "shard_000000.zarr")
+    buf = _open(staged, batch_size=2, load_workers=1)
+
+    link.unlink()
+    link.symlink_to(second / "shard_000000.zarr")
+    batch = buf.sample_batch_arrays(2)
+
+    assert sorted(np.asarray(batch["ply_index"]).tolist()) == [10, 11]
+    assert buf.receipt()["complete"] is True
+
+
+def test_shard_content_fingerprint_rejects_mutation_during_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0), (1, 1)]])
+    buf = _open(shard_dir, batch_size=2, load_workers=1)
+    original_load = game_epoch_module.load_shard_arrays
+
+    def mutating_load(*args: Any, **kwargs: Any) -> Any:
+        loaded = original_load(*args, **kwargs)
+        if kwargs.get("lazy") is False:
+            shard = zarr.open_group(
+                str(shard_dir / "shard_000000.zarr"), mode="a",
+            )
+            shard["policy_target"][0, 0] = np.float16(0.5)
+        return loaded
+
+    monkeypatch.setattr(
+        game_epoch_module, "load_shard_arrays", mutating_load,
+    )
+
+    with pytest.raises(RuntimeError, match="during exact-epoch full decode"):
+        buf.sample_batch_arrays(2)
+
+
+def test_shard_content_fingerprint_brackets_objective_census(
+    tmp_path: Path,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0), (1, 1)]])
+    mutated = False
+
+    def mutating_counter(arrays: Mapping[str, Any]) -> Mapping[str, float]:
+        nonlocal mutated
+        if not mutated:
+            shard = zarr.open_group(
+                str(shard_dir / "shard_000000.zarr"), mode="a",
+            )
+            shard["x"][0, 0, 0, 0] = np.float16(7.0)
+            mutated = True
+        return {"policy": float(arrays["x"].shape[0])}
+
+    with pytest.raises(ValueError, match=r"content changed during.*preflight"):
+        _open(
+            shard_dir,
+            batch_size=2,
+            load_workers=1,
+            objective_mask_counter=mutating_counter,
+        )
+
+
+def test_shard_content_fingerprint_brackets_lazy_metadata_scan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(tmp_path / "replay", [[(0, 0), (1, 1)]])
+    original_load = game_epoch_module.load_shard_arrays
+    mutated = False
+
+    def mutating_load(*args: Any, **kwargs: Any) -> Any:
+        nonlocal mutated
+        loaded = original_load(*args, **kwargs)
+        if kwargs.get("lazy") is True and not mutated:
+            shard = zarr.open_group(
+                str(shard_dir / "shard_000000.zarr"), mode="a",
+            )
+            shard["x"][0, 0, 0, 0] = np.float16(7.0)
+            mutated = True
+        return loaded
+
+    monkeypatch.setattr(
+        game_epoch_module, "load_shard_arrays", mutating_load,
+    )
+
+    with pytest.raises(ValueError, match=r"content changed during.*preflight"):
+        _open(shard_dir, batch_size=2, load_workers=1)
+
+
+def test_game_multiplicities_are_rechecked_after_planning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0), (0, 1), (1, 2), (1, 3)]],
+    )
+    buf = _open(shard_dir, batch_size=2, load_workers=1)
+
+    # Keep the same rows, schema and set of ids while moving one row from game
+    # 0 to game 1.  Membership-only validation accepts this but the planned
+    # per-game deadlines no longer describe the decoded shard.
+    shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
+    shard["game_id"][:] = np.asarray([0, 1, 1, 1], dtype=np.int64)
+    monkeypatch.setattr(
+        game_epoch_module,
+        "_shard_content_sha256",
+        lambda _path: buf._records[0].content_sha256,
+    )
+
+    with pytest.raises(RuntimeError, match="per-game row counts changed"):
+        buf.sample_batch_arrays(2)
+
+
+def test_objective_census_is_banked_and_rechecked_at_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0), (1, 1), (2, 2)]],
+    )
+
+    def counter(arrays: Mapping[str, Any]) -> Mapping[str, float]:
+        has_policy = arrays["has_policy"]
+        return {
+            "policy": float(np.asarray(has_policy[:], dtype=np.float64).sum()),
+        }
+
+    buf = _open(
+        shard_dir,
+        batch_size=3,
+        load_workers=1,
+        objective_mask_counter=counter,
+    )
+    assert buf.exact_objective_mask_weights == {"policy": 3.0}
+    assert buf.plan.as_dict()["objective_mask_weights"] == {"policy": 3.0}
+
+    shard = zarr.open_group(str(shard_dir / "shard_000000.zarr"), mode="a")
+    shard["has_policy"][0] = False
+    monkeypatch.setattr(
+        game_epoch_module,
+        "_shard_content_sha256",
+        lambda _path: buf._records[0].content_sha256,
+    )
+    with pytest.raises(RuntimeError, match="objective-mask populations changed"):
+        buf.sample_batch_arrays(3)
+
+
+def test_mixed_policy_width_corpus_is_refused_before_any_decode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(0, 0), (1, 1)]],
+        planes=175,
+    )
+    full = _sample(game=2, row=2, planes=175)
+    full.policy_target = np.zeros((POLICY_SIZE,), dtype=np.float32)
+    full.policy_target[2] = 1.0
+    full.legal_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
+    full.legal_mask[2] = 1
+    save_local_shard_arrays(
+        shard_dir / "shard_000001.zarr",
+        arrs=samples_to_arrays([full]),
+        meta=ShardMeta(
+            positions=1,
+            policy_encoding="az_4672",
+            policy_size=POLICY_SIZE,
+        ),
+    )
+
+    def unexpected_decode(
+        _self: GameAwareEpochBuffer, _record: object,
+    ) -> dict[str, np.ndarray]:
+        raise AssertionError("policy mismatch must fail before a full decode")
+
+    monkeypatch.setattr(GameAwareEpochBuffer, "_load_one", unexpected_decode)
+    with pytest.raises(ValueError, match=r"mixes policy widths \[1858, 4672\]"):
+        GameAwareEpochBuffer(
+            shard_dir=shard_dir,
+            batch_size=2,
+            seed=0,
+            input_planes=175,
+            input_history_encoding="legacy",
+            history_rep_fix=False,
+            mirror_augmentation=False,
+            plan_workers=1,
+            load_workers=1,
+        )
+
+
+def test_mirror_augmentation_is_preflighted_in_working_set(tmp_path: Path) -> None:
+    shard_dir = _write(
+        tmp_path / "replay",
+        [[(game, game) for game in range(4)]],
+    )
+    plain = _open(shard_dir, batch_size=4, mirror_augmentation=False)
+    mirrored = _open(shard_dir, batch_size=4, mirror_augmentation=True)
+
+    assert mirrored.plan.peak_working_set_bytes > plain.plan.peak_working_set_bytes
+    assert mirrored.plan.plan_sha256 == plain.plan.plan_sha256
+    assert mirrored.plan.mirror_augmentation is True
+    assert mirrored.plan.mirror_working_set_batch_copies == 7
+    too_small = mirrored.plan.peak_working_set_bytes - 1
+    with pytest.raises(ValueError, match="materialization"):
+        _open(
+            shard_dir,
+            batch_size=4,
+            mirror_augmentation=True,
+            max_working_set_bytes=too_small,
+        )

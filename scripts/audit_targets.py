@@ -1368,6 +1368,171 @@ def profiles_for_audit(
     return profiles, requested
 
 
+# The CLI-SOURCED search knobs that are not recoverable from anything else a
+# report carries. `--config` does not pin them: `--vloss-weight`, `--vloss-mode`
+# and `--target-batch` are CLI-only (the script never reads
+# `gumbel_vloss_weight` / `gumbel_target_batch` from the yaml), `--batch-size` /
+# `--sims` / `--rl-sims` override or select what the config would have said, and
+# `--policy-temp` / `--gumbel-topk` reshape the search with no config source at
+# all. So a banked report made without them is not known-wrong, it is UNKNOWN —
+# which is the one state a ruler must never be in.
+# ⚑ THIS IS NOT THE WHOLE SEARCH. The CONFIG-sourced knobs are outside this set
+# and are still unrecorded; `search_param_stamp`'s docstring names each one.
+# ⚑ `vloss_weight` / `target_batch` are SPLIT per profile, following the
+# `sims`/`rl_sims` and `play_topk`/`rl_topk` convention directly above, because
+# the two profiles genuinely disagree now. `--vloss-weight` and `--target-batch`
+# default to None = "inherit production", and `build_search_profiles` resolves
+# that asymmetrically ON PURPOSE: the RL rows take production's value (1 / the
+# yaml's target batch) while the PLAY row stays at 0, because row (b) is a
+# standing ruler with banked readings that must not move silently. A single
+# stamped field cannot describe both, and the one it would report is wrong for
+# whichever profile it is not describing — a value accepted and then silently
+# misrecorded, in the artifact every later reading is joined against.
+SEARCH_PARAM_FIELDS: tuple[str, ...] = (
+    "play_vloss_weight", "rl_vloss_weight", "vloss_mode",
+    "play_target_batch", "rl_target_batch", "batch_size",
+    "sims", "rl_sims", "fast_sims",
+    "play_topk", "rl_topk",
+    "play_policy_temp", "rl_policy_temp",
+    "gumbel_training_rows",
+)
+
+
+def realized_gumbel_value(
+    profile: _SearchProfile, field: str, fallback: float,
+) -> float:
+    """What ``_build`` will actually put in this profile's ``GumbelConfig``.
+
+    ``--gumbel k=v`` is applied by ``dataclasses.replace`` on the BUILT config,
+    i.e. AFTER the profile's own columns, so ``--gumbel simulations=300`` runs
+    the search at 300 while ``profile.sims`` still reads 256. Stamping the
+    profile column there would print a sim count nothing was searched at and
+    look like provenance while being false — the same failure this stamp exists
+    to end, one level down.
+
+    Last write wins, because ``_build`` collects the overrides into a dict
+    comprehension and a repeated key resolves the same way.
+    """
+    value = fallback
+    for key, override in profile.overrides:
+        if key == field:
+            value = override
+    return float(value)
+
+
+def search_param_stamp(
+    args: argparse.Namespace, *, profiles: dict[str, _SearchProfile],
+) -> dict[str, float | bool]:
+    """The search-parameter provenance carried by BOTH the report and the dump.
+
+    One function, two consumers, so the header and the dump cannot drift apart
+    or from the search the run actually ran — the same reasoning that makes
+    ``profiles_for_audit`` a function rather than a stretch of ``main()``.
+
+    Everything sim/topk/temp-shaped is read off the PROFILES, never off
+    ``args``, because three separate things move those between the flag and the
+    search: ``--rl-sims 0`` is a sentinel meaning "use the config's
+    ``mcts_simulations``", ``--gumbel-topk`` defaults to the PLAY table rather
+    than to a literal, and ``--gumbel k=v`` rewrites the built config outright.
+    A stamp that echoed the flag would be a false record in all three cases.
+
+    ⚑ EVERY KNOB THIS STAMP COVERS IS STAMPED PER PROFILE — and the covered set
+    is SMALLER THAN "the search"; see the gaps below. ``--gumbel`` reaches the
+    PLAY row only unless ``--gumbel-training-rows`` is passed, so a single
+    unqualified column is FALSE for whichever rows the override missed. That is
+    not hypothetical: a single ``policy_temp`` column read off the PLAY profile
+    gave BYTE-IDENTICAL provenance to two runs whose ``cand.train`` differed by
+    −9.66 cp [−18.07, −3.00] under ``paired_compare`` (independent review of PR
+    #434, executed on a 6-position audit). ``play_*``/``rl_*`` pairs, and
+    ``fast_sims`` for row (e), are what make those two runs distinguishable.
+
+    ⚑⚑ KNOWN GAPS — DO NOT READ THIS STAMP AS "THE SEARCH". The knobs sourced
+    from ``--config`` rather than the CLI are profile-varying and are NOT here:
+
+    * ``gumbel_c_scale`` — ``build_search_profiles`` reads it for the RL rows
+      while PLAY takes ``PLAY_SEARCH_DEFAULTS``, so the two rows genuinely
+      differ on it and NEITHER value is recorded. MEASURED: two runs differing
+      only in the config's ``gumbel_c_scale`` produce a differing ``cand.train``
+      and byte-identical dump provenance (same review).
+    * ``volatility_q_scale`` / ``volatility_fpu`` / ``volatility_anchor`` — same
+      shape, and they additionally decide whether a row takes the C runner at
+      all, which is what can make ``vloss_weight`` / ``vloss_mode`` /
+      ``target_batch`` above inapplicable to that row while still stamped.
+    * ``syzygy_in_search`` / ``syzygy_path`` — the audited search probes
+      tablebases when the config says so.
+
+    The header records the config PATH, and that is a WEAK record: the yaml is
+    mutable and re-read every run, so a path does not pin the values it held.
+    Closing these means stamping the REALIZED ``GumbelConfig`` per profile,
+    which has to happen next to the cfgs in ``_net_candidates`` rather than
+    here; that is a follow-up, and until it lands this list is the boundary.
+
+    ⚑ ``--seed`` is NOT a gap. ``_build`` fixes ``add_noise=False`` and
+    ``temperature=0.0``, and ``gumbel.py`` computes ``scale = gumbel_scale if
+    add_noise else 0.0``, so the perturbation is identically zero and two seeds
+    are bit-identical. Checked rather than assumed, because "the seed is in the
+    dump filename" is exactly the kind of thing that gets asserted and is false.
+
+    ⚑ ``gumbel_training_rows`` IS ITSELF A STAMPED FIELD, and it is what closes
+    the same hole for every override with no dedicated column. ``--gumbel
+    halving_div=4`` with and without the flag are materially different searches
+    that serialize the same ``gumbel_overrides``; only the scope flag separates
+    them. Adding a knob here without asking "does this vary per profile, and is
+    its SCOPE recorded" re-opens the hole this stamp exists to close.
+    """
+    play, train = profiles["search"], profiles["train"]
+    fast = profiles["train_fast"]
+    return {
+      # Read off the RESOLVED profiles, never off `args`. Both flags default to
+      # None ("inherit production"), so `int(args.vloss_weight)` raises
+      # TypeError on an ordinary invocation — and coercing the None to 0 to
+      # dodge that would stamp 0 onto RL rows that searched production's 1.
+      # Same rule the `sims` columns below already follow: stamp what the
+      # search ran, not what the operator typed.
+        "play_vloss_weight": int(play.vloss_weight),
+        "rl_vloss_weight": int(train.vloss_weight),
+        "vloss_mode": int(args.vloss_mode),
+        "play_target_batch": int(play.target_batch),
+        "rl_target_batch": int(train.target_batch),
+        "batch_size": int(args.batch_size),
+        "sims": int(realized_gumbel_value(play, "simulations", play.sims)),
+        "rl_sims": int(realized_gumbel_value(train, "simulations", train.sims)),
+        "fast_sims": int(realized_gumbel_value(fast, "simulations", fast.sims)),
+      # train and train_fast are built by the same `_rl` closure and take the
+      # same overrides, so one column speaks for both; only `simulations`
+      # differs between them, which is why `fast_sims` is the lone extra.
+        "play_topk": int(realized_gumbel_value(play, "topk", play.topk)),
+        "rl_topk": int(realized_gumbel_value(train, "topk", train.topk)),
+        "play_policy_temp": realized_gumbel_value(
+            play, "policy_temp", args.policy_temp,
+        ),
+        "rl_policy_temp": realized_gumbel_value(
+            train, "policy_temp", args.policy_temp,
+        ),
+        "gumbel_training_rows": bool(args.gumbel_training_rows),
+    }
+
+
+def format_search_params(
+    stamp: Mapping[str, float | bool],
+    *,
+    gumbel_overrides: tuple[tuple[str, float], ...] = (),
+) -> str:
+    """One greppable ``k=v`` line for the report header.
+
+    ``gumbel_overrides`` rides on the end rather than being folded in, because
+    the two are different objects: the stamp is the fixed set every run has, the
+    overrides are whatever else the operator reached into. Folding them in would
+    make the line's key set vary run to run.
+    """
+    line = " ".join(f"{k}={v}" for k, v in stamp.items())
+    if gumbel_overrides:
+        line += " gumbel_overrides=" + ",".join(
+            f"{k}={v}" for k, v in gumbel_overrides
+        )
+    return line
+
+
 def _wdl_softmax(logits: np.ndarray) -> np.ndarray:
     """Row-wise softmax of raw WDL logits, as `network_turn.py` does.
 
@@ -2309,7 +2474,15 @@ def main() -> None:
     ap.add_argument("--batch-size", type=int, default=256,
                     help="net forward batch. Raw policy regret is BATCH-SIZE "
                          "DEPENDENT (~0.8 cp between 64 and 256); pin it across "
-                         "every arm of a comparison. Echoed in the report header.")
+                         "every arm of a comparison. Echoed in the report header. "
+                         "⚑ IT IS ALSO BOARDS-PER-SEARCH-CALL, which is a SEARCH "
+                         "SHAPE, not just a throughput knob: it sets how many trees "
+                         "share one leaf-accumulation batch (see --target-batch), and "
+                         "at >= 64 boards the C runner additionally takes the 2-group "
+                         "eval pipeline (`_use_pipeline`, mcts/gumbel_c.py) that "
+                         "production distributed selfplay never reaches, because "
+                         "SlotInferenceClient has no evaluate_encoded_async. "
+                         "Production runs ~1 board per call.")
     ap.add_argument("--input-encoding", choices=INPUT_ENCODINGS,
                     default=INPUT_ENCODING_DEFAULT,
                     help="input encoding for row (a), the net's raw policy. "
@@ -2324,7 +2497,11 @@ def main() -> None:
                     help="matched-rows index for --input-encoding stored "
                          "(default: <audit-set>.matched_rows.npz); built by "
                          "scripts/match_audit_rows.py, not checked in")
-    ap.add_argument("--sims", type=int, default=256)
+    ap.add_argument("--sims", type=int, default=256,
+                    help="sim budget for the PLAY row (b) only. The training rows "
+                         "(d)/(e) follow the config's mcts_simulations / "
+                         "fast_simulations unless --rl-sims overrides them. Recorded "
+                         "in the report header and the per-position dump.")
     ap.add_argument("--allow-stale-config", action="store_true",
                     help="proceed when --config disagrees with the live production "
                          "yaml on a search key. For deliberately auditing a historical "
@@ -2406,7 +2583,9 @@ def main() -> None:
     ap.add_argument("--vloss-mode", type=int, default=0, choices=(0, 1),
                     help="How an in-flight walker is VALUED when --vloss-weight > 0. "
                          "0 = LEGACY, the parallel-PUCT construct: the pending visit is "
-                         "scored as a LOSS, biasing the child down. 1 = VIRTUAL_MEAN: it "
+                         "scored as a LOSS, biasing the child down. 0 is also what "
+                         "PRODUCTION runs — selfplay never passes vloss_mode, so the C "
+                         "runner's LEGACY default stands. 1 = VIRTUAL_MEAN: it "
                          "is valued at the child's existing mean, so the visit count "
                          "moves and the estimate does not. "
                          "*** 1 CURRENTLY RAISES: tree_gumbel_select_child mirrors "
@@ -2434,7 +2613,9 @@ def main() -> None:
                          "--vloss-weight: those buy ~60%% more distinct nodes per nominal "
                          "sim, so run the production arm at the matched node count to "
                          "separate 'less duplication' from 'more search'. Does not touch "
-                         "the PLAY row (--sims).")
+                         "the PLAY row (--sims). 0 is a sentinel meaning 'use the "
+                         "config'; the report header and the per-position dump record "
+                         "the RESOLVED value, never the sentinel.")
     ap.add_argument("--max-positions", type=int, default=0,
                     help=">0 limits positions (smoke runs)")
     ap.add_argument("--blunder-taus", type=str, default=None,
@@ -2486,6 +2667,21 @@ def main() -> None:
   # kept -- `profiles_for_audit` re-derives it from `args` below, so there is no
   # variable in `main()` that a later edit can forget to forward.
     parse_gumbel_overrides(args.gumbel)
+  # ⚑ THE DEDICATED FLAG GETS THE SAME BAND AS THE OVERRIDE — but NOT HERE, and
+  # this comment is placed to stop the next reader concluding it is unguarded.
+  # `--policy-temp` is checked by `_refuse_dead_search_cfg` inside
+  # `build_profile_search_shape`, on the ASSEMBLED GumbelConfig, which is the
+  # object `_net_candidates` will actually search with. That is later than this
+  # parse-time block: after `load_audit_set` and after the checkpoint load. It
+  # is the right place anyway — the band is validated once, on the config the
+  # search receives, sharing `validate_gumbel_config` with every other caller
+  # rather than keeping a second copy of the band in this file.
+  #
+  # The reason the check must exist at all, kept because it is the thing that
+  # would otherwise be rediscovered the hard way: `apply_policy_temp` silently
+  # swallows an out-of-band value, so the audit scores the DEFAULT prior while
+  # the stamp prints the operator's number — provenance that is false, which
+  # this file's own thesis says is worse than provenance that is missing.
     if args.dump_distributions and args.dump_per_position is None:
         raise SystemExit(
             "--dump-distributions needs --dump-per-position (it adds a field "
@@ -2493,12 +2689,15 @@ def main() -> None:
         )
 
   # Reject at PARSE time, not deep in the run. `_net_candidates` only forwards
-  # vloss_mode when vloss_weight > 0, and this script never prints or records
-  # vloss_mode, so `--vloss-mode 1` at the default `--vloss-weight 0` used to be
-  # accepted, dropped, and leave no trace -- the exact "value accepted and then
-  # silently ignored" pattern the rest of this PR removes, sitting in the flag
-  # it just re-documented. With a weight the search DOES raise, but only after
-  # the audit set, the checkpoint and the evaluator have loaded. Failing here
+  # vloss_mode when vloss_weight > 0, so `--vloss-mode 1` at the default
+  # `--vloss-weight 0` used to be accepted, dropped, and leave no trace -- the
+  # exact "value accepted and then silently ignored" pattern, sitting in the flag
+  # it had just re-documented. (`search_param_stamp` now records the requested
+  # mode in the header and the dump, so it no longer leaves NO trace -- but a
+  # recorded value that the search dropped is still the wrong outcome, and this
+  # guard is what makes the recorded mode the one the search ran.)
+  # With a weight the search DOES raise, but only after the audit set, the
+  # checkpoint and the evaluator have loaded. Failing here
   # makes the help text true for every flag combination and the failure cheap.
   # Local import: this module keeps the mcts/C-extension import lazy.
     from chess_anti_engine.mcts.gumbel_c import VLOSS_MODE_VIRTUAL_MEAN
@@ -2512,6 +2711,26 @@ def main() -> None:
             "2026-08-03, F4). Comparing the two constructs through it would be a "
             "verdict off a broken instrument. Re-enable in the commit that mirrors "
             "the C parent branch."
+        )
+
+  # Same shape, and it only became a defect once the value was recorded:
+  # `_net_candidates` forwards the weight under `if vloss_weight > 0`, so a
+  # NEGATIVE weight is dropped exactly like `--vloss-mode 1` at weight 0 was --
+  # and the stamp would now print it in the header of a report whose search ran
+  # at 0. Refuse rather than stamp a value the search discarded.
+  # ⚑ `is not None` FIRST. `--vloss-weight` defaults to None ("inherit whatever
+  # `gumbel_vloss_weight` the resolved production config sets"), not to the
+  # literal 0 it used to, so a bare `int(args.vloss_weight)` raises TypeError on
+  # EVERY ordinary invocation. The None path is not unguarded: it never reaches
+  # the runner as an operator value at all — `build_search_profiles` resolves it
+  # from the production shape and `_assert_production_shape` compares the result.
+    if args.vloss_weight is not None and int(args.vloss_weight) < 0:
+        raise SystemExit(
+            f"--vloss-weight {args.vloss_weight} is refused: the C runner is "
+            "only handed a weight when it is > 0, so a negative value is "
+            "silently dropped and the search runs at 0 — while the report "
+            "header and the per-position dump would record your number. Pass 0 "
+            "for no virtual loss, or a positive weight."
         )
 
     if args.sf_soft_nodes is None:
@@ -2587,8 +2806,20 @@ def main() -> None:
     full_share = float(flat.get("playout_cap_fraction", 1.0))
     profiles, gumbel_overrides = profiles_for_audit(args, flat)
     rl_c_scale = profiles["train"].c_scale
-    rl_sims = profiles["train"].sims
-    rl_fast_sims = profiles["train_fast"].sims
+  # Built ONCE, here, and handed to both the report header and the per-position
+  # dump. Building it twice is how a stamp starts disagreeing with the run.
+    search_params = search_param_stamp(args, profiles=profiles)
+  # ⚑ READ THE SIM COUNTS OFF THE STAMP, never off `profiles[...].sims` or
+  # `args.sims`. `--gumbel simulations=N` lands AFTER the profile columns, so
+  # the columns are pre-override: at `--sims 8 --gumbel simulations=17
+  # --gumbel-training-rows` all three rows searched at 17 while this header line
+  # printed "PLAY 8 sims / RL train 8 full + 32 fast" one line above a stamp
+  # reading 17 (independent review of PR #434, executed). A report that
+  # contradicts itself is worse than one that omits — and the WRONG line is the
+  # one an operator greps.
+    play_sims_note = search_params["sims"]
+    rl_sims = search_params["rl_sims"]
+    rl_fast_sims = search_params["fast_sims"]
     for name, prof in profiles.items():
         print(
             f"[audit] {_CANDIDATE_NAMES[name]}: {prof.label} — "
@@ -2628,6 +2859,11 @@ def main() -> None:
             "search at the audit's fixed settings', not as UCI play strength.",
             flush=True,
         )
+    print(
+        "[audit] search params: "
+        f"{format_search_params(search_params, gumbel_overrides=gumbel_overrides)}",
+        flush=True,
+    )
 
   # Production probes tablebases inside the search; the audited target has to
   # as well or the endgame bucket describes a search production never runs.
@@ -2766,7 +3002,12 @@ def main() -> None:
                         None if c == "sf_soft" else "fen_only")
                     for c in cands
                 },
-                "batch_size": int(args.batch_size),
+                # The SEARCH the row was produced by: --vloss-weight /
+                # --vloss-mode / --target-batch are CLI-only and unrecoverable
+                # from --config. `batch_size` lives in here rather than being
+                # spelled out beside it, so the header and the dump cannot
+                # disagree about it.
+                **search_params,
                 # ⚑ THE RULER STAMPS: rows (d)/(e)'s realized search shape (per
                 # TRAINING ROW, read off the shape the runner was ACTUALLY
                 # handed and never off the pre-override `_SearchProfile`),
@@ -2912,9 +3153,18 @@ def main() -> None:
         f"ITS RECORDS — do not put row (a) from a `stored` run in a table with "
         f"row (a) from a `fen_only` run.\n"
         f"- net: {net.label}\n"
-        f"- search: PLAY {args.sims} sims / RL train {rl_sims} full + {rl_fast_sims} fast "
+        f"- search: PLAY {play_sims_note} sims / RL train {rl_sims} full + {rl_fast_sims} fast "
         f"(playout_cap_fraction {full_share}); shallow SF: {args.sf_soft_nodes} nodes "
-        f"MultiPV {args.sf_soft_multipv}; config: {args.config}\n\n"
+        f"MultiPV {args.sf_soft_multipv}; config: {args.config}\n"
+      # The search params, greppable, in one line. They are CLI-only: --config
+      # pins none of vloss_weight / vloss_mode / target_batch, so a report
+      # without this line cannot be traced to the search that produced it.
+      # ⚑ vloss_weight=0 is NOT production (the yaml runs 1) — see the flag's help.
+        f"- search params: "
+        f"{format_search_params(search_params, gumbel_overrides=gumbel_overrides)} "
+        f"(vloss_weight/vloss_mode/target_batch have no --config source at all; "
+        f"the sims/topk/policy_temp entries are the REALIZED values, after the "
+        f"--rl-sims sentinel and any --gumbel override)\n\n"
         f"## Headline\n\n"
         f"- **production TRAINING target** expected regret (overall): {train_note} vs "
         f"SF-soft-target {'—' if headline_sf is None else f'{headline_sf[0]:.1f} cp'} — "

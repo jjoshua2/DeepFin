@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from chess_anti_engine.replay import disk_buffer as disk_buffer_module
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer, _concat_sparse_batches
@@ -45,6 +46,33 @@ def _arrays(policy_size: int, n: int = 1) -> dict[str, np.ndarray]:
         "priority": np.ones((n,), dtype=np.float32),
         "has_policy": np.ones((n,), dtype=np.uint8),
     }
+
+
+def test_concat_skips_uniformly_absent_optional_fields_before_allocating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_default(*_args: object, **_kwargs: object) -> np.ndarray:
+        raise AssertionError("uniformly absent optional field allocated a default")
+
+    monkeypatch.setattr(
+        disk_buffer_module, "zeros_for_storage_field", unexpected_default,
+    )
+    out = _concat_sparse_batches([_arrays(4672, n=2), _arrays(4672, n=3)])
+
+    assert set(out) == {
+        "x", "policy_target", "wdl_target", "priority", "has_policy",
+    }
+    assert out["x"].shape[0] == 5
+
+
+def test_concat_preserves_legacy_network_turn_default_per_chunk() -> None:
+    tagged = _arrays(4672)
+    tagged["is_network_turn"] = np.zeros(1, dtype=np.uint8)
+    legacy = _arrays(4672)
+
+    out = _concat_sparse_batches([tagged, legacy])
+
+    assert out["is_network_turn"].tolist() == [0, 1]
 
 
 def test_take_write_prefix_preserves_scalar_chunk_fields(tmp_path) -> None:

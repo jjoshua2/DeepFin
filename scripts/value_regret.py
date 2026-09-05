@@ -333,8 +333,11 @@ def main() -> None:
                          "matched stored parent row. ⚑ DIFFERENT RULERS — never mix "
                          "the two in one table, trend or threshold.")
     ap.add_argument("--matched-rows", type=Path, default=None,
-                    help="matched-rows index for --input-encoding stored "
-                         "(default: <audit-set>.matched_rows.npz). Built by "
+                    help="matched-rows index for --input-encoding stored, or "
+                         "with --dump-per-position to attach conservative "
+                         "game_cluster_id for a clustered paired bootstrap. "
+                         "Stored-mode default: "
+                         "<audit-set>.matched_rows.npz. Built by "
                          "scripts/match_audit_rows.py; not checked in.")
     ap.add_argument("--pos-chunk", type=int, default=128,
                     help="positions buffered per forward pass group (bounds RAM)")
@@ -384,6 +387,16 @@ def main() -> None:
     )
 
     encoding = normalize_input_encoding(args.input_encoding)
+    if (
+        encoding != "stored"
+        and args.matched_rows is not None
+        and args.dump_per_position is None
+    ):
+        raise SystemExit(
+            "--matched-rows with fen_only supplies game_cluster_id to "
+            "--dump-per-position; without a dump it would be accepted but "
+            "ignored"
+        )
     # Every metric line below carries this tag. The two knobs in it each move
     # the number by more than several effects this ruler has been asked to
     # judge, so a figure that does not name them cannot be compared to anything.
@@ -416,25 +429,65 @@ def main() -> None:
     # same argument as `audit_set`); the DIGEST is the value compared.
     # (Codex inline review, #442.)
     matched_provenance: dict[str, str] = {}
-    if encoding == "stored":
+    matched_path = (
+        args.matched_rows
+        if args.matched_rows is not None
+        else default_matched_rows_path(args.audit_set)
+        if encoding == "stored"
+        else None
+    )
+    if matched_path is not None:
         matched = MatchedAuditRows(
-            args.matched_rows or default_matched_rows_path(args.audit_set)
+            matched_path
         )
         matched_provenance = {
             MATCHED_ROWS_KEY: str(matched.path),
             MATCHED_ROWS_DIGEST_KEY: sha256_file(Path(matched.path))[:16],
         }
-        n_before = len(positions)
-        positions = [p for p in positions if p.key in matched]
-        print(f"[value-regret] input-encoding=stored: {matched.path} covers "
-              f"{matched.n_matched}/{matched.n_audit_rows} audit rows; dropped "
-              f"{n_before - len(positions)} unmatched ({len(positions)} kept). "
-              f"⚑ RULER CHANGE — these numbers are NOT comparable to fen_only ones.")
-        if not positions:
+        if encoding == "stored":
+            n_before = len(positions)
+            positions = [p for p in positions if p.key in matched]
+            print(f"[value-regret] input-encoding=stored: {matched.path} covers "
+                  f"{matched.n_matched}/{matched.n_audit_rows} audit rows; dropped "
+                  f"{n_before - len(positions)} unmatched ({len(positions)} kept). "
+                  f"⚑ RULER CHANGE — these numbers are NOT comparable to fen_only ones.")
+            if not positions:
+                raise SystemExit(
+                    "no scored position has a stored row; the matched-rows index does "
+                    "not cover this audit set"
+                )
+        else:
+            missing = [pos.key for pos in positions if pos.key not in matched]
+            if missing:
+                raise SystemExit(
+                    f"--matched-rows does not cover {len(missing)} scored "
+                    f"positions, e.g. {missing[:3]}; a clustered dump cannot "
+                    "silently omit or row-bootstrap them"
+                )
+    dump_game_clusters: dict[str, int] = {}
+    if matched is not None and args.dump_per_position:
+        # Both encodings attach the conservative source-game component when a
+        # matched index is present. Do this before value_1ply_regret:
+        # discovering a masked/legacy fill only after the GPU pass would waste
+        # the complete scoring run.
+        missing_cluster = [
+            pos.key for pos in positions
+            if not matched.has_game_cluster_id(pos.key)
+        ]
+        if missing_cluster:
             raise SystemExit(
-                "no scored position has a stored row; the matched-rows index does "
-                "not cover this audit set"
+                f"--matched-rows has no game_cluster_id for "
+                f"{len(missing_cluster)} scored positions, e.g. "
+                f"{missing_cluster[:3]}; source-game cluster resampling is "
+                "unavailable"
             )
+        dump_game_clusters = {
+            pos.key: matched.game_cluster_id(pos.key) for pos in positions
+        }
+        n_clusters = len(set(dump_game_clusters.values()))
+        print(f"[value-regret] cluster index: {matched.path} supplies "
+              f"game_cluster_id for {len(positions)} positions across "
+              f"{n_clusters} conservative source-game components")
     print(f"[value-regret] {tag} {len(positions)} positions from {args.audit_set}")
     overall, per_phase, per_position = value_1ply_regret(
         net=net, positions=positions, device=args.device,
@@ -461,6 +514,10 @@ def main() -> None:
                 {
                     "fen": pos.fen, "phase": int(pos.phase),
                     "value": None if np.isnan(r) else float(r),
+                    **(
+                        {"game_cluster_id": int(dump_game_clusters[pos.key])}
+                        if dump_game_clusters else {}
+                    ),
                     # A dump is a report: it must carry the ruler it was made
                     # with, or a downstream paired compare can silently join
                     # two different rulers.

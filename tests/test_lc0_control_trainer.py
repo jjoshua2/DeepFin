@@ -16,10 +16,41 @@ The consequence was load-bearing, not cosmetic: the control's
 So this file tests the other instrument: `LIVE_TRAINER_PIN`, the drift check,
 and the fact that the check prefers the live file over any in-tree copy — the
 same three propositions `test_lc0_control_arch.py` tests one axis over.
+
+⚑⚑ THE REFERENCE DECISION IS A TWO-WORLD CONTRACT, NOT A ONE-WORLD CLAIM. "The
+in-tree config is stale, therefore judge against the pin" was written on `main`,
+where it is true. On `ops/live-20260725` the in-tree file IS the live file, so
+the same sentence is false and the test asserting it went red for being RIGHT.
+Deleting it would give up the guard; relaxing it to "drift is truthy" would give
+up the gate, since a bare truthiness test can no longer fail once both outcomes
+are allowed. So the staleness assertion is now a classification with exactly two
+accepted states, and it is `two_world_trainer_reference_problems` that decides:
+
+* **STATE MAIN** — the in-tree config realizes trainer kwargs that differ from
+  `LIVE_TRAINER_PIN`, and the difference includes every kwarg in
+  `LIVE_ONLY_TRAINER_KWARGS`. Measured 2026-08-29 against `main`'s committed
+  `configs/pbt2_small.yaml`: **17** kwargs drift (`w_categorical`,
+  `rebuild_categorical_target`, `warmup_steps`, `sf_wdl_frac`,
+  `search_wdl_frac`, `categorical_target_params`, `sf_target_params`, `lr_T0`,
+  `lr_T_mult`, `w_sf_move`, `w_sf_own`, `w_sf_own_regret`, `w_sf_eval`,
+  `w_sf_policy_floor`, `sf_policy_floor_tau`, `sf_policy_floor_tau_top1`,
+  `sf_policy_floor_delta_cp`). The pin is the reference because the file next
+  door is behind.
+* **STATE LIVE** — the drift is EMPTY, exactly. The in-tree file IS the live
+  file, the pin is a faithful second copy of it, and `LIVE_TRAINER_PIN`'s
+  freshness test below has a real chance of catching it going stale.
+
+Anything else is a third state and FAILS: a PARTIAL catch-up — some of the
+bt4heads trainer half adopted and not the rest — means neither "the pin is the
+reference" nor "the two agree" is true, and that is precisely when a reader
+would assume one of them. ⚑ The pin remains the arbiter in both states: STATE
+LIVE is accepted because the file EQUALS the pin's world, never because a
+non-empty drift was waved through.
 """
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -43,9 +74,112 @@ REPO = Path(__file__).resolve().parent.parent
 PRODUCTION = REPO / "configs" / "pbt2_small.yaml"
 CONTROL = REPO / "configs" / "lc0_positive_control.yaml"
 
+# The bt4heads bundle's trainer half: `main` trains the categorical head at 0.0
+# and live at 1.0, with the rebuild and its 0.69/0.31 blend on, and live's warmup
+# moved to 1000. Named individually so a PARTIAL catch-up is visible instead of
+# being absorbed by a bare "the sets differ" — which, now that an empty drift is
+# also a legitimate world, is the only thing keeping this gate able to fail.
+LIVE_ONLY_TRAINER_KWARGS: tuple[str, ...] = (
+    "w_categorical", "rebuild_categorical_target", "warmup_steps",
+)
+
+# ⚑ THE WHOLE MEASURED GAP, not just its three flagship kwargs. STATE MAIN's
+# drift must EQUAL this set: requiring only the flagship three would accept a
+# 14/17 hybrid — the other kwargs caught up, the flagships not — as "stale",
+# which is exactly the partial state the two-world contract exists to refuse
+# (grok review of PR #488, finding 3; the architecture axis cannot make this
+# mistake because its MAIN state is key ABSENCE, while every trainer kwarg
+# always realizes a value, so only the drift's exact extent can discriminate).
+# Measured 2026-08-29 against `main`'s committed configs/pbt2_small.yaml — the
+# same measurement the module header cites. If a kwarg legitimately catches up
+# on `main`, re-measure and re-pin HERE with the commit, exactly as for
+# LIVE_TRAINER_PIN itself.
+# ⚑ VALUES, not just names (codex round 2 on PR #488): a key-set check reads a
+# main-world kwarg that moved to a THIRD value — neither `main`'s nor the live
+# pin's — as still-STATE-MAIN, because its name stays in the drift. So `main`'s
+# side of the gap is pinned by VALUE, and STATE MAIN means every one of these
+# kwargs realizes exactly this while the live pin says otherwise.
+MAIN_WORLD_KWARG_VALUES: dict[str, Any] = {
+    "categorical_target_params": {
+        "blend_frac": 0.0, "search_blend_frac": 0.0, "num_bins": 32,
+        "sigma": 0.04,
+    },
+    "lr_T0": 999999,
+    "lr_T_mult": 1,
+    "rebuild_categorical_target": False,
+    "search_wdl_frac": 0.2,
+    "sf_policy_floor_delta_cp": None,
+    "sf_policy_floor_tau": None,
+    "sf_policy_floor_tau_top1": None,
+    "sf_target_params": {
+        "sf_policy_temp": 0.012, "sf_policy_label_smooth": 0.01,
+        "sf_wdl_use_cp_logistic": True, "sf_wdl_cp_slope": 0.006,
+        "sf_wdl_cp_draw_width": 120.0, "sf_policy_score_mode": "wdl",
+        "sf_policy_cp_temp": 16.2,
+    },
+    "sf_wdl_frac": 0.5,
+    "w_categorical": 0.3,
+    "w_sf_eval": 0.1,
+    "w_sf_move": 0.02,
+    "w_sf_own": 0.1,
+    "w_sf_own_regret": 0.7,
+    "w_sf_policy_floor": 0.0,
+    "warmup_steps": 72,
+}
+MAIN_WORLD_DRIFT_KWARGS = frozenset(MAIN_WORLD_KWARG_VALUES)
+assert set(LIVE_ONLY_TRAINER_KWARGS) <= MAIN_WORLD_DRIFT_KWARGS
+
 
 def _flat(path: Path) -> dict[str, Any]:
     return flatten_run_config_defaults(load_yaml_file(str(path)))
+
+
+def two_world_trainer_reference_problems(drift: Mapping[str, Any]) -> list[str]:
+    """Classify an in-tree-vs-`LIVE_TRAINER_PIN` drift, and report a third state.
+
+    Empty list ⇒ the tree is in STATE MAIN (stale, drift EQUALS the measured
+    `MAIN_WORLD_DRIFT_KWARGS` gap) or STATE LIVE (drift empty). See this
+    module's header for why both are legitimate and why anything between them
+    is not. ⚑ Equality, not the flagship-three subset this used to require: a
+    drift of exactly the three `LIVE_ONLY_TRAINER_KWARGS` means the OTHER
+    fourteen caught up — a partial merge — and the old predicate read that
+    hybrid as a legitimate STATE MAIN (grok review of PR #488, finding 3).
+
+    Returned rather than asserted so each caller keeps its own reference-decision
+    message in its own module, where pytest rewrites the assertion — and so the
+    two callers cannot drift into two different definitions of "stale".
+    """
+    if not drift:
+        return []
+    caught_up = sorted(MAIN_WORLD_DRIFT_KWARGS - set(drift))
+    beyond = sorted(set(drift) - MAIN_WORLD_DRIFT_KWARGS)
+    problems = [
+        f"the in-tree production config now realizes LIVE's {key!r} while still "
+        f"drifting on {sorted(drift)}"
+        for key in caught_up
+    ]
+    problems.extend(
+        f"the in-tree production config drifts on {key!r}, which is OUTSIDE the "
+        "measured MAIN_WORLD_DRIFT_KWARGS gap — a kwarg moved on one side since "
+        "the 2026-08-29 measurement; re-measure the gap and re-pin it with the "
+        "commit"
+        for key in beyond
+    )
+    # ⚑ Each drifting kwarg must realize `main`'s RECORDED value, not merely a
+    # value different from the live pin — "drifts, but to a third value" is a
+    # third state wearing STATE MAIN's key set (codex round 2 on PR #488).
+    # `drift` values are `(control, reference)` tuples from
+    # `trainer_kwargs_drift`; the control side is the in-tree realization.
+    problems.extend(
+        f"the in-tree production config realizes {key!r} as {value[0]!r}, "
+        f"which is neither LIVE's pin nor `main`'s recorded "
+        f"{MAIN_WORLD_KWARG_VALUES[key]!r} — a third value, not STATE MAIN"
+        for key, value in sorted(drift.items())
+        if key in MAIN_WORLD_KWARG_VALUES
+        and isinstance(value, tuple) and len(value) == 2
+        and value[0] != MAIN_WORLD_KWARG_VALUES[key]
+    )
+    return problems
 
 
 def test_the_recorded_pin_still_matches_the_live_file_when_one_is_named() -> None:
@@ -82,26 +216,112 @@ def test_the_recorded_pin_still_matches_the_live_file_when_one_is_named() -> Non
 
 def test_the_pin_records_a_recipe_the_in_tree_config_does_not(
 ) -> None:
-    """⚑ The staleness the whole module rests on, ASSERTED rather than assumed.
+    """⚑ The reference decision the whole module rests on, ASSERTED not assumed.
 
-    Judging against a pin instead of the yaml sitting next to it is only
-    justified while the two disagree. Mirrors
-    `test_lc0_control_arch.py::test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks`:
-    the situation improving must BREAK this, so nobody discovers it silently.
+    Judging against a pin instead of the yaml sitting next to it is justified in
+    exactly two situations, and this test says which one the tree is in. Mirrors
+    `test_lc0_control_arch.py::test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks`
+    one axis over.
+
+    * **STATE MAIN** — the two disagree, and the disagreement covers the whole
+      bt4heads trainer half. The pin is the reference BECAUSE the file next door
+      is behind (17 kwargs, measured 2026-08-29 — see the module header).
+    * **STATE LIVE** — the two agree exactly. The in-tree file IS the file
+      production reads, the pin is a faithful copy of it, and the reference
+      decision is moot rather than wrong.
+
+    A PARTIAL catch-up is neither and fails: it means someone hand-copied part
+    of the live recipe across, so "the pin is the reference" has become a claim
+    about a file that is half-live — the state in which a reader assumes the
+    wrong one. ⚑ The relaxation this test refuses is the obvious one: allowing
+    "any non-empty drift OR none" would make the assertion a tautology, so the
+    named kwargs are what keeps it a gate that can fail.
     """
     drift = trainer_kwargs_drift(
         trainer_kwargs_signature(_flat(PRODUCTION)), LIVE_TRAINER_PIN["kwargs"],
     )
-  # The bt4heads bundle's trainer half is the load-bearing part of the gap:
-  # `main` trains the categorical head at 0.0 and live at 1.0, with the rebuild
-  # and its 0.69/0.31 blend on. Named individually so a partial catch-up is
-  # visible instead of being absorbed by a bare "the sets differ".
-    for key in ("w_categorical", "rebuild_categorical_target", "warmup_steps"):
-        assert key in drift, (
-            f"the in-tree production config now realizes LIVE's {key!r}. If "
-            "`main` has caught up on every kwarg, this module's reference "
-            "decision should be re-read rather than the assertion relaxed."
+    problems = two_world_trainer_reference_problems(drift)
+    assert not problems, (
+        "configs/pbt2_small.yaml is in NEITHER known world:\n  "
+        + "\n  ".join(problems)
+        + "\nIf `main` has caught up on every kwarg the drift goes empty and "
+        "this passes as STATE LIVE. A half-adopted recipe is the state to fix, "
+        "not the assertion — re-read this module's reference decision rather "
+        "than relaxing the named kwargs away."
+    )
+
+
+def test_a_flagship_only_hybrid_is_not_state_main() -> None:
+    """⚑ The 14/17 hybrid the old predicate waved through (grok #488, finding 3).
+
+    A partial merge that catches up every kwarg EXCEPT the flagship three
+    leaves a drift of exactly `LIVE_ONLY_TRAINER_KWARGS` — which the
+    subset-based predicate read as a legitimate STATE MAIN. STATE MAIN is the
+    MEASURED 17-kwarg gap, nothing narrower and nothing wider.
+    """
+    def _drift_at_main(keys: frozenset[str] | tuple[str, ...]) -> dict[str, tuple[Any, Any]]:
+        return {
+            key: (MAIN_WORLD_KWARG_VALUES[key], "live-pin") for key in keys
+        }
+
+    hybrid = _drift_at_main(LIVE_ONLY_TRAINER_KWARGS)
+    problems = two_world_trainer_reference_problems(hybrid)
+    assert problems, "a flagship-only drift must be a third state, not MAIN"
+    assert any("sf_wdl_frac" in p for p in problems), problems
+
+    full_gap = _drift_at_main(MAIN_WORLD_DRIFT_KWARGS)
+    assert two_world_trainer_reference_problems(full_gap) == []
+    assert two_world_trainer_reference_problems({}) == []
+
+    beyond = dict(full_gap, some_new_kwarg=("x", "y"))
+    problems = two_world_trainer_reference_problems(beyond)
+    assert any("some_new_kwarg" in p and "re-measure" in p for p in problems), problems
+
+    # The value teeth (codex round 2): the full key set with ONE kwarg at a
+    # value that is neither main's recorded one nor the live pin must fail.
+    third_value = dict(full_gap, warmup_steps=(4242, "live-pin"))
+    problems = two_world_trainer_reference_problems(third_value)
+    assert any("third value" in p and "warmup_steps" in p for p in problems), problems
+
+
+def test_the_pinned_main_gap_is_the_measured_one() -> None:
+    """`MAIN_WORLD_DRIFT_KWARGS` re-measured, not restated, when main is here.
+
+    The constant claims to BE the drift of `main`'s committed yaml against
+    `LIVE_TRAINER_PIN`. Where a git checkout with an `origin/main` ref exists,
+    recompute it; a pin nothing re-measures is a number, not a gate. Skipping
+    (shallow CI clone, no ref) says what was NOT checked.
+    """
+    import subprocess
+
+    proc = subprocess.run(
+        ["git", "show", "origin/main:configs/pbt2_small.yaml"],
+        cwd=REPO, capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        pytest.skip(
+            "origin/main is not resolvable here — MAIN_WORLD_DRIFT_KWARGS was "
+            "NOT re-measured by this run"
         )
+    import yaml as _yaml
+
+    flat = flatten_run_config_defaults(_yaml.safe_load(proc.stdout))
+    signature = trainer_kwargs_signature(flat)
+    drift = trainer_kwargs_drift(signature, LIVE_TRAINER_PIN["kwargs"])
+    assert set(drift) == set(MAIN_WORLD_DRIFT_KWARGS), (
+        f"main's measured gap moved: missing={sorted(set(MAIN_WORLD_DRIFT_KWARGS) - set(drift))} "
+        f"extra={sorted(set(drift) - set(MAIN_WORLD_DRIFT_KWARGS))}. Re-pin the "
+        "constant with the commit that moved it."
+    )
+    value_moves = {
+        key: (signature.get(key, "<absent>"), MAIN_WORLD_KWARG_VALUES[key])
+        for key in MAIN_WORLD_DRIFT_KWARGS
+        if signature.get(key, "<absent>") != MAIN_WORLD_KWARG_VALUES[key]
+    }
+    assert value_moves == {}, (
+        f"main's VALUES moved (realized, pinned): {value_moves}. Re-pin "
+        "MAIN_WORLD_KWARG_VALUES with the commit that moved them."
+    )
 
 
 def test_the_shipped_control_matches_the_pin_apart_from_the_declared_deviations() -> None:

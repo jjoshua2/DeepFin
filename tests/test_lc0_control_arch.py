@@ -1,11 +1,11 @@
 """The control must build the architecture PRODUCTION IS RUNNING.
 
-⚑⚑ THE IN-TREE `configs/pbt2_small.yaml` IS NOT THE FILE PRODUCTION READS.
-The live run reads the yaml in the LIVE working tree, on the live branch, and
-that file moves independently of whatever this branch carries. Measured
-2026-08-16 and unchanged by the bt4heads merge: in-tree 63,084,128 trainable
-params, live 61,444,448, the gap being exactly `aux_policy_head_dim: 128`,
-`categorical_head_coupled: true`, `policy_embedding_mode: linear` — which
+⚑⚑ THE IN-TREE `configs/pbt2_small.yaml` IS NOT NECESSARILY THE FILE PRODUCTION
+READS. The live run reads the yaml in the LIVE working tree, on the live branch,
+and that file moves independently of whatever a given branch carries. Measured
+2026-08-16 from `main` and unchanged by the bt4heads merge: in-tree 63,084,128
+trainable params, live 61,444,448, the gap being exactly `aux_policy_head_dim:
+128`, `categorical_head_coupled: true`, `policy_embedding_mode: linear` — which
 `main` has in its SCHEMA (PR #439) but not in its committed production yaml.
 
 So this file tests the OTHER instrument: the pin, the drift check, and the
@@ -19,11 +19,25 @@ the flattener to RAISE and now requires it to build the pinned 61,444,448, and
 to be REFUSED and now requires it to be accepted — while still proving that
 dropping any one bt4heads key is refused, so the gate can still fail.
 
-`test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks` was NOT
-inverted, because its premise did not change: `main`'s production yaml is still
-stale. That test is the recorded justification for
-`tests/test_lc0_control_config.py` judging the architecture against the pin
-instead of against the file sitting next to it.
+⚑⚑ `test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks` IS NOW A
+TWO-WORLD CONTRACT, for the third time this file has had to learn the same
+lesson. It was written on `main`, where "the in-tree production yaml is stale by
+exactly these three keys" is a fact; on `ops/live-20260725` the in-tree yaml IS
+the live yaml, the same sentence is false, and the test went red for being
+right. The accepted states are now named:
+
+* **STATE MAIN** — the in-tree `model:` section carries NONE of
+  `LIVE_ONLY_MODEL_KEYS`. The pin is the reference because the file next door is
+  behind.
+* **STATE LIVE** — the in-tree `model:` section equals `LIVE_ARCH_PIN["model"]`
+  key for key and value for value. The file next door IS the live file; the pin
+  is a faithful second copy of it.
+
+A PARTIAL bundle fails, and that is the point: it is the only state in which
+`tests/test_lc0_control_config.py`'s "judge the architecture against the pin"
+would read as justified while describing a file that is half-live. ⚑ The pin
+stays the arbiter in both worlds — STATE LIVE is accepted because the file
+EQUALS the pin, never because a mismatch was read as progress.
 """
 from __future__ import annotations
 
@@ -108,27 +122,66 @@ def test_this_tree_builds_the_pinned_live_architecture() -> None:
 
 
 def test_the_pin_names_the_bt4heads_keys_the_in_tree_config_lacks() -> None:
-    """⚑⚑ NOT INVERTED — ITS PREMISE DID NOT CHANGE, AND IT IS LOAD-BEARING.
+    """⚑⚑ THE TWO-WORLD FORM. IT IS THE LOAD-BEARING TEST OF THIS FILE.
 
     PR #439 gave ``main`` the SCHEMA for the bt4heads keys; it did not put them
-    in ``main``'s committed ``configs/pbt2_small.yaml``, and ``main`` has
-    committed nothing to that file since the live branch diverged. So the
-    in-tree production config is stale by exactly these three keys, and this
-    test is the RECORDED REASON that
+    in ``main``'s committed ``configs/pbt2_small.yaml``. The live branch's copy
+    of that same path IS the live file and carries them. So "the in-tree config
+    lacks these three keys" is branch-dependent, and asserting it unconditionally
+    asserts which branch the checkout is on rather than anything about the
+    reference decision it exists to justify.
+
+    This is the RECORDED REASON that
     ``tests/test_lc0_control_config.py::test_architecture_is_identical_to_production``
     judges against ``LIVE_ARCH_PIN`` rather than against the yaml sitting next
-    to it. When someone syncs the in-tree copy, this fails — and that failure
-    is the prompt to revisit that reference decision, not to edit this line.
+    to it, and that reason holds in exactly two states:
+
+    * **STATE MAIN** — none of the three keys is in the in-tree ``model:``
+      section. The pin is the reference because the file next door is behind.
+    * **STATE LIVE** — the in-tree ``model:`` section EQUALS the pin, whole:
+      same keys, same values. Checked across the entire section rather than the
+      three bt4heads keys, because "carries the bundle" and "is the file the pin
+      was cut from" are different claims and only the second one licenses
+      calling the in-tree copy faithful.
+
+    Anything in between fails and names the key. ⚑ Do not fix such a failure by
+    editing this line: a half-adopted bundle means the tree is claiming a
+    reference it does not have, and the fix is in the yaml or the pin.
     """
     in_tree = model_section(_raw(PRODUCTION))
+    pinned = dict(LIVE_ARCH_PIN["model"])
     for key in LIVE_ONLY_MODEL_KEYS:
-        assert key in LIVE_ARCH_PIN["model"], f"the pin lost {key}"
-        assert key not in in_tree, (
-            f"{key} is now in the in-tree production config, which was stale by "
-            "exactly the bt4heads keys. Re-check whether the in-tree copy is a "
-            "faithful reference now, regenerate the pin, and revisit the "
-            "reference decision in tests/test_lc0_control_config.py"
-        )
+        assert key in pinned, f"the pin lost {key}"
+
+    carried = sorted(key for key in LIVE_ONLY_MODEL_KEYS if key in in_tree)
+    if not carried:
+        return  # STATE MAIN, the state this test was written in.
+
+    absent = sorted(set(LIVE_ONLY_MODEL_KEYS) - set(in_tree))
+    assert not absent, (
+        f"the in-tree production config carries {carried} of the bt4heads "
+        f"bundle but not {absent}. A PARTIAL bundle is neither `main`'s world "
+        "nor LIVE's: it builds a net nothing has measured, while "
+        "tests/test_lc0_control_config.py goes on describing the file as "
+        "known-stale. Finish the sync or drop the partial keys."
+    )
+
+  # Not `model_section_drift`: its lines are labelled control=/live=, and both
+  # sides here are references. A mislabelled diff is worse than no diff.
+    drift = [
+        f"{key}: in_tree={in_tree.get(key, '<absent>')!r} "
+        f"pin={pinned.get(key, '<absent>')!r}"
+        for key in sorted(set(in_tree) | set(pinned))
+        if in_tree.get(key, "<absent>") != pinned.get(key, "<absent>")
+    ]
+    assert drift == [], (
+        "the in-tree production config carries the whole bt4heads bundle, so it "
+        "is claiming to BE the live file — but it does not equal LIVE_ARCH_PIN:"
+        "\n  " + "\n  ".join(drift) + "\n"
+        "Regenerate the pin with scripts/lc0_control_arch_pin.py --live-config "
+        "<live yaml>, then revisit the reference decision in "
+        "tests/test_lc0_control_config.py."
+    )
 
 
 def test_the_control_config_matches_the_recorded_pin(

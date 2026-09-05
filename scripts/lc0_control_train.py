@@ -139,10 +139,18 @@ VERDICT.
 
 Usage
 -----
+    # Historical replacement-sampled control:
     PYTHONPATH=. python3 scripts/lc0_control_train.py \\
         --config configs/lc0_positive_control.yaml \\
         --shards <converted-dir> [<converted-dir> ...] \\
         --steps 20 --out-dir <run-dir>
+
+    # Frozen-corpus training (every row exactly once):
+    PYTHONPATH=. python3 scripts/lc0_control_train.py \\
+        --config configs/lc0_positive_control.yaml \\
+        --shards <converted-dir> [<converted-dir> ...] \\
+        --sampling-mode game_epoch --steps 0 --out-dir <run-dir> \\
+        --allow-invalid-control
 """
 from __future__ import annotations
 
@@ -151,6 +159,7 @@ import dataclasses
 import hashlib
 import json
 import sys
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
@@ -158,6 +167,7 @@ from typing import Any, cast
 
 import numpy as np
 import torch
+import zarr
 
 from chess_anti_engine.eval.lc0_control_arch import (
     LIVE_FILE_UNREAD as _LIVE_FILE_UNREAD,
@@ -173,8 +183,16 @@ from chess_anti_engine.eval.lc0_control_rows import (
 from chess_anti_engine.model import build_model, model_config_from_flat_config
 from chess_anti_engine.replay.buffer import ReplayBuffer
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
+from chess_anti_engine.replay.game_epoch import (
+    DEFAULT_LOAD_WORKERS as GAME_EPOCH_LOAD_WORKERS,
+    DEFAULT_MAX_WORKING_SET_BYTES as GAME_EPOCH_MAX_WORKING_SET_BYTES,
+    DEFAULT_PLAN_WORKERS as GAME_EPOCH_PLAN_WORKERS,
+    MIN_OPTIMIZER_BATCH_FILL_RATIO as GAME_EPOCH_MIN_BATCH_FILL_RATIO,
+    GameAwareEpochBuffer,
+)
 from chess_anti_engine.replay.shard import iter_shard_paths
 from chess_anti_engine.train import trainer as trainer_module
+from chess_anti_engine.train.losses import normalize_value_blend_fracs
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.eval.lc0_control_replay import (
     ControlReplayDrift,
@@ -727,6 +745,7 @@ def purity_receipt_problems(
 
 def preflight(
     cfg: dict[str, Any], shard_dirs: list[Path], *, allow_leak: bool,
+    allow_mixed_history: bool = False, allow_partial_corpus: bool = False,
 ) -> dict[str, dict[str, int]]:
     """The two LAUNCH-level value-blend guards. Returns the measured coverage.
 
@@ -803,10 +822,538 @@ def preflight(
         fail("the config is wrong for these shards:\n  " + "\n  ".join(problems))
     else:
         print("[preflight] converter run-config gate: no problems")
+
+  # ⚑ TWO SEPARATE VALUE-TARGET GATES, and the order matters for the operator
+  # rather than for correctness: the identity gate runs UNCONDITIONALLY (a mixed
+  # corpus is wrong under every blend, including the shipped one), and the
+  # blend gate is about what THIS config would add on top. Folding them into one
+  # function is what hid the mixing hazard behind the blend's early return.
+    for message in value_scheme_identity_problems(shard_dirs):
+        fail(message)
+    # ⚑ NOT downgraded by --allow-leak: mixing input histories is not a value
+    # leak, and it has its own explicit opt-in.
+    for message in history_identity_problems(
+        shard_dirs, allow_mixed_history=allow_mixed_history,
+    ):
+        raise SystemExit(f"REFUSING TO LAUNCH — {message}")
+    # ⚑ Same shape: a partial corpus is not a leak either.
+    for message in partial_corpus_problems(
+        shard_dirs, allow_partial_corpus=allow_partial_corpus,
+    ):
+        raise SystemExit(f"REFUSING TO LAUNCH — {message}")
+    for message in baked_value_blend_problems(cfg, shard_dirs):
+        fail(message)
     return {
         flag: {"labelled_rows": labelled, "rows": rows}
         for flag, (labelled, rows) in coverage.items()
     }
+
+
+#: The one ``derive_value_scheme`` stamp under which ``search_wdl`` is the bare
+#: searched root value.  Every other value scheme
+#: (``scripts/derive_corpus_targets.py``'s value round) has already blended some
+#: share of the GAME OUTCOME into that column.
+UNBAKED_VALUE_SCHEME = "search"
+
+#: The ``derive_schema`` numbers THIS code knows how to read: 1 is the original
+#: contract (``search_wdl`` is the searched root value) and 2 is the value
+#: round's baked target.
+#:
+#: ⚑⚑ THE POINT OF READING IT AT ALL.  MEASURED on this tree: `derive_schema` had
+#: no reader anywhere in the repo -- the deriver stamped it, one write-side test
+#: asserted it, and `load_shard_arrays` copied the whole attrs dict through
+#: without inspecting a single version field.  A schema number nobody reads is
+#: this repo's signature defect in its purest form, and bumping such a number
+#: protects nothing.  So the bump comes with the reader that makes it mean
+#: something on the one path the value round actually trains through.
+#:
+#: ⚑ It FAILS CLOSED on a number from the future: a schema 3 written by a later
+#: deriver is refused here rather than trained on under schema-2 assumptions,
+#: which is the whole reason a version field exists.  The duplication with
+#: ``derive_corpus_targets.DERIVE_SCHEMA*`` is deliberate -- importing that
+#: module pulls the corpus generator's import chain into a training launcher --
+#: and ``tests/test_derive_corpus_targets.py`` pins the two together, so a
+#: divergence is a failing test rather than a silently narrowed gate.
+KNOWN_DERIVE_SCHEMAS = (1, 2)
+
+#: What ``derive_value_source`` reads as when a shard does not carry it.
+#:
+#: ⚑ THE PRE-``--value-depth`` CONTRACT: every corpus written before that flag
+#: existed read its value off the scheme's own rung through the deepest phase
+#: covering each move, and stamped nothing.  So this default is what those
+#: shards HOLD, which is what keeps a legacy corpus and a freshly derived
+#: depth-scheme corpus ONE identity and every existing arm launching.
+#:
+#: ⚑ It is wrong about exactly one legacy shape -- a ``nodes-<N>`` corpus
+#: derived before the stamp, whose value really is ``phase0_only`` -- and that
+#: is accepted knowingly: no round in the ledger has ever derived one, a nodes
+#: corpus differs in its POLICY target too (a mixing hazard this gate never
+#: claimed to cover), and the alternative is refusing every legacy corpus for
+#: lack of a stamp it could not have written.
+#:
+#: ⚑ Duplicated from ``derive_corpus_targets.VALUE_SOURCE_DEEPEST`` for the same
+#: reason ``KNOWN_DERIVE_SCHEMAS`` is -- importing that module pulls the corpus
+#: generator's import chain into a training launcher -- and pinned to it by
+#: ``tests/test_derive_corpus_targets.py``, so a divergence is a failing test
+#: rather than a silently widened gate.
+UNSTAMPED_VALUE_SOURCE = "deepest_phase_covering"
+
+
+@dataclasses.dataclass(frozen=True)
+class ShardValueStamps:
+    """What ``--shards`` says about itself, read off the shards themselves."""
+
+    #: ``derive_value_scheme`` -> one example ``dir/shard`` carrying it.  An
+    #: absent stamp is recorded as :data:`UNBAKED_VALUE_SCHEME`, because that is
+    #: what every pre-value-round corpus holds.
+    schemes: dict[str, str]
+    #: ``derive_schema`` -> one example ``dir/shard`` carrying it.
+    schemas: dict[int, str]
+    #: ``derive_value_source`` -> one example ``dir/shard`` carrying it.  An
+    #: absent stamp is recorded as :data:`UNSTAMPED_VALUE_SOURCE`.
+    sources: dict[str, str]
+
+
+def read_value_stamps(shard_dirs: Sequence[Path]) -> ShardValueStamps:
+    """Read every shard's value-identity attrs.  No policy, just the reading."""
+    schemes: dict[str, str] = {}
+    schemas: dict[int, str] = {}
+    sources: dict[str, str] = {}
+    for shard_dir in shard_dirs:
+        for path in iter_shard_paths(Path(shard_dir)):
+            attrs = zarr.open_group(str(path), mode="r").attrs
+            where = f"{Path(shard_dir).name}/{path.name}"
+            scheme = str(attrs.get("derive_value_scheme", UNBAKED_VALUE_SCHEME))
+            schemes.setdefault(scheme, where)
+            # ⚑ ABSENT MEANS 1, and it has to: every shard written before the
+            # deriver stamped anything, and every `lc0_data_to_rows` corpus,
+            # holds the original contract and carries no attr at all.
+            schemas.setdefault(int(attrs.get("derive_schema", 1)), where)
+            sources.setdefault(
+                str(attrs.get("derive_value_source", UNSTAMPED_VALUE_SOURCE)),
+                where,
+            )
+    return ShardValueStamps(schemes=schemes, schemas=schemas, sources=sources)
+
+
+#: What a derived shard written before the history stamps existed holds: the
+#: deriver of that era reconstructed a bare FEN per row, so its planes are the
+#: zero-history distribution.  ⚑ Absent reads as THIS, deliberately: every
+#: pre-#497 corpus is that shape, and the gate must keep them launchable while
+#: still refusing to mix them with a history-aware one.
+UNSTAMPED_CORPUS_ROW_SCHEMA = 1
+UNSTAMPED_ZERO_HISTORY = True
+#: ``derive_corpus_targets.DERIVE_STATE_COMMITTED``, duplicated for the same
+#: reason the ``DERIVE_SCHEMA*`` constants above are (no deriver import here)
+#: and pinned by ``tests/test_derive_corpus_targets.py``.
+DERIVE_STATE_COMMITTED = "committed"
+#: The keys a shard carrying ``derive_identity_format`` MUST have: the deriver
+#: stamps them in the same commit as the rows (``_shard_identity``), so a
+#: format-marked shard missing one is a fault, never a legacy shard.
+IDENTITY_KEYS = (
+    "derive_corpus_row_schema", "derive_corpus_row_schema_counts", "zero_history",
+    "derive_history_rep_fix", "derive_state",
+)
+#: The completeness keys the same commit writes.  ⚑ REQUIRED too (Grok/Fable
+#: round 5): a marked shard missing ``derive_run_finalized`` was read as
+#: finished through the ``corpus_complete`` default -- the fail-open shape.
+COMPLETENESS_KEYS = (
+    "derive_run_finalized", "corpus_complete", "corpus_run_finished_claim",
+    "corpus_shards_adopted", "corpus_rows_claimed",
+)
+REQUIRED_MARKED_KEYS = (*IDENTITY_KEYS, *COMPLETENESS_KEYS)
+
+
+def marked_shard_problem(attrs: Mapping[str, Any]) -> str | None:
+    """Why a format-marked shard cannot be read, or ``None`` (unmarked, or
+    whole).  ONE reader for both the history and the completeness gates."""
+    if attrs.get("derive_identity_format") is None:
+        return None
+    missing = [key for key in REQUIRED_MARKED_KEYS if key not in attrs]
+    state = attrs.get("derive_state")
+    if missing or state != DERIVE_STATE_COMMITTED:
+        return (
+            f"derive_identity_format={attrs.get('derive_identity_format')!r}, "
+            f"missing {missing}, derive_state={state!r}"
+        )
+    return None
+
+
+@dataclasses.dataclass(frozen=True)
+class ShardHistoryStamps:
+    """What ``--shards`` says about the HISTORY its planes carry."""
+
+    #: ``derive_corpus_row_schema`` (an int, or ``"mixed"``) -> example shard.
+    row_schemas: dict[str, str]
+    #: ``zero_history`` -> example shard.
+    zero_history: dict[bool, str]
+    #: Shards that are mixed WITHIN themselves: stamped ``"mixed"``, or with a
+    #: ``derive_corpus_row_schema_counts`` naming more than one schema.
+    mixed_within: dict[str, str] = dataclasses.field(default_factory=dict)
+    #: Shards that carry the deriver's ``derive_identity_format`` marker and
+    #: yet lack part of their identity, or are not in the committed state.
+    #: ⚑ "Missing means legacy" applies ONLY to shards with no marker: every
+    #: pre-marker derivation was bare-FEN.  A marked shard with a missing
+    #: identity is a fault, and no opt-in admits it.
+    unidentified: dict[str, str] = dataclasses.field(default_factory=dict)
+
+    @property
+    def mixed(self) -> bool:
+        """⚑ ACROSS directories OR WITHIN a shard (Grok P2-B, round 3).
+
+        The first cut computed this as ``len(keys) > 1`` across shards only,
+        and ``str()`` absorbed the deriver's fail-closed ``"mixed"`` stamp into
+        a single key -- so one derived directory holding schema-1 AND schema-3
+        rows read as one identity and launched.
+        """
+        return (
+            len(self.row_schemas) > 1
+            or len(self.zero_history) > 1
+            or bool(self.mixed_within)
+        )
+
+
+def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
+    """Read every shard's history-identity attrs.  No policy, just the reading."""
+    row_schemas: dict[str, str] = {}
+    zero_history: dict[bool, str] = {}
+    mixed_within: dict[str, str] = {}
+    unidentified: dict[str, str] = {}
+    for shard_dir in shard_dirs:
+        for path in iter_shard_paths(Path(shard_dir)):
+            attrs = zarr.open_group(str(path), mode="r").attrs
+            where = f"{Path(shard_dir).name}/{path.name}"
+            problem = marked_shard_problem(attrs)
+            if problem is not None:
+                unidentified[where] = problem
+                continue
+            schema = str(attrs.get("derive_corpus_row_schema", UNSTAMPED_CORPUS_ROW_SCHEMA))
+            row_schemas.setdefault(schema, where)
+            zero_history.setdefault(
+                bool(attrs.get("zero_history", UNSTAMPED_ZERO_HISTORY)), where,
+            )
+            counts = dict(attrs.get("derive_corpus_row_schema_counts", {}) or {})
+            if schema == "mixed" or len(counts) > 1:
+                mixed_within[where] = (
+                    f"derive_corpus_row_schema {schema!r}, counts "
+                    f"{dict(sorted(counts.items()))}"
+                )
+    return ShardHistoryStamps(
+        row_schemas=row_schemas, zero_history=zero_history, mixed_within=mixed_within,
+        unidentified=unidentified,
+    )
+
+
+def history_identity_problems(
+    shard_dirs: Sequence[Path], *, allow_mixed_history: bool,
+) -> list[str]:
+    """⚑⚑ ONE input-history identity across ``--shards`` (Grok D3, round 2).
+
+    ``derive_corpus_targets.py`` stamps ``derive_corpus_row_schema`` and
+    ``zero_history`` on every shard, and until this reader existed nothing READ
+    them: a directory derived from schema-1 bare-FEN rows (slots 1..7 and every
+    repetition plane zero) and one derived from schema-3 windows carry the same
+    ``input_history_encoding`` and the same ``history_rep_fix``, so the replay
+    buffer's own identity merge lets them mix and the net trains on two input
+    distributions no summary names.  ``--allow-mixed-history`` is the explicit
+    opt-in, and the run's summary then records the mix.
+    """
+    stamps = read_history_stamps(shard_dirs)
+    problems: list[str] = []
+    if stamps.unidentified:
+        listed = "; ".join(f"{w} ({why})" for w, why in sorted(stamps.unidentified.items()))
+        problems.append(
+            f"--shards holds {len(stamps.unidentified)} shard(s) written by the "
+            f"identity-stamping deriver whose history identity is MISSING or "
+            f"not committed: {listed}. The deriver stamps every identity key in "
+            "the same commit as the rows, so this is a damaged or hand-edited "
+            "shard, not a legacy one, and nothing says what planes it holds. "
+            "No flag admits it: rerun the derivation.",
+        )
+    if not stamps.mixed or allow_mixed_history:
+        return problems
+    schemas = ", ".join(f"{s} (e.g. {w})" for s, w in sorted(stamps.row_schemas.items()))
+    zero = ", ".join(f"{z} (e.g. {w})" for z, w in sorted(stamps.zero_history.items()))
+    within = "".join(
+        f" Mixed WITHIN {w}: {why}." for w, why in sorted(stamps.mixed_within.items())
+    )
+    return [
+        f"--shards mixes input-history identities: derive_corpus_row_schema "
+        f"{{{schemas}}}, zero_history {{{zero}}}.{within} A zero-history shard fills "
+        "history slot 0 only; a history-aware one fills all 8 frames and the "
+        "repetition planes, and the champion flips 46.5% of its top-1 moves "
+        "between the two. One replay buffer would sample both. Train one "
+        "identity at a time, or pass --allow-mixed-history to record the mix "
+        f"deliberately. (An absent stamp reads as row schema "
+        f"{UNSTAMPED_CORPUS_ROW_SCHEMA}, zero_history {UNSTAMPED_ZERO_HISTORY}: "
+        "corpora derived before the stamps existed are the bare-FEN shape.)",
+        *problems,
+    ]
+
+
+#: A derived shard written before the deriver stamped completeness: every
+#: such shard came from a summary-record derivation, which was the only kind
+#: that existed, so absent reads as WHOLE.  ⚑ Stated, because it is the
+#: permissive default: a pre-stamp partial derivation cannot be told from a
+#: whole one here, and only the deriver's own summary of that run can.
+UNSTAMPED_CORPUS_COMPLETE = True
+
+
+def read_partial_corpus_stamps(shard_dirs: Sequence[Path]) -> dict[str, dict[str, Any]]:
+    """``{shard: its corpus_* stamps}`` for every shard stamped INCOMPLETE."""
+    incomplete: dict[str, dict[str, Any]] = {}
+    for shard_dir in shard_dirs:
+        for path in iter_shard_paths(Path(shard_dir)):
+            attrs = zarr.open_group(str(path), mode="r").attrs
+            if marked_shard_problem(attrs) is not None:
+                # Refused by name in `history_identity_problems`; never read
+                # here through a default.
+                continue
+            corpus_whole = bool(attrs.get("corpus_complete", UNSTAMPED_CORPUS_COMPLETE))
+            # ⚑ A derivation that died (or is still running) after committing
+            # this shard is a PARTIAL derived corpus too: the shard's own
+            # identity is complete, but the set of shards is not the run's.
+            finalized = attrs.get("derive_run_finalized")
+            run_whole = finalized is not False
+            if corpus_whole and run_whole:
+                continue
+            incomplete[f"{Path(shard_dir).name}/{path.name}"] = {
+                "run_finished_claim": attrs.get("corpus_run_finished_claim"),
+                "shards_adopted": attrs.get("corpus_shards_adopted"),
+                "rows_claimed": attrs.get("corpus_rows_claimed"),
+                "rows_derived": attrs.get("corpus_rows_derived"),
+                "derive_run_finalized": finalized,
+            }
+    return incomplete
+
+
+def partial_corpus_problems(
+    shard_dirs: Sequence[Path], *, allow_partial_corpus: bool,
+) -> list[str]:
+    """⚑⚑ A derived shard from a corpus that was NOT WHOLE (#498 rebase).
+
+    ``derive_corpus_targets.py`` stamps ``corpus_complete: false`` (with the
+    corpus's shard/row counts) on every shard it derives from a
+    ``manifest+progress`` read or from a ``summary.json`` that says
+    ``run_finished: false`` -- a repair run with ``--shards``/``--workers``
+    writes exactly that.  Arm B must train on the exact 5.5M champion rows; a
+    subset that launched without a word is the failure this refuses.
+    ``--allow-partial-corpus`` is the explicit opt-in, recorded in the summary.
+    """
+    incomplete = read_partial_corpus_stamps(shard_dirs)
+    if not incomplete or allow_partial_corpus:
+        return []
+    listed = "; ".join(
+        f"{where} (run_finished_claim={s['run_finished_claim']!r}, "
+        f"shards_adopted={s['shards_adopted']}, rows_claimed={s['rows_claimed']}, "
+        f"rows_derived={s['rows_derived']}, "
+        f"derive_run_finalized={s['derive_run_finalized']!r})"
+        for where, s in sorted(incomplete.items())
+    )
+    return [
+        f"--shards holds {len(incomplete)} shard(s) that are a PARTIAL corpus "
+        f"(corpus_complete: false, or derive_run_finalized: false): {listed}. "
+        "Either the generator's record was a manifest+progress read or a "
+        "summary stating run_finished: false, or the derivation that committed "
+        "the shard never finalized (still running, or died) -- so these rows "
+        "are a subset of a corpus nobody finished. Derive the finished corpus, "
+        "or pass --allow-partial-corpus to train on the subset deliberately "
+        "(recorded in summary.json under corpus.partial_corpus).",
+    ]
+
+
+def partial_corpus_record(
+    incomplete: Mapping[str, Mapping[str, Any]], *, allow_partial_corpus: bool,
+) -> dict[str, Any]:
+    """The summary's record of what the partial-corpus reader saw."""
+    return {
+        "incomplete_shards": {k: dict(v) for k, v in sorted(incomplete.items())},
+        "partial": bool(incomplete),
+        "allow_partial_corpus": bool(allow_partial_corpus),
+    }
+
+
+def history_identity_record(
+    stamps: ShardHistoryStamps, *, allow_mixed_history: bool,
+) -> dict[str, Any]:
+    """The summary's record of what the reader saw, mixed or not."""
+    return {
+        "row_schemas": sorted(stamps.row_schemas),
+        "zero_history": sorted(stamps.zero_history),
+        "mixed_within": sorted(stamps.mixed_within),
+        "unidentified": sorted(stamps.unidentified),
+        "mixed": stamps.mixed,
+        "allow_mixed_history": bool(allow_mixed_history),
+    }
+
+
+def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
+    """⚑⚑ ONE value-target identity across ``--shards``, whatever the blend is.
+
+    This is NOT the ``game_frac`` guard below and must not be folded into it.
+    That one asks "would training add the outcome to shards that already have
+    it", and under the SHIPPED blend (``sf_wdl_frac 0.0`` / ``search_wdl_frac
+    1.0``) its answer is legitimately no -- so it returns at its first branch
+    and never looks at a stamp.  MEASURED: with the shipped blend, a
+    ``--shards`` list naming a ``qz50`` directory, a ``qzsegment`` directory and
+    a legacy one passed every launch guard, and the run trained on a per-row
+    mixture of three different value targets -- a corpus that is none of the
+    preregistered arms and that no summary anywhere would describe (Codex review
+    of PR #491).
+
+    The value round's entire method is that V0/A/B/C hold the SAME positions and
+    differ only in ``search_wdl``.  A run whose buffer mixes two of them cannot
+    be attributed to either, and nothing downstream would ever notice: the rows
+    are shape-compatible, the encoding identity matches, and the buffer merges
+    them without complaint.
+
+    ⚑ An ABSENT stamp is ``search``, so a legacy corpus and a V0 corpus are ONE
+    identity and mixing them is allowed -- they hold the same thing under the
+    same contract.  That is the only default under which existing arms keep
+    launching.
+
+    ⚑⚑ THE IDENTITY IS THE PAIR ``(value scheme, value SOURCE)``, and the second
+    half is not optional.  ``derive_corpus_targets.py --value-depth`` reads the
+    searched value at a different rung from the scheme's own, so
+    ``uniform-d7`` and ``uniform-d7 --value-depth 9`` derive from ONE bank into
+    two corpora that agree on ``derive_value_scheme`` (both ``search``), on
+    ``derive_schema`` (both 1) and even on their POLICY target -- while their
+    ``search_wdl`` columns differ on every row.  Keyed on the scheme alone this
+    gate returned ``[]`` for that pair: the value round's own mixing hazard, in
+    the value round's own gate, invisible (Codex review of PR #494).  The
+    source string spells the realized depth, so the pair separates them.
+    """
+    stamps = read_value_stamps(shard_dirs)
+    problems: list[str] = []
+    unknown = sorted(s for s in stamps.schemas if s not in KNOWN_DERIVE_SCHEMAS)
+    if unknown:
+        named = ", ".join(f"{s} (e.g. {stamps.schemas[s]})" for s in unknown)
+        problems.append(
+            f"--shards carries derive_schema {named}, which this code does not "
+            f"know how to read (it understands {list(KNOWN_DERIVE_SCHEMAS)}). "
+            "The schema number changes when the MEANING of an emitted column "
+            "changes, so a newer one means search_wdl may hold something this "
+            "trainer would misread as a value it is not. Update this launcher "
+            "to the deriver that wrote these shards.",
+        )
+    if len(stamps.schemes) > 1:
+        named = ", ".join(
+            f"{scheme} (e.g. {where})" for scheme, where in sorted(stamps.schemes.items())
+        )
+        problems.append(
+            f"--shards mixes {len(stamps.schemes)} different value-target "
+            f"identities: {named}. Every row is sampled into ONE replay buffer, "
+            "so the trained value target would be a per-row mixture of these "
+            "arms rather than any one of them -- none of the preregistered "
+            "V0/A/B/C cells, and nothing that could be compared against them. "
+            "Train one --value-scheme at a time. (An absent stamp reads as "
+            f"{UNBAKED_VALUE_SCHEME!r}: legacy and V0 corpora are one identity "
+            "and may be mixed.)",
+        )
+    if len(stamps.sources) > 1:
+        named = ", ".join(
+            f"{source} (e.g. {where})" for source, where in sorted(stamps.sources.items())
+        )
+        problems.append(
+            f"--shards mixes {len(stamps.sources)} different value SOURCES: "
+            f"{named}. These corpora agree on their value scheme -- and may "
+            "agree on their policy target too -- but their search_wdl columns "
+            "were read at different depths, so every row sampled into the one "
+            "replay buffer would carry whichever teacher depth its shard "
+            "happened to come from. That is a per-row mixture of two "
+            "value-depth arms and is none of them. Train one --value-depth at "
+            f"a time. (An absent stamp reads as {UNSTAMPED_VALUE_SOURCE!r}: "
+            "corpora predating the flag are one identity with the schemes' own "
+            "read and may be mixed.)",
+        )
+    return problems
+
+
+def baked_value_blend_problems(
+    cfg: Mapping[str, Any], shard_dirs: Sequence[Path],
+) -> list[str]:
+    """⚑⚑ ``game_frac > 0`` against shards that already baked the outcome in.
+
+    ``derive_corpus_targets.py --value-scheme {qz50,qzphase,qzsegment}`` writes a
+    blend of the searched value and the game's outcome into ``search_wdl``, while
+    ``wdl_target`` still carries the RAW outcome (it is a required shard field
+    with no has-flag, so there is no way not to).  A run with ``game_frac > 0``
+    therefore mixes the outcome in a SECOND time, on top of the share the
+    derivation already chose -- producing a value target that is no arm of the
+    value round, including the one whose name is stamped on the shards it came
+    from.  Nothing else can see it: the shards are well formed, the coverage
+    gates pass, the loss converges.
+
+    ⚑ READ OFF THE SHARDS, not off a pin.  ``PRODUCTION_GAME_FRAC`` above
+    already refuses a drift in production's own blend, and that guard is the
+    reason this hazard is closed TODAY -- but it is closed by a hand-written
+    constant that is correct for production's current recipe, so the day
+    production legitimately moves to a positive ``game_frac`` and the pin is
+    refreshed, this hazard silently opens.  The shard's own
+    ``derive_value_scheme`` attr is a property of the DATA and cannot drift
+    away from it.
+
+    ⚑ Shards that carry no such attr are the pre-value-round corpora (and every
+    ``lc0_data_to_rows`` corpus), which bake nothing: absent means unbaked, and
+    that is the only default under which existing arms keep launching.
+
+    ⚑⚑ THE OUTCOME SHARE IS DERIVED, NEVER READ BY NAME.  ``game_frac`` IS NOT A
+    CONFIG KEY: ``configs/lc0_positive_control.yaml`` mentions it only in
+    comments, and the value is the COMPLEMENT that
+    ``normalize_value_blend_fracs`` computes from ``sf_wdl_frac`` and
+    ``search_wdl_frac``.  The first cut of this gate read ``cfg["game_frac"]``,
+    which is absent from every real flattened config -- so it took the ``0.0``
+    default, returned ``[]`` at its first branch, and could not fire on ANY
+    config that will ever be handed to it.  MEASURED: ``sf_wdl_frac 0.0 /
+    search_wdl_frac 0.5`` leaves 0.5 of the value target on the raw outcome and
+    the gate said ALLOWED.  A gate keyed to a name that never exists is this
+    repo's signature defect wearing the uniform of the check written to stop it,
+    and the tests could not see it because they passed literal
+    ``{"game_frac": ...}`` dicts -- a shape no config file produces.
+
+    So the share comes through the SAME function the loss uses (one
+    implementation, two callers -- that function's own docstring), which is the
+    same reason ``lc0_control_trainer.live_production_game_frac`` exists rather
+    than a constant.  ⚑ From THIS RUN's ``cfg``, not from the live pin: the
+    question here is what the arm being launched will put on the raw outcome,
+    which is exactly what a deviating arm gets wrong.
+    """
+    _, _, game_frac = normalize_value_blend_fracs(
+        float(cfg.get("sf_wdl_frac", 0.0) or 0.0),
+        float(cfg.get("search_wdl_frac", 0.0) or 0.0),
+    )
+    if game_frac <= 0.0:
+        return []
+    baked = {
+        scheme: where
+        for scheme, where in read_value_stamps(shard_dirs).schemes.items()
+        if scheme != UNBAKED_VALUE_SCHEME
+    }
+    if not baked:
+        return []
+    named = ", ".join(f"{scheme} (e.g. {where})" for scheme, where in sorted(baked.items()))
+    return [
+        f"game_frac={game_frac:.4f} would put that share of the RAW game outcome "
+        f"on top of shards whose search_wdl ALREADY blended it in: {named}. "
+        "Those shards were derived by derive_corpus_targets.py with a "
+        f"--value-scheme other than {UNBAKED_VALUE_SCHEME!r}, whose manifest "
+        "requires the outcome share to be 0 "
+        "(required_training_overrides.game_frac). "
+        # ⚑⚑ NAME THE KEYS THAT EXIST. An earlier version of this line told the
+        # operator to "set game_frac=0.0" -- and `game_frac` is not a config
+        # key, it is the complement this function has just DERIVED. Following
+        # that advice puts an unknown key in the yaml, which
+        # `flatten_run_config_defaults` raises on before the main parser is even
+        # built, so the next launch dies at startup with an error about a key
+        # this message invented (CLAUDE.md's live-yaml category (a)). A refusal
+        # that hands the operator a remedy which cannot work is worse than one
+        # that hands them none (Codex review of PR #491).
+        "FIX: there is no game_frac key to set -- raise sf_wdl_frac + "
+        "search_wdl_frac until they sum to at least 1.0, which leaves nothing "
+        "for the outcome complement; the shipped control's sf_wdl_frac: 0.0 "
+        "with search_wdl_frac: 1.0 already does. Or train "
+        f"on a --value-scheme {UNBAKED_VALUE_SCHEME} corpus.",
+    ]
 
 
 def preflight_architecture(
@@ -935,10 +1482,18 @@ class SaveMidBudgetCheckpoint:
     ``train_steps``'s CUDA-error loop is not counted twice.
     """
 
-    def __init__(self, trainer: Trainer, *, at_step: int, path: Path) -> None:
+    def __init__(
+        self,
+        trainer: Trainer,
+        *,
+        at_step: int,
+        path: Path,
+        delete_on_error: bool = False,
+    ) -> None:
         self.trainer = trainer
         self.at_step = int(at_step)
         self.path = path
+        self.delete_on_error = bool(delete_on_error)
         self.steps_done = 0
         self.saved_at_step: int | None = None
         self._original = trainer._run_optimizer_step
@@ -968,6 +1523,9 @@ class SaveMidBudgetCheckpoint:
         _exc: BaseException | None,
         _tb: TracebackType | None,
     ) -> None:
+        if _exc_type is not None and self.delete_on_error:
+            self.path.unlink(missing_ok=True)
+            self.saved_at_step = None
   # ⚑ DELETE the instance attribute rather than rebinding to the original.
   # Rebinding leaves a permanent per-instance slot holding a bound method --
   # a reference cycle, and a trainer that no longer resolves the method through
@@ -989,6 +1547,18 @@ def _metric_fields(metrics: Any, predicate: Any) -> list[tuple[str, Any]]:
         for field in sorted(dataclasses.fields(type(metrics)), key=lambda f: f.name)
         if predicate(field.name)
     ]
+
+
+def _scalar_metric_record(metrics: Any) -> dict[str, Any]:
+    """JSON-safe scalar fields from one ``Trainer.train_steps`` window."""
+    return {
+        field.name: getattr(metrics, field.name)
+        for field in dataclasses.fields(type(metrics))
+        if isinstance(
+            getattr(metrics, field.name),
+            (int, float, bool, type(None)),
+        )
+    }
 
 
 def print_realized(capture: _LossCapture, metrics: Any) -> None:
@@ -1223,7 +1793,37 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, default=Path("configs/lc0_positive_control.yaml"))
     parser.add_argument("--shards", type=Path, nargs="+", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--steps", type=int, required=True)
+    parser.add_argument(
+        "--steps", type=int, required=True,
+        help="optimizer steps. With --sampling-mode game_epoch, 0 resolves to "
+             "the exact one-epoch step count and any positive value must equal "
+             "it; the sampler never truncates or wraps a corpus.",
+    )
+    parser.add_argument(
+        "--sampling-mode", choices=("replacement", "game_epoch"),
+        default="replacement",
+        help="replacement reproduces the historical DiskReplayBuffer control. "
+             "game_epoch is for a frozen finite corpus: every row exactly once "
+             "and at most one row per game per batch.",
+    )
+    parser.add_argument(
+        "--epoch-plan-workers", type=int, default=GAME_EPOCH_PLAN_WORKERS,
+        help="threads used only to scan game_id metadata before a game_epoch "
+             f"run (default {GAME_EPOCH_PLAN_WORKERS}; no full rows decoded).",
+    )
+    parser.add_argument(
+        "--epoch-load-workers", type=int, default=GAME_EPOCH_LOAD_WORKERS,
+        help="parallel full-shard decoders used when game_epoch refills its "
+             f"bounded active pool (default {GAME_EPOCH_LOAD_WORKERS}).",
+    )
+    parser.add_argument(
+        "--epoch-max-working-set-gib",
+        type=float,
+        default=GAME_EPOCH_MAX_WORKING_SET_BYTES / float(1024**3),
+        help="hard preflight/runtime cap for eager decoded shards, batch "
+             "preparation plus pinned transfer, and compaction scratch under game_epoch "
+             f"(default {GAME_EPOCH_MAX_WORKING_SET_BYTES / float(1024**3):g} GiB).",
+    )
     parser.add_argument(
         "--batch-size", type=int, default=0,
         help="0 = config batch_size. ⚑ Any other value changes the examples per "
@@ -1237,6 +1837,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-compile", action="store_true",
         help="skip torch.compile; changes throughput, not the objective",
+    )
+    parser.add_argument(
+        "--allow-mixed-history", action="store_true",
+        help="let --shards mix zero-history (schema-1-derived) and "
+             "history-aware (schema-3-derived) directories; the mix is then "
+             "recorded in summary.json under corpus.history_identity.",
+    )
+    parser.add_argument(
+        "--allow-partial-corpus", action="store_true",
+        help="let --shards hold shards the deriver stamped corpus_complete: "
+             "false (derived from a manifest+progress read or a summary with "
+             "run_finished: false); recorded in summary.json under "
+             "corpus.partial_corpus.",
     )
     parser.add_argument(
         "--allow-leak", action="store_true",
@@ -1326,7 +1939,19 @@ def main(argv: list[str] | None = None) -> int:
             "purity receipt (which compares sets) can see it. Name each "
             "directory once.",
         )
-    coverage = preflight(cfg, shard_dirs, allow_leak=bool(args.allow_leak))
+    coverage = preflight(
+        cfg, shard_dirs, allow_leak=bool(args.allow_leak),
+        allow_mixed_history=bool(args.allow_mixed_history),
+        allow_partial_corpus=bool(args.allow_partial_corpus),
+    )
+    history_identity = history_identity_record(
+        read_history_stamps(shard_dirs),
+        allow_mixed_history=bool(args.allow_mixed_history),
+    )
+    partial_corpus = partial_corpus_record(
+        read_partial_corpus_stamps(shard_dirs),
+        allow_partial_corpus=bool(args.allow_partial_corpus),
+    )
 
     receipt: dict[str, Any] | None = None
     receipt_path = Path(args.purity_receipt) if args.purity_receipt else None
@@ -1425,20 +2050,134 @@ def main(argv: list[str] | None = None) -> int:
   # review F6's defect (certified, then overwritten, with nothing in the
   # artifact saying so); the realized values are banked in summary.json.
     replay_kwargs = apply_control_deviations(replay_kwargs_signature(cfg))
-    buf = DiskReplayBuffer(
-        capacity=10**9,
-        shard_dir=out_dir / "staged_shards",
-        rng=np.random.default_rng(int(args.seed)),
-  # ⚑ NEVER False here. See stage_shards: a writable buffer enforces its
-  # window in __init__ and would delete the converted shards through the
-  # symlinks.
-        read_only=True,
-        **replay_kwargs,
-    )
-    print(f"[data] replay buffer: {len(buf)} rows in the hot shuffle pool "
-          f"over {staged} shard(s)")
-    print("[data] replay kwargs (realized): "
-          + " ".join(f"{k}={v!r}" for k, v in sorted(replay_kwargs.items())))
+    realized_replay: dict[str, Any]
+    if args.sampling_mode == "game_epoch":
+        accum_steps = int(trainer.accum_steps)
+        if accum_steps != 1:
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --sampling-mode game_epoch currently "
+                "requires Trainer.accum_steps=1 so its one-row-per-game rule "
+                "covers the complete optimizer batch, not merely each "
+                f"microbatch; realized accum_steps={accum_steps}.",
+            )
+        if int(args.epoch_plan_workers) <= 0 or int(args.epoch_load_workers) <= 0:
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --epoch-plan-workers and "
+                "--epoch-load-workers must both be positive",
+            )
+        if (
+            not np.isfinite(float(args.epoch_max_working_set_gib))
+            or float(args.epoch_max_working_set_gib) <= 0.0
+        ):
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --epoch-max-working-set-gib must be "
+                "finite and positive",
+            )
+        epoch_max_working_set_bytes = int(
+            float(args.epoch_max_working_set_gib) * 1024**3
+        )
+        if epoch_max_working_set_bytes <= 0:
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --epoch-max-working-set-gib resolves "
+                "to fewer than one byte",
+            )
+        epoch_input_planes = replay_kwargs.get("input_planes")
+        buf: Any = GameAwareEpochBuffer(
+            shard_dir=out_dir / "staged_shards",
+            batch_size=batch_size,
+            seed=int(args.seed),
+            input_planes=(
+                None if epoch_input_planes is None else int(epoch_input_planes)
+            ),
+            input_history_encoding=model_cfg.input_history_encoding,
+            history_rep_fix=bool(model_cfg.history_rep_fix),
+            mirror_augmentation=float(trainer.mirror_prob) > 0.0,
+            plan_workers=int(args.epoch_plan_workers),
+            load_workers=int(args.epoch_load_workers),
+            max_working_set_bytes=epoch_max_working_set_bytes,
+            objective_mask_counter=trainer.exact_objective_mask_counter,
+        )
+        epoch_steps = buf.num_batches
+        if int(args.steps) == 0:
+            args.steps = epoch_steps
+            print(f"[data] --steps 0 resolved to exact epoch: {epoch_steps} "
+                  f"optimizer steps / {buf.num_batches} microbatches")
+        elif int(args.steps) != epoch_steps:
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --sampling-mode game_epoch planned "
+                f"{buf.plan.rows} rows in {buf.num_batches} microbatches = "
+                f"{epoch_steps} optimizer steps at accum_steps={accum_steps}, "
+                f"but --steps requested {int(args.steps)}. That would stop "
+                "before every row was used or ask the one-shot sampler to wrap. "
+                "Pass --steps 0 (recommended) or the exact planned count.",
+            )
+        print(
+            f"[data] game-aware exact epoch: {buf.plan.rows} rows, "
+            f"{buf.plan.game_count} games, {buf.plan.batches} batches "
+            f"({buf.plan.full_batches} full, min {buf.plan.min_batch_rows} rows), "
+            f"{staged} shard(s), "
+            f"working-set peak {buf.plan.peak_working_set_bytes / 1024**3:.2f}/"
+            f"{buf.plan.max_working_set_bytes / 1024**3:.2f} GiB, "
+            f"plan={buf.plan.plan_sha256}",
+        )
+        realized_replay = {
+            "sampling_mode": "game_epoch",
+            "applied": {
+                "input_planes": epoch_input_planes,
+                "input_history_encoding": buf.plan.input_history_encoding,
+                "history_rep_fix": bool(buf.plan.history_rep_fix),
+                "batch_size": batch_size,
+                "policy_size": int(buf.plan.policy_size),
+                "seed": int(args.seed),
+                "plan_workers": int(args.epoch_plan_workers),
+                "load_workers": int(args.epoch_load_workers),
+                "max_working_set_bytes": epoch_max_working_set_bytes,
+                "min_optimizer_batch_fill_ratio": (
+                    GAME_EPOCH_MIN_BATCH_FILL_RATIO
+                ),
+                "mirror_augmentation": float(trainer.mirror_prob) > 0.0,
+                "mirror_working_set_batch_copies": int(
+                    buf.plan.mirror_working_set_batch_copies
+                ),
+                "collation_working_set_batch_copies": int(
+                    buf.plan.collation_working_set_batch_copies
+                ),
+                "validated_load_payload_copies": int(
+                    buf.plan.validated_load_payload_copies
+                ),
+            },
+            # Guard 0d still compares the historical replay signature so this
+            # intervention cannot masquerade as that control. These settings
+            # are deliberately NOT forwarded to GameAwareEpochBuffer, and the
+            # artifact must not label dead configuration as realized.
+            "ignored_disk_replay_kwargs": {
+                key: value
+                for key, value in replay_kwargs.items()
+                if key != "input_planes"
+            },
+        }
+    else:
+        if int(args.steps) <= 0:
+            raise SystemExit(
+                "REFUSING TO LAUNCH — --steps must be positive under "
+                "--sampling-mode replacement; 0 is only the exact-epoch "
+                "auto-budget spelling",
+            )
+        buf = DiskReplayBuffer(
+            capacity=10**9,
+            shard_dir=out_dir / "staged_shards",
+            rng=np.random.default_rng(int(args.seed)),
+      # ⚑ NEVER False here. See stage_shards: a writable buffer enforces its
+      # window in __init__ and would delete the converted shards through the
+      # symlinks.
+            read_only=True,
+            **replay_kwargs,
+        )
+        print(f"[data] replacement replay buffer: {len(buf)} rows in the hot "
+              f"shuffle pool over {staged} shard(s)")
+        realized_replay = dict(replay_kwargs)
+    print("[data] replay settings (realized): "
+          + json.dumps(realized_replay, sort_keys=True))
 
     window_steps, n_windows, cadence_problem = train_window_plan(
         steps=int(args.steps), window=int(args.train_window_steps),
@@ -1501,6 +2240,14 @@ def main(argv: list[str] | None = None) -> int:
                             or _LIVE_FILE_UNREAD in trainer_provenance),
         live_game_frac=live_game_frac,
     )
+    if args.sampling_mode == "game_epoch":
+        planned_problems.append(
+            "sampling mode game_epoch intentionally differs from the historical "
+            "DiskReplayBuffer control (without replacement, natural corpus WDL "
+            "mix, and at most one row per game per batch). It is a sampler "
+            "intervention, not a valid continuation of replacement-sampled "
+            "control results",
+        )
     if planned_problems and not args.allow_invalid_control:
         raise SystemExit(
             "REFUSING TO LAUNCH — this run cannot be a valid control, and every "
@@ -1515,11 +2262,15 @@ def main(argv: list[str] | None = None) -> int:
     if planned_problems:
         print("⚑⚑ --allow-invalid-control: THIS RUN IS NOT A VALID CONTROL and "
               "its artifact cannot be quoted:\n  " + "\n  ".join(planned_problems))
+    train_window_metrics: list[dict[str, Any]] = []
     with CaptureRealizedLosses(
         rebuild_categorical=bool(kwargs["rebuild_categorical_target"]),
         categorical_params=kwargs["categorical_target_params"],
     ) as capture, SaveMidBudgetCheckpoint(
-        trainer, at_step=mid_step, path=mid_ckpt,
+        trainer,
+        at_step=mid_step,
+        path=mid_ckpt,
+        delete_on_error=isinstance(buf, GameAwareEpochBuffer),
     ) as mid:
   # ⚑⚑ WINDOWED AT PRODUCTION'S CADENCE, NOT ONE MONOLITHIC CALL. See
   # `PRODUCTION_TRAIN_WINDOW_STEPS`: with `lr_release_cycle_steps: 0` the release
@@ -1562,10 +2313,20 @@ def main(argv: list[str] | None = None) -> int:
                 steps=this_window,
             )
             steps_done += this_window
+            train_window_metrics.append({
+                "window_index": int(window_index + 1),
+                "steps_requested": int(this_window),
+                "steps_cumulative": int(steps_done),
+                **_scalar_metric_record(metrics),
+            })
             if n_windows > 1:
+                # flush=True is load-bearing: stdout redirected to a file is
+                # 8KB block-buffered, and at ~60 bytes/line ~136 windows sat
+                # invisible between flushes — the 2026-08-27 2x run read as
+                # "stalled for 3 hours" while perfectly healthy.
                 print(f"[train] window {window_index + 1}/{n_windows} "
                       f"({this_window} steps) done, "
-                      f"{steps_done} of {int(args.steps)}")
+                      f"{steps_done} of {int(args.steps)}", flush=True)
 
     if metrics is None:
         raise SystemExit(
@@ -1575,6 +2336,36 @@ def main(argv: list[str] | None = None) -> int:
         )
     if capture.calls == 0:
         raise SystemExit("compute_loss was never called — no step ran")
+
+    if isinstance(buf, GameAwareEpochBuffer):
+        sampling_receipt = {
+            **buf.receipt(),
+            # Applied by Trainer._run_optimizer_step on every exact batch and
+            # banked here, after the epoch completed, so the artifact says how
+            # each head's masked numerator reached the optimizer rather than
+            # merely what sizes the sampler returned.
+            "loss_normalization": (
+                "sum(weighted_masked_numerator*corpus_rows/"
+                "objective_mask_weight)/batch_size"
+            ),
+        }
+        if not sampling_receipt["complete"]:
+            if mid.saved_at_step is not None:
+                mid_ckpt.unlink(missing_ok=True)
+            raise SystemExit(
+                "EXACT-EPOCH GUARD FAILED — no checkpoint written (including "
+                "the mid-budget one): " + json.dumps(sampling_receipt, sort_keys=True),
+            )
+    else:
+        sampling_receipt = {
+            "mode": "replacement",
+            "with_replacement": True,
+            "sampled_examples_nominal": (
+                int(args.steps) * int(trainer.accum_steps) * batch_size
+            ),
+            "sampled_batches_nominal": int(args.steps) * int(trainer.accum_steps),
+            "complete": None,
+        }
 
     print_realized(capture, metrics)
 
@@ -1648,6 +2439,14 @@ def main(argv: list[str] | None = None) -> int:
                             or _LIVE_FILE_UNREAD in trainer_provenance),
         live_game_frac=live_game_frac,
     )
+    if args.sampling_mode == "game_epoch":
+        validity_problems.append(
+            "sampling mode game_epoch intentionally differs from the historical "
+            "DiskReplayBuffer control (without replacement, natural corpus WDL "
+            "mix, and at most one row per game per batch). It is a sampler "
+            "intervention, not a valid continuation of replacement-sampled "
+            "control results",
+        )
     summary = {
         "steps": int(args.steps),
   # ⚑ THE STEPS THAT ACTUALLY RAN. `steps` above is the REQUEST; a windowed loop
@@ -1691,7 +2490,11 @@ def main(argv: list[str] | None = None) -> int:
   # realized values go in the artifact for the same reason
   # `realized_after_guard` does one entry down: a recipe that is certified and
   # then changed must not be able to look identical to one that was not.
-        "realized_replay_after_guard": replay_kwargs,
+        "realized_replay_after_guard": realized_replay,
+        # Exact-epoch mode banks both the pre-training plan hash and the
+        # independently accumulated realized hash. A completed step count is
+        # not evidence that every row was used; this receipt is.
+        "sampling": sampling_receipt,
         "mid_checkpoint": (
             None if mid.saved_at_step is None else {
                 "path": str(mid_ckpt.resolve()),
@@ -1725,6 +2528,10 @@ def main(argv: list[str] | None = None) -> int:
             "shard_dirs": [str(Path(d).resolve()) for d in shard_dirs],
             "staged_shards": staged,
             "label_coverage": coverage,
+            # ⚑ What the history-identity reader saw (round 2, Grok D3): a
+            # run launched with --allow-mixed-history says so here.
+            "history_identity": history_identity,
+            "partial_corpus": partial_corpus,
         },
         "purity_receipt": (
             None if receipt is None or receipt_path is None else {
@@ -1739,11 +2546,12 @@ def main(argv: list[str] | None = None) -> int:
         "compute_loss_calls": capture.calls,
         "realized": dict(readout.as_table()),
         "realized_categorical": dict(capture.worst_categorical.as_table()),
-        "metrics": {
-            f.name: getattr(metrics, f.name)
-            for f in dataclasses.fields(type(metrics))
-            if isinstance(getattr(metrics, f.name), (int, float, bool, type(None)))
-        },
+        # ``metrics`` remains the end-of-run/final-window compatibility view.
+        # The preregistered throughput gate needs the median over EVERY window,
+        # so bank the complete per-window series in the run-owned artifact too;
+        # stdout and the shared default TensorBoard directory are not receipts.
+        "metrics": _scalar_metric_record(metrics),
+        "train_window_metrics": train_window_metrics,
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     if mid.saved_at_step is not None:

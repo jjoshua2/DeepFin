@@ -1,0 +1,108 @@
+{
+  "n_pop": 1007,
+  "n_bad": 153,
+  "base_rate": 0.1519,
+  "PRECOMMITTED_BAR_auc": 0.65,
+  "oof_auc_all4": {
+    "auc": 0.7371,
+    "ci95": [
+      0.6971,
+      0.777
+    ],
+    "features": [
+      "log_n_legal",
+      "log_sf_regret",
+      "top1_mass",
+      "not_listed"
+    ]
+  },
+  "oof_auc_two_signal_feats": {
+    "auc": 0.663,
+    "ci95": [
+      0.6246,
+      0.7031
+    ],
+    "features": [
+      "log_n_legal",
+      "log_sf_regret"
+    ]
+  },
+  "negative_control_shuffled_labels_auc": 0.4793,
+  "curve_oof_all4": [
+    {
+      "select_frac": 0.1,
+      "bad_captured": 0.2745,
+      "random_baseline": 0.1,
+      "lift": 2.745,
+      "deficit_captured": 0.3482,
+      "label_cost_mult": 1.186,
+      "loop_cost_mult": 1.176
+    },
+    {
+      "select_frac": 0.15,
+      "bad_captured": 0.366,
+      "random_baseline": 0.15,
+      "lift": 2.44,
+      "deficit_captured": 0.4864,
+      "label_cost_mult": 1.279,
+      "loop_cost_mult": 1.265
+    },
+    {
+      "select_frac": 0.2,
+      "bad_captured": 0.4575,
+      "random_baseline": 0.2,
+      "lift": 2.288,
+      "deficit_captured": 0.551,
+      "label_cost_mult": 1.371,
+      "loop_cost_mult": 1.353
+    },
+    {
+      "select_frac": 0.3,
+      "bad_captured": 0.6013,
+      "random_baseline": 0.3,
+      "lift": 2.004,
+      "deficit_captured": 0.6813,
+      "label_cost_mult": 1.557,
+      "loop_cost_mult": 1.529
+    },
+    {
+      "select_frac": 0.5,
+      "bad_captured": 0.7712,
+      "random_baseline": 0.5,
+      "lift": 1.542,
+      "deficit_captured": 0.795,
+      "label_cost_mult": 1.929,
+      "loop_cost_mult": 1.882
+    },
+    {
+      "select_frac": 1.0,
+      "bad_captured": 1.0,
+      "random_baseline": 1.0,
+      "lift": 1.0,
+      "deficit_captured": 1.0,
+      "label_cost_mult": 2.857,
+      "loop_cost_mult": 2.764,
+      "note": "BLANKET re-label at 500k - the thing the screen has to beat"
+    }
+  ],
+  "residual_invisible_to_shallow_teacher": {
+    "shallow_regret_q25_cp": 8.0,
+    "n_bad_in_confident_quartile": 8,
+    "share_of_all_bad": 0.0523,
+    "bad_rate_in_confident_quartile": 0.0305,
+    "bad_rate_elsewhere": 0.1946,
+    "mean_dQ_of_those_rows": -0.1615
+  },
+  "clause_SCREENABLE_p6_bad_capture_at_15pct": {
+    "value": 0.366,
+    "threshold": 0.5,
+    "passes": false
+  },
+  "clause_NOT_SCREENABLE_auc_below_bar": {
+    "value": 0.7371,
+    "threshold": 0.65,
+    "passes": false
+  },
+  "VERDICT": "UNCLASSIFIED BY THE PREREG - the two clauses do not tile the space",
+  "VERDICT_note": "best out-of-fold AUC 0.7371 clears the 0.65 bar, but the top-15% capture is 0.366 against a pre-committed 0.50. The screen is real and well above chance; it is weaker than the operating point I pre-registered."
+}

@@ -1,83 +1,80 @@
 # Evaluation protocol for architecture / target candidates
 
-Every architecture or training-target candidate PR is judged with the same
-measurement, so results stay comparable across months of experiments. The
-production policy path is the compact `lc0_1858` encoding
-(`configs/pbt2_small.yaml: model.policy_encoding`); all tooling below follows
-the encoding stored in the checkpoint itself.
+Choose measurements for the claim being tested. Frozen-target agreement, offline
+learning, playing strength and throughput are different outcomes. This protocol
+supersedes blanket arena-size and offline-seed gates in older experiment records.
+Historical measurements below retain their original settings and limitations.
 
-## Required measurements per candidate
+## Staged decisions
 
-1. **Frozen-holdout loss delta.** Evaluate candidate and reference on the same
-   frozen holdout replay set at a matched training-step count, and record the
-   deltas for at least `test_policy_loss` and `test_wdl_loss`. The holdout
-   must be frozen — never the live (still-growing) replay window, which shifts
-   under PID difficulty and window growth. **`test_wdl_loss` changed meaning
-   on 2026-07-26**: it now reports the blended loss the optimizer sees rather
-   than a hard one-hot diagnostic (docs/rl_loop_audit.md I7), so it steps by
-   ~+0.026 at that boundary. Candidate and reference must be measured with the
-   same code; never compare a delta across it. The old quantity survives as
-   `test_wdl_onehot_loss`.
+Before new training compute, use relevant banked data or a bounded target/offline
+screen. Record the hypothesis, simpler control where useful, deciding metric,
+threshold, uncertainty method, budget and readout horizon in the
+[ledger](experiment_ledger.md). Choose sample size and seeds for the expected effect
+and variability; there is no universal two-seed or 1,000-game requirement.
 
-2. **1000-game paired arena, BOTH modes.**
+1. **Target or mechanism screen.** Frozen deep-SF regret can price teacher agreement;
+   Brier/ECE describe calibration. Use them to reject candidates only when the
+   preregistered hypothesis makes that criterion relevant. For a proposed SF blind-spot
+   improvement, SF agreement alone cannot decide the claim: preregister an appropriate
+   independent measurement or bounded playing test before spending more compute.
+2. **Bounded training comparison.** When needed, use matched controls, a frozen holdout
+   and a declared training budget (steps, ingested views or wall time according to the
+   question). Sampling/loss-weight changes benefit from an offline outcome screen that
+   can detect broad regressions. Choose seeds and horizon explicitly; a short negative
+   result on co-adapted weights is conditional on that starting point.
+3. **Paired playing evaluation.** Use an arena to support strength claims. Choose
+   `matched_sims` to compare quality at a fixed search budget, or `matched_time` to
+   assess the intended deployed engine including latency. Run both when the comparison
+   needs to separate quality from throughput. A Python prototype's wall-time result
+   describes that prototype; it does not predict a future native implementation.
 
-   ```bash
-   PYTHONPATH=. python3 scripts/arena_standard.py \
-       --candidate <ckpt> --reference <ckpt> --games 1000 \
-       --mode matched_sims --search-shape training --sims 64
+Record results and uncertainty against the precommitted rule. An inconclusive result
+can stop at the declared budget; it does not require automatic scaling. Keep raw
+observations and provenance so later estimator changes reuse the same sample.
 
-   PYTHONPATH=. python3 scripts/arena_standard.py \
-       --candidate <ckpt> --reference <ckpt> --games 1000 \
-       --mode matched_time --ms-per-move 100
-   ```
+## Instruments and comparability
 
-   - **`--search-shape` is REQUIRED for `matched_sims` and has no default.**
-     `training` is what production selfplay runs (`c_scale` 0.1, `topk` 16,
-     linear root, `gumbel_vloss_weight` from the yaml); `play` is the tuned
-     UCI/match shape (`c_scale` 0.025, `topk` 32, log root, `vloss_weight` 3).
-     Judge the training loop with `training`; judge the shipped engine with
-     `play`. Before 2026-07-29 the script silently used the play shape and
-     passed no `vloss_weight` at all, so **every arena Elo recorded before
-     that date was measured on a third configuration neither flag reproduces**
-     (the play shape at `vloss_weight=0`) and is not comparable with anything
-     measured after — see the ledger's 2026-07-28 findings. The realized knobs
-     are printed at startup and stored per row under `search_candidate` /
-     `search_reference`.
-   - `matched_time` rejects `--search-shape` and the other in-process search
-     flags: it plays through UCI subprocesses that build their own search from
-     their own flags. Pass those via `--uci-args`.
-   - Openings come from the production 8-move UHO book
-     (`opening_book_path_2` in `configs/pbt2_small.yaml`); each opening is
-     played twice with colors swapped, and the pair is the unit of analysis.
-   - The Elo point estimate and 95% CI come from the pentanomial pair-score
-     variance, not the trinomial W/D/L counts — paired games are correlated
-     and trinomial CIs are misleadingly tight.
-   - `matched_sims` isolates net quality at a fixed search budget.
-     `matched_time` runs each side as a real UCI engine
-     (`python -m chess_anti_engine.uci`) at fixed wall clock per move, so a
-     slower architecture pays for its latency. A candidate must be judged on
-     both: the gap between the two numbers is its throughput cost in Elo.
-   - **Cap a run with `--max-seconds`, never with an external `timeout` alone.**
-     A SIGKILLed arena loses whatever is still in its block-buffered stdout,
-     which is always exactly the LAST block printed — each flushed line pushes
-     everything written before it. A run that printed several blocks keeps all
-     but the last; a run slow enough to print only ONE loses everything, and
-     its log ends mid-report at `[arena] RUNNING Elo after 6 complete pairs:`
-     with no `[arena] Elo:` line for any parser to read. That is why the daily
-     ratchet wrote no CSV row on 2026-07-30 and 07-31.
-     `--max-seconds` stops the play loop on the arena's own clock, scores the
-     opening pairs that FINISHED (half-played games are dropped, never imputed
-     as draws), prints the summary and appends the record. A capped run is then
-     a small sample rather than no sample, and `games`/`pairs` in the record
-     mean what they say; `games_requested` and `truncated` say what was asked
-     for. With nothing complete it prints `NO COMPLETE PAIRS` and exits 3.
-   - Every run appends one JSON line to `runs/arena_results.jsonl` with git
-     SHA, production-config hash, mode, and both checkpoint paths.
+For holdout comparisons, evaluate candidate and reference on the same frozen replay
+set and measurement code. `test_wdl_loss` changed on 2026-07-26 from a hard one-hot
+diagnostic to the blended optimizer loss; the old diagnostic remains
+`test_wdl_onehot_loss`. A delta across those definitions is not meaningful.
 
-3. **Record the (holdout delta, arena Elo) pair** in the tracking table below.
-   Accumulating these pairs builds the loss→Elo exchange rate, which is what
-   lets us judge future candidates from cheap holdout numbers before paying
-   for a full arena.
+A paired arena uses the production UHO opening book by default, plays each opening
+with colors swapped, and computes Elo intervals from pentanomial pair scores. The
+opening pair is the unit of analysis. Example commands below are illustrative budgets,
+not launch instructions or fixed sample-size requirements:
+
+```bash
+PYTHONPATH=. python scripts/arena_standard.py \
+    --candidate <candidate.pt> --reference <reference.pt> --games 100 \
+    --mode matched_sims --search-shape training --sims 64 --max-seconds 1800
+
+PYTHONPATH=. python scripts/arena_standard.py \
+    --candidate <candidate.pt> --reference <reference.pt> --games 100 \
+    --mode matched_time --ms-per-move 100 --max-seconds 1800
+```
+
+- `matched_sims` requires `--search-shape`: use `training` for the training loop and
+  `play` for the match configuration. Realized settings are printed and recorded.
+  Before 2026-07-29 arenas used a third shape (play with zero virtual-loss weight);
+  those numbers are not directly comparable with the later named shapes.
+- `matched_time` uses UCI subprocesses. It rejects in-process search flags; configure
+  the subprocesses with `--uci-args` and verify the intended implementation is loaded.
+- Set `CHESS_ANTI_ENGINE_LIVE_CONFIG` when claiming production equivalence; see
+  [operations](operations.md). Record each engine's tablebase settings and coverage,
+  checkpoint architecture, code revision and effective search shape.
+- Use `--max-seconds` for a bounded readout. The arena scores completed pairs, drops
+  incomplete pairs and records truncation; with no completed pairs it exits 3.
+  An external kill alone may lose the final buffered report.
+- Results append to `runs/arena_results.jsonl`. Budget shared CPU/GPU resources before
+  launching; a simulation count or allocator fraction is not a safety guarantee.
+
+## Historical instruments and measurement notes
+
+The following sections document instruments and dated comparisons. Read the relevant
+section when using that instrument; local installation paths and performance numbers
+must be verified on the machine being used.
 
 ## Exchange-rate curves
 
@@ -107,6 +104,39 @@ the encoding stored in the checkpoint itself.
 - 500 pairs (1000 games) gives a CI of roughly ±10-15 Elo at typical draw
   rates; if a candidate's effect is smaller than that, more games — not a
   tighter prior — is the only honest fix.
+
+## A crashed match is resumable — never replay a finished game
+
+Both drivers (`scripts/arena_standard.py`, `scripts/match_vs_uci.py`) append one
+flushed JSONL record per FINISHED game to a **game log**, so a run that dies
+mid-match leaves every game that ended. 2026-08-21 is why: a 128-game compiled
+arena OOMed at ply 20 with ZERO games persisted, and its relaunch lost its first
+minutes the same way.
+
+- **Where**: `--games-out <path>`. Default for the arena is
+  `runs/arena_games/<label>.<settings-fingerprint>.games.jsonl`; for
+  `match_vs_uci` it rides `--pgn-out` when that is given, else
+  `runs/match_games/`. It is deliberately NOT derived from the arena's `--out`,
+  which is the shared append-only aggregate every arena in history writes to.
+- **Resume**: `--resume` keeps what finished and plays only the remainder, then
+  scores everything as one match. The arena keeps COMPLETE PAIRS only — a pair
+  with one coloring played is discarded and replayed, because the pentanomial's
+  sampling unit is the pair. The result record carries `resumed_pairs`,
+  `resumed_orphan_pairs` and `game_log`, so a row that is a splice of two
+  processes says so.
+- **It refuses to mix.** The log header stores a fingerprint of every setting
+  that defines the population and the ruler (nets/engines, seed, games,
+  openings, mode, sims or budget, search shape, syzygy). `--resume` onto a
+  changed one names the difference and exits. Execution knobs are deliberately
+  NOT in the fingerprint — resuming an OOMed arena at a lower
+  `--max-concurrent-games` is the main use.
+- **Without `--resume`, an existing log for the same settings is an error.**
+  Appending would silently pool two runs. `scripts/daily_gate_ratchet.sh` passes
+  `--resume` for exactly this reason: its same-day retry of a series is the same
+  invocation, and it now continues that attempt instead of replaying it.
+- ⚑ A resumed PGN keeps the discarded orphan game (append-only). Its
+  replacements carry `ResumeReplay "1"`, so for any `PairId` that has the tag,
+  the games WITHOUT it are the stale ones — drop those before a pooled fit.
 
 ## Pooled multi-player ratings (Ordo) — when 3+ arms play a round robin
 
@@ -202,6 +232,40 @@ point before launching**; look at partial fits freely for *operational* checks
 (is an arm crashing, are counts advancing, has the missingness flag tripped)
 and never for the sign or size of the effect.
 
+**⚑ `--sprt` is the ONE sanctioned way to stop early, and it is opt-in.**
+"Pre-commit the count and never look" is the right default and stays the
+default. The principled alternative is not to peek more carefully but to
+declare the boundary first: `scripts/arena_standard.py --sprt
+'elo0=E,elo1=E,alpha=A,beta=B'` runs a pentanomial GSPRT (Van den Bergh's
+formulation, i.e. what fishtest computes; implementation in
+`chess_anti_engine/eval/sprt.py`) whose error rates are approximately bounded by
+the alpha and beta you named — conservative Wald bounds (type-I ≤ α/(1−β),
+type-II ≤ β/(1−α)), not exact equalities — no matter how often it looks. All
+four numbers are REQUIRED — there is no default anywhere in that path, because a
+boundary the operator did not state is not a preregistration.
+
+- The unit is the PAIR, so the LLR is only ever recomputed on pairs whose two
+  colorings both finished. Rolling and matched_time look after every pair;
+  `--no-rolling` looks between chunks, which is coarser and is recorded as
+  `check_granularity` in the row.
+- `--games` becomes a HARD CAP. Reaching it without crossing is **INCONCLUSIVE**
+  and is reported as that. It is NOT a fixed-N result: the sample size was
+  chosen by the data, so re-reading it as one is the same optional stopping
+  under a different name.
+- ⚑ **The VERDICT is the deliverable.** The Elo and CI printed alongside it are
+  descriptive: a sequentially stopped point estimate is biased AWAY from zero
+  (the run stopped when the sample looked extreme) and the CI has no nominal
+  coverage. Quote the verdict, the pairs played, and the boundary — never the
+  Elo on its own. The row banks all of it under `sprt`, including the LLR
+  trajectory, so a later re-analysis has the whole path and not just its end.
+- A resumed SPRT arena recomputes the LLR over loaded + new pairs, and a run
+  that had already crossed plays zero further games. The spec is recorded in the
+  game log's header (`info.sprt`) but deliberately NOT in the resume
+  fingerprint, so resuming across specs is allowed rather than refused — it
+  prints a stderr warning naming both, because alpha and beta belong to ONE
+  preregistered boundary.
+- Absent `--sprt` nothing changes, down to the JSONL record, which grows no key.
+
 **⚑ A bootstrap cannot fix informative missingness.** If pairs complete faster
 in one matchup for a reason correlated with the arms, the pairs you HAVE are
 that matchup's FAST pairs — systematically more decisive — and resampling them
@@ -238,26 +302,19 @@ number.
 |---|---|---|---|---|---|---|---|
 | _(append one row per candidate)_ | | | | | | | |
 
-## Target audit: every training-target candidate is audited here FIRST
+## Frozen target audit: an early screen, not a strength verdict
 
-The arena gates above price a candidate AFTER spending training compute. The
-target audit prices it BEFORE: a frozen, deeply-labeled position set
-(`data/audit_set_v1.jsonl`, built once by `scripts/build_audit_set.py` with
-unhandicapped Stockfish at >=1M nodes, MultiPV >= 10) and a scorer
-(`scripts/audit_targets.py`) that evaluates any policy or value target
-DIRECTLY against it.
-
-**The rule: a target that loses the direct audit — higher expected deep-SF
-regret, or worse Brier/ECE calibration than the incumbent — is killed
-without training.** No fixed-budget run, no arena, no tracking-table row.
-Only candidates that win or tie the audit graduate to the
-training-then-arena pipeline above.
+The frozen, deeply labeled set (`data/audit_set_v1.jsonl`, generated with
+`scripts/build_audit_set.py`) lets `scripts/audit_targets.py` compare policy and value
+targets before training. Reuse a compatible banked dump when it answers the question.
+A direct-audit loss is a kill only under the preregistered criterion in the staged
+protocol above. Brier/ECE alone do not establish value strength; `value_regret` is a
+separate ranking diagnostic, and neither replaces paired play for strength claims.
 
 Mechanics:
 
 - The audit set is FROZEN after generation (the build script refuses to
-  overwrite; new sampling = new version `audit_set_v2...`). All candidates,
-  forever, are scored against the same positions — phase-stratified
+  overwrite; new sampling = new version `audit_set_v2...`). Comparisons within a dataset version use the same positions — phase-stratified
   (endgame/middlegame/opening by piece count), source-stratified
   (selfplay/curriculum), deduplicated, side-to-move canonical.
 - Policy candidates are scored as expected deep-SF regret in cp of a move

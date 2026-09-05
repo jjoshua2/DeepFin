@@ -38,6 +38,8 @@ width, via ``losses.align_policy_mask``) so mask alignment has one home.
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import torch
 
 from chess_anti_engine.moves.torch_maps import policy_index_remap_table
@@ -110,6 +112,113 @@ def _row_scores(
     return score, present & (logistic_ok | native_ok)
 
 
+class _SparsePolicyInputs(NamedTuple):
+    idx: torch.Tensor
+    probs: torch.Tensor
+    scoreable: torch.Tensor
+    legal: torch.Tensor
+    legal_count: torch.Tensor
+    fallback_idx: torch.Tensor
+    fallback_ok: torch.Tensor
+    computed: torch.Tensor
+
+
+def _sparse_policy_inputs(
+    batch: dict[str, torch.Tensor],
+    *,
+    params: SfTargetParams,
+    legal_aligned: torch.Tensor,
+    dst_width: int,
+) -> _SparsePolicyInputs | None:
+    """Target-only sparse-policy state shared by CE and exact census."""
+    raw = batch.get("sf_multipv_raw")
+    has_raw = batch.get("has_sf_multipv_raw")
+    legal = batch.get("sf_legal_mask")
+    has_legal = batch.get("has_sf_legal_mask")
+    if raw is None or has_raw is None or legal is None or has_legal is None:
+        return None
+
+    src_width = int(legal.shape[-1])
+    remap = policy_index_remap_table(
+        src_width, int(dst_width), legal_aligned.device,
+    )
+    raw = raw.to(torch.long)
+    idx = raw[..., 0]
+    scores, ok = _row_scores(raw, params=params)
+    if remap is not None:
+        mapped = remap[idx.clamp_min(0)]
+        ok = ok & (mapped >= 0)
+        idx = mapped
+
+    temp = max(
+        1e-6,
+        float(params.sf_policy_cp_temp)
+        if params.sf_policy_score_mode == "cp"
+        else float(params.sf_policy_temp),
+    )
+    z = torch.where(
+        ok,
+        scores.double() / temp,
+        scores.new_full((), -torch.inf, dtype=torch.float64),
+    )
+    z = z - z.amax(dim=-1, keepdim=True).clamp_min(-1e30)
+    expz = torch.where(ok, z.exp(), z.new_zeros(()))
+    denom = expz.sum(dim=-1)
+    has_cand = denom > 0
+    probs = (expz / denom.clamp_min(1e-300).unsqueeze(-1)).float()
+
+    fallback_idx = idx.new_zeros(idx.shape[0])
+    fallback_ok = has_cand.new_zeros(has_cand.shape)
+    sf_move_index = batch.get("sf_move_index")
+    has_sf_move = batch.get("has_sf_move")
+    if sf_move_index is not None and has_sf_move is not None:
+        fallback_idx = sf_move_index.to(torch.long)
+        fallback_valid = (fallback_idx >= 0) & (has_sf_move > 0)
+        if remap is not None:
+            mapped = remap[fallback_idx.clamp_min(0)]
+            fallback_valid = fallback_valid & (mapped >= 0)
+            fallback_idx = mapped
+        fallback_ok = ~has_cand & fallback_valid
+
+    legal_f = legal_aligned.float()
+    legal_count = legal_f.sum(dim=-1)
+    computed = (
+        (has_raw > 0)
+        & (has_legal > 0)
+        & (legal_count > 0)
+        & (has_cand | fallback_ok)
+    ).to(legal_aligned.dtype)
+    return _SparsePolicyInputs(
+        idx=idx,
+        probs=probs,
+        scoreable=ok,
+        legal=legal_f,
+        legal_count=legal_count,
+        fallback_idx=fallback_idx,
+        fallback_ok=fallback_ok,
+        computed=computed,
+    )
+
+
+def sparse_sf_policy_availability(
+    batch: dict[str, torch.Tensor],
+    *,
+    params: SfTargetParams,
+    legal_aligned: torch.Tensor,
+    dst_width: int,
+) -> torch.Tensor:
+    """Rows whose sparse labels can train ``policy_sf``, without logits."""
+    prepared = _sparse_policy_inputs(
+        batch,
+        params=params,
+        legal_aligned=legal_aligned,
+        dst_width=int(dst_width),
+    )
+    if prepared is None:
+        return legal_aligned.new_zeros(legal_aligned.shape[0])
+    return prepared.computed
+
+
 def sparse_sf_policy_ce(
     masked_logits: torch.Tensor,
     batch: dict[str, torch.Tensor],
@@ -126,26 +235,20 @@ def sparse_sf_policy_ce(
     labels AND the SF legal mask (needed for the analytic smoothing term).
     Ineligible rows return 0 with mask 0 — callers keep the dense CE there.
     """
-    raw = batch.get("sf_multipv_raw")
-    has_raw = batch.get("has_sf_multipv_raw")
-    legal = batch.get("sf_legal_mask")
-    has_legal = batch.get("has_sf_legal_mask")
     zeros = masked_logits.new_zeros(masked_logits.shape[0])
-    if raw is None or has_raw is None or legal is None or has_legal is None:
+    prepared = _sparse_policy_inputs(
+        batch,
+        params=params,
+        legal_aligned=legal_aligned,
+        dst_width=int(masked_logits.shape[-1]),
+    )
+    if prepared is None:
         return zeros, zeros
 
     lsm = torch.log_softmax(masked_logits.float(), dim=-1)
     dst_width = int(masked_logits.shape[-1])
-    src_width = int(legal.shape[-1])
-    remap = policy_index_remap_table(src_width, dst_width, masked_logits.device)
-
-    raw = raw.to(torch.long)
-    idx = raw[..., 0]
-    scores, ok = _row_scores(raw, params=params)
-    if remap is not None:
-        mapped = remap[idx.clamp_min(0)]
-        ok = ok & (mapped >= 0)
-        idx = mapped
+    idx = prepared.idx
+    ok = prepared.scoreable
 
     # Candidate term: softmax(scores/T) over scoreable rows, gathered
     # log-probs. The probs are computed in float64 to mirror the live
@@ -157,35 +260,15 @@ def sparse_sf_policy_ce(
     # which would silently consume ~70% of the 1e-5 dense-parity test
     # budget; float64 keeps that margin for catching real bugs, at the
     # cost of ~12K double ops per 256-batch (unmeasurable).
-    temp = max(
-        1e-6,
-        float(params.sf_policy_cp_temp)
-        if params.sf_policy_score_mode == "cp"
-        else float(params.sf_policy_temp),
-    )
-    z = torch.where(ok, scores.double() / temp, scores.new_full((), -torch.inf, dtype=torch.float64))
-    z = z - z.amax(dim=-1, keepdim=True).clamp_min(-1e30)  # stable even for all-masked rows
-    expz = torch.where(ok, z.exp(), z.new_zeros(()))
-    denom = expz.sum(dim=-1)
-    has_cand = denom > 0
-    p = (expz / denom.clamp_min(1e-300).unsqueeze(-1)).float()
     g = lsm.gather(1, idx.clamp(0, dst_width - 1))
-    cand_term = (p * g).masked_fill(~ok, 0.0).sum(dim=-1)
+    cand_term = (prepared.probs * g).masked_fill(~ok, 0.0).sum(dim=-1)
 
     # Empty-candidate fallback: live built a one-hot at sf_move_index.
-    sf_move_index = batch.get("sf_move_index")
-    has_sf_move = batch.get("has_sf_move")
-    fallback_ok = zeros.bool()
-    if sf_move_index is not None and has_sf_move is not None:
-        fb_idx = sf_move_index.to(torch.long)
-        fb_valid = (fb_idx >= 0) & (has_sf_move > 0)
-        if remap is not None:
-            fb_mapped = remap[fb_idx.clamp_min(0)]
-            fb_valid = fb_valid & (fb_mapped >= 0)
-            fb_idx = fb_mapped
-        fb_term = lsm.gather(1, fb_idx.clamp(0, dst_width - 1).unsqueeze(1)).squeeze(1)
-        fallback_ok = ~has_cand & fb_valid
-        cand_term = torch.where(fallback_ok, fb_term, cand_term)
+    fb_term = lsm.gather(
+        1,
+        prepared.fallback_idx.clamp(0, dst_width - 1).unsqueeze(1),
+    ).squeeze(1)
+    cand_term = torch.where(prepared.fallback_ok, fb_term, cand_term)
 
     # Analytic smoothing term over the (pre-aligned) legal set. Gated PER ROW on
     # "candidates don't cover every legal move" — mirrors the live builder
@@ -195,12 +278,14 @@ def sparse_sf_policy_ce(
     # legal_aligned would otherwise inflate the count and flip the gate vs dense);
     # the empty-cand fallback covers exactly its one bestmove.
     smooth = float(params.sf_policy_label_smooth)
-    legal_f = legal_aligned.float()
-    legal_count = legal_f.sum(dim=-1)
+    legal_f = prepared.legal
+    legal_count = prepared.legal_count
     if smooth > 0.0:
         cand_is_legal = legal_f.gather(1, idx.clamp(0, dst_width - 1)) > 0
         n_covered = (ok & cand_is_legal).sum(dim=-1).to(legal_count.dtype)
-        n_covered = torch.where(fallback_ok, torch.ones_like(n_covered), n_covered)
+        n_covered = torch.where(
+            prepared.fallback_ok, torch.ones_like(n_covered), n_covered,
+        )
         smooth_row = torch.where(
             (n_covered < legal_count) & (legal_count > 0),
             legal_count.new_full((), smooth),
@@ -212,10 +297,5 @@ def sparse_sf_policy_ce(
     else:
         ce = -cand_term
 
-    computed = (
-        (has_raw > 0)
-        & (has_legal > 0)
-        & (legal_count > 0)
-        & (has_cand | fallback_ok)
-    ).to(masked_logits.dtype)
+    computed = prepared.computed.to(masked_logits.dtype)
     return ce * computed, computed

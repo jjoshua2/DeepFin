@@ -35,6 +35,7 @@ static void init_once(void) {
 
 static void startpos(CBoard *b) {
     memset(b, 0, sizeof(CBoard));
+    cboard_reset_hist_ep(b);  /* int8_t 0 would read as ep on a1, not "no ep" */
     b->bb[PAWN]   = 0x00FF00000000FF00ULL;
     b->bb[KNIGHT] = 0x4200000000000042ULL;
     b->bb[BISHOP] = 0x2400000000000024ULL;
@@ -86,6 +87,7 @@ static void raw_board(const uint8_t *data, size_t size) {
         return;
     CBoard b;
     memset(&b, 0, sizeof(CBoard));
+    cboard_reset_hist_ep(&b);  /* int8_t 0 would read as ep on a1, not "no ep" */
     uint64_t v[8];
     memcpy(v, data, 64);
     for (int p = 0; p < 6; p++)

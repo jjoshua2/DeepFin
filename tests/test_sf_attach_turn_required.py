@@ -93,10 +93,20 @@ def test_last_record_wrapper_matches_the_direct_attach() -> None:
         legal_indices=_legal(), turn=True,
     )
 
+    # Not-None asserted first: it narrows the Optional for the type checker
+    # AND turns "both sides silently None" from a vacuous pass into a failure.
+    assert via_state.sf_policy_target is not None
+    assert direct.sf_policy_target is not None
     np.testing.assert_array_equal(via_state.sf_policy_target, direct.sf_policy_target)
+    assert via_state.sf_legal_mask is not None
+    assert direct.sf_legal_mask is not None
     np.testing.assert_array_equal(via_state.sf_legal_mask, direct.sf_legal_mask)
+    assert via_state.sf_wdl is not None
+    assert direct.sf_wdl is not None
     np.testing.assert_array_equal(via_state.sf_wdl, direct.sf_wdl)
     assert via_state.sf_move_index == direct.sf_move_index
+    assert via_state.sf_multipv_raw is not None
+    assert direct.sf_multipv_raw is not None
     np.testing.assert_array_equal(via_state.sf_multipv_raw, direct.sf_multipv_raw)
 
 

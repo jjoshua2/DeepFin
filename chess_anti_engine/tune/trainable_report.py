@@ -846,6 +846,9 @@ def _log_iteration_scalars(
 
 _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "train_loss": 999.0, "train_time_s": 0.0, "optimizer_step_time_s": 0.0,
+    "batch_prefetch_wait_s": 0.0, "fwd_loss_s": 0.0, "bwd_s": 0.0, "gradnorm_zclip_s": 0.0,
+    "opt_step_s": 0.0, "pipeline_other_s": 0.0, "gpu_fwd_loss_s": 0.0, "gpu_bwd_s": 0.0,
+    "gpu_gradnorm_zclip_s": 0.0, "gpu_opt_step_s": 0.0,
     "trainer_steps_done": 0, "train_samples_seen": 0,
     "trainer_steps_per_s": 0.0, "trainer_samples_per_s": 0.0, "optimizer_steps_per_s": 0.0,
     "policy_loss": 0.0, "soft_policy_loss": 0.0, "future_policy_loss": 0.0,
@@ -994,6 +997,8 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "aurora_uw_ratio_median": 0.0,
     "aurora_uw_effective_ratio_min": 0.0,
     "aurora_uw_effective_ratio_median": 0.0,
+    "adamw_foreach_buckets": 0.0, "adamw_foreach_params": 0.0,
+    "adamw_loop_params": 0.0, "adamw_foreach_recoveries": 0.0,
     "aurora_polar_steps_configured": 0.0, "aurora_polar_sv_samples": 0.0,
     "aurora_polar_sv_errors": 0.0,
     "aurora_polar_sv_ratio_square": 0.0, "aurora_polar_sv_ratio_rect": 0.0,
@@ -1018,6 +1023,19 @@ def _train_metrics_dict(metrics) -> dict:
         "trainer_steps_per_s": float(metrics.train_steps_done / train_t) if metrics.train_time_s > 0.0 else 0.0,
         "trainer_samples_per_s": float(metrics.train_samples_seen / train_t) if metrics.train_time_s > 0.0 else 0.0,
         "optimizer_steps_per_s": float(metrics.train_steps_done / opt_t) if metrics.opt_step_time_s > 0.0 else 0.0,
+  # The window's pipeline-bubble decomposition (see `_PipelinePhaseTimer`).
+  # Promoted here on purpose: a TensorBoard-only field is how the grad-norm
+  # family went unread for weeks, and this file's own comment says so.
+        "batch_prefetch_wait_s": float(metrics.batch_prefetch_wait_s),
+        "fwd_loss_s": float(metrics.fwd_loss_s),
+        "bwd_s": float(metrics.bwd_s),
+        "gradnorm_zclip_s": float(metrics.gradnorm_zclip_s),
+        "opt_step_s": float(metrics.opt_step_s),
+        "pipeline_other_s": float(metrics.pipeline_other_s),
+        "gpu_fwd_loss_s": float(metrics.gpu_fwd_loss_s),
+        "gpu_bwd_s": float(metrics.gpu_bwd_s),
+        "gpu_gradnorm_zclip_s": float(metrics.gpu_gradnorm_zclip_s),
+        "gpu_opt_step_s": float(metrics.gpu_opt_step_s),
         "policy_loss": float(metrics.policy_loss),
         "soft_policy_loss": float(metrics.soft_policy_loss),
         "future_policy_loss": float(metrics.future_policy_loss),
@@ -1135,11 +1153,10 @@ def _train_metrics_dict(metrics) -> dict:
         # Terminal-proximal outcome transfer -- see the defaults table above.
         "wdl_terminal_outcome_frac": float(metrics.wdl_terminal_outcome_frac),
         "wdl_terminal_outcome_rows": float(metrics.wdl_terminal_outcome_rows),
-        # Rebuild coverage. `sf_rebuild_policy_frac` below `sf_rebuild_wdl_frac`
-        # is a Stockfish-DESYNC signal, not a coverage cost: both divide by all
-        # batch rows and a healthy labelled row always carries both fields, so
-        # the difference is the fully-stripped-label share of the batch — a
-        # LOWER bound on contamination (~59% of poisoned rows lose the block).
+        # Rebuild coverage. Policy counts dense targets actually rewritten;
+        # WDL also counts supported sparse-policy rows, so their gap is not a
+        # health signal. Use sf_labelled_no_multipv_frac plus its checked
+        # denominator for Stockfish desynchronization detection.
         # ⚑ All five read 0.0 while `rebuild_sf_targets` is off, which is the
         # default and is in no config, so a zero here is NOT evidence of health;
         # see target_builder.py::SfRebuildCoverage.metric_kwargs for the
@@ -1225,6 +1242,19 @@ def _train_metrics_dict(metrics) -> dict:
         "aurora_uw_effective_ratio_median": float(
             metrics.aurora_uw_effective_ratio_median
         ),
+        # Which AdamW-fallback path the iteration's last optimizer step ran.
+        # `adamw_foreach_params` is the proof-of-effect column for the batched
+        # `_foreach_*` update (tensors that carried a grad: 394 of 431 in 2
+        # buckets, loop 0.0 on the lc0 control); a
+        # non-zero `adamw_loop_params` is the batchability predicates
+        # silently routing tensors to the per-parameter path, and
+        # `adamw_foreach_recoveries` is a bucket finished per tensor after its
+        # denominator allocation failed. Read off the optimizer's own
+        # counters during the step, never off the config.
+        "adamw_foreach_buckets": float(metrics.adamw_foreach_buckets),
+        "adamw_foreach_params": float(metrics.adamw_foreach_params),
+        "adamw_loop_params": float(metrics.adamw_loop_params),
+        "adamw_foreach_recoveries": float(metrics.adamw_foreach_recoveries),
         # Polar residual of the update Aurora applied, at the step count that
         # produced it. `aurora_polar_steps_configured` is the proof-of-effect
         # column for any change to `aurora_polar_steps`: it is read off the

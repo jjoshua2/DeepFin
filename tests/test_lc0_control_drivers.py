@@ -158,7 +158,104 @@ def _write_shards(
     return shard_dir
 
 
+def _write_game_rows(
+    shard_dir: Path, game_rows: list[tuple[int, int]],
+) -> Path:
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    samples = [
+        dataclasses.replace(
+            _lc0_like_sample(10_000 + row, with_sf_wdl=False),
+            game_id=game,
+            ply_index=row,
+        )
+        for game, row in game_rows
+    ]
+    save_local_shard_arrays(
+        shard_dir / "shard_000000.zarr",
+        arrs=samples_to_arrays(samples),
+        meta=ShardMeta(
+            positions=len(samples),
+            input_history_encoding="lc0_root_legacy_meta",
+            history_rep_fix=True,
+            policy_encoding="lc0_1858",
+            policy_size=COMPACT_POLICY_SIZE,
+        ),
+    )
+    return shard_dir
+
+
 # ── lc0_control_train: the realized guard, and whether it is REACHED ──────────
+
+
+def test_the_history_identity_is_read_back_off_the_written_summary(
+    tmp_path: Path,
+) -> None:
+    """⚑ Fable (round 2 delta): ``corpus.history_identity`` off ``summary.json``
+    as ``main`` writes it, not only via ``history_identity_record``.  One
+    directory stamped history-aware (schema 3, ``zero_history: false``) and one
+    unstamped (the bare-FEN reading): refused without the flag, recorded as
+    mixed with it.
+    """
+    import zarr
+
+    zero = _write_shards(tmp_path / "zero", list(range(8)))
+    hist = _write_shards(tmp_path / "hist", list(range(8, 16)))
+    group = zarr.open_group(str(hist / "shard_000000.zarr"), mode="a")
+    group.attrs.update({"derive_corpus_row_schema": 3, "zero_history": False})
+    argv = [
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(zero), str(hist),
+        "--out-dir", str(tmp_path / "run"), "--steps", "1", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
+    ]
+    with pytest.raises(SystemExit, match="input-history identities"):
+        lc0_control_train.main(argv)
+    assert not (tmp_path / "run" / "summary.json").exists()
+
+    rc = lc0_control_train.main([*argv, "--allow-mixed-history"])
+    assert rc == 0
+    summary = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["corpus"]["history_identity"] == {
+        "row_schemas": ["1", "3"], "zero_history": [False, True],
+        "mixed_within": [], "unidentified": [], "mixed": True,
+        "allow_mixed_history": True,
+    }
+
+
+def test_a_partial_corpus_stamp_is_read_back_off_the_written_summary(
+    tmp_path: Path,
+) -> None:
+    """``corpus.partial_corpus`` off ``summary.json`` as ``main`` writes it:
+    a shard stamped ``corpus_complete: false`` is refused, and recorded with
+    ``--allow-partial-corpus``."""
+    import zarr
+
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    group = zarr.open_group(str(shards / "shard_000000.zarr"), mode="a")
+    group.attrs.update({
+        "corpus_complete": False, "corpus_run_finished_claim": False,
+        "corpus_shards_adopted": 3, "corpus_rows_claimed": 300, "corpus_rows_derived": 16,
+    })
+    argv = [
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(tmp_path / "run"), "--steps", "1", "--batch-size", "4",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift",
+        "--allow-invalid-control",
+    ]
+    with pytest.raises(SystemExit, match="PARTIAL corpus"):
+        lc0_control_train.main(argv)
+    assert not (tmp_path / "run" / "summary.json").exists()
+
+    rc = lc0_control_train.main([*argv, "--allow-partial-corpus"])
+    assert rc == 0
+    summary = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["corpus"]["partial_corpus"] == {
+        "incomplete_shards": {"rows/shard_000000.zarr": {
+            "run_finished_claim": False, "shards_adopted": 3,
+            "rows_claimed": 300, "rows_derived": 16, "derive_run_finalized": None,
+        }},
+        "partial": True, "allow_partial_corpus": True,
+    }
 
 
 def test_the_control_run_completes_and_writes_a_summary(tmp_path: Path) -> None:
@@ -833,6 +930,192 @@ def test_the_driver_builds_productions_buffer_not_the_constructor_defaults(
     assert "replay" in summary["replay_judged_against"].lower() or summary[
         "replay_judged_against"
     ], "the artifact must name what guard 0d judged against"
+
+
+def test_game_epoch_driver_resolves_one_complete_epoch_and_banks_its_receipt(
+    tmp_path: Path,
+) -> None:
+    game_rows = [(0, ply) for ply in range(4)] + [
+        (game, 100 + game) for game in range(1, 13)
+    ]
+    shards = _write_game_rows(tmp_path / "rows", game_rows)
+    out = tmp_path / "epoch_run"
+
+    rc = lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "0", "--batch-size", "4",
+        "--sampling-mode", "game_epoch", "--epoch-plan-workers", "2",
+        "--epoch-load-workers", "2", "--train-window-steps", "2",
+        "--device", "cpu", "--no-compile",
+        "--allow-arch-drift", "--allow-invalid-control",
+    ])
+
+    assert rc == 0
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
+    assert summary["steps"] == 4
+    assert summary["steps_realized"] == 4
+    assert summary["sampling"]["mode"] == "game_epoch"
+    assert summary["sampling"]["rows_planned"] == 16
+    assert summary["sampling"]["rows_realized"] == 16
+    assert summary["sampling"]["batches_planned"] == 4
+    assert summary["sampling"]["batches_realized"] == 4
+    assert summary["sampling"]["min_batch_rows_planned"] == 4
+    assert summary["sampling"]["min_optimizer_batch_fill_ratio"] == 0.99
+    assert summary["sampling"]["same_game_repeats_max"] == 0
+    assert summary["sampling"]["input_history_encoding"] == (
+        "lc0_root_legacy_meta"
+    )
+    assert summary["sampling"]["history_rep_fix"] is True
+    assert summary["sampling"]["validated_load_payload_copies"] == 5
+    assert summary["sampling"]["collation_working_set_batch_copies"] == 3
+    assert summary["sampling"]["complete"] is True
+    assert summary["sampling"]["max_working_set_bytes"] == (
+        lc0_control_train.GAME_EPOCH_MAX_WORKING_SET_BYTES
+    )
+    assert summary["sampling"]["peak_working_set_bytes"] <= summary["sampling"][
+        "peak_working_set_bytes_planned"
+    ]
+    assert summary["sampling"]["peak_working_set_bytes_planned"] <= summary[
+        "sampling"
+    ]["max_working_set_bytes"]
+    assert summary["sampling"]["plan_sha256"] == summary["sampling"]["realized_sha256"]
+    assert summary["sampling"]["row_order"] == (
+        "seeded_shuffle_within_shard_game_segments"
+    )
+    assert summary["sampling"]["loss_normalization"] == (
+        "sum(weighted_masked_numerator*corpus_rows/"
+        "objective_mask_weight)/batch_size"
+    )
+    windows = summary["train_window_metrics"]
+    assert [window["window_index"] for window in windows] == [1, 2]
+    assert [window["steps_requested"] for window in windows] == [2, 2]
+    assert [window["steps_cumulative"] for window in windows] == [2, 4]
+    assert [window["train_steps_done"] for window in windows] == [2, 2]
+    assert [window["train_samples_seen"] for window in windows] == [8, 8]
+    assert all(
+        window["train_steps_done"] / window["train_time_s"] > 0.0
+        for window in windows
+    )
+    assert summary["metrics"]["train_samples_seen"] == windows[-1][
+        "train_samples_seen"
+    ]
+    realized_replay = summary["realized_replay_after_guard"]
+    assert realized_replay["sampling_mode"] == "game_epoch"
+    assert realized_replay["applied"]["batch_size"] == 4
+    assert realized_replay["applied"]["policy_size"] == COMPACT_POLICY_SIZE
+    assert realized_replay["applied"]["input_planes"] == PLANES
+    assert realized_replay["applied"]["input_history_encoding"] == (
+        "lc0_root_legacy_meta"
+    )
+    assert realized_replay["applied"]["history_rep_fix"] is True
+    assert realized_replay["applied"]["validated_load_payload_copies"] == 5
+    assert realized_replay["applied"]["collation_working_set_batch_copies"] == 3
+    assert realized_replay["applied"]["max_working_set_bytes"] == (
+        lc0_control_train.GAME_EPOCH_MAX_WORKING_SET_BYTES
+    )
+    assert realized_replay["applied"]["min_optimizer_batch_fill_ratio"] == 0.99
+    assert realized_replay["applied"]["mirror_augmentation"] is True
+    assert realized_replay["applied"]["mirror_working_set_batch_copies"] == 7
+    assert "shuffle_cap" not in realized_replay["applied"]
+    assert "shuffle_cap" in realized_replay["ignored_disk_replay_kwargs"]
+    assert summary["valid_control"] is False
+    assert any("sampler intervention" in item for item in summary["validity_problems"])
+
+
+def test_game_epoch_driver_refuses_a_budget_that_cannot_use_every_row(
+    tmp_path: Path,
+) -> None:
+    shards = _write_shards(tmp_path / "rows", list(range(16)))
+    out = tmp_path / "truncated_epoch"
+
+    with pytest.raises(SystemExit, match="stop before every row was used"):
+        lc0_control_train.main([
+            "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+            "--out-dir", str(out), "--steps", "3", "--batch-size", "4",
+            "--sampling-mode", "game_epoch", "--epoch-plan-workers", "2",
+            "--epoch-load-workers", "2", "--device", "cpu", "--no-compile",
+            "--allow-arch-drift", "--allow-invalid-control",
+        ])
+
+    assert not (out / "checkpoint.pt").exists()
+    assert not (out / "checkpoint_mid.pt").exists()
+
+
+def test_game_epoch_driver_refuses_gradient_accumulation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shards = _write_game_rows(
+        tmp_path / "rows",
+        [(game, game * 10 + ply) for game in range(4) for ply in range(2)],
+    )
+    out = tmp_path / "accumulated_epoch"
+    # This test deliberately changes a production trainer knob in order to
+    # reach the sampler's stricter invariant. Bypass the earlier control-arm
+    # recipe pin only; the constructed Trainer must still realize accum_steps=2.
+    monkeypatch.setattr(
+        lc0_control_train,
+        "preflight_trainer",
+        lambda _cfg, *, allow_leak: "test override for sampler guard",
+    )
+    monkeypatch.setattr(
+        lc0_control_train,
+        "GameAwareEpochBuffer",
+        lambda **_kwargs: pytest.fail(
+            "gradient accumulation must be rejected before epoch planning",
+        ),
+    )
+
+    with pytest.raises(SystemExit, match=r"requires Trainer\.accum_steps=1"):
+        lc0_control_train.main([
+            "--config", str(_tiny_config(tmp_path, train={"accum_steps": 2})),
+            "--shards", str(shards), "--out-dir", str(out), "--steps", "0",
+            "--batch-size", "2", "--sampling-mode", "game_epoch",
+            "--epoch-plan-workers", "2", "--epoch-load-workers", "2",
+            "--device", "cpu", "--no-compile", "--allow-arch-drift",
+            "--allow-invalid-control",
+        ])
+
+    assert not (out / "checkpoint.pt").exists()
+    assert not (out / "checkpoint_mid.pt").exists()
+
+
+def test_game_epoch_failure_after_midpoint_removes_the_partial_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_rows = [(0, ply) for ply in range(4)] + [
+        (game, 100 + game) for game in range(1, 13)
+    ]
+    shards = _write_game_rows(tmp_path / "rows", game_rows)
+    out = tmp_path / "failed_epoch"
+    original = lc0_control_train.GameAwareEpochBuffer.sample_batch_arrays
+    calls = 0
+
+    def fail_third_batch(
+        self: Any, batch_size: int, *, wdl_balance: bool = True,
+    ) -> dict[str, np.ndarray]:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise RuntimeError("injected exact-epoch read failure")
+        return original(self, batch_size, wdl_balance=wdl_balance)
+
+    monkeypatch.setattr(
+        lc0_control_train.GameAwareEpochBuffer,
+        "sample_batch_arrays",
+        fail_third_batch,
+    )
+    with pytest.raises(RuntimeError, match="injected exact-epoch"):
+        lc0_control_train.main([
+            "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+            "--out-dir", str(out), "--steps", "0", "--batch-size", "4",
+            "--sampling-mode", "game_epoch", "--epoch-plan-workers", "2",
+            "--epoch-load-workers", "2", "--device", "cpu", "--no-compile",
+            "--allow-arch-drift", "--allow-invalid-control",
+        ])
+
+    assert calls == 3
+    assert not (out / "checkpoint.pt").exists()
+    assert not (out / "checkpoint_mid.pt").exists()
 
 
 def test_the_replay_guard_refuses_a_drifted_control_at_launch(
