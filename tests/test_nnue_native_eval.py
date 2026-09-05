@@ -1945,7 +1945,9 @@ def test_benchmark_rejects_an_empty_sample(tmp_path: Path, bucket_pack: Path) ->
     assert code == 2
 
 
-def test_the_delivered_sample_holds_no_duplicate_evaluator_inputs() -> None:
+def test_the_delivered_sample_holds_no_duplicate_evaluator_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """⚑ The sample's own claim, checked on the sample it delivers.
 
     Deduping on the full FEN lets the same placement+STM through several times
@@ -1953,15 +1955,22 @@ def test_the_delivered_sample_holds_no_duplicate_evaluator_inputs() -> None:
     cell count — so the gate's "N positions covered" counts the same evaluator
     input more than once.
     """
-    from scripts.nnue_fens import sample_fens, state_key_of_fen
+    from scripts import nnue_fens
 
-    # ⚑ 800, not 200. Measured: with the full-FEN key restored, a 200-position
-    # sample happens to deliver no colliding pair, so the assertion below would
-    # hold with the fix reverted — the test would exist and prove nothing. At
-    # 800 the reverted sampler delivers two.
-    fens, stats = sample_fens(800, seed=31337)
-    states = [state_key_of_fen(f) for f in fens]
+    first = chess.Board()
+    repeated = chess.Board()
+    repeated.halfmove_clock = 8
+    repeated.fullmove_number = 5
+    distinct = chess.Board()
+    distinct.push_uci("e2e4")
+    # Make the clock-only collision certain; keep classification, deduplication,
+    # round-robin delivery and statistics on the actual sampler path.
+    monkeypatch.setattr(nnue_fens, "_playout", lambda _rng, _capture_bias: [first, repeated, distinct])
+    fens, stats = nnue_fens.sample_fens(3, seed=31337, max_playouts=1)
+    states = [nnue_fens.state_key_of_fen(f) for f in fens]
     assert len(set(states)) == len(fens), "the delivered sample repeats an evaluator input"
-    assert stats.accepted == len(fens)
-    # And the sampler saw duplicates and rejected them, so this is not vacuous.
-    assert stats.duplicate_states > 0
+    assert set(fens) == {first.fen(), distinct.fen()}
+    assert stats.accepted == len(fens) == 2
+    assert stats.considered == 3
+    assert stats.duplicate_states == 1
+    assert sum(stats.cell_counts.values()) == 2

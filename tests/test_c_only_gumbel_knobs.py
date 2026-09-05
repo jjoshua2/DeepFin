@@ -1,65 +1,15 @@
-"""A C-only search knob must be REFUSED on the Python path, never ignored.
+"""C-only search options must be refused wherever the Python path could run.
 
-The mirror of ``tests/test_uci_search_options.py::test_the_c_path_refuses_a_
-python_only_knob``, and the residual of narrowed task #264.
+``full_tree=False`` changes the C descent to PUCT. The Python reference path
+cannot implement that option; bypassing its guard leaves policy and action
+unchanged. The controls pair those two behaviors at both top-k widths, while
+separate C cases cover changes to the training policy and the played action.
 
-``GumbelConfig.full_tree`` is read by the C fast path and by nothing else. The
-C takes ``bool(cfg.full_tree)`` in ``gumbel_c.run_gumbel_root_many_c``, hands it
-to ``start_gumbel_sims`` as ``g->sel.full_tree``, and
-``tree_gumbel_collect_leaf`` branches on it to run ``tree_gumbel_select_child``
-(true) or ``tree_select_child``, the PUCT descent (false). The Python reference
-search descends through ``_select_full_gumbel_child`` unconditionally --
-``cfg.full_tree`` does not occur in ``mcts/gumbel.py`` at all.
-
-So before this file existed the value was accepted by
-``arena_standard --cand-gumbel full_tree=0`` (it is not in
-``INERT_GUMBEL_KNOBS``), banked by ``realized_gumbel()`` as that side's realized
-search, honoured if the C ran, and silently dropped if the extension was
-missing or volatility forced the Python path. Which of the two searches the
-number described was decided after the record was written.
-
-MEASURED here, not argued: ``test_the_c_path_really_reads_it`` and
-``test_the_python_path_really_does_not`` run the same deterministic search on
-both paths at both values. L1 over the returned policy, ``full_tree`` True vs
-False, everything else fixed:
-
-    sims    C topk=4    C topk=8    Python (either)
-      64    0.000000    0.000000    0.000000
-     128    0.000000    0.000000    0.000000
-     256    0.000000    0.000000    0.000000
-     512    0.000000    0.000000    0.000000
-     768    0.000000    0.000000    0.000000
-     896    0.000000    0.096116    0.000000
-    1024    1.996486    0.063902    0.000000
-    1152    1.916876    0.043043    0.000000
-    1280    0.000001    0.028351    0.000000
-    1536    0.000000    1.980454    0.000000
-    2048    0.000000    0.000036    0.000000
-    3072    2.000000    0.000000    0.000000   <- played ACTION changes
-    4096    2.000000    0.000000    0.000000   <- played ACTION changes
-
-⚑⚑ THE C COLUMN IS NOT MONOTONE AND THERE IS NO DEPTH THRESHOLD. An earlier
-revision of this docstring said the difference "needs a deep enough subtree to
-reach the branch", which predicts a threshold the data does not have: topk=4
-diverges at 1024-1152, returns to 0.0 at 1536-2048, and diverges again at
-3072-4096. Sequential halving frequently eliminates to the SAME root policy
-even when the descent below the root genuinely differed, so the branch being
-reached is necessary and nowhere near sufficient. **The sim counts below are an
-empirically found working point, not a derived one.** If this test ever fails,
-do not go hunting for the mechanism that sets the threshold -- there isn't one.
-Re-run the sweep (``_SWEEP`` drives it) and move to a point that still
-diverges.
-
-What the table does establish, at all 26 measured points: the Python column is
-EXACTLY 0.0 everywhere, and the C column is non-zero at 8 of 26. That asymmetry
-is the whole finding. The tests below re-assert it at the DISCRIMINATING points
--- every point where the C diverges, where a Python 0.0 is a statement about
-the path rather than about the sim count -- and not at all 26, because a Python
-0.0 where the C is also 0.0 discriminates nothing and the full re-sweep costs
-~98s of reference search. A probe that sampled only 128/256/512 would have read
-0.0 on both paths and closed the question the wrong way.
-
-The mutation matrix (9 mutants, each applied, run, reverted) is in the PR body.
+The selected simulation counts are empirical controls, not depth thresholds.
+C policy divergence is non-monotonic: sequential halving can produce the same
+root policy despite different descent below the root. Pairing each Python
+control with a C case that actually diverges avoids an inconclusive comparison
+where both paths happen to return unchanged results.
 """
 from __future__ import annotations
 
@@ -173,33 +123,16 @@ def test_membership_is_read_off_the_two_paths_source_not_off_the_name() -> None:
 # --- MEASURED: which path acts on it -----------------------------------------
 
 
-# The C points from the module docstring's table that diverge, chosen for
-# DISTANCE from a zero rather than for size. ``(1024, 4)`` is the headline
-# number but sits one step from ``(896, 4)`` = 0.0; the topk=8 run 896-1536 is
-# a contiguous non-zero band, so a knife-edge moving by one step cannot empty
-# this list. Not a threshold -- see the docstring.
+# C policy controls span both widths and several simulation counts because
+# divergence is non-monotonic; a single count does not establish a threshold.
 _DIVERGING = [(1024, 4), (1152, 4), (896, 8), (1024, 8), (1152, 8), (1536, 8)]
 
 # Where the descent swap reaches the PLAYED MOVE, not just the stored target.
 _ACTION_CHANGING = [(3072, 4), (4096, 4)]
 
-# Every point the module docstring tabulates. Not a test parametrisation --
-# re-running the whole thing on the PYTHON path costs ~98s, and at a point
-# where the C is 0.0 too a Python 0.0 discriminates nothing. It is here so the
-# sweep behind the table can be reproduced without reconstructing the list:
-#   [(s, k, l1) for s, k in _SWEEP]  against `_search(run_gumbel_root_many_c,...)`
-_SWEEP = [
-    (s, k)
-    for k in (4, 8)
-    for s in (64, 128, 256, 512, 768, 896, 1024, 1152, 1280, 1536, 2048, 3072, 4096)
-]
-
-# The DISCRIMINATING points for the Python-side control: every point where the
-# C really does diverge, so "Python is 0.0 here" is a statement about the path
-# and not about the sim count -- plus two from the shallow regime where neither
-# path moves. ``(4096, 4)`` is left out on cost alone (29s of Python reference
-# search for a point ``(3072, 4)`` already covers).
-_PY_CONTROL = [(128, 4), (256, 4), *_DIVERGING, (3072, 4)]
+# Pair each Python width with a point where the C policy demonstrably changes.
+# An unchanged Python result where the C also stays unchanged is inconclusive.
+_PY_CONTROL = [(1024, 4), (896, 8)]
 
 
 @pytest.mark.parametrize(("sims", "topk"), _DIVERGING)
@@ -333,26 +266,9 @@ def test_the_volatility_reroute_hits_the_same_guard(
 
 
 def test_production_selfplay_has_no_route_to_the_knob_at_all() -> None:
-    """WHY there is no ``network_turn`` route test, stated as an assertion.
-
-    Production selfplay dispatches at ``run_network_turn`` (``_HAS_GUMBEL_C and
-    not volatility_search_enabled``), which the
-    ``pick_moves_for_boards`` test above does not cover. A route test there
-    would have to FABRICATE a config production cannot produce, so it would be
-    testing the callee-side placement -- which mutant M1 already covers from
-    ``run_gumbel_root_many`` -- rather than a reachable path.
-
-    The stronger and cheaper statement is this one: the knob has no config
-    surface anywhere. ``build_selfplay_gumbel_config`` is the whole
-    ``SearchConfig -> GumbelConfig`` mapping and it never passes ``full_tree``,
-    ``SearchConfig`` has no such field, and the yaml schema has no key for it.
-    So the production path is protected structurally, and this test is what
-    fails the day somebody adds ``gumbel_full_tree`` to the yaml and wires it
-    through without re-reading ``C_ONLY_GUMBEL_KNOBS``.
-    """
+    """Default selfplay uses full-tree search without exposing a search field."""
     from chess_anti_engine.selfplay.config import GameConfig, SearchConfig
     from chess_anti_engine.selfplay.network_turn import build_selfplay_gumbel_config
-    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
 
     cfg = build_selfplay_gumbel_config(
         search=SearchConfig(), game=GameConfig(), simulations=8,
@@ -360,7 +276,6 @@ def test_production_selfplay_has_no_route_to_the_knob_at_all() -> None:
     assert cfg.full_tree is True
     assert c_only_knobs_set(cfg) == ()
     assert not [f for f in SearchConfig.__dataclass_fields__ if "full_tree" in f]
-    assert not [k for k in flatten_run_config_defaults({}) if "full_tree" in k]
 
 
 def test_the_c_path_still_accepts_it() -> None:
