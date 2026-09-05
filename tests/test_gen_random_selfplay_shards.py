@@ -24,6 +24,7 @@ from typing import Any
 import chess
 import numpy as np
 import pytest
+import torch
 
 from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding._lc0_ext import CBoard
@@ -47,6 +48,16 @@ GEN = load_script_module("gen_random_selfplay_shards.py")
 _PLANES = 175
 _HIST = "lc0_root_legacy_meta"
 _EXTRA = "v2_threats"
+
+
+@pytest.fixture(autouse=True)
+def _restore_torch_threads() -> Iterator[None]:
+    """In-process worker calls must not leak their child-process thread setting."""
+    previous = torch.get_num_threads()
+    try:
+        yield
+    finally:
+        torch.set_num_threads(previous)
 
 
 @pytest.fixture(autouse=True)

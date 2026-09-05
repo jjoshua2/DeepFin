@@ -620,10 +620,17 @@ def test_the_c_call_refuses_a_bad_mode_or_an_unusable_curve() -> None:
         _c_batch(wdl_logits=wdl, values=values,
                  extra=(0, _N_EXTRA_V1, 0, 0.0, 0.0, 0.0, 7, PROD_SLOPE, PROD_WIDTH))
     for slope, width in ((0.0, PROD_WIDTH), (PROD_SLOPE, 0.0)):
-        with pytest.raises(ValueError, match="cp_slope"):
+        with pytest.raises(ValueError, match="cp_slope") as exc:
             _c_batch(wdl_logits=wdl, values=values,
                      extra=(0, _N_EXTRA_V1, 0, 0.0, 0.0, 0.0,
                             SWDL_DRAW_PARAMETRIC_Q, slope, width))
+        assert str(exc.value).endswith(f"got {slope:g} and {width:g}")
+    for slope, width in ((1e-300, 1e-300), (1.0, 1e3)):
+        with pytest.raises(ValueError, match="outside the representable range of sinh") as exc:
+            _c_batch(wdl_logits=wdl, values=values,
+                     extra=(0, _N_EXTRA_V1, 0, 0.0, 0.0, 0.0,
+                            SWDL_DRAW_PARAMETRIC_Q, slope, width))
+        assert f"slope*draw_width_cp={slope * width:g} is" in str(exc.value)
 
 
 @requires_c
