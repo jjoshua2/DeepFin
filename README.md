@@ -41,13 +41,19 @@ dated proposals rather than current deployment instructions.
 See [toolchain entry points](docs/toolchains.md) and [branch lifecycle](docs/branch_lifecycle.md) for development and production adoption.
 
 ## Setup
+
+Development and CI use the committed lock on Linux x86-64 / Python 3.13:
+
 ```bash
-pip install -e ".[dev]"      # full server/test env (server+train+tune+onnx);
-                             # the test suite hard-requires all of them (no skips)
-pip install -e ".[worker]"   # lite selfplay-client install (core deps + requests)
+uv sync --locked --extra dev --extra cpu
+. .venv/bin/activate
 ```
 
-Common minimal installs:
+Use `--extra cu130` in place of `--extra cpu` for the CUDA development profile.
+See [development](docs/development.md) for the uv version, platform scope, updates
+and validation. Create this environment in a fresh worktree when jobs are live.
+
+Ordinary package installs (without the development lock):
 - trainer/tune machine: `pip install -e ".[train,tune,server]"`
 - worker/client machine: `pip install -e ".[worker]"`
 
@@ -272,5 +278,5 @@ Notes:
 
 ## Run tests
 ```bash
-python -m pytest -m 'not slow'
+python scripts/validate.py cpu
 ```

@@ -45,6 +45,10 @@ include = ["chess_anti_engine*"]
 exclude = ["runs*", "tests*"]
 
 [project.optional-dependencies]
+# Accelerator selection for the locked development environment (uv sources below).
+cpu = ["torch==2.14.0"]
+cu130 = ["torch==2.14.0"]
+
 train = [
   "tensorboard>=2.0",
   # Unconditional import in train/trainer.py (gradient z-clip).
@@ -116,6 +120,40 @@ server = [
 worker = [
   "requests>=2.31",
 ]
+
+[tool.uv]
+required-version = "==0.12.10"
+# This lock qualifies development/CI on the host platform, not the worker matrix.
+# Published package metadata retains its broader Python/platform compatibility.
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64' and python_version == '3.13'"]
+conflicts = [[{ extra = "cpu" }, { extra = "cu130" }]]
+build-constraint-dependencies = [
+  "setuptools==84.0.0", "wheel==0.48.0", "packaging==26.3", "numpy==2.2.6",
+]
+# Native headers and build flags must invalidate uv's editable build cache.
+cache-keys = [
+  { file = "pyproject.toml" }, { file = "setup.py" },
+  { file = "chess_anti_engine/**/*.c" }, { file = "chess_anti_engine/**/*.h" },
+  { env = "CC" }, { env = "CFLAGS" }, { env = "CPPFLAGS" }, { env = "LDFLAGS" },
+  { env = "CAE_EXT_NATIVE" }, { env = "CAE_EXT_LTO" },
+  { env = "CAE_EXT_SANITIZE" }, { env = "CAE_EXT_WERROR" },
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", extra = "cpu" },
+  { index = "pytorch-cu130", extra = "cu130" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -205,4 +243,3 @@ ignore_names = [
   "pairwise_momentum",
   "n_walkers",
 ]
-
