@@ -75,7 +75,12 @@ runner or during a confirmed pause with no competing work; an explicit thread co
 is also supported. Invalid values retain the cap. In CI YAML, quote string values.
 
 The shared validator prints the interpreter, Torch build, requested thread count,
-native backend, elapsed time and failing command. CPU suites hide GPUs even in a CUDA
+native backend, elapsed time and failing command. Test suites print their 20 slowest
+phases and write per-test JUnit timings/results to `artifacts/validation/<suite>.xml`.
+Use `--report-dir PATH` to retain a comparison run separately; the default replaces
+the previous report for that suite. CI uploads these reports even when tests fail.
+Compare runs with the same thread count and compiler-cache conditions before claiming
+a speedup. CPU suites hide GPUs even in a CUDA
 environment; `--require-cpu-wheel` additionally verifies CI's actual dependency variant.
 Each test invocation owns a temporary compilation cache, so it neither consumes nor
 modifies live worker artifacts. Compiler jobs are limited to one. On Linux, validation
@@ -134,6 +139,11 @@ the server and worker, not a separate local selfplay implementation. Use
   consistency against source. Run relevant tests only if the change affects them.
 - Behavior changes: exercise the changed behavior and a meaningful failure case.
   Prefer deterministic tests in encoding, replay, MCTS and target construction.
+  Exact chess answers and serialization contracts are useful; source spelling,
+  historical commentary and copies of implementation algebra usually are not.
+  Prefer the observable contract, and consolidate older guards when a behavioral
+  test supersedes them. Protocol-only UCI tests run eagerly; an explicit compiled
+  handshake/search smoke remains in the ordinary CPU suite.
 - Distributed/selfplay wiring: include `tests/test_e2e_smoke.py`; for a search-only
   change the `-k gumbel_selfplay_smoke` selection exercises the real chain.
 - Code changes: run focused checks while iterating, then the whole-repo

@@ -81,24 +81,6 @@ def test_ray_still_raises_on_a_missing_path_without_the_patch(tmp_path: Path) ->
         _delete_fs_path(fs=pyarrow.fs.LocalFileSystem(), fs_path=str(tmp_path / "gone"))
 
 
-def test_the_guard_in_front_of_the_delete_is_what_raises() -> None:
-    """`_delete_fs_path` swallows every failure of the delete ITSELF.
-
-    Only the `_is_directory` existence probe in front of it is unguarded, which
-    is the whole reason an absent path is fatal instead of a no-op. Stating
-    that here keeps the fix's rationale honest.
-    """
-    import inspect
-
-    from ray.train._internal.storage import _delete_fs_path, _is_directory
-
-    src = inspect.getsource(_delete_fs_path)
-    probe, _, remainder = src.partition("try:")
-    assert "_is_directory" in probe, "the existence probe moved inside the try"
-    assert "except Exception" in remainder, "the delete is no longer guarded"
-    assert "FileNotFoundError" in inspect.getsource(_is_directory)
-
-
 def test_patched_eviction_treats_an_absent_target_as_deleted(
     tmp_path: Path, unpatched_delete_fs_path, capsys: pytest.CaptureFixture[str]
 ) -> None:
