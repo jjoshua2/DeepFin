@@ -86,8 +86,8 @@ dev = [
   "numpy==2.2.6",
   # torch pinned for the same reason: torch ships its own stubs and they drift
   # between releases (e.g. torch.device.index verdicts). Local CUDA builds
-  # (2.12.1+cu130) satisfy the bare pin, so this doesn't fight the cu130 wheel.
-  "torch==2.12.1",
+  # (2.14.0+cu130) satisfy the bare pin, so this doesn't fight the cu130 wheel.
+  "torch==2.14.0",
   # C extension static analysis (pip-installable, no sudo required)
   "cppcheck>=1.5",     # general C static analyzer (bundles cppcheck binary)
   # For deeper interprocedural analysis, install Facebook infer separately:

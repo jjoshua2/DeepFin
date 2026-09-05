@@ -1,3 +1,9 @@
+> **Historical ledger — frozen.** New experiments and later follow-ups belong in
+> [individual experiment records](experiments/README.md). Search this archive for
+> prior evidence; its old instructions, dates and “LIVE” labels do not describe
+> current operating policy. The original contents below remain unchanged to preserve
+> historical anchors and evidence references; this archive has not been split.
+
 # Experiment Ledger
 
 **Purpose.** One place that answers: what did we try, what was the verdict, on which

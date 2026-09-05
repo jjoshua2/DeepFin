@@ -362,8 +362,9 @@ monitor_fen loop) retires seeds after 2 consecutive AWARE reads, runs probation 
 on retirees that regress, writes a new versioned list, and repoints the yaml itself.
 Don't hand-edit the active list for removals.
 
-**Feeding new seeds is manual and ledger-gated** — it is a data-affecting change, so one
-per readout window with a ledger entry.
+**Feeding new seeds is a manual, data-affecting change.** Record its hypothesis and
+readout plan in an [experiment record](experiments/README.md), keeping one
+data-affecting change per readout window where practical.
 
 ```bash
 PYTHONPATH=. python3 scripts/blindspot_feed_step.py --batch <vetted-file> --tag <label>

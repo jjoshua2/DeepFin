@@ -20,10 +20,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install CPU torch
-        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Install package + dev deps
-        run: pip install -e ".[dev]"
+        run: |
+          pip install -e ".[dev]" --extra-index-url https://download.pytorch.org/whl/cpu
+          python -c "import torch; print(torch.__version__); assert torch.version.cuda is None, 'CI requires the CPU wheel'"
       # Override the pins with latest — this is the whole point of the canary.
       - name: Upgrade lint tools + numpy to latest
         run: pip install -U ruff basedpyright vulture numpy

@@ -11,7 +11,7 @@ Use Python compatible with `pyproject.toml` and install into an isolated environ
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e '.[dev]'
+python -m pip install -e '.[dev]' --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
 The `dev` extra supplies the server, training, tuning, ONNX and test dependencies.
@@ -19,6 +19,16 @@ The `dev` extra supplies the server, training, tuning, ONNX and test dependencie
 in `pyproject.toml`; don't infer them from another checkout's environment. An old
 setuptools without PEP 660 can fail editable installation; build isolation uses the
 project's build requirements. Avoid upgrading an environment used by active jobs.
+
+For CUDA development on the RTX 5090, use the official `cu130` index instead of `cpu`
+in the install command. Both variants resolve the Torch version from the same dev pin;
+CI also checks that it actually installed the CPU variant. Installing unpinned Torch
+first can be undone by the later dev install, silently changing versions and variants.
+
+Validate Torch upgrades in a separate environment with model/loss/optimizer tests and
+an actual GPU forward/backward and compiled-inference check. Existing AOT packages and
+compiled caches are version-specific; rebuild and validate them before production adopts
+a different Torch build. Installing a candidate does not upgrade a running process.
 
 From the repository root:
 

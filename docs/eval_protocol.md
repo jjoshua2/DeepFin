@@ -9,8 +9,8 @@ Historical measurements below retain their original settings and limitations.
 
 Before new training compute, use relevant banked data or a bounded target/offline
 screen. Record the hypothesis, simpler control where useful, deciding metric,
-threshold, uncertainty method, budget and readout horizon in the
-[ledger](experiment_ledger.md). Choose sample size and seeds for the expected effect
+threshold, uncertainty method, budget and readout horizon in an
+[experiment record](experiments/README.md). Choose sample size and seeds for the expected effect
 and variability; there is no universal two-seed or 1,000-game requirement.
 
 1. **Target or mechanism screen.** Frozen deep-SF regret can price teacher agreement;
