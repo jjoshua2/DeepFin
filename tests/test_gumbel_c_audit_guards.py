@@ -22,7 +22,6 @@ The F5 and F10 tests drive the real C search on CPU with a synthetic evaluator.
 from __future__ import annotations
 
 import dataclasses
-import inspect
 import logging
 import os
 
@@ -271,42 +270,28 @@ def test_policy_temp_one_says_nothing(caplog: pytest.LogCaptureFixture) -> None:
 # --- F10: one temperature sampler, not two -------------------------------
 
 
-def test_gumbel_c_calls_the_shared_sampler() -> None:
-    src = inspect.getsource(run_gumbel_root_many_c)
-    assert "sample_action_with_temperature(" in src
-    assert "np.power(np.maximum(p, 0.0), 1.0 / float(cfg.temperature))" not in src
+def test_temperature_zero_plays_the_survivor_not_the_first_legal_action() -> None:
+    """One candidate makes the survivor known independently of sampling code."""
+    board = chess.Board()
+    legal = _legal_indices(board)
+    expected = int(legal.max())
 
+    class _PreferredActionEvaluator:
+        supports_legal_bf16 = False
 
-def test_the_shared_sampler_gets_the_survivor_s_index_not_zero() -> None:
-    """`sampling.py`'s docstring claimed Gumbel passes argmax_idx=0. It does
-    not — index 0 of ``legal`` is the lowest legal action id."""
-    src = inspect.getsource(run_gumbel_root_many_c)
-    assert "np.searchsorted(legal, best_a)" in src
+        def evaluate_encoded(self, x, relations=None):
+            del relations
+            policy = np.zeros((len(x), POLICY_SIZE), dtype=np.float32)
+            policy[:, expected] = 8.0
+            return policy, np.zeros((len(x), 3), dtype=np.float32)
 
-    from chess_anti_engine.mcts import sampling
-
-    doc = sampling.sample_action_with_temperature.__doc__ or ""
-    assert "searchsorted" in doc
-    assert "NOT 0 for Gumbel" in doc
-
-
-def test_at_temperature_zero_the_swap_is_a_no_op() -> None:
-    """Selfplay runs temperature 0.0, so the F10 swap must not move a thing.
-
-    The old inline code returned ``best_a`` directly; the shared helper returns
-    ``legal[searchsorted(legal, best_a)]``, which is the same action whenever
-    ``best_a`` is in ``legal`` — and it always is, since the candidate set is
-    drawn from the same pruned legal array the priors were written on.
-    """
-    boards = [chess.Board(f) for f in _FENS]
-    probs, actions, values, *_ = _run(boards, cfg=_cfg(temperature=0.0))
-    for board, action in zip(boards, actions, strict=True):
-        assert 0 <= int(action) < POLICY_SIZE
-        # The played action must be a legal move of the position it was
-        # searched from (the failure a wrong argmax_idx would produce).
-        legal_ids = {int(a) for a in _legal_indices(board)}
-        assert int(action) in legal_ids
-    assert len(probs) == len(values) == len(boards)
+    probs, actions, *_ = _run(
+        [board], cfg=_cfg(topk=1, temperature=0.0), evaluator=_PreferredActionEvaluator(),
+    )
+    support = np.flatnonzero(probs[0])
+    assert len(support) > 1
+    assert int(support[0]) != expected
+    assert int(actions[0]) == expected
 
 
 def test_a_positive_temperature_still_samples_from_the_returned_policy() -> None:

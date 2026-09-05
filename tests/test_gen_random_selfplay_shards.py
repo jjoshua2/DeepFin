@@ -584,19 +584,9 @@ def test_the_fen_seeding_branch_is_unreachable_and_unannounced(
 ) -> None:
     """Generation zero cannot seed from blind-spot FENs, and does not claim to.
 
-    Two halves, and the second is the one with teeth. FIRST: no CLI-reachable
-    combination populates the FEN-list branch of the shared ``OpeningConfig``,
-    so a run of this tool is pure selfplay by construction rather than by
-    convention -- seeded openings would be curriculum data inside the arm whose
-    whole point is having none. SECOND: because those fields cannot move, they
-    are absent from the realized line. A constant there is not extra
-    provenance; it is the mirror of the defect the line exists to catch, and it
-    would weaken the only property the line claims -- that every entry in it
-    moved because something asked it to.
-
-    Wiring a real flag for either field fails BOTH halves here and the
-    literal-surface pin in ``tests/test_deletion_annotations.py``, which is
-    where a consumer of a key the production config no longer sets belongs.
+    Exercise opening construction and its realized report together. Seeded
+    openings would add curriculum data to this pure-selfplay arm, so enabling
+    them requires revisiting both expectations.
     """
     for cfg in (
         _config(tmp_path),

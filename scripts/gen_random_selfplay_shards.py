@@ -1814,20 +1814,9 @@ def realized_config(
 ) -> dict[str, Any]:
     """Read the realized settings back off the objects that will consume them.
 
-    Deliberately NOT built from ``args``: every field here is fetched from the
-    ``GumbelConfig`` the search receives, the evaluator instance it calls, the
-    ``OpeningConfig`` the sampler reads, or the OS. A flag that got dropped on
-    the way in is therefore visible in this line, not just in the parser.
-
-    ⚑ And ONLY such fields. A field no flag can move is not extra provenance,
-    it is a constant wearing a realized value's clothes — the mirror of the
-    defect this line exists to catch, and it dilutes the one property the line
-    claims (every entry here moved because something asked it to). So the
-    unreachable FEN-list opening fields are absent by the same rule that keeps
-    the parser's own spellings out; ``build_opening_config`` says why they
-    cannot vary. Wiring a flag for one is what should put it back, and the
-    deletion-annotation guard in ``tests/test_deletion_annotations.py`` will
-    stop that PR to have the key re-judged, which is the right place for it.
+    Read from the search, evaluator and opening objects so dropped CLI values
+    are visible. This generator has no FEN-list seeding option; if one is added,
+    include its realized settings here and exercise their propagation.
     """
     arm = evaluator.nnue_source
     return {

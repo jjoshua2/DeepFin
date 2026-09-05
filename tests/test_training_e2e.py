@@ -1,11 +1,9 @@
-"""End-to-end training loop smoke test with profiling.
+"""End-to-end training loop smoke tests.
 
 Exercises the full Trainer pipeline (forward, loss, backward, optimizer step,
 LR schedule, SWA update, save/load) using synthetic data — no Stockfish needed.
 """
 from __future__ import annotations
-
-import time
 
 import numpy as np
 import torch
@@ -40,15 +38,15 @@ def _make_sample(rng: np.random.Generator) -> ReplaySample:
 
 
 def test_e2e_training_loop_smoke(tmp_path):
-    """Full training loop: train N steps, verify loss decreases, save/load roundtrip."""
+    """Cross warmup, average multiple SWA states, then resume real training."""
     rng = np.random.default_rng(42)
 
     cfg = TransformerConfig(in_planes=146, embed_dim=64, num_layers=2, num_heads=4,
                             use_smolgen=False, use_nla=False)
     model = ChessNet(cfg)
 
-    buf = ReplayBuffer(500, rng=rng)
-    for _ in range(100):
+    buf = ReplayBuffer(32, rng=rng)
+    for _ in range(16):
         buf.add(_make_sample(rng))
 
     trainer = Trainer(
@@ -64,23 +62,26 @@ def test_e2e_training_loop_smoke(tmp_path):
         swa_freq=2,
     )
 
-    # Phase 1: train a few steps
-    t0 = time.perf_counter()
-    m1 = trainer.train_steps(buf, batch_size=8, steps=10)
-    t1 = time.perf_counter()
-
+    m1 = trainer.train_steps(buf, batch_size=8, steps=4)
     assert m1.loss > 0.0, "Loss should be positive"
-    assert m1.train_steps_done == 10
-    assert m1.train_samples_seen > 0
+    assert m1.train_steps_done == 4
+    assert m1.train_samples_seen == 32
+    warmup_lrs = [group["lr"] for group in trainer.opt.param_groups]
 
-    # Phase 2: train more, loss should decrease (or at least be finite)
-    m2 = trainer.train_steps(buf, batch_size=8, steps=10)
-    t2 = time.perf_counter()
-
+    # Eight steps cross the five-step warmup and observe SWA at steps 4 and 6.
+    m2 = trainer.train_steps(buf, batch_size=8, steps=4)
     assert torch.isfinite(torch.tensor(m2.loss))
-    assert trainer.step == 20
+    assert m2.train_steps_done == 4
+    assert m2.train_samples_seen == 32
+    assert trainer.step == 8
+    assert all(
+        group["lr"] > warmup_lr
+        for group, warmup_lr in zip(trainer.opt.param_groups, warmup_lrs, strict=True)
+    )
+    assert trainer._swa_model is not None
+    assert int(trainer._swa_model.n_averaged) == 2
 
-    # Phase 3: save and load roundtrip
+    # Save and load weights, optimizer moments, schedule, and the SWA average.
     ckpt_path = tmp_path / "ckpt.pt"
     trainer.save(ckpt_path)
 
@@ -100,7 +101,14 @@ def test_e2e_training_loop_smoke(tmp_path):
     )
     trainer2.load(ckpt_path)
 
-    assert trainer2.step == 20
+    assert trainer2.step == 8
+    optimizer_state = trainer.opt.state_dict()
+    assert optimizer_state["state"]
+    torch.testing.assert_close(trainer2.opt.state_dict(), optimizer_state, rtol=0, atol=0)
+    assert trainer2._swa_model is not None
+    torch.testing.assert_close(
+        trainer2._swa_model.state_dict(), trainer._swa_model.state_dict(), rtol=0, atol=0,
+    )
 
     # Verify model weights match after load
     for (n1, p1), (n2, p2) in zip(
@@ -110,22 +118,25 @@ def test_e2e_training_loop_smoke(tmp_path):
         assert n1 == n2
         assert torch.equal(p1.data.cpu(), p2.data.cpu()), f"Param {n1} mismatch after load"
 
-    # Phase 4: SWA export
+    resumed = trainer2.train_steps(buf, batch_size=8, steps=1)
+    assert resumed.train_steps_done == 1
+    assert resumed.train_samples_seen == 8
+    assert torch.isfinite(torch.tensor(resumed.loss))
+    assert trainer2.step == 9
+    assert all(int(state["step"]) == 9 for state in trainer2.opt.state_dict()["state"].values())
+    assert int(trainer2._swa_model.n_averaged) == 3
+    assert any(
+        not torch.equal(before, after)
+        for before, after in zip(trainer.model.parameters(), trainer2.model.parameters(), strict=True)
+    )
+
+    # Export the restored average after its next observation.
     swa_path = tmp_path / "swa_model.pt"
-    trainer.export_swa(swa_path)
+    trainer2.export_swa(swa_path)
     swa_ckpt = torch.load(str(swa_path), map_location="cpu")
     assert "model" in swa_ckpt
 
-    # Print profiling info
-    phase1_s = t1 - t0
-    phase2_s = t2 - t1
-    total_steps = 20
-    total_s = phase2_s + phase1_s
-    print("\n[profiling] 20 train steps on CPU (embed=64, 2L, 4H):")
-    print(f"  phase 1 (10 steps): {phase1_s:.3f}s ({10/phase1_s:.1f} steps/s)")
-    print(f"  phase 2 (10 steps): {phase2_s:.3f}s ({10/phase2_s:.1f} steps/s)")
-    print(f"  total: {total_s:.3f}s ({total_steps/total_s:.1f} steps/s)")
-    print(f"  loss: {m1.loss:.4f} -> {m2.loss:.4f}")
+    torch.testing.assert_close(swa_ckpt["model"], trainer2._swa_model.module.state_dict(), rtol=0, atol=0)
 
 
 def test_e2e_gradient_accumulation(tmp_path):
