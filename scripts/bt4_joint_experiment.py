@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
 
-LIVE = Path("/home/josh/projects/chess")
+LIVE = Path(os.environ.get("CHESS_EXPERIMENT_ROOT", Path.home() / "projects/chess"))
 TRAIN = LIVE / ".dev/worktree/wise-cloud"
 MIX = Path("/tmp/deepfin-bt4-toolchain")
 MIX_PYTHON = str(MIX / ".venv/bin/python")

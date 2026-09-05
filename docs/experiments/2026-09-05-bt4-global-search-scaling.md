@@ -2,7 +2,7 @@
 
 ## Decision before training
 
-On September 5 Josh explicitly reopened the six-arm near-tie design. The A-F
+On September 5 the user explicitly reopened the six-arm near-tie design. The A-F
 coordinator was stopped through its STOP marker at 15:56Z, before any A-F training
 or arena. Its recorded operational `failed` status means intentional supersession,
 not a negative scientific result. Preserve A's external materialization and all

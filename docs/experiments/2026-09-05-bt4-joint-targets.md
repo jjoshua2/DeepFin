@@ -1,6 +1,6 @@
 # BT4 near-tie policy targets for the NNUE restart
 
-**Superseded before A-F training:** Josh reopened this design on September5.
+**Superseded before A-F training:** The user reopened this design on September5.
 The coordinator was intentionally stopped; preserve its artifacts. The active
 plan is [global BT4 mixing and search scaling](2026-09-05-bt4-global-search-scaling.md).
 The historical plan and diagnostic below remain evidence, not queued work.
@@ -8,7 +8,7 @@ The historical plan and diagnostic below remain evidence, not queued work.
 ## Objective and authorization
 
 Continue the September 4 six-arm experiment using its completed E0 control and
-banked teachers. On September 5 Josh authorized autonomous training, evaluation
+banked teachers. On September 5 the user authorized autonomous training, evaluation
 and evidence-supported follow-ups, keeping available GPU compute productive until
 there is a defensible recipe. A target-quality proxy alone does not decide strength.
 The production restart remains a separate adoption decision.
@@ -20,7 +20,7 @@ experiment entries than main's ledger. New readouts live here.
 
 ## Banked evidence and frozen inputs
 
-Paths below are relative to `/home/josh/projects/chess`.
+Paths below are relative to the experiment checkout root.
 
 - Source: `data/nnue_derived/armB/qtemp_0.0005_hist_20m`, 18,910,484 rows in
   2,309 shards, derived from the first 20M raw rows; source summary SHA256
@@ -136,7 +136,7 @@ allocator ceiling and16-shard lease batches. It has its own writer lock, preserv
 completed sidecars and releases the shared GPU lease after child teardown. Its
 15-second inter-batch yield lets the A-F driver's10-second lock polling take
 priority when an arm is ready. The September4 pause was for training priority;
-archive those markers before resuming under Josh's September5 instruction to keep
+archive those markers before resuming under the user's September5 instruction to keep
 useful GPU work running. No generator, source manifest or label semantics change.
 
 This labeling is part of the planned100M teacher bank and is recorded separately
