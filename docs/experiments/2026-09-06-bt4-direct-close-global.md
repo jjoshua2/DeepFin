@@ -105,8 +105,43 @@ new arena output directory, exact executable/input hashes and the 100-simulation
 /usr/bin/python3 scripts/bt4_direct_screen.py --manifest /home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/launch_manifest.json --execute
 ```
 
-This record has no playing result yet. The launch manifest is finalized after the
-launcher review; the immutable snapshot is not edited while a job is running.
+The prospective snapshot above remains pinned under the state directory. The
+completed result below was added after the full match ended.
 The completed SF-close reader artifact is
 scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_readout.json,
 SHA256 2dde2ce5b46bc69b662be129b3752ffe37f93aa383f2d3bd06dbeb5d581a7257.
+
+
+## Completed direct screen
+
+Completed September 6, 2026: C20T05 scored **414 wins, 258 draws and 328
+losses**, or **54.3%**, against G20T05 across 1,000 games / 500 color-swapped
+opening pairs. Its paired Elo estimate is **+29.95 [11.89, 48.18]** (nominal
+95% interval). The full bank has no orphan rows. Both realized search-prior
+temperatures were 1.0 at 100 simulations with the registered settings.
+
+The interval favors C under the preregistered decision rule. Select the already
+materialized sharpened exact-tie treatment as the next trained challenger against
+C. This can establish whether widening the SF candidate set improves on sharpening
+exact ties alone. Defer G50 and broader grids. Training schedule qualification, a
+new preregistration and launch review remain required before that run.
+
+The arena used 2,352.37 seconds, **0.6534 GPU hours**, within its 1.5-hour cap.
+The coordinator and arena are terminal. A parent calculation independently rebuilt
+the paired W/D/L scores from the raw game results and reproduced the registered
+sample-variance interval. This remains a reused-checkpoint development screen, not
+fresh recipe confirmation or evidence about a search-scaling slope.
+
+Artifacts under `scratchpad/bt4_joint20/direct_close_global_run01/`:
+
+- `arena/arena.games.jsonl`: SHA256
+  `bb97f201bad3db23d25fcb6ed34ade70447a8e65f9ce9f327abdd8ddcbcc9d86`.
+- `arena/readout.json`: SHA256
+  `3bec9d477266c6ac54e9f8f0280def3e6fc6de0da35d5965855589f419f3cf9d`.
+- `arena/complete.json`: closed runtime, checkpoint and realized command receipts.
+- `parent_numerical_review.json`: independent parent pair construction, W/D/L,
+  interval and charge check.
+
+Keep fresh matched-seed training and the reserved opening bank for confirmation
+after choosing the strongest relevant alternative. The 100M data-transfer
+contract and later RL benefit remain separate research questions.
