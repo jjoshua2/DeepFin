@@ -77,9 +77,16 @@ construction invariants. Expected deep-SF regret changed by -0.159 cp with inter
 [-1.394, +1.066]; top-choice regret changed by -5.960 cp [-7.951, -4.105]. These are
 FEN-only teacher diagnostics, not strength results or grounds for promotion.
 
-The CPU materializer started at Unix time 1788714379.975 (September 6, 2026).
-At this record it is running; the corpus has not been declared complete. Its
-supervisor admits at least 300 GiB free, checks the 150 GiB reserve every 30 seconds,
+The CPU materializer completed successfully on September 6 at 19:09:22 UTC,
+after 7,382 seconds, within its four-hour cap. The published corpus contains
+18,910,484 rows across 2,309 shards. Independent publication review verified every
+shard's recipe and row-count metadata, the source and construction pins, and the
+absence of the temporary `.writing` directory. Exact source, sidecar and renamed
+target file hashes preserve the prior first-shard check of all 16 non-policy arrays
+and the mixing formula on 8,192 rows. This is not a full-corpus payload check or a
+training-schedule validation; no playing-strength conclusion follows.
+
+The supervisor admits at least 300 GiB free, checks the 150 GiB reserve every 30 seconds,
 and sends SIGTERM only to its owned process group on a stop or low disk. Partial
 outputs survive. Cooperative termination can exceed the nominal cap for an
 uninterruptible child; the supervisor retains its preparation lock while reaping.
@@ -92,6 +99,13 @@ Artifacts under `scratchpad/bt4_joint20/global_dose50_v1`:
 | `run_preparation.py` | `a1c9b364f4767cf9251ff10bce785deb82c65a8a4ef8e0955cb5d67e5a3abdc0` |
 | `preparation_independent_review.json` | `21aa7958d85360c110d934208650426b40f4b50e3688327a2187a1bb29c91809` |
 | `audit_G50T05.json` | `a35bcf7db4fea05ed636346bf2bd9d6c63fae9d86cb5bcf3a0ff17a2444a8550` |
+| `first_shard_integrity.json` | `71d431fbb70b694c616cca206ba078b8250fc3f74bbb2bdb8e44b2e17adc8fe5` |
+| `publication_integrity_review.json` | `bc7cf4288e7b4c2f902eddfa02993ae520635d3b504fc2145ac3fdab1fb811ae` |
+
+The published corpus's mix-summary SHA256 is
+`e78cc9eaeba0029faf2f036cdb54c35dba02575939c9633915d3606229e1b574`;
+its derived-summary SHA256 is
+`d2e1f2ad328d691bcd38c32342486728eb3e8a0f77e56e52f2eb958494b6edad`.
 
 The exact stage commands are recorded as argument arrays in the plan. Inspect
 `mix.status.json`, `mix.log`, the actual process handles and output before continuing.

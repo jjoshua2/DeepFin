@@ -70,8 +70,16 @@ validated before training. Training started September 6 at 16:27:52 UTC, after t
 global screen completed. It uses the frozen wise-cloud trainer, seed 0, batch 512,
 game_epoch sampling and the full 36,935-step epoch. The driver subsequently runs
 C20T05 directly against E0 at all three budgets, prior 1.0, with 1,000 games each.
-Its separate cumulative cap is 12 GPU hours. At this record, training is in progress;
-no completed C checkpoint or playing verdict is claimed.
+Its separate cumulative cap is 12 GPU hours. Training completed at 19:09:28 UTC:
+18,910,484 rows and 36,935 batches, with zero same-game repeats. The completed
+checkpoint SHA256 is
+`8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3`.
+The source-normalized schedule and actual staging were verified against the
+prospective plan; all 19 recorded launch pins and checkpoint/summary identities
+matched. The 25-simulation match started at 19:09:29 UTC. Playing results remain
+unread until the registered cells complete.
+Independent completed-epoch review passed, qualifying this checkpoint for the
+registered matched recipe comparison with the limitations below.
 
 The primary 100-simulation paired Elo interval is promising if wholly above zero,
 a loss if wholly below zero, and otherwise inconclusive. Report 400 simulations
@@ -81,19 +89,32 @@ paired 400-minus-25 score contrast measures relative advantage against E0.
 E0 uses teacher T1, so this comparison combines widening and sharpening. A
 sharpened-exact-tie control would isolate widening if attribution changes the next
 recipe decision. E0 also retains an incompletely stamped historical runtime;
-confirmation needs fresh matched training. Successful launch verification does not
-replace verification of the completed epoch's realized schedule and staging.
+confirmation needs fresh matched training. The schedule proof covers game metadata
+and batch choices, with row-order equality inferred from the pinned code; it is not
+a full feature/target payload check. The historical `valid_control:false` limitations
+remain: no held-out purity receipt, comparison to a committed configuration pin,
+and game-epoch sampling differing from the old replacement-sampled control.
 
 ## Next decisions and evidence
 
-Prepare a [50% sharpened global BT4 mixture](2026-09-06-bt4-global-dose50-preparation.md)
-to test a substantively larger teacher contribution. After the SF-close results,
+A [50% sharpened global BT4 mixture](2026-09-06-bt4-global-dose50-preparation.md)
+is now published and independently reviewed, ready as a candidate for testing a
+substantively larger teacher contribution. After the SF-close results,
 choose competitive direct recipe comparisons and any training-objective interaction
 that could change bootstrap selection. SF agreement and local gradient diagnostics
 cannot rank playing strength. PR [#517](https://github.com/jjoshua2/DeepFin/pull/517)
 contains the separate graded-objective investigation; no TailRL training is included
 in this screen. Reserve independent training-seed and fresh-opening confirmation
 before recommending a recipe for the larger bootstrap and RL restart.
+
+Before transferring recipes to the growing G10 corpus, explicitly choose which SF
+observation supplies policy, value and rank/quality labels. Legacy `uniform-d9`
+uses later-phase d9 scores where available, while the SF rank sidecar uses phase 0.
+The current 20M source has only one phase and is unaffected. One inspected G10 row
+shows changed scores and exact ties; it establishes existence, not prevalence or
+strength. Even phase-0 selection would not reproduce the old generator's search
+state: G10's additional deeper, narrowed searches change the transposition-table
+work inherited from earlier positions. Both generators retain tables within games.
 
 Runtime evidence lives under `scratchpad/bt4_joint20`, outside git. Read actual
 processes and completion artifacts when continuing; status here is a dated snapshot.
@@ -106,6 +127,9 @@ processes and completion artifacts when continuing; status here is a dated snaps
 | `global_run03/global_vs_exact_ties_exploratory.json` | `36c05e5806db8c29cf9a24193640b5284a0038da43c65f4671a2df6f92de21b4` |
 | `global_run03/global_vs_exact_ties_independent_review.json` | `6a429b5a31742d0e36b0ae8b7eeab9c50e6da711e83b366be982ee429f9d049b` |
 | `sf_close_run02/preregistration.md` | `c4c5a0b861efce888a62c9fc085d61509da0ab805790e108f0f293ea33d029b4` |
+| `sf_close_run02/matched_schedule_completed_C20T05.json` | `1f1529fa2247d56ad4cf457a8cb5bae0929c4ea917e2aab0c09d81fbaeedccbd` |
+| `sf_close_run02/C20T05.completed_epoch_independent_review.json` | `7ed7bd8863db4fb7bf2fa98016b7cdb269b751dc696c4f8827acc58f8cae5d5a` |
+| `global_dose50_v1/data_transfer_notes.json` | `4b1d74ddafdf4e9443b23d51e0119bf991860525ad007fb79bae93b4cfc4f9da` |
 
 The full-screen independent reviewer recomputed all nine game banks and registered
 contrasts, checked model/protocol identities, and reused the completed training
