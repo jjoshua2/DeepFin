@@ -5,6 +5,7 @@ import json
 import math
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -109,7 +110,8 @@ def test_empty_events_and_rows_do_not_create_nan_gradients_or_dilute_loss():
     loss = tail_event_loss(logits, legal, events)
     assert loss.item() == pytest.approx(math.log(3))
     loss.backward()
-    assert logits.grad is not None and torch.isfinite(logits.grad).all()
+    assert logits.grad is not None
+    assert torch.isfinite(logits.grad).all()
     assert torch.equal(logits.grad[1], torch.zeros(3, dtype=torch.float64))
 
 
@@ -119,7 +121,8 @@ def test_all_empty_batch_is_connected_exact_zero():
     loss = tail_event_loss(logits, legal, torch.zeros((3, 2, 4), dtype=torch.bool))
     assert loss.item() == 0
     loss.backward()
-    assert logits.grad is not None and torch.count_nonzero(logits.grad) == 0
+    assert logits.grad is not None
+    assert torch.count_nonzero(logits.grad) == 0
 
 
 def test_tail_averaging_is_within_position_not_weighted_by_event_count():
@@ -148,7 +151,8 @@ def test_precision_and_illegal_logits(dtype):
     assert loss.dtype == (torch.float64 if dtype == torch.float64 else torch.float32)
     assert loss.item() == pytest.approx(20, abs=1e-5)
     loss.backward()
-    assert logits.grad is not None and torch.isfinite(logits.grad).all()
+    assert logits.grad is not None
+    assert torch.isfinite(logits.grad).all()
     assert logits.grad[0, 2] == 0
 
 
@@ -158,7 +162,7 @@ def test_precision_and_illegal_logits(dtype):
     {"min_boost": 1}, {"min_boost": float("inf")},
 ])
 def test_bad_cohort_config(kwargs):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"max_prior|min_target|min_boost"):
         TailCohort(**kwargs)
 
 
@@ -176,14 +180,14 @@ def test_invalid_policy_inputs(kind):
         legal = legal.float()
     else:
         x = x.long()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"legal|logits"):
         legal_log_probs(x, legal)
 
 
 @pytest.mark.parametrize("values", [[0, 0, 0], [1, -0.1, 0], [0.8, 0.1, 0.1], [1, float("nan"), 0]])
 def test_missing_or_corrupt_target_is_not_good_evidence(values):
     legal = torch.tensor([[True, True, False]])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="target"):
         normalized_target(torch.tensor([values], dtype=torch.float64), legal)
 
 
@@ -246,7 +250,7 @@ def test_duplicate_bank_rows_rejected():
 def test_bank_roundtrip_cli_and_no_overwrite(tmp_path: Path):
     bank, manifest = fixture_bank()
     source = tmp_path / "bank.npz"
-    np.savez_compressed(source, **bank, manifest_json=np.asarray(json.dumps(manifest)))
+    np.savez_compressed(source, **dict[str, Any](bank), manifest_json=np.asarray(json.dumps(manifest)))
     original = source.read_bytes()
     reread, provenance = read_bank(source)
     np.testing.assert_array_equal(reread["cohort"], bank["cohort"])
@@ -302,7 +306,7 @@ def test_repository_collector_real_checkpoint_and_lazy_shard(tmp_path: Path):
     )
     replay = tmp_path / "replay"
     replay.mkdir()
-    save_local_shard_arrays(replay / "fixture.zarr", arrs=samples_to_arrays([sample]))
+    save_local_shard_arrays(replay / "shard_000000.zarr", arrs=samples_to_arrays([sample]))
     output = tmp_path / "collected"
     assert main(["--replay-dir", str(replay), "--reference", str(checkpoint),
                  "--candidate", str(checkpoint), "--output-dir", str(output),

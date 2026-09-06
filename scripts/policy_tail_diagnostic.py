@@ -117,8 +117,9 @@ def summarize_bank(
         "do not prove independence across split games, duplicates, or seed families."
     )
     report["interpretation"] = (
-        "Reference-rare, historical-search-target-promoted moves, not verified tactical "
-        "rescues. T=1 legal policy, not the tempered/noisy search prior. IID sampling "
+        "Reference-rare, recorded-policy-target-promoted moves, not verified tactical "
+        "rescues. Consult source metadata for the target's producer; bootstrap teacher "
+        "targets do not establish own-search rescue. T=1 legal policy, not the tempered/noisy search prior. IID sampling "
         "curves are not MCTS/Gumbel inclusion probabilities. No playing-strength verdict."
     )
     # Fail closed on non-finite summaries before writing misleading JSON.
@@ -291,10 +292,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         bank, manifest = collect_bank(args, spec)
         bank_path = args.output_dir / "observations.npz"
-        np.savez_compressed(bank_path, **bank, manifest_json=np.asarray(json.dumps(manifest, allow_nan=False)))
+        np.savez_compressed(bank_path, **dict[str, Any](bank), manifest_json=np.asarray(json.dumps(manifest, allow_nan=False)))
     report, rows = summarize_bank(bank, manifest)
     report["bank"] = {"path": str(bank_path), "sha256": sha256_file(bank_path)}
-    np.savez_compressed(args.output_dir / "per_row.npz", **rows)
+    np.savez_compressed(args.output_dir / "per_row.npz", **dict[str, Any](rows))
     # This is the completion marker. A failed/incomplete directory has no report.
     (args.output_dir / "report.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     print(json.dumps({key: report[key] for key in (

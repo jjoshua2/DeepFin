@@ -8,6 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
+| [Graded TailRL bootstrap screen](2026-09-06-tailrl-bootstrap.md) | Exact finite-action objective and bounded CPU mechanism comparison; no training or strength result |
 | [TailRL-inspired policy coverage](2026-09-05-tailrl-policy-coverage.md) | Frozen-cohort checkpoint diagnostic and isolated upper-tail loss prototype; no training readout |
 | [Varying-horizon online controller](varying_horizon_online_controller.md) | Preregistration and staged evaluation of online search continuation |
 | [Value head architecture](value_head_arch.md) | Historical April 2026 experiments |

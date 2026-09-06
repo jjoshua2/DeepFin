@@ -121,6 +121,59 @@ def tail_event_loss(logits: Tensor, legal: Tensor, events: Tensor) -> Tensor:
     return per_row.sum() / (counts > 0).sum().clamp_min(1)
 
 
+def finite_tail_loss(
+    logits: Tensor, legal: Tensor, rewards: Tensor, *, order: int = 32,
+    reduction: str = "mean",
+) -> Tensor:
+    """Exact negative finite-order TailRL objective for fixed action rewards.
+
+    Implements arxiv.org/html/2609.02987v1 Eq. 23/25: integrate
+    ``sum((1 - P(reward > threshold))**k / k, k=1..order)`` over [0, 1].
+    Rewards are detached, legal action qualities, not normalized policy targets.
+    Illegal reward/logit values are ignored; legal rewards must be finite [0, 1].
+
+    Sorting gives exact interval widths, including ties and the constant
+    ``(1 - max_reward) * H_order`` above the attainable reward range. There is
+    no per-row reward rescaling or omission of zero-tail intervals. Order 1 is
+    ``1 - E[reward]``. This enumerates known action rewards; it does not sample
+    the paper's rollout estimator or equate independent samples with MCTS.
+
+    Work is O(B*A*log(A) + order*B*A), with no [B,A,A] event tensor. Autograd
+    retains O(order*B*A) polynomial intermediates. Low precision inputs use
+    float32 work, as in ``legal_log_probs``. Reduction is mean, sum, or none.
+    """
+    if type(order) is not int or order < 1:
+        raise ValueError("order must be a positive integer")
+    if reduction not in ("mean", "sum", "none"):
+        raise ValueError("reduction must be mean, sum, or none")
+    logp = legal_log_probs(logits, legal)
+    if (
+        rewards.shape != logits.shape or rewards.device != logits.device
+        or not rewards.is_floating_point()
+    ):
+        raise ValueError("rewards must be floating point with logits' shape/device")
+    valid_rewards = rewards.masked_select(legal)
+    if not bool((torch.isfinite(valid_rewards) & (valid_rewards >= 0)
+                 & (valid_rewards <= 1)).all()):
+        raise ValueError("legal rewards must be finite and in [0, 1]")
+    values, indices = rewards.detach().to(logp.dtype).masked_fill(~legal, 0).sort(-1)
+    probabilities = logp.exp().gather(-1, indices)
+    cdf = probabilities.cumsum(-1)
+    # The final interval has exactly zero success probability. Make its loss
+    # policy-independent, including for rows where all rewards are equal.
+    cdf = torch.cat((cdf[:, :-1].clamp(0, 1), torch.ones_like(cdf[:, -1:])), -1)
+    widths = torch.cat((values[:, 1:], torch.ones_like(values[:, -1:])), -1) - values
+    # Horner evaluation of F + F**2/2 + ... + F**order/order. No log(0),
+    # divisions by small tail probabilities, or order-by-action broadcast.
+    polynomial = torch.zeros_like(cdf)
+    for k in range(order, 0, -1):
+        polynomial = cdf * (polynomial + 1.0 / k)
+    per_row = (widths * polynomial).sum(-1)
+    if reduction == "none":
+        return per_row
+    return per_row.mean() if reduction == "mean" else per_row.sum()
+
+
 def _mean(values: Tensor) -> float | None:
     return float(values.double().mean()) if values.numel() else None
 
