@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan one C20T05 versus G20T05 arena; --execute requires an explicit pinned manifest.
+"""Plan an explicit C20T05/G20T05 or trained E0T05/C20T05 arena; --execute requires an explicit pinned manifest.
 
 No training, resume, automatic retry or promotion. GNU timeout inherits the GPU
 lease and survives coordinator death. SIGKILL can leave an incomplete receipt;
@@ -21,6 +21,7 @@ import signal
 import subprocess
 import sys
 import time
+from typing import Any
 
 ROOT = Path('/home/josh/projects/chess')
 RUNTIME = ROOT / '.dev/worktree/wise-cloud'
@@ -70,8 +71,10 @@ def pin(path, digest):
 
 
 def validate(m):
-    require(set(m) == {'schema', 'output', 'sims', 'hard_seconds', 'candidate', 'reference',
-                       'book', 'runtime_manifest', 'preregistration', 'launcher_sha256'}, 'manifest keys differ')
+    keys = {'schema', 'output', 'sims', 'hard_seconds', 'candidate', 'reference',
+            'book', 'runtime_manifest', 'preregistration', 'launcher_sha256'}
+    sharpened = m.get('candidate', {}).get('role') == 'E0T05'
+    require(set(m) == keys | ({'candidate_training'} if sharpened else set()), 'manifest keys differ')
     require(m['schema'] == 1 and type(m['sims']) is int and m['sims'] in (100, 400), 'select 100 or 400 simulations')
     cap = m['hard_seconds']
     require(type(cap) in (int, float) and math.isfinite(cap) and cap > 30, 'hard_seconds must exceed 30s cleanup allowance')
@@ -79,9 +82,20 @@ def validate(m):
     require(output.is_absolute() and output == output.resolve(), 'output must be canonical absolute path')
     require(not output.exists() and not output.is_symlink(), 'output must be new; no adoption/resume')
     inputs = [RUNTIME, READER, BOOK, Path(__file__).resolve()]
-    for side, (role, path, digest) in CHECKPOINTS.items():
-        require(m[side] == {'role': role, 'path': str(path), 'sha256': digest}, f'wrong {side} checkpoint')
-        inputs.append(path)
+    if sharpened:
+        role, path, digest = CHECKPOINTS['candidate']  # Existing C becomes the control.
+        require(m['reference'] == {'role': role, 'path': str(path), 'sha256': digest}, 'wrong C reference')
+        require(set(m['candidate']) == {'role', 'path', 'sha256'}, 'invalid trained candidate identity')
+        candidate = Path(m['candidate']['path'])
+        require(candidate.is_absolute() and candidate == candidate.resolve() and candidate.name == 'checkpoint.pt',
+                'candidate must be a canonical completed checkpoint')
+        require(m['sims'] == 100, 'E0T05 profile is registered only at 100 simulations')
+        require(set(m['candidate_training']) == {'path', 'sha256'}, 'missing candidate training receipt')
+        inputs += [candidate, path, Path(m['candidate_training']['path']).resolve()]
+    else:
+        for side, (role, path, digest) in CHECKPOINTS.items():
+            require(m[side] == {'role': role, 'path': str(path), 'sha256': digest}, f'wrong {side} checkpoint')
+            inputs.append(path)
     require(m['book'] == {'path': str(BOOK), 'sha256': BOOK_SHA}, 'use original seed42 book')
     for key in ('runtime_manifest', 'preregistration'):
         item = m[key]
@@ -91,7 +105,8 @@ def validate(m):
 
 
 def environment(gpu=False):
-    return {**os.environ, 'PYTHONPATH': str(RUNTIME), 'CUDA_VISIBLE_DEVICES': '0' if gpu else '',
+    inherited = {k: v for k, v in os.environ.items() if k != 'CHESS_LIVE_PRODUCTION_CONFIG'}
+    return {**inherited, 'PYTHONPATH': str(RUNTIME), 'CUDA_VISIBLE_DEVICES': '0' if gpu else '',
             'PYTHONUNBUFFERED': '1', 'OMP_NUM_THREADS': '2', 'MKL_NUM_THREADS': '2',
             'OPENBLAS_NUM_THREADS': '2', 'NUMEXPR_NUM_THREADS': '2', 'BLOSC_NTHREADS': '2',
             'CHESS_ANTI_ENGINE_LIVE_CONFIG': str(RUNTIME / 'configs/pbt2_small.yaml')}
@@ -110,7 +125,28 @@ def check_pins(m):
     qualified_search()
     for key in ('candidate', 'reference', 'book', 'runtime_manifest', 'preregistration'):
         pin(m[key]['path'], m[key]['sha256'])
-    frozen = read(m['runtime_manifest']['path'])
+    if 'candidate_training' in m:
+        verify_candidate_training(m)
+    return runtime_identity(m['runtime_manifest'])
+
+
+def verify_candidate_training(m):
+    evidence = m['candidate_training']
+    pin(evidence['path'], evidence['sha256'])
+    receipt = read(evidence['path'])
+    require(receipt['complete'] is True and receipt['role'] == 'E0T05', 'candidate training incomplete')
+    require(receipt['checkpoint'] == m['candidate'], 'candidate checkpoint differs from completed training')
+    run = Path(m['candidate']['path']).parent
+    require(receipt['run'] == str(run), 'candidate run differs')
+    pin(run / 'summary.json', receipt['summary_sha256'])
+    pin(receipt['schedule']['path'], receipt['schedule']['sha256'])
+    require(receipt['canonical_plan_sha256'] == 'dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f',
+            'candidate schedule differs from registered source/C')
+
+
+def runtime_identity(identity):
+    pin(identity['path'], identity['sha256'])
+    frozen = read(identity['path'])
     require(frozen['identities']['heads'][str(RUNTIME)] == HEAD, 'unqualified runtime manifest')
     require(subprocess.check_output(['git', '-C', str(RUNTIME), 'rev-parse', 'HEAD'], text=True).strip() == HEAD, 'runtime moved')
     require(not subprocess.check_output(['git', '-C', str(RUNTIME), 'status', '--porcelain', '--untracked-files=no'], text=True).strip(), 'runtime tracked edits')
@@ -152,7 +188,8 @@ def command(m):
             '--search-shape', 'training', '--cand-gumbel', 'policy_temp=1.0', '--ref-gumbel', 'policy_temp=1.0',
             '--sims', str(m['sims']), '--seed', '42', '--openings', str(BOOK), '--opening-plies', '16',
             '--max-plies', '300', '--temperature', '0.1', '--max-concurrent-games', '128',
-            '--eval-max-batch', '4096', '--compile', 'on', '--no-rolling', '--label', 'C20T05_vs_G20T05',
+            '--eval-max-batch', '4096', '--compile', 'on', '--no-rolling', '--label',
+            f"{m['candidate']['role']}_vs_{m['reference']['role']}",
             '--max-seconds', str(m['hard_seconds'] - 30), '--games-out', str(out / 'arena.games.jsonl'),
             '--out', str(out / 'arena.results.jsonl')]
 
@@ -183,6 +220,8 @@ def check_cell(m, cell):
     expected = qualified_search()
     require(all(cell['settings'].get(side) == expected for side in ('search_candidate', 'search_reference')),
             'realized search differs from qualified C100')
+    if m['candidate']['role'] == 'E0T05':
+        require(cell['raw_game_rows'] == 1000 and cell['superseded_orphan_rows'] == 0, 'E0T05 requires no orphan rows')
     require(cell['result']['games'] == 1000 and cell['result']['pairs'] == 500, 'incomplete arena')
 
 
@@ -198,7 +237,7 @@ def read_bank(m):
     cell = module.read_arm(Path(m['output']) / 'arena.games.jsonl', reference=Path(m['reference']['path']),
                            seed=42, sims=m['sims'], prior_temperature=1.0)
     check_cell(m, cell)
-    return {'candidate_role': 'C20T05', 'reference_role': 'G20T05', 'match_complete': True,
+    return {'candidate_role': m['candidate']['role'], 'reference_role': m['reference']['role'], 'match_complete': True,
             **{k: v for k, v in cell.items() if k not in ('scores', 'openings')},
             'promotion': 'NONE; exploratory direct checkpoint screen'}
 
@@ -213,8 +252,60 @@ def acquire_gpu_lease(lease):
     fcntl.flock(lease, fcntl.LOCK_EX)
 
 
-def execute(m):
+def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, stop_paths=()) -> dict[str, Any]:
+    """One bounded process group; caller owns the inherited GPU lease and pin checks."""
+    require(not any(p.exists() for p in (out / 'STOP', *stop_paths)), 'stop requested before stage')
+    out.mkdir(exist_ok=False)
+    write(out / 'manifest.json', manifest)
+    wrapped = timeout_command(cmd, seconds)
+    started = time.monotonic()
+    receipt = {**metadata, 'complete': False, 'owner_pid': os.getpid(), 'started_unix': time.time(),
+               'command': cmd, 'supervisor_command': wrapped, 'cwd': str(RUNTIME), 'hard_seconds': seconds}
+    child = None
+    try:
+        write(out / 'process.json', receipt)
+        with (out / f'{stage}.log').open('x') as log:
+            child = subprocess.Popen(wrapped, cwd=RUNTIME, env=environment(lease_fd is not None), stdout=log,
+                                     stderr=subprocess.STDOUT, start_new_session=True, pass_fds=(() if lease_fd is None else (lease_fd,)))
+            receipt['supervisor_pid'] = child.pid
+            write(out / 'process.json', receipt)
+            while child.poll() is None:
+                if f'{stage}_pid' not in receipt:
+                    children = Path(f'/proc/{child.pid}/task/{child.pid}/children')
+                    ids = children.read_text().split() if children.exists() else []
+                    if ids:
+                        try:
+                            cmdline = Path(f'/proc/{ids[0]}/cmdline').read_bytes().decode().strip('\0').split('\0')
+                        except FileNotFoundError:
+                            pass
+                        else:
+                            receipt[f'{stage}_pid'] = int(ids[0])
+                            receipt[f'{stage}_cmdline'] = cmdline
+                            write(out / 'process.json', receipt)
+                disk_guard(out)
+                require(not any(p.exists() for p in (out / 'STOP', *stop_paths)), 'stop requested')
+                time.sleep(1)
+            require(child.returncode == 0, f'{stage}/timeout exited {child.returncode}')
+        cleanup(child)
+        elapsed = time.monotonic() - started
+        receipt.update(ended_unix=time.time(), stage_seconds=elapsed,
+                       gpu_seconds=elapsed if lease_fd is not None else 0.0,
+                       exit_code=child.returncode, process_complete=True)
+        write(out / 'process.json', receipt)
+        return receipt
+    except BaseException as error:
+        if child is not None:
+            cleanup(child)
+        write(out / 'failed.json', {**receipt, 'complete': False, 'ended_unix': time.time(),
+                                   'stage_seconds': time.monotonic() - started,
+                                   'gpu_seconds': time.monotonic() - started if lease_fd is not None else 0.0,
+                                   'error': str(error)})
+        raise
+
+
+def execute(m, *, stop_paths=()):
     validate(m)
+    require(not any(p.exists() for p in stop_paths), 'stop requested before arena')
     out = Path(m['output'])
     require(out.parent.is_dir(), 'create output parent before launch')
     disk_guard(out)
@@ -222,59 +313,29 @@ def execute(m):
     actual = runtime_probe(rt)
     with (ROOT / 'scratchpad/gpu0_experiment.lock').open('a') as lease:
         acquire_gpu_lease(lease)
+        require(not any(p.exists() for p in stop_paths), 'stop requested while waiting for arena')
         require(not subprocess.check_output(['nvidia-smi', '--query-compute-apps=pid', '--format=csv,noheader'],
                                             text=True, timeout=10).strip(), 'competing GPU process; no launch')
         check_pins(m)
         disk_guard(out)
-        out.mkdir(exist_ok=False)
-        write(out / 'manifest.json', m)
-        cmd = command(m)
-        wrapped = timeout_command(cmd, m['hard_seconds'])
-        started = time.monotonic()
-        receipt = {'complete': False, 'owner_pid': os.getpid(), 'started_unix': time.time(),
-                   'command': cmd, 'supervisor_command': wrapped, 'cwd': str(RUNTIME), 'runtime': actual,
-                   'models': {k: m[k] for k in ('candidate', 'reference')}, 'book': m['book'],
-                   'hard_seconds': m['hard_seconds'], 'qualified_search_readout_sha256': QUALIFIED_READOUT_SHA,
-                   'live_config': environment()['CHESS_ANTI_ENGINE_LIVE_CONFIG'], 'launcher_sha256': m['launcher_sha256']}
-        child = None
-        try:
-            write(out / 'process.json', receipt)
-            with (out / 'arena.log').open('x') as log:
-                child = subprocess.Popen(wrapped, cwd=RUNTIME, env=environment(True), stdout=log,
-                                         stderr=subprocess.STDOUT, start_new_session=True, pass_fds=(lease.fileno(),))
-                receipt['supervisor_pid'] = child.pid
-                write(out / 'process.json', receipt)
-                while child.poll() is None:
-                    if 'arena_pid' not in receipt:
-                        children = Path(f'/proc/{child.pid}/task/{child.pid}/children')
-                        ids = children.read_text().split() if children.exists() else []
-                        if ids:
-                            receipt['arena_pid'] = int(ids[0])
-                            receipt['arena_cmdline'] = Path(f'/proc/{ids[0]}/cmdline').read_bytes().decode().strip('\0').split('\0')
-                            write(out / 'process.json', receipt)
-                    disk_guard(out)
-                    require(not (out / 'STOP').exists(), 'stop requested')
-                    time.sleep(1)
-                require(child.returncode == 0, f'arena/timeout exited {child.returncode}')
-            cleanup(child)
-            receipt.update(ended_unix=time.time(), gpu_seconds=time.monotonic() - started,
-                           exit_code=child.returncode, process_complete=True)
-            write(out / 'process.json', receipt)
-            check_pins(m)
-            result = subprocess.check_output([rt['executable'], str(Path(__file__).resolve()), '--read-bank',
-                                              str(out / 'manifest.json')], cwd=RUNTIME,
-                                             env=environment(), text=True, timeout=120)
-            report = json.loads(result)
-            require(report['match_complete'] is True, 'incomplete bank is not a result')
-            write(out / 'readout.json', report)
-            write(out / 'complete.json', {**receipt, 'complete': True, 'games_sha256': sha(out / 'arena.games.jsonl'),
-                                         'readout_sha256': sha(out / 'readout.json'), 'reader_sha256': READER_SHA})
-        except BaseException as error:
-            if child is not None:
-                cleanup(child)
-            write(out / 'failed.json', {**receipt, 'complete': False, 'ended_unix': time.time(),
-                                       'gpu_seconds': time.monotonic() - started, 'error': str(error)})
-            raise
+        receipt = run_owned_stage(command(m), out, m['hard_seconds'], lease.fileno(), 'arena',
+            {'runtime': actual, 'models': {k: m[k] for k in ('candidate', 'reference')}, 'book': m['book'],
+             'qualified_search_readout_sha256': QUALIFIED_READOUT_SHA,
+             'live_config': environment()['CHESS_ANTI_ENGINE_LIVE_CONFIG'], 'launcher_sha256': m['launcher_sha256']}, manifest=m, stop_paths=stop_paths)
+    # The GPU lease is released for CPU-only readout; no subsequent GPU stage here.
+    try:
+        check_pins(m)
+        result = subprocess.check_output([rt['executable'], str(Path(__file__).resolve()), '--read-bank',
+                                          str(out / 'manifest.json')], cwd=RUNTIME,
+                                         env=environment(), text=True, timeout=120)
+        report = json.loads(result)
+        require(report['match_complete'] is True, 'incomplete bank is not a result')
+        write(out / 'readout.json', report)
+        write(out / 'complete.json', {**receipt, 'complete': True, 'games_sha256': sha(out / 'arena.games.jsonl'),
+                                     'readout_sha256': sha(out / 'readout.json'), 'reader_sha256': READER_SHA})
+    except BaseException as error:
+        write(out / 'failed.json', {**receipt, 'complete': False, 'error': str(error)})
+        raise
 
 
 def main():
