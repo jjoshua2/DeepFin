@@ -76,7 +76,7 @@ Independent review and whole-repository lint are recorded after completion.
 
 ## Completed first mechanism readout
 
-The bank completed in 76.7 CPU seconds: 128 positions from 43 games, with
+The bank completed in 76.7 seconds of elapsed time on CPU: 128 positions from 43 games, with
 complete legal-move d9 scores, exact raw-row joins and unchanged model/source
 hashes. The largest reconstructed SF-policy discrepancy was 0.000241593,
 within the preregistered float16 tolerance. No network training occurred.
@@ -132,3 +132,45 @@ search-budget comparisons. Do not first declare a mixture optimal under CE and
 assume that answer transfers to another loss. BT4 policy probabilities provide
 supervision, not independently measured move rewards; any BT4-derived reward
 proxy needs its own explicit definition and interpretation.
+
+The [bootstrap roadmap](2026-09-06-bootstrap-research-roadmap.md) connects this
+method study to the user's intended RL restart in roughly one to two months.
+
+## Completed teacher interaction screen
+
+Eight supervision targets were banked on the same rows: SF, exact ties, raw
+and sharpened 80/20 global mixtures, SF-close, pure raw/sharpened BT4, and a
+prospective 50/50 sharpened global mixture. The last three have no trained
+checkpoint in this comparison. The SF-close target is materialized, but its
+checkpoint is also absent from this bank. Exact input/row/legal alignment passed.
+
+Comparing their CE gradients with the same SF-quality T32 gradient gave:
+
+| CE target | Opposing direction on S0 logits | Opposing direction on G20T05 logits |
+| --- | --- | --- |
+| SF | 12/118 | 19/118 |
+| SF-close | 6/118 | 7/118 |
+| Sharpened 80/20 mixture | 13/118 | 16/118 |
+| Prospective sharpened 50/50 mixture | 15/118 | 14/118 |
+| Pure raw BT4 | 66/118 | 74/118 |
+| Pure sharpened BT4 | 45/118 | 46/118 |
+
+Here "opposing" means a negative inner product between two local logit gradients.
+It is not a training outcome or a teacher-strength ranking. Pure raw BT4 CE also
+increases the frozen rare-near-best mass in all 15 eligible positions on both
+models. The SF-based reward objective and BT4 supervision can therefore pull in
+different directions; greater agreement with SF is not automatically desirable.
+
+No BT4 probabilities were used as rewards. This screen varies CE supervision
+while holding the SF reward ruler fixed, and uses only two existing checkpoints.
+It does not test a trained teacher-by-loss factorial experiment or search scaling.
+Independent recomputation matched gradients, cosines and derivatives within
+1.2e-14. The analysis reused banked logits and took 2.62 seconds of elapsed time
+on CPU, with no new inference.
+
+Evidence under `scratchpad/tailrl_bootstrap_v1/teacher_targets_v1`:
+`targets.npz` (SHA256 `325ec0ac868ea50863d6bbe1e55b54ec6a286e955153675e08874ec49c204175`),
+`interaction_readout_v1/report.json`
+(SHA256 `f52671260539ebfd970fe891c3d28d595d4c64baf279c37a880497626d50a0f1`),
+and `interaction_independent_review.json`
+(SHA256 `540760a5a3265a01e2c7352a569094e035c7e1d87fdbdd467d891bcad7edb8ad`).

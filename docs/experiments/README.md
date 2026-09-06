@@ -8,6 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
+| [Bootstrap research toward RL restart](2026-09-06-bootstrap-research-roadmap.md) | Overall data, mixing, objective and search decisions toward a larger bootstrap and RL restart |
 | [Graded TailRL bootstrap screen](2026-09-06-tailrl-bootstrap.md) | Exact finite-action objective and bounded CPU mechanism comparison; no training or strength result |
 | [TailRL-inspired policy coverage](2026-09-05-tailrl-policy-coverage.md) | Frozen-cohort checkpoint diagnostic and isolated upper-tail loss prototype; no training readout |
 | [Global BT4 mixing and search scaling](2026-09-05-bt4-global-search-scaling.md) | Matched SF control, full-distribution mixtures and 25/100/400-simulation playing screen |
