@@ -65,7 +65,9 @@ def test_completion_requires_actual_epoch_and_schedule(tmp_path, mutation):
         result = epoch.completed_training({'run': str(run)}, path)
         assert result['complete'] is True
         assert result['historical_valid_control'] is False
-        assert result['checkpoint']['role'] == 'E0T05'
+        checkpoint = result['checkpoint']
+        assert isinstance(checkpoint, dict)
+        assert checkpoint['role'] == 'E0T05'
     else:
         with pytest.raises(ValueError, match=r'skipped/retried|schedule differ|stage differs|checkpoint differs'):
             epoch.completed_training({'run': str(run)}, path)
