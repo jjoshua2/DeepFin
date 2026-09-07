@@ -19,6 +19,7 @@ and do not launch experiments.
 | Repair an existing corpus's history | `scripts/repair_corpus_history.py` | Distinct output, inventory coverage, unchanged labels unless explicitly relabeling, truthful completion stamp |
 | Derive replay targets | `scripts/derive_corpus_targets.py` | Input corpus identity, target recipe, history/encoding stamps and completed-shard inventory |
 | Train a controlled LC0-shaped comparison | `scripts/lc0_control_train.py` | Declared architecture, data lineage, objective, view/step budget and checkpoint identity |
+| Registered sharpened-tie epoch and direct screen | [scripts/bt4_one_epoch_screen.py](experiments/2026-09-06-bt4-sharpened-ties-screen.md) | Pinned corpus/runtime/schedule; completed training before the direct development screen |
 | Offline target/loss comparison | `scripts/retarget_retrain.py` | Same-seed controls and a frozen readout appropriate to the hypothesis |
 | Replay epoch reference runner | `scripts/offline_replay_epoch.py` | Distinguish its sampling contract from the game-aware exact-epoch mode |
 
@@ -59,7 +60,7 @@ epoch consumption without wrapping or silently truncating. Follow
 | Observe fenlist and SF-refute outcomes without inferring playing strength | `scripts/monitor_sf_refute_outcomes.py` |
 | Relabel/reconstruct RVG targets and shadow readout | `scripts/rvg_label_pass.py`, `scripts/nnue_shadow_label_readout.py` |
 
-The BT4 direct screen retains its pinned host-local reader at
+The BT4 checkpoint and one-epoch screens retain their pinned host-local reader at
 `/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py`, plus its frozen runtime
 and development opening book. Updating the repository reader does not migrate
 that executed protocol; the linked registration records its identities. Set

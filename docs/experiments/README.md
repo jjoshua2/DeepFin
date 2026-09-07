@@ -10,6 +10,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
+| [Sharpened stored SF top ties versus SF-close](2026-09-06-bt4-sharpened-ties-screen.md) | One E0T05 seed-zero epoch and direct 100-simulation comparison with C20T05 |
 | [BT4 bootstrap results](2026-09-06-bt4-bootstrap-results.md) | Completed corrected-prior global screen, uncertain recipe ranking, and running SF-close follow-up |
 | [50% sharpened global BT4 preparation](2026-09-06-bt4-global-dose50-preparation.md) | Reviewed CPU target preparation for a larger teacher dose; no training or matches queued |
 | [Global BT4 mixing and search scaling](2026-09-05-bt4-global-search-scaling.md) | Matched SF control, full-distribution mixtures and 25/100/400-simulation playing screen |
