@@ -49,6 +49,7 @@ epoch consumption without wrapping or silently truncating. Follow
 | Question | Entry point |
 | --- | --- |
 | Paired checkpoint comparison, resume and optional SPRT | `scripts/arena_standard.py` |
+| Fresh-seed BT4 confirmation with two newly trained roles | [`scripts/bt4_confirmation.py`](bt4_confirmation.md), `scripts/bt4_joint_readout.py --profile confirmation` |
 | Match against another UCI engine | `scripts/match_vs_uci.py` |
 | Fixed handicapped-Stockfish opponent | `scripts/match_vs_handicapped_sf.py` |
 | Joint PGN rating estimate | `scripts/ordo_pooled_fit.py` |
