@@ -1,0 +1,778 @@
+{
+  "status": "PASS_DECLARED_RANK_TIEBREAK_CLARIFICATION",
+  "phase0_order": "Actual banked rank order, matching sf_d9_rank_sidecar",
+  "latest_order": "Counterfactual re-rank by descending latest-phase cp, then UCI; no native latest-phase rank across all moves exists as one banked phase",
+  "phase0_actual_vs_estimator_uci_tiebreak_set_changes": 1,
+  "rows_with_actual_phase0_C_vs_latest_reranked_set_change": 53,
+  "rows": [
+    {
+      "source_id": "run06_g10",
+      "physical_row": 0,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 1,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 2,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 3,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 4,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 5,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 6,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 7,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 8,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 9,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 10,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 11,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 12,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 13,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 14,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 15,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 16,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 17,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 18,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 19,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 20,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 21,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 22,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 23,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 24,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 25,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 26,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 27,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 28,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 29,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 30,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 31,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 32,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 33,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 34,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 35,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 36,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 37,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 38,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 39,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 40,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 41,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 42,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 43,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 44,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 45,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 46,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 47,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 48,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 49,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 50,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 51,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 52,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 53,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 54,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 55,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 56,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 57,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 58,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 59,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 60,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 61,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 62,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run06_g10",
+      "physical_row": 63,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 0,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 1,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 2,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": true,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 3,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 4,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 5,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 6,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 7,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 8,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 9,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 10,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 11,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 12,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 13,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 14,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 15,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 16,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 17,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 18,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 19,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 20,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 21,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 22,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 23,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 24,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 25,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 26,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 27,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 28,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 29,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 30,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 31,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 32,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 33,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 34,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 35,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 36,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 37,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 38,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 39,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 40,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 41,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 42,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 43,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 44,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 45,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 46,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 47,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 48,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 49,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 50,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 51,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 52,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 53,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 54,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 55,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 56,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 57,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 58,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 59,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 60,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 61,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 62,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "physical_row": 63,
+      "phase0_actual_rank_vs_uci_tiebreak_set_changed": false,
+      "phase0_actual_C_set_vs_latest_reranked_set_changed": true
+    }
+  ],
+  "raw_bank_sha256": "0835f6424d028b767e437f07a2a06df99896fcb5e7174d68652242664349090a"
+}

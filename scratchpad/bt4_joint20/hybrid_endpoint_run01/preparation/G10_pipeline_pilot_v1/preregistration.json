@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "registered_utc": "2026-09-07T23:14:31.699029+00:00",
+  "status": "REGISTERED_NOT_LAUNCHED",
+  "purpose": "Real bounded derivation/adaptation/rank/mixer pipeline qualification; no training or strength comparison",
+  "sources": [
+    {
+      "source_id": "run06_g10",
+      "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+      "source_shard": "w00-00000.jsonl.zst",
+      "raw_rows": 8236,
+      "source_sha256_recorded": "3c93d2d127bc6d11db9eb31425e0c795c96b417106d737632ef4b689569ae17d",
+      "source_manifest": {
+        "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json",
+        "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+      },
+      "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run06_g10",
+      "receipt_snapshot": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.closed_receipt.jsonl",
+        "sha256": "4248301efc9798b8f276cabdeaa16a7df72f411ba1978891fc6a93351d60a984"
+      },
+      "derived_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/derived",
+      "adapted_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/bt4",
+      "rank_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/rank",
+      "C_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/C20T05",
+      "H_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/H20T05"
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+      "source_shard": "w00-00000.jsonl.zst",
+      "raw_rows": 8243,
+      "source_sha256_recorded": "a499d2921043065b388778435efa2e2e63d3e206ab1310264b75dafa39d9dea0",
+      "source_manifest": {
+        "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json",
+        "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run07_g10_companion4",
+      "receipt_snapshot": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.closed_receipt.jsonl",
+        "sha256": "f16bbbc8d38731dc7d18efdce93b8c4b4711b0bfdce7abba72002f23517c6056"
+      },
+      "derived_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/derived",
+      "adapted_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/bt4",
+      "rank_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/rank",
+      "C_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/C20T05",
+      "H_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/H20T05"
+    }
+  ],
+  "physical_rows_total": 16479,
+  "selection": "Complete first closed w00-00000 shard per source, no outcome-dependent replacement",
+  "derive_common_args": [
+    "--scheme",
+    "uniform-d9",
+    "--policy-observation",
+    "phase0",
+    "--value-observation",
+    "latest-phase",
+    "--value-scheme",
+    "search",
+    "--temp",
+    "0.0005",
+    "--floor",
+    "0",
+    "--seed",
+    "0",
+    "--rows-per-shard",
+    "8192",
+    "--workers",
+    "1",
+    "--row-provenance"
+  ],
+  "rank_top_k": 3,
+  "recipes": [
+    "C20T05",
+    "H20T05"
+  ],
+  "resource_limits": {
+    "wall_seconds_including_kill": 1800,
+    "new_output_and_cache_bytes": 8589934592,
+    "minimum_free_bytes": 161061273600,
+    "adapter_index_cache_bytes": 16777216,
+    "numeric_threads": 2,
+    "cpu_affinity": "0,1",
+    "nice": 19,
+    "io_class": 3,
+    "gpu_hidden": true
+  },
+  "success": "Every emitted row has source-qualified original/quantized history join, legal rank/target coverage, ordinary sidecar admission, unchanged non-policy arrays and matched source-qualified schedule across C/H; report all dropped rows",
+  "stop": "First failed stage or exhausted resource cap; preserve evidence, no automatic input expansion or retry",
+  "launch_contract": "Before execution pin frozen reviewed implementation, interpreter and exact stage commands; no runtime implementation selected by this registration alone",
+  "record": "docs/experiments/2026-09-07-g10-transfer-readiness.md"
+}

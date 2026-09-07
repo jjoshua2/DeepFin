@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "status": "PASS_FOCUSED_BEHAVIOR_INDEPENDENT_REVIEW_AND_WHOLE_LINT",
+  "observed_unix": 1788823675.1586044,
+  "base_commit": "8f5de1556e228f51affdeafe3d902c748c1240f7",
+  "files": {
+    "scripts/derive_corpus_targets.py": "7886094a27484ba86571819b86f3a1735d2078a3293981917dd983df292590bf",
+    "scripts/corpus_row_provenance.py": "af81340e33e6832cd20b0369d230b9b4b3dea90f6ba42b2ef5d846ad336ba4f3",
+    "scripts/adapt_raw_bt4_sidecars.py": "36b816a3f7e27ec08a5b2264af455335a1d7c443a233672078d9189af7234778",
+    "scripts/sf_d9_rank_sidecar.py": "d60e9cc202de0ca7bc15672848c2f1a04ca8d10bcef3a0f15f19da9aeaeb2bfa",
+    "tests/test_derive_observation_provenance.py": "5d0c8217354fda23fa398ea05c810649a9b572333ae1fd8d8d66dd2cf6d7ca7e",
+    "tests/test_adapt_raw_bt4_sidecars.py": "e8412a5adb85eeffbca62ef941fefdfc88ae495aef154fecf9f66bb5e84fec00",
+    "tests/test_sf_d9_rank_sidecar.py": "c564334752f93ef536796f62e2c15a9ca128fe3815d84b5667a7d47e66ca5e23",
+    "docs/corpus_derivation.md": "83265f3be163b028ec1a2291e68a54f0bd9130ce155536eaa4b695af4983a086",
+    "docs/toolchains.md": "447613e55db03630c0e058ce5f682c375f5ae8817f43916a78d00c9415c5a0a0",
+    "docs/experiments/README.md": "dc49f292ee178f3c740d226775bfb174452e9a38830fc63c5ff8ffd55a68fc71",
+    "docs/experiments/2026-09-07-g10-transfer-readiness.md": "9628dd427ec93eca174b786b37299dad8d2415b90142b24f08433a6164cc65f2",
+    "docs/experiments/evidence/bt4-bootstrap/g10-readiness-manifest.json": "7bffb9f1baf9c674931d6ab8f08544622e1cff429aafcf20e9800c9250f7d696"
+  },
+  "lint": {
+    "session_id": 76938,
+    "log": "/tmp/deepfin-g10-final-lint.log",
+    "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 nice -n 19 ionice -c 3 taskset -c 0,1 /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python scripts/validate.py lint",
+    "cwd": "/tmp/deepfin-g10-transfer-tools",
+    "host_environment": true,
+    "exit_code": 0,
+    "seconds": 168.19,
+    "result": "Ruff passed; basedpyright0errors0warnings0notes; Vulture passed",
+    "published_log": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/combined_lint.log",
+    "log_sha256": "9546d311337ec592c9603707901d3d115024504617e11ee6c9b663f91c956e36"
+  },
+  "operational_pilot_launched": false,
+  "completed_unix": 1788823855.332706,
+  "behavior_checks": {
+    "derive_affected_cases": 317,
+    "adapter_cases": 8,
+    "rank_cases": 13,
+    "independent_derivation_cases": 3,
+    "independent_adapter_cases": 4,
+    "independent_rank_cases": 7,
+    "repeated_checks": "Only affected final deltas were retested; no full CPU suite rerun on host."
+  }
+}

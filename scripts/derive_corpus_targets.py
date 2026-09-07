@@ -443,6 +443,7 @@ from chess_anti_engine.replay.shard import (
 from scripts import audit_label_candidates as gate
 from scripts import gen_random_selfplay_shards as gen
 from scripts import gen_sf_rooted_corpus as corpus
+from scripts import corpus_row_provenance as row_refs
 
 #: Derived-shard schema.  Bumped when the MEANING of an emitted column changes,
 #: which is a different event from the corpus row schema changing -- a consumer
@@ -1026,6 +1027,18 @@ class Scheme:
     #: value at d7 and a cap could never reach the cell the round actually
     #: needs -- d7 policy with a d9 value.  See :func:`value_read_scheme`.
     value_depth: int | None = None
+    policy_observation: str = "latest-phase"
+    value_observation: str = "latest-phase"
+
+    def __post_init__(self) -> None:
+        for name in ("policy_observation", "value_observation"):
+            if getattr(self, name) not in {"latest-phase", "phase0"}:
+                raise ValueError(f"unknown {name}: {getattr(self, name)!r}")
+        if self.kind != "uniform" and (
+            self.policy_observation != "latest-phase"
+            or self.value_observation != "latest-phase"
+        ):
+            raise ValueError("explicit phase0 observations require a uniform depth scheme")
 
     @property
     def canonical(self) -> str:
@@ -1057,6 +1070,8 @@ class Scheme:
         -- a gate firing on a non-hazard, which is the same defect as a gate
         that cannot fire, pointed the other way (Codex re-review of PR #494).
         """
+        if self.policy_observation != self.value_observation:
+            return False
         if self.value_depth is None or self.kind == "nodes":
             return True
         return (
@@ -1069,9 +1084,13 @@ class Scheme:
     def value_source(self) -> str:
         if self.kind == "nodes":
             return VALUE_SOURCE_PHASE0
-        if self.value_reads_the_scheme:
-            return VALUE_SOURCE_DEEPEST
-        return f"{VALUE_SOURCE_DEEPEST}{VALUE_SOURCE_AT_SUFFIX}{self.value_depth}"
+        source = (
+            VALUE_SOURCE_PHASE0 if self.value_observation == "phase0"
+            else VALUE_SOURCE_DEEPEST
+        )
+        if self.value_depth is None or (self.kind == "uniform" and self.value_depth == self.depth):
+            return source
+        return f"{source}{VALUE_SOURCE_AT_SUFFIX}{self.value_depth}"
 
     def params(self) -> dict[str, Any]:
         return {
@@ -1092,6 +1111,11 @@ class Scheme:
             #: that only carried one of them could not be used to check the
             #: other.
             "value_depth": self.value_depth,
+            **({
+                "policy_observation": self.policy_observation,
+                "value_observation": self.value_observation,
+            } if self.policy_observation != "latest-phase"
+                  or self.value_observation != "latest-phase" else {}),
         }
 
 
@@ -1397,7 +1421,10 @@ def apply_scheme(bank: RowBank, scheme: Scheme) -> MoveValues:
     values: list[float] = []
     phases: list[int] = []
     for move in moves:
-        read = bank.value_at(move, base)
+        read = (
+            (block["values"][move], 0) if scheme.policy_observation == "phase0"
+            else bank.value_at(move, base)
+        )
         if read is None:  # pragma: no cover - phase 0 carries every move at base
             raise EnvelopeMiss(f"no banked value for {move} at depth {base}")
         values.append(read[0])
@@ -1466,7 +1493,7 @@ def value_read_scheme(scheme: Scheme, bank: RowBank) -> Scheme | None:
     """
     if scheme.value_reads_the_scheme:
         return None
-    depth = _required(scheme.value_depth, "value_depth")
+    depth = _required(scheme.value_depth if scheme.value_depth is not None else scheme.depth, "value depth")
     if bank.full_width_block(depth) is None:
         # ⚑ An EnvelopeMiss, so a row that cannot answer the requested depth is
         # counted and bounded by --max-envelope-misses exactly like a row that
@@ -1480,7 +1507,11 @@ def value_read_scheme(scheme: Scheme, bank: RowBank) -> Scheme | None:
             f"depth {depth} and this row's full-width envelope is "
             f"{bank.full_width_depths()}",
         )
-    return Scheme(kind="uniform", depth=depth)
+    return Scheme(
+        kind="uniform", depth=depth,
+        policy_observation=scheme.value_observation,
+        value_observation=scheme.value_observation,
+    )
 
 
 def value_read_moved(native: MoveValues, requested: MoveValues) -> bool:
@@ -2907,6 +2938,7 @@ class DeriveOptions:
     #: through that path.  Travels to the lanes inside ``_WorkerTask``, so a test
     #: that lowers it lowers it for the code that actually writes the spill.
     spill_chunk_rows: int = SPILL_CHUNK_ROWS
+    row_provenance: bool = False
 
     @property
     def needs_game(self) -> bool:
@@ -2931,6 +2963,7 @@ class DerivedRow:
     #: The corpus row's schema (``row_schema_of``), carried to the shard writer
     #: so each shard can stamp its OWN identity at commit.
     row_schema: int
+    provenance: dict[str, Any] | None = None
 
 
 class TargetDeriver:
@@ -4183,6 +4216,7 @@ def derive(
     written: list[dict[str, Any]] = []
     pending: list[ReplaySample] = []
     pending_schemas: list[int] = []
+    pending_refs: list[dict[str, Any]] = []
     shard_index = 0
     tt_carried: set[bool] = set()
     grouper = GameGrouper(deriver) if options.needs_game else None
@@ -4198,7 +4232,7 @@ def derive(
         241-row-oversized shard, and two arms of the value round would then
         differ in their shard layout as well as in their targets.
         """
-        nonlocal pending, pending_schemas, shard_index
+        nonlocal pending, pending_schemas, pending_refs, shard_index
         if batch is None or not batch.rows:
             return
         produced = apply_value_scheme(
@@ -4209,20 +4243,24 @@ def derive(
         )
         pending.extend(produced)
         pending_schemas.extend(_row_schemas_of(batch.rows, produced))
+        if options.row_provenance:
+            pending_refs.extend(_references_of(batch.rows))
         while len(pending) >= options.rows_per_shard:
             chunk = pending[: options.rows_per_shard]
             chunk_schemas = pending_schemas[: options.rows_per_shard]
             written.append(_flush(
                 out_dir, shard_index, chunk, options, rng, corpus_sha,
                 schemas=chunk_schemas, identity=identity,
+                references=pending_refs[:options.rows_per_shard] if options.row_provenance else None,
             ))
             deriver.stats.rows_written += len(chunk)
             pending = pending[options.rows_per_shard :]
             pending_schemas = pending_schemas[options.rows_per_shard :]
+            pending_refs = pending_refs[options.rows_per_shard :]
             shard_index += 1
 
     for path in shards:
-        for row in iter_corpus_rows(path):
+        for raw_index, row in enumerate(iter_corpus_rows(path)):
             if options.limit and deriver.stats.rows_read >= options.limit:
                 break
             deriver.stats.rows_read += 1
@@ -4264,6 +4302,10 @@ def derive(
                 if grouper is not None:
                     grouper.note_dropped(row)
                 continue
+            if options.row_provenance:
+                derived = replace(derived, provenance=row_refs.reference(
+                    row, path, raw_index, corpus_sha, derived.sample.x,
+                ))
             if grouper is None:
                 emit(GameBatch(rows=[derived]))
             else:
@@ -4282,6 +4324,7 @@ def derive(
         written.append(_flush(
             out_dir, shard_index, pending, options, rng, corpus_sha,
             schemas=pending_schemas, identity=identity,
+            references=pending_refs if options.row_provenance else None,
         ))
         deriver.stats.rows_written += len(pending)
     if not written:
@@ -4760,6 +4803,15 @@ def _shard_identity(
     }
 
 
+def _references_of(rows: Sequence[DerivedRow]) -> list[dict[str, Any]]:
+    references = []
+    for row in rows:
+        if row.provenance is None:
+            raise CorpusIntegrityError("surviving row lost its source provenance")
+        references.append(row.provenance)
+    return references
+
+
 def _flush(
     out_dir: Path,
     index: int,
@@ -4770,6 +4822,7 @@ def _flush(
     *,
     schemas: Sequence[int],
     identity: CommitIdentity,
+    references: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Write one shard.  ``--seed`` permutes the rows inside it and nothing else.
 
@@ -4783,6 +4836,7 @@ def _flush(
     return _flush_ordered(
         out_dir, index, [samples[int(i)] for i in order], options, corpus_sha,
         schemas=[int(schemas[int(i)]) for i in order], identity=identity,
+        references=[references[int(i)] for i in order] if references is not None else None,
     )
 
 
@@ -4795,6 +4849,7 @@ def _flush_ordered(
     *,
     schemas: Sequence[int],
     identity: CommitIdentity,
+    references: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Write one shard whose row ORDER has already been decided.
 
@@ -4833,8 +4888,19 @@ def _flush_ordered(
         _shard_identity(arrs, schemas, identity),
     )
     _verify_value_column_on_disk(writing, arrs)
+    provenance = None
+    if options.row_provenance:
+        if references is None:
+            raise CorpusIntegrityError("requested row provenance is missing from writer")
+        provenance = row_refs.write(
+            writing / row_refs.FILENAME, references, arrs["x"], arrs["game_id"], arrs["ply_index"],
+        )
+        zarr.open_group(str(writing), mode="a").attrs["derive_row_provenance"] = provenance
+    elif references is not None:
+        raise CorpusIntegrityError("unexpected row provenance with disabled option")
     os.replace(writing, path)
-    return {"path": path.name, "rows": len(ordered)}
+    return {"path": path.name, "rows": len(ordered),
+            **({"row_provenance": provenance} if provenance is not None else {})}
 
 
 def _verify_value_column_on_disk(path: Path, arrs: Mapping[str, np.ndarray]) -> None:
@@ -5137,6 +5203,10 @@ def build_summary(
         },
         # ⚑ Rebuilt from the PARSED scheme object, not echoed from the flag.
         "scheme": {"canonical": options.scheme.canonical, **options.scheme.params()},
+        **({"row_provenance": {
+            "schema": row_refs.SCHEMA, "path_in_shard": row_refs.FILENAME,
+            "identity": "source directory/config, raw shard and physical row; original and stored history input keys",
+        }} if options.row_provenance else {}),
         "temp_requested": options.temp,
         "floor_requested": options.floor,
         "cp_map": {
@@ -5237,6 +5307,10 @@ def build_summary(
             "search_wdl": (
                 "cp_to_wdl_array of the "
                 + (
+                    f"best-move value from {options.scheme.value_observation} observation "
+                    f"at depth {options.scheme.value_depth or options.scheme.depth}"
+                    if options.scheme.policy_observation != "latest-phase"
+                    or options.scheme.value_observation != "latest-phase" else
                     "SCHEME's best-move value"
                     if options.scheme.value_reads_the_scheme else
                     "best-move value read at the full-width rung at depth "
@@ -5424,6 +5498,11 @@ def value_scheme_manifest(options: DeriveOptions) -> dict[str, Any]:
         # describe -- the same metadata-honesty failure as a counter that
         # over-reports (Codex re-review of PR #494).
         "q_definition": (
+            f"cp_to_wdl_array of the best-move {options.scheme.value_observation} "
+            f"observation at depth {options.scheme.value_depth or options.scheme.depth}; "
+            "the policy observation is selected independently"
+            if options.scheme.policy_observation != "latest-phase"
+            or options.scheme.value_observation != "latest-phase" else
             "cp_to_wdl_array of the --scheme's best-move value: the SAME vector "
             "the search arm writes, so V0/A/B/C differ only in the retrospect"
             if options.scheme.value_reads_the_scheme else
@@ -6160,6 +6239,7 @@ def _schemas_path(chunk_path: Path) -> Path:
 
 def _write_spill_chunk(
     path: Path, samples: list[ReplaySample], *, schemas: Sequence[int],
+    references: Sequence[Mapping[str, Any]] | None = None,
 ) -> None:
     """Bank one run of surviving rows, and PROVE the banking is lossless.
 
@@ -6205,6 +6285,8 @@ def _write_spill_chunk(
     _schemas_path(path).write_text(
         json.dumps([int(s) for s in schemas]), encoding="utf-8",
     )
+    if references is not None:
+        row_refs.write(path / row_refs.FILENAME, references, want["x"], want["game_id"], want["ply_index"])
     stored, _ = load_shard_arrays(path, lazy=False)
     got = samples_to_arrays(arrays_to_samples(dict(stored)))
     if set(got) != set(want):
@@ -6241,6 +6323,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
 
     buffered: list[ReplaySample] = []
     buffered_schemas: list[int] = []
+    buffered_refs: list[dict[str, Any]] = []
     chunk_rows: list[int] = []
     survivors = 0
     tt_carried: set[bool] = set()
@@ -6251,10 +6334,10 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
     # overflow predicate and the next worker's skip predicate both name it.
     range_end_key: tuple[int, int] | None = None
 
-    def cut(rows: list[ReplaySample], schemas: list[int]) -> None:
+    def cut(rows: list[ReplaySample], schemas: list[int], refs: list[dict[str, Any]]) -> None:
         _write_spill_chunk(
             _spill_path(task.spill_dir, task.index, len(chunk_rows)), rows,
-            schemas=schemas,
+            schemas=schemas, references=refs if options.row_provenance else None,
         )
         chunk_rows.append(len(rows))
         bank.drain()
@@ -6271,11 +6354,15 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
         )
         buffered.extend(produced)
         buffered_schemas.extend(_row_schemas_of(batch.rows, produced))
+        if options.row_provenance:
+            buffered_refs.extend(_references_of(batch.rows))
         survivors += len(produced)
         while len(buffered) >= options.spill_chunk_rows:
-            cut(buffered[:options.spill_chunk_rows], buffered_schemas[:options.spill_chunk_rows])
+            cut(buffered[:options.spill_chunk_rows], buffered_schemas[:options.spill_chunk_rows],
+                buffered_refs[:options.spill_chunk_rows])
             del buffered[:options.spill_chunk_rows]
             del buffered_schemas[:options.spill_chunk_rows]
+            del buffered_refs[:options.spill_chunk_rows]
 
     stop = False
     for shard_index in range(span.lo, task.shards_in_play):
@@ -6344,6 +6431,10 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
                 if grouper is not None:
                     grouper.note_dropped(row)
                 continue
+            if options.row_provenance:
+                derived = replace(derived, provenance=row_refs.reference(
+                    row, task.shards[shard_index], seen - 1, task.corpus_sha, derived.sample.x,
+                ))
             if grouper is None:
                 emit(GameBatch(rows=[derived]))
             else:
@@ -6361,7 +6452,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
         # game did, flushes ``False`` -- the game ended, the budget did not.
         emit(grouper.flush(cut_by_limit=bool(limit and max_gidx + 1 >= limit)))
     if buffered:
-        cut(list(buffered), list(buffered_schemas))
+        cut(list(buffered), list(buffered_schemas), list(buffered_refs))
         buffered.clear()
 
     bank.drain()
@@ -6426,12 +6517,17 @@ def _repack_shard(task: _RepackTask) -> dict[str, Any]:
     """Rebuild one output shard's rows and write it through the sequential writer."""
     samples: list[ReplaySample] = []
     schemas: list[int] = []
+    references: list[dict[str, Any]] = []
     for part in task.slices:
         chunk_path = _spill_path(task.spill_dir, part.worker, part.chunk)
         arrs, _ = load_shard_arrays(chunk_path, lazy=False)
         samples.extend(arrays_to_samples(_slice_arrays(dict(arrs), part.lo, part.hi)))
         chunk_schemas = json.loads(_schemas_path(chunk_path).read_text(encoding="utf-8"))
         schemas.extend(int(s) for s in chunk_schemas[part.lo:part.hi])
+        if task.options.row_provenance:
+            references.extend(row_refs.read(
+                chunk_path / row_refs.FILENAME, rows=len(chunk_schemas),
+            )[part.lo:part.hi])
     if len(schemas) != len(samples):
         raise ParallelDeriveError(
             f"shard {task.index}: the repack assembled {len(samples)} rows and "
@@ -6448,6 +6544,7 @@ def _repack_shard(task: _RepackTask) -> dict[str, Any]:
     return _flush_ordered(
         task.out_dir, task.index, ordered, task.options, task.corpus_sha,
         schemas=[schemas[int(i)] for i in order], identity=task.identity,
+        references=[references[int(i)] for i in order] if task.options.row_provenance else None,
     )
 
 
@@ -7004,6 +7101,18 @@ def build_parser() -> argparse.ArgumentParser:
              "REFUSED with --workers 1, which spills nothing.",
     )
     parser.add_argument(
+        "--policy-observation", choices=("latest-phase", "phase0"), default="latest-phase",
+        help="SF policy observation; phase0 reads the complete initial uniform-depth block.",
+    )
+    parser.add_argument(
+        "--value-observation", choices=("latest-phase", "phase0"), default="latest-phase",
+        help="SF value observation, independent of the policy selector; default preserves legacy values.",
+    )
+    parser.add_argument(
+        "--row-provenance", action="store_true",
+        help="bank compact source-qualified row references and original history input keys through shuffling",
+    )
+    parser.add_argument(
         "--value-depth", type=int, default=None,
         help="read the VALUE target's q at the full-width rung at depth EXACTLY "
              "D, leaving the POLICY target on the --scheme's own depth. Absent "
@@ -7028,7 +7137,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    scheme = parse_scheme(str(args.scheme))
+    scheme = replace(
+        parse_scheme(str(args.scheme)),
+        policy_observation=args.policy_observation,
+        value_observation=args.value_observation,
+    )
     # ⚑ Next to the parse, and before the corpus is opened: a value depth on a
     # scheme that cannot consume it is refused rather than derived. The
     # remaining refusal (a depth outside this corpus's full-width envelope)
@@ -7136,6 +7249,7 @@ def main(argv: list[str] | None = None) -> int:
         value_scheme=value_scheme,
         spill_chunk_rows=spill_chunk_rows,
         qz=qz,
+        row_provenance=bool(args.row_provenance),
     )
     if workers > 1:
         # ⚑ A DIFFERENT FUNCTION, NOT A PARAMETER ON THE SAME ONE.  `--workers

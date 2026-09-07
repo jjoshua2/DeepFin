@@ -1,0 +1,245 @@
+{
+  "schema": 1,
+  "observed_utc": "2026-09-07T22:07:53.968805+00:00",
+  "scope": "Metadata/progress receipt intersection only; no corpus/sidecar array payload read",
+  "sources": {
+    "run06_g10": {
+      "manifest_sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4",
+      "config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+      "config_requested": {
+        "book": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "book_max_games": 200000,
+        "book_plies": 16,
+        "cp_draw_width": 120.0,
+        "cp_slope": 0.006,
+        "dedup_cache_max": 2000000,
+        "games": 520000,
+        "max_plies": 400,
+        "nice": 19,
+        "out_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+        "run_id": "nnue_bootstrap_run06_g10",
+        "seed": 20260902,
+        "sf_hash_mb": 64,
+        "sf_read_timeout_s": 300.0,
+        "sf_search_timeout_s": 30.0,
+        "shard_rows": 8192,
+        "staircase": "all:9,8:10,4:12",
+        "staircase_policy": "g10",
+        "stockfish": "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+        "syzygy_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+        "temp_high": 1.0,
+        "temp_low": 0.3,
+        "temp_plies": 20,
+        "workers": 12
+      },
+      "staircase_gate": {
+        "adaptive": true,
+        "decision_after_phase": 1,
+        "decision_depth": 10,
+        "extend_when": "margin_cp<=threshold_cp",
+        "extended_depth": 12,
+        "extended_phase": 2,
+        "extended_width": 4,
+        "metric": "effective_cp_rank1_minus_rank2",
+        "no_margin_action": "stop",
+        "policy": "g10",
+        "threshold_cp": 10.0
+      },
+      "closed_source_rows": 24476040,
+      "closed_source_shards": 2949,
+      "closed_source_games": 125196,
+      "receipt_backed_bt4_rows": 20186464,
+      "receipt_backed_bt4_shards": 2432,
+      "receipt_rows_seen": 2432,
+      "common_closed_source_bt4_metadata_sha256": "5627e152a1029f6fe1c4b20ad28747ea799148348057ba450ee1d7646e870f50",
+      "backlog_closed_rows": 4289576,
+      "backlog_closed_shards": 517,
+      "validation_errors": [],
+      "final_source_summary_present": false,
+      "bt4_latest_publish_unix": 1788818851.030094
+    },
+    "run07_g10_companion4": {
+      "manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9",
+      "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+      "config_requested": {
+        "book": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "book_max_games": 200000,
+        "book_plies": 16,
+        "cp_draw_width": 120.0,
+        "cp_slope": 0.006,
+        "dedup_cache_max": 2000000,
+        "games": 130000,
+        "max_plies": 400,
+        "nice": 19,
+        "out_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "run_id": "nnue_bootstrap_run07_g10_companion4",
+        "seed": 20260903,
+        "sf_hash_mb": 64,
+        "sf_read_timeout_s": 300.0,
+        "sf_search_timeout_s": 30.0,
+        "shard_rows": 8192,
+        "staircase": "all:9,8:10,4:12",
+        "staircase_policy": "g10",
+        "stockfish": "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+        "syzygy_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+        "temp_high": 1.0,
+        "temp_low": 0.3,
+        "temp_plies": 20,
+        "workers": 4
+      },
+      "staircase_gate": {
+        "adaptive": true,
+        "decision_after_phase": 1,
+        "decision_depth": 10,
+        "extend_when": "margin_cp<=threshold_cp",
+        "extended_depth": 12,
+        "extended_phase": 2,
+        "extended_width": 4,
+        "metric": "effective_cp_rank1_minus_rank2",
+        "no_margin_action": "stop",
+        "policy": "g10",
+        "threshold_cp": 10.0
+      },
+      "closed_source_rows": 6155799,
+      "closed_source_shards": 742,
+      "closed_source_games": 31528,
+      "receipt_backed_bt4_rows": 4738228,
+      "receipt_backed_bt4_shards": 571,
+      "receipt_rows_seen": 571,
+      "common_closed_source_bt4_metadata_sha256": "f1ecc58387fb607c4592d93a5e2f2b6481120026ca26f00275fd3031c4aefef2",
+      "backlog_closed_rows": 1417571,
+      "backlog_closed_shards": 171,
+      "validation_errors": [],
+      "final_source_summary_present": false,
+      "bt4_latest_publish_unix": 1788818872.9938786
+    }
+  },
+  "totals": {
+    "closed_source_rows": 30631839,
+    "closed_source_shards": 3691,
+    "receipt_backed_bt4_rows": 24924692,
+    "receipt_backed_bt4_shards": 3003,
+    "backlog_closed_rows": 5707147,
+    "backlog_closed_shards": 688
+  },
+  "progress_prefix_snapshots": [
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w00.progress.jsonl",
+      "prefix_bytes": 308874,
+      "prefix_sha256": "d859bc9a43c8e5f8d21b8e5bd78ad2de2482d33dbeadaf279257fb531c702af6",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w01.progress.jsonl",
+      "prefix_bytes": 316665,
+      "prefix_sha256": "92f0e082b2a40a0d2edc60ef08157a5380552c584bcdd40c67beb39c60ea4323",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w02.progress.jsonl",
+      "prefix_bytes": 314896,
+      "prefix_sha256": "9765aa90b57d8d504f439fc5ff8369995759c3b5a3990e6b363bb41e0c9dca28",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w03.progress.jsonl",
+      "prefix_bytes": 312915,
+      "prefix_sha256": "7d2d4954f9c2b2306fc08dd06e823f9e7747850f6325f314f73e849e2234d31d",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w04.progress.jsonl",
+      "prefix_bytes": 312911,
+      "prefix_sha256": "b2c29b8b4c864f8a6f05cac54292d69a9e773dbb358d3b3a112257a604ddfdff",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w05.progress.jsonl",
+      "prefix_bytes": 312312,
+      "prefix_sha256": "48bb037d1dd0319bf9053e3513f9c7ad3208f07cbe34c15f5ef9848fe66ae00b",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w06.progress.jsonl",
+      "prefix_bytes": 311570,
+      "prefix_sha256": "1b3d5a40b8dfca3a4c79078c16a8a73bdb6efc15f6d1c72ba06f207c6515d569",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w07.progress.jsonl",
+      "prefix_bytes": 314604,
+      "prefix_sha256": "693325f560b68c981ade66acbf84fdb8dac22609f87bee97a427c85091e847e8",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w08.progress.jsonl",
+      "prefix_bytes": 314508,
+      "prefix_sha256": "087ac421fd790e2df6446548336fa90b4ed34d746e1a4dcee44f833104c2a9aa",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w09.progress.jsonl",
+      "prefix_bytes": 310394,
+      "prefix_sha256": "51add7611b7f8f4e0549cfc3c079db97e74b6d89ada5e5691ef1520ff5187ace",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w10.progress.jsonl",
+      "prefix_bytes": 308833,
+      "prefix_sha256": "0ee995275dd4fe2acac83d0adc5fdc3365b8a25845ed97c4ad0bc7c6aae3454c",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run06_g10/w11.progress.jsonl",
+      "prefix_bytes": 310035,
+      "prefix_sha256": "d63c6d93b38385e76d9a2f5c7d604ddcc7844d1ebe9e48c8999baaee99b26be2",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/lc0/bt4_policy_sidecars/g10_raw/run06_g10/bt4_raw_sidecar.progress.jsonl",
+      "prefix_bytes": 2786403,
+      "prefix_sha256": "904525be65e2207e9bf168d524847724da1333c3d9aaffa0558a650f0d90fe94",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run07_g10_companion4/w00.progress.jsonl",
+      "prefix_bytes": 233900,
+      "prefix_sha256": "f005b79cb76237425e31b8f41b6ca49d1da1e04e8c3faa7f125b5bc04210fd52",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run07_g10_companion4/w01.progress.jsonl",
+      "prefix_bytes": 230436,
+      "prefix_sha256": "61fe73f960044917111ce3f7fba7e98dcc977898643434fdc53211c51baaf52f",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run07_g10_companion4/w02.progress.jsonl",
+      "prefix_bytes": 238115,
+      "prefix_sha256": "2dbc5cdef2d8e5946a3a6d3230f2385317ab11c55566ce10377b94f97ecded77",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/nnue_bootstrap/run07_g10_companion4/w03.progress.jsonl",
+      "prefix_bytes": 233923,
+      "prefix_sha256": "028c79c77034282925551a4c7e677c2dd97a5384ca9e2d8b79d9134c7176dc49",
+      "ignored_torn_tail_bytes": 0
+    },
+    {
+      "path": "data/lc0/bt4_policy_sidecars/g10_raw/run07_g10_companion4/bt4_raw_sidecar.progress.jsonl",
+      "prefix_bytes": 660495,
+      "prefix_sha256": "25de194a4591241e75924f2674959dcef40c9d50c7c4df9c2e2844276cc0b0ff",
+      "ignored_torn_tail_bytes": 0
+    }
+  ],
+  "identity_limits": "Counts are distinct (source_id, source_shard, physical row index) coverage. They are not globally deduplicated chess positions or bare game_id uniqueness; no fingerprint payload scan performed.",
+  "SF_d9_complete_row_count": "Not established by these counters: generator can bank incomplete final blocks, and raw BT4 encoding does not validate phase0 d9 legality/completeness.",
+  "fully_qualified_G10_matched_recipe_rows": 0,
+  "fully_qualified_G10_matched_recipe_shards": 0,
+  "fully_qualified_count_scope": "No completed G10 derived source/rank/mixed-corpus qualification found at configured destinations; this is not a claim that raw SF information is absent.",
+  "membership_manifest": {
+    "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/receipt_backed_membership.jsonl",
+    "bytes": 1494948,
+    "sha256": "c5aad096774818266bd1024a4ce28e03c4820e6c2f9f5be20f4531fcf7171965"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "status": "ESTIMATOR_FAILED_NO_DATA_VERDICT",
+  "original_script_sha256": "feb78370752542446e644b004e0e9580f797f03783f95e5dce98b5789114429c",
+  "error": "position_fingerprints rejects unsupported history_rep_fix keyword; per-row errors left no arrays to stack.",
+  "fix": "Remove unsupported keyword only; history regime remains checked by current deriver and input tensor key. Reuse exact banked128 rows, no raw corpus rescan.",
+  "raw_bank_sha256": "0835f6424d028b767e437f07a2a06df99896fcb5e7174d68652242664349090a",
+  "empty_partial_readouts_preserved": true
+}

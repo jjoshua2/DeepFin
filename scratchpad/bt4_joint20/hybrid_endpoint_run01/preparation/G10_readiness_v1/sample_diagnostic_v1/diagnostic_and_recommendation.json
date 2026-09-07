@@ -1,0 +1,129 @@
+{
+  "schema": 1,
+  "status": "BOUNDED_G10_SELECTOR_AND_JOIN_DIAGNOSTIC_COMPLETE_NO_IMPLEMENTATION",
+  "completed_utc": "2026-09-07T22:22:26.524429+00:00",
+  "sample": {
+    "rows": 128,
+    "sources": [
+      "run06_g10",
+      "run07_g10_companion4"
+    ],
+    "source_qualified_games": 3,
+    "selection": "First64 physical rows of w00-00000 from each source; declared before reading observations. Training-only, not random or representative.",
+    "phase_counts": {
+      "('run06_g10', 2)": 49,
+      "('run06_g10', 3)": 15,
+      "('run07_g10_companion4', 3)": 11,
+      "('run07_g10_companion4', 2)": 53
+    },
+    "raw_bank_sha256": "0835f6424d028b767e437f07a2a06df99896fcb5e7174d68652242664349090a",
+    "preregistration_sha256": "d870714ef335e97a66fd24172754d48cad3ffd2cf3cb08d12dbfdec005804291"
+  },
+  "observed_results": {
+    "valid_complete_d9_derived_join_rows": 128,
+    "writer_roundtrip_rows": 128,
+    "rows_with_changed_cp": 126,
+    "rows_with_argmax_change": 36,
+    "rows_with_stored_max_set_change": 40,
+    "rows_where_phase0_rank1_not_latest_stored_max": 36,
+    "mean_stored_policy_l1": 0.5507483515167059,
+    "rows_with_changed_searched_wdl": 114,
+    "max_searched_wdl_abs_delta": 0.13974612951278687,
+    "raw_input_key_changes_after_float16_storage_rows": 128,
+    "max_input_storage_abs_quantization_error": 0.00023508071899414062,
+    "bare_game_ply_keys_colliding_across_sources": 35
+  },
+  "close_set_result": {
+    "changed_rows": 53,
+    "phase0_order": "Actual banked rank order, matching sf_d9_rank_sidecar",
+    "latest_order": "Counterfactual re-rank by descending latest-phase cp, then UCI; no native latest-phase rank across all moves exists as one banked phase",
+    "phase0_uci_tiebreak_difference_rows": 1
+  },
+  "interpretation": [
+    "All128 sampled rows contain complete phase0d9 with one-to-one legal coverage; this does not quantify missing or incomplete blocks elsewhere. Both stopped and extended G10 branches are represented.",
+    "Legacy uniform-d9 substantially changes the observed targets in these three games because it overlays later-phase d9 scores. The phase0 rank tool would reject36 sampled rows if joined to those legacy stored SF maxima.",
+    "The current deriver verifies and preserves original full-history input keys before writing. Raw BT4 source/input keys, legal policy and game/ply match all128 rows.",
+    "The current writer stores x as float16. Every sampled raw input_tensor_key changes when recomputed from stored x, while stored x equals the exact float16 cast of original encoded x and source/root fingerprints remain matched. This is expected storage quantization, not evidence of data corruption.",
+    "Bare game_id/ply collides35times between the two runs. Source namespace is essential; root-position source_key is also not a unique full-history or physical-row identity.",
+    "Current writer shuffle was exercised exactly on separate64-row diagnostic shards with PCG64seed0. Policy, current search_wdl, legal, game/ply and quantized x all round-trip; this is not a production8192-row/parallel-schedule proof."
+  ],
+  "recommended_policy_and_value_contract": {
+    "policy": "For the next G10 recipe-transfer preparation, use an explicitly named phase0-at-d9 policy observation, with near-close ranks and cp-quality from that identical phase0 block. Retain the existing legacy latest-phase behavior unchanged for historical runs.",
+    "value": "Do not implicitly move root value when selecting phase0 policy. Expose and stamp its observation separately. The least-confounded policy-recipe comparison can explicitly retain legacy latest-phase-d9 searched value, identically across all recipe arms; choosing phase0 value is a separate deliberate intervention. No value convention was adopted here.",
+    "diagnostic_value_handling": "Current latest-phase searched WDL was written unchanged in both diagnostic shards. Phase0 WDL was computed only as a counterfactual metric (114changes,maxcomponentdelta0.139746).",
+    "readout_scope": "No evidence here ranks phase0 versus latest-phase value for playing strength, or chooses the next recipe after H20."
+  },
+  "minimal_reusable_changes": [
+    {
+      "area": "SF observation selector",
+      "change": "Add explicit policy/value observation selectors at RowBank/TargetDeriver; preserve existing defaults. Serialize both realized choices in scheme/shard/derive summary, count missing chosen-depth envelopes, and require rank/mixer/quality provenance to name the same intended policy observation. Fixed-depth phase0 must not be emulated with a node-budget scheme or --value-depth9.",
+      "verification": "Reuse this bank to show phase0 policy matches actual phase0 ranks, default legacy output stays byte-identical, and selecting policy phase0 with explicit legacy value leaves search_wdl unchanged. Separate selector choices must reach both sequential/parallel workers."
+    },
+    {
+      "area": "Raw BT4 to derived row bridge",
+      "change": "Carry a compact source-qualified raw row reference and original full-history input_key alongside each surviving derived sample through the existing filter and exact shard permutation; expose it as a derivation provenance sidecar rather than reconstructing identity from game/ply or stored x. Use one shared survivor/permutation path, not independently reimplemented filtering.",
+      "join": "Bind source manifest/config, source_id, raw shard and physical row index; verify raw input_key against prequantization encoded x and BT4 input_key, then verify written x against the identical dtype cast. Reorder raw BT4 policy by that same reference/permutation and emit the existing derived-sidecar contract with new-source policy/fingerprint pins plus transitive raw provenance. No network re-evaluation needed.",
+      "namespace": "When combining runs, preserve or deterministically map source-qualified game identities through training/schedule grouping; do not let the current bare game_id column merge games from different runs.",
+      "verification": "Roundtrip mixed-source equal(game,ply) fixtures, input-history mismatch rejection, quantization-aware input proof, result/envelope filtering, incomplete source refusal, and exact shared shuffle/source-policy identity."
+    }
+  ],
+  "remaining_before_35_100m": [
+    "Choose and freeze an eligible source-qualified snapshot/common membership, with enough intended rows after result/envelope exclusions.",
+    "Qualify selector and raw-sidecar bridge on a broader bounded source/game sample, including rejected/incomplete cases, before large derivation.",
+    "Materialize one common source and aligned label sidecars; selected recipes must share x/value targets/rows/order and canonical schedule.",
+    "Keep current generators/BT4 labeling operating unchanged; their published raw policies remain useful regardless of later teacher sharpness."
+  ],
+  "estimator_history": {
+    "first_attempt": "Unsupported history_rep_fix keyword passed to position_fingerprints; corrected against same frozen128-row bank. Failed script and empty partial reports preserved.",
+    "second_attempt": "Raw-key roundtrip assertion exposed actual float16 storage mismatch; recorded as a finding and separated raw identity from quantized stored identity.",
+    "final_attempt": "Same frozen observations; no resampling, engine/inference, or production changes. CPU numeric threads2,nice19,affinity0/1,GPUhidden,timeout570+30seconds; successful readout1.118seconds."
+  },
+  "limits": [
+    "Training-only deterministic first64 rows of two closed shards; limited games and phase coverage, no prevalence/heldout/strength claim.",
+    "Current writer exercised on64-row diagnostic shards, not production8192-row sequence/parallel scheduling.",
+    "Current latest-phase search_wdl was preserved; phase0 value differences are diagnostic only, not a selected transfer value target.",
+    "No full corpus qualification, inference, GPU, generator or labeler mutation."
+  ],
+  "evidence": {
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/preregistration.json": {
+      "bytes": 4547,
+      "sha256": "d870714ef335e97a66fd24172754d48cad3ffd2cf3cb08d12dbfdec005804291"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/selected_raw_rows.jsonl": {
+      "bytes": 2000403,
+      "sha256": "0835f6424d028b767e437f07a2a06df99896fcb5e7174d68652242664349090a"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/estimator_v3/readout.json": {
+      "bytes": 2759,
+      "sha256": "c605c6e142af163a13c93477ce8c9f9e1ab8e5efbe4cc990222160f4a30005ca"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/estimator_v3/row_readout.jsonl": {
+      "bytes": 98395,
+      "sha256": "aa8c7c0b9eb789a5a25b3008bd23ca71c40210b36eebddd631533452ae8aa5da"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/estimator_v3/row_join.jsonl": {
+      "bytes": 75927,
+      "sha256": "3b00b28e31d62fb255d0c8cedef58c841e3405cbc825303df73543836c80cbd7"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/estimator_v3/close_set_order_clarification.json": {
+      "bytes": 26752,
+      "sha256": "495dcac6cfa3936213455783cb8e8c92446640453598f7e0d8bbc230c8ec97c3"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/estimator_v3/selected_arrays.npz": {
+      "bytes": 134872,
+      "sha256": "c4efeee543b2a2b533eea5ab9abe865c1635e87b969a9a70d0f0ca9b2cfe5bf6"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/initial_estimator_failure.json": {
+      "bytes": 568,
+      "sha256": "a12c910d75aa57d8195a078dc9c70f7958bfed7c8b6107549bbe3fbb78b30e80"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/writer_quantization_finding.json": {
+      "bytes": 636,
+      "sha256": "a66a4bed85babc93989d85ea2b2b7e3ae233bfcc7560ff61bc58f0db7cddb593"
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/run_diagnostic_v3.py": {
+      "bytes": 12999,
+      "sha256": "b3928e0a20fa7856bb6c31fa2b1596d22185f2b0daf13c614c749c075deefb2b"
+    }
+  }
+}

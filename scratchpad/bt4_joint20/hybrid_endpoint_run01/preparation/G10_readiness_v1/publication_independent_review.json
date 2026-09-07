@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "status": "PASS_BOUNDED_G10_READINESS_PUBLICATION_REVIEW",
+  "reviewer": "review_pr517_bootstrap",
+  "reviewed_unix": 1788821077.4602373,
+  "base": "8f5de1556e228f51affdeafe3d902c748c1240f7",
+  "scope": "Exactly19 publication paths: dated record/index/catalog plus16 original evidence copies. Changing implementation, tests and ignored environment are explicitly outside review.",
+  "files": {
+    "docs/experiments/2026-09-07-g10-transfer-readiness.md": "2ddca9689e4c0cf6a8ae69a31eabfc77e28e1bf4c4dd4fd06cdb9380150b0098",
+    "docs/experiments/README.md": "dc49f292ee178f3c740d226775bfb174452e9a38830fc63c5ff8ffd55a68fc71",
+    "docs/experiments/evidence/bt4-bootstrap/g10-readiness-manifest.json": "a6a363ef06b8fa1860fb6f13e2f01a4f06e5f7336d7cb833d81d485942589523",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/active_processes.json": "e032cbe65594dc244ce821106fdc01c2d0f774a794452a80bf354ccc0bc5624b",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/implementation_evidence.json": "d73edc10bfa7c15cca2a2a60f874bd8ec30fdb8e0532ec32067bba323382b602",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/metadata_inventory.json": "a5593be6c4d137c5c8dab431f1300ca7b0ec070b11992c42dee72c0dd598667c",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/readiness.json": "fcfa9f0a201fbc5c78a351775446ab4d4518e2e078229e47541418c5f1a80ccf",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/receipt_backed_membership.jsonl": "c5aad096774818266bd1024a4ce28e03c4820e6c2f9f5be20f4531fcf7171965",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/diagnostic_and_recommendation.json": "1ec1082abdbafcbd0159983cf5d7eff73028384ac7fdb095a416431329f20a7b",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/estimator_v3/close_set_order_clarification.json": "495dcac6cfa3936213455783cb8e8c92446640453598f7e0d8bbc230c8ec97c3",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/estimator_v3/readout.json": "c605c6e142af163a13c93477ce8c9f9e1ab8e5efbe4cc990222160f4a30005ca",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/estimator_v3/row_join.jsonl": "3b00b28e31d62fb255d0c8cedef58c841e3405cbc825303df73543836c80cbd7",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/estimator_v3/row_readout.jsonl": "aa8c7c0b9eb789a5a25b3008bd23ca71c40210b36eebddd631533452ae8aa5da",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/estimator_v3/selected_arrays.npz": "c4efeee543b2a2b533eea5ab9abe865c1635e87b969a9a70d0f0ca9b2cfe5bf6",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/initial_estimator_failure.json": "a12c910d75aa57d8195a078dc9c70f7958bfed7c8b6107549bbe3fbb78b30e80",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/preregistration.json": "d870714ef335e97a66fd24172754d48cad3ffd2cf3cb08d12dbfdec005804291",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/run_diagnostic_v3.py": "b3928e0a20fa7856bb6c31fa2b1596d22185f2b0daf13c614c749c075deefb2b",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/selected_raw_rows.jsonl": "0835f6424d028b767e437f07a2a06df99896fcb5e7174d68652242664349090a",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/sample_diagnostic_v1/writer_quantization_finding.json": "a66a4bed85babc93989d85ea2b2b7e3ae233bfcc7560ff61bc58f0db7cddb593"
+  },
+  "scope_path_hash_map_sha256": "1a6cad57f6c03d037fc338dcbb5af3dbbcdaf48fd2a60eb6259fa07411601f23",
+  "findings": [],
+  "independent_checks": {
+    "copied_evidence": "16files3890962bytes: exact hashes/sizes and original byte equality PASS",
+    "membership": "3003 unique(source_id,source_shard) entries sum20186464 run06 +4738228 run07 =24924692 positions; source totals/backlogs agree with frozen readiness receipt. Physical occurrences, not global dedup or qualified corpus.",
+    "raw_diagnostic": "128 saved rows, first physical0..63 from each source,3 source-qualified games. Independently replayed board legal-move enumeration against each raw phase0d9 complete block:128 complete bijections. Independently reconstructed latest-phase d9 overlays and found126 rows with changed cp. No current corpus read.",
+    "row_evidence": "Aggregated saved row readout:40 stored-max-set changes,53 close-set changes,36 phase0rank1 outside latest storedmax,114 WDL changes max0.13974612951278687. Corrected close-set clarification also binds53 and documents actual phase0 rank versus counterfactual cp/UCI latest ordering.",
+    "join_evidence": "128 distinct raw/stored input-key pairs and128 quantization-aware writer matches in saved joins;35 bare(game_id,ply) keys span multiple sources. Selected arrays loaded with allow_pickle=False, dimensions128\u00d7175\u00d78\u00d78 float32 inputs and128\u00d71858 legal/BT4 rows. No writer rerun.",
+    "scientific_claims": "Diagnostic is first64rows/two shards/three games, not random/heldout/prevalence/strength. Phase0 value is counterfactual; actual current value retained. Complete training corpus count explicitly0. Policy/value selection separate; compact source-qualified provenance proposed, not declared implemented.",
+    "links": "Edited record and index local links resolve; index diff whitespace PASS",
+    "exposure": "Selected text and archival process/command scope inspected; no private-key/token/credential-pattern hits. Host paths/PIDs and scientific raw rows are intentional archival provenance; doc explicitly excludes portable launch interpretation."
+  },
+  "limits": [
+    "No implementation review or edits; code in this worktree is still being authored.",
+    "No tests, GPU, engine evaluation, full corpus scans, large payload hashes, restarts or live outcomes read.",
+    "Individual3003 source/sidecar checks are historical receipt evidence, not re-executed here; counts were independently aggregated from the frozen membership.",
+    "Saved WDL/policy/quantization diagnostics were aggregated and tied to raw bank/arrays; numerical writer/encoder kernels were not rerun.",
+    "No final G10 derivation, sidecar bridge, recipe/schedule or production readiness is qualified by this publication review."
+  ]
+}

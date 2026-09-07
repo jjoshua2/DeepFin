@@ -1,0 +1,7 @@
+{
+  "status": "PREQUANTIZATION_INPUT_KEY_DOES_NOT_IDENTIFY_STORED_FLOAT16_X",
+  "estimator_v2_sha256": "63f12ae596929906acb82638ff3ceec1f0bcdeca4cd94bab30c154cec7f2c1cb",
+  "observed": "Actual first-source current-writer roundtrip changed input_tensor_key while original TargetDeriver x matched raw BT4 input_key exactly. Writer metadata confirms float16 x.",
+  "next_estimator": "Record raw-key change frequency; require stored x equals exact dtype-cast original x and its separate stored key. Preserve source/root key plus full prequantization history key; no production change or value-target selection.",
+  "same128rawrows": true
+}

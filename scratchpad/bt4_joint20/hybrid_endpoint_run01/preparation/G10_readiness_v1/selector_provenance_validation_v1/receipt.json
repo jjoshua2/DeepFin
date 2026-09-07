@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "status": "PASS_TARGETED_VALIDATION_WHOLE_GATE_PENDING_ADAPTER",
+  "utc": "2026-09-07T22:51:33.184359+00:00",
+  "worktree": "/tmp/deepfin-g10-transfer-tools",
+  "base": "8f5de1556e228f51affdeafe3d902c748c1240f7",
+  "files": {
+    "scripts/derive_corpus_targets.py": {
+      "sha256": "7886094a27484ba86571819b86f3a1735d2078a3293981917dd983df292590bf",
+      "bytes": 367444
+    },
+    "scripts/corpus_row_provenance.py": {
+      "sha256": "af81340e33e6832cd20b0369d230b9b4b3dea90f6ba42b2ef5d846ad336ba4f3",
+      "bytes": 6125
+    },
+    "tests/test_derive_observation_provenance.py": {
+      "sha256": "5d0c8217354fda23fa398ea05c810649a9b572333ae1fd8d8d66dd2cf6d7ca7e",
+      "bytes": 8313
+    },
+    "docs/corpus_derivation.md": {
+      "sha256": "39bf1ce3c8a79dbe1eaefb6b9b2d1dcf82a26024e38a19679293ed1deb6662ad",
+      "bytes": 5198
+    },
+    "docs/toolchains.md": {
+      "sha256": "447613e55db03630c0e058ce5f682c375f5ae8817f43916a78d00c9415c5a0a0",
+      "bytes": 7494
+    }
+  },
+  "tests": {
+    "affected_suite_passed": 317,
+    "affected_suite": "tests/test_derive_corpus_targets.py tests/test_derive_parallel.py tests/test_derive_observation_provenance.py",
+    "final_focused_passed": 6,
+    "final_focused": "tests/test_derive_observation_provenance.py",
+    "interpreter": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "env": {
+      "CUDA_VISIBLE_DEVICES": "",
+      "OMP_NUM_THREADS": "2",
+      "MKL_NUM_THREADS": "2",
+      "OPENBLAS_NUM_THREADS": "2",
+      "BLOSC_NTHREADS": "2",
+      "NUMEXPR_NUM_THREADS": "2"
+    },
+    "priority": "nice19 ionice3 CPU0,1"
+  },
+  "focused_static": "ruff/basedpyright/vulture PASS;0 errors0 warnings0 notes",
+  "whole_static_initial": "26 findings:22 missing optional NNUE native import links and4 Zarr test annotation errors; link qualified by exact source diff, test annotations fixed; final combined gate pending adapter",
+  "native_runtime": "Three encoding/MCTS binaries linked from frozen H20 checkout after package source equivalence; NNUE linked from qualified sf-close-followup after exact NNUE/setup source equivalence. No native build or running checkout changes.",
+  "format": {
+    "schema": 1,
+    "fixed_record_bytes": 56,
+    "estimated_100m_payload_bytes": 5600000000,
+    "extra": "shared source/shard JSON table plus NPZ headers; no pickle or compression; replay arrays unchanged"
+  },
+  "scope_limits": [
+    "No full corpus derivation, labeler, training, inference or GPU work",
+    "Actual raw BT4 adapter is separate concurrent implementation; mixer identity checks untouched",
+    "Default legacy arrays and metadata remain unchanged; newly requested selectors/provenance require new outputs",
+    "No commit, push or publication by author yet"
+  ],
+  "logs": {
+    "g10-derive-suite.log": {
+      "sha256": "4418658c35a335f43cdd6c63850359a85430b28ba6e3c4afdd2c2d9817967f97"
+    },
+    "g10-provenance-grouped-tests.log": {
+      "sha256": "95a54fec84b35ae511a6e57201758badaabc904adf5c7a80ce8785bd9f1a3e3e"
+    },
+    "g10-focused-lint-final.log": {
+      "sha256": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc"
+    },
+    "g10-whole-lint.log": {
+      "sha256": "7d969ec45c5e4d977adc53e45f9234d1f11d9a3050e6d3f3788ac7d4e7e23aee"
+    }
+  }
+}

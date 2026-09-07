@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "status": "PASS_FIVE_FILE_CODE_AND_TARGETED_BEHAVIOR_REVIEW_COMBINED_GATE_PENDING",
+  "reviewer": "review_pr517_bootstrap",
+  "reviewed_unix": 1788821682.4614139,
+  "base": "8f5de1556e228f51affdeafe3d902c748c1240f7",
+  "files": {
+    "scripts/derive_corpus_targets.py": "7886094a27484ba86571819b86f3a1735d2078a3293981917dd983df292590bf",
+    "scripts/corpus_row_provenance.py": "af81340e33e6832cd20b0369d230b9b4b3dea90f6ba42b2ef5d846ad336ba4f3",
+    "tests/test_derive_observation_provenance.py": "5d0c8217354fda23fa398ea05c810649a9b572333ae1fd8d8d66dd2cf6d7ca7e",
+    "docs/corpus_derivation.md": "32fea192653965c414bc4a7c38663aaed565f9728d27ca8c6d9adc26362da2cb",
+    "docs/toolchains.md": "447613e55db03630c0e058ce5f682c375f5ae8817f43916a78d00c9415c5a0a0"
+  },
+  "scope": "Only selector/provenance5files; dated research/evidence reviewed separately; concurrent raw-BT4 adapter excluded.",
+  "findings": [],
+  "resolved_review_requests": [
+    {
+      "request": "Verify grouped survivor references across shard/worker handoff, not just independent rows",
+      "resolution": "Added actual qzphase3game4ply fixture split3/4/5 across2workers, envelope/result drops, spill2/output3. Every array/attribute and provenance NPZ equal sequential versus parallel; physical references recover exact10survivors. Independently executed."
+    },
+    {
+      "request": "Clarify existing game namespace consumer instead of implying generic missing multi-source support",
+      "resolution": "Guide now explicitly permits separate resolved directories in one loader; only flattening multiple sources into one physical parent needs extra ID mapping. Documentation-only correction after author receipt, no source/test changes."
+    }
+  ],
+  "review_assessment": [
+    "Existing latest-phase defaults preserve arrays, scheme metadata and node-budget behavior. New uniform policy/value selectors take effect independently through actual RowBank reads and value-view construction; missing complete/support observations use existing guards.",
+    "Opt-in original history key is checked against reconstructed float32 encoding, distinct stored key binds expected float16 quantization; source namespace includes resolved parent and config, plus shard/physical index/game/ply/worker.",
+    "References travel with the same derived rows, one-to-one value transform, spill cuts and final replay permutation. NewNPZ stored inside writing shard before atomic publication; attributes and summary record SHA. No replay array schema change.",
+    "56-byte fixed records and shared source table keep persistent provenance compact; processing memory remains bounded by configured existing buffers/shards. Not a complete raw-BT4 join qualification."
+  ],
+  "game_namespace_trace": {
+    "staging": "scripts/lc0_control_train.py:655-663 makes symlinks to each original resolved shard",
+    "planner": "chess_anti_engine/replay/game_epoch.py:491-553 resolves symlinks, rejects duplicate targets, and keys games by(resolved_shard_parent,raw_game_id)",
+    "batch": "game_epoch.py:1345-1357 maps raw IDs to same namespaced keys in sampled arrays",
+    "existing_regression": "tests/test_game_aware_epoch_replay.py:765 verifies two source directories with colliding raw0/1 IDs become4 distinct games; inspected, not rerun",
+    "remaining_requirement": "Retain separate resolved source parents for each G10 source. If flattening/repacking sources into one physical parent, implement source-qualified ID mapping because planner does not consume row_provenance.npz. Row-level BT4 joining still requires source qualification even where game scheduling is already namespaced."
+  },
+  "independent_validation": {
+    "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 nice -n 19 taskset -c 0,1 .venv/bin/python -m pytest -o addopts='' -q tests/test_derive_observation_provenance.py -k 'phase0_policy_changes or row_references_distinguish or grouped_refs'",
+    "result": "3passed,3deselected in4.58s exit0; realized2torchthreads",
+    "log": "/tmp/g10-selector-independent-tests.log",
+    "log_sha256": "6f67072e4d2d12979df1047e44748fef9526474e7a330d83b48f31a197443a47",
+    "coverage": "Policy/value interventions and default equivalence; namespace/quantized key roundtrip plus mismatched input refusal; real grouped sequential/parallel survivor and shuffle equivalence"
+  },
+  "author_validation": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/selector_provenance_validation_v1/receipt.json",
+    "sha256": "8673013a13fecd0e61e6a4a9cb053a74e094a3cd226554148a76082fedbf0446",
+    "verified_log_hashes": true,
+    "results": "317 affected suite passes before final grouped addition; final6 focused passes; scoped Ruff/Basedpyright0/0/0/Vulture PASS. Combined whole static gate explicitly pending separate adapter."
+  },
+  "limits": [
+    "No GPU/corpus scan/current experiment outcome read or code edits by reviewer. Only tiny temporary CPU fixtures ran.",
+    "Historical provenance evidence is not proof of completed full G10 data or teacher sidecars.",
+    "No adapter implementation, mixed-corpus pilot, ranking qualification or training launch approved by this scope.",
+    "Final combined static validation and adapter review remain before publishing combined code; existing passed subset need not be repeated absent code changes."
+  ]
+}

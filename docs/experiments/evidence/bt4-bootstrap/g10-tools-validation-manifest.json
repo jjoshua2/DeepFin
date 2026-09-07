@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "scope": "Original final validation and independent review receipts for G10 preparation tools. Earlier receipts retain their recorded scope/pins; combined validation and later supplements bind the final files. No operational pilot has run.",
+  "entries": [
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/combined_validation.json",
+      "bytes": 2643,
+      "sha256": "888b8196c7a1e35703830092ff999b72a9ec4c39fd05d53d4286044ae436217b"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/combined_lint.log",
+      "bytes": 512,
+      "sha256": "9546d311337ec592c9603707901d3d115024504617e11ee6c9b663f91c956e36"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/selector_provenance_validation_v1/receipt.json",
+      "bytes": 3275,
+      "sha256": "8673013a13fecd0e61e6a4a9cb053a74e094a3cd226554148a76082fedbf0446"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/selector_provenance_independent_review.json",
+      "bytes": 5435,
+      "sha256": "ee077bf4b06b921067924af3e7f5b4ba0b4ec6ed7aa4bcf76f5786e3dd81c2ad"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/adapter_author_validation.json",
+      "bytes": 2999,
+      "sha256": "1b67e783d7ebaf529002d0e05d149b06f76760f24e8512e4167f010ab3dfecf2"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/adapter_author_validation_final_delta.json",
+      "bytes": 1569,
+      "sha256": "c495e6299fbfddb7deed2b4bd4e6b7cc3f9f2495e43ca7976738b0f58edd6954"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/adapter_independent_review.json",
+      "bytes": 5287,
+      "sha256": "c72c04f6da47e77258cab444def856187956476233927097f22e2fb095126025"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/adapter_author_tests.log",
+      "bytes": 205,
+      "sha256": "a1197fbce8c7d63a274dd9e79ee39fbecfe654fc92ae7baa11fd7617f4aa6966"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/adapter_vector_delta_test.log",
+      "bytes": 205,
+      "sha256": "7d614066fdc40883835d37114e9ee58e289a5f2510cba6fa5c36c5c2adc0dcfd"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/rank_consumer_validation_v1/receipt.json",
+      "bytes": 2217,
+      "sha256": "06569d494ce8c81da717657281e25c82df307706054e92e7fce2026d873b3dc2"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/rank_consumer_independent_review.json",
+      "bytes": 5243,
+      "sha256": "eae40812da549a88fe6926386124cb7c97a2188c6fa560705a86f85bd154cac1"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/publication_independent_review.json",
+      "bytes": 6636,
+      "sha256": "d4b7127d2c4de7da90717a0ad171bd5030ecb6a3ef2a3868a03a6771765c74eb"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/pilot_publication_independent_supplement.json",
+      "bytes": 2700,
+      "sha256": "1848792c0b507c5c155e1b02ba0c18f02f03403d90a0acae09141b43013a4d63"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/selector_provenance_validation_v1/g10-derive-suite.log",
+      "bytes": 507,
+      "sha256": "4418658c35a335f43cdd6c63850359a85430b28ba6e3c4afdd2c2d9817967f97"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/selector_provenance_validation_v1/g10-focused-lint-final.log",
+      "bytes": 173,
+      "sha256": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/selector_provenance_validation_v1/g10-provenance-grouped-tests.log",
+      "bytes": 187,
+      "sha256": "95a54fec84b35ae511a6e57201758badaabc904adf5c7a80ce8785bd9f1a3e3e"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/rank_consumer_validation_v1/g10-rank-focused-lint.log",
+      "bytes": 778,
+      "sha256": "14e38312cd13fdbc1781a1866f5e9752c8c1cd91d14d726fbaf6c7b857e5b5bb"
+    },
+    {
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/rank_consumer_validation_v1/g10-rank-focused-tests-final.log",
+      "bytes": 187,
+      "sha256": "192590313658fde90c82ca350ad7fb706912c092e702284b9a368a4730ddf400"
+    }
+  ]
+}
