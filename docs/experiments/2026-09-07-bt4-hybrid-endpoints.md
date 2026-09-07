@@ -1,12 +1,14 @@
-# BT4 hybrid and global endpoints: next development screen
+# Adaptive bootstrap exploration: H20 first
 
 Registered September 7, 2026, after the [fresh C/E confirmation](2026-09-07-bt4-fresh-confirmation.md)
 completed and before training or playing outcomes for the new arms. **Status:
 CPU qualification and implementation in progress; no new training or arena launched.**
-The previous screen is complete. This registration starts the next bounded research
-stage; it does not commit a 168-hour queue or change production.
+The previous screen is complete. This registration selects H20 as the next bounded
+comparison. Subsequent tests are chosen from completed results, not a mandatory
+three-arm or 168-hour queue. Routine choices within the research goal do not need
+individual user approval. Production adoption remains separate.
 
-## Question and selected arms
+## Question and candidate options
 
 C20T05 remains the incumbent. Its fresh seed-one advantage over E0T05 is
 +37.67 Elo [18.72, 56.85]. C's earlier win over G20T05 compared complete recipes:
@@ -17,11 +19,11 @@ Let S be the legal-normalized stored SF target, B be the legal-normalized raw
 BT4 policy sharpened at teacher temperature 0.5, and C be the legal-normalized
 stored C20T05 target. Preserve all other training targets and fields.
 
-| New arm | Target | Question |
+| Arm | Target | Question and status |
 | --- | --- | --- |
-| H20 | 0.8 C + 0.2 B | Does broader BT4 help while retaining C's conditional distribution among selected moves? |
-| B100 | B | Does the missing BT4-only policy endpoint outperform the current mixture? |
-| G50 | 0.5 S + 0.5 B | Was the tested global dose too small? This corpus is already prepared. |
+| H20 | 0.8 C + 0.2 B | Does broader BT4 help while retaining C's conditional distribution among selected moves? **Selected next.** |
+| B100 | B | Does the missing BT4-only policy endpoint outperform the current mixture? Candidate follow-up. |
+| G50 | 0.5 S + 0.5 B | Was the tested global dose too small? Prepared candidate follow-up. |
 
 C's set A is the union of all stored SF maxima and d9 top-three moves within
 20 effective cp. It can exceed three moves because stored maxima may reflect
@@ -57,7 +59,7 @@ The existing mixer rejects C as a nested source and its ordinary global audit
 reconstructs S, so explicit composition and provenance support must precede H20
 materialization. No target corpus has been generated merely by publishing this plan.
 
-Train each new arm once from scratch at **seed zero**, using the qualified frozen
+Train each selected new arm once from scratch at **seed zero**, using the qualified frozen
 wise-cloud runtime `7ec261509fb7345cf1ca0ad73809193fc2749bb1`: Python 3.10.12,
 Torch 2.11.0+cu128, CUDA 12.8 and NumPy 1.26.2. Retain the pinned trainer/config,
 optimizer and initialization procedure, batch 512, one complete game epoch,
@@ -82,12 +84,18 @@ training. Preserve the historical `valid_control:false` limitations: no held-out
 purity receipt, committed configuration premise, and a game-epoch sampler different
 from the old replacement-sampled control. These remain development comparisons.
 
-## Fixed playing comparisons and order
+## First comparison and reusable follow-up protocols
 
-Train H20 and complete its registered comparisons first, then B100 and its
-comparisons, then G50 and its comparison. Target preparation for later arms can
-proceed during earlier GPU work when memory and I/O permit. Existing raw BT4
-labeling retains the GPU during preparation and between owned experiment stages.
+Train H20 and complete its three registered comparisons first. Then independently
+review the result and choose the next experiment that can most change our decision.
+B100 and G50 are substantive candidates, but neither is automatically queued.
+Preparing reusable support for them does not commit their training compute. Existing
+raw BT4 labeling retains the GPU during preparation and between experiment stages.
+
+The first three rows below are H20's selected package. The remaining rows define
+available follow-up protocols; their status stays unselected until a dated decision
+records the rationale. If another comparison is more informative, register that
+comparison before launch without asking for routine user approval.
 
 | Candidate / reference | Simulations per side | Games / opening pairs | Role |
 | --- | --- | --- | --- |
@@ -98,10 +106,13 @@ labeling retains the GPU during preparation and between owned experiment stages.
 | B100 / C20T05 | 400 | 500 / 250 | Predeclared higher-search probe |
 | G50 / C20T05 | 100 | 1,000 / 500 | Larger global-dose screen |
 
-Run H20 and B100's higher-search probes after valid completed training even if
-those candidates lose at 100 simulations. G50's first-pass conclusion is limited
-to 100 simulations; this screen does not dismiss that family at higher budgets.
-All three arms are selected in advance; a shallow H20 loss does not cancel B100.
+Run H20's higher-search probe after valid completed training even if it loses at
+100 simulations. If the B100 protocol is selected later, its higher-search probe
+also survives a shallow loss. G50's listed protocol is limited to 100 simulations;
+it cannot dismiss that family at higher budgets. Once a comparison is launched,
+finish its declared horizon unless validity, resource or operational limits require
+stopping. Adapt the next experiment using completed evidence rather than changing
+the current match after seeing partial results.
 
 Use the same qualified training search dictionaries with explicit prior temperature
 1.0 on both sides. Keep move temperature 0.1, maximum 300 plies, compilation,
@@ -140,13 +151,20 @@ Independent completed-bank/provenance review precedes the next research choice.
 
 ## Resource envelope and continuation
 
-Expected compute is **12–14 GPU hours**. Hard stage caps, including termination
-allowance, are 4.5 hours per training epoch, 1.5 hours per 100-simulation match,
-and 1.5 hours per 500-game higher-search probe. These sum to **22.5 GPU hours**:
-9 hours for H20, 7.5 for B100 and 6 for G50. The enclosing cap is **30 GPU hours**;
-unused allowance does not create additional arms, retries or longer horizons.
-Necessary GPU qualification, if any, is separately logged within that enclosing
-cap and limited to 0.5 hour. Do not launch a stage without its remaining allowance.
+H20 is expected to use approximately **4.5–5.5 GPU hours**. Its hard stage caps,
+including termination allowance, are 4.5 hours for training, 1.5 hours for each
+100-simulation match, and 1.5 hours for the 500-game higher-search probe: **9 hours**
+total. The available B100 and G50 protocols cap at 7.5 and 6 hours respectively.
+If all three were eventually selected, their expected total would be 12–14 hours
+and stage caps would sum to 22.5 hours; this is a cost scenario, not a queue.
+
+The initial planning envelope is **30 GPU hours**. Log actual expenditure and
+remaining allocation; unused allowance does not justify extra arms or repetitions.
+Necessary GPU qualification, if any, is logged within that envelope and limited to
+0.5 hour. Before exhausting the envelope, publish what was learned, compare the
+remaining opportunities and record the next bounded allocation under the standing
+research authorization. This is not a per-test approval gate. Do not start a stage
+without its declared remaining allowance.
 CPU-only schedule verification is capped at 30 minutes per stage and releases the
 GPU lease; lease waits do not count as GPU compute.
 
@@ -160,8 +178,15 @@ no rematerialization. Account for training outputs and concurrent generation too
 
 Publish preparation findings, implementation PRs, launches and completed readouts
 in this record and its linked compact evidence. A plan or successful target check
-must not be reported as launched training. This stage replaces an open-ended grid
-with three substantive candidates. Longer-training qualification, consistent G10
-observation selection, fair search calibration and fresh finalist replication
-remain the next decisions; no TailRL training, production adoption or 168-hour
-allocation is implicitly started by this registration.
+must not be reported as launched training. Explore substantive alternatives before fine-tuning one family. After each completed
+package, record which uncertainty matters next and why the chosen test is worth its
+cost. Potential directions include the global endpoint/dose, wider C support,
+raw-score SF targets, training horizon, search calibration, graded objectives and
+consistent G10 transfer. Evidence determines their order; prepared corpora or tools
+are not assignments. Preserve unused seeds/openings for finalist confirmation.
+
+Continue while there are plausible improvements with a favorable information or
+strength gain relative to their cost. Finishing H20, publishing a PR, or exhausting
+one planning block does not complete the broader goal. Report diminishing returns
+only with an explicit assessment of the remaining alternatives and relevant-scale
+evidence, not merely a narrow local winner. No production adoption is implied.
