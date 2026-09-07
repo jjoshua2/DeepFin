@@ -209,3 +209,69 @@ def test_experiment_root_override_reaches_checkpoint_and_live_config(tmp_path):
     assert actual['root'] == str(source)
     assert Path(actual['candidate']).is_relative_to(source)
     assert actual['live_config'] == str(source / '.dev/worktree/wise-cloud/configs/pbt2_small.yaml')
+
+
+def registered_cell(tmp_path, role='H20', reference='C20T05', sims=400, games=500) -> dict[str, Any]:
+    m = manifest(tmp_path)
+    controls = {value[0]: value for value in launcher.CHECKPOINTS.values()}
+    ref = controls[reference]
+    m.update(schema=2, candidate={'role': role, 'path': str(tmp_path / 'candidate/checkpoint.pt'), 'sha256': 'candidate'},
+             reference=dict(zip(('role', 'path', 'sha256'), (str(x) for x in ref))),
+             candidate_training={'path': str(tmp_path / 'training.complete.json'), 'sha256': 'training'},
+             reader={'path': str(launcher.EXTENDED_READER), 'sha256': 'reader'}, games=games, sims=sims, hard_seconds=5400)
+    if games == 500:
+        m['opening_anchor'] = {key: {'path': str(tmp_path / f'anchor.{key}.json'), 'sha256': key} for key in ('bank', 'completion')}
+    return m
+
+
+@pytest.mark.parametrize(('role', 'reference', 'sims', 'games', 'valid'), [
+    ('H20', 'C20T05', 400, 500, True), ('H20', 'G20T05', 100, 1000, True),
+    ('B100', 'C20T05', 400, 500, True), ('G50', 'C20T05', 100, 1000, True),
+    ('G50', 'G20T05', 100, 1000, False), ('H20', 'C20T05', 400, 1000, False),
+    ('B100', 'G20T05', 100, 1000, False),
+])
+def test_registered_cells_allow_only_fixed_references_and_game_budgets(tmp_path, role, reference, sims, games, valid):
+    m = registered_cell(tmp_path, role, reference, sims, games)
+    if not valid:
+        with pytest.raises(ValueError, match='unregistered'):
+            launcher.validate(m)
+        return
+    launcher.validate(m)
+    cmd = launcher.command(m)
+    assert cmd[cmd.index('--games') + 1] == str(games)
+    assert cmd[cmd.index('--sims') + 1] == str(sims)
+    m['hard_seconds'] = 108000
+    with pytest.raises(ValueError, match='arena cap'):
+        launcher.validate(m)
+
+
+@pytest.mark.parametrize('mutation', ['none', 'prefix', 'candidate', 'orphan', 'anchor_incomplete'])
+def test_probe_requires_same_candidate_c100_opening_prefix(tmp_path, monkeypatch, mutation):
+    m = registered_cell(tmp_path)
+    shape = {'shape': 'training', 'gumbel': {'policy_temp': 1.0}}
+    monkeypatch.setattr(launcher, 'qualified_search', lambda: shape)
+    baseline: dict[str, Any] = {'settings': {'candidate': m['candidate']['path'], 'openings': m['book']['path'],
+                            'search_candidate': shape, 'search_reference': shape},
+                'execution': ['on', '4096'], 'raw_game_rows': 1000, 'superseded_orphan_rows': 0,
+                'result': {'games': 1000, 'pairs': 500}, 'openings': [f'fen{i}' for i in range(500)]}
+    probe: dict[str, Any] = {**baseline, 'settings': dict(baseline['settings']), 'raw_game_rows': 500,
+             'result': {'games': 500, 'pairs': 250}, 'openings': baseline['openings'][:250]}
+    if mutation == 'prefix':
+        probe['openings'] = baseline['openings'][1:251]
+    elif mutation == 'candidate':
+        baseline['settings']['candidate'] = 'wrong-candidate'
+    elif mutation == 'orphan':
+        probe['superseded_orphan_rows'] = 1
+    anchor = m['opening_anchor']
+    Path(anchor['bank']['path']).write_text('fixture bank')
+    anchor['bank']['sha256'] = launcher.sha(anchor['bank']['path'])
+    Path(anchor['completion']['path']).write_text(json.dumps({'complete': mutation != 'anchor_incomplete', 'games_sha256': anchor['bank']['sha256']}))
+    anchor['completion']['sha256'] = launcher.sha(anchor['completion']['path'])
+    reader = tmp_path / 'reader.py'
+    reader.write_text('import json\nBASE = json.loads(' + repr(json.dumps(baseline)) + ')\nPROBE = json.loads(' + repr(json.dumps(probe)) + ')\ndef read_arm(path, **kwargs):\n    return PROBE if kwargs["sims"] == 400 else BASE\n')
+    monkeypatch.setattr(launcher, 'reader_identity', lambda _: (reader, launcher.sha(reader)))
+    if mutation == 'none':
+        assert launcher.read_bank(m)['match_complete'] is True
+    else:
+        with pytest.raises(ValueError, match=r'first250|candidate path|orphan|anchor incomplete'):
+            launcher.read_bank(m)

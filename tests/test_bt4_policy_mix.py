@@ -1250,3 +1250,164 @@ def test_descriptive_cli_audit_still_refuses_lost_policy_mass(
     assert report["treatment_invariants"]["selected_mass_drift_within_bounds"] is False
     assert report["gate"]["treatment_invariants_passed"] is False
     assert report["gate"]["training_permitted"] is False
+
+
+def _h20_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[list[str], Path, Path, Path]:
+    """Build a real tiny published C parent, then audit H20 through its CLI."""
+    source, shard, _ = _write_source(tmp_path)
+    original = zarr.open_group(str(shard), mode="a")
+    original[tool.POLICY_FIELD][:, :3] = np.asarray([[0.375, 0.375, 0.25], [0.625, 0.375, 0]], dtype=np.float16)
+    side = _write_sidecar(tmp_path, source, shard)
+    side_group = zarr.open_group(str(side / shard.name), mode="a")
+    side_group[tool.SIDECAR_POLICY_FIELD][:, :3] = np.asarray([[0.25, 0.75, 0], [1/3, 1/3, 1/3]], dtype=np.float32)
+    ranks = _write_rank_sidecar(tmp_path, source, shard)
+    c_audit = _write_audit_receipt(tmp_path, scope="sf-cp-window", bt4_temperature=0.5,
+                                   sf_rank_cap=3, sf_cp_window=20.0)
+    parent = tmp_path / "C20T05"
+    base_args = ["--shards", str(source), "--sidecar", str(side),
+                 "--sf-rank-sidecar", str(ranks), "--expected-rows", "2",
+                 "--expected-shards", "1", "--expected-source-summary-sha256",
+                 tool.file_sha256(source / tool.DERIVE_SUMMARY)]
+    assert tool.main(["mix", *base_args, "--scope", "sf-cp-window", "--alpha", "1",
+                      "--bt4-temperature", "0.5", "--sf-cp-window", "20",
+                      "--audit-receipt", str(c_audit), "--out", str(parent)]) == 0
+    audit_inputs = _write_global_audit_inputs(tmp_path, monkeypatch)
+    record = tmp_path / "H20.md"
+    record.write_text("Literal stored C20T05 plus20% sharpened BT4; SF ruler descriptive.\n")
+    treatment = ["--scope", "c20-global", "--alpha", "0.2", "--bt4-temperature", "0.5",
+                 "--sf-rank-cap", "3", "--sf-cp-window", "20", "--sf-audit-mode",
+                 "descriptive", "--experiment-record", str(record)]
+    audit = tmp_path / "H20.audit.json"
+    assert tool.main(["audit", *audit_inputs, *treatment, "--json", str(audit)]) == 0
+    out = tmp_path / "H20"
+    args = ["mix", *base_args, *treatment, "--c20-parent", str(parent),
+            "--expected-c20-summary-sha256", tool.file_sha256(parent / tool.DERIVE_SUMMARY),
+            "--expected-c20-mix-sha256", tool.file_sha256(parent / tool.MIX_SUMMARY),
+            "--audit-receipt", str(audit), "--out", str(out)]
+    return args, source, parent, out
+
+
+def test_h20_cli_uses_actual_stored_parent_and_preserves_transitive_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args, source, parent, out = _h20_fixture(tmp_path, monkeypatch)
+    before = {str(p.relative_to(parent)): p.read_bytes() for p in parent.rglob("*") if p.is_file()}
+    assert tool.main(args) == 0
+    original = zarr.open_group(str(source / "shard_000000.zarr"), mode="r")
+    c = zarr.open_group(str(parent / "shard_000000.zarr"), mode="r")
+    result = zarr.open_group(str(out / "shard_000000.zarr"), mode="r")
+    b = zarr.open_group(str(tmp_path / "sidecar/shard_000000.zarr"), mode="r")
+    c_policy = np.asarray(c[tool.POLICY_FIELD][:], dtype=np.float64)
+    c_policy /= c_policy.sum(axis=1, keepdims=True)
+    bt4 = np.asarray(b[tool.SIDECAR_POLICY_FIELD][:], dtype=np.float64) ** 2
+    bt4 /= bt4.sum(axis=1, keepdims=True)
+    expected = (0.8 * c_policy + 0.2 * bt4).astype(np.float32).astype(np.float16)
+    assert np.array_equal(np.asarray(result[tool.POLICY_FIELD][:]), expected)
+    for field in original.array_keys():
+        if field != tool.POLICY_FIELD:
+            assert np.array_equal(np.asarray(result[field][:]), np.asarray(original[field][:])), field
+    assert before == {str(p.relative_to(parent)): p.read_bytes() for p in parent.rglob("*") if p.is_file()}
+    summary = json.loads((out / tool.MIX_SUMMARY).read_text())
+    derived = json.loads((out / tool.DERIVE_SUMMARY).read_text())
+    parent_summary = json.loads((parent / tool.MIX_SUMMARY).read_text())
+    assert summary["kind"] == "c20-global"
+    assert summary["algorithm"] == "stored-c20t05-then-global-bt4-v1"
+    assert summary["source_dir"] == str(source)
+    assert summary["c20_parent"]["policy_target_postprocess"] == parent_summary
+    assert summary["c20_parent"]["source_dir"] == str(parent)
+    assert derived["policy_target_postprocess"] == summary
+    assert summary["selected_mass_abs_drift"]["reference"] == "normalized_total_legal_mass"
+    assert result.attrs["policy_target_mix_c20_parent_policy_sha256"] == tool._sha_array(
+        np.asarray(c[tool.POLICY_FIELD][:])
+    )
+    audit = json.loads((tmp_path / "H20.audit.json").read_text())
+    assert audit["treatment"]["parent_recipe"]["normalize_stored_parent"] is True
+    assert audit["admission"]["mode"] == "descriptive"
+    assert audit["temperature_one_reference"] == "C20T05 parent fixed; final global BT4 T1"
+
+
+@pytest.mark.parametrize("mutation", ["parent_pin", "parent_recipe", "parent_derive", "sidecar_source", "rank_source"])
+def test_h20_rejects_wrong_lineage_before_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str,
+) -> None:
+    args, source, parent, out = _h20_fixture(tmp_path, monkeypatch)
+    if mutation == "parent_pin":
+        args[args.index("--expected-c20-mix-sha256") + 1] = "0" * 64
+    elif mutation in {"parent_recipe", "parent_derive"}:
+        derived = json.loads((parent / tool.DERIVE_SUMMARY).read_text())
+        mixed = json.loads((parent / tool.MIX_SUMMARY).read_text())
+        if mutation == "parent_recipe":
+            mixed["sf_cp_window"] = 10.0
+            derived["policy_target_postprocess"] = mixed
+        else:
+            derived["seed"] = 123  # Parent cannot quietly change an inherited field.
+        (parent / tool.MIX_SUMMARY).write_text(json.dumps(mixed))
+        (parent / tool.DERIVE_SUMMARY).write_text(json.dumps(derived))
+        args[args.index("--expected-c20-mix-sha256") + 1] = tool.file_sha256(parent / tool.MIX_SUMMARY)
+        args[args.index("--expected-c20-summary-sha256") + 1] = tool.file_sha256(parent / tool.DERIVE_SUMMARY)
+    else:
+        path = (tmp_path / "sidecar" / tool.SIDECAR_SUMMARY if mutation == "sidecar_source"
+                else tmp_path / "sf-ranks" / tool.sf_ranks.SUMMARY_NAME)
+        data = json.loads(path.read_text())
+        data["source_dir"] = str(parent)  # Identity remains rooted at original SF.
+        path.write_text(json.dumps(data))
+    with pytest.raises((ValueError, SystemExit), match=r"mismatch|provenance|this source"):
+        tool.main(args)
+    assert source.exists()
+    assert parent.exists()
+    assert not out.exists()
+    assert not out.with_name(out.name + ".writing").exists()
+
+
+@pytest.mark.parametrize("mutation", ["policy", "nonpolicy", "extra_array", "sidecar_policy_hash", "rank_payload"])
+def test_h20_verifies_payload_not_just_parent_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str,
+) -> None:
+    args, source, parent, out = _h20_fixture(tmp_path, monkeypatch)
+    group = zarr.open_group(str(parent / "shard_000000.zarr"), mode="a")
+    if mutation == "policy":
+        group[tool.POLICY_FIELD][0, 0] = 0.25
+    elif mutation == "nonpolicy":
+        group["search_wdl"][0, 0] = 0.25
+    elif mutation == "extra_array":
+        group.create_dataset("extra", data=np.zeros(2))
+    elif mutation == "sidecar_policy_hash":
+        side = zarr.open_group(str(tmp_path / "sidecar/shard_000000.zarr"), mode="a")
+        side.attrs["source_policy_sha256"] = "0" * 64
+    else:
+        ranks = zarr.open_group(str(tmp_path / "sf-ranks/shard_000000.zarr"), mode="a")
+        ranks[tool.sf_ranks.GAP_FIELD][0, 1] = 99.0
+    with pytest.raises(ValueError, match=r"C20 parent|provenance mismatch|payload digest"):
+        tool.main(args)
+    assert source.exists()
+    assert parent.exists()
+    assert not out.exists()
+    assert out.with_name(out.name + ".writing").exists()  # Failed evidence preserved.
+
+
+@pytest.mark.parametrize(("flag", "value"), [("--alpha", "0.5"), ("--bt4-temperature", "1"), ("--sf-rank-cap", "2"), ("--sf-cp-window", "10")])
+def test_h20_rejects_unregistered_knobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flag: str, value: str,
+) -> None:
+    args, _, _, out = _h20_fixture(tmp_path, monkeypatch)
+    args[args.index(flag) + 1] = value
+    with pytest.raises(ValueError, match="fixed H20"):
+        tool.main(args)
+    assert not out.exists()
+    assert not out.with_name(out.name + ".writing").exists()
+
+
+def test_h20_requires_descriptive_audit_and_explicit_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    args, _, _, out = _h20_fixture(tmp_path, monkeypatch)
+    missing = args.copy()
+    index = missing.index("--c20-parent")
+    del missing[index:index + 2]
+    with pytest.raises(ValueError, match="C20 parent and both exact"):
+        tool.main(missing)
+    gated = args.copy()
+    gated[gated.index("--sf-audit-mode") + 1] = "gate"
+    index = gated.index("--experiment-record")
+    del gated[index:index + 2]
+    with pytest.raises(ValueError, match="descriptive"):
+        tool.main(gated)
+    assert not out.exists()

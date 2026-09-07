@@ -27,8 +27,11 @@ def training_fixture(tmp_path):
                'validity_problems': ['historical purity limitation'],
                'checkpoints': [{'role': 'last', 'path': str(run / 'checkpoint.pt'),
                                 'sha256': arena.sha(run / 'checkpoint.pt')}],
+               'train_windows': 420,
                'train_window_metrics': [{'grad_nonfinite_skip_rate': 0., 'transient_cuda_retry_batches': 0.,
-                                         'loss': 2., 'grad_norm_mean': 1.} for _ in range(420)]}
+                    'loss': 2., 'grad_norm_mean': 1., 'window_index': i + 1, 'steps_requested': min(88, 36935 - i * 88),
+                    'train_steps_done': min(88, 36935 - i * 88), 'steps_cumulative': min((i + 1) * 88, 36935),
+                    'train_samples_seen': 45056 if i < 419 else 18910484 - 419 * 45056} for i in range(420)]}
     report: dict[str, Any] = {'verifier_sha256': epoch.INPUT_PINS[str(epoch.VERIFIER)], 'seed': 0,
               'batch_size': 512, 'runtime': {'numpy': '1.26.2'},
               'source_plan': {'plan_sha256': epoch.CANONICAL, 'rows_planned': 18910484, 'batches_planned': 36935},
@@ -159,3 +162,150 @@ def test_epoch_cli_and_module_import_the_sibling_launcher(tmp_path, mode):
                             text=True, capture_output=True, check=True, timeout=10)
     assert '--manifest' in result.stdout
     assert '--execute' in result.stdout
+
+
+def registered_manifest(tmp_path, role='H20') -> dict[str, Any]:
+    corpus = epoch.CORPORA[role]
+    evidence = {'path': str(tmp_path / 'evidence.json'), 'sha256': 'a' * 64}
+    return {'schema': 2, 'profile': role, 'state': str(tmp_path / 'state'), 'run': str(tmp_path / 'run'),
+            'training_seconds': 16200, 'arena_seconds': 5400, 'total_seconds': epoch.TOTAL_CAPS[role],
+            'runtime_manifest': evidence, 'preregistration': evidence, 'prospective_schedule': evidence,
+            'launcher_sha256': 'a' * 64, 'arena_launcher_sha256': 'a' * 64,
+            'reader': {'path': str(arena.EXTENDED_READER), 'sha256': 'a' * 64},
+            'data_qualification': evidence, 'comparisons': [list(c) for c in arena.REGISTERED_COMPARISONS[role]],
+            'input_pins': {**epoch.COMMON_PINS, str(corpus / 'bt4_policy_mix_summary.json'): 'a' * 64,
+                           str(corpus / 'derive_targets_summary.json'): 'b' * 64}}
+
+
+@pytest.mark.parametrize('role', ['H20', 'B100', 'G50'])
+def test_registered_profile_train_command_and_completed_role(tmp_path, role):
+    m = registered_manifest(tmp_path, role)
+    epoch.validate(m)
+    Path(m['runtime_manifest']['path']).write_text(json.dumps({'runtime': {'executable': sys.executable}}))
+    cmd = epoch.train_command(m)
+    assert cmd[cmd.index('--shards') + 1] == str(epoch.CORPORA[role])
+    assert cmd[cmd.index('--seed') + 1] == '0'
+    assert cmd[cmd.index('--steps') + 1] == '0'
+    run, summary, report = training_fixture(tmp_path)
+    summary['corpus']['shard_dirs'] = [str(epoch.CORPORA[role])]
+    report['arms'][role] = report['arms'].pop('E0T05')
+    report['arms'][role]['corpus'] = str(epoch.CORPORA[role])
+    (run / 'summary.json').write_text(json.dumps(summary))
+    report['arms'][role]['summary_sha256'] = arena.sha(run / 'summary.json')
+    schedule = tmp_path / 'schedule.json'
+    schedule.write_text(json.dumps(report))
+    result = epoch.completed_training(m, schedule)
+    assert result['role'] == role
+    checkpoint = result['checkpoint']
+    assert isinstance(checkpoint, dict)
+    assert checkpoint['role'] == role
+    assert result['historical_valid_control'] is False
+    report['arms'][role]['physical_plan_sha256'] = 'wrong'
+    schedule.write_text(json.dumps(report))
+    with pytest.raises(ValueError, match='schedule differ'):
+        epoch.completed_training(m, schedule)
+
+
+@pytest.mark.parametrize('mutation', ['order', 'extra', 'cap', 'source_pin', 'corpus_pin'])
+def test_registered_profiles_reject_unregistered_work(tmp_path, mutation):
+    m = registered_manifest(tmp_path)
+    if mutation == 'order':
+        m['comparisons'].reverse()
+    elif mutation == 'extra':
+        m['comparisons'].append(['G20T05', 400, 500])
+    elif mutation == 'cap':
+        m['total_seconds'] = 108000  # Global authorization is not reusable per arm.
+    elif mutation == 'source_pin':
+        m['input_pins'][str(epoch.SOURCE / 'derive_targets_summary.json')] = 'b' * 64
+    else:
+        m['input_pins'][str(epoch.CORPORA['H20'] / 'derive_targets_summary.json')] = 'pending'
+    with pytest.raises(ValueError, match=r'order differs|budget differs|input pins differ|hashes required'):
+        epoch.validate(m)
+
+
+@pytest.mark.parametrize('stop_after', [None, 2])
+def test_registered_sequence_reuses_training_and_stops_between_cells(tmp_path, monkeypatch, stop_after):
+    m = registered_manifest(tmp_path)
+    root = tmp_path / 'root'
+    (root / 'scratchpad').mkdir(parents=True)
+    monkeypatch.setattr(epoch, 'ROOT', root)
+    monkeypatch.setattr(epoch, 'validate', lambda _: None)
+    monkeypatch.setattr(epoch, 'check_pins', lambda _: {'executable': sys.executable})
+    monkeypatch.setattr(epoch, 'verify_schedule', lambda *a, **kw: None)
+    monkeypatch.setattr(arena, 'runtime_probe', lambda _: {})
+    monkeypatch.setattr(arena, 'disk_guard', lambda _: None)
+    monkeypatch.setattr(epoch.subprocess, 'check_output', lambda *a, **kw: '')
+    Path(m['prospective_schedule']['path']).write_text('{}')
+    stages, cells = [], []
+    def stage(*args, **_kwargs):
+        stages.append(args[4])
+        return {'gpu_seconds': 10 if args[4] == 'training' else 0}
+    monkeypatch.setattr(arena, 'run_owned_stage', stage)
+    monkeypatch.setattr(epoch, 'train_command', lambda _: ['frozen-trainer'])
+    candidate = {'role': 'H20', 'path': str(Path(m['run']) / 'checkpoint.pt'), 'sha256': 'c' * 64}
+    monkeypatch.setattr(epoch, 'completed_training', lambda *_: {'complete': True, 'checkpoint': candidate})
+    def match(cell, **_kwargs):
+        cells.append((cell['reference']['role'], cell['sims'], cell['games']))
+        assert cell['candidate'] == candidate
+        out = Path(cell['output'])
+        out.mkdir()
+        arena.write(out / 'complete.json', {'complete': True, 'gpu_seconds': 20, 'games_sha256': 'd' * 64})
+        if cell['games'] == 500:
+            assert cell['opening_anchor']['bank']['path'].endswith('C20T05.s100/arena.games.jsonl')
+        if len(cells) == stop_after:
+            (Path(m['state']) / 'STOP').touch()
+    monkeypatch.setattr(arena, 'execute', match)
+    if stop_after:
+        with pytest.raises(ValueError, match='stop requested'):
+            epoch.execute(m)
+        assert len(cells) == 2
+        assert not (Path(m['state']) / 'complete.json').exists()
+    else:
+        epoch.execute(m)
+        assert cells == [('C20T05', 100, 1000), ('G20T05', 100, 1000), ('C20T05', 400, 500)]
+        result = arena.read(Path(m['state']) / 'complete.json')
+        assert result['gpu_seconds'] == 70
+        assert len(result['arena_receipts']) == 3
+    assert stages == ['training', 'schedule']
+
+
+@pytest.mark.parametrize('mutation', ['none', 'failed', 'corpus', 'hash', 'role'])
+def test_data_qualification_binds_success_and_final_recipe(tmp_path, mutation):
+    m = registered_manifest(tmp_path)
+    corpus = epoch.corpus_for(m)
+    receipt: dict[str, Any] = {'schema': 1, 'status': 'PASS_REGISTERED_CORPUS_QUALIFICATION', 'profile': 'H20',
+               'corpus': str(corpus), 'rows': 18910484, 'shards': 2309,
+               'source': {'path': str(epoch.SOURCE), 'derive_sha256': epoch.COMMON_PINS[str(epoch.SOURCE / 'derive_targets_summary.json')]},
+               'derive_summary': {'path': str(corpus / 'derive_targets_summary.json'), 'sha256': 'b' * 64},
+               'mix_summary': {'path': str(corpus / 'bt4_policy_mix_summary.json'), 'sha256': 'a' * 64}}
+    if mutation == 'failed':
+        receipt['status'] = 'FAILED'
+    elif mutation == 'corpus':
+        receipt['corpus'] = str(epoch.CORPORA['B100'])
+    elif mutation == 'role':
+        receipt['profile'] = 'B100'
+    elif mutation == 'hash':
+        receipt['derive_summary']['sha256'] = 'c' * 64
+    Path(m['data_qualification']['path']).write_text(json.dumps(receipt))
+    if mutation == 'none':
+        epoch.verify_data_qualification(m)
+    else:
+        with pytest.raises(ValueError, match='data qualification failed'):
+            epoch.verify_data_qualification(m)
+
+
+@pytest.mark.parametrize('mutation', ['duplicate', 'skipped', 'cumulative', 'samples'])
+def test_registered_window_cadence_rejects_duplicate_or_skipped_work(tmp_path, mutation):
+    _, summary, _ = training_fixture(tmp_path)
+    epoch.verify_window_cadence(summary)
+    windows = summary['train_window_metrics']
+    if mutation == 'duplicate':
+        windows[1] = dict(windows[0])
+    elif mutation == 'skipped':
+        windows[2]['train_steps_done'] = 87
+    elif mutation == 'cumulative':
+        windows[-1]['steps_cumulative'] -= 1
+    else:
+        windows[-1]['train_samples_seen'] -= 1
+    with pytest.raises(ValueError, match=r'cadence/cumulative|sample total'):
+        epoch.verify_window_cadence(summary)

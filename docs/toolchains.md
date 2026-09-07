@@ -19,7 +19,7 @@ and do not launch experiments.
 | Repair an existing corpus's history | `scripts/repair_corpus_history.py` | Distinct output, inventory coverage, unchanged labels unless explicitly relabeling, truthful completion stamp |
 | Derive replay targets | `scripts/derive_corpus_targets.py` | Input corpus identity, target recipe, history/encoding stamps and completed-shard inventory |
 | Train a controlled LC0-shaped comparison | `scripts/lc0_control_train.py` | Declared architecture, data lineage, objective, view/step budget and checkpoint identity |
-| Registered sharpened-tie epoch and direct screen | [scripts/bt4_one_epoch_screen.py](experiments/2026-09-06-bt4-sharpened-ties-screen.md) | Pinned corpus/runtime/schedule; completed training before the direct development screen |
+| Registered BT4 exact-epoch screen | [scripts/bt4_one_epoch_screen.py](experiments/2026-09-07-bt4-hybrid-endpoints.md) | One explicitly selected profile; qualified corpus, completed training and fixed comparisons |
 | Offline target/loss comparison | `scripts/retarget_retrain.py` | Same-seed controls and a frozen readout appropriate to the hypothesis |
 | Replay epoch reference runner | `scripts/offline_replay_epoch.py` | Distinguish its sampling contract from the game-aware exact-epoch mode |
 
@@ -60,12 +60,30 @@ epoch consumption without wrapping or silently truncating. Follow
 | Observe fenlist and SF-refute outcomes without inferring playing strength | `scripts/monitor_sf_refute_outcomes.py` |
 | Relabel/reconstruct RVG targets and shadow readout | `scripts/rvg_label_pass.py`, `scripts/nnue_shadow_label_readout.py` |
 
-The BT4 checkpoint and one-epoch screens retain their pinned host-local reader at
+The legacy BT4 checkpoint and sharpened-tie screens retain their pinned host-local reader at
 `/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py`, plus its frozen runtime
 and development opening book. Updating the repository reader does not migrate
 that executed protocol; the linked registration records its identities. Set
 `CHESS_EXPERIMENT_ROOT` to the data-owning repository when it differs from
 `~/projects/chess`; the launcher checkout can remain separate.
+
+The [adaptive H20 investigation](experiments/2026-09-07-bt4-hybrid-endpoints.md)
+adds explicit H20, B100 and G50 profiles to the same launchers. A manifest selects
+one profile; available profiles are not a queue. These profiles pin the adjacent
+extended reader, require a successful identity-bound corpus qualification, verify
+the complete seed-zero epoch and run only that profile's fixed comparisons. The
+500-game higher-search probe is tied to the completed same-candidate C100 bank's
+first 250 opening pairs. Old profile defaults retain their original reader.
+
+For H20 target construction, `scripts/bt4_policy_mix.py mix --scope c20-global`
+keeps `--shards` pointed at original SF. Supply the actual stored C corpus through
+`--c20-parent`, pin it with `--expected-c20-summary-sha256` and
+`--expected-c20-mix-sha256`, and retain original BT4/rank sidecars. The fixed recipe
+uses `--alpha 0.2 --bt4-temperature 0.5 --sf-rank-cap 3 --sf-cp-window 20`.
+Both audit and materialization use descriptive SF admission with the same immutable
+experiment record. The mixer verifies C's recipe, exact stored policy and all other
+fields before composing the new target, and records the parent lineage explicitly.
+This is specific C20T05 composition support, not arbitrary nested-source admission.
 
 The varying-horizon tools follow their [staged protocol](experiments/varying_horizon_online_controller.md),
 including grouped source identities and limits on interpretation.

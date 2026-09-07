@@ -88,8 +88,11 @@ DERIVE_SUMMARY = "derive_targets_summary.json"
 POLICY_FIELD = "policy_target"
 SIDECAR_POLICY_FIELD = "bt4_policy"
 SIDECAR_KEY_FIELD = "source_key"
-MIX_SCOPES = ("global", "top-max-ties", "near-max-ratio", "sf-cp-window")
+MIX_SCOPES = ("global", "top-max-ties", "near-max-ratio", "sf-cp-window", "c20-global")
+GLOBAL_SCOPES = {"global", "c20-global"}
+RANK_SCOPES = {"sf-cp-window", "c20-global"}
 TREATMENT_ALGORITHMS = {
+    "c20-global": "stored-c20t05-then-global-bt4-v1",
     "global": "legal-normalized-global-arithmetic-v1",
     "top-max-ties": "stored-top-set-only-v1",
     "near-max-ratio": "stored-near-max-set-only-v1",
@@ -189,19 +192,27 @@ def treatment_spec(
         if scope == "near-max-ratio"
         else None
     )
-    rank_cap = validate_sf_rank_cap(sf_rank_cap) if scope == "sf-cp-window" else None
+    rank_cap = validate_sf_rank_cap(sf_rank_cap) if scope in RANK_SCOPES else None
     cp_window = (
-        validate_sf_cp_window(sf_cp_window) if scope == "sf-cp-window" else None
+        validate_sf_cp_window(sf_cp_window) if scope in RANK_SCOPES else None
     )
-    spec = {
+    spec: dict[str, Any] = {
         "scope": scope,
         "alpha": weight,
         "algorithm": TREATMENT_ALGORITHMS[scope],
         "bt4_temperature": temperature,
         "near_max_ratio": ratio,
     }
-    if scope == "sf-cp-window":
+    if scope in RANK_SCOPES:
         spec.update({"sf_rank_cap": rank_cap, "sf_cp_window": cp_window})
+    if scope == "c20-global":
+        if (weight, temperature, rank_cap, cp_window) != (0.2, 0.5, 3, 20.0):
+            raise ValueError("c20-global is fixed H20: alpha=.2, BT4 T=.5, rank cap3, cp window20")
+        spec["parent_recipe"] = {
+            "kind": "sf-cp-window", "alpha": 1.0, "bt4_temperature": 0.5,
+            "sf_rank_cap": 3, "sf_cp_window": 20.0,
+            "storage_dtype": "float16", "normalize_stored_parent": True,
+        }
     return spec
 
 
@@ -333,7 +344,7 @@ def _source_candidate_set(
 ) -> np.ndarray:
     """Select the stored-source set whose mass BT4 may redistribute."""
     legal = np.asarray(legal_mask) != 0
-    if scope == "global":
+    if scope in GLOBAL_SCOPES:
         return legal
     source_values = np.asarray(source, dtype=np.float64)
     legal_source = np.where(legal, source_values, -np.inf)
@@ -411,6 +422,7 @@ def mix_policy_targets(
     sf_rank_gaps_cp: np.ndarray | None = None,
     sf_rank_cap: int = 3,
     sf_cp_window: float = 10.0,
+    c20_parent_policy: np.ndarray | None = None,
 ) -> np.ndarray:
     """Apply the selected literal probability-space treatment.
 
@@ -423,6 +435,24 @@ def mix_policy_targets(
     if scope not in MIX_SCOPES:
         raise ValueError(f"unknown mix scope {scope!r}; expected one of {MIX_SCOPES}")
     weight = validate_alpha(alpha)
+    if c20_parent_policy is not None and scope != "c20-global":
+        raise ValueError("C20 parent policy requires c20-global")
+    if scope == "c20-global":
+        treatment_spec(scope=scope, alpha=alpha, bt4_temperature=bt4_temperature,
+                       near_max_ratio=near_max_ratio, sf_rank_cap=sf_rank_cap,
+                       sf_cp_window=sf_cp_window)
+        rebuilt = mix_policy_targets(
+            source, bt4, legal_mask, alpha=1.0, scope="sf-cp-window",
+            bt4_temperature=0.5, sf_rank_indices=sf_rank_indices,
+            sf_rank_gaps_cp=sf_rank_gaps_cp, sf_rank_cap=3, sf_cp_window=20.0,
+        ).astype(np.float16)
+        if c20_parent_policy is not None:
+            parent = np.asarray(c20_parent_policy)
+            if parent.dtype != np.dtype(np.float16) or not np.array_equal(parent, rebuilt):
+                raise ValueError("stored C20 parent does not match original SF/BT4/rank recipe")
+        else:
+            parent = rebuilt  # Audit reconstructs the same stored intermediate.
+        return arithmetic_policy_mix(parent, bt4, legal_mask, alpha=0.2, bt4_temperature=0.5)
     if scope == "global":
         return arithmetic_policy_mix(
             source,
@@ -1129,7 +1159,7 @@ def _audit_admission(
 
 
 def _mass_drift_bounds(scope: str) -> tuple[float, float]:
-    if scope == "global":
+    if scope in GLOBAL_SCOPES:
         return GLOBAL_MASS_DRIFT_MAX, GLOBAL_MASS_DRIFT_MAX
     return SELECTED_MASS_DRIFT_MEAN_MAX, SELECTED_MASS_DRIFT_ROW_MAX
 
@@ -1220,7 +1250,7 @@ def _load_audit_receipt(
         required_invariants: dict[str, Any] = {
             "selected_mass_drift_within_bounds": True,
         }
-        if scope == "global":
+        if scope in GLOBAL_SCOPES:
             required_invariants["mass_reference"] = "normalized_total_legal_mass"
         if scope in {"near-max-ratio", "sf-cp-window"}:
             required_invariants.update(
@@ -1299,6 +1329,8 @@ def audit_mix(args: argparse.Namespace) -> int:
     )
     alpha = validate_alpha(float(args.alpha))
     scope = str(args.scope)
+    if scope == "c20-global" and admission["mode"] != "descriptive":
+        raise ValueError("c20-global requires descriptive SF admission")
     if scope not in MIX_SCOPES:
         raise SystemExit(f"--scope must be one of {MIX_SCOPES}")
     bt4_temperature = validate_bt4_temperature(float(args.bt4_temperature))
@@ -1342,7 +1374,7 @@ def audit_mix(args: argparse.Namespace) -> int:
         if bool(d9_row.get("timed_out")):
             raise ValueError(f"{position.key}: d9 label timed out")
         source = _stored_d9_policy(legal_ucis, _depth_lines(d9_row, 9))
-        if scope == "sf-cp-window":
+        if scope in RANK_SCOPES:
             sf_rank_indices, sf_rank_gaps_cp = _audit_d9_rank_arrays(
                 legal_ucis,
                 _depth_lines(d9_row, 9),
@@ -1379,19 +1411,30 @@ def audit_mix(args: argparse.Namespace) -> int:
         # 20M source is float16, so audit what the trainer will actually read.
         candidate_unstored = candidate
         candidate_stored = candidate_unstored.astype(np.float16).astype(np.float32)
-        reference_unstored = mix_policy_targets(
-            source[None, :],
-            bt4[None, :],
-            legal,
-            alpha=alpha,
-            scope=scope,
-            bt4_temperature=1.0,
-            near_max_ratio=near_max_ratio,
-            sf_rank_indices=sf_rank_indices,
-            sf_rank_gaps_cp=sf_rank_gaps_cp,
-            sf_rank_cap=sf_rank_cap,
-            sf_cp_window=sf_cp_window,
-        )
+        if scope == "c20-global":
+            audit_parent = mix_policy_targets(
+                source[None, :], bt4[None, :], legal, alpha=1.0,
+                scope="sf-cp-window", bt4_temperature=0.5,
+                sf_rank_indices=sf_rank_indices, sf_rank_gaps_cp=sf_rank_gaps_cp,
+                sf_rank_cap=3, sf_cp_window=20.0,
+            ).astype(np.float16)
+            reference_unstored = arithmetic_policy_mix(
+                audit_parent, bt4[None, :], legal, alpha=0.2, bt4_temperature=1.0,
+            )
+        else:
+            reference_unstored = mix_policy_targets(
+                source[None, :],
+                bt4[None, :],
+                legal,
+                alpha=alpha,
+                scope=scope,
+                bt4_temperature=1.0,
+                near_max_ratio=near_max_ratio,
+                sf_rank_indices=sf_rank_indices,
+                sf_rank_gaps_cp=sf_rank_gaps_cp,
+                sf_rank_cap=sf_rank_cap,
+                sf_cp_window=sf_cp_window,
+            )
         reference_stored = reference_unstored.astype(np.float16).astype(np.float32)
         candidate = _normalized_legal(
             candidate_stored,
@@ -1423,7 +1466,7 @@ def audit_mix(args: argparse.Namespace) -> int:
         )[0]
         candidate_count = int(candidate_set.sum())
         selected_source_mass = (
-            1.0 if scope == "global"
+            1.0 if scope in GLOBAL_SCOPES
             else float(np.sum(source[candidate_set], dtype=np.float64))
         )
         selected_candidate_mass = float(
@@ -1527,7 +1570,7 @@ def audit_mix(args: argparse.Namespace) -> int:
     mass_mean_bound, mass_row_bound = _mass_drift_bounds(scope)
     treatment_invariants = {
         "mass_reference": (
-            "normalized_total_legal_mass" if scope == "global" else "stored_selected_mass"
+            "normalized_total_legal_mass" if scope in GLOBAL_SCOPES else "stored_selected_mass"
         ),
         "candidate_set_wider_rows": candidate_set_wider_rows,
         "changed_unique_max_rows": changed_unique_max_rows,
@@ -1581,6 +1624,7 @@ def audit_mix(args: argparse.Namespace) -> int:
         "admission": admission,
         "treatment": treatment,
         "source_target_contract": SOURCE_TARGET_CONTRACT,
+        "temperature_one_reference": "C20T05 parent fixed; final global BT4 T1" if scope == "c20-global" else "same treatment with BT4 T1",
         "ruler": {
             "audit_set": str(audit_path),
             "audit_set_sha256": file_sha256(audit_path),
@@ -1680,6 +1724,71 @@ def audit_mix(args: argparse.Namespace) -> int:
     return 0 if training_permitted else 2
 
 
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(
+        char in "0123456789abcdef" for char in value
+    )
+
+
+def _validate_c20_parent(
+    parent_dir: Path, *, source_dir: Path, source_paths: list[Path],
+    source_summary: dict[str, Any], source_summary_sha: str,
+    side_summary_path: Path, rank_summary_path: Path,
+    expected_summary_sha: str, expected_mix_sha: str, expected_rows: int,
+) -> dict[str, Any]:
+    """Admit only a pinned C20T05 parent rooted in this original SF corpus.
+
+    Summary checks run before copying. Actual parent arrays and the stored C
+    formula are checked chunkwise in the existing materialization pass, so
+    metadata is never accepted as proof of payload equivalence.
+    """
+    derive_path, mix_path = parent_dir / DERIVE_SUMMARY, parent_dir / MIX_SUMMARY
+    if file_sha256(derive_path) != expected_summary_sha or file_sha256(mix_path) != expected_mix_sha:
+        raise ValueError("C20 parent summary SHA256 mismatch")
+    derived = json.loads(derive_path.read_text(encoding="utf-8"))
+    parent = json.loads(mix_path.read_text(encoding="utf-8"))
+    if derived.pop("policy_target_postprocess", None) != parent or derived != source_summary:
+        raise ValueError("C20 parent transitive derive provenance does not match original SF")
+    expected = {
+        "schema": MIX_SCHEMA, "kind": "sf-cp-window",
+        "algorithm": TREATMENT_ALGORITHMS["sf-cp-window"],
+        "alpha": 1.0, "bt4_temperature": 0.5, "near_max_ratio": None,
+        "sf_rank_cap": 3, "sf_cp_window": 20.0,
+        "source_dir": str(source_dir), "source_derive_summary_sha256": source_summary_sha,
+        "rows": expected_rows, "shards": len(source_paths),
+        "expected_rows": expected_rows, "expected_shards": len(source_paths),
+        "sidecar_dir": str(side_summary_path.parent),
+        "sidecar_summary": {"path": str(side_summary_path), "sha256": file_sha256(side_summary_path)},
+        "sf_rank_sidecar_dir": str(rank_summary_path.parent),
+        "sf_rank_sidecar_summary": {"path": str(rank_summary_path), "sha256": file_sha256(rank_summary_path)},
+        "mutated_arrays": [POLICY_FIELD],
+        "value_columns_unchanged": ["wdl_target", "search_wdl"],
+    }
+    bad = {key: (parent.get(key), value) for key, value in expected.items() if parent.get(key) != value}
+    if bad or "c20_parent" in parent or "parent_recipe" in parent:
+        raise ValueError(f"C20 parent recipe/lineage mismatch: {bad}")
+    if [path.name for path in iter_shard_paths(parent_dir)] != [path.name for path in source_paths]:
+        raise ValueError("C20 parent shard names/order differ from original SF")
+    return {
+        "source_dir": str(parent_dir),
+        "derive_summary": {"path": str(derive_path), "sha256": expected_summary_sha},
+        "mix_summary": {"path": str(mix_path), "sha256": expected_mix_sha},
+        "policy_target_postprocess": parent,
+        "validation": "all parent non-policy arrays equal original SF; actual float16 policy equals C20T05 reconstruction per chunk",
+    }
+
+
+def _validate_c20_layout(source: Any, parent: Any, source_path: Path) -> None:
+    if set(source.keys()) != set(parent.keys()) or list(source.group_keys()) or list(parent.group_keys()):
+        raise ValueError(f"C20 parent array inventory differs: {source_path}")
+    for field in source.array_keys():
+        if source[field].shape != parent[field].shape or source[field].dtype != parent[field].dtype:
+            raise ValueError(f"C20 parent array layout differs: {source_path}:{field}")
+    for key, value in dict(source.attrs).items():
+        if parent.attrs.get(key) != value:
+            raise ValueError(f"C20 parent original metadata differs: {source_path}:{key}")
+
+
 def mix_corpus(args: argparse.Namespace) -> int:
     sf_audit_mode = str(getattr(args, "sf_audit_mode", "gate"))
     experiment_record = getattr(args, "experiment_record", None)
@@ -1687,6 +1796,8 @@ def mix_corpus(args: argparse.Namespace) -> int:
     alpha = validate_alpha(float(args.alpha))
     scope = str(args.scope)
     mass_mean_bound, mass_row_bound = _mass_drift_bounds(scope)
+    if scope == "c20-global" and admission["mode"] != "descriptive":
+        raise ValueError("c20-global requires descriptive SF admission")
     if scope not in MIX_SCOPES:
         raise SystemExit(f"--scope must be one of {MIX_SCOPES}")
     bt4_temperature = validate_bt4_temperature(float(args.bt4_temperature))
@@ -1708,7 +1819,18 @@ def mix_corpus(args: argparse.Namespace) -> int:
         if getattr(args, "sf_rank_sidecar", None) is None
         else Path(args.sf_rank_sidecar).resolve()
     )
+    c20_dir = getattr(args, "c20_parent", None)
+    c20_summary_sha = getattr(args, "expected_c20_summary_sha256", None)
+    c20_mix_sha = getattr(args, "expected_c20_mix_sha256", None)
+    if scope == "c20-global":
+        if c20_dir is None or not _is_sha256(c20_summary_sha) or not _is_sha256(c20_mix_sha):
+            raise ValueError("c20-global requires a C20 parent and both exact summary SHA256 pins")
+        c20_dir = Path(c20_dir).resolve()
+    elif any(value is not None for value in (c20_dir, c20_summary_sha, c20_mix_sha)):
+        raise ValueError("C20 parent arguments require c20-global")
     out_dir = Path(args.out).resolve()
+    if c20_dir is not None and (out_dir == c20_dir or c20_dir in out_dir.parents):
+        raise ValueError("output must be separate from the C20 parent")
     expected_rows = int(args.expected_rows)
     expected_shards = int(args.expected_shards)
     expected_source_summary_sha256 = str(args.expected_source_summary_sha256)
@@ -1726,10 +1848,10 @@ def mix_corpus(args: argparse.Namespace) -> int:
         raise SystemExit("--sidecar must be separate from --shards")
     if sidecar_dir == out_dir or sidecar_dir in out_dir.parents:
         raise SystemExit("--out must be separate from, not inside, --sidecar")
-    if scope == "sf-cp-window" and rank_sidecar_dir is None:
-        raise SystemExit("sf-cp-window requires --sf-rank-sidecar")
-    if scope != "sf-cp-window" and rank_sidecar_dir is not None:
-        raise SystemExit("--sf-rank-sidecar is valid only for sf-cp-window")
+    if scope in RANK_SCOPES and rank_sidecar_dir is None:
+        raise SystemExit("rank-scoped recipes require --sf-rank-sidecar")
+    if scope not in RANK_SCOPES and rank_sidecar_dir is not None:
+        raise SystemExit("--sf-rank-sidecar is valid only for sf-cp-window or c20-global")
     if rank_sidecar_dir is not None and (
         rank_sidecar_dir in out_dir.parents or rank_sidecar_dir == out_dir
     ):
@@ -1766,6 +1888,8 @@ def mix_corpus(args: argparse.Namespace) -> int:
         derive_summary_original,
         storage_dtypes=source_policy_dtypes,
     )
+    if "policy_target_postprocess" in derive_summary_original:
+        raise ValueError("--shards must be the original SF source, not a postprocessed corpus")
     audit_receipt_path = Path(args.audit_receipt).resolve()
     _load_audit_receipt(
         audit_receipt_path,
@@ -1866,6 +1990,16 @@ def mix_corpus(args: argparse.Namespace) -> int:
         rank_outputs = {str(item["path"]): item for item in output_items}
         rank_summary_sha = file_sha256(rank_summary_path)
 
+    parent_provenance = None
+    if c20_dir is not None:
+        assert rank_summary_path is not None
+        parent_provenance = _validate_c20_parent(
+            c20_dir, source_dir=source_dir, source_paths=source_paths,
+            source_summary=derive_summary_original, source_summary_sha=source_summary_sha256,
+            side_summary_path=side_summary_path, rank_summary_path=rank_summary_path,
+            expected_summary_sha=str(c20_summary_sha), expected_mix_sha=str(c20_mix_sha),
+            expected_rows=expected_rows,
+        )
     shutil.copytree(source_dir, writing)
     stats = MixStats()
     try:
@@ -1916,6 +2050,11 @@ def mix_corpus(args: argparse.Namespace) -> int:
                         f"{rank_path}: summary output receipt mismatch {output_bad}",
                     )
                 rank = zarr.open_group(str(rank_path), mode="r")
+            c20_group = None
+            if c20_dir is not None:
+                c20_group = zarr.open_group(str(c20_dir / source_path.name), mode="r")
+                _validate_c20_layout(source, c20_group, source_path)
+            parent_policy_digest = hashlib.sha256()
             destination_path = writing / source_path.name
             destination: Any = zarr.open_group(str(destination_path), mode="a")
             rows = int(source["x"].shape[0])
@@ -1937,6 +2076,16 @@ def mix_corpus(args: argparse.Namespace) -> int:
                 )
                 sf = _normalized_legal(sf_stored, legal, name=f"{source_path}:source")
                 bt4 = _normalized_legal(bt4_stored, legal, name=f"{source_path}:BT4")
+                parent_policy = None
+                if c20_group is not None:
+                    for field in source.array_keys():
+                        if field != POLICY_FIELD and not np.array_equal(
+                            np.asarray(source[field][start:stop]),
+                            np.asarray(c20_group[field][start:stop]), equal_nan=True,
+                        ):
+                            raise ValueError(f"C20 parent non-policy field changed: {source_path}:{field}")
+                    parent_policy = np.asarray(c20_group[POLICY_FIELD][start:stop])
+                    parent_policy_digest.update(np.ascontiguousarray(parent_policy).tobytes())
                 mixed = mix_policy_targets(
                     sf_stored,
                     bt4,
@@ -1949,13 +2098,14 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     sf_rank_gaps_cp=sf_rank_gaps_cp,
                     sf_rank_cap=sf_rank_cap,
                     sf_cp_window=sf_cp_window,
+                    c20_parent_policy=parent_policy,
                 )
                 stored = mixed.astype(destination[POLICY_FIELD].dtype, copy=False)
                 destination[POLICY_FIELD][start:stop] = stored
                 reread = np.asarray(destination[POLICY_FIELD][start:stop])
                 if not np.array_equal(reread, stored):
                     raise ValueError(f"{destination_path}: policy write/read mismatch")
-                if scope == "global" and bool(np.any(reread[legal == 0] != 0.0)):
+                if scope in GLOBAL_SCOPES and bool(np.any(reread[legal == 0] != 0.0)):
                     raise ValueError(f"{destination_path}: global policy has illegal mass")
 
                 sf_top = np.argmax(sf, axis=1)
@@ -1997,7 +2147,7 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     np.sum(candidate_count > source_top_count)
                 )
                 source_selected_mass = (
-                    np.ones(stop - start, dtype=np.float64) if scope == "global"
+                    np.ones(stop - start, dtype=np.float64) if scope in GLOBAL_SCOPES
                     else np.sum(
                         np.where(candidate_set, sf_stored, 0.0), axis=1, dtype=np.float64,
                     )
@@ -2043,10 +2193,10 @@ def mix_corpus(args: argparse.Namespace) -> int:
                         near_max_ratio if scope == "near-max-ratio" else None
                     ),
                     "policy_target_mix_sf_rank_cap": (
-                        sf_rank_cap if scope == "sf-cp-window" else None
+                        sf_rank_cap if scope in RANK_SCOPES else None
                     ),
                     "policy_target_mix_sf_cp_window": (
-                        sf_cp_window if scope == "sf-cp-window" else None
+                        sf_cp_window if scope in RANK_SCOPES else None
                     ),
                     "policy_target_mix_sf_rank_sidecar": (
                         str(rank_sidecar_dir) if rank_sidecar_dir is not None else None
@@ -2067,6 +2217,12 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     "policy_target_mix_input_history_encoding": encoding,
                 }
             )
+            if parent_provenance is not None:
+                destination.attrs.update({
+                    "policy_target_mix_c20_parent_derive_sha256": c20_summary_sha,
+                    "policy_target_mix_c20_parent_mix_sha256": c20_mix_sha,
+                    "policy_target_mix_c20_parent_policy_sha256": parent_policy_digest.hexdigest(),
+                })
             stats.shards += 1
 
         denom = max(stats.rows, 1)
@@ -2076,7 +2232,7 @@ def mix_corpus(args: argparse.Namespace) -> int:
             "algorithm": treatment_specification["algorithm"],
             "formula": (
                 "mixed=(1-alpha)*stored_stockfish+alpha*bt4_raw_one_eval"
-                if scope == "global"
+                if scope in GLOBAL_SCOPES
                 else (
                     "redistribute alpha of stored source top-tie mass by "
                     "temperature-scaled BT4 prior"
@@ -2148,7 +2304,7 @@ def mix_corpus(args: argparse.Namespace) -> int:
             "mean_l1_from_source": stats.l1_from_source_sum / denom,
             "selected_mass_abs_drift": {
                 "reference": (
-                    "normalized_total_legal_mass" if scope == "global" else "stored_selected_mass"
+                    "normalized_total_legal_mass" if scope in GLOBAL_SCOPES else "stored_selected_mass"
                 ),
                 "mean": stats.selected_mass_abs_drift_sum / denom,
                 "max": stats.selected_mass_abs_drift_max,
@@ -2185,10 +2341,24 @@ def mix_corpus(args: argparse.Namespace) -> int:
         ):
             raise ValueError(
                 "float16 "
-                + ("total legal" if scope == "global" else "selected-set")
+                + ("total legal" if scope in GLOBAL_SCOPES else "selected-set")
                 + " mass drift exceeds the preregistered bounds",
             )
 
+        if parent_provenance is not None:
+            assert c20_dir is not None
+            assert rank_summary_path is not None
+            if _validate_c20_parent(
+                c20_dir, source_dir=source_dir, source_paths=source_paths,
+                source_summary=derive_summary_original, source_summary_sha=source_summary_sha256,
+                side_summary_path=side_summary_path, rank_summary_path=rank_summary_path,
+                expected_summary_sha=str(c20_summary_sha), expected_mix_sha=str(c20_mix_sha),
+                expected_rows=expected_rows,
+            ) != parent_provenance:
+                raise ValueError("C20 parent provenance changed during composition")
+            treatment["c20_parent"] = parent_provenance
+            treatment["parent_recipe"] = treatment_specification["parent_recipe"]
+            treatment["formula"] = "0.8*legal_normalize(actual stored C20T05)+0.2*legal_normalize(BT4^2)"
         derive_summary_path = writing / DERIVE_SUMMARY
         if _audit_admission(sf_audit_mode, experiment_record) != admission:
             raise ValueError("experiment record changed during materialization")
@@ -2246,6 +2416,10 @@ def build_parser() -> argparse.ArgumentParser:
     mix.add_argument("--expected-shards", type=int, required=True)
     mix.add_argument("--expected-source-summary-sha256", required=True)
     mix.add_argument("--audit-receipt", type=Path, required=True)
+    mix.add_argument("--c20-parent", type=Path, default=None,
+                     help="published C20T05 corpus for c20-global; --shards remains original SF")
+    mix.add_argument("--expected-c20-summary-sha256", default=None)
+    mix.add_argument("--expected-c20-mix-sha256", default=None)
 
     audit = sub.add_parser(
         "audit",

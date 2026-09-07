@@ -88,9 +88,13 @@ def confirmation_input(path: Path, expected_sha256: str) -> dict[str, Any]:
 def read_arm(
     path: Path, *, reference: Path, seed: int, sims: int = 100,
     prior_temperature: float = 1.0, calibration: bool = False,
-    confirmation: dict[str, Any] | None = None,
+    confirmation: dict[str, Any] | None = None, expected_pairs: int = PAIRS,
 ) -> dict[str, Any]:
     """Refuse incomplete, conflicting or off-protocol banks before scoring."""
+    if type(expected_pairs) is not int or expected_pairs not in (250, PAIRS):
+        raise ValueError("expected_pairs must be 250 or 500")
+    if expected_pairs == 250 and (sims != 400 or calibration or confirmation is not None):
+        raise ValueError("250 pairs are restricted to the registered 400-simulation book probe")
     if confirmation is not None and calibration:
         raise ValueError("confirmation input is not part of the fixed calibration protocol")
     log = read_game_log(path)
@@ -102,7 +106,7 @@ def read_arm(
     if log.fingerprint != settings_fingerprint(settings):
         raise ValueError(f"{path}: header fingerprint disagrees with its settings")
     required: dict[str, Any] = {
-        "games": 1000, "mode": "matched_sims", "sims_candidate": sims,
+        "games": 2 * expected_pairs, "mode": "matched_sims", "sims_candidate": sims,
         "sims_reference": sims, "seed": seed, "opening_plies": 16,
         "openings_kind": "book", "max_plies": 300, "temperature": 0.1,
         "gumbel_add_noise": True,
@@ -150,7 +154,7 @@ def read_arm(
     history: dict[int, list[dict[str, Any]]] = {}
     for row in log.games:
         pair, half = row.get("pair_id"), row.get("half")
-        if type(pair) is not int or not 0 <= pair < PAIRS or type(half) is not int or half not in (0, 1):
+        if type(pair) is not int or not 0 <= pair < expected_pairs or type(half) is not int or half not in (0, 1):
             raise ValueError(f"{path}: invalid pair/half identity {(pair, half)}")
         key = (pair, half)
         if row.get("a_is_white") is not (half == 0) or row.get("opening_index") != pair:
@@ -181,11 +185,11 @@ def read_arm(
         if len({r["opening_fen"] for r in games}) != 1:
             raise ValueError(f"{path}: pair {pair} changes opening across replay attempts")
     rows = latest_rows_by_key(log.games, key=lambda r: (r["pair_id"], r["half"]))
-    if len(rows) != 2 * PAIRS:
-        raise ValueError(f"{path}: require 1000 canonical games / 500 complete pairs")
+    if len(rows) != 2 * expected_pairs:
+        raise ValueError(f"{path}: require {2 * expected_pairs} canonical games / {expected_pairs} complete pairs")
 
     scores, openings = [], []
-    for pair in range(PAIRS):
+    for pair in range(expected_pairs):
         white, black = rows[(pair, 0)], rows[(pair, 1)]
         if white["opening_fen"] != black["opening_fen"]:
             raise ValueError(f"{path}: colors did not share opening {pair}")
@@ -207,7 +211,7 @@ def read_arm(
         "raw_game_rows": len(log.games), "superseded_orphan_rows": len(log.games) - len(rows),
         "openings": openings, "scores": np.asarray(scores, dtype=np.float64),
         "result": {
-            "games": 1000, "pairs": PAIRS, "score": summary.score,
+            "games": 2 * expected_pairs, "pairs": expected_pairs, "score": summary.score,
             "score_ci95": [lo, hi], "elo": summary.elo,
             "elo_ci95": list(summary.elo_ci95), "verdict": verdict,
             "pentanomial": dict(zip(("WW", "WD_DW", "DD_WL", "LD_DL", "LL"), summary.counts)),
