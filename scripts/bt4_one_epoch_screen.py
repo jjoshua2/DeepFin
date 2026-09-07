@@ -12,8 +12,11 @@ import math
 from pathlib import Path
 import signal
 import subprocess
+import sys
 
-import bt4_direct_screen as arena
+# Direct CLI execution must import the sibling from this launcher checkout.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts import bt4_direct_screen as arena
 
 ROOT = arena.ROOT
 CORPUS = ROOT / 'data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050'

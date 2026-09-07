@@ -137,7 +137,7 @@ The matching `launch_manifest.json` pins the corpus, completed C reference,
 prospective schedule, frozen runtime and both launchers. Inspect the plan with:
 
 ```bash
-python scripts/bt4_one_epoch_screen.py --manifest /home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/launch_manifest.json
+python scripts/bt4_one_epoch_screen.py --manifest ~/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/launch_manifest.json
 ```
 
 After separate launch review, `--execute` runs the single epoch and qualified

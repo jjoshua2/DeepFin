@@ -1,24 +1,15 @@
 """Small saved-summary and subprocess fixtures; no training/data/GPU workload."""
-import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 from typing import Any
 
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[1] / 'scripts'
-spec = importlib.util.spec_from_file_location('bt4_direct_screen', SCRIPTS / 'bt4_direct_screen.py')
-assert spec is not None
-assert spec.loader is not None
-arena = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(arena)
-sys.modules['bt4_direct_screen'] = arena
-spec = importlib.util.spec_from_file_location('bt4_one_epoch_screen', SCRIPTS / 'bt4_one_epoch_screen.py')
-assert spec is not None
-assert spec.loader is not None
-epoch = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(epoch)
+from scripts import bt4_direct_screen as arena
+from scripts import bt4_one_epoch_screen as epoch
 
 
 def training_fixture(tmp_path):
@@ -154,3 +145,15 @@ def test_parent_stop_prevents_any_owned_stage(tmp_path):
     with pytest.raises(ValueError, match='stop requested before stage'):
         arena.run_owned_stage([], out, 35, None, 'schedule', {}, manifest={}, stop_paths=(stop,))
     assert not out.exists()
+
+
+@pytest.mark.parametrize('mode', ['script', 'module'])
+def test_epoch_cli_and_module_import_the_sibling_launcher(tmp_path, mode):
+    root = Path(__file__).resolve().parents[1]
+    command = [str(root / 'scripts/bt4_one_epoch_screen.py')] if mode == 'script' else ['-m', 'scripts.bt4_one_epoch_screen']
+    result = subprocess.run([sys.executable, *command, '--help'],
+                            cwd=tmp_path if mode == 'script' else root,
+                            env={**os.environ, 'PYTHONPATH': '', 'CUDA_VISIBLE_DEVICES': ''},
+                            text=True, capture_output=True, check=True, timeout=10)
+    assert '--manifest' in result.stdout
+    assert '--execute' in result.stdout
