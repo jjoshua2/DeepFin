@@ -8,6 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
+| [BT4 hybrid and global endpoints](2026-09-07-bt4-hybrid-endpoints.md) | H20 selected next; subsequent target, horizon and search tests chosen adaptively |
 | [External archive and restore record](2026-09-07-storage-archive.md) | 38 verified archives, qualified local cleanup, retained dependencies and restore instructions |
 | [Fresh paired BT4 confirmation](2026-09-07-bt4-fresh-confirmation.md) | Completed fresh seed-one comparison: C beats E by 37.67 Elo [18.72, 56.85] at 100 sims |
 | [Direct SF-close versus global sharpened BT4](2026-09-06-bt4-direct-close-global.md) | Completed 100-simulation comparison favors C over G20T05 |
