@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "status": "PASS_CPU_PREPARATION_LAUNCH",
+  "reviewed_unix": 1788817753.3968248,
+  "reviewer": "independent review_pr517_bootstrap",
+  "tool_head": "054042f990c0e1b86787ad1366ccb8abcacc6aab",
+  "inputs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation_plan.json": "a43ca32437855afecb296df9b026d8714904b638be90d4bc0c714785294250a2",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/run_preparation.py": "0bc8cfbbd833432e59065d4486469922435df07d9a58b9459b8eee17e7312140",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation.md": "fa13921775acb73f38ec6e00fc46d6c912d1c9ab364e1816f709bb4621217311",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/cpu_runtime_qualification.json": "c2e93944a76cc3070c6a4a0a6244b0359321fd0f4a4c28d9d032340990106a7b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/command_bootstrap_qualification.json": "62dc52bbd4889874940bb8bdcafb416a487e58c05b62b2725823c3299d4aa652",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/supervisor_qualification.json": "3dfcf5f66a2157363683172feee162bd20a20160e9c2dd80dfc0ebd1d79a514d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/implementation_review.json": "302f1abd79a149365bb782bb28720ba26a7f68ee0da5ec225f89b789ab00c091"
+  },
+  "findings": [],
+  "independent_checks": {
+    "all_103_pins_current": true,
+    "qualified_supervisor_delta": "Exact source comparison: only audit_G50T05.json to audit_H20.json substitution",
+    "source_parent_recipe": "Original SF source; explicitly pinned C20T05 parent; H20 alpha 0.2 with BT4 temperature 0.5; rank cap 3 and 20 cp parent; fixed expected 18910484 rows and 2309 shards",
+    "audit_role": "Descriptive only; same fixed treatment and frozen preregistration; mix requires completed audit under exact plan and unchanged audit receipt",
+    "commands": "Exact argv inspected: CUDA hidden, numeric/compression threads 2, nice 19, ionice class 3, explicit project Python path and config; GNU timeout 1770/14370 seconds with 30-second TERM-to-KILL allowance",
+    "supervision": "Owned new process group; GNU timeout survives coordinator death; STOP and periodic free-space checks; shared stage lock and existing status/output refusal; no automatic retry or partial adoption",
+    "space_free_bytes_at_review": 487934144512,
+    "output_absent": true,
+    "partial_absent": true,
+    "STOP_absent": true,
+    "stage_statuses_absent": true
+  },
+  "author_evidence_reused": {
+    "runtime_and_command_bootstrap": "PASS recorded exact argv with --help only; Python 3.13.15, NumPy 2.2.6, Zarr 2.18.7, Blosc 2 threads; 90 imported project/native files included in pins",
+    "supervisor_fixtures": "Four actual temporary child-process cases: success, TERM-resistant STOP, timeout, disk exception; owned child terminated, unrelated process preserved. Not independently rerun here."
+  },
+  "launch_conditions": [
+    "Parent publishes and retains reviewed tool head and exact pinned files before launching recorded audit/mix stages.",
+    "Each stage performs its existing pin, fresh-output, STOP, lock and disk checks; preserve failures without automatic retry."
+  ],
+  "limits": [
+    "CPU preparation only; no audit or materialization was executed by this review.",
+    "No corpus payload scan, GPU use, runtime mutation, or training/arena authorization is implied by this receipt.",
+    "Full materialized-corpus qualification, training schedule and runtime matching remain required before the separately registered H20 experiment.",
+    "Numeric/compression threads are capped at two; this argv has no CPU affinity binding.",
+    "A coordinator SIGKILL can leave an incomplete status; surviving timeout bounds its child, and recovery must inspect retained state."
+  ]
+}

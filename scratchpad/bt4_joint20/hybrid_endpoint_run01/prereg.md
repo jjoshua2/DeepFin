@@ -2,41 +2,11 @@
 
 Registered September 7, 2026, after the [fresh C/E confirmation](2026-09-07-bt4-fresh-confirmation.md)
 completed and before training or playing outcomes for the new arms. **Status:
-Reviewed implementation merged; CPU corpus materialization running as of 2026-09-07 21:57 UTC. No new training or arena launched.**
+CPU qualification and implementation in progress; no new training or arena launched.**
 The previous screen is complete. This registration selects H20 as the next bounded
 comparison. Subsequent tests are chosen from completed results, not a mandatory
 three-arm or 168-hour queue. Routine choices within the research goal do not need
 individual user approval. Production adoption remains separate.
-
-## Preparation readout — September 7
-
-The implementation merged in [PR #527](https://github.com/jjoshua2/DeepFin/pull/527)
-after independent review, 69 mixer tests, 85 launcher/readout tests and whole-repository
-lint. Execution is frozen at `054042f990c0e1b86787ad1366ccb8abcacc6aab`; the live
-training runtime remains unchanged. The [publication manifest](evidence/bt4-bootstrap/h20-preparation-manifest.json)
-links the complete audit, source identities and independent implementation/preparation
-reviews. Archived host commands and PIDs are historical evidence, not instructions
-to restart jobs.
-
-The actual [descriptive audit](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/audit_H20.json)
-completed in 10.40 seconds with target invariants passing. Across the existing
-4,000-position bank, H20 minus original SF expected deep-SF regret was −5.10 cp
-(position-bootstrap 95% interval [−6.64, −3.67]); top-choice regret changed by
-−8.13 cp [−10.17, −6.28]. These diagnostics use the older FEN-only BT4 cache,
-whereas materialization uses history-aware training sidecars. They do not measure
-playing strength or compare H20 against C20T05. The registered arena package remains
-the deciding evidence.
-
-Corpus materialization started at 21:51:14 UTC under the reviewed CPU supervisor,
-with a four-hour cap and a 150 GiB free-space reserve. It must complete its full
-source/parent/target checks before corpus and prospective schedule qualification.
-No H20 training or playing result is available at this snapshot.
-
-A [readiness note](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_experiment_options.md)
-identifies pure BT4 as the most distinct available endpoint and G50 as the easiest
-prepared alternative. Longer training and raw-cp SF targets address separate major
-uncertainties, but require qualified implementation changes. These remain conditional
-options: no next candidate has been selected before H20's completed readout.
 
 ## Question and candidate options
 
