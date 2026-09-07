@@ -197,3 +197,15 @@ with open(sys.argv[2],'a') as lease:
             if child.poll() is None:
                 child.kill()
                 child.wait(timeout=2)
+
+
+def test_experiment_root_override_reaches_checkpoint_and_live_config(tmp_path):
+    source = tmp_path / 'data root'
+    probe = "import json,runpy,sys; m=runpy.run_path(sys.argv[1]); print(json.dumps(dict(root=str(m['ROOT']),candidate=str(m['CHECKPOINTS']['candidate'][1]),live_config=m['environment']()['CHESS_ANTI_ENGINE_LIVE_CONFIG'])))"
+    actual = json.loads(subprocess.check_output(
+        [sys.executable, '-c', probe, str(SCRIPT)],
+        env={**os.environ, 'CHESS_EXPERIMENT_ROOT': str(source), 'CUDA_VISIBLE_DEVICES': ''},
+        text=True, timeout=10))
+    assert actual['root'] == str(source)
+    assert Path(actual['candidate']).is_relative_to(source)
+    assert actual['live_config'] == str(source / '.dev/worktree/wise-cloud/configs/pbt2_small.yaml')

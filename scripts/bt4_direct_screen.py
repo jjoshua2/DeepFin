@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 
-ROOT = Path('/home/josh/projects/chess')
+ROOT = Path(os.environ.get('CHESS_EXPERIMENT_ROOT', Path.home() / 'projects/chess')).expanduser().resolve()
 RUNTIME = ROOT / '.dev/worktree/wise-cloud'
 HEAD = '7ec261509fb7345cf1ca0ad73809193fc2749bb1'
 READER = Path('/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py')

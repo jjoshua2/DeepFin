@@ -62,7 +62,9 @@ epoch consumption without wrapping or silently truncating. Follow
 The BT4 direct screen retains its pinned host-local reader at
 `/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py`, plus its frozen runtime
 and development opening book. Updating the repository reader does not migrate
-that executed protocol; the linked registration records its identities.
+that executed protocol; the linked registration records its identities. Set
+`CHESS_EXPERIMENT_ROOT` to the data-owning repository when it differs from
+`~/projects/chess`; the launcher checkout can remain separate.
 
 The varying-horizon tools follow their [staged protocol](experiments/varying_horizon_online_controller.md),
 including grouped source identities and limits on interpretation.

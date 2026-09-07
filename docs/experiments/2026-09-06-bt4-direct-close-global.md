@@ -101,8 +101,8 @@ new arena output directory, exact executable/input hashes and the 100-simulation
 5,400-second choice. From the reviewed launcher checkout:
 
 ```bash
-/usr/bin/python3 scripts/bt4_direct_screen.py --manifest /home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/launch_manifest.json
-/usr/bin/python3 scripts/bt4_direct_screen.py --manifest /home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/launch_manifest.json --execute
+/usr/bin/python3 scripts/bt4_direct_screen.py --manifest ~/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/launch_manifest.json
+/usr/bin/python3 scripts/bt4_direct_screen.py --manifest ~/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/launch_manifest.json --execute
 ```
 
 The prospective snapshot above remains pinned under the state directory. The
