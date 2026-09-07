@@ -27,7 +27,7 @@ primary; 400 simulations is also relevant to deployment.
 
 | Training recipe | 25 sims: Elo [95% CI] | 100 sims | 400 sims |
 | --- | --- | --- | --- |
-| E0: raw BT4 redistribution among exact SF maxima | +98.07 [80.94, 115.68] | +91.71 [74.09, 109.81] | +93.20 [77.60, 109.18] |
+| E0: raw BT4 redistribution among stored SF target maxima | +98.07 [80.94, 115.68] | +91.71 [74.09, 109.81] | +93.20 [77.60, 109.18] |
 | G20T1: 80% SF + 20% global raw BT4 | +62.15 [46.59, 77.97] | +58.21 [42.69, 73.97] | +76.61 [61.16, 92.36] |
 | G20T05: 80% SF + 20% global BT4 at T0.5 | +103.73 [87.77, 120.13] | +109.07 [91.63, 127.06] | +114.07 [98.28, 130.32] |
 
@@ -35,6 +35,8 @@ These are direct comparisons against S0, not head-to-head Elo between the recipe
 S0 trains on the stored sharp SF targets. Global mixtures normalize each legal
 teacher distribution before mixing; T0.5 squares BT4 probabilities before
 normalization. Teacher temperature and search-prior temperature are distinct.
+The "exact ties" label refers to equality of stored SF policy targets; quantization
+or saturation can create ties that are absent from the underlying SF scores.
 
 The registered raw-minus-sharpened common-S0 score contrasts favor sharpening:
 at 25/100/400 simulations, differences are -5.65/-6.90/-5.00 percentage points,
