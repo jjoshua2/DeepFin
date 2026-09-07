@@ -45,6 +45,41 @@ per source-qualified game, preflight memory and target masks, and account for co
 epoch consumption without wrapping or silently truncating. Follow
 [target rebuildability](target_rebuildability.md) for retained observations and identity.
 
+## Uninterrupted offline game epochs
+
+`scripts/lc0_control_train.py --sampling-mode game_epoch --steps 0 --epochs 2`
+trains two complete passes through one frozen corpus using one freshly initialized
+trainer. `--epochs` defaults to 1, preserving the existing one-epoch path; values
+above one require `--steps 0`. This interface does not resume old checkpoints.
+Each epoch uses sampling seed `--seed + epoch_index - 1`. The optimizer, scheduler,
+Torch RNG and augmentation RNG continue across boundaries. The usual 88-step
+windows restart at each epoch, including a separate short final window per pass.
+The corpus is revalidated and replanned at each boundary; budget that CPU and disk
+work as well as training. Corpus fingerprint or planned batch-count changes abort.
+
+Successful runs publish `checkpoint_epoch1.pt` and final `checkpoint.pt`, with
+both identities in `summary.json`. The existing `checkpoint_mid.pt` remains a
+run-budget snapshot snapped to an actual interior window endpoint, including
+ragged epoch boundaries (equal-distance ties choose the earlier endpoint). For
+two epochs at the default half-budget fraction it coincides with epoch one; it
+need not do so for other epoch counts or fractions. Until all epochs and realized
+loss guards pass, the first-epoch snapshot is named `checkpoint_epoch1.pending.pt`.
+A failed run can retain that diagnostic artifact, but emits no completed summary
+or published epoch-one checkpoint, and output reuse is refused. Multi-epoch
+`sampling.mode` is `game_epochs`: its `epochs` list records each sampling seed,
+planned/realized schedule hashes, rows, batches, window count and cumulative step
+boundaries. Window records also identify their epoch. Readers that require one
+`game_epoch` must explicitly support this different receipt before using it.
+
+These runs retain the historical `valid_control: false` limitations of exact
+sampling. Current main additionally uses corpus fingerprints and corpus-wide
+objective-mask loss normalization absent from the frozen wise-cloud BT4 runtime.
+A horizon comparison must train both target families freshly under the same
+qualified implementation and compare each trajectory's own epoch-one/epoch-two
+checkpoints. Comparing a new two-epoch run with an old frozen-runtime one-epoch
+checkpoint would confound training duration with objective/backend changes.
+This interface does not select an experiment or alter the active H20 protocol.
+
 ## Playing and measurement
 
 | Question | Entry point |

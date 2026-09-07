@@ -322,7 +322,8 @@ def min_budget_for_mid_tolerance(window: int) -> int:
 
 # The artifacts a completed (or half-completed) run leaves behind. `--out-dir`
 # reuse is refused when any of these is present -- see `existing_run_artifacts`.
-RUN_ARTIFACTS = ("checkpoint.pt", "checkpoint_mid.pt", "summary.json")
+RUN_ARTIFACTS = ("checkpoint.pt", "checkpoint_mid.pt", "summary.json",
+                 "checkpoint_epoch1.pt", "checkpoint_epoch1.pending.pt")
 
 
 def existing_run_artifacts(out_dir: Path) -> list[str]:
@@ -433,8 +434,25 @@ def mid_step_on_window_boundary(*, steps: int, window: int, frac: float) -> int:
     return min(max(boundary, window), steps - window)
 
 
+def game_epoch_window_endpoints(*, epoch_steps: int, epochs: int, window: int) -> tuple[int, ...]:
+    """Actual endpoints when the final partial window closes each epoch."""
+    return tuple(
+        epoch_index * epoch_steps + min(start + window, epoch_steps)
+        for epoch_index in range(epochs)
+        for start in range(0, epoch_steps, window)
+    )
+
+
+def mid_step_on_epoch_boundary(*, endpoints: tuple[int, ...], frac: float) -> int:
+    """Nearest interior window endpoint; exact distance ties choose the earlier."""
+    if frac <= 0.0 or len(endpoints) < 2:
+        return 0
+    target = frac * endpoints[-1]
+    return min(endpoints[:-1], key=lambda step: (abs(step - target), step))
+
+
 def checkpoint_identities(
-    *, last: Path, mid: Path | None,
+    *, last: Path, mid: Path | None, epoch_one: Path | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """``(run_id, [{role, path, sha256}])`` — THIS trajectory's identity.
 
@@ -468,6 +486,9 @@ def checkpoint_identities(
     if mid is not None:
         entries.insert(0, {"role": "mid", "path": str(Path(mid).resolve()),
                            "sha256": sha256_file(mid)})
+    if epoch_one is not None:
+        entries.append({"role": "epoch1", "path": str(epoch_one.resolve()),
+                        "sha256": sha256_file(epoch_one)})
     fingerprint = "|".join(
         f"{entry['role']}:{entry['sha256']}"
         for entry in sorted(entries, key=lambda e: str(e["role"]))
@@ -1561,6 +1582,83 @@ def _scalar_metric_record(metrics: Any) -> dict[str, Any]:
     }
 
 
+def _train_multiple_game_epochs(
+    trainer: Trainer, first: GameAwareEpochBuffer, *, buffer_kwargs: dict[str, Any],
+    epochs: int, seed: int, batch_size: int, window_steps: int,
+    epoch_one_pending: Path,
+) -> tuple[Any, int, list[dict[str, Any]], dict[str, Any]]:
+    """Uninterrupted trajectory; fresh sampling order, continuous augmentation RNG."""
+    buf = first
+    corpus_sha = first.plan.corpus_sha256
+    epoch_batches = first.num_batches
+    augmentation_rng = first.rng
+    records: list[dict[str, Any]] = []
+    windows: list[dict[str, Any]] = []
+    steps_done = 0
+    metrics: Any = None
+    try:
+        for epoch_index in range(epochs):
+            if epoch_index:
+                buf = GameAwareEpochBuffer(**buffer_kwargs, seed=seed + epoch_index)
+                # Replanning uses separate streams; do not restart augmentation.
+                buf.rng = augmentation_rng
+            if buf.plan.corpus_sha256 != corpus_sha or buf.num_batches != epoch_batches:
+                raise RuntimeError("exact-epoch corpus or batch count changed between passes")
+            epoch_steps = 0
+            start_window = len(windows)
+            while epoch_steps < epoch_batches:
+                requested = min(window_steps, epoch_batches - epoch_steps)
+                metrics = trainer.train_steps(
+                    _as_replay_buffer(buf), batch_size=batch_size, steps=requested,
+                )
+                values = _scalar_metric_record(metrics)
+                if (
+                    values["train_steps_done"] != requested
+                    or values["transient_cuda_retry_batches"] != 0
+                    or values["grad_nonfinite_skip_rate"] != 0
+                    or any(isinstance(value, float) and not np.isfinite(value)
+                           for value in values.values())
+                ):
+                    raise RuntimeError("exact-epoch optimizer window incomplete, retried or nonfinite")
+                epoch_steps += requested
+                steps_done += requested
+                windows.append({
+                    "window_index": len(windows) + 1, "epoch_index": epoch_index + 1,
+                    "epoch_window_index": len(windows) - start_window + 1,
+                    "steps_requested": requested, "steps_cumulative": steps_done,
+                    "epoch_steps_cumulative": epoch_steps, **values,
+                })
+                print(f"[train] epoch {epoch_index + 1}/{epochs}, "
+                      f"{epoch_steps}/{epoch_batches} steps; total {steps_done}", flush=True)
+            receipt = dict(buf.receipt())
+            if not receipt["complete"] or sum(
+                item["train_samples_seen"] for item in windows[start_window:]
+            ) != receipt["rows_realized"]:
+                raise RuntimeError("exact-epoch row/schedule completion guard failed")
+            records.append({"epoch_index": epoch_index + 1,
+                            "steps_start": steps_done - epoch_steps,
+                            "steps_end": steps_done,
+                            "window_count": len(windows) - start_window,
+                            "sampling": receipt})
+            if epoch_index == 0:
+                # Published only after every epoch and the realized loss guards pass.
+                trainer.save(epoch_one_pending)
+            buf.close()
+    finally:
+        buf.close()
+    return metrics, steps_done, windows, {
+        "mode": "game_epochs", "complete": len(records) == epochs,
+        "epochs_requested": epochs, "epochs_completed": len(records),
+        "sampling_seed_rule": "seed + zero_based_epoch_index",
+        "augmentation_rng": "continuous_from_epoch_one",
+        "corpus_sha256": corpus_sha,
+        "rows_realized": sum(item["sampling"]["rows_realized"] for item in records),
+        "batches_realized": sum(item["sampling"]["batches_realized"] for item in records),
+        "epochs": records,
+        "loss_normalization": "sum(weighted_masked_numerator*corpus_rows/objective_mask_weight)/batch_size",
+    }
+
+
 def print_realized(capture: _LossCapture, metrics: Any) -> None:
     """The realized-vs-configured table, head losses, and head denominators."""
     readout = capture.worst
@@ -1609,6 +1707,7 @@ def control_validity_problems(
     configured_batch_size: int,
     live_config_unread: bool,
     live_game_frac: float,
+    window_endpoints: tuple[int, ...] | None = None,
 ) -> list[str]:
     """Every reason this run is not a valid control — ONE implementation.
 
@@ -1711,10 +1810,12 @@ def control_validity_problems(
   # PASSING knob. `mid_step_on_window_boundary` now snaps MID to a boundary at
   # the source; this entry is what says so if any future path does not.
             (mid_saved_at_step is not None and window_steps > 0
-             and mid_saved_at_step % window_steps != 0,
+             and (mid_saved_at_step not in window_endpoints if window_endpoints is not None
+                  else mid_saved_at_step % window_steps != 0),
              f"the mid checkpoint sits at step {mid_saved_at_step}, which is NOT "
-             f"a multiple of the {window_steps}-step train window: with "
-             "`lr_release_cycle_steps: 0` the LR release cycle is derived from "
+             + ("an actual train-window endpoint: with " if window_endpoints is not None
+                else f"a multiple of the {window_steps}-step train window: with ")
+             + "`lr_release_cycle_steps: 0` the LR release cycle is derived from "
              "each call's step count, so MID is at a different phase of the "
              "anneal from LAST and part of the MID->LAST difference is the LR "
              "moving, not the trainer learning"),
@@ -1796,8 +1897,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--steps", type=int, required=True,
         help="optimizer steps. With --sampling-mode game_epoch, 0 resolves to "
-             "the exact one-epoch step count and any positive value must equal "
+             "the exact requested-epoch step count. With one epoch a positive value must equal "
              "it; the sampler never truncates or wraps a corpus.",
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=1,
+        help="complete uninterrupted game epochs (default 1). More than one "
+             "requires game_epoch and --steps 0; sampling seed is seed+epoch-1. "
+             "Optimizer, Torch RNG and augmentation RNG continue across epochs.",
     )
     parser.add_argument(
         "--sampling-mode", choices=("replacement", "game_epoch"),
@@ -1914,6 +2021,10 @@ def main(argv: list[str] | None = None) -> int:
              "corpus to the held-out purity check.",
     )
     args = parser.parse_args(argv)
+    if args.epochs < 1 or (args.epochs > 1 and (
+        args.sampling_mode != "game_epoch" or args.steps != 0
+    )):
+        parser.error("--epochs must be positive; multiple epochs require game_epoch and --steps 0")
 
     arch_provenance = preflight_architecture(
         Path(args.config), allow_drift=bool(args.allow_arch_drift),
@@ -2051,6 +2162,7 @@ def main(argv: list[str] | None = None) -> int:
   # artifact saying so); the realized values are banked in summary.json.
     replay_kwargs = apply_control_deviations(replay_kwargs_signature(cfg))
     realized_replay: dict[str, Any]
+    epoch_buffer_kwargs: dict[str, Any] = {}
     if args.sampling_mode == "game_epoch":
         accum_steps = int(trainer.accum_steps)
         if accum_steps != 1:
@@ -2082,26 +2194,26 @@ def main(argv: list[str] | None = None) -> int:
                 "to fewer than one byte",
             )
         epoch_input_planes = replay_kwargs.get("input_planes")
-        buf: Any = GameAwareEpochBuffer(
-            shard_dir=out_dir / "staged_shards",
-            batch_size=batch_size,
-            seed=int(args.seed),
-            input_planes=(
+        epoch_buffer_kwargs = {
+            "shard_dir": out_dir / "staged_shards",
+            "batch_size": batch_size,
+            "input_planes": (
                 None if epoch_input_planes is None else int(epoch_input_planes)
             ),
-            input_history_encoding=model_cfg.input_history_encoding,
-            history_rep_fix=bool(model_cfg.history_rep_fix),
-            mirror_augmentation=float(trainer.mirror_prob) > 0.0,
-            plan_workers=int(args.epoch_plan_workers),
-            load_workers=int(args.epoch_load_workers),
-            max_working_set_bytes=epoch_max_working_set_bytes,
-            objective_mask_counter=trainer.exact_objective_mask_counter,
-        )
-        epoch_steps = buf.num_batches
+            "input_history_encoding": model_cfg.input_history_encoding,
+            "history_rep_fix": bool(model_cfg.history_rep_fix),
+            "mirror_augmentation": float(trainer.mirror_prob) > 0.0,
+            "plan_workers": int(args.epoch_plan_workers),
+            "load_workers": int(args.epoch_load_workers),
+            "max_working_set_bytes": epoch_max_working_set_bytes,
+            "objective_mask_counter": trainer.exact_objective_mask_counter,
+        }
+        buf: Any = GameAwareEpochBuffer(**epoch_buffer_kwargs, seed=int(args.seed))
+        epoch_steps = buf.num_batches * args.epochs
         if int(args.steps) == 0:
             args.steps = epoch_steps
             print(f"[data] --steps 0 resolved to exact epoch: {epoch_steps} "
-                  f"optimizer steps / {buf.num_batches} microbatches")
+                  f"optimizer steps across {args.epochs} epoch(s)")
         elif int(args.steps) != epoch_steps:
             raise SystemExit(
                 "REFUSING TO LAUNCH — --sampling-mode game_epoch planned "
@@ -2180,8 +2292,9 @@ def main(argv: list[str] | None = None) -> int:
           + json.dumps(realized_replay, sort_keys=True))
 
     window_steps, n_windows, cadence_problem = train_window_plan(
-        steps=int(args.steps), window=int(args.train_window_steps),
+        steps=int(args.steps) // args.epochs, window=int(args.train_window_steps),
     )
+    n_windows *= args.epochs
   # ⚑⚑ SNAPPED TO A WINDOW BOUNDARY, not `int(frac * steps)` clamped to the
   # interior. See `mid_step_on_window_boundary`: the fraction guard bounds a
   # PROXY (±0.01 is ±2 whole windows at the arm's budget), so a passing knob
@@ -2192,6 +2305,14 @@ def main(argv: list[str] | None = None) -> int:
         steps=int(args.steps), window=int(window_steps),
         frac=float(args.mid_checkpoint_frac),
     )
+    epoch_endpoints = None
+    if args.epochs > 1:
+        epoch_endpoints = game_epoch_window_endpoints(
+            epoch_steps=int(args.steps) // args.epochs, epochs=args.epochs, window=window_steps,
+        )
+        mid_step = mid_step_on_epoch_boundary(
+            endpoints=epoch_endpoints, frac=float(args.mid_checkpoint_frac),
+        )
     mid_ckpt = out_dir / "checkpoint_mid.pt"
     print(f"[train] {n_windows} window(s) of {window_steps} step(s) "
           f"(production cadence ~{PRODUCTION_TRAIN_WINDOW_STEPS}/iteration; the "
@@ -2202,7 +2323,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[train] mid-budget checkpoint at step {mid_step} of "
               f"{int(args.steps)} ({mid_step / max(int(args.steps), 1):.4f} of "
               f"the budget, window boundary "
-              f"{mid_step // max(int(window_steps), 1)}/{n_windows})")
+              f"{epoch_endpoints.index(mid_step) + 1 if epoch_endpoints is not None else mid_step // max(int(window_steps), 1)}/{n_windows})")
 
   # ⚑⚑ THE LAUNCH-TIME REFUSAL. EVERY entry below is knowable from the
   # arguments, the config and the plan — and until this call existed they were
@@ -2239,6 +2360,7 @@ def main(argv: list[str] | None = None) -> int:
         live_config_unread=(_LIVE_FILE_UNREAD in arch_provenance
                             or _LIVE_FILE_UNREAD in trainer_provenance),
         live_game_frac=live_game_frac,
+        window_endpoints=epoch_endpoints,
     )
     if args.sampling_mode == "game_epoch":
         planned_problems.append(
@@ -2263,6 +2385,7 @@ def main(argv: list[str] | None = None) -> int:
         print("⚑⚑ --allow-invalid-control: THIS RUN IS NOT A VALID CONTROL and "
               "its artifact cannot be quoted:\n  " + "\n  ".join(planned_problems))
     train_window_metrics: list[dict[str, Any]] = []
+    multi_sampling_receipt: dict[str, Any] | None = None
     with CaptureRealizedLosses(
         rebuild_categorical=bool(kwargs["rebuild_categorical_target"]),
         categorical_params=kwargs["categorical_target_params"],
@@ -2303,31 +2426,37 @@ def main(argv: list[str] | None = None) -> int:
   # ignored". A short final window is safe for the LR: `_scale_for_window_step`
   # returns `min_scale` at `local_step == cycle_steps - 1` for ANY cycle length
   # (measured), so LAST still sits at the bottom of a release cycle.
-        steps_done = 0
-        for window_index in range(n_windows):
-            this_window = min(int(window_steps), int(args.steps) - steps_done)
-            if this_window <= 0:
-                break
-            metrics = trainer.train_steps(
-                _as_replay_buffer(buf), batch_size=batch_size,
-                steps=this_window,
+        if args.epochs > 1:
+            metrics, steps_done, train_window_metrics, multi_sampling_receipt = _train_multiple_game_epochs(
+                trainer, buf, buffer_kwargs=epoch_buffer_kwargs, epochs=args.epochs,
+                seed=int(args.seed), batch_size=batch_size, window_steps=window_steps,
+                epoch_one_pending=out_dir / "checkpoint_epoch1.pending.pt",
             )
-            steps_done += this_window
-            train_window_metrics.append({
-                "window_index": int(window_index + 1),
-                "steps_requested": int(this_window),
-                "steps_cumulative": int(steps_done),
-                **_scalar_metric_record(metrics),
-            })
-            if n_windows > 1:
-                # flush=True is load-bearing: stdout redirected to a file is
-                # 8KB block-buffered, and at ~60 bytes/line ~136 windows sat
-                # invisible between flushes — the 2026-08-27 2x run read as
-                # "stalled for 3 hours" while perfectly healthy.
-                print(f"[train] window {window_index + 1}/{n_windows} "
-                      f"({this_window} steps) done, "
-                      f"{steps_done} of {int(args.steps)}", flush=True)
-
+        else:
+            steps_done = 0
+            for window_index in range(n_windows):
+                this_window = min(int(window_steps), int(args.steps) - steps_done)
+                if this_window <= 0:
+                    break
+                metrics = trainer.train_steps(
+                    _as_replay_buffer(buf), batch_size=batch_size,
+                    steps=this_window,
+                )
+                steps_done += this_window
+                train_window_metrics.append({
+                    "window_index": int(window_index + 1),
+                    "steps_requested": int(this_window),
+                    "steps_cumulative": int(steps_done),
+                    **_scalar_metric_record(metrics),
+                })
+                if n_windows > 1:
+                    # flush=True is load-bearing: stdout redirected to a file is
+                    # 8KB block-buffered, and at ~60 bytes/line ~136 windows sat
+                    # invisible between flushes — the 2026-08-27 2x run read as
+                    # "stalled for 3 hours" while perfectly healthy.
+                    print(f"[train] window {window_index + 1}/{n_windows} "
+                          f"({this_window} steps) done, "
+                          f"{steps_done} of {int(args.steps)}", flush=True)
     if metrics is None:
         raise SystemExit(
             f"no training window ran (--steps {int(args.steps)}, "
@@ -2337,7 +2466,10 @@ def main(argv: list[str] | None = None) -> int:
     if capture.calls == 0:
         raise SystemExit("compute_loss was never called — no step ran")
 
-    if isinstance(buf, GameAwareEpochBuffer):
+    if args.epochs > 1:
+        assert multi_sampling_receipt is not None
+        sampling_receipt = multi_sampling_receipt
+    elif isinstance(buf, GameAwareEpochBuffer):
         sampling_receipt = {
             **buf.receipt(),
             # Applied by Trainer._run_optimizer_step on every exact batch and
@@ -2408,6 +2540,10 @@ def main(argv: list[str] | None = None) -> int:
 
     ckpt = out_dir / "checkpoint.pt"
     trainer.save(ckpt)
+    epoch_one = None
+    if args.epochs > 1:
+        epoch_one = out_dir / "checkpoint_epoch1.pt"
+        (out_dir / "checkpoint_epoch1.pending.pt").replace(epoch_one)
   # ⚑ AFTER both saves, because the identity IS the file bytes. See
   # `checkpoint_identities`: `valid_control` was a verdict about a RUN with
   # nothing tying it to a FILE, so `lc0_control_eval score` could bank a valid
@@ -2415,6 +2551,7 @@ def main(argv: list[str] | None = None) -> int:
   # LAST checkpoints from different trajectories as LAST-vs-MID-BUDGET.
     run_id, checkpoint_records = checkpoint_identities(
         last=ckpt, mid=mid_ckpt if mid.saved_at_step is not None else None,
+        epoch_one=epoch_one,
     )
   # ⚑ THE SAME FUNCTION THE LAUNCH REFUSAL CALLED, with the ONE input that could
   # not be known in advance replaced by its realized value. Two copies of this
@@ -2438,6 +2575,8 @@ def main(argv: list[str] | None = None) -> int:
         live_config_unread=(_LIVE_FILE_UNREAD in arch_provenance
                             or _LIVE_FILE_UNREAD in trainer_provenance),
         live_game_frac=live_game_frac,
+        window_endpoints=(tuple(row["steps_cumulative"] for row in train_window_metrics)
+                          if args.epochs > 1 else None),
     )
     if args.sampling_mode == "game_epoch":
         validity_problems.append(
