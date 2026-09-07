@@ -204,3 +204,12 @@ resume was14,377,828 primary rows plus2,796,072 companion rows, totaling17,173,9
 Closed shards remain authoritative; in-flight games are replayed by the existing
 deterministic recovery protocol. The unchanged G10 BT4 banker resumed after its
 output was checked for partial sidecars and CUDA availability was verified.
+
+
+## September 6 corrected-prior readout
+
+The [completed bootstrap results](2026-09-06-bt4-bootstrap-results.md) record the
+prospective correction to search-prior temperature 1.0, completed nine-cell screen,
+independent reviews, current SF-close follow-up and remaining confirmation. Its
+results supersede an interpretation based on the inherited prior 1.5. Training
+recipes and the original evidence above remain preserved.
