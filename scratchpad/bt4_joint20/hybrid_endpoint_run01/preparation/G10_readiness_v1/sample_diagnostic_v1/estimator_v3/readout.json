@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "status": "PASS_BOUNDED_OBSERVATION_AND_JOIN",
+  "preregistration_sha256": "d870714ef335e97a66fd24172754d48cad3ffd2cf3cb08d12dbfdec005804291",
+  "frozen_raw_bank_sha256": "0835f6424d028b767e437f07a2a06df99896fcb5e7174d68652242664349090a",
+  "script_sha256": "b3928e0a20fa7856bb6c31fa2b1596d22185f2b0daf13c614c749c075deefb2b",
+  "elapsed_seconds": 1.1180040836334229,
+  "sampled_rows": 128,
+  "valid_complete_d9_derived_join_rows": 128,
+  "writer_roundtrip_rows": 128,
+  "source_qualified_games": 3,
+  "phase_count_strata": {
+    "('run06_g10', 2)": 49,
+    "('run06_g10', 3)": 15,
+    "('run07_g10_companion4', 3)": 11,
+    "('run07_g10_companion4', 2)": 53
+  },
+  "rows_with_changed_cp": 126,
+  "rows_with_argmax_change": 36,
+  "rows_with_stored_max_set_change": 40,
+  "rows_with_consistent_close_set_change": 53,
+  "rows_where_phase0_rank1_not_latest_stored_max": 36,
+  "mean_stored_policy_l1": 0.5507483515167059,
+  "rows_with_changed_searched_wdl": 114,
+  "max_searched_wdl_abs_delta": 0.13974612951278687,
+  "raw_input_key_changes_after_float16_storage_rows": 128,
+  "max_input_storage_abs_quantization_error": 0.00023508071899414062,
+  "bare_game_ply_keys_colliding_across_sources": 35,
+  "errors": [],
+  "limitations": [
+    "Training-only deterministic first64 rows of two closed shards; limited games and phase coverage, no prevalence/heldout/strength claim.",
+    "Current writer exercised on64-row diagnostic shards, not production8192-row sequence/parallel scheduling.",
+    "Current latest-phase search_wdl was preserved; phase0 value differences are diagnostic only, not a selected transfer value target.",
+    "No full corpus qualification, inference, GPU, generator or labeler mutation."
+  ],
+  "artifacts": {
+    "errors.jsonl": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "selected_arrays.npz": {
+      "bytes": 134872,
+      "sha256": "c4efeee543b2a2b533eea5ab9abe865c1635e87b969a9a70d0f0ca9b2cfe5bf6"
+    },
+    "row_join.jsonl": {
+      "bytes": 75927,
+      "sha256": "3b00b28e31d62fb255d0c8cedef58c841e3405cbc825303df73543836c80cbd7"
+    },
+    "row_readout.jsonl": {
+      "bytes": 98395,
+      "sha256": "aa8c7c0b9eb789a5a25b3008bd23ca71c40210b36eebddd631533452ae8aa5da"
+    }
+  },
+  "implementation_sha256": {
+    "scripts/derive_corpus_targets.py": "92ab1e1d9bcdf206c9e1e563a117d9e5161deddaef3506d3c1e8ac4c28ec3e9a",
+    "scripts/gen_sf_rooted_corpus.py": "4bb5e22e81db93c74cfe88d2362136311b001e40e0254f8ff0adc9f3858ea655",
+    "scripts/sf_d9_rank_sidecar.py": "6d715920812f1365698e3b78d21060d837a81013e2883357579e2c99d926fb55",
+    "scripts/bt4_raw_corpus_sidecar.py": "eb85a1d0db620f4e78d68685157fff73d3ac98840b92d732338c7ce07c59e632"
+  }
+}

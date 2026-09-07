@@ -1,0 +1,38 @@
+{
+  "scripts/bt4_raw_corpus_sidecar.py": {
+    "active_runtime_path": ".dev/worktree/wise-cloud/scripts/bt4_raw_corpus_sidecar.py",
+    "active_runtime_sha256": "eb85a1d0db620f4e78d68685157fff73d3ac98840b92d732338c7ce07c59e632",
+    "frozen_main_tool_sha256": "eb85a1d0db620f4e78d68685157fff73d3ac98840b92d732338c7ce07c59e632",
+    "same_bytes": true
+  },
+  "scripts/derive_corpus_targets.py": {
+    "active_runtime_path": ".dev/worktree/wise-cloud/scripts/derive_corpus_targets.py",
+    "active_runtime_sha256": "92ab1e1d9bcdf206c9e1e563a117d9e5161deddaef3506d3c1e8ac4c28ec3e9a",
+    "frozen_main_tool_sha256": "92ab1e1d9bcdf206c9e1e563a117d9e5161deddaef3506d3c1e8ac4c28ec3e9a",
+    "same_bytes": true
+  },
+  "scripts/gen_sf_rooted_corpus.py": {
+    "active_runtime_path": ".dev/worktree/wise-cloud/scripts/gen_sf_rooted_corpus.py",
+    "active_runtime_sha256": "4bb5e22e81db93c74cfe88d2362136311b001e40e0254f8ff0adc9f3858ea655",
+    "frozen_main_tool_sha256": "4bb5e22e81db93c74cfe88d2362136311b001e40e0254f8ff0adc9f3858ea655",
+    "same_bytes": true
+  },
+  "scripts/sf_d9_rank_sidecar.py": {
+    "active_runtime_path": ".dev/worktree/wise-cloud/scripts/sf_d9_rank_sidecar.py",
+    "active_runtime_sha256": "6d715920812f1365698e3b78d21060d837a81013e2883357579e2c99d926fb55",
+    "frozen_main_tool_sha256": "6d715920812f1365698e3b78d21060d837a81013e2883357579e2c99d926fb55",
+    "same_bytes": true
+  },
+  "scripts/bt4_policy_mix.py": {
+    "active_runtime_path": ".dev/worktree/wise-cloud/scripts/bt4_policy_mix.py",
+    "active_runtime_sha256": "ba7221c7b669c7c228f263320bbf4006cb1847e508c6fce5418a13a5928e38a5",
+    "frozen_main_tool_sha256": "c897fae3c6455e896f078c133e9d3a98b8eb9d86038369ccf8bcf5faf5f3759d",
+    "same_bytes": false
+  },
+  "scratchpad/bt4_g10_raw/driver.sh": {
+    "sha256": "e309086e111c9f7b4bd2b3807573e84ee38c39fb1a46b5e5385e6609207044e9"
+  },
+  "scratchpad/bt4_joint20/global_dose50_v1/data_transfer_notes.json": {
+    "sha256": "4b1d74ddafdf4e9443b23d51e0119bf991860525ad007fb79bae93b4cfc4f9da"
+  }
+}

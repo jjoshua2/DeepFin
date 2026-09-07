@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "status": "PASS_PROSPECTIVE_PILOT_PUBLICATION_SUPPLEMENT",
+  "reviewer": "review_pr517_bootstrap",
+  "reviewed_unix": 1788823041.5677602,
+  "prior_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/publication_independent_review.json",
+    "sha256": "d4b7127d2c4de7da90717a0ad171bd5030ecb6a3ef2a3868a03a6771765c74eb"
+  },
+  "files": {
+    "docs/experiments/2026-09-07-g10-transfer-readiness.md": "9628dd427ec93eca174b786b37299dad8d2415b90142b24f08433a6164cc65f2",
+    "docs/experiments/evidence/bt4-bootstrap/g10-readiness-manifest.json": "7bffb9f1baf9c674931d6ab8f08544622e1cff429aafcf20e9800c9250f7d696",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/preregistration.json": "a8b0d58b0ce3873c776dc9941efe2e6d90058eb516e26e9faea77c8c53f22e85",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.closed_receipt.jsonl": "4248301efc9798b8f276cabdeaa16a7df72f411ba1978891fc6a93351d60a984",
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.closed_receipt.jsonl": "f16bbbc8d38731dc7d18efdce93b8c4b4711b0bfdce7abba72002f23517c6056"
+  },
+  "findings": [],
+  "checks": [
+    "All original 16 evidence copies and index unchanged; 3 added machine-registration/closed-receipt files match root originals, SHA256 and sizes.",
+    "Registered first complete shard counts 8236 + 8243 = 16479 and raw source hashes agree with previously reviewed membership; no raw corpus reread.",
+    "Phase0 policy plus latest-phase searched value, uniform-d9 temperature .0005 floor0, rank top3, C/H ordinary admission and non-policy/schedule checks are coherent bounded pipeline qualification.",
+    "Document and machine registration agree on 1800-second inclusive wall cap, 8 GiB new output/cache, 150 GiB reserve, 16 MiB identity cache, 2 threads/cores, nice19/idleIO and CUDA hidden.",
+    "Selection is prospective filename-based, exclusions must be reported, failure stops dependent stages without retry; no strength, full-corpus readiness or 100M throughput claim.",
+    "All dated-record relative links resolve; added records contain deliberate host provenance and no detected credential patterns."
+  ],
+  "limits": [
+    "Publication/scientific registration only. No actual launch commands, interpreter pins or resource-supervisor implementation is selected or qualified by this supplement.",
+    "No operational scans, payload hashes, GPU jobs, tests or runtime mutation.",
+    "Adapter and selector reviews remain separate; rank consumer follow-up and combined static gate pending."
+  ]
+}

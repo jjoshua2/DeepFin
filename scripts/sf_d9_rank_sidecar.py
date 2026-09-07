@@ -3,7 +3,9 @@
 
 The frozen NNUE-bootstrap corpus stores a deliberately cold d9 policy, which
 does not retain the centipawn gaps needed to distinguish true near ties from
-float16 probability ties.  This tool replays the original derivation's prefix,
+float16 probability ties. Sources with row provenance join by physical source
+rows and verified full-history keys, independently of output shuffle/repacking.
+Legacy sources replay the original derivation's prefix,
 drop rule, shard boundaries, and within-shard permutation, then writes the
 top-ranked compact move indices and their gaps from the best d9 score.  Every
 output shard is checked against the derived row's ``(game_id, ply_index)`` and
@@ -15,6 +17,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -28,6 +31,7 @@ from numcodecs import Blosc
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from chess_anti_engine.encoding.encode import encode_position
 from chess_anti_engine.moves.encode import (
     COMPACT_POLICY_SIZE,
     FULL_TO_COMPACT_POLICY,
@@ -35,6 +39,8 @@ from chess_anti_engine.moves.encode import (
 )
 from chess_anti_engine.replay.shard import iter_shard_paths
 from scripts import derive_corpus_targets as derive
+from scripts import corpus_row_provenance as provenance
+from scripts import gen_sf_rooted_corpus as corpus
 from scripts.bt4_policy_dump import file_sha256
 
 
@@ -282,6 +288,177 @@ def _flush(
     }
 
 
+def _file_identity(path: Path) -> tuple[int, int, int, int, int]:
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def _storage_identity(path: Path) -> str:
+    digest = hashlib.sha256()
+    for root, dirs, files in os.walk(path):
+        dirs.sort()
+        if any((Path(root) / name).is_symlink() for name in [*dirs, *files]):
+            raise ValueError("derived storage contains an untracked symlink")
+        for name in [".", *sorted(files)]:
+            entry = Path(root) if name == "." else Path(root) / name
+            stat = entry.lstat()
+            digest.update(repr((str(entry.relative_to(path)), stat.st_mode, stat.st_dev,
+                                stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)).encode())
+    return digest.hexdigest()
+
+
+def _bank_provenance(
+    *, record: derive.CorpusRecord, raw_dir: Path, source_paths: list[Path],
+    source_summary: Mapping[str, Any], source_summary_sha: str, writing: Path,
+    limit: int, top_k: int, max_cache_bytes: int,
+) -> tuple[list[dict[str, Any]], int, int, dict[str, Any]]:
+    """Read raw rows once; join recorded physical rows even across output revisits."""
+    dtype = np.dtype([
+        ("game_id", "<i8"), ("ply", "<i4"), ("worker_id", "<i4"),
+        ("input_key", "u1", (16,)), ("stored_input_key", "u1", (16,)),
+        ("indices", "<u2", (top_k,)), ("gaps", "<f4", (top_k,)),
+        ("count", "u1"), ("valid", "u1"),
+    ])
+    corpus.apply_history_rep_fix()
+    counts = derive.shard_row_counts(record)
+    required = limit * (dtype.itemsize + 1) + len(counts) * 512
+    if max_cache_bytes <= 0 or required > max_cache_bytes:
+        raise ValueError(f"rank/history cache needs up to {required} bytes, cap {max_cache_bytes}")
+    cache = writing / "._rank_identity_cache"
+    cache.mkdir()
+    raw_config = str(record.facts["config_sha256"])
+    raw_rows = dropped = 0
+    index: dict[str, tuple[Path, Path, str, int]] = {}
+    identities: dict[Path, tuple[int, int, int, int, int]] = {}
+    for number, (raw_path, count) in enumerate(zip(record.shards, counts)):
+        take = min(int(count), limit - raw_rows)
+        if take <= 0:
+            break
+        if take * dtype.itemsize > 64 * 1024 ** 2:
+            raise ValueError("raw shard exceeds the 64MiB rank-cache working-set limit")
+        identities[raw_path] = _file_identity(raw_path)
+        records = np.zeros(take, dtype=dtype)
+        seen = 0
+        for offset, row in enumerate(derive.iter_corpus_rows(raw_path)):
+            if offset >= take:
+                break
+            seen += 1
+            raw_rows += 1
+            derive._check_row_identity(row, raw_config)
+            if row.get("result") is None:
+                dropped += 1
+                continue
+            # A dropped envelope row need not have d9. A selected row must.
+            if derive.RowBank(row).full_width_block(9) is None:
+                continue
+            observation = rank_observation(row, top_k=top_k)
+            derive.require_row_regime(row)
+            board = derive.board_from_row(row)
+            x = np.asarray(encode_position(
+                board, add_features=True,
+                input_history_encoding=derive.INPUT_HISTORY_ENCODING,
+                input_extra_features=derive.INPUT_EXTRA_FEATURES,
+            ), dtype=np.float32)
+            ref = provenance.reference(row, raw_path, offset, raw_config, x)
+            item = records[offset]
+            for field in ("game_id", "ply", "worker_id"):
+                item[field] = ref[field]
+            for field in ("input_key", "stored_input_key"):
+                item[field] = np.frombuffer(bytes.fromhex(ref[field]), dtype=np.uint8)
+            item["indices"], item["gaps"] = observation.indices, observation.gaps_cp
+            item["count"], item["valid"] = observation.count, 1
+        if seen != take or _file_identity(raw_path) != identities[raw_path]:
+            raise ValueError("raw source count or storage changed while banking ranks")
+        target = cache / f"{number:06d}.npy"
+        with target.open("xb") as handle:
+            np.save(handle, records, allow_pickle=False)
+        used_path = cache / f"{number:06d}.used.npy"
+        used = np.lib.format.open_memmap(used_path, mode="w+", dtype=np.uint8, shape=(take,))
+        used[:] = 0
+        used.flush()
+        del used
+        index[raw_path.name] = (target, used_path, file_sha256(target), take)
+    if raw_rows != limit:
+        raise ValueError(f"raw prefix has {raw_rows} rows, expected {limit}")
+    written = []
+    derived_stable: dict[Path, str] = {}
+    shard_manifest = {entry["path"]: entry for entry in source_summary["shards"]}
+    if set(shard_manifest) != {path.name for path in source_paths}:
+        raise ValueError("derived summary shard inventory differs from actual shards")
+    expected_namespace = hashlib.sha256(json.dumps(
+        [str(raw_dir), raw_config], separators=(",", ":"),
+    ).encode()).hexdigest()
+    for path in source_paths:
+        derived_stable[path] = _storage_identity(path)
+        source: Any = zarr.open_group(str(path), mode="r")
+        x = np.asarray(source["x"][:])
+        rows = len(x)
+        stamp = dict(source.attrs).get("derive_row_provenance")
+        if (not isinstance(stamp, dict) or stamp != shard_manifest[path.name].get("row_provenance")
+                or stamp.get("schema") != provenance.SCHEMA or stamp.get("rows") != rows
+                or stamp.get("record_bytes") != provenance.RECORD_DTYPE.itemsize
+                or stamp.get("path") != provenance.FILENAME):
+            raise ValueError("derived row provenance stamp mismatch")
+        ref_path = path / provenance.FILENAME
+        if file_sha256(ref_path) != stamp["sha256"]:
+            raise ValueError("derived row provenance checksum mismatch")
+        identities[ref_path] = _file_identity(ref_path)
+        identities[path / ".zattrs"] = _file_identity(path / ".zattrs")
+        refs = provenance.read(ref_path, rows=rows)
+        ordered: list[RankObservation | None] = [None] * rows
+        requests: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+        for offset, ref in enumerate(refs):
+            if (ref["source_dir"] != str(raw_dir) or ref["source_config_sha256"] != raw_config
+                    or ref["source_shard"] not in index):
+                raise ValueError("rank provenance names another raw source")
+            requests.setdefault(ref["source_shard"], []).append((offset, ref))
+        for raw_name, group in requests.items():
+            target, used_path, expected_hash, count = index[raw_name]
+            if file_sha256(target) != expected_hash:
+                raise ValueError("private rank cache changed")
+            records = np.load(target, mmap_mode="r", allow_pickle=False)
+            used = np.load(used_path, mmap_mode="r+", allow_pickle=False)
+            for offset, ref in group:
+                raw_index = int(ref["source_row"])
+                if not 0 <= raw_index < count or used[raw_index]:
+                    raise ValueError("duplicate or out-of-prefix physical row reference")
+                item = records[raw_index]
+                if (not item["valid"] or ref["source_namespace"] != expected_namespace
+                        or any(int(ref[field]) != int(item[field]) for field in ("game_id", "ply", "worker_id"))
+                        or any(ref[field] != item[field].tobytes().hex() for field in ("input_key", "stored_input_key"))
+                        or ref["stored_input_key"] != corpus.input_tensor_key(x[offset])):
+                    raise ValueError("raw/derived full-history row identity mismatch")
+                used[raw_index] = 1
+                ordered[offset] = RankObservation(
+                    int(item["game_id"]), int(item["ply"]),
+                    np.array(item["indices"]), np.array(item["gaps"]), int(item["count"]),
+                )
+            used.flush()
+            del used, records
+        if any(item is None for item in ordered):
+            raise ValueError("rank references did not cover every derived row")
+        written.append(_flush(
+            observations=cast(list[RankObservation], ordered), order=np.arange(rows),
+            source_path=path, destination=writing / path.name, top_k=top_k,
+            source_summary_sha256=source_summary_sha, raw_config_sha256=raw_config,
+        ))
+    if (any(_file_identity(path) != identity for path, identity in identities.items())
+            or any(_storage_identity(path) != identity for path, identity in derived_stable.items())):
+        raise ValueError("raw or derived storage changed during rank publication")
+    raw_members = set(record.shards)
+    proof = {
+        "join": "source-qualified-physical-row-and-full-history-keys-v1",
+        "observation": "complete-phase0-d9", "raw_shards_read_once": len(index),
+        "cache_record_bytes": dtype.itemsize, "cache_seen_bytes_per_row": 1,
+        "cache_budget_bytes": max_cache_bytes,
+        "raw_source_metadata": {str(path): list(identity) for path, identity in identities.items()
+                                if path in raw_members},
+        "policy_observation": source_summary["scheme"].get("policy_observation", "latest-phase"),
+        "value_observation": source_summary["scheme"].get("value_observation", "latest-phase"),
+    }
+    return written, raw_rows, dropped, proof
+
+
 def bank(args: argparse.Namespace) -> int:
     raw_dir = Path(args.raw).resolve()
     source_dir = Path(args.shards).resolve()
@@ -332,6 +509,10 @@ def bank(args: argparse.Namespace) -> int:
             f"derived source has {len(source_paths)} shards, expected {expected_shards}",
         )
 
+    raw_record_pins = {
+        path: file_sha256(path) for path in (raw_dir / "manifest.json", raw_dir / "summary.json")
+        if path.is_file()
+    }
     record = derive.read_corpus_record(raw_dir)
     raw_config_sha = str(record.facts.get("config_sha256", ""))
     source_corpus = source_summary.get("corpus", {})
@@ -348,52 +529,61 @@ def bank(args: argparse.Namespace) -> int:
     dropped_no_result = 0
     started = time.time()
     try:
-        for raw_path in record.shards:
-            for row in derive.iter_corpus_rows(raw_path):
+        provenance_proof: dict[str, Any] = {}
+        if source_summary.get("row_provenance") is not None:
+            written, raw_rows, dropped_no_result, provenance_proof = _bank_provenance(
+                record=record, raw_dir=raw_dir, source_paths=source_paths,
+                source_summary=source_summary, source_summary_sha=source_summary_sha,
+                writing=writing, limit=limit, top_k=top_k,
+                max_cache_bytes=int(getattr(args, "max_provenance_cache_bytes", 8 * 1024 ** 3)),
+            )
+        else:
+            for raw_path in record.shards:
+                for row in derive.iter_corpus_rows(raw_path):
+                    if raw_rows >= limit:
+                        break
+                    raw_rows += 1
+                    if row.get("result") is None:
+                        dropped_no_result += 1
+                        continue
+                    pending.append(rank_observation(row, top_k=top_k))
+                    if len(pending) == int(args.rows_per_shard):
+                        index = len(written)
+                        written.append(
+                            _flush(
+                                observations=pending,
+                                order=rng.permutation(len(pending)),
+                                source_path=source_paths[index],
+                                destination=writing / source_paths[index].name,
+                                top_k=top_k,
+                                source_summary_sha256=source_summary_sha,
+                                raw_config_sha256=raw_config_sha,
+                            )
+                        )
+                        pending = []
+                        elapsed = max(time.time() - started, 1e-9)
+                        if len(written) % 16 == 0:
+                            print(
+                                f"[sf-d9-ranks] {len(written)}/{expected_shards} shards, "
+                                f"{sum(item['rows'] for item in written)} rows, "
+                                f"{raw_rows / elapsed:.1f} raw rows/s",
+                                flush=True,
+                            )
                 if raw_rows >= limit:
                     break
-                raw_rows += 1
-                if row.get("result") is None:
-                    dropped_no_result += 1
-                    continue
-                pending.append(rank_observation(row, top_k=top_k))
-                if len(pending) == int(args.rows_per_shard):
-                    index = len(written)
-                    written.append(
-                        _flush(
-                            observations=pending,
-                            order=rng.permutation(len(pending)),
-                            source_path=source_paths[index],
-                            destination=writing / source_paths[index].name,
-                            top_k=top_k,
-                            source_summary_sha256=source_summary_sha,
-                            raw_config_sha256=raw_config_sha,
-                        )
+            if pending:
+                index = len(written)
+                written.append(
+                    _flush(
+                        observations=pending,
+                        order=rng.permutation(len(pending)),
+                        source_path=source_paths[index],
+                        destination=writing / source_paths[index].name,
+                        top_k=top_k,
+                        source_summary_sha256=source_summary_sha,
+                        raw_config_sha256=raw_config_sha,
                     )
-                    pending = []
-                    elapsed = max(time.time() - started, 1e-9)
-                    if len(written) % 16 == 0:
-                        print(
-                            f"[sf-d9-ranks] {len(written)}/{expected_shards} shards, "
-                            f"{sum(item['rows'] for item in written)} rows, "
-                            f"{raw_rows / elapsed:.1f} raw rows/s",
-                            flush=True,
-                        )
-            if raw_rows >= limit:
-                break
-        if pending:
-            index = len(written)
-            written.append(
-                _flush(
-                    observations=pending,
-                    order=rng.permutation(len(pending)),
-                    source_path=source_paths[index],
-                    destination=writing / source_paths[index].name,
-                    top_k=top_k,
-                    source_summary_sha256=source_summary_sha,
-                    raw_config_sha256=raw_config_sha,
                 )
-            )
         rows = sum(int(item["rows"]) for item in written)
         expected_dropped = int(realized.get("rows_dropped_no_result", -1))
         if (
@@ -408,6 +598,14 @@ def bank(args: argparse.Namespace) -> int:
                 f"shards={len(written)}/{expected_shards}, "
                 f"drops={dropped_no_result}/{expected_dropped}",
             )
+        if provenance_proof:
+            if raw_rows - rows - dropped_no_result != int(realized.get("rows_dropped_envelope", 0)):
+                raise ValueError("provenance-selected row count differs from declared drop counters")
+            if (file_sha256(source_summary_path) != source_summary_sha
+                    or any(file_sha256(path) != digest for path, digest in raw_record_pins.items())):
+                raise ValueError("source summary or raw manifest changed during rank publication")
+            provenance_proof["raw_record_sha256"] = {str(path): digest for path, digest in raw_record_pins.items()}
+            shutil.rmtree(writing / "._rank_identity_cache")
         summary = {
             "schema": SCHEMA,
             "kind": "sf_d9_rank_gap_sidecar",
@@ -427,6 +625,7 @@ def bank(args: argparse.Namespace) -> int:
             "index_encoding": "lc0_1858",
             "gap_definition": "rank1_effective_cp-minus-ranked_effective_cp",
             "outputs": written,
+            **({"row_provenance": provenance_proof} if provenance_proof else {}),
             "completed_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         _atomic_json(writing / SUMMARY_NAME, summary)
@@ -451,6 +650,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--limit", type=int, required=True)
     parser.add_argument("--top-k", type=int, default=3)
+    parser.add_argument("--max-provenance-cache-bytes", type=int, default=8 * 1024 ** 3,
+                        help="private temporary rank/history index cap when source has row provenance")
     parser.add_argument("--rows-per-shard", type=int, default=8192)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--expected-rows", type=int, required=True)

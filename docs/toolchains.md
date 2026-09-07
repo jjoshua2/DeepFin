@@ -17,7 +17,7 @@ and do not launch experiments.
 | Generate rooted Stockfish corpus | `scripts/gen_sf_rooted_corpus.py` | Frozen worker/search/resume settings, engine identity, row history and source-qualified game identity |
 | Audit possible teacher labels | `scripts/audit_label_candidates.py` | Fixed banked observations and comparable teacher/search settings |
 | Repair an existing corpus's history | `scripts/repair_corpus_history.py` | Distinct output, inventory coverage, unchanged labels unless explicitly relabeling, truthful completion stamp |
-| Derive replay targets | `scripts/derive_corpus_targets.py` | Input corpus identity, target recipe, history/encoding stamps and completed-shard inventory |
+| Derive replay targets | [`scripts/derive_corpus_targets.py`](corpus_derivation.md) | Input corpus identity, target recipe, history/encoding stamps and completed-shard inventory |
 | Train a controlled LC0-shaped comparison | `scripts/lc0_control_train.py` | Declared architecture, data lineage, objective, view/step budget and checkpoint identity |
 | Registered BT4 exact-epoch screen | [scripts/bt4_one_epoch_screen.py](experiments/2026-09-07-bt4-hybrid-endpoints.md) | One explicitly selected profile; qualified corpus, completed training and fixed comparisons |
 | Offline target/loss comparison | `scripts/retarget_retrain.py` | Same-seed controls and a frozen readout appropriate to the hypothesis |
