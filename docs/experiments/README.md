@@ -1,5 +1,7 @@
 # Experiment records
 
+- [Direct SF-close versus global sharpened BT4](2026-09-06-bt4-direct-close-global.md): one matched 100-simulation screen of existing contenders.
+
 Start here for experiment planning and readouts. [Project guidance](../../CLAUDE.md)
 holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.

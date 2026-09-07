@@ -49,6 +49,7 @@ epoch consumption without wrapping or silently truncating. Follow
 | Question | Entry point |
 | --- | --- |
 | Paired checkpoint comparison, resume and optional SPRT | `scripts/arena_standard.py` |
+| Registered BT4 checkpoint screen | [scripts/bt4_direct_screen.py](experiments/2026-09-06-bt4-direct-close-global.md) |
 | Fresh-seed BT4 confirmation with two newly trained roles | [`scripts/bt4_confirmation.py`](bt4_confirmation.md), `scripts/bt4_joint_readout.py --profile confirmation` |
 | Match against another UCI engine | `scripts/match_vs_uci.py` |
 | Fixed handicapped-Stockfish opponent | `scripts/match_vs_handicapped_sf.py` |
@@ -57,6 +58,13 @@ epoch consumption without wrapping or silently truncating. Follow
 | Bank and analyze varying-horizon continuation trajectories | `scripts/collect_varying_budget_trajectories.py`, `scripts/analyze_varying_budget_controller.py` |
 | Observe fenlist and SF-refute outcomes without inferring playing strength | `scripts/monitor_sf_refute_outcomes.py` |
 | Relabel/reconstruct RVG targets and shadow readout | `scripts/rvg_label_pass.py`, `scripts/nnue_shadow_label_readout.py` |
+
+The BT4 direct screen retains its pinned host-local reader at
+`/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py`, plus its frozen runtime
+and development opening book. Updating the repository reader does not migrate
+that executed protocol; the linked registration records its identities. Set
+`CHESS_EXPERIMENT_ROOT` to the data-owning repository when it differs from
+`~/projects/chess`; the launcher checkout can remain separate.
 
 The varying-horizon tools follow their [staged protocol](experiments/varying_horizon_online_controller.md),
 including grouped source identities and limits on interpretation.
