@@ -2,6 +2,7 @@
 
 Registered September 6, 2026 after the complete C20T05-versus-G20T05 direct screen.
 This registration precedes training of E0T05 and all outcome observation for it.
+The original protocol is retained below; the completed readout follows it.
 
 ## Question and selection
 
@@ -146,3 +147,48 @@ the CPU-only schedule subprocess applies its own two-core cap. New outputs are
 `sharpened_ties_run01/experiment` and
 `runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050_epoch_v1`. An interrupted attempt
 preserves these outputs and requires explicit recovery; the tool has no resume mode.
+
+## Completed readout — September 7, 2026 UTC
+
+The complete registered match favors C20T05. From E0T05's perspective:
+
+| Games / pairs | Wins | Draws | Losses | Score | Elo, paired nominal 95% interval |
+| --- | --- | --- | --- | --- | --- |
+| 1,000 / 500 | 347 | 221 | 432 | 0.4575 | −29.60 [−48.72, −10.66] |
+
+There were no orphan or duplicate rows. The independent review recomputed the
+result from the raw bank using opening-pair scores, unbiased sample variance and
+a normal 95% score interval transformed to Elo. The interval wholly below zero
+satisfies the precommitted rule favoring C. This rejects E as the winner of this
+particular development screen; it does not establish that stored-tie methods
+cannot work under other training or search conditions.
+
+Training completed all 18,910,484 rows, 36,935 batches and 420 windows, with finite
+loss/gradient summaries, no skipped gradients or CUDA retries, and matched planned
+and realized schedules. The arena used the exact final checkpoints and full
+qualified C100 settings, with 100 simulations and prior temperature 1.0 on both
+sides. Training and arena charged 12,143.501 seconds (3.37319 GPU hours), within
+the six-hour cap. CPU schedule verification took 290.15 seconds separately.
+
+Execution remained pinned at revision
+`3ec5bdc3d62be4b47192d3642924ce0cdff052fa`. Later publication portability/import
+fixes were not substituted into the completed run. Evidence below is relative to
+`scratchpad/bt4_joint20/sharpened_ties_run01/` and stays outside git:
+
+| Artifact | SHA256 |
+| --- | --- |
+| `experiment/arena/arena.games.jsonl` | `ec8d11a419b026b6c334705065a96834e54deda3378c29d94c72871f1247bfe6` |
+| `experiment/arena/readout.json` | `b22f4baa0ca051de8a856a0498bd4166e5b19a1a983c64116758e87705d13973` |
+| `completed_screen_independent_review.json` | `245a9baf86c36ebeebefa0ccfeb54dc0b72c8f3b08e474eda78cdf264eba0973` |
+
+C remains the provisional leader. The prewritten challenger-selection heuristic
+chooses E for [fresh paired confirmation](2026-09-07-bt4-fresh-confirmation.md):
+E scored 0.4575 against C versus G's 0.457 on aligned development openings.
+That 0.0005 difference is not evidence that E is stronger than G. Fresh training
+of both recipes and reserved openings test whether C's advantage survives that
+change; no extra development games or grid was selected.
+
+The seed-zero control, reused openings, missing held-out purity receipt,
+committed-pin architecture/trainer check and historical sampler limitations above
+remain in force. This result is not a seed-variance, search-scaling, 100M-transfer
+or RL-benefit estimate.
