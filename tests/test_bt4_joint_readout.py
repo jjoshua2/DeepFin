@@ -352,3 +352,27 @@ def test_direct_confirmation_refuses_wrong_identity_budget_or_profile(
         tool.main()
     assert error.value.code == 2
     assert not capsys.readouterr().out
+
+
+def test_registered_250_pair_probe_requires_explicit_complete_400_budget(tmp_path):
+    bank(tmp_path, 'H20', 400)
+    path = tmp_path / 'H20.400.jsonl'
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    records[0]['settings']['games'] = 500
+    records[0]['fingerprint'] = tool.settings_fingerprint(records[0]['settings'])
+    records = records[:501]
+    path.write_text(''.join(json.dumps(row) + '\n' for row in records))
+    result = tool.read_arm(path, reference=tmp_path / 'S0.pt', seed=42, sims=400, expected_pairs=250)
+    assert result['result']['games'] == 500
+    assert result['result']['pairs'] == 250
+    assert sum(result['result']['pentanomial'].values()) == 250
+    assert len(result['openings']) == 250
+    assert result['openings'][-1] == 'opening249'
+    assert result['result']['score'] == pytest.approx(result['scores'].mean())
+    with pytest.raises(ValueError, match='off-protocol'):
+        tool.read_arm(path, reference=tmp_path / 'S0.pt', seed=42, sims=400)
+    with pytest.raises(ValueError, match='restricted'):
+        tool.read_arm(path, reference=tmp_path / 'S0.pt', seed=42, sims=100, expected_pairs=250)
+    path.write_text(''.join(json.dumps(row) + '\n' for row in records[:-1]))
+    with pytest.raises(ValueError, match='no complete final attempt'):
+        tool.read_arm(path, reference=tmp_path / 'S0.pt', seed=42, sims=400, expected_pairs=250)

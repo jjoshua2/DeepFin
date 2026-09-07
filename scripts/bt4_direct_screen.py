@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Plan an explicit C20T05/G20T05 or trained E0T05/C20T05 arena; --execute requires an explicit pinned manifest.
+"""Run one explicitly registered checkpoint comparison with a pinned manifest.
+
+Legacy C/G and E0T05/C profiles coexist with fixed H20/B100/G50 development cells.
 
 No training, resume, automatic retry or promotion. GNU timeout inherits the GPU
 lease and survives coordinator death. SIGKILL can leave an incomplete receipt;
@@ -38,6 +40,13 @@ CHECKPOINTS = {
     'reference': ('G20T05', ROOT / 'runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05_epoch_v2/checkpoint.pt',
                   'bd8c208a95247373f423be0649329e9c100db64ab1b5a5e68fd7a6aec3769a74'),
 }
+# Fixed development profiles; each cell is (reference role, simulations, games).
+REGISTERED_COMPARISONS = {
+    'H20': (('C20T05', 100, 1000), ('G20T05', 100, 1000), ('C20T05', 400, 500)),
+    'B100': (('C20T05', 100, 1000), ('C20T05', 400, 500)),
+    'G50': (('C20T05', 100, 1000),),
+}
+EXTENDED_READER = Path(__file__).resolve().with_name('bt4_joint_readout.py')
 RESERVE = 150 * 1024**3
 
 
@@ -70,37 +79,62 @@ def pin(path, digest):
     require(sha(path) == digest, f'changed identity: {path}')
 
 
+def reader_identity(m):
+    return (Path(m['reader']['path']), m['reader']['sha256']) if m['candidate']['role'] in REGISTERED_COMPARISONS else (READER, READER_SHA)
+
+
 def validate(m):
     keys = {'schema', 'output', 'sims', 'hard_seconds', 'candidate', 'reference',
             'book', 'runtime_manifest', 'preregistration', 'launcher_sha256'}
-    sharpened = m.get('candidate', {}).get('role') == 'E0T05'
-    require(set(m) == keys | ({'candidate_training'} if sharpened else set()), 'manifest keys differ')
-    require(m['schema'] == 1 and type(m['sims']) is int and m['sims'] in (100, 400), 'select 100 or 400 simulations')
+    role = m.get('candidate', {}).get('role')
+    registered = role in REGISTERED_COMPARISONS
+    trained = registered or role == 'E0T05'
+    extra = {'candidate_training'} if trained else set()
+    if registered:
+        extra |= {'reader', 'games'}
+        require(m['schema'] == 2, 'registered development cells require schema2')
+        require(type(m['games']) is int and (m['reference']['role'], m['sims'], m['games']) in REGISTERED_COMPARISONS[role], 'unregistered candidate/reference/budget cell')
+        require(m['hard_seconds'] == 5400, 'registered arena cap is 5400 seconds')
+        require(m['reader']['path'] == str(EXTENDED_READER) and set(m['reader']) == {'path', 'sha256'}, 'wrong extended reader')
+        if m['games'] == 500:
+            extra |= {'opening_anchor'}
+            require(set(m['opening_anchor']) == {'bank', 'completion'}, 'probe needs completed C100 opening anchor')
+            for item in m['opening_anchor'].values():
+                require(set(item) == {'path', 'sha256'} and Path(item['path']).is_absolute(), 'invalid opening anchor pin')
+    else:
+        require(m['schema'] == 1, 'legacy manifest requires schema1')
+    require(set(m) == keys | extra, 'manifest keys differ')
+    require(type(m['sims']) is int and m['sims'] in (100, 400), 'select 100 or 400 simulations')
     cap = m['hard_seconds']
     require(type(cap) in (int, float) and math.isfinite(cap) and cap > 30, 'hard_seconds must exceed 30s cleanup allowance')
     output = Path(m['output'])
     require(output.is_absolute() and output == output.resolve(), 'output must be canonical absolute path')
     require(not output.exists() and not output.is_symlink(), 'output must be new; no adoption/resume')
-    inputs = [RUNTIME, READER, BOOK, Path(__file__).resolve()]
-    if sharpened:
-        role, path, digest = CHECKPOINTS['candidate']  # Existing C becomes the control.
-        require(m['reference'] == {'role': role, 'path': str(path), 'sha256': digest}, 'wrong C reference')
+    inputs = [RUNTIME, reader_identity(m)[0], BOOK, Path(__file__).resolve()]
+    if trained:
+        controls = {value[0]: value for value in CHECKPOINTS.values()}
+        reference = m['reference']['role']
+        require(reference in controls and (registered or reference == 'C20T05'), 'wrong C reference or unregistered reference')
+        ref_role, path, digest = controls[reference]
+        require(m['reference'] == {'role': ref_role, 'path': str(path), 'sha256': digest}, 'wrong C reference or G reference')
         require(set(m['candidate']) == {'role', 'path', 'sha256'}, 'invalid trained candidate identity')
         candidate = Path(m['candidate']['path'])
         require(candidate.is_absolute() and candidate == candidate.resolve() and candidate.name == 'checkpoint.pt',
                 'candidate must be a canonical completed checkpoint')
-        require(m['sims'] == 100, 'E0T05 profile is registered only at 100 simulations')
+        require(registered or m['sims'] == 100, 'E0T05 profile is registered only at 100 simulations')
         require(set(m['candidate_training']) == {'path', 'sha256'}, 'missing candidate training receipt')
         inputs += [candidate, path, Path(m['candidate_training']['path']).resolve()]
     else:
-        for side, (role, path, digest) in CHECKPOINTS.items():
-            require(m[side] == {'role': role, 'path': str(path), 'sha256': digest}, f'wrong {side} checkpoint')
+        for side, (known_role, path, digest) in CHECKPOINTS.items():
+            require(m[side] == {'role': known_role, 'path': str(path), 'sha256': digest}, f'wrong {side} checkpoint')
             inputs.append(path)
     require(m['book'] == {'path': str(BOOK), 'sha256': BOOK_SHA}, 'use original seed42 book')
     for key in ('runtime_manifest', 'preregistration'):
         item = m[key]
         require(set(item) == {'path', 'sha256'} and Path(item['path']).is_absolute(), f'invalid {key}')
         inputs.append(Path(item['path']).resolve())
+    if 'opening_anchor' in m:
+        inputs.extend(Path(item['path']).resolve() for item in m['opening_anchor'].values())
     require(all(output != p and output not in p.parents and p not in output.parents for p in inputs), 'input/output overlap')
 
 
@@ -121,12 +155,17 @@ def qualified_search():
 
 def check_pins(m):
     pin(__file__, m['launcher_sha256'])
-    pin(READER, READER_SHA)
+    pin(*reader_identity(m))
     qualified_search()
     for key in ('candidate', 'reference', 'book', 'runtime_manifest', 'preregistration'):
         pin(m[key]['path'], m[key]['sha256'])
     if 'candidate_training' in m:
         verify_candidate_training(m)
+    if 'opening_anchor' in m:
+        for item in m['opening_anchor'].values():
+            pin(item['path'], item['sha256'])
+        anchor = read(m['opening_anchor']['completion']['path'])
+        require(anchor['complete'] is True and anchor['games_sha256'] == m['opening_anchor']['bank']['sha256'], 'opening anchor incomplete or bank differs')
     return runtime_identity(m['runtime_manifest'])
 
 
@@ -134,7 +173,7 @@ def verify_candidate_training(m):
     evidence = m['candidate_training']
     pin(evidence['path'], evidence['sha256'])
     receipt = read(evidence['path'])
-    require(receipt['complete'] is True and receipt['role'] == 'E0T05', 'candidate training incomplete')
+    require(receipt['complete'] is True and receipt['role'] == m['candidate']['role'], 'candidate training incomplete')
     require(receipt['checkpoint'] == m['candidate'], 'candidate checkpoint differs from completed training')
     run = Path(m['candidate']['path']).parent
     require(receipt['run'] == str(run), 'candidate run differs')
@@ -184,7 +223,7 @@ def command(m):
     python = read(m['runtime_manifest']['path'])['runtime']['executable']
     out = Path(m['output'])
     return [python, 'scripts/arena_standard.py', '--candidate', m['candidate']['path'],
-            '--reference', m['reference']['path'], '--games', '1000', '--mode', 'matched_sims',
+            '--reference', m['reference']['path'], '--games', str(m.get('games', 1000)), '--mode', 'matched_sims',
             '--search-shape', 'training', '--cand-gumbel', 'policy_temp=1.0', '--ref-gumbel', 'policy_temp=1.0',
             '--sims', str(m['sims']), '--seed', '42', '--openings', str(BOOK), '--opening-plies', '16',
             '--max-plies', '300', '--temperature', '0.1', '--max-concurrent-games', '128',
@@ -220,23 +259,35 @@ def check_cell(m, cell):
     expected = qualified_search()
     require(all(cell['settings'].get(side) == expected for side in ('search_candidate', 'search_reference')),
             'realized search differs from qualified C100')
-    if m['candidate']['role'] == 'E0T05':
-        require(cell['raw_game_rows'] == 1000 and cell['superseded_orphan_rows'] == 0, 'E0T05 requires no orphan rows')
-    require(cell['result']['games'] == 1000 and cell['result']['pairs'] == 500, 'incomplete arena')
+    games = m.get('games', 1000)
+    if m['candidate']['role'] == 'E0T05' or m['candidate']['role'] in REGISTERED_COMPARISONS:
+        require(cell['raw_game_rows'] == games and cell['superseded_orphan_rows'] == 0, 'trained candidate requires no orphan rows')
+    require(cell['result']['games'] == games and cell['result']['pairs'] == games // 2, 'incomplete arena')
 
 
 def read_bank(m):
-    pin(READER, READER_SHA)
+    reader, digest = reader_identity(m)
+    pin(reader, digest)
     # Load only the role-independent reader; build_report assumes E0 for sf-close.
     sys.path.insert(0, str(RUNTIME))
-    spec = importlib.util.spec_from_file_location('qualified_bt4_reader', READER)
+    spec = importlib.util.spec_from_file_location('qualified_bt4_reader', reader)
     if spec is None or spec.loader is None:
         raise ValueError('qualified reader cannot be loaded')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    options = {'expected_pairs': m['games'] // 2} if m['candidate']['role'] in REGISTERED_COMPARISONS else {}
     cell = module.read_arm(Path(m['output']) / 'arena.games.jsonl', reference=Path(m['reference']['path']),
-                           seed=42, sims=m['sims'], prior_temperature=1.0)
+                           seed=42, sims=m['sims'], prior_temperature=1.0, **options)
     check_cell(m, cell)
+    if 'opening_anchor' in m:
+        anchor = m['opening_anchor']
+        for item in anchor.values():
+            pin(item['path'], item['sha256'])
+        completion = read(anchor['completion']['path'])
+        require(completion['complete'] is True and completion['games_sha256'] == anchor['bank']['sha256'], 'opening anchor incomplete')
+        baseline = module.read_arm(Path(anchor['bank']['path']), reference=CHECKPOINTS['candidate'][1], seed=42, sims=100)
+        check_cell({**m, 'sims': 100, 'games': 1000}, baseline)
+        require(cell['openings'] == baseline['openings'][:250], 'probe openings differ from first250 C100 pairs')
     return {'candidate_role': m['candidate']['role'], 'reference_role': m['reference']['role'], 'match_complete': True,
             **{k: v for k, v in cell.items() if k not in ('scores', 'openings')},
             'promotion': 'NONE; exploratory direct checkpoint screen'}
@@ -332,7 +383,7 @@ def execute(m, *, stop_paths=()):
         require(report['match_complete'] is True, 'incomplete bank is not a result')
         write(out / 'readout.json', report)
         write(out / 'complete.json', {**receipt, 'complete': True, 'games_sha256': sha(out / 'arena.games.jsonl'),
-                                     'readout_sha256': sha(out / 'readout.json'), 'reader_sha256': READER_SHA})
+                                     'readout_sha256': sha(out / 'readout.json'), 'reader_sha256': reader_identity(m)[1]})
     except BaseException as error:
         write(out / 'failed.json', {**receipt, 'complete': False, 'error': str(error)})
         raise
