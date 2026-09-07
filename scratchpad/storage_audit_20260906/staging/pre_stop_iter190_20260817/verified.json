@@ -1,0 +1,67 @@
+{
+  "pool": "pre_stop_iter190_20260817",
+  "source": "/home/josh/projects/chess/data/salvage/pre_stop_iter190_20260817",
+  "source_deleted": false,
+  "plan_sha256": "f389eeff35235a5097f39a3a5b4dd22a7c860ca36bc5038fbaabb4211491a5bb",
+  "started_unix": 1788745252.7257404,
+  "mount": {
+    "target": "/mnt/e",
+    "source": "E:\\",
+    "fstype": "9p",
+    "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+  },
+  "resources": {
+    "local_free_bytes": 515047100416,
+    "available_RAM_bytes": 53947416576
+  },
+  "references": {
+    "observed_source_references": [],
+    "other_user_processes_not_inspected": [
+      1,
+      9,
+      12,
+      13,
+      71,
+      72,
+      87,
+      88,
+      103,
+      104
+    ],
+    "same_user_processes_not_inspected": [
+      68
+    ],
+    "complete_process_visibility": false,
+    "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+  },
+  "inventory": {
+    "entries": 393323,
+    "logical_file_bytes": 2447926162
+  },
+  "tar_bytes": 3160084480,
+  "verified_members": 393323,
+  "tar_sha256": "4b0cb2ea8137dfdac445c5752f5998f710ddce6daeccfdc917cbefe4a8c7b215",
+  "source_manifest_sha256": "45d07a1c1d8730c7f708f6b15fc3333230484ac549457a3fa5ed02473a19300b",
+  "rsync_command": [
+    "rsync",
+    "--no-whole-file",
+    "--partial-dir=.pre_stop_iter190_20260817.partial",
+    "--bwlimit=16384",
+    "--fsync",
+    "--",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_stop_iter190_20260817/pre_stop_iter190_20260817.tar",
+    "/mnt/e/chess_archive_20260906/salvage/pre_stop_iter190_20260817.tar"
+  ],
+  "rsync_exit_code": 0,
+  "external_tar_sha256": "4b0cb2ea8137dfdac445c5752f5998f710ddce6daeccfdc917cbefe4a8c7b215",
+  "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+  "finished_unix": 1788746075.3060362,
+  "external_archive": "/mnt/e/chess_archive_20260906/salvage/pre_stop_iter190_20260817.tar",
+  "external_size": 3160084480,
+  "external_mtime_ns": 1788745966475477500,
+  "limitations": [
+    "Source retained; removal requires separate parent verification.",
+    "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+    "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+  ]
+}

@@ -1,0 +1,496 @@
+{
+  "status": "READ_ONLY_AUDIT_COMPLETE_NO_IMPLEMENTATION",
+  "created_unix": 1788717817.5474753,
+  "finding": "G10 retains complete phase0 d9, but existing uniform-d9 overlays later-phase d9 re-emissions. Same scheme name therefore changes observation semantics relative to the phase0-only20M source. Existing d9 rank sidecars instead read phase0, requiring explicit reconciliation.",
+  "evidence": {
+    "source20m_derive": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json",
+      "sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef"
+    },
+    "source20m_raw_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run03_s3/summary.json",
+      "sha256": "55a9cf043b9b90a005bd1adf1dc6d810cb282341bcc11a4eccf127c07c09d6af"
+    },
+    "run06_manifest": {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json",
+      "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+    },
+    "run07_manifest": {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json",
+      "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+    },
+    "generator": {
+      "path": "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/gen_sf_rooted_corpus.py",
+      "sha256": "4bb5e22e81db93c74cfe88d2362136311b001e40e0254f8ff0adc9f3858ea655"
+    },
+    "deriver": {
+      "path": "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/derive_corpus_targets.py",
+      "sha256": "92ab1e1d9bcdf206c9e1e563a117d9e5161deddaef3506d3c1e8ac4c28ec3e9a"
+    },
+    "rank_sidecar": {
+      "path": "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/sf_d9_rank_sidecar.py",
+      "sha256": "6d715920812f1365698e3b78d21060d837a81013e2883357579e2c99d926fb55"
+    },
+    "bt4_mixer": {
+      "path": "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/bt4_policy_mix.py",
+      "sha256": "ba7221c7b669c7c228f263320bbf4006cb1847e508c6fce5418a13a5928e38a5"
+    }
+  },
+  "source20m": {
+    "corpus": {
+      "banked_rows_min_piece_count": 7,
+      "config_sha256": "50fdfe58a5bc2275b4957b898811190fe91739d15dfa45ce2190749452c9bfc8",
+      "corpus_complete": true,
+      "corpus_record": "summary",
+      "corpus_record_detail": {
+        "corpus_complete": true,
+        "document": "summary.json",
+        "facts_only_in_summary": {},
+        "mode": "summary",
+        "progress_files_read": [],
+        "progress_torn_tail_files": [],
+        "rows_claimed_by_inventory": 23994163,
+        "run_finished": true,
+        "run_finished_claim": true,
+        "shards_adopted": 2891,
+        "shards_on_disk_not_in_inventory": []
+      },
+      "dir": "run03_s3",
+      "row_schema": 3,
+      "row_schema_realized": 3,
+      "run_id": "nnue_bootstrap_run03",
+      "staircase_gate": {
+        "adaptive": false,
+        "policy": "fixed"
+      },
+      "staircase_parsed": [
+        {
+          "depth": 9,
+          "width": "all"
+        }
+      ],
+      "tt_carried_across_phases": [
+        true
+      ]
+    },
+    "scheme": {
+      "canonical": "uniform-d9",
+      "deep_depth": null,
+      "depth": 9,
+      "kind": "uniform",
+      "nodes": null,
+      "top_k": null,
+      "value_depth": null,
+      "value_source": "deepest_phase_covering"
+    },
+    "cp_map": {
+      "cp_draw_width": 120.0,
+      "cp_slope": 0.006,
+      "q_function": "scripts.audit_label_candidates.q_from_effective_cp",
+      "realized_cross_check_available": true,
+      "realized_workers_cross_checked": 0,
+      "source": "the corpus's own config_requested",
+      "wdl_function": "chess_anti_engine.stockfish.wdl.cp_to_wdl_array"
+    },
+    "temp_requested": 0.0005,
+    "floor_requested": 0.0,
+    "input": {
+      "encoder": "encode_position",
+      "history_frames_total": 8,
+      "history_rep_fix": true,
+      "input_extra_features": "v2_threats",
+      "input_history_encoding": "lc0_root_legacy_meta",
+      "why_zero_history": "row schema 1: a row is a bare FEN, chess.Board(fen) has an empty move stack, and the encoder fills history slot 0 only -- slots 1..7 (planes 13..103) and every repetition plane stay ZERO. Row schema 2 banks history_root_fen + history_uci and board_from_row replays them, so the 8 frames are the frames live play encodes; see row_schema_counts and history_slots_filled_histogram for which this run derived",
+      "zero_history": false
+    },
+    "value_channels": {
+      "categorical_target": "ABSENT \u2014 outcome-derived, and wdl_target carries the outcome",
+      "moves_left": "ABSENT \u2014 a corpus row does not know its game's length",
+      "search_wdl": "cp_to_wdl_array of the SCHEME's best-move value: Stockfish's searched root value, side-to-move POV. \u2691 NOT our MCTS's value, which is what this column means on production shards",
+      "sf_wdl": "ABSENT \u2014 deliberately. lc0_control_train.py's launch guard 1 (assert_pid_cannot_reassert_sf_wdl) refuses any config with sf_wdl_frac > 0 regardless of what the shards carry, so a value written here could never reach a loss on this rig",
+      "wdl_target": "the corpus row's exact game result, already stored from that row's own side-to-move seat (result_from_pov). 0=W/1=D/2=L"
+    },
+    "required_training_overrides": {
+      "search_wdl_frac": "the whole non-outcome share. These shards carry no sf_wdl, so losses.py would redirect any SF share onto the raw game outcome; the searched value is in search_wdl",
+      "sf_wdl_frac": 0.0,
+      "sf_wdl_frac_floor": 0.0
+    },
+    "realized": {
+      "rows_read": 20000000,
+      "rows_written": 18910484,
+      "values_by_phase": {
+        "0": 495791508
+      },
+      "phases_per_row": {
+        "1": 18910484
+      },
+      "realized_base_depth_histogram": {
+        "9": 18910484
+      },
+      "realized_value_depth_histogram": {
+        "9": 18910484
+      },
+      "value_depth_moved_rows": 0
+    }
+  },
+  "generation": {
+    "source20m_raw_summary": {
+      "config_requested": {
+        "book": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "book_max_games": 200000,
+        "book_plies": 16,
+        "cp_draw_width": 120.0,
+        "cp_slope": 0.006,
+        "dedup_cache_max": 2000000,
+        "games": 500000,
+        "max_plies": 400,
+        "nice": 15,
+        "out_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run03",
+        "run_id": "nnue_bootstrap_run03",
+        "seed": 20260830,
+        "sf_hash_mb": 64,
+        "sf_read_timeout_s": 300.0,
+        "sf_search_timeout_s": 2.0,
+        "shard_rows": 8192,
+        "staircase": "all:9",
+        "stockfish": "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+        "syzygy_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+        "temp_high": 1.0,
+        "temp_low": 0.3,
+        "temp_plies": 20,
+        "workers": 14
+      },
+      "engine": {
+        "id_name": "Stockfish dev-20260825-2edd935b",
+        "path": "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+        "sha256": "e5f3b866a59210c33880eb1c25915d6399698ac80dc985779737fab124ee3ee8",
+        "size": 111262888,
+        "source": "explicit"
+      },
+      "staircase_gate": null,
+      "staircase_parsed": [
+        {
+          "depth": 9,
+          "width": "all"
+        }
+      ],
+      "row_schema": 3,
+      "history_rep_fix": true
+    },
+    "run06_manifest": {
+      "config_requested": {
+        "book": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "book_max_games": 200000,
+        "book_plies": 16,
+        "cp_draw_width": 120.0,
+        "cp_slope": 0.006,
+        "dedup_cache_max": 2000000,
+        "games": 520000,
+        "max_plies": 400,
+        "nice": 19,
+        "out_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+        "run_id": "nnue_bootstrap_run06_g10",
+        "seed": 20260902,
+        "sf_hash_mb": 64,
+        "sf_read_timeout_s": 300.0,
+        "sf_search_timeout_s": 30.0,
+        "shard_rows": 8192,
+        "staircase": "all:9,8:10,4:12",
+        "staircase_policy": "g10",
+        "stockfish": "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+        "syzygy_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+        "temp_high": 1.0,
+        "temp_low": 0.3,
+        "temp_plies": 20,
+        "workers": 12
+      },
+      "engine": {
+        "id_name": "Stockfish dev-20260825-2edd935b",
+        "path": "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+        "sha256": "e5f3b866a59210c33880eb1c25915d6399698ac80dc985779737fab124ee3ee8",
+        "size": 111262888,
+        "source": "explicit"
+      },
+      "staircase_gate": {
+        "adaptive": true,
+        "decision_after_phase": 1,
+        "decision_depth": 10,
+        "extend_when": "margin_cp<=threshold_cp",
+        "extended_depth": 12,
+        "extended_phase": 2,
+        "extended_width": 4,
+        "metric": "effective_cp_rank1_minus_rank2",
+        "no_margin_action": "stop",
+        "policy": "g10",
+        "threshold_cp": 10.0
+      },
+      "staircase_parsed": [
+        {
+          "depth": 9,
+          "width": "all"
+        },
+        {
+          "depth": 10,
+          "width": "8"
+        },
+        {
+          "depth": 12,
+          "width": "4"
+        }
+      ],
+      "row_schema": 3,
+      "history_rep_fix": true
+    },
+    "run07_manifest": {
+      "config_requested": {
+        "book": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "book_max_games": 200000,
+        "book_plies": 16,
+        "cp_draw_width": 120.0,
+        "cp_slope": 0.006,
+        "dedup_cache_max": 2000000,
+        "games": 130000,
+        "max_plies": 400,
+        "nice": 19,
+        "out_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "run_id": "nnue_bootstrap_run07_g10_companion4",
+        "seed": 20260903,
+        "sf_hash_mb": 64,
+        "sf_read_timeout_s": 300.0,
+        "sf_search_timeout_s": 30.0,
+        "shard_rows": 8192,
+        "staircase": "all:9,8:10,4:12",
+        "staircase_policy": "g10",
+        "stockfish": "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+        "syzygy_path": "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+        "temp_high": 1.0,
+        "temp_low": 0.3,
+        "temp_plies": 20,
+        "workers": 4
+      },
+      "engine": {
+        "id_name": "Stockfish dev-20260825-2edd935b",
+        "path": "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+        "sha256": "e5f3b866a59210c33880eb1c25915d6399698ac80dc985779737fab124ee3ee8",
+        "size": 111262888,
+        "source": "explicit"
+      },
+      "staircase_gate": {
+        "adaptive": true,
+        "decision_after_phase": 1,
+        "decision_depth": 10,
+        "extend_when": "margin_cp<=threshold_cp",
+        "extended_depth": 12,
+        "extended_phase": 2,
+        "extended_width": 4,
+        "metric": "effective_cp_rank1_minus_rank2",
+        "no_margin_action": "stop",
+        "policy": "g10",
+        "threshold_cp": 10.0
+      },
+      "staircase_parsed": [
+        {
+          "depth": 9,
+          "width": "all"
+        },
+        {
+          "depth": 10,
+          "width": "8"
+        },
+        {
+          "depth": 12,
+          "width": "4"
+        }
+      ],
+      "row_schema": 3,
+      "history_rep_fix": true
+    }
+  },
+  "path_resolution": "run03_s3 has summary.json, not manifest.json. Companion path is run07_g10_companion4, not run07_g10.",
+  "published_row_examined": {
+    "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+    "shard": "w00-00000.jsonl.zst",
+    "publication_receipt": "w00.progress.jsonl first record,8236 rows",
+    "row_ordinal": 0,
+    "worker_id": 0,
+    "game_id": 0,
+    "ply": 0,
+    "raw_json_line_sha256": "934c201855ca7ad2f2207ee4087a08844ad49eae784dc6d3c596c9e2c34fc708",
+    "fen": "rn1qkb1r/pb1n1ppp/1p2p3/2ppP3/3P1P2/2N2N2/PPP1B1PP/R1BQK2R w KQkq - 0 9",
+    "phase0": {
+      "requested_depth": 9,
+      "width": 35,
+      "d9_complete": true,
+      "d9_covers_all_actual_legal_moves": true
+    },
+    "phase1": {
+      "requested_depth": 10,
+      "width": 8,
+      "d9_complete": true,
+      "d9_moves": 8
+    },
+    "gate": {
+      "observed_d10_margin_cp": 11.0,
+      "threshold_cp": 10.0,
+      "extended_to_d12": false
+    },
+    "selection": {
+      "value_depth": 9,
+      "value_full_width": true,
+      "value_width": 35,
+      "temp": 1.0
+    },
+    "changed_d9_values_phase0_then_latest": {
+      "e1g1": [
+        65.0,
+        54.0
+      ],
+      "f4f5": [
+        65.0,
+        55.0
+      ],
+      "c1e3": [
+        50.0,
+        36.0
+      ],
+      "e2d3": [
+        47.0,
+        33.0
+      ],
+      "a2a3": [
+        37.0,
+        28.0
+      ],
+      "h2h4": [
+        34.0,
+        37.0
+      ],
+      "a2a4": [
+        30.0,
+        19.0
+      ],
+      "c3b1": [
+        28.0,
+        19.0
+      ]
+    },
+    "phase0_best_cp": 65.0,
+    "latest_d9_best_cp": 55.0,
+    "phase0_maximum_moves": [
+      "e1g1",
+      "f4f5"
+    ],
+    "latest_d9_maximum_moves": [
+      "f4f5"
+    ],
+    "limitation": "One published row establishes existence/retained field semantics, not prevalence or strength. No second row or full payload analyzed."
+  },
+  "code_paths": [
+    {
+      "file": "generator",
+      "line_start": 853,
+      "line_end": 875,
+      "fact": "PhaseResult.as_row retains every phase/depth block; later refinements do not overwrite phase0."
+    },
+    {
+      "file": "generator",
+      "line_start": 1407,
+      "line_end": 1451,
+      "fact": "G10 extends top4 to d12 only if complete d10 top2 margin <=10cp; stopped rows have no d12 block."
+    },
+    {
+      "file": "generator",
+      "line_start": 1452,
+      "line_end": 1477,
+      "fact": "Phase0 unrestricted full width; later phases restrict searchmoves and append separate results."
+    },
+    {
+      "file": "generator",
+      "line_start": 1483,
+      "line_end": 1498,
+      "fact": "Game move selection reads results[0] full-width scores, not the narrowed phase best."
+    },
+    {
+      "file": "generator",
+      "line_start": 36,
+      "line_end": 43,
+      "fact": "TT carried across phases and positions within each game, cleared per game. Subsequent phase0 search can inherit deeper earlier-position work."
+    },
+    {
+      "file": "deriver",
+      "line_start": 1297,
+      "line_end": 1335,
+      "fact": "full_width_block reads phase0. value_at traverses phases backwards, taking latest available phase for move/requested depth."
+    },
+    {
+      "file": "deriver",
+      "line_start": 1370,
+      "line_end": 1432,
+      "fact": "nodes uses phase0; uniform/topK starts with phase0 support but overlays values via value_at. TopK deepens an offline-ranked subset or raises EnvelopeMiss."
+    },
+    {
+      "file": "deriver",
+      "line_start": 1098,
+      "line_end": 1135,
+      "fact": "Parser has uniform-dD, topK-dD2-rest-dD1, nodes-N; no explicit fixed-depth phase0-only selector."
+    },
+    {
+      "file": "deriver",
+      "line_start": 1191,
+      "line_end": 1235,
+      "fact": "Uniform policy/value depth cannot exceed full-width9 envelope; narrowed d10/d12 is not all-legal deeper supervision."
+    },
+    {
+      "file": "deriver",
+      "line_start": 1460,
+      "line_end": 1483,
+      "fact": "Matching policy/value uniform depth reuses MoveValues. --value-depth9 does not force phase0."
+    },
+    {
+      "file": "deriver",
+      "line_start": 2992,
+      "line_end": 2997,
+      "fact": "Policy is softmax of scheme q values with selected temperature/floor."
+    },
+    {
+      "file": "deriver",
+      "line_start": 3037,
+      "line_end": 3040,
+      "fact": "Default root value uses best effective cp from the same scheme values; observation selection affects value too."
+    },
+    {
+      "file": "rank_sidecar",
+      "line_start": 79,
+      "line_end": 112,
+      "fact": "d9_lines explicitly selects phases[0] complete depth9; near-close rankings use phase0."
+    },
+    {
+      "file": "bt4_mixer",
+      "line_start": 1063,
+      "line_end": 1097,
+      "fact": "Shown source contract checks scheme/depth/temp/floor/cp-map/encoding/storage but not observation-phase convention."
+    }
+  ],
+  "recipe_transfer": {
+    "reusable": "All-legal phase0 d9 and complete history survive. Global BT4, exact-tie and near-close formulas are reusable after choosing/stamping the SF observation convention and rebinding all sidecars to new source identities.",
+    "not_same_labels": "Existing uniform-d9 on G10 can change SF scores, maxima, exact ties, near-close membership and root WDL. Existing20M sidecars/checkpoints are not interchangeable with different rows.",
+    "remaining_distribution_shift": "Even explicit phase0-d9 has different games/seeds/worker allocation and richer across-position TT history. Same engine/book/temp/cp map does not reconstruct a bare all:9 generator counterfactual.",
+    "adaptive_refinement": "No generic latest-available-per-move scheme exists in examined parser. Top4-d12 may fail where G10 stopped or offline latest-d9 ranking selects outside generator shortlist. No silent depth fallback is justified."
+  },
+  "minimal_fix_options": [
+    {
+      "option": "Explicit score-observation selection",
+      "proposal": "On an inactive main-based checkout add a named selector such as legacy latest-phase-at-depth versus phase0-at-depth. Preserve existing default/legacy semantics and every current artifact. Stamp policy/value observation selection in derived shard/summary provenance, and require matching rank/quality sidecar and mixer contracts. --value-depth alone is not an observation selector."
+    },
+    {
+      "option": "Future G10 phase0 canonical comparison",
+      "proposal": "Once explicit selection exists, deliberately choose complete phase0 d9 for future G10 policy, default root value, exact-tie sets, near-close ranks and finite-tail quality. This preserves20M observation type, not identical rows/search state. Keep old default unchanged; make future choice explicit."
+    }
+  ],
+  "smallest_later_comparison": {
+    "cpu_banked": "Preregister one source-qualified game-clustered G10 sample. Pair phase0-d9 versus legacy latest-phase-d9 on identical rows, mapping/temp/floor and BT4 data. Record cp deltas, top1/max-tie changes, close-set changes, policy L1/KL with zero-support handling, root-WDL deltas and gated/stopped phase strata. No engine relabeling needed.",
+    "resolves": "Prevalence/magnitude of observation drift and agreement of producing/consuming conventions.",
+    "not_resolved": "Playing strength or100M recipe transfer. Material differences would motivate a separately designed matched-data training comparison with fixed recipe/value treatment and paired search evaluation; no GPU queue change is recommended here."
+  },
+  "actions": "Read metadata/scoped sources; streamed only first published raw row; wrote this note. No tests/inference/labelgeneration/derivation/queue/runtime edits."
+}

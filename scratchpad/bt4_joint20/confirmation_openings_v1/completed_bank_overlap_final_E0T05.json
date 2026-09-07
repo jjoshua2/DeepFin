@@ -1,0 +1,16 @@
+{
+  "status": "PASS_FINAL_DEVELOPMENT_OPENING_ALIGNMENT_AND_RESERVED_BANK_EXCLUSION",
+  "checked_unix": 1788750921.8292763,
+  "prior_receipt_sha256": "abc2bbc4776691073936b80af55bcfeb501ea8321f8592ab553944f1daaf43d1",
+  "prior_13_bank_hashes_still_match": true,
+  "new_bank": "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/arena.games.jsonl",
+  "new_bank_sha256": "ec8d11a419b026b6c334705065a96834e54deda3378c29d94c72871f1247bfe6",
+  "new_bank_game_rows": 1000,
+  "new_bank_pairs": 500,
+  "same_pair_id_opening_index_terminal_epd_mapping_as_prior_13": true,
+  "fresh_bank_sha256": "e0d13b2ea70c0ac278570a0e463c3c1c3030a18256522bcba864db23cdc07c98",
+  "fresh_history_plies": 16,
+  "fresh_unique_terminal_epds": 500,
+  "overlap": 0,
+  "limits": "Opening-bank exclusion only, not exclusion from training data; prior alignment proof reused with fresh bank-file hash checks."
+}

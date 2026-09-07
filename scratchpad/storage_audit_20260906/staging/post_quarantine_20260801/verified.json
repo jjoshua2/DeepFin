@@ -1,0 +1,67 @@
+{
+  "pool": "post_quarantine_20260801",
+  "source": "/home/josh/projects/chess/data/salvage/post_quarantine_20260801",
+  "source_deleted": false,
+  "plan_sha256": "f389eeff35235a5097f39a3a5b4dd22a7c860ca36bc5038fbaabb4211491a5bb",
+  "started_unix": 1788731575.1262445,
+  "mount": {
+    "target": "/mnt/e",
+    "source": "E:\\",
+    "fstype": "9p",
+    "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+  },
+  "resources": {
+    "local_free_bytes": 473651888128,
+    "available_RAM_bytes": 58302586880
+  },
+  "references": {
+    "observed_source_references": [],
+    "other_user_processes_not_inspected": [
+      1,
+      9,
+      12,
+      13,
+      71,
+      72,
+      87,
+      88,
+      103,
+      104
+    ],
+    "same_user_processes_not_inspected": [
+      68
+    ],
+    "complete_process_visibility": false,
+    "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+  },
+  "inventory": {
+    "entries": 345151,
+    "logical_file_bytes": 2462703061
+  },
+  "tar_bytes": 3083130880,
+  "verified_members": 345151,
+  "tar_sha256": "5943654f7ecb1bb7a3dd9f20741d08899265e13a1055ba3ae2a9924d5d20c10e",
+  "source_manifest_sha256": "02ba40816d6d9df9abbfe3295d5fbd9930e0f1830d357914cd58a919b30850ce",
+  "rsync_command": [
+    "rsync",
+    "--no-whole-file",
+    "--partial-dir=.post_quarantine_20260801.partial",
+    "--bwlimit=16384",
+    "--fsync",
+    "--",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/post_quarantine_20260801/post_quarantine_20260801.tar",
+    "/mnt/e/chess_archive_20260906/salvage/post_quarantine_20260801.tar"
+  ],
+  "rsync_exit_code": 0,
+  "external_tar_sha256": "5943654f7ecb1bb7a3dd9f20741d08899265e13a1055ba3ae2a9924d5d20c10e",
+  "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+  "finished_unix": 1788732362.9310906,
+  "external_archive": "/mnt/e/chess_archive_20260906/salvage/post_quarantine_20260801.tar",
+  "external_size": 3083130880,
+  "external_mtime_ns": 1788732253616634600,
+  "limitations": [
+    "Source retained; removal requires separate parent verification.",
+    "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+    "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+  ]
+}

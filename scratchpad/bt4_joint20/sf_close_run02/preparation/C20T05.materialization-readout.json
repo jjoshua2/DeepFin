@@ -1,0 +1,79 @@
+{
+  "checked_unix": 1788673883.4361088,
+  "summary_sha256": "5bf8502a12af0b9ce938a39ddfd9d95df4bfb2b1a0f80292d80d04109cce7100",
+  "derive_summary_sha256": "fc6a33b4f75b154ae2945240d4169b40685618ff0082cc759914a0c4f5b6e8a5",
+  "metadata_and_lineage": "PASS",
+  "summary": {
+    "admission": {
+      "experiment_record": null,
+      "mode": "gate"
+    },
+    "algorithm": "stored-top-ties-union-sf-d9-cp-window-v1",
+    "alpha": 1.0,
+    "audit_receipt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/audit_C_k3_g20_a100_t050_v2.json",
+      "sha256": "7e54c847c02cf3e2e2ad37d34ab5913317f8f93d66ffc7dac7c91acd1604ce7e"
+    },
+    "bt4_temperature": 0.5,
+    "candidate_set_wider_fraction": 0.2618137642590216,
+    "candidate_set_wider_rows": 4951025,
+    "changed_fraction": 0.43227444628069805,
+    "changed_rows": 8174519,
+    "changed_unique_max_rows": 4740654,
+    "completed_utc": "2026-09-06T05:50:07Z",
+    "expected_rows": 18910484,
+    "expected_shards": 2309,
+    "formula": "redistribute alpha of stored top-tie union d9 cp-window mass by temperature-scaled BT4 prior",
+    "kind": "sf-cp-window",
+    "mean_entropy_nats": {
+      "bt4": 2.0525573055367654,
+      "mixed": 0.5154697398029385,
+      "source": 0.5689733823705948
+    },
+    "mean_l1_from_source": 0.3703393676127623,
+    "mixed_bt4_top1_agreement": 0.70426193216419,
+    "mixed_source_top1_agreement": 0.7344873880541608,
+    "mutated_arrays": [
+      "policy_target"
+    ],
+    "near_max_ratio": null,
+    "rows": 18910484,
+    "schema": 1,
+    "selected_mass_abs_drift": {
+      "max": 0.0004163980484008789,
+      "mean": 4.6526547843736774e-05,
+      "mean_bound": 0.0002,
+      "reference": "stored_selected_mass",
+      "row_bound": 0.005
+    },
+    "sf_cp_window": 20.0,
+    "sf_rank_cap": 3,
+    "sf_rank_sidecar_dir": "/home/josh/projects/chess/data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top8",
+    "sf_rank_sidecar_summary": {
+      "path": "/home/josh/projects/chess/data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top8/sf_d9_rank_sidecar_summary.json",
+      "sha256": "165c43e5180146a37e308b9d2dc204190f9cbc5e8a971e0daf5ec8acfa7542fa"
+    },
+    "shards": 2309,
+    "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m",
+    "sidecar_summary": {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json",
+      "sha256": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3"
+    },
+    "source_bt4_top1_agreement": 0.4936922820166845,
+    "source_candidate_multi_fraction": 0.43229253148676683,
+    "source_candidate_multi_rows": 8174861,
+    "source_derive_summary_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+    "source_top_tied_fraction": 0.18159239076059608,
+    "source_top_tied_rows": 3434000,
+    "top1_ge_0_99_fraction": {
+      "mixed": 0.5005711646513119,
+      "source": 0.5938493166013096
+    },
+    "value_columns_unchanged": [
+      "wdl_target",
+      "search_wdl"
+    ]
+  },
+  "scope": "Published summary, recipe, input summary bytes, shard inventory/counts, derived postprocess metadata; not full payload proof or training strength."
+}

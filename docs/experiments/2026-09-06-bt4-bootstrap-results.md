@@ -90,10 +90,10 @@ replicates with PCG64 seed 20260903. Increasing relative advantage over E0 with
 search is not established. Training and all three arena charges closed at
 **5.376 GPU hours**, below the separate 12-hour cap.
 
-E0 uses teacher T1, so this comparison combines widening and sharpening. A
-sharpened-exact-tie model remains a substantive challenger that could change the
-winning recipe. E0 also retains an incompletely stamped historical runtime;
-confirmation needs fresh matched training. The schedule proof covers game metadata
+E0 uses teacher T1, so this comparison combines widening and sharpening. At the
+time of this screen, a sharpened-exact-tie model remained a substantive challenger;
+its completed comparisons are recorded below. E0 also retains an incompletely
+stamped historical runtime; fresh matched training was needed for confirmation. The schedule proof covers game metadata
 and batch choices, with row-order equality inferred from the pinned code; it is not
 a full feature/target payload check. The historical `valid_control:false` limitations
 remain: no held-out purity receipt, comparison to a committed configuration pin,
@@ -101,33 +101,49 @@ and game-epoch sampling differing from the old replacement-sampled control.
 These nominal one-training-seed results do not promote a recipe. Direct-E0 Elo
 cannot be subtracted from the global screen's direct-S0 Elo to rank C against G.
 
-## Next decisions and evidence
+## Updated decisions after the fresh confirmation
 
-The selected next development screen is a **direct C20T05-versus-G20T05 match at
-100 simulations**, reusing the existing checkpoints: 1,000 games / 500 pairs,
-prior 1.0 on both sides, with a hard **5,400-second** arena/supervisor cap including
-termination allowance. It has not launched at this record update. C's paired Elo
-interval wholly above zero favors C, wholly below zero favors G, and crossing zero
-is inconclusive; an inconclusive result does not require more games or establish
-equivalence. This one-budget screen selects a useful next challenger, not a
-search-scaling slope or a deployment winner.
+Subsequent direct comparisons resolved the next steps described in the original
+September 6 snapshot:
 
-If the close family remains competitive, the already materialized sharpened
-exact-tie recipe is a possible winner-changing challenger, not merely an
-attribution control. Its bounded 8,192-row check verified target arithmetic,
-raw-BT4 lineage and non-policy preservation; prospective and realized training
-schedules still need qualification if selected. If the global family clearly
-leads, the published and independently reviewed
-[50% sharpened global BT4 mixture](2026-09-06-bt4-global-dose50-preparation.md)
-tests a substantively larger teacher contribution. Corpus availability alone does
-not justify a training grid.
+| Comparison | Budget | Direct Elo [paired 95% CI] | Record |
+| --- | --- | --- | --- |
+| C20T05 versus G20T05, seed zero | 100 sims | +29.95 [11.89, 48.18] | [Direct global comparison](2026-09-06-bt4-direct-close-global.md) |
+| C20T05 versus E0T05, seed zero | 100 sims | +29.60 [10.66, 48.72] | [Sharpened ties screen](2026-09-06-bt4-sharpened-ties-screen.md) |
+| C20T05 versus E0T05, fresh paired seed one and fresh openings | 100 sims | +37.67 [18.72, 56.85] | [Completed confirmation](2026-09-07-bt4-fresh-confirmation.md) |
 
-Training-objective interactions remain relevant to bootstrap selection. SF agreement
-and local gradient diagnostics cannot rank playing strength. PR
-[#517](https://github.com/jjoshua2/DeepFin/pull/517) contains the separate graded-objective
-investigation; no TailRL training is included in these screens. Reserve fresh
-matched training-seed and fresh-opening confirmation, including deployment-relevant
-search, before recommending a recipe for the larger bootstrap and RL restart.
+Each comparison has 1,000 games / 500 complete color-swapped opening pairs.
+The fresh result meets the registered confirming rule. **C20T05 is the selected
+baseline for the next bootstrap stage**, supported by the tested head-to-head
+comparisons. It is not a claim of universal optimality or an automatic production
+promotion. Wider SF-close redistribution survives the sharpened-ties challenger
+with both recipes using BT4 T0.5. One fresh paired training seed does not measure
+training-seed variance; these intervals describe opening-pair uncertainty.
+
+The [50% sharpened global mixture](2026-09-06-bt4-global-dose50-preparation.md)
+remains prepared but untrained. Further dose searches need a reason to expect a
+winner-changing result, rather than corpus availability alone. The next research
+priorities are larger-corpus observation consistency and the graded-objective
+investigation in [PR #517](https://github.com/jjoshua2/DeepFin/pull/517), including
+SF-only versus BT4-mixed target interactions. No TailRL training is part of the
+completed results. Keep the long-term aim of a strong approximately 100M-position
+bootstrap and eventual RL restart distinct from this 20M comparison. Fresh
+confirmation at 400 simulations and actual RL benefit remain unmeasured.
+
+The [prepared TailRL integration notes](../../scratchpad/tailrl_bootstrap_v1/offline_integration_notes.json)
+are now published unchanged (SHA256 `bedb08efaa044231aba79faad3cd6883258806b5ffd26bdc12b7de41504df06f`),
+against PR #517 head `f759e52ec95c02c47d0a424c1467769e0a5c67fd`. They are
+**read-only preparation, with no implementation or training queued**. They identify
+work to qualify before a training comparison: carry complete legal-action quality
+labels through filtering, mirroring and collation; compare order 1 and order 32
+using the same finite-tail objective; preserve ragged-batch weighting; and verify
+real optimizer updates, disabled equivalence, coverage rejection, timing and memory.
+The existing own-regret loss is a different control, not an order-1 substitute.
+The dense float32 quality estimate is approximately 131 GiB for this corpus;
+packed storage or measured compression needs investigation before materialization.
+These are integration requirements and estimates, not strength results. The old
+roadmap's instruction to finish global/SF-close screens has been satisfied; resume
+from the confirmation result rather than rerunning them.
 
 Before transferring recipes to the growing G10 corpus, explicitly choose which SF
 observation supplies policy, value and rank/quality labels. Legacy `uniform-d9`
@@ -138,8 +154,10 @@ strength. Even phase-0 selection would not reproduce the old generator's search
 state: G10's additional deeper, narrowed searches change the transposition-table
 work inherited from earlier positions. Both generators retain tables within games.
 
-Runtime evidence lives under `scratchpad/bt4_joint20`, outside git. Read actual
-processes and completion artifacts when continuing; status here is a dated snapshot.
+Compact runtime evidence and game banks are available through the
+[published evidence catalog](evidence/bt4-bootstrap/README.md). Bulk corpora and
+checkpoints remain outside git. Read actual processes and completion artifacts
+when continuing; status here is a dated snapshot.
 
 | Artifact | SHA256 |
 | --- | --- |
@@ -161,6 +179,7 @@ contrasts, checked model/protocol identities, and reused the completed training
 provenance. All global GPU charges closed at 22.3373 hours, below its 30-hour cap.
 The post-hoc contrasts were separately recomputed from six raw banks. The SF-close
 review independently rescored all three banks and its registered interaction,
-checked protocol and completion identities, and verified the closed GPU charges. Confirmation
-openings and launch/readout tooling have been prepared but no confirmation run is
-selected or launched. Preserve active generation throughout.
+checked protocol and completion identities, and verified the closed GPU charges.
+The fresh confirmation has since completed; see its linked record for seed-one
+training, opening qualification, the final bank and independent review. Preserve
+active generation throughout.

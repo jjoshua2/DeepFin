@@ -1,0 +1,31 @@
+{
+  "checked_unix": 1788667759.269188,
+  "status": "complete_integrity_verified",
+  "cells": {
+    "S0": {
+      "games_sha256": "28dafc36894faae1b4cad06da5e4cdf9b18c4043ccdf8bb7741b0f9ad7d8b5d6",
+      "checkpoint_sha256": "b41a5614bae5bf67cb32916c4ace8d26db27fd9152b7c496be40427424b08fb8",
+      "complete_receipt_sha256": "72f1b9da0a2e8166044aa5fad5802844f76d11e4084f64abfe145a68b6485811",
+      "raw_rows": 1000
+    },
+    "E0": {
+      "games_sha256": "5302737b2d66405024c54348ca11ac774bc663653cdc6b30e525e975b99df71e",
+      "checkpoint_sha256": "c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817",
+      "complete_receipt_sha256": "7fd038c07586448b63fab6cae4b17f98b2a0509e0cdcb0bc489214d8a0a12103",
+      "raw_rows": 1000
+    }
+  },
+  "charges": [
+    {
+      "file": "E0.s100.arena.1788665175885499612.gpu-charge.json",
+      "seconds": 2495.2666649739986,
+      "stage": "E0.s100.arena"
+    },
+    {
+      "file": "S0.s100.arena.1788662174222006748.gpu-charge.json",
+      "seconds": 3000.287677846005,
+      "stage": "S0.s100.arena"
+    }
+  ],
+  "total_calibration_gpu_seconds": 5495.5543428200035
+}

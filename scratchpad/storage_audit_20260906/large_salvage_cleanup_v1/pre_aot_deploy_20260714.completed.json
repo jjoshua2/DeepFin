@@ -1,0 +1,14 @@
+{
+  "status": "VERIFIED_LOCAL_POOL_REMOVED_EXTERNAL_ARCHIVE_PRESERVED",
+  "name": "pre_aot_deploy_20260714",
+  "completed_unix": 1788743219.794456,
+  "source": "/home/josh/projects/chess/data/salvage/pre_aot_deploy_20260714",
+  "archive": "/mnt/e/chess_archive_20260906/salvage/pre_aot_deploy_20260714.tar",
+  "tar_sha256": "d64226038a64fa367ebaf1609625ec39d6f8e1a7623861a9abb561a766be244c",
+  "external_restore_receipt": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/pre_aot_deploy_20260714.restore.json",
+  "external_restore_receipt_sha256": "0d2a31e3cc0fe92120b77b9a45a03f7ef924951ff754682b5198dc27e66fc78e",
+  "entries": 352438,
+  "allocated_bytes_before": 3694477312,
+  "plan_sha256": "12c67cc7dbe82d4e1dc8948c23da80f865a11d43cdf3b6d9e70a621d86283694",
+  "script_sha256": "3d83c7bc96f9275863930de51a7bd10a7536f4d05c1bffa9427e2d841ccb0b20"
+}

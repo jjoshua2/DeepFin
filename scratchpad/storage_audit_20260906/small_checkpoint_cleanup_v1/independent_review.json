@@ -1,0 +1,66 @@
+{
+  "status": "PASS_FIXED_THREE_POOL_RETIREMENT_REVIEW",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_unix": 1788734931.2586749,
+  "script": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/retire_three.py",
+  "script_sha256": "ba75e1a59156b22df400ad9bd31add4e4b9dfd08f68d04b8a61951cf0c5f4dc5",
+  "plan": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/plan.json",
+  "plan_sha256": "2d86dd9d11abab6340a2eb7ade6bd4de723dcbc4e733d66eb809c91f6892feae",
+  "fixed_pools": [
+    "apf_endpoint_checkpoint_000297_20260818",
+    "f_only_readout_iter487_20260819",
+    "iter118_pre_value_easy_drop"
+  ],
+  "blockers": [],
+  "reviewed_contract": [
+    "Fixed immutable three-name plan, source/archive roots and owned quarantine/pointer/receipt names; new retirement state only. ANCHOR and protected restart/replay/link targets are outside allowlist.",
+    "All17 evidence/config/queue/helper/source-manifest/verified-receipt pins passed through independently executed real plan-only mode; no source/archive payloads read.",
+    "Archive-driver name/stat/sha256 schema adapted explicitly; exact old stat fields, complete membership, regular file nlink1, root-relative safe paths, counts and logical sizes checked. Private frozen helper instance preserves original helper file and sets current source/quarantine/STOP identities correctly.",
+    "Execution freshly hashes complete external archive and every selected source file at16MiB/s, compares pinned hashes, and repeats source inventory and archive/mount stability checks. External archive must be a single regular file on a different filesystem with unchanged verified size/mtime.",
+    "Host boot/PID1 and exact known inaccessible process identities retained; new unreadable live processes rejected. cwd/fd/maps/cmdline, shallow aliases and nested source mounts checked before and after quarantine; visible limits remain explicit.",
+    "Quarantine rename tolerates only root ctime change. Original source must remain absent; final external mount/archive identity and fd-safe rmtree checks precede removal. Archive is never deleted.",
+    "Exclusive done/failure receipts and restore pointer preserve evidence. Pre-removal failure retains source or full quarantine; rmtree failure may leave partial quarantine and earlier completed pools remain completed. No automatic retry.",
+    "Final pointer status becomes COMPLETE only after valid completion receipt. Existing pointer content/metadata checked, exclusive fsynced temporary written, atomic replace plus parent-directory fsync; last-stage failures preserve completion evidence and report finalize_restore_pointer.",
+    "Pinned running archive driver iterates its fixed plan forward and does not revisit completed pools or auto-adopt existing attempts. APF excluded from remaining queue; historical completed f_only/iter118 entries do not introduce new current work. No running driver/plan changes made."
+  ],
+  "independent_validation": {
+    "real_plan_only": "PASS17pins; /usr/bin/python3 retire_three.py without --execute, CUDA hidden,nice19,affinity0/1.",
+    "pointer_cases": {
+      "path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/pointer_independent_checks.json",
+      "sha256": "841e2ebf7417876ae1fd43b58301f366996f0f15b82088082ac72ff5a6ada127",
+      "passed": 2,
+      "cases": [
+        "success",
+        "final_pointer_update_failure"
+      ],
+      "scope": "Reviewed author harness executed independently for these two cases only, with genuine temporary filesystem/hash/rename/deletion and explicit mount/device/process substitutes."
+    }
+  },
+  "author_validation_inspected_not_fully_rerun": {
+    "path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/small_checkpoint_cleanup_v1/failure_qualification_v2.json",
+    "sha256": "263d380bb5ffdb77adf49e2e656db6338eeb2e5b6986df70d3cd516107d0b0a4",
+    "passed": 10,
+    "scope": "Success, bad archive/source hashes, hardlink/symlink, mutation during hashing, post-quarantine consumer, final mount loss, partial rmtree failure and final-pointer replacement failure."
+  },
+  "prior_dependency_evidence": {
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/batch_cleanup_dependency_review.json": "6b55c0c5f606d1a8c6f4e36189df6353c7a0f5b27327b60198e9c5a07d66e242",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/batch_cleanup_host_observation.json": "6c9631fc262c273d8aa2b0745d8528fab0b7ad4a2cbb8e9826a05ecac4c8a284",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/batch_cleanup_small_pool_metadata.json": "3f018bffe6373bf4ec50879277d64770f09233adde7d771ea85802912f57c420",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/linked_pool_dependencies.json": "1f9a7e5065562e30dd7cc3134dcc8830929fcb73a8d5ffb12704faeda9bda027"
+  },
+  "limitations": [
+    "This is prelaunch qualification of exact script/plan, not evidence real cleanup or payload verification has executed. Parent owns launch with required nice19/CPU0,1.",
+    "Known inaccessible process identities and future or deeper aliases/consumers are not certified absent; current host dependencies are refreshed by execution.",
+    "Archive ACL/xattrs capture is not independently verified. After retirement external archive is the surviving copy; no future drive-availability guarantee.",
+    "STOP is checked before removal and during hashing; interruption of rmtree can leave partial quarantine. Post-removal pointer failure can leave done plus failed receipts and requires stage-aware inspection.",
+    "Concurrent archive/generation jobs affect measured free-space change. No full replay-tree or large archive read was performed during this review."
+  ],
+  "not_performed": [
+    "Production cleanup",
+    "Production checkpoint/source or archive payload hashing",
+    "Archive-queue changes",
+    "Process signalling",
+    "GPU inference",
+    "Partial arena-result reads"
+  ]
+}

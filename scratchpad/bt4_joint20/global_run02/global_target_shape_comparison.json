@@ -1,0 +1,49 @@
+{
+  "arms": {
+    "G20T05": {
+      "audit_sha256": "20e14a75c113338847a4ebca778a88103ef7759bf85ce69469a40a4429f408c5",
+      "candidate_entropy_median_nats": 0.4721132964789426,
+      "candidate_top1_probability_median": 0.8692252877570733,
+      "changed_top1_mean_regret_delta_cp": -78.53846153846153,
+      "changed_top1_rows": 260,
+      "shape": {
+        "candidate_mean_entropy_nats": 0.523699563586565,
+        "candidate_top1_ge_0_99_fraction": 0.19725,
+        "selected_mass_abs_drift_bounds": {
+          "mean_max": 0.0009765625,
+          "row_max": 0.0009765625
+        },
+        "selected_mass_abs_drift_max": 0.0003374814987182617,
+        "selected_mass_abs_drift_mean": 0.00011699898540973663,
+        "source_mean_entropy_nats": 0.17708954017617723,
+        "source_top1_ge_0_99_fraction": 0.85
+      },
+      "source_unique_max_rows": 3625,
+      "unique_max_changed_rows": 4
+    },
+    "G20T1": {
+      "audit_sha256": "3b2c17b05d731ece133ff87aad12188733697083d12d56ea67b6e1b7d99b4d0e",
+      "candidate_entropy_median_nats": 0.6455612705981498,
+      "candidate_top1_probability_median": 0.8554673771211336,
+      "changed_top1_mean_regret_delta_cp": -78.0923076923077,
+      "changed_top1_rows": 260,
+      "shape": {
+        "candidate_mean_entropy_nats": 0.7101167144124106,
+        "candidate_top1_ge_0_99_fraction": 0.02425,
+        "selected_mass_abs_drift_bounds": {
+          "mean_max": 0.0009765625,
+          "row_max": 0.0009765625
+        },
+        "selected_mass_abs_drift_max": 0.0002853870391845703,
+        "selected_mass_abs_drift_mean": 0.00011879368126392365,
+        "source_mean_entropy_nats": 0.17708954017617723,
+        "source_top1_ge_0_99_fraction": 0.85
+      },
+      "source_unique_max_rows": 3625,
+      "unique_max_changed_rows": 2
+    }
+  },
+  "kind": "matched_frozen_ruler_target_shape",
+  "purpose": "Descriptive shape evidence only; not playing strength or search scaling",
+  "rows": 4000
+}

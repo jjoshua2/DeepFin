@@ -66,8 +66,10 @@ two torch threads for this reason; keep that default on a shared machine.
 
 Use [experiment records](docs/experiments/README.md) as the primary index. Each new
 experiment gets `docs/experiments/YYYY-MM-DD-slug.md`, with its preregistration and
-subsequent readouts together, plus a link in the index. The old
-[ledger](docs/experiment_ledger.md) is frozen historical evidence: search relevant
+subsequent readouts together, plus a link in the index. Publish completed records
+and their compact supporting evidence on `main`, with locations and identities for
+external bulk artifacts; do not leave the only useful record in a local scratchpad.
+The old [ledger](docs/experiment_ledger.md) is frozen historical evidence: search relevant
 entries and gotchas, without loading the whole file or appending new work there.
 
 Before committing training compute or changing the live distribution, record the

@@ -1,0 +1,45 @@
+{
+  "algorithm": "stored-top-set-only-v1",
+  "alpha": 1.0,
+  "audit_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_top_ties_a100_v7.json",
+    "sha256": "d4dec48b77c628364dd08963682b610451326fcd9932e1397f0a81fc67bf4003"
+  },
+  "changed_fraction": 0.18157155575711337,
+  "changed_rows": 3433606,
+  "changed_unique_max_rows": 0,
+  "completed_utc": "2026-09-03T19:51:09Z",
+  "formula": "redistribute alpha of stored source top-tie mass by BT4 prior",
+  "kind": "top-max-ties",
+  "mean_entropy_nats": {
+    "bt4": 2.0525573055367654,
+    "mixed": 0.5138242439441882,
+    "source": 0.5689733823705948
+  },
+  "mean_l1_from_source": 0.09603282239595122,
+  "mixed_bt4_top1_agreement": 0.624454403176566,
+  "mixed_source_top1_agreement": 0.8594782132493277,
+  "mutated_arrays": [
+    "policy_target"
+  ],
+  "rows": 18910484,
+  "schema": 1,
+  "shards": 2309,
+  "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m",
+  "sidecar_summary": {
+    "path": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json",
+    "sha256": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3"
+  },
+  "source_bt4_top1_agreement": 0.4936922820166845,
+  "source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+  "source_top_tied_fraction": 0.18159239076059608,
+  "source_top_tied_rows": 3434000,
+  "top1_ge_0_99_fraction": {
+    "mixed": 0.5952985655999075,
+    "source": 0.5938493166013096
+  },
+  "value_columns_unchanged": [
+    "wdl_target",
+    "search_wdl"
+  ]
+}

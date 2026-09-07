@@ -1,0 +1,14 @@
+{
+  "status": "VERIFIED_LOCAL_POOL_REMOVED_EXTERNAL_ARCHIVE_PRESERVED",
+  "name": "pre_lc0_control_20260819",
+  "completed_unix": 1788744374.1136363,
+  "source": "/home/josh/projects/chess/data/salvage/pre_lc0_control_20260819",
+  "archive": "/mnt/e/chess_archive_20260906/salvage/pre_lc0_control_20260819.tar",
+  "tar_sha256": "e50f4620efcffe2f6baa4f0665e01a69089e809fc9745cb552941cb6c4c121c0",
+  "external_restore_receipt": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/pre_lc0_control_20260819.restore.json",
+  "external_restore_receipt_sha256": "b332a8c4988b5e797735bb15c53494fdbadce938b23f5a4427dcbc5bd24bf67d",
+  "entries": 396295,
+  "allocated_bytes_before": 3964899328,
+  "plan_sha256": "12c67cc7dbe82d4e1dc8948c23da80f865a11d43cdf3b6d9e70a621d86283694",
+  "script_sha256": "3d83c7bc96f9275863930de51a7bd10a7536f4d05c1bffa9427e2d841ccb0b20"
+}

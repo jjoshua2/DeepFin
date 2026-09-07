@@ -1,0 +1,14 @@
+{
+  "status": "VERIFIED_LOCAL_POOL_REMOVED_EXTERNAL_ARCHIVE_PRESERVED",
+  "name": "f_only_midpoint_20260818",
+  "completed_unix": 1788742216.6170547,
+  "source": "/home/josh/projects/chess/data/salvage/f_only_midpoint_20260818",
+  "archive": "/mnt/e/chess_archive_20260906/salvage/f_only_midpoint_20260818.tar",
+  "tar_sha256": "cb1152f8e592b215c0ca65ade729729b1fe72fc720e143cc1ee8ae87f40956a3",
+  "external_restore_receipt": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/f_only_midpoint_20260818.restore.json",
+  "external_restore_receipt_sha256": "c4ecffa3d0d973ba5bef2ce14e41ec66f4d96ad2b6d8cfa0954617fcf9e83f3d",
+  "entries": 399105,
+  "allocated_bytes_before": 3878465536,
+  "plan_sha256": "12c67cc7dbe82d4e1dc8948c23da80f865a11d43cdf3b6d9e70a621d86283694",
+  "script_sha256": "3d83c7bc96f9275863930de51a7bd10a7536f4d05c1bffa9427e2d841ccb0b20"
+}

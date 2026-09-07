@@ -1,0 +1,77 @@
+{
+  "bank_sha256": {
+    "25": "a60082176666207d7898ab58652c6218bde65515360e75b993d33437f07cfe54",
+    "400": "21fd37e59e92e300ad0a8c161cad7971f280d6f95b8455820e8969f2e868aeed"
+  },
+  "blockers": [],
+  "checked_utc": "2026-09-06T10:45:04.437961+00:00",
+  "checkpoint_sha256": {
+    "candidate": "e94b5dc53d55d7fdb119b214f0b59ccc79a7963f933124d3e1f731478bb32b6d",
+    "reference": "b41a5614bae5bf67cb32916c4ace8d26db27fd9152b7c496be40427424b08fb8"
+  },
+  "completion_receipt_sha256": "c65025dcc4da7d47830519843bdce0059e481a24860e828f1272f251372f2950",
+  "cpu_affinity": [
+    0,
+    1
+  ],
+  "interaction_400_minus_25": {
+    "ci95": [
+      -0.0125,
+      0.0525
+    ],
+    "discordant_pairs": 370,
+    "method": "percentile; PCG64 default_rng; linear percentile",
+    "pair_outcome_covariance": -0.007993236472945892,
+    "samples": 10000,
+    "score_advantage": 0.02,
+    "seed": 20260903,
+    "unit": "aligned opening pair"
+  },
+  "interpretation": "G20T1 beats S0 at400 simulations in this fixed seed/opening screen. The400-minus25 interval includeszero; no demonstrated increase or decrease in relative advantage over S0.",
+  "limitations": [
+    "Nominal exploratory intervals without family-wise correction.",
+    "Relative advantage across budgets is not either model's absolute improvement with search.",
+    "This is not evidence about uncompleted global or SF-close arms.",
+    "Previously reviewed training schedule and corpus checks are retained; no new corpus payload verification performed."
+  ],
+  "manifest_sha256": "64b45d136d7dd08c59791e14714c6cf2605ddd676cb538e478946ff814994132",
+  "method": "Independent stdlib raw result/color scoring, sample-variance paired normal95% interval; independent NumPy aligned-pair percentile bootstrap. No producer/readout estimator imports.",
+  "next_action": "Continue full registered global arms, SF-close follow-up and independent-seed/fresh-opening confirmation sequence. No optional stopping, queue change or recipe selection.",
+  "numpy_version": "2.2.6",
+  "parent_readout_match": true,
+  "parent_readout_receipt_sha256": "b8bb471a35251a487e1a0674bfceccccfcb7d1de4960808de0ff8d7445ae7e97",
+  "parent_readout_sha256": "74c41b4e5a82524260bd392c81bde06fbaa75d2d80f9fd3099252c157104b988",
+  "previous_primary_review_sha256": "0b61a32cc3a8b7ff6bcc0ff12d761f3b293266951734630e33bd1138dd0c56c1",
+  "protocol_receipt_sha256": "c421212606be9445df0ba0738926e1784116ffdfc71baa944d343e807b28981d",
+  "reproducer_path": "/tmp/deepfin-g20t1-trio-independent-review.py",
+  "reproducer_sha256": "15dac76584e9316b1dfc3576b73bb90995b839b3c1e1cf77bf42f9ce034f146c",
+  "result_G20T1_400": {
+    "WDL": [
+      367,
+      483,
+      150
+    ],
+    "elo": 76.61152646884867,
+    "elo_ci95": [
+      61.16408570045297,
+      92.36311749176204
+    ],
+    "games": 1000,
+    "pairs": 500,
+    "pentanomial": {
+      "DD_WL": 168,
+      "LD_DL": 73,
+      "LL": 12,
+      "WD_DW": 180,
+      "WW": 67
+    },
+    "score": 0.6085,
+    "score_ci95": [
+      0.5871240107917959,
+      0.6298759892082042
+    ],
+    "score_se": 0.010906116942961279,
+    "verdict": "SUCCESS"
+  },
+  "scope": "New completed G20T1:400 cell and preregistered aligned G20T1:400-minus-G20T1:25 interaction; existing G20T1:25/G20T1:100 review retained. No incomplete sharpened-global or SF-close results read."
+}

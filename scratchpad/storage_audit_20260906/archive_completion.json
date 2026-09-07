@@ -1,0 +1,15 @@
+{
+  "status": "ALL_38_PLANNED_QUEUED_ARCHIVES_CONTENT_VERIFIED",
+  "checked_unix": 1788752076.9334168,
+  "archives": 38,
+  "archive_bytes": 85320079360,
+  "external_receipts_readback_verified": true,
+  "hardlink_copy_terminal_pid": 196675,
+  "hardlink_sources_retained": true,
+  "local_available_bytes": 511672352768,
+  "earlier_observed_cleanup_GiB": 18.316715240478516,
+  "nine_pool_gross_removed_allocation_GiB": 32.53399658203125,
+  "space_accounting_limit": "Earlier observed free-space deltas and later gross allocation removal are different measurements; no exact combined net-reclaimed claim. Concurrent generation continues.",
+  "failed_original_attempts_preserved": true,
+  "source_cleanup_limit": "Only previously independently qualified cleanup was performed. Remaining originals, restart and linked dependencies stay local."
+}

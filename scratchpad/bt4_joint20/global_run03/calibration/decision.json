@@ -1,0 +1,71 @@
+{
+  "decided_unix": 1788668107.3586812,
+  "decision": "PROCEED_REGISTERED_COMMON_PRIOR_1_GRID",
+  "reason": "Both same-checkpoint100sim comparisons clearly favor prior1.0; neither triggers registered clear-loss/deeper-check condition.",
+  "preregistration_sha256": "402ee38ba734beb9582d3350b61981b8328f8b952f8260b3949ceedc3d2250b6",
+  "readout_sha256": "d9300b35650ef4d555de07c5d548be5a32b489c222649971b88fcfa2cef841bb",
+  "integrity_sha256": "ccd6e85db141b372cc7fdc127e286436e8ff7cc6b4fdbd38e0d5ef92aef6bb60",
+  "independent_review_sha256": "f40814dab268b3bddb49e66cde92b103cf8494a42747bfc57e81a1d095ece592",
+  "scores": {
+    "S0:100": {
+      "games": 1000,
+      "pairs": 500,
+      "score": 0.5795,
+      "score_ci95": [
+        0.5575988773450516,
+        0.6014011226549484
+      ],
+      "elo": 55.71497606627356,
+      "elo_ci95": [
+        40.2022681249878,
+        71.45126532094496
+      ],
+      "verdict": "SUCCESS",
+      "pentanomial": {
+        "WW": 59,
+        "WD_DW": 160,
+        "DD_WL": 179,
+        "LD_DL": 85,
+        "LL": 17
+      }
+    },
+    "E0:100": {
+      "games": 1000,
+      "pairs": 500,
+      "score": 0.621,
+      "score_ci95": [
+        0.5955157703525996,
+        0.6464842296474004
+      ],
+      "elo": 85.78095608340313,
+      "elo_ci95": [
+        67.19666929102016,
+        104.85965707835167
+      ],
+      "verdict": "SUCCESS",
+      "pentanomial": {
+        "WW": 125,
+        "WD_DW": 112,
+        "DD_WL": 173,
+        "LD_DL": 60,
+        "LL": 30
+      }
+    }
+  },
+  "next_phase": "treatments",
+  "next_driver": "/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_experiment.py",
+  "prior_each_side": 1.0,
+  "budgets": [
+    25,
+    100,
+    400
+  ],
+  "cumulative_gpu_seconds": 38730.61745564599,
+  "remaining_gpu_seconds": 69269.38254435401,
+  "limitations": [
+    "Nominal paired 95% intervals; no pooling across checkpoints or family-wise correction.",
+    "This calibrates inference on two checkpoints, not training-temperature transfer or an optimal prior.",
+    "Checkpoint/book bytes and build provenance require the external launch manifest."
+  ],
+  "sf_close": "CPU preparation continues; its training and arenas remain gated on global completion."
+}

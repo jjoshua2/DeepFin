@@ -1,0 +1,62 @@
+{
+  "adopted_training_sha256": "309d05c05f5d0a440382ad2dc1cbc747527d792cc788fa7455a353661a0a42f8",
+  "bank_sha256": "a60082176666207d7898ab58652c6218bde65515360e75b993d33437f07cfe54",
+  "blockers": [],
+  "checked_utc": "2026-09-06T08:08:48.858452+00:00",
+  "checkpoint_sha256": {
+    "candidate": "e94b5dc53d55d7fdb119b214f0b59ccc79a7963f933124d3e1f731478bb32b6d",
+    "reference": "b41a5614bae5bf67cb32916c4ace8d26db27fd9152b7c496be40427424b08fb8"
+  },
+  "completion_sha256": "6bf2cdf6202ed7b67803279fa28eaade3ea6e1690ec967e124a02447ec47f508",
+  "cpu_affinity": [
+    0,
+    1
+  ],
+  "interpretation": "Promising completed25-simulation result against S0; primary100 and deployment-relevant400 results remain unread.",
+  "limitations": [
+    "Nominal exploratory interval; not adjusted for the full set of comparisons.",
+    "No direct G20T1-versus-E0 head-to-head inference from separate S0 comparisons.",
+    "One completed search budget cannot establish search scaling or optimal targets."
+  ],
+  "manifest_sha256": "64b45d136d7dd08c59791e14714c6cf2605ddd676cb538e478946ff814994132",
+  "method": "Independent stdlib raw PGN-result/color score,500pair normalized means; normal95% interval with sample variance across opening pairs;400log10(p/(1-p)) transform. No producer/readout estimator imports.",
+  "next_action": "Continue all registered global cells, SF-close follow-up and independent training-seed/fresh-opening confirmation. No optional stopping, recipe promotion or queue change.",
+  "parent_readout_match": true,
+  "parent_readout_sha256": "12af7667cb416b649f6838ef13d0ef6955337421fcc3165b9441eb233e192709",
+  "realized_protocol_sha256": "084e7f1c8d37d2692ee1aff785210f612f8872bcf154d19c8913f8df03ecee65",
+  "reproducer_path": "/tmp/deepfin-g20t1-25-independent-review.py",
+  "reproducer_sha256": "c78023287158374c21cb8293632bbf1c96398c68d553b79b1282bb8a66eaa82d",
+  "result": {
+    "WDL": [
+      347,
+      483,
+      170
+    ],
+    "elo": 62.15065105246595,
+    "elo_ci95": [
+      46.586881614582154,
+      77.96537824473474
+    ],
+    "games": 1000,
+    "pairs": 500,
+    "pentanomial": {
+      "DD_WL": 157,
+      "LD_DL": 85,
+      "LL": 17,
+      "WD_DW": 186,
+      "WW": 55
+    },
+    "score": 0.5885,
+    "score_ci95": [
+      0.5666449744662203,
+      0.6103550255337797
+    ],
+    "score_se": 0.011150523231520274,
+    "terminations": {
+      "max_plies": 56,
+      "rules": 944
+    },
+    "verdict": "SUCCESS"
+  },
+  "scope": "Completed G20T1:25 vs S0 only. E0:25 header used for protocol comparability, not head-to-head result inference; no G20T1:100 partial rows read."
+}

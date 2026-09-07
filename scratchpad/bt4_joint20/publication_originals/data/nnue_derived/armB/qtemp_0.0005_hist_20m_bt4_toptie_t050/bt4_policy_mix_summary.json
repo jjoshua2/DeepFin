@@ -1,0 +1,60 @@
+{
+  "algorithm": "stored-top-set-only-v1",
+  "alpha": 1.0,
+  "audit_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_policy_mix/audit_toptie_t050_v1.json",
+    "sha256": "8cde6a10e35a23e91134850fa7d07ee8d5a0e9fd72e597b4c5e7a4bdfd4700ed"
+  },
+  "bt4_temperature": 0.5,
+  "candidate_set_wider_fraction": 0.0,
+  "candidate_set_wider_rows": 0,
+  "changed_fraction": 0.18158213190101322,
+  "changed_rows": 3433806,
+  "changed_unique_max_rows": 0,
+  "completed_utc": "2026-09-04T17:22:38Z",
+  "expected_rows": 18910484,
+  "expected_shards": 2309,
+  "formula": "redistribute alpha of stored source top-tie mass by temperature-scaled BT4 prior",
+  "kind": "top-max-ties",
+  "mean_entropy_nats": {
+    "bt4": 2.0525573055367654,
+    "mixed": 0.4444210356037773,
+    "source": 0.5689733823705948
+  },
+  "mean_l1_from_source": 0.15120358703058023,
+  "mixed_bt4_top1_agreement": 0.6244848095902781,
+  "mixed_source_top1_agreement": 0.8594655747573674,
+  "mutated_arrays": [
+    "policy_target"
+  ],
+  "near_max_ratio": null,
+  "rows": 18910484,
+  "schema": 1,
+  "selected_mass_abs_drift": {
+    "max": 0.0004119873046875,
+    "mean": 1.6787761530126445e-05,
+    "mean_bound": 0.0002,
+    "row_bound": 0.005
+  },
+  "shards": 2309,
+  "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m",
+  "sidecar_summary": {
+    "path": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json",
+    "sha256": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3"
+  },
+  "source_bt4_top1_agreement": 0.4936922820166845,
+  "source_candidate_multi_fraction": 0.18159239076059608,
+  "source_candidate_multi_rows": 3434000,
+  "source_derive_summary_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+  "source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+  "source_top_tied_fraction": 0.18159239076059608,
+  "source_top_tied_rows": 3434000,
+  "top1_ge_0_99_fraction": {
+    "mixed": 0.6063732160424873,
+    "source": 0.5938493166013096
+  },
+  "value_columns_unchanged": [
+    "wdl_target",
+    "search_wdl"
+  ]
+}

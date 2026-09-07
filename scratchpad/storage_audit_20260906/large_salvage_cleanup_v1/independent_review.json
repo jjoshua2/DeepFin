@@ -1,0 +1,55 @@
+{
+  "status": "PASS_FIXED_OPERATION_PRELAUNCH_REVIEW_NOT_EXECUTION_COMPLETION",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "checked_unix": 1788741390.9200976,
+  "files": {
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/retire_large.py": "3d83c7bc96f9275863930de51a7bd10a7536f4d05c1bffa9427e2d841ccb0b20",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/plan.json": "12c67cc7dbe82d4e1dc8948c23da80f865a11d43cdf3b6d9e70a621d86283694",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/test_retire_large.py": "c3b63e0ad299bab3a8dd8686145ba8681c0d25f9bfc144ad39c6032ea928f35d",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/author_validation.json": "613a61f7f5e66e123ae3b9430acc68ab761b8ada125d9c1e943c1e3613718559",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/large_salvage_cleanup_v1/README.md": "7e1ceb57b3fe8b9a2ab897ebdb67cdb62953aae3eff72bea0c0e4489a61ee21e",
+    "/tmp/large-salvage-independent-review/test_independent.py": "6b3eca501d3b438e3b9af6dba54a2ef2fe7e2d8eb725c13f2bc034146dd5ca8f",
+    "/tmp/large-salvage-independent-review/tests.log": "75f5f59b79835a6236802e60fa6d1e6bc93dbe292a4bae059c6ac072e8194b87"
+  },
+  "selected_pools": [
+    "bt4heads_iter112_20260817",
+    "f_only_midpoint_20260818",
+    "post_quarantine_20260801",
+    "pre_abandonfix_20260724",
+    "pre_aot_deploy_20260714",
+    "pre_audit_window_20260726",
+    "pre_durable_deploy_20260726",
+    "pre_lc0_control_20260819",
+    "pre_mainmerge_20260810"
+  ],
+  "totals": {
+    "entries": 3412711,
+    "logical_bytes": 22504067440,
+    "tar_bytes": 28673228800
+  },
+  "independent_checks": [
+    "Read complete operational script, tests, fixed plan, and reused process/alias helpers; no remaining correctness blocker found.",
+    "Independently executed check_pins on final code; all pinned small code/config/dependency/verified-receipt inputs matched. Cross-checked all nine receipt source/archive identities, completed content status, sizes, member counts, source manifest hashes and local/external archive SHA equality.",
+    "Verified SQLite unique-path index consumes unsorted historical manifest once; streamed pre/post-quarantine traversal checks exact membership, historical stat equality, nlink=1 and source device, exempting only renamed root ctime. No source payload read path is used.",
+    "Verified external archive canonical parent/device, no-follow descriptor identity, full SHA readback at16MiB/s, repeated mount-ID/device/inode stability checks; restore receipt file, proof-directory and its parent fsynced before source removal.",
+    "Verified retained fixed exclusions, exact source/quarantine paths, reused private helpers retargeted to all nine names plus quarantines, repeated live consumers/config/mount/alias checks, exclusive outputs and no automatic retry/adoption.",
+    "Independently executed three real tiny-filesystem failure tests at nice19 CPU0,1 with CUDA hidden: new proof-directory parent fsync failure preserves full quarantine; post-quarantine consumer rejection preserves full quarantine; partial rmtree failure preserves archive/restore pointer/proof and records partial-stage failure without completion receipts. 3 passed in0.43s."
+  ],
+  "author_evidence": {
+    "focused_cases": 18,
+    "seconds": 1.04,
+    "label": "Author run; final exact log and code hashes independently verified, not redundantly rerun"
+  },
+  "launch_conditions": [
+    "Use exact frozen reviewed script and plan. Parent owns detached launch with nice19, ionice3, CPU0,1 and proposed1GiB address-space cap.",
+    "Actual host process/dependency checks, source metadata qualification, external full SHA and durability operations remain mandatory runtime gates; this review does not substitute for them.",
+    "Do not edit running archive driver, training checkout or pinned inputs. Do not retry failed or interrupted state automatically."
+  ],
+  "limits": [
+    "No production source scan, large manifest scan, archive payload readback, inference, copy, rename or deletion was performed by reviewer.",
+    "Tiny fixtures substitute host mounts and process observations; parent supplied pinned fresh actual-host dependency evidence and external directory fsync probe.",
+    "Relies on previous per-member content verification plus unchanged historical source metadata; does not detect silent source corruption with unchanged metadata or assert independent ACL/xattr equality.",
+    "Known inaccessible process identities, arbitrary external aliases and future consumers remain explicitly qualified; new inaccessible live identities or observed references stop execution.",
+    "Pre-removal failures retain original/full quarantine; removal interruption may leave partial quarantine with verified external restore evidence. Logical bytes are not measured reclaimed allocation."
+  ]
+}

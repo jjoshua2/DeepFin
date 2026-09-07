@@ -1,0 +1,27 @@
+{
+  "status": "PASS_PARENT_INDEPENDENT_NUMERICAL_RESCORING",
+  "checked_unix": 1788735694.1898434,
+  "bank_sha256": "bb97f201bad3db23d25fcb6ed34ade70447a8e65f9ce9f327abdd8ddcbcc9d86",
+  "wdl": {
+    "W": 414,
+    "D": 258,
+    "L": 328
+  },
+  "games": 1000,
+  "pairs": 500,
+  "score": 0.543,
+  "score_ci95": [
+    0.5170974818967696,
+    0.5689025181032304
+  ],
+  "elo": 29.95345180759873,
+  "elo_ci95": [
+    11.885181142668145,
+    48.184947993150836
+  ],
+  "gpu_hours": 0.6534350277702753,
+  "clock_difference_seconds": -5.145338946022093e-06,
+  "decision": "C20T05 favored over G20T05 under preregistered direct100 screen; select sharpened exact ties next",
+  "limits": "Reused seed-zero checkpoints and development openings; registered nominal paired sample-variance normal interval, not fresh recipe confirmation.",
+  "verification_note": "Initial parent checks corrected population to registered sample variance and allowed 1ms cross-clock accounting tolerance; all final checks passed."
+}

@@ -1,0 +1,15 @@
+{
+  "reviewed_unix": 1788674206.100849,
+  "reviewer": "review_toolchain_reconciliation",
+  "verdict": "PASS; no blockers",
+  "scope": "Read-only recipe, actual input hashes, publication receipts, derived metadata, frozen mixer/launch, descriptive arithmetic and one-shard sample receipt. No repeated corpus scan or strength conclusions. Full schedule verified separately by parent.",
+  "findings": [],
+  "notes": [
+    "43.2274% of stored policy rows changed.",
+    "26.1814% had an eligible set wider than original SF maxima; eligibility is not necessarily positive stored support.",
+    "Mean full-row normalized entropy fell from 0.568973 to 0.515470 nats.",
+    "Alpha1 redistributes selected local SF mass by conditional BT4 T0.5.",
+    "The prior 4,000-position audit is a separate population; its 48.425% widening is not the full-corpus rate.",
+    "The sample checks only 16 stored non-policy arrays on 8,192 rows of shard001154."
+  ]
+}

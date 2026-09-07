@@ -1,0 +1,220 @@
+{
+  "profile": "calibration",
+  "candidate_prior_temperature": 1.0,
+  "reference_prior_temperature": 1.5,
+  "cells": {
+    "S0:100": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.games.jsonl",
+      "sha256": "28dafc36894faae1b4cad06da5e4cdf9b18c4043ccdf8bb7741b0f9ad7d8b5d6",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 100,
+        "sims_reference": 100,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.5)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.5,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.5795,
+        "score_ci95": [
+          0.5575988773450516,
+          0.6014011226549484
+        ],
+        "elo": 55.71497606627356,
+        "elo_ci95": [
+          40.2022681249878,
+          71.45126532094496
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 59,
+          "WD_DW": 160,
+          "DD_WL": 179,
+          "LD_DL": 85,
+          "LL": 17
+        }
+      }
+    },
+    "E0:100": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.games.jsonl",
+      "sha256": "5302737b2d66405024c54348ca11ac774bc663653cdc6b30e525e975b99df71e",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 100,
+        "sims_reference": 100,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.5)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.5,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.621,
+        "score_ci95": [
+          0.5955157703525996,
+          0.6464842296474004
+        ],
+        "elo": 85.78095608340313,
+        "elo_ci95": [
+          67.19666929102016,
+          104.85965707835167
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 125,
+          "WD_DW": 112,
+          "DD_WL": 173,
+          "LD_DL": 60,
+          "LL": 30
+        }
+      }
+    }
+  },
+  "screen_complete": true,
+  "contrast": "Within each fixed checkpoint: prior 1.0 versus prior 1.5 at 100 simulations",
+  "limitations": [
+    "Nominal paired 95% intervals; no pooling across checkpoints or family-wise correction.",
+    "This calibrates inference on two checkpoints, not training-temperature transfer or an optimal prior.",
+    "Checkpoint/book bytes and build provenance require the external launch manifest."
+  ]
+}

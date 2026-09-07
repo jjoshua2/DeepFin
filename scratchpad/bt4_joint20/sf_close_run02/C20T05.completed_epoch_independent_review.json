@@ -1,0 +1,86 @@
+{
+  "status": "PASS_REGISTERED_MATCHED_RECIPE_COMPARISON_QUALIFIED",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_utc": "2026-09-06T19:18:23.782776+00:00",
+  "scope": "Completed C20T05 epoch identity, pinned launch/runtime/recipe, completed actual schedule reconstruction versus preregistered prospective plan and banked E0/global proofs. No duplicate schedule scan, feature/target payload rescan, inference or arena score read.",
+  "blocking_findings": [],
+  "checkpoint_sha256": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3",
+  "summary_sha256": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+  "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+  "physical_plan_sha256": "70063ded8e105f34bd8012001a49f506d256eaebefa1261345feae0983b5dd34",
+  "verified": {
+    "rows_realized": 18910484,
+    "steps_realized": 36935,
+    "compute_loss_calls": 36935,
+    "shards": 2309,
+    "games": 97968,
+    "windows": 420,
+    "batch_size": 512,
+    "seed": 0,
+    "full_batches": 36699,
+    "ragged_batches": 236,
+    "minimum_batch_rows": 511,
+    "same_game_repeats_max": 0,
+    "decoded_rows_resident": 0,
+    "nonfinite_skip_windows": 0,
+    "transient_cuda_retry_windows": 0,
+    "all_window_loss_and_gradient_norm_summaries_finite": true,
+    "actual_staging_verified_by_completed_reconstruction": true,
+    "ordered_source_columns_and_shards_equal_prospective_E0_and_G20T05_banked_proofs": true,
+    "reconstruction_elapsed_seconds": 293.2915498169896,
+    "training_gpu_charge_complete": true,
+    "training_gpu_charge_seconds": 9695.914570458,
+    "runtime": {
+      "numpy": "1.26.2",
+      "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+      "torch": "2.11.0+cu128"
+    },
+    "launch_and_completed_pin_maps_equal_current_bytes": true
+  },
+  "recipe": {
+    "scope": "SF d9 top3 within20cp union all stored SF maxima",
+    "alpha_within_selected_mass": 1.0,
+    "bt4_temperature": 0.5,
+    "nonselected_sf_mass": "unchanged by qualified mixer",
+    "reference": "E0 exact ties raw BT4",
+    "arena_budgets": [
+      25,
+      100,
+      400
+    ],
+    "arena_prior_temperature": 1.0
+  },
+  "historical_valid_control": false,
+  "historical_validity_problems": [
+    "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+    "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+    "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+  ],
+  "limitations": [
+    "Qualification is for the registered exploratory matched recipe comparison, not production validity, a held-out purity guarantee or playing strength.",
+    "Physical/canonical hashes and ordered game columns support code-backed row-order equality; this review does not claim a full feature/target payload-byte audit or per-row execution trace.",
+    "Published non-policy sample covered16arrays on8192rows of one shard; existing mixer provenance provides the broader copy-path evidence.",
+    "E0 historical NumPy/runtime was not independently stamped.",
+    "Intervention combines widening eligible moves and sharpening BT4 relative to E0; it does not isolate widening.",
+    "No incomplete arena outcomes read; the existing25/100/400 queue is unchanged."
+  ],
+  "evidence_sha256": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/C20T05.completed_epoch_identity.json": "9ec05c4f005e9ff7773fc126e480ac9171b958b5684b9b767af091ecfb6fcf57",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/matched_schedule_completed_C20T05.json": "1f1529fa2247d56ad4cf457a8cb5bae0929c4ea917e2aab0c09d81fbaeedccbd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/preparation/completed_epoch_validation_plan.json": "8ec4608a1ab0885ed316c7aa032e703d55a49df9782191ed20086088bab527d5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/preparation/matched_schedule_published_C20T05.json": "839c27bdbebd0c7619f1a9ab7e01f5e427885518622357880d90af2eaeb4d85b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/preparation/independent_materialization_review.json": "2ad2d142b8617375b75744157daa64599ec9c93af5c4176dab88597f85003fbd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/preparation/C20T05.published-middle-shard-integrity.json": "21cf5fb955e23daf6e1f2c2085681bb17657f8d2e56c91ad45ecd695ff03ac8d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.complete.json": "abfe0bd7885620af8cdd494025403c66b3357dfe62a9ad2eeab0fdfb8a726008",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.status.json": "c894788fc7d58ca8edeba589ba8df0002a9e6b4c7990c8e2b35f6d475f4f8da2",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.launch-integrity.json": "e94cea309322e309addb5a514382b3a064e6ae326aab385f5f3781b36f62335a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/driver.launch.json": "b9bdec05ead734b48a6698aa11a00c77ff75a31fd40be734e8c2b2b7670a7280",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.1788712072203493219.gpu-charge.json": "9ae1c7034758452e62ac25eb4dbf49eab0ba4c993ff8bfe1ca0de1cd1b7d16b4",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/matched_schedule_E0_S0.json": "5cb4a1fdd2b2f6f148c3662c602b8d590a817b8b15119fa767d5e43d26658e1b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/matched_schedule_completed_G20T05.json": "5bb8e1173d53c1f300e4b10a45c473c2df2e13e34e4b9ccb5d0005640e3fa0fe"
+  },
+  "actions": "Only this new review receipt written. Parent reported verifier session5970 exit0; reviewer consumed and independently cross-checked its completed artifact."
+}

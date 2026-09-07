@@ -1,0 +1,67 @@
+{
+  "pool": "bt4heads_iter112_20260817",
+  "source": "/home/josh/projects/chess/data/salvage/bt4heads_iter112_20260817",
+  "source_deleted": false,
+  "plan_sha256": "f389eeff35235a5097f39a3a5b4dd22a7c860ca36bc5038fbaabb4211491a5bb",
+  "started_unix": 1788729584.3353581,
+  "mount": {
+    "target": "/mnt/e",
+    "source": "E:\\",
+    "fstype": "9p",
+    "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+  },
+  "resources": {
+    "local_free_bytes": 474372775936,
+    "available_RAM_bytes": 58539429888
+  },
+  "references": {
+    "observed_source_references": [],
+    "other_user_processes_not_inspected": [
+      1,
+      9,
+      12,
+      13,
+      71,
+      72,
+      87,
+      88,
+      103,
+      104
+    ],
+    "same_user_processes_not_inspected": [
+      68
+    ],
+    "complete_process_visibility": false,
+    "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+  },
+  "inventory": {
+    "entries": 399345,
+    "logical_file_bytes": 2459894483
+  },
+  "tar_bytes": 3181854720,
+  "verified_members": 399345,
+  "tar_sha256": "7d02d370c7b5e2a8520e8512241346bb2de213cbebb01ad129888408d87326a1",
+  "source_manifest_sha256": "457890c994c23b1ea20b0b8cf9c818fa057e0ce3cf0f68e10fa0a5a3bc6d1418",
+  "rsync_command": [
+    "rsync",
+    "--no-whole-file",
+    "--partial-dir=.bt4heads_iter112_20260817.partial",
+    "--bwlimit=16384",
+    "--fsync",
+    "--",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/bt4heads_iter112_20260817/bt4heads_iter112_20260817.tar",
+    "/mnt/e/chess_archive_20260906/salvage/bt4heads_iter112_20260817.tar"
+  ],
+  "rsync_exit_code": 0,
+  "external_tar_sha256": "7d02d370c7b5e2a8520e8512241346bb2de213cbebb01ad129888408d87326a1",
+  "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+  "finished_unix": 1788730427.1842718,
+  "external_archive": "/mnt/e/chess_archive_20260906/salvage/bt4heads_iter112_20260817.tar",
+  "external_size": 3181854720,
+  "external_mtime_ns": 1788730315337003600,
+  "limitations": [
+    "Source retained; removal requires separate parent verification.",
+    "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+    "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+  ]
+}

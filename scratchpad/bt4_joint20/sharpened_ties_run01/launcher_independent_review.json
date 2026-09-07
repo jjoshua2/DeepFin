@@ -1,0 +1,52 @@
+{
+  "status": "PASS_INDEPENDENT_LAUNCH_REVIEW",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_unix": 1788737704.8565574,
+  "worktree": "/tmp/deepfin-bt4-esharp-screen",
+  "base_commit": "ff99d40f7c0247758bb6918b756336416e8a0260",
+  "reviewed_files_sha256": {
+    "/tmp/deepfin-bt4-esharp-screen/scripts/bt4_one_epoch_screen.py": "f62a7d6df672f410af81cb20f08b4c152cf0b2fa78f601cad20bd7614aa8a90d",
+    "/tmp/deepfin-bt4-esharp-screen/scripts/bt4_direct_screen.py": "ef531896876c7684dd7cbff54e400845cbef8a2814bdf4368072799470b7b172",
+    "/tmp/deepfin-bt4-esharp-screen/tests/test_bt4_one_epoch_screen.py": "67f475ad15e95715fdbdeef110506a5a16c647a868410ef78c171fbe53495455",
+    "/tmp/deepfin-bt4-esharp-screen/tests/test_bt4_direct_screen.py": "fa5586cd2d671aed24eb613937191a62989a01a6d03d4cc50028277f17ecfb37",
+    "/tmp/deepfin-bt4-esharp-screen/docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md": "2b5cd974c647ed9e58e785258554aca7ff862b11128974b7799fb5f8c39585aa",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/launch_manifest.json": "c5fb774dd5ca3c3b776767956a6e09561a73b2f863227ec7d907e3147dd91da5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/preregistration.md": "bba0d5c47c2715714dcf37f871ff9923aade25e98e75d82fb17998aa6cad0279",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/prospective_schedule.json": "1aca8a7dfd7e2917927560c9eea285fe26e3db591ff8ebdd2cfa00dfba08cfd8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/scientific_independent_review.json": "5c65b4049f11b22befa7fc3749e6a57003304952bddb9bb0cf3260dd9140fd18"
+  },
+  "blockers": [],
+  "resolved_findings": [
+    "Parent STOP marker now checked before/after arena lease wait and passed through owned stage monitoring, preventing a queued or running arena from ignoring the experiment stop.",
+    "CPU schedule verification now reuses independently surviving GNU timeout and owned process group, with no inherited GPU lease, hidden CUDA and zero GPU charge. Its 1800-second cap includes TERM/KILL allowance."
+  ],
+  "independent_checks": [
+    "Read actual patch relative to previously reviewed frozen direct-screen helper, full new epoch launcher/tests and scientific preregistration.",
+    "Compared generated final-manifest training argv with actual prior C20T05 launch receipt: exact equality after changing only corpus and output paths.",
+    "Validated final manifest, all nine input metadata/code/config pins, runtime-manifest/preregistration/prospective hashes and final launcher hashes without model payload reads or another runtime probe.",
+    "Validated prospective proof schema/role/canonical/count identities; reused completed scan rather than repeating corpus traversal.",
+    "Executed completed_training using a temporary fixture built from actual completed C summary and prospective receipt C arm. Actual counters and all420 training windows were preserved; only fixture corpus/checkpoint/role/summary identities changed. Passed and retained historical valid_control:false."
+  ],
+  "author_reported_checks": {
+    "new_focused_CPU_tests": 12,
+    "scoped_basedpyright": "0 errors / 0 warnings",
+    "ruff": "PASS",
+    "diff_check": "PASS",
+    "actual_CLI_plan": "PASS",
+    "whole_repository_lint": "still running at receipt time; no whole-repository pass claimed"
+  },
+  "coverage": [
+    "Fresh state/run paths; explicit published E0T05 target and pinned C control; no mixing/resume/retries/promotion.",
+    "One exact seed0 game epoch, complete rows/batches/zero repeats/finite windows/no skipped or retried batches, checkpoint-to-summary identity and actual staged physical-to-realized schedule checks before arena.",
+    "Surviving external supervisor bounds each owned process group; GPU leases cover train/arena and release for CPU verification; fixed stage budgets sum to6hours.",
+    "Direct profile requires E0T05 training receipt and pinned C reference at100 simulations; full qualified C100 search settings and complete1000game500pair bank remain checked by reused reader.",
+    "Preregistered nominal development comparison and historical control limitations remain accurately scoped."
+  ],
+  "limitations": [
+    "No actual training, arena, GPU probe, large corpus scan, model/checkpoint payload hash or process interruption by reviewer.",
+    "Runtime-probe/full-pin execution guards and completed actual E0T05 schedule remain mandatory future checks; no completed-training or playing-strength claim.",
+    "Author ran focused pytest cases; reviewer inspected them and independently ran the actual-summary fixture rather than repeating the suite.",
+    "Existing independently tested timeout/lease/cleanup mechanics were reused; no new SIGKILL experiment was repeated for this extracted helper.",
+    "External termination can leave incomplete receipts and partial artifacts; no automatic recovery. Source and target metadata proofs do not certify full feature/target byte identity."
+  ]
+}

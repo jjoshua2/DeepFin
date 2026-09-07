@@ -1,0 +1,67 @@
+{
+  "pool": "pre_zclip65_20260727",
+  "source": "/home/josh/projects/chess/data/salvage/pre_zclip65_20260727",
+  "source_deleted": false,
+  "plan_sha256": "f389eeff35235a5097f39a3a5b4dd22a7c860ca36bc5038fbaabb4211491a5bb",
+  "started_unix": 1788746988.5003152,
+  "mount": {
+    "target": "/mnt/e",
+    "source": "E:\\",
+    "fstype": "9p",
+    "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+  },
+  "resources": {
+    "local_free_bytes": 514413441024,
+    "available_RAM_bytes": 53634560000
+  },
+  "references": {
+    "observed_source_references": [],
+    "other_user_processes_not_inspected": [
+      1,
+      9,
+      12,
+      13,
+      71,
+      72,
+      87,
+      88,
+      103,
+      104
+    ],
+    "same_user_processes_not_inspected": [
+      68
+    ],
+    "complete_process_visibility": false,
+    "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+  },
+  "inventory": {
+    "entries": 379049,
+    "logical_file_bytes": 2607901360
+  },
+  "tar_bytes": 3291494400,
+  "verified_members": 379049,
+  "tar_sha256": "ad3ae63fdd8587293c7cf9a2e79e6282aafb8584419c2b716ea0e617432bee9e",
+  "source_manifest_sha256": "9448a987da2bfa84418f517990746dc33874be94934d8c94a228119e0a91ec23",
+  "rsync_command": [
+    "rsync",
+    "--no-whole-file",
+    "--partial-dir=.pre_zclip65_20260727.partial",
+    "--bwlimit=16384",
+    "--fsync",
+    "--",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_zclip65_20260727/pre_zclip65_20260727.tar",
+    "/mnt/e/chess_archive_20260906/salvage/pre_zclip65_20260727.tar"
+  ],
+  "rsync_exit_code": 0,
+  "external_tar_sha256": "ad3ae63fdd8587293c7cf9a2e79e6282aafb8584419c2b716ea0e617432bee9e",
+  "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+  "finished_unix": 1788747817.646245,
+  "external_archive": "/mnt/e/chess_archive_20260906/salvage/pre_zclip65_20260727.tar",
+  "external_size": 3291494400,
+  "external_mtime_ns": 1788747708329272000,
+  "limitations": [
+    "Source retained; removal requires separate parent verification.",
+    "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+    "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+  ]
+}

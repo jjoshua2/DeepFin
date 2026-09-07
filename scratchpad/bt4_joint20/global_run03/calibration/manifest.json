@@ -1,0 +1,66 @@
+{
+  "arms": [
+    [
+      "S0",
+      0.0,
+      1.0
+    ],
+    [
+      "E0",
+      0.0,
+      1.0
+    ]
+  ],
+  "budgets": [
+    100
+  ],
+  "charge_roots": [
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03"
+  ],
+  "comparison": "same_checkpoint_prior_calibration",
+  "gpu_budget_seconds": 108000,
+  "identities": {
+    "hashes": {
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+      "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt": "b41a5614bae5bf67cb32916c4ace8d26db27fd9152b7c496be40427424b08fb8",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt": "c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/summary.json": "56d7850403388712605742fdaaa7ac6664f3a7db039386d744d56e77bad6ef2a",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run01/preregistration.md": "0efd4e6e5217237b90ebeffa33edf400019b02b360258b32233a2e3366bc1565",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/baseline/S0.train.adopted.json": "5faef9c1ab6ddc430152c058d46dd18033a9acd37c5e3db0494651f84a4245b2",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/calibration_preregistration.md": "402ee38ba734beb9582d3350b61981b8328f8b952f8260b3949ceedc3d2250b6",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/preregistration.md": "4457c4f8ba407a2b16ad31f26dcebebc41e97760a82bbc5fe27a7cbc78c884e8",
+      "/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_experiment.py": "13416ee45defc19789d02736f1e029a3fed516f27db724c9fb4ce3efb6da5cff"
+    },
+    "heads": {
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+    }
+  },
+  "phase": "calibration",
+  "policy_temp_candidate": 1.0,
+  "policy_temp_reference": 1.5,
+  "runtime": {
+    "cuda": "12.8",
+    "executable": "/usr/bin/python3",
+    "native_extension_sha256": {
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c",
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df",
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so": "9d8cc4ba5ab20e78cfc0d183c62801765002ca49d56dbf10010f16a95291e01d",
+      "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082"
+    },
+    "native_extensions": {
+      "chess_anti_engine.encoding._features_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+      "chess_anti_engine.encoding._lc0_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+      "chess_anti_engine.mcts._mcts_tree": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+      "chess_anti_engine.nnue._nnue_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so"
+    },
+    "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+    "torch": "2.11.0+cu128"
+  },
+  "source_footprint_bytes": 12021141504
+}

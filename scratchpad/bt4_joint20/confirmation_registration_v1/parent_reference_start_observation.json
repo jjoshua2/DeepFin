@@ -1,0 +1,14 @@
+{
+  "checked_unix": 1788751993.75098,
+  "status": "FRESH_CONFIRMATION_REFERENCE_TRAIN_RUNNING_OUTCOMES_UNREAD",
+  "coordinator_pid": 199324,
+  "supervisor_pid": 199576,
+  "trainer_pid": 199577,
+  "role": "C20T05",
+  "training_seed": 1,
+  "actual_cmdline_matches_registered_stage": true,
+  "trainer_cpu_affinity": "0-31",
+  "state": "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1",
+  "manifest_sha256": "33d4845ddcc131522e572c42b2ff6338850c4f5b4500295bf9f413fe073011a9",
+  "remaining": "Complete reference and candidate seed-one epochs, verify realized matched schedule, complete fixed fresh-opening arena, independent result review."
+}

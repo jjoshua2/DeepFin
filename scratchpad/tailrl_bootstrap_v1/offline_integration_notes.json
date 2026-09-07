@@ -1,0 +1,24 @@
+{
+  "recorded_unix": 1788713036.0361946,
+  "status": "READ_ONLY_PREPARATION_NO_IMPLEMENTATION_OR_TRAINING",
+  "source_head": "f759e52ec95c02c47d0a424c1467769e0a5c67fd",
+  "goal": "Supported bootstrap data/mixing/loss recipe and RL restart in roughly1-2months",
+  "findings": [
+    "Reuse existing offline Trainer/game-epoch path in a separate checkout; keep active SF-close runtime frozen.",
+    "Complete all-legal quality labels must survive shard field filtering, sample gathering, mirroring and explicit tensor collation. A loss-only patch would drop them.",
+    "Existing w_sf_own_regret is not the T1 control: different cp-regret labels, fabricated unlisted tails and optional gating. Use the same finite_tail_loss with order1 and32.",
+    "Add auxiliary per-row mean before existing realized-row/requested-batch scaling. Require complete population quality coverage and preserve unchanged holdout metrics.",
+    "Record actual coefficient, order, quality population and loss contribution. Select data/loss combinations and budget before training."
+  ],
+  "qualification_needed": [
+    "real sidecar through sample/mirror/tensor to optimizer update",
+    "disabled equivalence",
+    "T1 same expected-reward objective",
+    "T32 distinct parameter update",
+    "missing/misaligned labels rejected",
+    "ragged-batch weighting",
+    "representative end-to-end timing and peak memory before training commitment"
+  ],
+  "storage_note": "Densefloat32quality is about3.6MiB/512rowbatch and131GiB uncompressed/18.9Mrows; measure compression or packed legal-action storage rather than assuming that footprint is resident.",
+  "new_experiment_queued": false
+}
