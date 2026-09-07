@@ -1,0 +1,146 @@
+{
+  "checked_unix": 1788673998.807807,
+  "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+  "derived": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05",
+  "shard": "shard_001154.zarr",
+  "rows": 8192,
+  "block_rows": 512,
+  "checker_sha256": "61dca546adf58caabb1919ae6010cfc963a5467b149768e8a15cad508f4c1468",
+  "non_policy_arrays": {
+    "game_id": {
+      "shape": [
+        8192
+      ],
+      "dtype": "int64",
+      "source_sha256": "8e577843a66f51e834f879597347666ff0db0cf12e0ad80959cb06dee76ffcba",
+      "derived_sha256": "8e577843a66f51e834f879597347666ff0db0cf12e0ad80959cb06dee76ffcba"
+    },
+    "has_game_id": {
+      "shape": [
+        8192
+      ],
+      "dtype": "uint8",
+      "source_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+      "derived_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+    },
+    "has_is_network_turn": {
+      "shape": [
+        8192
+      ],
+      "dtype": "uint8",
+      "source_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+      "derived_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+    },
+    "has_is_selfplay": {
+      "shape": [
+        8192
+      ],
+      "dtype": "uint8",
+      "source_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+      "derived_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+    },
+    "has_legal_mask": {
+      "shape": [
+        8192
+      ],
+      "dtype": "uint8",
+      "source_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+      "derived_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+    },
+    "has_ply_index": {
+      "shape": [
+        8192
+      ],
+      "dtype": "uint8",
+      "source_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+      "derived_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+    },
+    "has_policy": {
+      "shape": [
+        8192
+      ],
+      "dtype": "uint8",
+      "source_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+      "derived_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+    },
+    "has_search_wdl": {
+      "shape": [
+        8192
+      ],
+      "dtype": "uint8",
+      "source_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+      "derived_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+    },
+    "is_network_turn": {
+      "shape": [
+        8192
+      ],
+      "dtype": "uint8",
+      "source_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+      "derived_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+    },
+    "is_selfplay": {
+      "shape": [
+        8192
+      ],
+      "dtype": "uint8",
+      "source_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136",
+      "derived_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+    },
+    "legal_mask": {
+      "shape": [
+        8192,
+        1858
+      ],
+      "dtype": "uint8",
+      "source_sha256": "7ce2e1a2b748634ef857cd89800d1054e33efcad281e70b10c0d5f010ba36851",
+      "derived_sha256": "7ce2e1a2b748634ef857cd89800d1054e33efcad281e70b10c0d5f010ba36851"
+    },
+    "ply_index": {
+      "shape": [
+        8192
+      ],
+      "dtype": "int32",
+      "source_sha256": "222c05601b1a7ada984c3721c6e76d811ac8fae811d239de6c54b9be00658cdf",
+      "derived_sha256": "222c05601b1a7ada984c3721c6e76d811ac8fae811d239de6c54b9be00658cdf"
+    },
+    "priority": {
+      "shape": [
+        8192
+      ],
+      "dtype": "float32",
+      "source_sha256": "46ac448298521650c9dfcc1d8dad9f941244e7bb071dc84c6841750d864015a9",
+      "derived_sha256": "46ac448298521650c9dfcc1d8dad9f941244e7bb071dc84c6841750d864015a9"
+    },
+    "search_wdl": {
+      "shape": [
+        8192,
+        3
+      ],
+      "dtype": "float16",
+      "source_sha256": "74b25fb90b7cd9156aff2258e63dc76f8d0ebbbb6914beeac43f9b7359aeee17",
+      "derived_sha256": "74b25fb90b7cd9156aff2258e63dc76f8d0ebbbb6914beeac43f9b7359aeee17"
+    },
+    "wdl_target": {
+      "shape": [
+        8192
+      ],
+      "dtype": "int8",
+      "source_sha256": "c1d16b48ff551a596ccd0878c7e097571377de5afb558acba72467866724d3f8",
+      "derived_sha256": "c1d16b48ff551a596ccd0878c7e097571377de5afb558acba72467866724d3f8"
+    },
+    "x": {
+      "shape": [
+        8192,
+        175,
+        8,
+        8
+      ],
+      "dtype": "float16",
+      "source_sha256": "df56498a038ebcaa49926818fa75ba0449195a09865da9e0c7f65a0fba25358a",
+      "derived_sha256": "df56498a038ebcaa49926818fa75ba0449195a09865da9e0c7f65a0fba25358a"
+    }
+  },
+  "result": "PASS",
+  "scope": "All 16 stored non-policy arrays byte-identical on one predetermined middle shard; not a full-corpus payload proof."
+}

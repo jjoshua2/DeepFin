@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "source_root": "/home/josh/projects/chess/data/salvage",
+  "archive_root": "/mnt/e/chess_archive_20260906/salvage",
+  "mount": {
+    "target": "/mnt/e",
+    "source": "E:\\",
+    "fstype": "9p"
+  },
+  "pools": [
+    {
+      "name": "recover_ckpt751_20260711",
+      "estimated_tar_bytes": 34359738368
+    },
+    {
+      "name": "scaleup_512x16_window_20260707",
+      "estimated_tar_bytes": 34359738368
+    },
+    {
+      "name": "swap_512x16_20260711",
+      "estimated_tar_bytes": 34359738368
+    }
+  ],
+  "scope": "COPY ONLY; all sources retained. No adoption of original failed attempts. No launch authorized by this preparation artifact.",
+  "hardlink_semantics": "GNU tar --hard-dereference stores every regular path independently; restores bytes/verified metadata but not inode sharing. External aliases remain untouched. st_nlink joins full stat identity so link membership changes reject.",
+  "driver_sha256": "2c25416f40bbcbc61c56e9687947449ca33259f2aef5b3ba13b40f86571a40e0",
+  "original_driver_sha256": "f46f44a29ab303c8e8eb1ee4f41b83f7087031847a502ca26b5a6f6499381419",
+  "estimates": "Original per-pool 32 GiB ceiling retained, not a new size measurement. Inventory counts every regular path logical size, including repeated hardlink payload; fails if ceiling is insufficient. No real payload scan during preparation."
+}

@@ -1,7 +1,5 @@
 # Experiment records
 
-- [Direct SF-close versus global sharpened BT4](2026-09-06-bt4-direct-close-global.md): one matched 100-simulation screen of existing contenders.
-
 Start here for experiment planning and readouts. [Project guidance](../../CLAUDE.md)
 holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.
@@ -10,9 +8,11 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [Fresh paired BT4 confirmation](2026-09-07-bt4-fresh-confirmation.md) | Preregistered fresh seed-one training of C and E with 500 reserved opening pairs |
+| [External archive and restore record](2026-09-07-storage-archive.md) | 38 verified archives, qualified local cleanup, retained dependencies and restore instructions |
+| [Fresh paired BT4 confirmation](2026-09-07-bt4-fresh-confirmation.md) | Completed fresh seed-one comparison: C beats E by 37.67 Elo [18.72, 56.85] at 100 sims |
+| [Direct SF-close versus global sharpened BT4](2026-09-06-bt4-direct-close-global.md) | Completed 100-simulation comparison favors C over G20T05 |
 | [Sharpened stored SF top ties versus SF-close](2026-09-06-bt4-sharpened-ties-screen.md) | Completed E0T05 seed-zero epoch and direct 100-simulation screen favoring C20T05 |
-| [BT4 bootstrap results](2026-09-06-bt4-bootstrap-results.md) | Completed global and SF-close screens; C is the provisional leader after direct comparisons |
+| [BT4 bootstrap results](2026-09-06-bt4-bootstrap-results.md) | Completed screens and confirmation; C is the selected next-stage baseline |
 | [50% sharpened global BT4 preparation](2026-09-06-bt4-global-dose50-preparation.md) | Reviewed CPU target preparation for a larger teacher dose; no training or matches queued |
 | [Global BT4 mixing and search scaling](2026-09-05-bt4-global-search-scaling.md) | Matched SF control, full-distribution mixtures and 25/100/400-simulation playing screen |
 | [BT4 near-tie policy targets](2026-09-05-bt4-joint-targets.md) | Superseded six-arm plan and completed control diagnostic |
@@ -22,6 +22,9 @@ measurements support which claims.
 
 These descriptions identify the records, not the state of a running experiment.
 Check subsequent readouts and the actual process/artifacts before resuming work.
+
+The [BT4 evidence catalog](evidence/bt4-bootstrap/README.md) provides published
+registrations, machine-readable readouts, game banks and provenance receipts.
 
 ## New experiments and follow-ups
 
@@ -33,8 +36,11 @@ linking the original evidence; do not append to the frozen ledger.
 Include the hypothesis, baseline/control, realized settings and revision, deciding
 command/threshold, uncertainty method, budget, horizon, confounds, artifact identities
 and recovery plan. Add the readout against the precommitted rule, with its limits and
-next decision. Keep raw observations outside git where appropriate and preserve enough
-provenance to reinterpret them without rerunning the experiment.
+next decision. Publish compact supporting evidence with the record: realized settings,
+readouts, review receipts and manageable game banks, with a source/hash manifest.
+Keep large corpora, checkpoints and transient logs external and document their
+identities and retrieval or restore locations. Historical absolute paths inside
+frozen evidence are provenance, not portable command defaults.
 
 ## Finding prior evidence
 

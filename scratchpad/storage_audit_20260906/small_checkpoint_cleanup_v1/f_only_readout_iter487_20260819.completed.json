@@ -1,0 +1,561 @@
+{
+  "status": "VERIFIED_LOCAL_POOL_REMOVED_EXTERNAL_TAR_PRESERVED",
+  "completed_unix": 1788735178.5064044,
+  "source": "/home/josh/projects/chess/data/salvage/f_only_readout_iter487_20260819",
+  "archive": "/mnt/e/chess_archive_20260906/salvage/f_only_readout_iter487_20260819.tar",
+  "archive_sha256": "5e69deca50bf470989c88cfe12ee4ac4146009354c9fea3a448be8d77c986465",
+  "archive_metadata": {
+    "type": "file",
+    "size": 667760640,
+    "mode": 33279,
+    "uid": 1000,
+    "gid": 1000,
+    "device": 75,
+    "inode": 281474978207856,
+    "nlink": 1,
+    "mtime_ns": 1788731403065841200,
+    "ctime_ns": 1788731404825657500,
+    "blocks": 1304224
+  },
+  "restore_pointer": "/home/josh/projects/chess/data/salvage/f_only_readout_iter487_20260819.ARCHIVED.json",
+  "source_files_sha256": {
+    "f_only_readout_iter487_20260819/trial_meta.json": "e128de3ffda818f8770baf5f9e8ca25ae6c6fe051ac3d1969d2e1fdf46cb7451",
+    "f_only_readout_iter487_20260819/holdout.npz": "2b7caeb4b9e9f5af7debe7758effa28f041754d144f859e725df6288aa67e63b",
+    "f_only_readout_iter487_20260819/pid_state.json": "aabab2275744a57825689ba8f2d01adf62e262081423049dfa3c2efd178e0392",
+    "f_only_readout_iter487_20260819/trainer.pt": "74717f6f5eb5a1a91f13a8ff2c1d85edeb837407f1abd44742f0e4009da15a51",
+    "f_only_readout_iter487_20260819/rng_state.json": "3291446a4b7581c3afd35b3656c74c905c509bb9b4029ce02469586cae64dc88"
+  },
+  "source_metadata_before": {
+    "f_only_readout_iter487_20260819": {
+      "type": "directory",
+      "size": 4096,
+      "mode": 16877,
+      "uid": 1000,
+      "gid": 1000,
+      "device": 2096,
+      "inode": 68321145,
+      "nlink": 2,
+      "mtime_ns": 1787151003228324827,
+      "ctime_ns": 1787153707382012029,
+      "blocks": 8
+    },
+    "f_only_readout_iter487_20260819/trial_meta.json": {
+      "type": "file",
+      "size": 10218,
+      "mode": 33188,
+      "uid": 1000,
+      "gid": 1000,
+      "device": 2096,
+      "inode": 80975513,
+      "nlink": 1,
+      "mtime_ns": 1787151003228324827,
+      "ctime_ns": 1787153706756244243,
+      "blocks": 24
+    },
+    "f_only_readout_iter487_20260819/holdout.npz": {
+      "type": "file",
+      "size": 2077315,
+      "mode": 33188,
+      "uid": 1000,
+      "gid": 1000,
+      "device": 2096,
+      "inode": 80975514,
+      "nlink": 1,
+      "mtime_ns": 1787151003228858612,
+      "ctime_ns": 1787153706756923567,
+      "blocks": 4064
+    },
+    "f_only_readout_iter487_20260819/pid_state.json": {
+      "type": "file",
+      "size": 2266,
+      "mode": 33188,
+      "uid": 1000,
+      "gid": 1000,
+      "device": 2096,
+      "inode": 80975515,
+      "nlink": 1,
+      "mtime_ns": 1787151003228324827,
+      "ctime_ns": 1787153706758951720,
+      "blocks": 8
+    },
+    "f_only_readout_iter487_20260819/trainer.pt": {
+      "type": "file",
+      "size": 665657678,
+      "mode": 33188,
+      "uid": 1000,
+      "gid": 1000,
+      "device": 2096,
+      "inode": 80975517,
+      "nlink": 1,
+      "mtime_ns": 1787151004026816281,
+      "ctime_ns": 1787153707382012029,
+      "blocks": 1300128
+    },
+    "f_only_readout_iter487_20260819/rng_state.json": {
+      "type": "file",
+      "size": 176,
+      "mode": 33188,
+      "uid": 1000,
+      "gid": 1000,
+      "device": 2096,
+      "inode": 80975516,
+      "nlink": 1,
+      "mtime_ns": 1787151003228324827,
+      "ctime_ns": 1787153706759164058,
+      "blocks": 8
+    }
+  },
+  "plan_sha256": "2d86dd9d11abab6340a2eb7ade6bd4de723dcbc4e733d66eb809c91f6892feae",
+  "script_sha256": "ba75e1a59156b22df400ad9bd31add4e4b9dfd08f68d04b8a61951cf0c5f4dc5",
+  "helper_sha256": "40cec48ff64c6b072471c5e837c1eeaf3536f74b4b20794e2afb77ee6c7e36b9",
+  "pinned_inputs": {
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/batch_cleanup_dependency_review.json": "6b55c0c5f606d1a8c6f4e36189df6353c7a0f5b27327b60198e9c5a07d66e242",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/batch_cleanup_host_observation.json": "6c9631fc262c273d8aa2b0745d8528fab0b7ad4a2cbb8e9826a05ecac4c8a284",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/batch_cleanup_small_pool_metadata.json": "3f018bffe6373bf4ec50879277d64770f09233adde7d771ea85802912f57c420",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/linked_pool_dependencies.json": "1f9a7e5065562e30dd7cc3134dcc8830929fcb73a8d5ffb12704faeda9bda027",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/archive_plan_remaining_v3.json": "f389eeff35235a5097f39a3a5b4dd22a7c860ca36bc5038fbaabb4211491a5bb",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/queue_launch_v3.json": "ac235a5745361460ea76be8450e02113a3995e6e0f4775e0e1e33262f7ede1b4",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/retire_zarr_pilot.py": "40cec48ff64c6b072471c5e837c1eeaf3536f74b4b20794e2afb77ee6c7e36b9",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/zarr_pilot/cleanup_visibility_identities.json": "a3f8e49f4c96f6cbf793ea0e488e5126d0b95cfe51725789eb1f66b3cb77a346",
+    "/home/josh/projects/chess/configs/pbt2_small.yaml": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/pbt2_small.yaml": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/apf_endpoint_checkpoint_000297_20260818/verified.json": "0acb580a916e278acce3e48eab496686f2535b76c2db7decf6066c106ec474f4",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/apf_endpoint_checkpoint_000297_20260818/source.jsonl": "f2dce199c04925a5c7d388f77538afe8c1b32485578044cc018ce28cc2fab748",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/f_only_readout_iter487_20260819/verified.json": "c975307723f64db61c1f10c0f2de955fdc84a23b37e0b20c29a3c58dd4a6d94d",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/f_only_readout_iter487_20260819/source.jsonl": "3c8c281ea0cabdf5037e70c37ba33907ecb31dcb8f44bfed6d4db3e793407eac",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/iter118_pre_value_easy_drop/verified.json": "1d89fb84ed0e6bed1f0947c03c3516a1388e82d780d704b3002118c90ee96fb6",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/iter118_pre_value_easy_drop/source.jsonl": "50570481ad25e90627d8d2e695b23e2ab6dda58c041d5cdd5884987bb3c02996",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/archive_pools.py": "f46f44a29ab303c8e8eb1ee4f41b83f7087031847a502ca26b5a6f6499381419"
+  },
+  "logical_bytes": 667747653,
+  "observed_free_bytes_change": 667394048,
+  "process_checks": [
+    {
+      "processes_observed": 100,
+      "inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "terminal_zombies": [],
+      "limitation": "Host cwd/fd paths only. Exact reviewed inaccessible identities remain uncertified; no guarantee about future or mmap-only readers.",
+      "command_maps_inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "shallow_link_paths_checked": 405
+    },
+    {
+      "processes_observed": 100,
+      "inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "terminal_zombies": [],
+      "limitation": "Host cwd/fd paths only. Exact reviewed inaccessible identities remain uncertified; no guarantee about future or mmap-only readers.",
+      "command_maps_inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "shallow_link_paths_checked": 405
+    },
+    {
+      "processes_observed": 100,
+      "inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "terminal_zombies": [],
+      "limitation": "Host cwd/fd paths only. Exact reviewed inaccessible identities remain uncertified; no guarantee about future or mmap-only readers.",
+      "command_maps_inaccessible": [
+        {
+          "pid": 1,
+          "uid": 0,
+          "comm": "init(Ubuntu)",
+          "start_ticks": "133"
+        },
+        {
+          "pid": 9,
+          "uid": 0,
+          "comm": "init",
+          "start_ticks": "179"
+        },
+        {
+          "pid": 12,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 13,
+          "uid": 0,
+          "comm": "Relay(14)",
+          "start_ticks": "180"
+        },
+        {
+          "pid": 68,
+          "uid": 1000,
+          "comm": "ssh-agent",
+          "start_ticks": "229"
+        },
+        {
+          "pid": 71,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 72,
+          "uid": 0,
+          "comm": "Relay(73)",
+          "start_ticks": "305"
+        },
+        {
+          "pid": 87,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 88,
+          "uid": 0,
+          "comm": "Relay(89)",
+          "start_ticks": "487"
+        },
+        {
+          "pid": 103,
+          "uid": 0,
+          "comm": "SessionLeader",
+          "start_ticks": "635"
+        },
+        {
+          "pid": 104,
+          "uid": 0,
+          "comm": "Relay(105)",
+          "start_ticks": "635"
+        }
+      ],
+      "shallow_link_paths_checked": 406
+    }
+  ],
+  "limits": "Free-space change includes other jobs. Known inaccessible processes and future aliases/consumers are not certified absent. External archive is the surviving copy."
+}

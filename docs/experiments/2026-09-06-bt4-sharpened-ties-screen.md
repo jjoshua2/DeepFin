@@ -173,7 +173,8 @@ the six-hour cap. CPU schedule verification took 290.15 seconds separately.
 Execution remained pinned at revision
 `3ec5bdc3d62be4b47192d3642924ce0cdff052fa`. Later publication portability/import
 fixes were not substituted into the completed run. Evidence below is relative to
-`scratchpad/bt4_joint20/sharpened_ties_run01/` and stays outside git:
+`scratchpad/bt4_joint20/sharpened_ties_run01/`; compact snapshots are now
+published through the [evidence catalog](evidence/bt4-bootstrap/README.md):
 
 | Artifact | SHA256 |
 | --- | --- |

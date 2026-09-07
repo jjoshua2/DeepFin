@@ -1,0 +1,14 @@
+{
+  "status": "PASS_FINAL_SELECTED_MANIFEST_PINS_DISK_AND_ABSENT_OUTPUTS",
+  "checked_unix": 1788751384.035729,
+  "manifest_sha256": "33d4845ddcc131522e572c42b2ff6338850c4f5b4500295bf9f413fe073011a9",
+  "preregistration_sha256": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528",
+  "template_changed_fields": [
+    "preregistration"
+  ],
+  "launcher_sha256": "07fea41523fbb8068cfd910d0ff5e629622ccb81a180e7160188106d4040c09c",
+  "outputs_all_absent": true,
+  "runtime_probe_repeated": false,
+  "execute_called": false,
+  "limits": "No training, inference, corpus scan or test-suite repeat; actual runtime probe and post-lease checks remain enforced by execution."
+}

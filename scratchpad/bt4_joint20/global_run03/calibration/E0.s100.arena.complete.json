@@ -1,0 +1,11 @@
+{
+  "checkpoint_sha256": "c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817",
+  "comparison": "same_checkpoint_prior_calibration",
+  "games_sha256": "5302737b2d66405024c54348ca11ac774bc663653cdc6b30e525e975b99df71e",
+  "policy_temp_candidate": 1.0,
+  "policy_temp_reference": 1.5,
+  "raw_rows": 1000,
+  "readout": "unread",
+  "reference_sha256": "c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817",
+  "replaced_orphan_rows": 0
+}

@@ -1,0 +1,23 @@
+{
+  "status": "FRESH_ARENA_RUNNING_LAUNCH_AND_HEADER_VERIFIED",
+  "checked_unix": 1788771635.1612036,
+  "coordinator_pid": 199324,
+  "arena_supervisor_pid": 217778,
+  "arena_pid": 217779,
+  "actual_cmdline_matches_launch_receipt": true,
+  "actual_cwd_matches": true,
+  "actual_live_config": "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/pbt2_small.yaml",
+  "arena_seed": 20260907,
+  "games": 1000,
+  "sims_each": 100,
+  "candidate_role": "E0T05",
+  "reference_role": "C20T05",
+  "opening_histories": 500,
+  "full_qualified_search_matches_both_sides": true,
+  "header_fingerprint": "1c4659529f96",
+  "header_line_sha256": "7e53960da24f9a39c9e568b25b8d3a6f37a87b461f45d12c8989cc1ea292787c",
+  "arena_process_receipt_sha256": "7b125227a0a79f963e4a97c99f05cb274a79f34190c1aba021e4bd4f11ab6745",
+  "matched_schedule_sha256": "6b4281eb68cf07404205166402011930497e251b6d69c3caa8a6d2651b0da334",
+  "outcomes_read": false,
+  "inspection_limit": "Only first header line was read from bank; no game rows or rolling result/log content inspected."
+}

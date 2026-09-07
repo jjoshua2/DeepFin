@@ -1,0 +1,46 @@
+{
+  "status": "PASS_INDEPENDENT_TOOL_QUALIFICATION_NO_EXPERIMENT_MANIFEST_SELECTED",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_unix": 1788739415.3691866,
+  "base_commit": "ba25e71801fd416aa62b8d6d10cd5315dc7a9ef6",
+  "reviewed_files_sha256": {
+    "/tmp/deepfin-confirmation-e0t05/scripts/bt4_confirmation.py": "07fea41523fbb8068cfd910d0ff5e629622ccb81a180e7160188106d4040c09c",
+    "/tmp/deepfin-confirmation-e0t05/scripts/bt4_joint_readout.py": "49cd6ceab88e1b7d225b18a166fbf7a004309d58bc1f0bf9ae2afe859606f16c",
+    "/tmp/deepfin-confirmation-e0t05/tests/test_bt4_confirmation.py": "8b8c63dc76d0e54a6f85448d4818747fcd7fca6f2d3006b2bc23052e722f90ae",
+    "/tmp/deepfin-confirmation-e0t05/tests/test_bt4_joint_readout.py": "da021f27302dde8970cdf284eb17f15c1e978259223de2092f859cc2fe75311c"
+  },
+  "blockers": [],
+  "resolved_findings": [
+    "Runner.check_runtime previously removed actual NumPy but compared to a manifest still containing NumPy. Both sides now preserve NumPy and require1.26.2; actual frozen probe passed.",
+    "training_complete now requires88-step cadence and ceil(seed-specific batches/88) windows, all finite loss/gradient means, zero skipped nonfinite gradients/CUDA retries, and exact last-checkpoint path plus SHA."
+  ],
+  "independent_evidence": [
+    "Read coherent four-file diff and affected full launcher consumers, including command generation, resource scopes, completion/schedule gates, runtime and recipe identity checks, final header and reader paths.",
+    "Actual check_runtime invoked frozen /usr/bin/python3 under CUDA_VISIBLE_DEVICES empty, nice19 and affinity CPU0/1; accepted sf-close/manifest.json with Python3.10.12,Torch2.11.0+cu128,CUDA12.8,NumPy1.26.2 and all four native module paths. No GPU inference.",
+    "Reviewed targeted tests and their saved logs: review-fix-tests10passed; cap-tests8passed; initial focused run had one obsolete tiny-cap expectation later corrected, not an operational experiment failure. Author separately reports corrected test, original64passing tests, real coordinator-SIGKILL inherited lease release and TERM-resistant CPU timeout pass."
+  ],
+  "change_coverage": [
+    "E0T05 named role binds exact published T0.5 top-tie mix SHA and derive lineage; raw E0 cannot be relabeled. Reader supports actual E0T05/C roles without implying training provenance or search-scaling evidence.",
+    "Explicit frozen CHESS_ANTI_ENGINE_LIVE_CONFIG and full qualified C100 search equality reject matched-but-different shape drift. Reserved history-bearing FEN input/readout identity and complete1000game500pair requirements remain.",
+    "Every stage uses surviving GNU timeout in an owned new session. GPU stages inherit shared lease and use remaining stage budget; CPU stages have explicit1800/120second limits, hidden CUDA and no GPU lease. All caps include30second TERM/KILL grace.",
+    "Owned-group cleanup, STOP checks, fixed new output paths, exclusive state lock, no adoption/retry, budget and disk guards, immutable runtime/preregistration/recipe/opening/verifier/reader pins retained."
+  ],
+  "lint": {
+    "author_reports": "Whole Ruff/Vulture PASS; full type check still running at review time after environment correction. No final full-type-pass claim."
+  },
+  "future_manifest_conditions": [
+    "Use final chosen independently qualified contrast with C reference and selected E0T05/G20T05 candidate; final dated preregistration and manifest remain absent.",
+    "Proposed design requires fresh training_seed1 for both, arena_seed20260907, sims100, stage caps16200/16200/5400 and total37800GPUseconds, CPU caps1800/120; tool supports other explicitly registered values, so bind exact selected manifest before launch.",
+    "Pin current reviewed launch/reader sources, runtime manifest including NumPy, qualified published corpora/derived summaries, reserved FEN bank, matched-seed verifier and final preregistration. Require new paths and fresh realized source/candidate/reference schedule proof.",
+    "Qualify all completed development opening banks against the reserved bank before calling it fresh; preserve contradictory/unresolved evidence and no automatic extra games.",
+    "Launch coordinator at low priority without clamping16-worker training. Current code caps numerical/compression threads but not CPU affinity; if CPU0/1 affinity is required for schedule/readout, add and review a narrow CPU-only command prefix before launch."
+  ],
+  "limits": [
+    "This qualifies tools only; it does not approve a confirmation launch, select recipes, certify future completed training, or interpret any E0T05 outcome.",
+    "No data payload scan, weights hash, corpus traversal, new arena, GPU workload or running-checkout mutation by reviewer.",
+    "Author executed the process/fault pytest tests; reviewer read evidence and independently executed actual CPU runtime validation.",
+    "Old manifest shape now requires explicit CPU caps and GPU stage caps exceeding30seconds; manifests must be updated intentionally.",
+    "No universal old-format runtime manifest compatibility claim: use the current reviewed NumPy-bearing manifest.",
+    "Abrupt loss can leave incomplete charge receipts; inspect owned stage termination and reconcile rather than automatically resume."
+  ]
+}

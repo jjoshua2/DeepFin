@@ -1,0 +1,75 @@
+{
+  "actual_runtime_probe": {
+    "CUDA_VISIBLE_DEVICES": "",
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "executed": true,
+    "method": "Imported prepared epoch launcher; check_pins(manifest); arena.runtime_probe(returned_runtime). This invoked the actual frozen interpreter, not only file-hash checks.",
+    "receipt": "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/runtime_probe.json",
+    "result": "PASS actual Python3.10.12/Torch2.11.0+cu128/CUDA12.8/NumPy1.26.2 native module paths and complete resolved C100 search after prior1 override"
+  },
+  "artifact_sha256": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/focused_direct_tests.log": "71f41538de40685372df98265238f0d5a6798aea9c1170ff9b625efec6168553",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/launch_manifest.json": "c5fb774dd5ca3c3b776767956a6e09561a73b2f863227ec7d907e3147dd91da5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/launcher_independent_review.json": "a68160539af5087953f7cd3faf2c1af1ce77ae3a685264d21951336546aad044",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/preregistration.md": "bba0d5c47c2715714dcf37f871ff9923aade25e98e75d82fb17998aa6cad0279",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/prospective_schedule.json": "1aca8a7dfd7e2917927560c9eea285fe26e3db591ff8ebdd2cfa00dfba08cfd8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/runtime_probe.json": "ff24211990e107262311022058c34a46b2258e2b889615bec2550c2cf74b4815",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/runtime_probe.log": "334eee8f1250ed1ccfa68ec96290f4b441c2776b27ccfbc9ccbac7505149e0e2",
+    "/tmp/deepfin-bt4-esharp-screen-lint.log": "8ba7f27a55e00b794577bfae295f8977349d0b8d287153b5254529e9393c2acb",
+    "/tmp/deepfin-bt4-esharp-screen/docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md": "2b5cd974c647ed9e58e785258554aca7ff862b11128974b7799fb5f8c39585aa",
+    "/tmp/deepfin-bt4-esharp-screen/scripts/bt4_direct_screen.py": "ef531896876c7684dd7cbff54e400845cbef8a2814bdf4368072799470b7b172",
+    "/tmp/deepfin-bt4-esharp-screen/scripts/bt4_one_epoch_screen.py": "f62a7d6df672f410af81cb20f08b4c152cf0b2fa78f601cad20bd7614aa8a90d",
+    "/tmp/deepfin-bt4-esharp-screen/tests/test_bt4_direct_screen.py": "fa5586cd2d671aed24eb613937191a62989a01a6d03d4cc50028277f17ecfb37",
+    "/tmp/deepfin-bt4-esharp-screen/tests/test_bt4_one_epoch_screen.py": "67f475ad15e95715fdbdeef110506a5a16c647a868410ef78c171fbe53495455"
+  },
+  "base": "ff99d40f7c0247758bb6918b756336416e8a0260",
+  "branch": "experiment/bt4-sharpened-ties-screen",
+  "cli_plan_and_all_metadata_pins": "PASS; no --execute invocation",
+  "created_unix": 1788737867.3118708,
+  "focused_tests": {
+    "new_epoch_and_changed_supervision": {
+      "command": "CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 PYTHONPATH=/tmp/deepfin-bt4-esharp-screen nice -n 19 taskset -c 0,1 /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -m pytest -q tests/test_bt4_one_epoch_screen.py",
+      "evidence": "Author tool output: twelve tests passed; final subsequent helper change was return-type annotation only.",
+      "passed": 12
+    },
+    "original_direct_screen_regressions": {
+      "command": "CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 PYTHONPATH=/tmp/deepfin-bt4-esharp-screen nice -n 19 taskset -c 0,1 /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -m pytest -q tests/test_bt4_direct_screen.py",
+      "log": "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/focused_direct_tests.log",
+      "passed": 12
+    }
+  },
+  "gpu_launch_performed": false,
+  "independent_review": "PASS; launcher_independent_review.json",
+  "lint": {
+    "basedpyright": {
+      "error_categories": {
+        "Import \"chess_anti_engine.encoding._features_ext\" could not be resolved from source (reportMissingModuleSource)": 9,
+        "Import \"chess_anti_engine.encoding._lc0_ext\" could not be resolved from source (reportMissingModuleSource)": 101,
+        "Import \"chess_anti_engine.mcts._mcts_tree\" could not be resolved from source (reportMissingModuleSource)": 104,
+        "Import \"chess_anti_engine.nnue._nnue_ext\" could not be resolved from source (reportMissingModuleSource)": 22
+      },
+      "errors": 236,
+      "limitation": "Fresh checkout has stubs but no built native binaries; no extension rebuild/transplant performed.",
+      "new_or_modified_file_findings": 0,
+      "warnings": 0
+    },
+    "command": "PATH=/tmp/deepfin-esharp-lint-tools:/tmp/deepfin-bt4-sf-close-followup/.venv/bin:$PATH CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 nice -n 19 taskset -c 0,1 ./scripts/lint.sh",
+    "environment_config": "/tmp/deepfin-esharp-lint-tools/pyrightconfig.json extends repository config with explicit existing venv and source search paths only.",
+    "exit_code": 1,
+    "ruff": "PASS whole repository",
+    "scoped_basedpyright": "PASS 0 errors,0 warnings on both launchers and new tests",
+    "vulture": "PASS whole repository"
+  },
+  "prospective_schedule": {
+    "executed_once": true,
+    "parent_review": "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/prospective_schedule_parent_review.json",
+    "result": "E0T05 prospective source/game metadata and exact schedule match source and completed C; no feature/policy decoding",
+    "sha256": "1aca8a7dfd7e2917927560c9eea285fe26e3db591ff8ebdd2cfa00dfba08cfd8"
+  },
+  "status": "PASS_FOCUSED_RUNTIME_AND_REVIEW_WITH_UNBUILT_NATIVE_LINT_LIMIT",
+  "tracked_runtime_files_changed_since_review": false,
+  "worktree": "/tmp/deepfin-bt4-esharp-screen"
+}

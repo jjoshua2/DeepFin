@@ -1,0 +1,13 @@
+{
+  "checked_unix": 1788728572.6285696,
+  "method": "Bounded root and seeds/slot child metadata only; not a whole-tree symlink scan.",
+  "links": [
+    {
+      "pool": "armB_launch_base_20260814",
+      "link": "/home/josh/projects/chess/data/salvage/armB_launch_base_20260814/seeds/slot_000/replay_shards",
+      "target": "/home/josh/projects/chess/data/salvage/pre_policy_adapter_20260812/seeds/slot_000/replay_shards",
+      "resolved_target": "/home/josh/projects/chess/data/salvage/pre_policy_adapter_20260812/seeds/slot_000/replay_shards"
+    }
+  ],
+  "retention": "Keep linked pools and their resolved targets locally until their dependency graph is archived and restoration is qualified."
+}

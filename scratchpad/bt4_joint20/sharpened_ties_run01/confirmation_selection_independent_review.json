@@ -1,0 +1,46 @@
+{
+  "status": "SUPPORTED_DRAFT_WITH_PRE_REGISTRATION_CLARIFICATIONS",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_unix": 1788738687.4910343,
+  "draft_sha256": "24d95cd20aa2b1f71e1352763c2cf6a7d7afb8ccde3f458af922c6a9ddb9ae22",
+  "launch_authorized": false,
+  "scientific_assessment": [
+    "Two fresh matched-seed1 recipes and one fixed1000game500pair arena on reserved history-bearing openings can test whether the selected development contrast survives both a new training seed and new openings. It does not isolate which change causes differences.",
+    "Selecting the best challenger by aligned development score against the same C checkpoint is a reasonable deterministic allocation heuristic. It supplies no direct E-versus-G significance or strength ordering beyond those conditional screens.",
+    "One100-simulation horizon is a useful bounded follow-up. Current root and wise-cloud configs have base100,fast32,start256; this is not full deployed-budget or search-scaling confirmation.",
+    "Hard4.5+4.5+1.5GPUhours is internally consistent; separate CPU caps, shared lease and no automatic retries preserve budget scope.",
+    "Single fresh paired seed cannot estimate seed variance, and terminal-opening disjointness is not training purity or separation of opening families/later transpositions."
+  ],
+  "proposed_clarifications": [
+    {
+      "item": "Qualified-only selection",
+      "change": "Make the otherwise branch apply only to a complete independently qualified E0T05 bank. Missing/invalid/incomplete evidence must stop conditional selection, not count as an unfavored challenger."
+    },
+    {
+      "item": "Explicit roles and direction",
+      "change": "Fix candidate/reference names for every selected pair and record the expected development direction. Keeping C as reference and E0T05/G20T05 as candidate is simplest: support for C is a negative candidate interval."
+    },
+    {
+      "item": "Contradiction versus unresolved",
+      "change": "Distinguish decisive opposite-direction fresh evidence from a fresh interval containing zero; report the former as contradictory only when the prior development contrast was itself decisive. A prior inconclusive contrast is unresolved development evidence, even if the new bank becomes decisive."
+    },
+    {
+      "item": "Fresh opening qualification",
+      "change": "Once all selection banks are complete, check their terminal EPDs against the frozen exclusion set and reserved bank before calling the confirmation openings fresh. Preserve history-bearing bank SHA and FEN-list loader/readout validation."
+    }
+  ],
+  "not_recommended": [
+    "No extra E-versus-G match solely to validate the selection heuristic.",
+    "No automatic400-simulation or fast/start-budget arenas, further training seeds or horizon extension from this draft."
+  ],
+  "evidence": {
+    "reserved_generation_receipt_sha256": "8b781aeb5612e4ab2051f07d3ed80a032463f80eb0d69d688c00390b73909252",
+    "root_config_sha256": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624",
+    "wise_cloud_config_sha256": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624"
+  },
+  "limits": [
+    "No E0T05 run/status/output or partial outcome inspection.",
+    "Read draft, existing generation metadata/README and current relevant config values only; no new corpus/target/payload scan or arena.",
+    "This supports preparation with clarifications, not final preregistration, launch approval or a chosen pair. Operational launcher delta remains a separate later review."
+  ]
+}

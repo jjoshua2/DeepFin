@@ -1,0 +1,14 @@
+{
+  "status": "VERIFIED_LOCAL_POOL_REMOVED_EXTERNAL_ARCHIVE_PRESERVED",
+  "name": "pre_durable_deploy_20260726",
+  "completed_unix": 1788744018.914596,
+  "source": "/home/josh/projects/chess/data/salvage/pre_durable_deploy_20260726",
+  "archive": "/mnt/e/chess_archive_20260906/salvage/pre_durable_deploy_20260726.tar",
+  "tar_sha256": "2c1518fd8f5ad4d611867605d7abe673b682f325737ae993be75a557cf63bdfb",
+  "external_restore_receipt": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/pre_durable_deploy_20260726.restore.json",
+  "external_restore_receipt_sha256": "44453584d19b1ba98b96a0dedb5e590b8ae28fa55ca8811096df9e7b876a84ae",
+  "entries": 381246,
+  "allocated_bytes_before": 4032315392,
+  "plan_sha256": "12c67cc7dbe82d4e1dc8948c23da80f865a11d43cdf3b6d9e70a621d86283694",
+  "script_sha256": "3d83c7bc96f9275863930de51a7bd10a7536f4d05c1bffa9427e2d841ccb0b20"
+}

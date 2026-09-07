@@ -1,0 +1,53 @@
+{
+  "checked_unix": 1788714422.4010646,
+  "processes": {
+    "136827": {
+      "cmdline": "python3 -",
+      "cwd": "/home/josh/projects/chess",
+      "stat": "136827 (python3) S 136824 136824 136824 0 -1 4194304 6286 0 0 0 10 5 0 0 20 0 1 0 8725338 36716544 7352 18446744073709551615 101952184303616 101952187139405 140731826664992 0 0 0 0 16781312 16386 1 0 0 17 10 0 0 0 0 0 101952189511760 101952189795736 101952579788800 140731826670360 140731826670370 140731826670370 140731826675687 0"
+    },
+    "136828": {
+      "cmdline": "timeout --signal=TERM 4h env CUDA_VISIBLE_DEVICES= OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 nice -n 19 /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -c import runpy,sys; from numcodecs import blosc; blosc.set_nthreads(2); sys.argv=['/tmp/deepfin-bt4-toolchain/scripts/bt4_policy_mix.py']+sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__') mix --shards /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m --sidecar /home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m --out /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05 --expected-rows 18910484 --expected-shards 2309 --expected-source-summary-sha256 391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef --audit-receipt /home/josh/projects/chess/scratchpad/bt4_joint20/global_dose50_v1/audit_G50T05.json --alpha 0.5 --scope global --bt4-temperature 0.5 --sf-audit-mode descriptive --experiment-record /home/josh/projects/chess/scratchpad/bt4_joint20/global_dose50_v1/preparation.md",
+      "cwd": "/tmp/deepfin-bt4-toolchain",
+      "stat": "136828 (timeout) S 136827 136828 136828 0 -1 4194304 83 0 0 0 0 0 0 0 20 0 1 0 8725348 3309568 467 18446744073709551615 108425579139072 108425579155601 140734959706544 0 0 0 0 3145728 90119 1 0 0 17 9 0 0 0 0 0 108425579170416 108425579172440 108426441240576 140734959711971 140734959713058 140734959713058 140734959718375 0"
+    },
+    "133457": {
+      "cmdline": "/usr/bin/python3 scripts/lc0_control_train.py --config configs/lc0_positive_control.yaml --shards /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05 --out-dir /home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1 --steps 0 --batch-size 512 --sampling-mode game_epoch --epoch-plan-workers 16 --epoch-load-workers 16 --seed 0 --device cuda --train-window-steps 88 --allow-invalid-control",
+      "cwd": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+      "stat": "133457 (python3) R 127437 133457 133457 0 -1 4194304 2775743 20775 461 16 524150 53752 8 8 39 19 87 0 8494575 164032630784 1901306 18446744073709551615 108598014189568 108598017025357 140726274023408 0 0 0 0 4096 1098926599 0 0 0 17 21 0 0 0 0 0 108598019397712 108598019681688 108598771351552 140726274029744 140726274030201 140726274030201 140726274035687 0"
+    },
+    "127437": {
+      "cmdline": "/usr/bin/python3 scripts/bt4_joint_experiment.py --phase sf-close --execute",
+      "cwd": "/tmp/deepfin-bt4-prior-one",
+      "stat": "127437 (python3) S 88 127437 127437 0 -1 4194304 20200 158768 1 180 493 179 676 1074 39 19 1 0 8172513 29536256 5686 18446744073709551615 108947160764416 108947163600205 140735124162320 0 0 0 0 16781312 16386 1 0 0 17 18 0 0 0 0 0 108947165972560 108947166256536 108947335544832 140735124167315 140735124167391 140735124167391 140735124172775 0"
+    },
+    "4741": {
+      "cmdline": "/usr/bin/python3 -m scripts.gen_sf_rooted_corpus --book /home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip --book-max-games 200000 --book-plies 16 --cp-draw-width 120.0 --cp-slope 0.006 --dedup-cache-max 2000000 --games 520000 --max-plies 400 --nice 19 --out-dir /home/josh/projects/chess/data/nnue_bootstrap/run06_g10 --run-id nnue_bootstrap_run06_g10 --seed 20260902 --sf-hash-mb 64 --sf-read-timeout 300.0 --sf-search-timeout 30.0 --shard-rows 8192 --staircase all:9,8:10,4:12 --staircase-policy g10 --stockfish /home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2 --syzygy-path /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6 --temp-high 1.0 --temp-low 0.3 --temp-plies 20 --workers 12 --resume",
+      "cwd": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+      "stat": "4741 (python3) S 88 4741 4741 0 -1 4194304 93335 57751 0 0 113 39 16 31 20 0 4 0 113097 5768663040 64354 18446744073709551615 110934233083904 110934235919693 140724078643648 0 0 0 0 16781312 2 0 0 0 17 31 0 0 0 0 0 110934238292048 110934238576024 110934419660800 140724078647142 140724078647977 140724078647977 140724078653415 0"
+    },
+    "4743": {
+      "cmdline": "/usr/bin/python3 -m scripts.gen_sf_rooted_corpus --book /home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip --book-max-games 200000 --book-plies 16 --cp-draw-width 120.0 --cp-slope 0.006 --dedup-cache-max 2000000 --games 130000 --max-plies 400 --nice 19 --out-dir /home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4 --run-id nnue_bootstrap_run07_g10_companion4 --seed 20260903 --sf-hash-mb 64 --sf-read-timeout 300.0 --sf-search-timeout 30.0 --shard-rows 8192 --staircase all:9,8:10,4:12 --staircase-policy g10 --stockfish /home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2 --syzygy-path /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6 --temp-high 1.0 --temp-low 0.3 --temp-plies 20 --workers 4 --resume",
+      "cwd": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+      "stat": "4743 (python3) S 88 4743 4743 0 -1 4194304 88930 29642 0 0 115 34 17 10 20 0 4 0 113116 5749678080 64462 18446744073709551615 94117299720192 94117302555981 140729179096688 0 0 0 0 16781312 2 0 0 0 17 12 0 0 0 0 0 94117304928336 94117305212312 94117624569856 140729179101009 140729179101865 140729179101865 140729179107303 0"
+    },
+    "4251": {
+      "cmdline": "/usr/bin/bash /home/josh/projects/chess/scratchpad/bt4_g10_raw/driver.sh",
+      "cwd": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+      "stat": "4251 (bash) S 88 4251 4251 0 -1 4194304 3349 17818111 1 13117 3 2 471976 18627 39 19 1 0 94271 5042176 822 18446744073709551615 100747134177280 100747135090541 140733728257792 0 0 0 65536 4 1132560123 1 0 0 17 2 0 0 0 0 0 100747135335056 100747135383120 100748000088064 140733728261501 140733728261574 140733728261574 140733728264170 0"
+    },
+    "7745": {
+      "cmdline": "/usr/bin/python3 /home/josh/projects/chess/scratchpad/reboot_recovery_20260905/monitor_generators.py --run --plan /home/josh/projects/chess/scratchpad/reboot_recovery_20260905/g10-monitor-plan.json",
+      "cwd": "/home/josh/projects/chess",
+      "stat": "7745 (python3) S 88 7745 7745 0 -1 4194560 2696 0 0 0 1027 645 0 0 20 0 1 0 302611 26013696 4505 18446744073709551615 95156444135424 95156446971213 140736266020128 0 0 0 0 16781312 2 1 0 0 17 2 0 0 0 0 0 95156449343568 95156449627544 95156604755968 140736266025564 140736266025762 140736266025762 140736266031079 0"
+    },
+    "136829": {
+      "cmdline": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -c import runpy,sys; from numcodecs import blosc; blosc.set_nthreads(2); sys.argv=['/tmp/deepfin-bt4-toolchain/scripts/bt4_policy_mix.py']+sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__') mix --shards /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m --sidecar /home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m --out /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05 --expected-rows 18910484 --expected-shards 2309 --expected-source-summary-sha256 391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef --audit-receipt /home/josh/projects/chess/scratchpad/bt4_joint20/global_dose50_v1/audit_G50T05.json --alpha 0.5 --scope global --bt4-temperature 0.5 --sf-audit-mode descriptive --experiment-record /home/josh/projects/chess/scratchpad/bt4_joint20/global_dose50_v1/preparation.md",
+      "cwd": "/tmp/deepfin-bt4-toolchain",
+      "stat": "136829 (python) R 136828 136828 136828 0 -1 4194304 47387 2470 1 103 860 1779 2 4 39 19 2 0 8725349 715399168 65390 18446744073709551615 4329472 33283224 140731034701760 0 0 0 0 16781312 2 0 0 0 17 6 0 0 0 0 0 23068672 33283224 331345920 140731034707688 140731034708632 140731034708632 140731034714052 0"
+    }
+  },
+  "free_gib": 453.2654266357422,
+  "exec_session_id": 6366,
+  "scope": "CPU G50 materialization launch only; active C trainer and generation preserved"
+}

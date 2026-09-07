@@ -1,0 +1,67 @@
+{
+  "pool": "apf_endpoint_checkpoint_000297_20260818",
+  "source": "/home/josh/projects/chess/data/salvage/apf_endpoint_checkpoint_000297_20260818",
+  "source_deleted": false,
+  "plan_sha256": "a397b85adb9603a482ad9635b24cf25c4297c16959f256544eb199f4e72bb69b",
+  "started_unix": 1788728054.7345898,
+  "mount": {
+    "target": "/mnt/e",
+    "source": "E:\\",
+    "fstype": "9p",
+    "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+  },
+  "resources": {
+    "local_free_bytes": 470819987456,
+    "available_RAM_bytes": 58656567296
+  },
+  "references": {
+    "observed_source_references": [],
+    "other_user_processes_not_inspected": [
+      1,
+      9,
+      12,
+      13,
+      71,
+      72,
+      87,
+      88,
+      103,
+      104
+    ],
+    "same_user_processes_not_inspected": [
+      68
+    ],
+    "complete_process_visibility": false,
+    "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+  },
+  "inventory": {
+    "entries": 13,
+    "logical_file_bytes": 667837357
+  },
+  "tar_bytes": 667863040,
+  "verified_members": 13,
+  "tar_sha256": "cf6e93687d1787a5bc7aa4ca4f032ee8c02699028f727192dbd7f6a835d7b988",
+  "source_manifest_sha256": "f2dce199c04925a5c7d388f77538afe8c1b32485578044cc018ce28cc2fab748",
+  "rsync_command": [
+    "rsync",
+    "--no-whole-file",
+    "--partial-dir=.apf_endpoint_checkpoint_000297_20260818.partial",
+    "--bwlimit=16384",
+    "--fsync",
+    "--",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/apf_endpoint_checkpoint_000297_20260818/apf_endpoint_checkpoint_000297_20260818.tar",
+    "/mnt/e/chess_archive_20260906/salvage/apf_endpoint_checkpoint_000297_20260818.tar"
+  ],
+  "rsync_exit_code": 0,
+  "external_tar_sha256": "cf6e93687d1787a5bc7aa4ca4f032ee8c02699028f727192dbd7f6a835d7b988",
+  "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+  "finished_unix": 1788728199.9736826,
+  "external_archive": "/mnt/e/chess_archive_20260906/salvage/apf_endpoint_checkpoint_000297_20260818.tar",
+  "external_size": 667863040,
+  "external_mtime_ns": 1788728175518595000,
+  "limitations": [
+    "Source retained; removal requires separate parent verification.",
+    "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+    "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+  ]
+}

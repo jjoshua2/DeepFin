@@ -1,0 +1,26 @@
+{
+  "status": "PASS_ACTUAL_FROZEN_RUNTIME_AND_FULL_C100_SEARCH",
+  "actual": {
+    "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+    "executable": "/usr/bin/python3",
+    "torch": "2.11.0+cu128",
+    "cuda": "12.8",
+    "numpy": "1.26.2",
+    "native_extensions": {
+      "chess_anti_engine.encoding._features_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+      "chess_anti_engine.encoding._lc0_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+      "chess_anti_engine.mcts._mcts_tree": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+      "chess_anti_engine.nnue._nnue_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so"
+    }
+  },
+  "CUDA_VISIBLE_DEVICES": "",
+  "cpu_affinity": [
+    0,
+    1
+  ],
+  "arena_launcher_sha256": "ef531896876c7684dd7cbff54e400845cbef8a2814bdf4368072799470b7b172",
+  "runtime_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json",
+    "sha256": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df"
+  }
+}

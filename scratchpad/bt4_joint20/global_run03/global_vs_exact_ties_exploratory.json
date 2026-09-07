@@ -1,0 +1,76 @@
+{
+  "analysis_status": "POST_HOC_EXPLORATORY",
+  "contrast": "G20T05 minus E0 score against common S0; not direct-match Elo",
+  "sources": {
+    "G20T05:25": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.games.jsonl",
+      "sha256": "031c1d4cd6e8fb4cb66f85c8b7103bf3c15f3b811aa171ef8f9f0e7d93ad0a87"
+    },
+    "G20T05:100": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.games.jsonl",
+      "sha256": "46b76edc631381320bfb99d7fb2d1e9d62c33beec2e9db4cf6afdefdb9829d36"
+    },
+    "G20T05:400": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.games.jsonl",
+      "sha256": "23c99fbdc5b2a3a5a9b7d305d118987c2b87a0405a3aa1c2d0590c4e9be349b9"
+    },
+    "E0:25": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.games.jsonl",
+      "sha256": "55af2ba812271130a88a45ffbdb09f14b5146c627d39330bf3cf376bf79088e4"
+    },
+    "E0:100": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.games.jsonl",
+      "sha256": "971958cf1882ace0596827217efa811f20f380ca8a25d904bc557175b95bad08"
+    },
+    "E0:400": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.games.jsonl",
+      "sha256": "20ae76e774408cb249ee9ff4858be985e790debd95620d41b60f44cb4587d342"
+    }
+  },
+  "parent_readout_sha256": "07e59cb0803e077379f6946e4bae7176681f4ff20d424aaf0a6c552971375f24",
+  "script_sha256": "79636b65bf0c7dbda2a39da19d3e421fc385119e434210cee87cf570b9cd8748",
+  "by_budget": {
+    "25": {
+      "score_difference": 0.0075,
+      "ci95": [
+        -0.024,
+        0.0395
+      ]
+    },
+    "100": {
+      "score_difference": 0.023,
+      "ci95": [
+        -0.01,
+        0.0555
+      ]
+    },
+    "400": {
+      "score_difference": 0.0275,
+      "ci95": [
+        -0.003,
+        0.057
+      ]
+    }
+  },
+  "relative_search_interaction_400_minus_25": {
+    "score_difference": 0.02,
+    "ci95": [
+      -0.025,
+      0.063
+    ]
+  },
+  "bootstrap": {
+    "unit": "aligned opening pair",
+    "samples": 10000,
+    "seed": 20260903,
+    "generator": "PCG64",
+    "method": "percentile"
+  },
+  "limitations": [
+    "Contrasts selected after reading the completed screen; nominal intervals.",
+    "One training seed; intervals represent opening/game variation, not retraining variation.",
+    "Common-opponent results do not establish direct head-to-head strength or transitivity.",
+    "Historical E0 runtime provenance remains incomplete.",
+    "No training, inference, new games, queue changes or promotion."
+  ]
+}

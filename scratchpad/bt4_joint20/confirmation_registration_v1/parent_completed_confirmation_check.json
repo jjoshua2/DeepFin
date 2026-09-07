@@ -1,0 +1,24 @@
+{
+  "status": "PARENT_NUMERICAL_CHECK_PASS",
+  "games": 1000,
+  "pairs": 500,
+  "candidate_wdl": {
+    "1.0": 350,
+    "0.0": 458,
+    "0.5": 192
+  },
+  "pair_variance": 0.0955250501002004,
+  "score": 0.446,
+  "score_ci95": [
+    0.41890870868840213,
+    0.4730912913115979
+  ],
+  "elo": -37.669962406515175,
+  "elo_ci95": [
+    -56.84999112510496,
+    -18.71616919820815
+  ],
+  "registered_rule": "E-minus-C interval wholly negative confirms C direction",
+  "gpu_hours": 5.899271685631951,
+  "games_sha256": "88d7c7a915ca6c9889f55237462862bacf0c6baae6373eca67d668276a3a69f6"
+}

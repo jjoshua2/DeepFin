@@ -1,0 +1,53 @@
+{
+  "status": "PASS_FINAL_DELTA_AND_PREREGISTRATION_REVIEW",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_unix": 1788732792.2895703,
+  "previous_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/direct_screen_launcher_independent_review.json",
+    "sha256": "a2f2b34c1fa802744b6eb75f4398f07b338365aa987bb0f1571ef264d6c25e85",
+    "preserved": true
+  },
+  "final_artifacts": {
+    "/tmp/deepfin-bt4-direct-screen/scripts/bt4_direct_screen.py": "b1c7da6f7ccdb49f7149e181d873be6a41d2f7d4b8527768f903dee3b93415ec",
+    "/tmp/deepfin-bt4-direct-screen/tests/test_bt4_direct_screen.py": "fa5586cd2d671aed24eb613937191a62989a01a6d03d4cc50028277f17ecfb37",
+    "/tmp/deepfin-bt4-direct-screen/docs/experiments/2026-09-06-bt4-direct-close-global.md": "2f003bb37fdc99d797bd2d79fd0703f275a198d1f0320d6e1fa3b61950373d31",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/preregistration.md": "2f003bb37fdc99d797bd2d79fd0703f275a198d1f0320d6e1fa3b61950373d31",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/launch_manifest.json": "a75059d535b509fa79f19d6ce442006ab939a32282037bbfde299dd54e88d6bf"
+  },
+  "blockers": [],
+  "delta_assessment": [
+    "Optional import spec/loader guard rejects unsupported loading before module creation; successful path unchanged. Test assertions/type annotations have no protocol effect.",
+    "Blocking acquire_gpu_lease uses the same shared exclusive flock. Actual execute calls it before GPU check, pin/disk rechecks, output creation and timeout start. CLI signal handler remains able to interrupt a waiting call.",
+    "Real separate-process focused fixture independently proved waiter remains blocked while another owner holds the lease and proceeds after release. Existing parent-death timeout, inherited lease and owned-group cleanup code unchanged.",
+    "Added qualified-search receipt hash and explicit live-config path improve execution provenance without changing behavior.",
+    "Final manifest matches final script SHA, correct fixed checkpoint roles/paths, original book and frozen sf-close runtime manifest. Output directory absent at review.",
+    "Registered document and runtime snapshot are byte-identical; manifest selects exactly100 simulations/hard5400 seconds. Its completed C25/C100/C400 values and400-minus25 interaction match the completed full-screen report SHA2dde2ce5b46bc69b662be129b3752ffe37f93aa383f2d3bd06dbeb5d581a7257.",
+    "Decision uses one complete1000-game/500-pair direct C-versus-G screen and nominal paired interval. No optional stopping, automatic horizon extension, fresh-opening/seed confirmation or search-scaling claim."
+  ],
+  "independent_focused_validation": {
+    "passed": 1,
+    "test": "test_queued_lease_waits_for_owner_release",
+    "junit": "/tmp/bt4-direct-screen-queued-lease-review.xml",
+    "junit_sha256": "08094987c028e0a827fcc4095ede294af6b358c11dcb817482a2a99861c332e4",
+    "environment": "GPU hidden, numeric threads2, affinity0/1, nice19",
+    "note": "Prior immutable receipt records earlier timeout/cleanup/protocol tests; no redundant full12-test rerun."
+  },
+  "author_reported_not_repeated": [
+    "Final12 focused CPU tests and Ruff passed.",
+    "Scoped basedpyright passed; whole-repository lint still in progress at final delta review."
+  ],
+  "limits": [
+    "This receipt binds reviewed implementation and prospective inputs; it does not assert the arena has launched or completed, or replace parent-owned completed-C400 provenance approval.",
+    "Only the fully validated direct bank can yield a result. Interrupted/time-capped output remains invalid; coordinator SIGKILL can leave incomplete receipts requiring reconciliation after surviving timeout exits.",
+    "GPU queue wait is outside the arena cap and output creation. New inaccessible or unrelated GPU usage is not bypassed by the blocking lock.",
+    "No actual runtime probe or checkpoint payload hash was repeated during this final delta; executable rechecks immutable pins/runtime before queueing and pins after lease acquisition.",
+    "Internal soft deadline/TERM timing limitation from previous receipt remains."
+  ],
+  "not_performed": [
+    "Arena launch",
+    "GPU inference",
+    "Corpus scan",
+    "Partial C400 outcome read",
+    "Runtime/config edits"
+  ]
+}

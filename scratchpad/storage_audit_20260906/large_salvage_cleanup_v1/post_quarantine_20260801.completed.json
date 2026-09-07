@@ -1,0 +1,14 @@
+{
+  "status": "VERIFIED_LOCAL_POOL_REMOVED_EXTERNAL_ARCHIVE_PRESERVED",
+  "name": "post_quarantine_20260801",
+  "completed_unix": 1788742541.4601471,
+  "source": "/home/josh/projects/chess/data/salvage/post_quarantine_20260801",
+  "archive": "/mnt/e/chess_archive_20260906/salvage/post_quarantine_20260801.tar",
+  "tar_sha256": "5943654f7ecb1bb7a3dd9f20741d08899265e13a1055ba3ae2a9924d5d20c10e",
+  "external_restore_receipt": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/post_quarantine_20260801.restore.json",
+  "external_restore_receipt_sha256": "b9e69c12372e32f9182679b263337fa7316d2551925dfee3ebee2ef24787fae3",
+  "entries": 345151,
+  "allocated_bytes_before": 3722571776,
+  "plan_sha256": "12c67cc7dbe82d4e1dc8948c23da80f865a11d43cdf3b6d9e70a621d86283694",
+  "script_sha256": "3d83c7bc96f9275863930de51a7bd10a7536f4d05c1bffa9427e2d841ccb0b20"
+}

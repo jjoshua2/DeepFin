@@ -1,0 +1,42 @@
+{
+  "status": "PASS_FIXED_PILOT_PRELAUNCH_REVIEW",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_unix": 1788729004.6465175,
+  "script": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/retire_zarr_pilot.py",
+  "script_sha256": "40cec48ff64c6b072471c5e837c1eeaf3536f74b4b20794e2afb77ee6c7e36b9",
+  "plan": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/zarr_pilot/cleanup_plan.json",
+  "plan_sha256": "b66ae5bc0a6121ba93dc2dc062afc234cf290843ce8859e56e25c3c8c6b9eb76",
+  "scope": "Only pre_audit_deploy_20260726 local retirement after runtime archive verification. Parent owns authorized launch. No qualification for other source deletions.",
+  "blockers": [],
+  "resolved_finding": {
+    "issue": "PermissionError before process identity assignment could accept unknown PID through None == None.",
+    "resolution": "Requires non-None identity before matching exact reviewed inaccessible process identity; independently tested."
+  },
+  "checks": [
+    "All 12 pinned receipt, metadata, config and queue-plan SHA256 values matched current files; source and archive payloads were not read.",
+    "Proof chain binds exact-membership/source metadata and successful native tar comparison to verified full external archive SHA256 and size. Runtime rehashes external archive at 16 MiB/s and checks stable metadata and expected E: 9p mount.",
+    "Fixed source, quarantine and archive paths; pilot excluded from pinned copy queue, retained production seed pool remains BT4-100 in both pinned configs.",
+    "All 371075 inventory entries checked before and after quarantine; exact identities, regular types, device, single-link regular files, no missing/extra entries. Only renamed root ctime exemption; descendant ctimes remain checked.",
+    "Boot and host PID1 identity pinned; exact known inaccessible process identities disclosed; observed consumers rejected; new inaccessible live or identity-unreadable processes rejected; proven terminal Z states separately recorded.",
+    "Restore pointer written before fd-based quarantine removal; exclusive success/failure receipts and stop checkpoints; external tar is never removed.",
+    "Final script loaded and three in-memory mocked-/proc regressions executed successfully. Earlier seven author inventory/receipt helper checks inspected, not independently rerun; those functions unchanged."
+  ],
+  "independent_checks": {
+    "path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/zarr_pilot/cleanup_visibility_independent_checks.json",
+    "sha256": "2f207c4a139c659eade4bf91562fb1bf80cee8cd9683c82fc6136f50d9d96333"
+  },
+  "operational_limits": [
+    "Not complete process visibility: reviewed inaccessible identities and mmap-only/future consumers are not certified absent.",
+    "STOP is checked before removal; ordinary rmtree failure or interruption can leave a partially removed quarantine requiring inspection. No automatic retry or rollback.",
+    "External tar is the surviving data copy after completion; no guarantee about future external drive failure or durability.",
+    "Parent must launch this exact reviewed SHA and retain separate copy queue pause for the requested single bulk I/O lane."
+  ],
+  "not_executed": [
+    "Actual cleanup",
+    "Source inventory rescan",
+    "Source or archive payload hashing",
+    "Host process scan",
+    "GPU or training activity"
+  ],
+  "parent_reported_not_independently_rerun": "Final live-host preflight passed with 102 processes, 11 known inaccessible identities and terminal zombie PID153169; parent reports copy queue paused."
+}

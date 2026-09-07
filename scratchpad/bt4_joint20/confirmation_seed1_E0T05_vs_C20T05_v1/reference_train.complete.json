@@ -1,0 +1,8 @@
+{
+  "batches": 36935,
+  "checkpoint_sha256": "ef42d11276529178480a9d255315ee4bf07b2eb39a8516ecb0a7799d03392745",
+  "physical_plan_sha256": "1e8b32380b11f8cbbfe6adfa33bcba6ae9884a8edc1d6e5de33ab98a7faeb696",
+  "rows": 18910484,
+  "seed": 1,
+  "summary_sha256": "034f463d59f2b0a7263a29daf5a8c957e674d217a4a124c041753586f0fe56ae"
+}

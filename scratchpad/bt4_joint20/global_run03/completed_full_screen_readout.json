@@ -1,0 +1,1032 @@
+{
+  "profile": "global",
+  "reference_role": "S0",
+  "prior_temperature": 1.0,
+  "cells": {
+    "G20T1:25": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.games.jsonl",
+      "sha256": "a60082176666207d7898ab58652c6218bde65515360e75b993d33437f07cfe54",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1_epoch_v2/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 25,
+        "sims_reference": 25,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.5885,
+        "score_ci95": [
+          0.5666449744662203,
+          0.6103550255337797
+        ],
+        "elo": 62.15065105246597,
+        "elo_ci95": [
+          46.586881614582154,
+          77.96537824473474
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 55,
+          "WD_DW": 186,
+          "DD_WL": 157,
+          "LD_DL": 85,
+          "LL": 17
+        }
+      },
+      "strength_interpretation": "PROMISING"
+    },
+    "G20T1:100": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.games.jsonl",
+      "sha256": "e9bafbc59a65314727b8e5ed783d2ede7f199fd8ebebc8ba2b1d8ec0bd6c3f1e",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1_epoch_v2/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 100,
+        "sims_reference": 100,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.583,
+        "score_ci95": [
+          0.5611329569822373,
+          0.6048670430177626
+        ],
+        "elo": 58.21299991410259,
+        "elo_ci95": [
+          42.69312334926468,
+          73.96666700374254
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 61,
+          "WD_DW": 162,
+          "DD_WL": 173,
+          "LD_DL": 90,
+          "LL": 14
+        }
+      },
+      "strength_interpretation": "PROMISING"
+    },
+    "G20T1:400": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.games.jsonl",
+      "sha256": "21fd37e59e92e300ad0a8c161cad7971f280d6f95b8455820e8969f2e868aeed",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1_epoch_v2/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 400,
+        "sims_reference": 400,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.6085,
+        "score_ci95": [
+          0.5871240107917959,
+          0.6298759892082042
+        ],
+        "elo": 76.61152646884865,
+        "elo_ci95": [
+          61.164085700452965,
+          92.36311749176204
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 67,
+          "WD_DW": 180,
+          "DD_WL": 168,
+          "LD_DL": 73,
+          "LL": 12
+        }
+      },
+      "strength_interpretation": "PROMISING"
+    },
+    "G20T05:25": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.games.jsonl",
+      "sha256": "031c1d4cd6e8fb4cb66f85c8b7103bf3c15f3b811aa171ef8f9f0e7d93ad0a87",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05_epoch_v2/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 25,
+        "sims_reference": 25,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.645,
+        "score_ci95": [
+          0.6236921430092307,
+          0.6663078569907693
+        ],
+        "elo": 103.7325446320695,
+        "elo_ci95": [
+          87.77079476941199,
+          120.13158135477997
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 92,
+          "WD_DW": 182,
+          "DD_WL": 157,
+          "LD_DL": 62,
+          "LL": 7
+        }
+      },
+      "strength_interpretation": "PROMISING"
+    },
+    "G20T05:100": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.games.jsonl",
+      "sha256": "46b76edc631381320bfb99d7fb2d1e9d62c33beec2e9db4cf6afdefdb9829d36",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05_epoch_v2/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 100,
+        "sims_reference": 100,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.652,
+        "score_ci95": [
+          0.6288861112985763,
+          0.6751138887014237
+        ],
+        "elo": 109.06734071413568,
+        "elo_ci95": [
+          91.62591830577203,
+          127.05835866399755
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 116,
+          "WD_DW": 161,
+          "DD_WL": 147,
+          "LD_DL": 63,
+          "LL": 13
+        }
+      },
+      "strength_interpretation": "PROMISING"
+    },
+    "G20T05:400": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.games.jsonl",
+      "sha256": "23c99fbdc5b2a3a5a9b7d305d118987c2b87a0405a3aa1c2d0590c4e9be349b9",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05_epoch_v2/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 400,
+        "sims_reference": 400,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.6585,
+        "score_ci95": [
+          0.6377824237728092,
+          0.6792175762271907
+        ],
+        "elo": 114.06602851210046,
+        "elo_ci95": [
+          98.28121058506268,
+          130.3193404715433
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 90,
+          "WD_DW": 203,
+          "DD_WL": 150,
+          "LD_DL": 48,
+          "LL": 9
+        }
+      },
+      "strength_interpretation": "PROMISING"
+    },
+    "E0:25": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.games.jsonl",
+      "sha256": "55af2ba812271130a88a45ffbdb09f14b5146c627d39330bf3cf376bf79088e4",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 25,
+        "sims_reference": 25,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.6375,
+        "score_ci95": [
+          0.614415648708506,
+          0.660584351291494
+        ],
+        "elo": 98.06887127959205,
+        "elo_ci95": [
+          80.93714732493812,
+          115.67856794646664
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 111,
+          "WD_DW": 144,
+          "DD_WL": 167,
+          "LD_DL": 65,
+          "LL": 13
+        }
+      },
+      "strength_interpretation": "PROMISING"
+    },
+    "E0:100": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.games.jsonl",
+      "sha256": "971958cf1882ace0596827217efa811f20f380ca8a25d904bc557175b95bad08",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 100,
+        "sims_reference": 100,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.629,
+        "score_ci95": [
+          0.6050336770013389,
+          0.6529663229986611
+        ],
+        "elo": 91.7106943320892,
+        "elo_ci95": [
+          74.08779275243296,
+          109.80766443973727
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 102,
+          "WD_DW": 166,
+          "DD_WL": 142,
+          "LD_DL": 68,
+          "LL": 22
+        }
+      },
+      "strength_interpretation": "PROMISING"
+    },
+    "E0:400": {
+      "status": "READ",
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.games.jsonl",
+      "sha256": "20ae76e774408cb249ee9ff4858be985e790debd95620d41b60f44cb4587d342",
+      "settings": {
+        "mode": "matched_sims",
+        "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt",
+        "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt",
+        "games": 1000,
+        "seed": 42,
+        "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "openings_kind": "book",
+        "opening_plies": 16,
+        "sims_candidate": 400,
+        "sims_reference": 400,
+        "ms_per_move": null,
+        "max_plies": 300,
+        "temperature": 0.1,
+        "gumbel_add_noise": true,
+        "search_candidate": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "search_reference": {
+          "shape": "training",
+          "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+          "gumbel": {
+            "c_scale": 0.1,
+            "c_scale_root": -1.0,
+            "c_visit": 50.0,
+            "c_visit_root": -1.0,
+            "full_tree": true,
+            "halving_div": 2,
+            "policy_temp": 1.0,
+            "q_visit_exp_root": 99.0,
+            "target_max_visit_cap": 5,
+            "target_q_rescale": true,
+            "target_untempered_prior": true,
+            "topk": 16,
+            "volatility_anchor": 0.05,
+            "volatility_factor_clip": 4.0,
+            "volatility_fpu": 0.0,
+            "volatility_q_scale": 0.0
+          },
+          "vloss_weight": 1,
+          "target_batch": 0,
+          "tree_reuse": "cold"
+        },
+        "volatility_candidate": null,
+        "uci_args": "",
+        "syzygy": "",
+        "syzygy_max_pieces": 6
+      },
+      "execution": [
+        "on",
+        "4096"
+      ],
+      "raw_game_rows": 1000,
+      "superseded_orphan_rows": 0,
+      "result": {
+        "games": 1000,
+        "pairs": 500,
+        "score": 0.631,
+        "score_ci95": [
+          0.6098528060389836,
+          0.6521471939610164
+        ],
+        "elo": 93.20119723402956,
+        "elo_ci95": [
+          77.59861548687263,
+          109.18004756025515
+        ],
+        "verdict": "SUCCESS",
+        "pentanomial": {
+          "WW": 76,
+          "WD_DW": 192,
+          "DD_WL": 162,
+          "LD_DL": 58,
+          "LL": 12
+        }
+      },
+      "strength_interpretation": "PROMISING"
+    }
+  },
+  "search_interactions_25_to_400": {
+    "G20T1": {
+      "status": "READ",
+      "contrast": "score400 - score25 against S0",
+      "score_advantage": 0.02,
+      "ci95": [
+        -0.0125,
+        0.0525
+      ],
+      "pair_outcome_covariance": -0.007993236472945897,
+      "discordant_pairs": 370
+    },
+    "G20T05": {
+      "status": "READ",
+      "contrast": "score400 - score25 against S0",
+      "score_advantage": 0.0135,
+      "ci95": [
+        -0.017,
+        0.043
+      ],
+      "pair_outcome_covariance": -0.0009844689378757515,
+      "discordant_pairs": 364
+    },
+    "E0": {
+      "status": "READ",
+      "contrast": "score400 - score25 against S0",
+      "score_advantage": -0.0065,
+      "ci95": [
+        -0.0385,
+        0.026
+      ],
+      "pair_outcome_covariance": -0.005398296593186366,
+      "discordant_pairs": 380
+    }
+  },
+  "global_arm_comparisons_by_budget": {
+    "25": {
+      "status": "READ",
+      "contrast": "G20T1 - G20T05 score against S0",
+      "score_advantage": -0.0565,
+      "ci95": [
+        -0.087,
+        -0.0255
+      ],
+      "pair_outcome_covariance": -0.0008341683366733484,
+      "discordant_pairs": 351
+    },
+    "100": {
+      "status": "READ",
+      "contrast": "G20T1 - G20T05 score against S0",
+      "score_advantage": -0.069,
+      "ci95": [
+        -0.101,
+        -0.038
+      ],
+      "pair_outcome_covariance": -0.0007424849699398766,
+      "discordant_pairs": 371
+    },
+    "400": {
+      "status": "READ",
+      "contrast": "G20T1 - G20T05 score against S0",
+      "score_advantage": -0.05,
+      "ci95": [
+        -0.08,
+        -0.02
+      ],
+      "pair_outcome_covariance": -0.0020764028056112186,
+      "discordant_pairs": 382
+    }
+  },
+  "missing_cells": [],
+  "screen_complete": true,
+  "bootstrap": {
+    "unit": "aligned opening pair",
+    "samples": 10000,
+    "seed": 20260903,
+    "method": "percentile"
+  },
+  "primary_strength_budget": 100,
+  "deployment_relevant_budget": 400,
+  "promotion": "NONE; prospective independent-seed/fresh-opening confirmation required",
+  "limitations": [
+    "Checkpoint/book contents and build provenance require the external run manifest.",
+    "Score differences against S0 are not direct head-to-head Elo between candidate recipes.",
+    "Positive search interaction means increasing relative advantage against S0, not absolute improvement with search.",
+    "Exploratory one-training-seed screen: nominal intervals without family-wise correction.",
+    "No optimal recipe or promotion follows from this screen; report 400-simulation strength separately.",
+    "E0 retains its historical runtime provenance limit; new arms require matched runtime evidence."
+  ]
+}

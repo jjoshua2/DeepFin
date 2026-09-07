@@ -1,0 +1,94 @@
+{
+  "checked_unix": 1788659904.6316586,
+  "status": "published_corpus_validated; not trained or strength-tested",
+  "rows": 18910484,
+  "shards": 2309,
+  "summary_sha256": "ff50d6b3f4c8ab38233de723c68924980d745335a374a71d6cfc3eac71c248ab",
+  "independent_lineage_review": "Dirac passed actual source/teacher/audit/prereg/mixer pins and embedded derive metadata",
+  "schedule": {
+    "path": "scratchpad/bt4_joint20/global_run02/matched_schedule_published_G20T05.json",
+    "sha256": "3fae2356709fc24697d66129bb5d06cae95971f0ba3724edba4fd4a27b1f8b6e",
+    "arms": {
+      "G20T05": {
+        "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+        "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05",
+        "metadata_matches_source": true,
+        "physical_plan_sha256": "d1ad09d9eb1373f5d1dece3742c0d1703b4df686f933303431420502cc2ef192",
+        "staging": "prospective only",
+        "training_completion_verified": false
+      }
+    },
+    "source_plan": {
+      "batch_size": 512,
+      "batches_planned": 36935,
+      "full_batches_planned": 36699,
+      "game_identity": "resolved_shard_parent+game_id",
+      "games": 97968,
+      "min_batch_rows_planned": 511,
+      "mode": "game_epoch",
+      "plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+      "ragged_batches_planned": 236,
+      "row_order": "seeded_shuffle_within_shard_game_segments",
+      "rows_planned": 18910484,
+      "seed": 0,
+      "shards": 2309,
+      "sources": 1
+    },
+    "elapsed_seconds": 317.784371927999,
+    "scope": "Full ordered game metadata and source-normalized prospective plan; realized G20T05 training not yet available",
+    "banked_E0_source_metadata_and_plan_match": true
+  },
+  "non_policy_sample": {
+    "path": "scratchpad/bt4_joint20/global_run03/G20T05.published-middle-shard-integrity.json",
+    "sha256": "d8edcf109907fd2fa436c9bafe5e834c05e96e1cdc0c42b5364c5dbec7160102",
+    "shard": "shard_001154.zarr",
+    "arrays": 16,
+    "equal_to_source_and_G20T1": true,
+    "scope": "one middle shard only"
+  },
+  "distribution_stats": {
+    "G20T1": {
+      "mean_entropy_nats": {
+        "bt4": 2.0525573055367654,
+        "mixed": 1.0907332536373155,
+        "source": 0.5689733823705948
+      },
+      "top1_ge_0_99_fraction": {
+        "mixed": 0.022649869775940162,
+        "source": 0.5938493166013096
+      },
+      "mean_l1_from_source": 0.22791321901599057,
+      "mixed_source_top1_agreement": 0.8542117166329535,
+      "mixed_bt4_top1_agreement": 0.6293974813124825,
+      "selected_mass_abs_drift": {
+        "max": 0.000408172607421875,
+        "mean": 0.00010699257825368946,
+        "mean_bound": 0.0009765625,
+        "reference": "normalized_total_legal_mass",
+        "row_bound": 0.0009765625
+      }
+    },
+    "G20T05": {
+      "mean_entropy_nats": {
+        "bt4": 2.0525573055367654,
+        "mixed": 0.8944542047093159,
+        "source": 0.5689733823705948
+      },
+      "top1_ge_0_99_fraction": {
+        "mixed": 0.15595491897510397,
+        "source": 0.5938493166013096
+      },
+      "mean_l1_from_source": 0.1990219911593897,
+      "mixed_source_top1_agreement": 0.8488930796271529,
+      "mixed_bt4_top1_agreement": 0.6353807232009503,
+      "selected_mass_abs_drift": {
+        "max": 0.00041490793228149414,
+        "mean": 0.00010681839689379564,
+        "mean_bound": 0.0009765625,
+        "reference": "normalized_total_legal_mass",
+        "row_bound": 0.0009765625
+      }
+    }
+  },
+  "interpretation": "T0.5 mixture is sharper than T1 but remains broader than source on aggregate entropy and near-one-hot fraction; these are target-distribution measurements, not student strength. BT4 entropy field refers to raw untempered teacher."
+}

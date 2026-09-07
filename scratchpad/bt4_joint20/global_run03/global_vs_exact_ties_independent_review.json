@@ -1,0 +1,78 @@
+{
+  "all_six_banks_1000_games_500_pairs_zero_orphans": true,
+  "artifacts_sha256": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/compare_global_to_exact_ties.py": "79636b65bf0c7dbda2a39da19d3e421fc385119e434210cee87cf570b9cd8748",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/completed_full_screen_independent_review.json": "c7a84c318c269312ade96f623cd4b5a9486f95c388207c86e2035d1185b5e35c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/completed_full_screen_readout.json": "07e59cb0803e077379f6946e4bae7176681f4ff20d424aaf0a6c552971375f24",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/global_vs_exact_ties_exploratory.json": "36c05e5806db8c29cf9a24193640b5284a0038da43c65f4671a2df6f92de21b4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.games.jsonl": "971958cf1882ace0596827217efa811f20f380ca8a25d904bc557175b95bad08",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.games.jsonl": "55af2ba812271130a88a45ffbdb09f14b5146c627d39330bf3cf376bf79088e4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.games.jsonl": "20ae76e774408cb249ee9ff4858be985e790debd95620d41b60f44cb4587d342",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.games.jsonl": "46b76edc631381320bfb99d7fb2d1e9d62c33beec2e9db4cf6afdefdb9829d36",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.games.jsonl": "031c1d4cd6e8fb4cb66f85c8b7103bf3c15f3b811aa171ef8f9f0e7d93ad0a87",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.games.jsonl": "23c99fbdc5b2a3a5a9b7d305d118987c2b87a0405a3aa1c2d0590c4e9be349b9",
+    "/tmp/review_global_exact_ties_posthoc.py": "b747c94f7b096fb074ce0298e7bd637a136ece5033865ca3421607e69a0dfd59"
+  },
+  "blockers": [],
+  "bootstrap": {
+    "generator": "PCG64",
+    "method": "percentile",
+    "samples": 10000,
+    "seed": 20260903,
+    "unit": "aligned opening pair"
+  },
+  "by_budget": {
+    "100": {
+      "ci95": [
+        -0.01,
+        0.0555
+      ],
+      "score_difference": 0.023
+    },
+    "25": {
+      "ci95": [
+        -0.024,
+        0.0395
+      ],
+      "score_difference": 0.0075
+    },
+    "400": {
+      "ci95": [
+        -0.003,
+        0.057
+      ],
+      "score_difference": 0.0275
+    }
+  },
+  "checked_unix": 1788713570.1658945,
+  "cpu_affinity": [
+    0,
+    1
+  ],
+  "cuda_visible_devices": "",
+  "independent_of": "compare_global_to_exact_ties.py author; no producer or analysis estimators imported",
+  "interpretation": [
+    "Every nominal recipe-contrast interval includes zero; no decisive common-S0 separation, no equivalence conclusion, and no direct head-to-head result.",
+    "Positive point estimates favor G20T05, but the difference-of-differences interval also includes zero: better relative scaling than E0 is not established.",
+    "Post-hoc selection and one training seed limit inference. Opening/game intervals do not quantify retraining variation; historical E0 runtime remains incompletely stamped."
+  ],
+  "method": "Independently parsed JSON/result scores; explicit PCG64 generator with one 500-pair resample per replicate; manually interpolated ordered bootstrap percentiles.",
+  "next_work_implications": [
+    "Complete the fixed C20T05-vs-E0 screen. A direct matched-search comparison of sharpened global against the strongest relevant local recipe would resolve a material uncertainty that common-S0 scores cannot. It is useful evidence, not an automatic proof of universal recipe ordering.",
+    "Choose and record the direct-match decision rule, budget and openings before its results. A single-budget result cannot establish a search-scaling curve; retain a low/high budget comparison if scaling is the question.",
+    "Broader teacher/loss or mixing-weight experiments remain reasonable prospective directions; these uncertain post-hoc differences do not justify declaring E0 obsolete, expanding every old lane, or blocking inexpensive preparation of alternative recipes.",
+    "Independent training seed and fresh-opening confirmation remain necessary before a 100M recipe recommendation; this review does not select a training recipe or alter the queue."
+  ],
+  "nice": 19,
+  "recipe_winner_established": false,
+  "relative_search_interaction_400_minus_25": {
+    "ci95": [
+      -0.025,
+      0.063
+    ],
+    "score_difference": 0.02
+  },
+  "reviewer": "bank_pr517_quality",
+  "scope": "Six existing completed banks, actual result/color-derived opening pair scores, hashes and protocol/opening alignment; all three post-hoc recipe score contrasts and one difference of differences. No inference, games, corpus scan or process actions.",
+  "verdict": "PASS; no actionable numerical or interpretation findings"
+}

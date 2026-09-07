@@ -1,0 +1,44 @@
+{
+  "status": "PASS_PARENT_PROSPECTIVE_RECEIPT_CHECK",
+  "checked_unix": 1788736834.5925124,
+  "schedule_sha256": "1aca8a7dfd7e2917927560c9eea285fe26e3db591ff8ebdd2cfa00dfba08cfd8",
+  "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+  "arms": {
+    "C": {
+      "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+      "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05",
+      "metadata_matches_source": true,
+      "physical_plan_sha256": "70063ded8e105f34bd8012001a49f506d256eaebefa1261345feae0983b5dd34",
+      "staging": "verified actual",
+      "summary_sha256": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+      "training_completion_verified": true
+    },
+    "E0T05": {
+      "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+      "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050",
+      "metadata_matches_source": true,
+      "physical_plan_sha256": "c81bd16b2589c31c2090501312c67ac313315866a12892e092d2460494776103",
+      "staging": "prospective only",
+      "training_completion_verified": false
+    }
+  },
+  "source_plan": {
+    "batch_size": 512,
+    "batches_planned": 36935,
+    "full_batches_planned": 36699,
+    "game_identity": "resolved_shard_parent+game_id",
+    "games": 97968,
+    "min_batch_rows_planned": 511,
+    "mode": "game_epoch",
+    "plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+    "ragged_batches_planned": 236,
+    "row_order": "seeded_shuffle_within_shard_game_segments",
+    "rows_planned": 18910484,
+    "seed": 0,
+    "shards": 2309,
+    "sources": 1
+  },
+  "verifier_sha256": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18",
+  "elapsed_seconds": 423.8721050660097,
+  "limits": "Checked completed verifier receipt and expected identities/counts; did not repeat corpus scan. E0T05 is prospective; actual training and realized schedule remain unverified."
+}

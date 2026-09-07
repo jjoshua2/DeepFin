@@ -1,0 +1,32 @@
+{
+  "status": "PASS_INDEPENDENT_CODE_AND_PIN_REVIEW",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_unix": 1788735974.9078562,
+  "script": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/discard_partial.py",
+  "script_sha256": "99022384807f26538da1d5ec128c120fc5c48012f2df65c4f91be62fbfeb312d",
+  "plan_sha256": "6ba5c7b3d3e053464ee00dec627a023c22dbee94419e769aeddee40c75e7d3a6",
+  "blockers": [],
+  "scope": "Fixed superseded G20T1 derived partial discard; no production launch by reviewer.",
+  "independent_checks": [
+    "Actual evidence() succeeded for all 43 pinned metadata/code/config files, six retained-root identities and checkpoint lstat. No array/checkpoint payload reads.",
+    "Pinned inventory receipt agrees with candidate/source identities, all expected counts and inventory hash. Reused receipt proves full filename/type match to retained original SF source plus metadata archive verification; reviewer did not repeat the 713330-entry scan.",
+    "Real isolated temporary fixture exercised actual stream_inventory: exact inventory accepted, renamed root accepted with ctime-only allowance, modified descendant rejected and fixture retained through rejection."
+  ],
+  "fixture_receipt": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/abandoned_G20T1_cleanup_v1/independent_stream_checks.json",
+  "fixture_receipt_sha256": "86b549dcadadf749f7ede6a09139df06268cb9453b147ba0437a223664195988",
+  "code_findings": [
+    "Only fixed candidate can be renamed and only fixed owned quarantine reaches fd-safe rmtree. All pre-existing quarantine/pointer/completion/failure state requires inspection; no automatic retry.",
+    "Streaming exact sorted DFS and matching raw manifest SHA enforce membership, all recorded stat fields, device/type and nlink1. Depth is limited by layout to three components; directory names capped at 20000; manifest line capped at 16 KiB. Metadata pins hash in 1 MiB blocks.",
+    "Both pre- and post-quarantine source traversals retain exact descendant metadata; only root ctime is exempt after rename. Mount, process, aliases, source recreation, root identity and STOP checks precede removal.",
+    "Frozen process helper rejects observed cwd/fd/maps/cmdline consumers and new inaccessible live identities. Only exact previously disclosed inaccessible identities and proven terminal zombies are excepted.",
+    "Seventeen lineage snapshots, full metadata inventory/archive, current SF source/raw BT4, completed G20T1 corpus and trained checkpoint stay outside the deletion path. No interrupted-state byte reconstruction or payload-archive claim is made.",
+    "Exclusive completion/failure receipts preserve failure stage. Final pointer replacement occurs only after completion receipt and uses fsynced exclusive temporary file, atomic replacement and parent-directory fsync."
+  ],
+  "limits": [
+    "Author full orchestration fault tests were still in progress at review time and are not claimed as independently executed.",
+    "Fresh host process preflight is an execution-time guard; reviewer did not re-run host scan for this receipt. Historical visibility exceptions and future consumers remain qualified.",
+    "No array chunk hashes, checkpoint rehash, large inventory rescan, metadata-archive decompression, source rename, deletion, archive copy or running-job mutation by reviewer.",
+    "A failure or interruption during rmtree can leave partial quarantine; metadata alone cannot restore chunk payloads. This is authorized redundant derived discard, not verified-payload archival removal.",
+    "Retained directory root identity does not certify every retained descendant payload; claims rely on prior completed lineage evidence and explicit no-byte-reconstruction limitation."
+  ]
+}

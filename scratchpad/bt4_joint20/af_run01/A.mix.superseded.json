@@ -1,0 +1,7 @@
+{
+  "pid": 2564356,
+  "at": "2026-09-05T16:26:34.427791+00:00",
+  "reason": "A-F plan superseded before training; preserve partial A corpus and release CPU for registered global target preparation. No playing-strength verdict.",
+  "command": "/usr/bin/python3 -u scripts/bt4_policy_mix.py mix --shards /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m --sidecar /home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m --out /home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_joint_A_k2_g10_a100_t050 --scope sf-cp-window --sf-rank-sidecar /home/josh/projects/chess/data/lc0/sf_d9_rank_sidecars/armB_qtemp0005_hist20m_top8 --sf-rank-cap 2 --sf-cp-window 10 --alpha 1 --bt4-temperature 0.5 --expected-rows 18910484 --expected-shards 2309 --expected-source-summary-sha256 391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef --audit-receipt /home/josh/projects/chess/scratchpad/bt4_joint20/audit_A_k2_g10_a100_t050_v2.json ",
+  "signal": "SIGINT"
+}

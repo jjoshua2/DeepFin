@@ -1,0 +1,137 @@
+{
+  "status": "PASS_COMPLETED_DEVELOPMENT_BANK_ALIGNMENT_AND_RESERVED_OPENING_EXCLUSION",
+  "checked_unix": 1788741820.1287718,
+  "fresh_bank": "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_openings_v1/openings.fen",
+  "fresh_bank_sha256": "e0d13b2ea70c0ac278570a0e463c3c1c3030a18256522bcba864db23cdc07c98",
+  "fresh_pairs": 500,
+  "fresh_history_plies": 16,
+  "readouts": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/completed_full_screen_readout.json": "07e59cb0803e077379f6946e4bae7176681f4ff20d424aaf0a6c552971375f24",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_readout.json": "2dde2ce5b46bc69b662be129b3752ffe37f93aa383f2d3bd06dbeb5d581a7257",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/arena/readout.json": "3bec9d477266c6ac54e9f8f0280def3e6fc6de0da35d5965855589f419f3cf9d"
+  },
+  "banks": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/arena/arena.games.jsonl",
+      "sha256": "bb97f201bad3db23d25fcb6ed34ade70447a8e65f9ce9f327abdd8ddcbcc9d86",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.games.jsonl",
+      "sha256": "971958cf1882ace0596827217efa811f20f380ca8a25d904bc557175b95bad08",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.games.jsonl",
+      "sha256": "55af2ba812271130a88a45ffbdb09f14b5146c627d39330bf3cf376bf79088e4",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.games.jsonl",
+      "sha256": "20ae76e774408cb249ee9ff4858be985e790debd95620d41b60f44cb4587d342",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.games.jsonl",
+      "sha256": "46b76edc631381320bfb99d7fb2d1e9d62c33beec2e9db4cf6afdefdb9829d36",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.games.jsonl",
+      "sha256": "031c1d4cd6e8fb4cb66f85c8b7103bf3c15f3b811aa171ef8f9f0e7d93ad0a87",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.games.jsonl",
+      "sha256": "23c99fbdc5b2a3a5a9b7d305d118987c2b87a0405a3aa1c2d0590c4e9be349b9",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.games.jsonl",
+      "sha256": "e9bafbc59a65314727b8e5ed783d2ede7f199fd8ebebc8ba2b1d8ec0bd6c3f1e",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.games.jsonl",
+      "sha256": "a60082176666207d7898ab58652c6218bde65515360e75b993d33437f07cfe54",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.games.jsonl",
+      "sha256": "21fd37e59e92e300ad0a8c161cad7971f280d6f95b8455820e8969f2e868aeed",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.games.jsonl",
+      "sha256": "60b070d2f45bb05d52634bfc56675949d86ce9b982c1d59c454c5210851078ae",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.games.jsonl",
+      "sha256": "7143d2d508dabb90c04d9527fb3c2d91b4bce711dae94c16ace8aa9058141253",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.games.jsonl",
+      "sha256": "d7af69c0371904b4ce93ee2d75e6be3459b7f0d46ce863f12c076afd2d41f1fe",
+      "game_rows": 1000,
+      "pairs": 500,
+      "opening_alignment_sha256": "195257e513e703b9365f54509fe2260d020c2c0ecbb77a5dcbb5907ec3aa09e1",
+      "unique_terminal_epds": 500,
+      "reserved_bank_overlap": 0
+    }
+  ],
+  "development_unique_terminal_epds": 500,
+  "overlap": 0,
+  "method": "Replay reserved FEN plus16legalUCI moves; compare python-chess Board.epd() with every completed game opening_fen. Require exactly500paired colors and equal pair_id-to-opening_index/EPD mapping across all listed banks. No score or outcome used.",
+  "pending": "Repeat the inexpensive alignment/exclusion check including the eventual completed E0T05-versus-C bank before final confirmation selection/registration. Current E training and its future arena were not read.",
+  "limits": "Opening-bank freshness only. Does not establish absence from training data or confirm recipe strength."
+}

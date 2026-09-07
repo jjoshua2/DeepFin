@@ -1,0 +1,167 @@
+{
+  "blockers": [],
+  "calibration_driver_lock_free": true,
+  "calibration_gpu_seconds": 5495.5543428200035,
+  "charges": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/baseline/S0.train.1788628891651326600.gpu-charge.json": {
+      "seconds": 9645.790273793,
+      "sha256": "59b224734837074217b05042fd69bae4d2230b6b477bb0aa6e38b718f88534e6",
+      "stage": "S0.train"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/previous/S0.train.1788625684329661935.gpu-charge.json": {
+      "seconds": 1441.6703143119812,
+      "sha256": "6b207a9b11c94fb0519461f1777b5f37f0abd5d5c89af03cf7cb6f57df7124a7",
+      "stage": "S0.train"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/treatments/E0.s100.arena.1788641107312846015.gpu-charge.json": {
+      "seconds": 2905.269559896,
+      "sha256": "8d1131c8acd04c5c982eb503a32b8b10db59609947101a4668fc1499c22eae40",
+      "stage": "E0.s100.arena"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/treatments/E0.s25.arena.1788639275767675167.gpu-charge.json": {
+      "seconds": 1830.1706087719995,
+      "sha256": "5aaa81bc33931a351c788d92d495dc487ab90281388a1ea1a1f039522eb21c7f",
+      "stage": "E0.s25.arena"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/treatments/E0.s400.arena.1788644013774770266.gpu-charge.json": {
+      "seconds": 6845.647634291003,
+      "sha256": "45798ce5f2f044bb67f312140aa43fb9b69ef3aa8205d81f3aaac35242e96287",
+      "stage": "E0.s400.arena"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/treatments/G20T1.s25.arena.1788661831287269749.gpu-charge.json": {
+      "seconds": 0.5598326760009513,
+      "sha256": "a843ae80c075c749b1b57121dc3c5dd4c8d50ea07a3bd712fe0f9424e302c00a",
+      "stage": "G20T1.s25.arena"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/treatments/G20T1.train.1788651264588390920.gpu-charge.json": {
+      "seconds": 10565.954889085999,
+      "sha256": "b309730be7c0a6f48401594d7e4c8459a19daaa800d630afd06872081db4fcab",
+      "stage": "G20T1.train"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.1788665175885499612.gpu-charge.json": {
+      "seconds": 2495.2666649739986,
+      "sha256": "d6d7725752abbe974b37dd4704565ef40ab49d6d387538dacfdc7f92bc30aae3",
+      "stage": "E0.s100.arena"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.1788662174222006748.gpu-charge.json": {
+      "seconds": 3000.287677846005,
+      "sha256": "c1d98d1cc6698c81d3ed094841733fa8542f50dc1acb9e9f261e05fab518386f",
+      "stage": "S0.s100.arena"
+    }
+  },
+  "cross_cell_openings_aligned": true,
+  "cumulative_global_gpu_seconds": 38730.61745564599,
+  "decision": "PROCEED_REGISTERED_COMMON_PRIOR_1_GRID",
+  "estimator_source_path": "/tmp/deepfin-calibration-independent-review.py",
+  "estimator_source_sha256": "2e36705e9576b8578af8bc31014b74dc2c2f2b5b0e3451e6989cee656c7552c1",
+  "host_owner_pids_absent": [
+    65136,
+    71015,
+    74853
+  ],
+  "independent_method": "stdlib JSON parser; recompute candidate score from PGN result and color; group500 opening pairs; mean paired normalized score +/-1.96*sample_stddev/sqrt500; transform both bounds with400log10(p/(1-p)). No imports or outputs from producer/readout estimator.",
+  "limits": [
+    "Nominal per-cell95% intervals; two exploratory comparisons without joint-error guarantee.",
+    "Same-net prior-temperature effects at100 simulations; not a direct E0-versus-S0 strength comparison.",
+    "No inference about optimal training target temperature or new global-mixture strength.",
+    "No jobs launched or stopped by this review."
+  ],
+  "manifest_sha256": "caa697dd67592787ad6e2e9fa2d13136b03bbd5f073667480e662de59849225b",
+  "preregistration_sha256": "402ee38ba734beb9582d3350b61981b8328f8b952f8260b3949ceedc3d2250b6",
+  "remaining_global_gpu_seconds": 69269.38254435401,
+  "results": {
+    "E0": {
+      "checkpoint_sha256": "c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817",
+      "command_and_header_verified": true,
+      "draws": 218,
+      "elo": 85.78095608340313,
+      "elo_ci95": [
+        67.19666929102017,
+        104.8596570783517
+      ],
+      "games": 1000,
+      "games_sha256": "5302737b2d66405024c54348ca11ac774bc663653cdc6b30e525e975b99df71e",
+      "losses": 270,
+      "pairs": 500,
+      "pentanomial_WW_WD_DDWL_DL_LL": [
+        125,
+        112,
+        173,
+        60,
+        30
+      ],
+      "raw_result_color_score_recomputed": true,
+      "replayed_or_partial_games": 0,
+      "score": 0.621,
+      "score_ci95": [
+        0.5955157703525996,
+        0.6464842296474004
+      ],
+      "score_se": 0.013002157983367565,
+      "settings_fingerprint": "d51f880b0d40",
+      "terminations": {
+        "max_plies": 2,
+        "rules": 998
+      },
+      "verdict": "CLEAR_WIN",
+      "wins": 512
+    },
+    "S0": {
+      "checkpoint_sha256": "b41a5614bae5bf67cb32916c4ace8d26db27fd9152b7c496be40427424b08fb8",
+      "command_and_header_verified": true,
+      "draws": 485,
+      "elo": 55.714976066273536,
+      "elo_ci95": [
+        40.2022681249878,
+        71.45126532094498
+      ],
+      "games": 1000,
+      "games_sha256": "28dafc36894faae1b4cad06da5e4cdf9b18c4043ccdf8bb7741b0f9ad7d8b5d6",
+      "losses": 178,
+      "pairs": 500,
+      "pentanomial_WW_WD_DDWL_DL_LL": [
+        59,
+        160,
+        179,
+        85,
+        17
+      ],
+      "raw_result_color_score_recomputed": true,
+      "replayed_or_partial_games": 0,
+      "score": 0.5795,
+      "score_ci95": [
+        0.5575988773450516,
+        0.6014011226549484
+      ],
+      "score_se": 0.011174042170892042,
+      "settings_fingerprint": "e2012c8dd2e7",
+      "terminations": {
+        "max_plies": 41,
+        "rules": 959
+      },
+      "verdict": "CLEAR_WIN",
+      "wins": 337
+    }
+  },
+  "reviewed_utc": "2026-09-06T04:12:07.175791+00:00",
+  "verified_input_hashes": {
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so": "9d8cc4ba5ab20e78cfc0d183c62801765002ca49d56dbf10010f16a95291e01d",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+    "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/checkpoint.pt": "b41a5614bae5bf67cb32916c4ace8d26db27fd9152b7c496be40427424b08fb8",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt": "c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/summary.json": "56d7850403388712605742fdaaa7ac6664f3a7db039386d744d56e77bad6ef2a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run01/preregistration.md": "0efd4e6e5217237b90ebeffa33edf400019b02b360258b32233a2e3366bc1565",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/baseline/S0.train.adopted.json": "5faef9c1ab6ddc430152c058d46dd18033a9acd37c5e3db0494651f84a4245b2",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/calibration_preregistration.md": "402ee38ba734beb9582d3350b61981b8328f8b952f8260b3949ceedc3d2250b6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/preregistration.md": "4457c4f8ba407a2b16ad31f26dcebebc41e97760a82bbc5fe27a7cbc78c884e8",
+    "/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_experiment.py": "13416ee45defc19789d02736f1e029a3fed516f27db724c9fb4ce3efb6da5cff"
+  }
+}

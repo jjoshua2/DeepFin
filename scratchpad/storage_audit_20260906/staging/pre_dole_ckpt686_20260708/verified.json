@@ -1,0 +1,67 @@
+{
+  "pool": "pre_dole_ckpt686_20260708",
+  "source": "/home/josh/projects/chess/data/salvage/pre_dole_ckpt686_20260708",
+  "source_deleted": false,
+  "plan_sha256": "f389eeff35235a5097f39a3a5b4dd22a7c860ca36bc5038fbaabb4211491a5bb",
+  "started_unix": 1788735063.7772233,
+  "mount": {
+    "target": "/mnt/e",
+    "source": "E:\\",
+    "fstype": "9p",
+    "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+  },
+  "resources": {
+    "local_free_bytes": 471822073856,
+    "available_RAM_bytes": 57975410688
+  },
+  "references": {
+    "observed_source_references": [],
+    "other_user_processes_not_inspected": [
+      1,
+      9,
+      12,
+      13,
+      71,
+      72,
+      87,
+      88,
+      103,
+      104
+    ],
+    "same_user_processes_not_inspected": [
+      68
+    ],
+    "complete_process_visibility": false,
+    "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+  },
+  "inventory": {
+    "entries": 5,
+    "logical_file_bytes": 385921758
+  },
+  "tar_bytes": 385935360,
+  "verified_members": 5,
+  "tar_sha256": "4f871543a107ce5db19b6dab18e37c6134739f997f7f92e7a826470963b7173c",
+  "source_manifest_sha256": "b9c88eb0618d20296c102a2818436adc6cbc886e07c86267a69e3ac94499d1b2",
+  "rsync_command": [
+    "rsync",
+    "--no-whole-file",
+    "--partial-dir=.pre_dole_ckpt686_20260708.partial",
+    "--bwlimit=16384",
+    "--fsync",
+    "--",
+    "/home/josh/projects/chess/scratchpad/storage_audit_20260906/staging/pre_dole_ckpt686_20260708/pre_dole_ckpt686_20260708.tar",
+    "/mnt/e/chess_archive_20260906/salvage/pre_dole_ckpt686_20260708.tar"
+  ],
+  "rsync_exit_code": 0,
+  "external_tar_sha256": "4f871543a107ce5db19b6dab18e37c6134739f997f7f92e7a826470963b7173c",
+  "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+  "finished_unix": 1788735146.7411737,
+  "external_archive": "/mnt/e/chess_archive_20260906/salvage/pre_dole_ckpt686_20260708.tar",
+  "external_size": 385935360,
+  "external_mtime_ns": 1788735133120594900,
+  "limitations": [
+    "Source retained; removal requires separate parent verification.",
+    "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+    "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+  ]
+}

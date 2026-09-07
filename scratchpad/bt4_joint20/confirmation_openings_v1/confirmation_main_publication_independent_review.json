@@ -1,0 +1,37 @@
+{
+  "status": "PASS_MAIN_BASED_PUBLICATION_REVIEW_NO_EXPERIMENT_LAUNCH",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_unix": 1788740062.8838317,
+  "worktree": "/tmp/deepfin-confirmation-publication",
+  "base_commit": "204af6fc61ade0d565b4f378d1381a9f10455bfd",
+  "patch_sha256": "65cc97a399175befbb2318c7a80ef173427abd039e5edd64c31d08f286c5491d",
+  "reviewed_files_sha256": {
+    "docs/bt4_confirmation.md": "a6d4083e74a33463045e17e2e9f3a35e1a08f3162ea84a3690f8f987f45c1b16",
+    "docs/toolchains.md": "fde9e7c9959eb7922ab3b98f7c1f9c154094ece25dd5b7d949e96c27aa5b5e31",
+    "scripts/bt4_confirmation.py": "07fea41523fbb8068cfd910d0ff5e629622ccb81a180e7160188106d4040c09c",
+    "scripts/bt4_joint_readout.py": "49cd6ceab88e1b7d225b18a166fbf7a004309d58bc1f0bf9ae2afe859606f16c",
+    "tests/test_bt4_confirmation.py": "8b8c63dc76d0e54a6f85448d4818747fcd7fca6f2d3006b2bc23052e722f90ae",
+    "tests/test_bt4_joint_readout.py": "da021f27302dde8970cdf284eb17f15c1e978259223de2092f859cc2fe75311c"
+  },
+  "blockers": [],
+  "prior_tool_review_sha256": "fbb3158ee2b1c1f7b3601dcf498aba63c5e619ead856d4c36d1acb6220d80ff5",
+  "prior_validation_supplement_sha256": "3277f69855a9deca4530c37e1883b2e92ab25c5260e34a4df19565f9a9162ec2",
+  "checks": [
+    "All four Python files exactly equal independently accepted tool snapshot; staged publication scope is exactly six files.",
+    "Independently compared git objects for entire chess_anti_engine tree,arena_standard,conftest,pyproject,uv.lock,pyrightconfig and lint script against reviewed snapshot; all equal. No concrete test-reuse dependency gap.",
+    "Read main reader delta and scoped import/caller references. Existing read_arm required arguments remain valid; prior1.0 is intentionally enforced by default and superseded1.5 banks require explicit flag, now documented.",
+    "Read final guide and toolchain link. It supplies non-executable placeholders, explicit CPU caps and stage grace, required external host artifacts/runtime, new-output-only behavior, realized schedule/training checks, full search/history protocol and recovery limitations.",
+    "Stored-top-tie and historical-prior compatibility wording clarified without code changes. No scientific recipe selection or experiment launch is embedded."
+  ],
+  "validation": {
+    "reused_focused_cases": 75,
+    "basis": "Identical reviewed code/test/dependency objects plus prior actual frozen CPU runtime probe and saved full lint qualification; no unnecessary test rerun.",
+    "publication_ruff_vulture_diffcheck": "Author reports PASS",
+    "publication_typecheck": "Running at receipt time; prior full-scope tool snapshot0errors0warnings0notes retained as evidence, not a claimed new publication pass."
+  },
+  "limits": [
+    "Publication qualification only. A selected final confirmation manifest, dated preregistration and scheduling decision are still absent.",
+    "No current E0T05 outcome inspection, data payload scan, checkpoint hash, training/arena launch or mutation of executed checkouts.",
+    "Scientific selection and later experimental interpretation retain conditions from prior reviews."
+  ]
+}

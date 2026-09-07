@@ -1,0 +1,64 @@
+{
+  "status": "PASS_SELECTED_E0T05_VS_C20T05_FRESH_CONFIRMATION_PRELAUNCH_REVIEW",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "checked_unix": 1788751523.2392254,
+  "input_sha256": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/preregistration.md": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/manifest.json": "33d4845ddcc131522e572c42b2ff6338850c4f5b4500295bf9f413fe073011a9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/selection.json": "4e71656264cdf693a62452facb7e280459931344515b444cc41f25884c0d285c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/plan_only.json": "d75e3d0daafb37368a9ae2050b44c3705060996028cdb571e44a53789c094bd2",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_preparation_v1/E0T05_vs_C20T05.template.json": "a4a5e955dd7db02c3068dc0ab482b04c37a484645a35c4f96122086379c691e0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_openings_v1/completed_bank_overlap_final_E0T05.json": "85e88d4803e04a57fa8887c66c4171b91b2bf59753421aaf7a85add31076b0c1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_openings_v1/completed_bank_overlap_refresh_v1.json": "abc2bbc4776691073936b80af55bcfeb501ea8321f8592ab553944f1daaf43d1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_openings_v1/openings.fen": "e0d13b2ea70c0ac278570a0e463c3c1c3030a18256522bcba864db23cdc07c98",
+    "/tmp/deepfin-confirmation-publication/scripts/bt4_confirmation.py": "07fea41523fbb8068cfd910d0ff5e629622ccb81a180e7160188106d4040c09c",
+    "/tmp/deepfin-confirmation-publication/scripts/bt4_joint_readout.py": "49cd6ceab88e1b7d225b18a166fbf7a004309d58bc1f0bf9ae2afe859606f16c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_tools/verify_matched_schedule.py": "b212d4b220387dcd121b155d1f7d49ba7c1ea2e94c4e6c1d9a31ff6035bea9f4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/completed_screen_independent_review.json": "245a9baf86c36ebeebefa0ccfeb54dc0b72c8f3b08e474eda78cdf264eba0973",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/confirmation_selection_revised.md": "ce7866fbb304180ff2a16abda84105182f5bdf73175b769c626ea77c7096352f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_e0t05_tool_independent_review.json": "fbb3158ee2b1c1f7b3601dcf498aba63c5e619ead856d4c36d1acb6220d80ff5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_e0t05_tool_validation_supplement.json": "3277f69855a9deca4530c37e1883b2e92ab25c5260e34a4df19565f9a9162ec2",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_main_publication_independent_review.json": "8237f0f485602a53395bef992cb8bac2872fc7e8b822eb55ecf76b017efe1cbd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_main_publication_validation_supplement.json": "78a5432d294841457701e58b96a956bdf32a97e2d4f96af4995c4a4b9f125bf3"
+  },
+  "launcher_commit": "12f26da49f83225086e237ad0257494346abdb05",
+  "checks": [
+    "Registration accurately applies independently accepted C-favoring development result and prior conditional selection. E candidate/C reference;0.0005 point-score difference only challenger heuristic, not E>G inference.",
+    "Frozen E template differs only in external preregistration path/hash; original templates unmodified. Selected roles, corpora, seeds,100sim match and GPU/CPU caps are exact.",
+    "Independent actual CLI plan-only execution succeeds; generated training, arena and readout commands preserve roles, from-scratch seed1, fixed1000games500pairs,arena seed20260907,prior1.0,history-bearing reserved openings and qualified search protocol.",
+    "All3 canonical output directories distinct, absent, with existing parents. No adoption/resume/automatic retries; failure and stop handling preserved in previously reviewed immutable launcher.",
+    "Fresh opening file and final exclusion receipt hashes verified; receipt links prior13-bank alignment plus completed E bank,500 unique16ply histories and zero overlap. This reuses parent bank/legality computation, not a repeated purity scan.",
+    "Negative E-minus-C interval is expected confirmation of C; positive interval contradicts decisive development, crossing zero unresolved. No automatic extra games/seeds or promotion.",
+    "Historical control/purity, single fresh seed, fixed budget, no100M/RL/search-slope extrapolation limitations retained.",
+    "Existing independently reviewed launcher/reader tests, parent-death/resource controls and full type/lint publication evidence apply unchanged. Parent separately executes final Runner pin/resource guard; execution still rechecks runtime."
+  ],
+  "outputs_observed_absent": [
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1",
+    "/home/josh/projects/chess/runs/armB/confirmation_seed1_E0T05_vs_C20T05_candidate_E0T05_v1",
+    "/home/josh/projects/chess/runs/armB/confirmation_seed1_E0T05_vs_C20T05_reference_C20T05_v1"
+  ],
+  "budget": {
+    "gpu_seconds": 37800,
+    "gpu_stage_caps": {
+      "reference_train": 16200,
+      "candidate_train": 16200,
+      "arena": 5400
+    },
+    "cpu_stage_caps": {
+      "schedule": 1800,
+      "readout": 120
+    }
+  },
+  "plan_only_command": [
+    "python3",
+    "/tmp/deepfin-confirmation-publication/scripts/bt4_confirmation.py",
+    "--manifest",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/manifest.json"
+  ],
+  "findings": [],
+  "limits": [
+    "No execute, training, corpus scan, new tests, model/native checkpoint payload hashing, target mutation or scientific-file edits. Only selected small pins, bank file identity and actual plan-only entrypoint inspected.",
+    "Readiness is point-in-time; parent must launch exact reviewed manifest/check-out while outputs remain unused. Existing runtime pin/resource/stop/lease gates remain mandatory.",
+    "This receipt qualifies the selected launch; it makes no fresh-confirmation outcome claim. Selection.json records PENDING and launched:false at review; this separate immutable receipt records approval without rewriting that historical selection snapshot."
+  ]
+}

@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_unix": 1788774017.2388546,
+  "verdict": "PASS_COMPLETED_CONFIRMATION_EXPECTED_C20T05_DIRECTION_CONFIRMED",
+  "findings": [],
+  "candidate": "E0T05",
+  "reference": "C20T05",
+  "contrast": "E0T05 minus C20T05",
+  "evidence_sha256": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/manifest.json": "33d4845ddcc131522e572c42b2ff6338850c4f5b4500295bf9f413fe073011a9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/preregistration.md": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/selection.json": "4e71656264cdf693a62452facb7e280459931344515b444cc41f25884c0d285c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/independent_launch_review.json": "c07453d71ca01daf7dd45b93fc5d9fd0161a5f1ac5f50a25918559bd5f2b6d88",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/independent_fresh_training_schedule_review.json": "c4190f1bbfe34aa321664656ab10d3c7708232b84058b4a6580628ffa405e380",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/parent_arena_start_observation.json": "7f8d16cbccd1b3d5659329a55c7c17a56b3885926b401602743f6617065af5ac",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_openings_v1/completed_bank_overlap_final_E0T05.json": "85e88d4803e04a57fa8887c66c4171b91b2bf59753421aaf7a85add31076b0c1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_openings_v1/openings.fen": "e0d13b2ea70c0ac278570a0e463c3c1c3030a18256522bcba864db23cdc07c98",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/completed_s100_readout.json": "353d95c0f94cad1c1be1f9b23f6449d8cad50c6a41523c2b9ab5415f5cd6c12e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/manifest.json": "7d01ecc1d35c98d0bafbde13a6e182e1fd9ba0d273433c7d5213bfdd4744e0cb",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/preregistration.md": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/launch.json": "0170abe91c91d9eea89191b72e9293d83b589dda62494506d862e81846b660f5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/complete.json": "82121c284aac074b466f1d5a58a3e440fd672311d8558e81db9c0df77f07cdff",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/matched_schedule.json": "6b4281eb68cf07404205166402011930497e251b6d69c3caa8a6d2651b0da334",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/reference_train.complete.json": "ac37690bccda6b00b7df8fcbba5e233b3f015953f29d6a945dcf7e459560948f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/candidate_train.complete.json": "f512c6a86aa86324b078cdea0bb0aa5ab7fbc245c9c9b37bb421708eb3e85f3f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/reference_train.gpu-charge.json": "65f0744ed7c4b843cd5cb5c994fb88b7398bd295496cd18a573366cce56ed23b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/candidate_train.gpu-charge.json": "e5173f6ab1ff1d491fd559db1dd263cd395ebea21f1d4578a6e02e6b6c81df2e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.gpu-charge.json": "99dae086f46afe8ea6d5b5f9591d090c4e183b117c053624b4d1071a2ce85eb8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.process.json": "7b125227a0a79f963e4a97c99f05cb274a79f34190c1aba021e4bd4f11ab6745",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/readout.process.json": "cb7cbb85b4ce884d1f6e6702a7a3c78d8ccf7011ff58cc02941d6fc84f253138",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.games.jsonl": "88d7c7a915ca6c9889f55237462862bacf0c6baae6373eca67d668276a3a69f6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.results.jsonl": "7c5b66268c5ddf236eb45d79761e2f55d9b28a1dbc8ba9d4b480bbe64e341e69",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/readout.json": "3719bd291ca7a7a2625eca2075eac1eb2b5cd1906e978bf6fc7a59fe2be355f7"
+  },
+  "independent_numerical_result": {
+    "wins": 350,
+    "draws": 192,
+    "losses": 458,
+    "games": 1000,
+    "pairs": 500,
+    "score": 0.446,
+    "pair_sample_variance_ddof1": 0.0955250501002004,
+    "pair_standard_error": 0.013822087403876478,
+    "score_ci95": [
+      0.41890870868840213,
+      0.4730912913115979
+    ],
+    "elo": -37.669962406515175,
+    "elo_ci95": [
+      -56.84999112510496,
+      -18.71616919820815
+    ],
+    "pentanomial": {
+      "WW": 55,
+      "WD_DW": 72,
+      "DD_WL": 185,
+      "LD_DL": 86,
+      "LL": 102
+    },
+    "method": "Candidate scores independently derived from raw chess results and colors. Pair means are sampling units; sample variance denominator499, SE sqrt(variance/500), normal95 mean plus/minus1.96 SE, bounds transformed as400 log10(p/(1-p)). Existing reader was not executed.",
+    "agrees_with_automatic_readout": true,
+    "agrees_with_final_arena_result": true
+  },
+  "registered_rule": {
+    "expected_direction": "candidate E minus reference C below zero",
+    "observed_interval_wholly_below_zero": true,
+    "conclusion": "Confirms C20T05 expected advantage under the registered fresh paired seed-one and fresh-openings comparison at100 simulations.",
+    "automatic_reader_KILL_label": "Candidate-centric generic label; interpreted using the preregistered negative-direction confirmation rule.",
+    "promotion": "No automatic production mutation or promotion; C is the best-tested 20M bootstrap recipe within the tested scope."
+  },
+  "full_bank_checks": [
+    "One supported header and exactly1000 complete newline-terminated game rows; all500 pair IDs each have half0 and half1 exactly once, no duplicate/replayed/orphan rows.",
+    "Every raw result agrees with candidate score and color; opening index equals pair ID; both halves use the identical prescribed endpoint.",
+    "All500 opening lines independently replayed from their initial FEN with exactly16 legal moves; endpoint FEN agrees with every logged game;500 unique terminal EPDs.",
+    "Opening file SHA matches registration; prelaunch14-development-bank non-overlap proof reused after checking its immutable hash.",
+    "Header fingerprint recomputed; exact candidate/reference final checkpoint paths and full realized search dictionaries agree with qualifiedC100 on both sides.",
+    "Every game has arena seed20260907, compilation on, evaluator hoist4096 and chunked loop; final result confirms evaluator batch4096/concurrency128,100 simulations per side, maximum300 plies, move temperature0.1 and prior1.0.",
+    "Final result is not truncated, has no resumed pairs/orphans, confirms1000 requested/completed games and500 pairs; result argv equals launch and actual process receipts.",
+    "Complete receipt bank/readout/schedule hashes match current bytes. No failed receipt exists.",
+    "Recorded pre-outcome host launch observation binds same process receipt and first header line; live-config and full search qualification were observed externally by parent."
+  ],
+  "provenance": {
+    "training_schedule_review_reused": "independent_fresh_training_schedule_review.json",
+    "all_prior_review_input_hashes_reverified": true,
+    "training_complete_records_match_final_complete_receipt": true,
+    "training_seed": 1,
+    "canonical_plan_sha256": "4d75a181dea1e94e592f2bc78036e3b233452a3f85b8a1d6024e69fbb731510e",
+    "frozen_launcher_head": "12f26da49f83225086e237ad0257494346abdb05",
+    "runtime_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1",
+    "checkpoint_payload_rehashed": false,
+    "automatic_readout_training_provenance_false_resolved_by_external_review": true
+  },
+  "completion_and_resources": {
+    "host_observation_unix": 1788773871.4985032,
+    "terminal_absent_pids": [
+      199324,
+      217778,
+      217779,
+      219438
+    ],
+    "stage_gpu_seconds": {
+      "reference_train": 9789.061949866009,
+      "candidate_train": 9284.944867974002,
+      "arena": 2163.3712504350115
+    },
+    "total_gpu_seconds": 21237.378068275022,
+    "total_gpu_hours": 5.899271685631951,
+    "gpu_budget_seconds": 37800,
+    "all_stage_charges_succeeded_and_within_caps": true,
+    "arena_stage_cap_seconds": 5400,
+    "arena_timeout_includes30second_termination_grace": true,
+    "cpu_schedule_cap_seconds": 1800,
+    "cpu_readout_cap_seconds": 120,
+    "completed_result_not_timeout_or_partial": true
+  },
+  "limitations": [
+    "One fresh paired training seed does not estimate training-seed variance.",
+    "Paired nominal95 interval models the500 opening pairs and is not a bootstrap interval or adjustment over all historical experiments.",
+    "Historical valid_control:false remains: no held-out training purity receipt, committed architecture/trainer premise, and game_epoch differs from historical replacement-sampled control.",
+    "Fresh opening exclusion is from the development match banks, not from training data.",
+    "Bank logs record opening endpoints; history-loader/runtime identity and launch-time inputs depend on accepted immutable external launch evidence, supplemented by independent legal replay now.",
+    "Schedule row-offset equality remains code-backed inference from exact planner inputs and saved proof; no corpus rescan or feature/target payload verification performed.",
+    "No redundant checkpoint/native payload hashing, new experiment, inference or test run.",
+    "This result does not establish universal optimality, a search-scaling slope,100M transfer or RL benefit. Development results and this fresh confirmation are distinct experiments, not pooled as independent training replicates."
+  ]
+}

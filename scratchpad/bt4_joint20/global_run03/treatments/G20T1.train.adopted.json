@@ -1,0 +1,14 @@
+{
+  "source_completion": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/treatments/G20T1.train.complete.json",
+    "sha256": "17200de5c287eaadf9ca9ce4b3033ad402b965b230adad5d59c52b4ea222463d"
+  },
+  "source_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/treatments/manifest.json",
+    "sha256": "bc6b1ee000b6742573ba674cdd07b9f7766092705bd5b3bedb03cf395ee7d8e8"
+  },
+  "training": {
+    "checkpoint_sha256": "e94b5dc53d55d7fdb119b214f0b59ccc79a7963f933124d3e1f731478bb32b6d",
+    "summary_sha256": "ef68d18a6cd2b3f4d8446cd0277271a8aaae6a01fbfa018317915a918290fe36"
+  }
+}

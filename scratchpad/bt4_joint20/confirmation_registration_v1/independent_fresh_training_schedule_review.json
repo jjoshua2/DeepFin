@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "reviewer": "/root/review_pr517_bootstrap",
+  "reviewed_unix": 1788771640.7373798,
+  "verdict": "PASS_FOR_REGISTERED_MATCHED_SEED_ONE_TRAINING_AND_SCHEDULE",
+  "findings": [],
+  "scope": "Independent completed training and canonical schedule qualification only; no arena outcomes, rolling logs, or result banks inspected.",
+  "evidence_sha256": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/manifest.json": "33d4845ddcc131522e572c42b2ff6338850c4f5b4500295bf9f413fe073011a9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/preregistration.md": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/independent_launch_review.json": "c07453d71ca01daf7dd45b93fc5d9fd0161a5f1ac5f50a25918559bd5f2b6d88",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/launch.json": "345ac427b8559107bbb24a091974fdb621f340841a9fb2e2d6eeded5e91d7a68",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/manifest.json": "7d01ecc1d35c98d0bafbde13a6e182e1fd9ba0d273433c7d5213bfdd4744e0cb",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/preregistration.md": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/launch.json": "0170abe91c91d9eea89191b72e9293d83b589dda62494506d862e81846b660f5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/matched_schedule.json": "6b4281eb68cf07404205166402011930497e251b6d69c3caa8a6d2651b0da334",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/schedule.process.json": "b2f8e5524602096f934ea9336f90de187e42a10307c281a1a08d9739090dfa5f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/realized_schedule.json": "4666179fe24887347e87154148e45bb56b59dc7bfffd3bdbdda0a3c299af9cd6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_tools/verify_matched_schedule.py": "b212d4b220387dcd121b155d1f7d49ba7c1ea2e94c4e6c1d9a31ff6035bea9f4",
+    "/tmp/deepfin-confirmation-publication/scripts/bt4_confirmation.py": "07fea41523fbb8068cfd910d0ff5e629622ccb81a180e7160188106d4040c09c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/reference_train.complete.json": "ac37690bccda6b00b7df8fcbba5e233b3f015953f29d6a945dcf7e459560948f",
+    "/home/josh/projects/chess/runs/armB/confirmation_seed1_E0T05_vs_C20T05_reference_C20T05_v1/summary.json": "034f463d59f2b0a7263a29daf5a8c957e674d217a4a124c041753586f0fe56ae",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/reference_train.gpu-charge.json": "65f0744ed7c4b843cd5cb5c994fb88b7398bd295496cd18a573366cce56ed23b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/reference_train.process.json": "cda5b626bd8505982d4bc5e4e27dbf4a82db4f39bb5c03051f472f6b6b8bca9e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/candidate_train.complete.json": "f512c6a86aa86324b078cdea0bb0aa5ab7fbc245c9c9b37bb421708eb3e85f3f",
+    "/home/josh/projects/chess/runs/armB/confirmation_seed1_E0T05_vs_C20T05_candidate_E0T05_v1/summary.json": "c28d2067501b263368cf2699b5b6ec4ff5df01ed6afbedd37bc4422942c9a662",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/candidate_train.gpu-charge.json": "e5173f6ab1ff1d491fd559db1dd263cd395ebea21f1d4578a6e02e6b6c81df2e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/candidate_train.process.json": "ab4f288d48ef35f4c503c605c2b49464ab0734323e9aa33fca3e616c46b31bde"
+  },
+  "frozen_launcher_head": "12f26da49f83225086e237ad0257494346abdb05",
+  "runtime_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1",
+  "training": {
+    "reference": {
+      "label": "C20T05",
+      "rows": 18910484,
+      "batches": 36935,
+      "windows": 420,
+      "all_window_loss_and_mean_gradient_finite": true,
+      "skipped_batches": 0,
+      "retried_batches": 0,
+      "summary_sha256": "034f463d59f2b0a7263a29daf5a8c957e674d217a4a124c041753586f0fe56ae",
+      "checkpoint_sha256_from_qualified_launcher_and_summary": "ef42d11276529178480a9d255315ee4bf07b2eb39a8516ecb0a7799d03392745",
+      "physical_plan_sha256": "1e8b32380b11f8cbbfe6adfa33bcba6ae9884a8edc1d6e5de33ab98a7faeb696",
+      "gpu_seconds": 9789.061949866009,
+      "valid_control": false,
+      "historical_validity_problems": [
+        "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+        "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+        "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+      ]
+    },
+    "candidate": {
+      "label": "E0T05",
+      "rows": 18910484,
+      "batches": 36935,
+      "windows": 420,
+      "all_window_loss_and_mean_gradient_finite": true,
+      "skipped_batches": 0,
+      "retried_batches": 0,
+      "summary_sha256": "c28d2067501b263368cf2699b5b6ec4ff5df01ed6afbedd37bc4422942c9a662",
+      "checkpoint_sha256_from_qualified_launcher_and_summary": "bc9f029ef1874ae0aa613def4295331e1a894d1a23e12fb466ee3e9ef6bae740",
+      "physical_plan_sha256": "f7a13b63dc32ed29e16cac3352ad4b43640f260f1c4896fdeaf09e6e8b8c7b2d",
+      "gpu_seconds": 9284.944867974002,
+      "valid_control": false,
+      "historical_validity_problems": [
+        "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+        "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+        "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+      ]
+    }
+  },
+  "independent_training_checks": [
+    "Original manifest/preregistration/runtime/commands and role-specific corpus metadata pins checked.",
+    "Seed one, planned and realized rows/batches, full epoch sampling, zero repeated games per batch and zero resident decoded rows checked.",
+    "All 420 windows independently checked for contiguous cadence, requested/done counts (419 times 88 plus final 63), finite loss and mean gradient, zero nonfinite skips and transient CUDA retries, and total samples.",
+    "Exact final checkpoint path and SHA agreed between pinned launcher completion evidence and one final last-checkpoint summary record; checkpoint payload was not redundantly hashed.",
+    "Role-independent architecture, trainer, replay settings and validity limitations agree."
+  ],
+  "schedule": {
+    "sha256": "6b4281eb68cf07404205166402011930497e251b6d69c3caa8a6d2651b0da334",
+    "canonical_plan_sha256": "4d75a181dea1e94e592f2bc78036e3b233452a3f85b8a1d6024e69fbb731510e",
+    "physical_hashes_match_both_completed_training_receipts": true,
+    "all_ordered_source_game_columns_and_shards_match_prior_qualified_proof": true,
+    "source_rows": 18910484,
+    "source_shards": 2309,
+    "source_games": 97968,
+    "batches": 36935,
+    "seed": 1,
+    "numpy": "1.26.2",
+    "actual_staging_verified_for_both_roles": true,
+    "verifier_code_and_small_input_pins_verified": true,
+    "elapsed_seconds": 460.09838619999937,
+    "cpu_cap_seconds": 1800,
+    "supervisor_term_then_kill_grace_seconds": 30,
+    "terminal_verifier_host_observation": {
+      "observed_unix": 1788771326.382007,
+      "absent_pids": [
+        217024,
+        217025
+      ]
+    },
+    "verifier_method_review": "Pinned verifier compares exact source-normalized records and full ordered game columns, reconstructs physical plans, compares every load-count and batch-row array to source, and requires saved realized summary hashes/counts. Final report is written only after both completed arms validate.",
+    "limits": [
+      "No feature/target decoding or identity check; unchanged non-policy rows require separate mixer provenance.",
+      "Plan hashes cover game choices and shard paths, not per-row offsets; row-order equality is a code-backed inference.",
+      "Historical NumPy version without a banked runtime stamp remains unknown.",
+      "An unfinished run or prospective corpus is not realized training evidence."
+    ]
+  },
+  "resources": {
+    "reference_and_candidate_trainers_and_supervisors_absent_at_host_observation": 1788771032.2730124,
+    "absent_training_pids": [
+      199576,
+      199577,
+      207040,
+      207041
+    ],
+    "training_gpu_seconds_total": 19074.00681784001,
+    "training_gpu_hours_total": 5.29833522717778,
+    "registered_total_gpu_seconds": 37800,
+    "remaining_after_training_seconds": 18725.99318215999,
+    "full_registered_arena_cap_seconds": 5400,
+    "within_total_even_if_arena_uses_full_cap": true,
+    "cpu_schedule_has_no_separate_completion_receipt_by_design": true
+  },
+  "review_limits": [
+    "No new corpus scan, target or feature payload verification, inference, training, or tests.",
+    "No checkpoint payload or native extension rehash; qualified immutable launcher evidence reused.",
+    "Saved schedule records compared directly; verifier was not rerun. Source row-offset equality remains the pinned-code inference documented in the verifier, not an independently logged offset stream.",
+    "Both runs retain valid_control:false: no held-out purity receipt; committed architecture/trainer premise; game_epoch differs from historical replacement-sampled control.",
+    "Qualification applies to the registered fresh seed-one matched recipe comparison. It does not establish strength, production validity, seed variance, search scaling, or 100M/RL transfer.",
+    "No arena outcomes inspected or judged."
+  ]
+}

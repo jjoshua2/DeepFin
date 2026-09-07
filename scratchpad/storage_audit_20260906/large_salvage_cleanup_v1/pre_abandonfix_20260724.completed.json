@@ -1,0 +1,14 @@
+{
+  "status": "VERIFIED_LOCAL_POOL_REMOVED_EXTERNAL_ARCHIVE_PRESERVED",
+  "name": "pre_abandonfix_20260724",
+  "completed_unix": 1788742893.7007332,
+  "source": "/home/josh/projects/chess/data/salvage/pre_abandonfix_20260724",
+  "archive": "/mnt/e/chess_archive_20260906/salvage/pre_abandonfix_20260724.tar",
+  "tar_sha256": "6aad6d51042b8106429b9b11d055491ba68d52b16c1c41a0144637e3648ab654",
+  "external_restore_receipt": "/mnt/e/chess_archive_20260906/salvage/large_salvage_cleanup_v1/pre_abandonfix_20260724.restore.json",
+  "external_restore_receipt_sha256": "3fff4ed8c682740df1ec6114e5953fc72504aeb9eab82fb48c7a85322b3e3aa7",
+  "entries": 370902,
+  "allocated_bytes_before": 3997048832,
+  "plan_sha256": "12c67cc7dbe82d4e1dc8948c23da80f865a11d43cdf3b6d9e70a621d86283694",
+  "script_sha256": "3d83c7bc96f9275863930de51a7bd10a7536f4d05c1bffa9427e2d841ccb0b20"
+}

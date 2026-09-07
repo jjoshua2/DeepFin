@@ -1,0 +1,2607 @@
+{
+  "schema_version": 1,
+  "purpose": "Byte-identical portable BT4 scientific evidence; historical snapshots, not executable defaults or live state.",
+  "files": [
+    {
+      "source_path": "data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json",
+      "bytes": 1271,
+      "sha256": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3",
+      "reason": "Raw BT4 sidecar identity and construction summary",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json",
+      "bytes": 162597,
+      "sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05/bt4_policy_mix_summary.json",
+      "bytes": 2624,
+      "sha256": "ff50d6b3f4c8ab38233de723c68924980d745335a374a71d6cfc3eac71c248ab",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05/bt4_policy_mix_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05/derive_targets_summary.json",
+      "bytes": 165396,
+      "sha256": "8d43a70708fc64c867eee19d9b2ce8a9240c0b422d6af5fda5cade7ceab54b9e",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05/derive_targets_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/bt4_policy_mix_summary.json",
+      "bytes": 2623,
+      "sha256": "d0848a2357f8d1f8cd22850c6ba71cfe58ae57bf2a99ac63b1f91de4f1544fcb",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/bt4_policy_mix_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/derive_targets_summary.json",
+      "bytes": 165395,
+      "sha256": "dce36703e851d30437399f3c6f5b6d271238b4acc9b4334bce82c04d5565d58d",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/derive_targets_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05/bt4_policy_mix_summary.json",
+      "bytes": 2626,
+      "sha256": "e78cc9eaeba0029faf2f036cdb54c35dba02575939c9633915d3606229e1b574",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05/bt4_policy_mix_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05/derive_targets_summary.json",
+      "bytes": 165398,
+      "sha256": "d2e1f2ad328d691bcd38c32342486728eb3e8a0f77e56e52f2eb958494b6edad",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05/derive_targets_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/bt4_policy_mix_summary.json",
+      "bytes": 2744,
+      "sha256": "5bf8502a12af0b9ce938a39ddfd9d95df4bfb2b1a0f80292d80d04109cce7100",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/bt4_policy_mix_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/derive_targets_summary.json",
+      "bytes": 165516,
+      "sha256": "fc6a33b4f75b154ae2945240d4169b40685618ff0082cc759914a0c4f5b6e8a5",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/derive_targets_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100/bt4_policy_mix_summary.json",
+      "bytes": 1616,
+      "sha256": "7bbb7df4e42cbb61fc937fd210bb7f3c6ed66a04644d02fd85b8a32f64c55222",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100/bt4_policy_mix_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100/derive_targets_summary.json",
+      "bytes": 164334,
+      "sha256": "a1f34cf5f36a659de6b64101f83475940637c30c7d91d3f2ee2624341e73fd4d",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100/derive_targets_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050/bt4_policy_mix_summary.json",
+      "bytes": 2168,
+      "sha256": "a85ba1403c2477018bdc59b622311094027ca17cf045dc78090f6c0ee9f5463d",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050/bt4_policy_mix_summary.json"
+    },
+    {
+      "source_path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050/derive_targets_summary.json",
+      "bytes": 164916,
+      "sha256": "4354bafe8e1435bb030faaa161810bbfff667a2b83c647940ad371eb2ab1caf1",
+      "reason": "Published corpus derivation/mixture summary; data payload external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050/derive_targets_summary.json"
+    },
+    {
+      "source_path": "runs/armB/confirmation_seed1_E0T05_vs_C20T05_candidate_E0T05_v1/summary.json",
+      "bytes": 2454783,
+      "sha256": "c28d2067501b263368cf2699b5b6ec4ff5df01ed6afbedd37bc4422942c9a662",
+      "reason": "Completed training metrics/config/schedule provenance; weights external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/runs/armB/confirmation_seed1_E0T05_vs_C20T05_candidate_E0T05_v1/summary.json"
+    },
+    {
+      "source_path": "runs/armB/confirmation_seed1_E0T05_vs_C20T05_reference_C20T05_v1/summary.json",
+      "bytes": 2454476,
+      "sha256": "034f463d59f2b0a7263a29daf5a8c957e674d217a4a124c041753586f0fe56ae",
+      "reason": "Completed training metrics/config/schedule provenance; weights external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/runs/armB/confirmation_seed1_E0T05_vs_C20T05_reference_C20T05_v1/summary.json"
+    },
+    {
+      "source_path": "runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05_epoch_v2/summary.json",
+      "bytes": 2455000,
+      "sha256": "9bd74d24ce9a6400528d36229fc3ca3dfde38320390ae2396448039ee984c4b0",
+      "reason": "Completed training metrics/config/schedule provenance; weights external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05_epoch_v2/summary.json"
+    },
+    {
+      "source_path": "runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1_epoch_v2/summary.json",
+      "bytes": 2455021,
+      "sha256": "ef68d18a6cd2b3f4d8446cd0277271a8aaae6a01fbfa018317915a918290fe36",
+      "reason": "Completed training metrics/config/schedule provenance; weights external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1_epoch_v2/summary.json"
+    },
+    {
+      "source_path": "runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/summary.json",
+      "bytes": 2453999,
+      "sha256": "4abce67b414da401ef12f7b61cdc8cf4ea02cc6d3939ce47b5eeb2a040e45b4e",
+      "reason": "Completed training metrics/config/schedule provenance; weights external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/runs/armB/qtemp_0.0005_hist_20m_bt4_global_S0_epoch_v2/summary.json"
+    },
+    {
+      "source_path": "runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json",
+      "bytes": 2454204,
+      "sha256": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+      "reason": "Completed training metrics/config/schedule provenance; weights external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json"
+    },
+    {
+      "source_path": "runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/summary.json",
+      "bytes": 2454533,
+      "sha256": "56d7850403388712605742fdaaa7ac6664f3a7db039386d744d56e77bad6ef2a",
+      "reason": "Completed training metrics/config/schedule provenance; weights external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/summary.json"
+    },
+    {
+      "source_path": "runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050_epoch_v1/summary.json",
+      "bytes": 2454059,
+      "sha256": "52bf4c775c51a5ab8ef7215ff36ee820cb3a0c9f29e942dcecefa69b2a9cf472",
+      "reason": "Completed training metrics/config/schedule provenance; weights external",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050_epoch_v1/summary.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/af_run01/A.mix.superseded.json",
+      "bytes": 1024,
+      "sha256": "e5eee53362cc8ab2848376db79aa796a4c6e97842621979ebb97bd043beac3a8",
+      "reason": "Superseded six-arm plan: completed sampler diagnostic and supersession evidence",
+      "published_path": "scratchpad/bt4_joint20/af_run01/A.mix.superseded.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/af_run01/E0_sampler_diagnostic.games.jsonl",
+      "bytes": 166832,
+      "sha256": "f2080369e113ac381b554736e138d20cdd958045953f8999a796df052848be73",
+      "reason": "Superseded six-arm plan: completed sampler diagnostic and supersession evidence",
+      "published_path": "scratchpad/bt4_joint20/af_run01/E0_sampler_diagnostic.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/af_run01/E0_sampler_diagnostic.launch.json",
+      "bytes": 1050,
+      "sha256": "55e4dcd4b0b0b6ff4fdc05838178d31179b9483ab8dc7e18b922db7c9c974892",
+      "reason": "Superseded six-arm plan: completed sampler diagnostic and supersession evidence",
+      "published_path": "scratchpad/bt4_joint20/af_run01/E0_sampler_diagnostic.launch.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/af_run01/E0_sampler_diagnostic.results.jsonl",
+      "bytes": 3382,
+      "sha256": "1f6148eef1832bc16c1511b3d5f51751d7f30b3fab5e8b161a1180dfdb84a279",
+      "reason": "Superseded six-arm plan: completed sampler diagnostic and supersession evidence",
+      "published_path": "scratchpad/bt4_joint20/af_run01/E0_sampler_diagnostic.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/af_run01/manifest.json",
+      "bytes": 5111,
+      "sha256": "105405a0d393b27384a618cc56409e9b247c22b9bb23a5a0ad534a96e29f9cc8",
+      "reason": "Superseded six-arm plan: completed sampler diagnostic and supersession evidence",
+      "published_path": "scratchpad/bt4_joint20/af_run01/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/audit_A_k2_g10_a100_t050_v2.json",
+      "bytes": 3507384,
+      "sha256": "4a6387a294358fb0caa9c2a4f9802cb39eadb7899d3cc5226bc225f00053aaa5",
+      "reason": "Six-arm historical target admission audit cited by original registration",
+      "published_path": "scratchpad/bt4_joint20/audit_A_k2_g10_a100_t050_v2.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/audit_B_k2_g10_a100_t200_v2.json",
+      "bytes": 3499233,
+      "sha256": "35f2c66353dcfaad32536bc66f678579f06353e289b44045e6800fd3c38be6c2",
+      "reason": "Six-arm historical target admission audit cited by original registration",
+      "published_path": "scratchpad/bt4_joint20/audit_B_k2_g10_a100_t200_v2.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/audit_C_k3_g20_a100_t050_v2.json",
+      "bytes": 3536933,
+      "sha256": "7e54c847c02cf3e2e2ad37d34ab5913317f8f93d66ffc7dac7c91acd1604ce7e",
+      "reason": "Six-arm historical target admission audit cited by original registration",
+      "published_path": "scratchpad/bt4_joint20/audit_C_k3_g20_a100_t050_v2.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/audit_D_k3_g20_a100_t200_v2.json",
+      "bytes": 3523198,
+      "sha256": "6c90d64a2ddaadbcc7acb73edef4f2bc5b7f8f9cf122c0cd6672432d5cc117b9",
+      "reason": "Six-arm historical target admission audit cited by original registration",
+      "published_path": "scratchpad/bt4_joint20/audit_D_k3_g20_a100_t200_v2.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/audit_E_k2_g10_a050_t200_v2.json",
+      "bytes": 3501385,
+      "sha256": "d803ae4617f8e7f4ddeae945648291e4a30bcc2f7b422672e0a1699c0b8232fb",
+      "reason": "Six-arm historical target admission audit cited by original registration",
+      "published_path": "scratchpad/bt4_joint20/audit_E_k2_g10_a050_t200_v2.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/audit_F_k3_g20_a050_t200_v2.json",
+      "bytes": 3529126,
+      "sha256": "9dc9c0b47c5f43230a923967f81c5d926c98bca2f4fa7e6edf42afb47a6b79b3",
+      "reason": "Six-arm historical target admission audit cited by original registration",
+      "published_path": "scratchpad/bt4_joint20/audit_F_k3_g20_a050_t200_v2.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_openings_v1/README.md",
+      "bytes": 3983,
+      "sha256": "21785b337008448f956aef337fe85df3b392073c31f3c7024fde0d2e6622bed0",
+      "reason": "Reserved history openings, construction/exclusion and tool qualification",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/README.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_openings_v1/completed_bank_overlap_final_E0T05.json",
+      "bytes": 914,
+      "sha256": "85e88d4803e04a57fa8887c66c4171b91b2bf59753421aaf7a85add31076b0c1",
+      "reason": "Reserved history openings, construction/exclusion and tool qualification",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/completed_bank_overlap_final_E0T05.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_openings_v1/completed_bank_overlap_refresh_v1.json",
+      "bytes": 7181,
+      "sha256": "abc2bbc4776691073936b80af55bcfeb501ea8321f8592ab553944f1daaf43d1",
+      "reason": "Reserved history openings, construction/exclusion and tool qualification",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/completed_bank_overlap_refresh_v1.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_e0t05_tool_independent_review.json",
+      "bytes": 5277,
+      "sha256": "fbb3158ee2b1c1f7b3601dcf498aba63c5e619ead856d4c36d1acb6220d80ff5",
+      "reason": "Reserved history openings, construction/exclusion and tool qualification",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_e0t05_tool_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_e0t05_tool_validation_supplement.json",
+      "bytes": 1058,
+      "sha256": "3277f69855a9deca4530c37e1883b2e92ab25c5260e34a4df19565f9a9162ec2",
+      "reason": "Reserved history openings, construction/exclusion and tool qualification",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_e0t05_tool_validation_supplement.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_main_publication_independent_review.json",
+      "bytes": 3128,
+      "sha256": "8237f0f485602a53395bef992cb8bac2872fc7e8b822eb55ecf76b017efe1cbd",
+      "reason": "Reserved history openings, construction/exclusion and tool qualification",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_main_publication_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_main_publication_validation_supplement.json",
+      "bytes": 658,
+      "sha256": "78a5432d294841457701e58b96a956bdf32a97e2d4f96af4995c4a4b9f125bf3",
+      "reason": "Reserved history openings, construction/exclusion and tool qualification",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/confirmation_main_publication_validation_supplement.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_openings_v1/excluded_epds.json",
+      "bytes": 33955,
+      "sha256": "1d29918c058b309f6b76607528ea3f387f6fd0ff017c8bd5c3cd49fcc7c9be12",
+      "reason": "Reserved history openings, construction/exclusion and tool qualification",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/excluded_epds.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_openings_v1/generation_receipt.json",
+      "bytes": 8965,
+      "sha256": "8b781aeb5612e4ab2051f07d3ed80a032463f80eb0d69d688c00390b73909252",
+      "reason": "Reserved history openings, construction/exclusion and tool qualification",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/generation_receipt.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_openings_v1/openings.fen",
+      "bytes": 69500,
+      "sha256": "e0d13b2ea70c0ac278570a0e463c3c1c3030a18256522bcba864db23cdc07c98",
+      "reason": "Reserved history openings, construction/exclusion and tool qualification",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/openings.fen"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_openings_v1/sampled_pool.jsonl",
+      "bytes": 669625,
+      "sha256": "273e809775b40a0359168182ecfd08cb8ff4bbd4dae8e1d541d316e949690b1b",
+      "reason": "Reserved history openings, construction/exclusion and tool qualification",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/sampled_pool.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/final_pin_check.json",
+      "bytes": 683,
+      "sha256": "f724e5609f55e90f3a9d5e82383c5d16bd2c90140d6ecc925887e0f8cf663bc0",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/final_pin_check.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/independent_completed_confirmation_review.json",
+      "bytes": 10259,
+      "sha256": "cab8e9ccbf5d379d6dc03c9fa5c0502d2b865b50a649d5bf6c3f8093661505e0",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/independent_completed_confirmation_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/independent_fresh_training_schedule_review.json",
+      "bytes": 10578,
+      "sha256": "c4190f1bbfe34aa321664656ab10d3c7708232b84058b4a6580628ffa405e380",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/independent_fresh_training_schedule_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/independent_launch_review.json",
+      "bytes": 6461,
+      "sha256": "c07453d71ca01daf7dd45b93fc5d9fd0161a5f1ac5f50a25918559bd5f2b6d88",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/independent_launch_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/launch.json",
+      "bytes": 1113,
+      "sha256": "345ac427b8559107bbb24a091974fdb621f340841a9fb2e2d6eeded5e91d7a68",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/launch.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/manifest.json",
+      "bytes": 2050,
+      "sha256": "33d4845ddcc131522e572c42b2ff6338850c4f5b4500295bf9f413fe073011a9",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/parent_arena_start_observation.json",
+      "bytes": 1051,
+      "sha256": "7f8d16cbccd1b3d5659329a55c7c17a56b3885926b401602743f6617065af5ac",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/parent_arena_start_observation.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/parent_candidate_complete_observation.json",
+      "bytes": 1743,
+      "sha256": "6f77fba13669c939c2ebe8dd951ab15c4c6dee2e9f4ecda007a709a0832809b0",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/parent_candidate_complete_observation.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/parent_completed_confirmation_check.json",
+      "bytes": 578,
+      "sha256": "496ea434f6c5fd7e3b14e6c3baae1cf469bdd067c675d17317e9b285494bc0c5",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/parent_completed_confirmation_check.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/parent_reference_complete_candidate_start_observation.json",
+      "bytes": 1830,
+      "sha256": "9c767973e17c7c15ad38b26ec2627428ab517c042439d45d6f731fcab8f17916",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/parent_reference_complete_candidate_start_observation.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/parent_reference_start_observation.json",
+      "bytes": 677,
+      "sha256": "26dd8d4aa233f66bd4e6b0a15621225ad37745086f14e133f476c83c1f9b3f5b",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/parent_reference_start_observation.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/preregistration.md",
+      "bytes": 5065,
+      "sha256": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/preregistration.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_registration_v1/selection.json",
+      "bytes": 734,
+      "sha256": "4e71656264cdf693a62452facb7e280459931344515b444cc41f25884c0d285c",
+      "reason": "Final fresh protocol/selection, independent launch/training/result reviews",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/selection.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.games.jsonl",
+      "bytes": 438859,
+      "sha256": "88d7c7a915ca6c9889f55237462862bacf0c6baae6373eca67d668276a3a69f6",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.gpu-charge.json",
+      "bytes": 163,
+      "sha256": "99dae086f46afe8ea6d5b5f9591d090c4e183b117c053624b4d1071a2ce85eb8",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.process.json",
+      "bytes": 2684,
+      "sha256": "7b125227a0a79f963e4a97c99f05cb274a79f34190c1aba021e4bd4f11ab6745",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.results.jsonl",
+      "bytes": 3735,
+      "sha256": "7c5b66268c5ddf236eb45d79761e2f55d9b28a1dbc8ba9d4b480bbe64e341e69",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/candidate_train.complete.json",
+      "bytes": 329,
+      "sha256": "f512c6a86aa86324b078cdea0bb0aa5ab7fbc245c9c9b37bb421708eb3e85f3f",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/candidate_train.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/candidate_train.gpu-charge.json",
+      "bytes": 172,
+      "sha256": "e5173f6ab1ff1d491fd559db1dd263cd395ebea21f1d4578a6e02e6b6c81df2e",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/candidate_train.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/candidate_train.process.json",
+      "bytes": 1636,
+      "sha256": "ab4f288d48ef35f4c503c605c2b49464ab0734323e9aa33fca3e616c46b31bde",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/candidate_train.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/complete.json",
+      "bytes": 1134,
+      "sha256": "82121c284aac074b466f1d5a58a3e440fd672311d8558e81db9c0df77f07cdff",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/launch.json",
+      "bytes": 5411,
+      "sha256": "0170abe91c91d9eea89191b72e9293d83b589dda62494506d862e81846b660f5",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/launch.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/manifest.json",
+      "bytes": 2050,
+      "sha256": "7d01ecc1d35c98d0bafbde13a6e182e1fd9ba0d273433c7d5213bfdd4744e0cb",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/matched_schedule.json",
+      "bytes": 732824,
+      "sha256": "6b4281eb68cf07404205166402011930497e251b6d69c3caa8a6d2651b0da334",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/matched_schedule.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/preregistration.md",
+      "bytes": 5065,
+      "sha256": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/preregistration.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/readout.json",
+      "bytes": 4875,
+      "sha256": "3719bd291ca7a7a2625eca2075eac1eb2b5cd1906e978bf6fc7a59fe2be355f7",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/readout.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/readout.process.json",
+      "bytes": 2217,
+      "sha256": "cb7cbb85b4ce884d1f6e6702a7a3c78d8ccf7011ff58cc02941d6fc84f253138",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/readout.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/reference_train.complete.json",
+      "bytes": 329,
+      "sha256": "ac37690bccda6b00b7df8fcbba5e233b3f015953f29d6a945dcf7e459560948f",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/reference_train.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/reference_train.gpu-charge.json",
+      "bytes": 171,
+      "sha256": "65f0744ed7c4b843cd5cb5c994fb88b7398bd295496cd18a573366cce56ed23b",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/reference_train.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/reference_train.process.json",
+      "bytes": 1644,
+      "sha256": "cda5b626bd8505982d4bc5e4e27dbf4a82db4f39bb5c03051f472f6b6b8bca9e",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/reference_train.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/schedule.process.json",
+      "bytes": 1386,
+      "sha256": "b2f8e5524602096f934ea9336f90de187e42a10307c281a1a08d9739090dfa5f",
+      "reason": "Fresh confirmation complete bank, registered protocol, stages, charges and schedule",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/schedule.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/arena.games.jsonl",
+      "bytes": 433092,
+      "sha256": "bb97f201bad3db23d25fcb6ed34ade70447a8e65f9ce9f327abdd8ddcbcc9d86",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/arena.results.jsonl",
+      "bytes": 3829,
+      "sha256": "3ef19192d85cb225980f1752c7a0e5c7b36ca623ec16951d39555b551d3c2158",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/complete.json",
+      "bytes": 6435,
+      "sha256": "f89648b3bceb9e2d658de4c564b9c633155944b76591ba6d9a0e4f71186e5615",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/manifest.json",
+      "bytes": 1401,
+      "sha256": "9eaf7a73a3d79b20aec5c707e2f3066111d829ccc5099944bd070236f08ea18d",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/process.json",
+      "bytes": 6175,
+      "sha256": "02bce30a14776aa51bdc4e7df6cde3147ade7ceb71e433d8f93346b10399ebf7",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/readout.json",
+      "bytes": 3124,
+      "sha256": "3bec9d477266c6ac54e9f8f0280def3e6fc6de0da35d5965855589f419f3cf9d",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/readout.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/completed_numerical_review_by_launcher_author.json",
+      "bytes": 4738,
+      "sha256": "a6a8c240bb63b160bf093ffb0856f7920e75fba1a2eff7d1935aa6b1c78a7f74",
+      "reason": "Registered direct comparison and independent numerical review",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/completed_numerical_review_by_launcher_author.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/launch_manifest.json",
+      "bytes": 1401,
+      "sha256": "a75059d535b509fa79f19d6ce442006ab939a32282037bbfde299dd54e88d6bf",
+      "reason": "Registered direct comparison and independent numerical review",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/launch_manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/parent_numerical_review.json",
+      "bytes": 997,
+      "sha256": "9dcbdbc1206a7fd107ba56306ab7f4e867f86c1cd7beba53f935077b9ab13446",
+      "reason": "Registered direct comparison and independent numerical review",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/parent_numerical_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/preflight.json",
+      "bytes": 3247,
+      "sha256": "0edd32f7dd622d50209632cd4a75b0d0f1bd0e17a948f3e29059c6c12ddf94c7",
+      "reason": "Registered direct comparison and independent numerical review",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/preflight.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/preregistration.md",
+      "bytes": 6831,
+      "sha256": "2f003bb37fdc99d797bd2d79fd0703f275a198d1f0320d6e1fa3b61950373d31",
+      "reason": "Registered direct comparison and independent numerical review",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/preregistration.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_dose50_v1/audit_G50T05.json",
+      "bytes": 3655603,
+      "sha256": "a35bcf7db4fea05ed636346bf2bd9d6c63fae9d86cb5bcf3a0ff17a2444a8550",
+      "reason": "Published G50 target preparation and independent formula/lineage evidence; no training claim",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/audit_G50T05.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_dose50_v1/data_transfer_notes.json",
+      "bytes": 19428,
+      "sha256": "4b1d74ddafdf4e9443b23d51e0119bf991860525ad007fb79bae93b4cfc4f9da",
+      "reason": "Published G50 target preparation and independent formula/lineage evidence; no training claim",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/data_transfer_notes.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_dose50_v1/first_shard_integrity.json",
+      "bytes": 69041,
+      "sha256": "71d431fbb70b694c616cca206ba078b8250fc3f74bbb2bdb8e44b2e17adc8fe5",
+      "reason": "Published G50 target preparation and independent formula/lineage evidence; no training claim",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/first_shard_integrity.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_dose50_v1/mix.launch_integrity.json",
+      "bytes": 8725,
+      "sha256": "2f91661733fe1b9a2c43b18c0269681139da4536a7f4914e3bd39f733f4dd19b",
+      "reason": "Published G50 target preparation and independent formula/lineage evidence; no training claim",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/mix.launch_integrity.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_dose50_v1/mix.status.json",
+      "bytes": 1746,
+      "sha256": "2693e89441518156b56b81484ba55a10a641efe3f9a90c1d8b770debe713b4e0",
+      "reason": "Published G50 target preparation and independent formula/lineage evidence; no training claim",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/mix.status.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_dose50_v1/preparation.md",
+      "bytes": 3304,
+      "sha256": "08706292cf0c23156854772cfe2748aa314909c0ad72cbecc3a6e5deb5fbf1fe",
+      "reason": "Published G50 target preparation and independent formula/lineage evidence; no training claim",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/preparation.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_dose50_v1/preparation_independent_review.json",
+      "bytes": 5409,
+      "sha256": "21aa7958d85360c110d934208650426b40f4b50e3688327a2187a1bb29c91809",
+      "reason": "Published G50 target preparation and independent formula/lineage evidence; no training claim",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/preparation_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_dose50_v1/preparation_plan.json",
+      "bytes": 3839,
+      "sha256": "392c470b56957effc8c1e3bf941c0b4aaac8ca4284ec44a9738dfb3d5b3692fd",
+      "reason": "Published G50 target preparation and independent formula/lineage evidence; no training claim",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/preparation_plan.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_dose50_v1/publication_integrity_review.json",
+      "bytes": 1472237,
+      "sha256": "bc7cf4288e7b4c2f902eddfa02993ae520635d3b504fc2145ac3fdab1fb811ae",
+      "reason": "Published G50 target preparation and independent formula/lineage evidence; no training claim",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/publication_integrity_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_dose50_v1/run_preparation.py",
+      "bytes": 5033,
+      "sha256": "a1c9b364f4767cf9251ff10bce785deb82c65a8a4ef8e0955cb5d67e5a3abdc0",
+      "reason": "Published G50 target preparation and independent formula/lineage evidence; no training claim",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/run_preparation.py"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run01/G20T1.first-shard-integrity.json",
+      "bytes": 521,
+      "sha256": "c9c404a0e93c5c25a2d1c8209e67ab4b8ede0c5cae943f07c143d26e9e344a39",
+      "reason": "Earlier registered global plan, amendments and target audits",
+      "published_path": "scratchpad/bt4_joint20/global_run01/G20T1.first-shard-integrity.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run01/audit_G20T05.json",
+      "bytes": 3657618,
+      "sha256": "20e14a75c113338847a4ebca778a88103ef7759bf85ce69469a40a4429f408c5",
+      "reason": "Earlier registered global plan, amendments and target audits",
+      "published_path": "scratchpad/bt4_joint20/global_run01/audit_G20T05.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run01/audit_G20T1.json",
+      "bytes": 3652383,
+      "sha256": "3b2c17b05d731ece133ff87aad12188733697083d12d56ea67b6e1b7d99b4d0e",
+      "reason": "Earlier registered global plan, amendments and target audits",
+      "published_path": "scratchpad/bt4_joint20/global_run01/audit_G20T1.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run01/preregistration.before_runtime_correction.md",
+      "bytes": 8273,
+      "sha256": "aa6ba02ef62166b671674e824a9f3c13f5dfcf0ec73cb89a7a60628867854eca",
+      "reason": "Earlier registered global plan, amendments and target audits",
+      "published_path": "scratchpad/bt4_joint20/global_run01/preregistration.before_runtime_correction.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run01/preregistration.md",
+      "bytes": 8598,
+      "sha256": "0efd4e6e5217237b90ebeffa33edf400019b02b360258b32233a2e3366bc1565",
+      "reason": "Earlier registered global plan, amendments and target audits",
+      "published_path": "scratchpad/bt4_joint20/global_run01/preregistration.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run02/G20T1.published-middle-shard-integrity.json",
+      "bytes": 4990,
+      "sha256": "76cafc285ec00dffc57ad33d3b9d97f764a7b2d870697f7eed1c272fad95c12c",
+      "reason": "Matched training schedule and target lineage underlying global screen",
+      "published_path": "scratchpad/bt4_joint20/global_run02/G20T1.published-middle-shard-integrity.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run02/README.matched-schedule.md",
+      "bytes": 4058,
+      "sha256": "6d40d26863c401466ff8d2f7e14714a003c9061898499c32ae10688d63f95974",
+      "reason": "Matched training schedule and target lineage underlying global screen",
+      "published_path": "scratchpad/bt4_joint20/global_run02/README.matched-schedule.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run02/global_target_shape_comparison.json",
+      "bytes": 1953,
+      "sha256": "b58ad7fddc206e2da7206716f56b84f6351f9ef1b7e9504ab1f320f821c6edb4",
+      "reason": "Matched training schedule and target lineage underlying global screen",
+      "published_path": "scratchpad/bt4_joint20/global_run02/global_target_shape_comparison.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run02/matched_schedule_E0_S0.json",
+      "bytes": 732841,
+      "sha256": "5cb4a1fdd2b2f6f148c3662c602b8d590a817b8b15119fa767d5e43d26658e1b",
+      "reason": "Matched training schedule and target lineage underlying global screen",
+      "published_path": "scratchpad/bt4_joint20/global_run02/matched_schedule_E0_S0.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run02/matched_schedule_published_G20T05.json",
+      "bytes": 732189,
+      "sha256": "3fae2356709fc24697d66129bb5d06cae95971f0ba3724edba4fd4a27b1f8b6e",
+      "reason": "Matched training schedule and target lineage underlying global screen",
+      "published_path": "scratchpad/bt4_joint20/global_run02/matched_schedule_published_G20T05.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run02/matched_schedule_published_G20T1.json",
+      "bytes": 732189,
+      "sha256": "b1502f9fa2df52d9458ee2b0d56540fe91164a217c479be99ab03b62c3e29bca",
+      "reason": "Matched training schedule and target lineage underlying global screen",
+      "published_path": "scratchpad/bt4_joint20/global_run02/matched_schedule_published_G20T1.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/E0.completed_25_100_independent_review.json",
+      "bytes": 2040,
+      "sha256": "0bccc8df3fdab086df6c081df35b3e007cf278afc31ce87fc230520d1b6ad4c4",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/E0.completed_25_100_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/E0.completed_trio_independent_review.json",
+      "bytes": 3007,
+      "sha256": "d89ba4517f6e2ee9f704767f28f7b52be1efc92d1aab3fd32537bd64fe0986ec",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/E0.completed_trio_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/G20T05.completed_training_independent_review.json",
+      "bytes": 14163,
+      "sha256": "8070cb59d56ed90232268714ac29c86c0cc1bc1a5c9de6ba0c0ea9ddf1286c10",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/G20T05.completed_training_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/G20T05.completed_training_stage_chain.json",
+      "bytes": 2290,
+      "sha256": "a2c47341fea8188ed7bf46181635df142ec21ec226a2379feecc75fe252dc8e6",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/G20T05.completed_training_stage_chain.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/G20T05.materialization-readout.json",
+      "bytes": 3806,
+      "sha256": "0c8a7df183d099f5b34d9780d3fb77f58129f22e1ecba2f268e101aa90372997",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/G20T05.materialization-readout.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/G20T05.published-middle-shard-integrity.json",
+      "bytes": 5079,
+      "sha256": "d8edcf109907fd2fa436c9bafe5e834c05e96e1cdc0c42b5364c5dbec7160102",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/G20T05.published-middle-shard-integrity.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/G20T05.s100.completed_independent_review.json",
+      "bytes": 10626,
+      "sha256": "cd2dac4ee3c99b12f5ef6e982d687c04fdceb298b992d4c76d3d81dc6dda6d4f",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/G20T05.s100.completed_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/G20T05.s25.completed_independent_review.json",
+      "bytes": 5893,
+      "sha256": "3a01eded4b93ad75ee7e05c71c1714f24b6f8fa2decf3e47ee0d6ae5dad82448",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/G20T05.s25.completed_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/G20T1.completed_25_100_independent_review.json",
+      "bytes": 2934,
+      "sha256": "0b61a32cc3a8b7ff6bcc0ff12d761f3b293266951734630e33bd1138dd0c56c1",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/G20T1.completed_25_100_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/G20T1.completed_25_independent_review.json",
+      "bytes": 2601,
+      "sha256": "914b6074630938ac6ee14d9618f594da820481b4c672271596ad08077ab88bc9",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/G20T1.completed_25_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/G20T1.completed_trio_independent_review.json",
+      "bytes": 3319,
+      "sha256": "2b7c699a609086c2eebf27d3cbb78601d062a83ca952c85432417b6153e319af",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/G20T1.completed_trio_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/baseline/S0.train.adopted.json",
+      "bytes": 635,
+      "sha256": "5faef9c1ab6ddc430152c058d46dd18033a9acd37c5e3db0494651f84a4245b2",
+      "reason": "Matched S0 baseline provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/baseline/S0.train.adopted.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/baseline/S0.train.complete.json",
+      "bytes": 182,
+      "sha256": "86d4362a13bea1d9becb8f01f49980708f50d075b50e9d162062de179393103d",
+      "reason": "Matched S0 baseline provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/baseline/S0.train.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/baseline/manifest.json",
+      "bytes": 4186,
+      "sha256": "7cea501de5c4de219b9b5e1920391f5c07bfbaabc4f05676e0c75c9bbe6ea9ed",
+      "reason": "Matched S0 baseline provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/baseline/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.1788665175885499612.gpu-charge.json",
+      "bytes": 144,
+      "sha256": "d6d7725752abbe974b37dd4704565ef40ab49d6d387538dacfdc7f92bc30aae3",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.1788665175885499612.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.complete.json",
+      "bytes": 459,
+      "sha256": "7fd038c07586448b63fab6cae4b17f98b2a0509e0cdcb0bc489214d8a0a12103",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.games.jsonl",
+      "bytes": 432920,
+      "sha256": "5302737b2d66405024c54348ca11ac774bc663653cdc6b30e525e975b99df71e",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.process.json",
+      "bytes": 1265,
+      "sha256": "a554c612d2632506c26e41e2b8e70f2422738eae966b247ed8b5b4c5179c7da2",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.results.jsonl",
+      "bytes": 3837,
+      "sha256": "2201d9c9a0079eb64db0e6a37875f2e4d85d986e26917fc2206e977d567acbaf",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.1788662174222006748.gpu-charge.json",
+      "bytes": 143,
+      "sha256": "c1d98d1cc6698c81d3ed094841733fa8542f50dc1acb9e9f261e05fab518386f",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.1788662174222006748.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.complete.json",
+      "bytes": 459,
+      "sha256": "72f1b9da0a2e8166044aa5fad5802844f76d11e4084f64abfe145a68b6485811",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.games.jsonl",
+      "bytes": 434269,
+      "sha256": "28dafc36894faae1b4cad06da5e4cdf9b18c4043ccdf8bb7741b0f9ad7d8b5d6",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.process.json",
+      "bytes": 1261,
+      "sha256": "b1d3541acd8666a8ddb74234bf852cd5d00bd5726db58116fa43a3a7cd47d216",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.results.jsonl",
+      "bytes": 3830,
+      "sha256": "7e12973c5ff79d7358d043ae08c821d64544c0869fdb70be22bacb91a8f9b847",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/completed_integrity.json",
+      "bytes": 1125,
+      "sha256": "ccd6e85db141b372cc7fdc127e286436e8ff7cc6b4fdbd38e0d5ef92aef6bb60",
+      "reason": "Prior-temperature calibration readout/review",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/completed_integrity.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/completed_readout.json",
+      "bytes": 7381,
+      "sha256": "d9300b35650ef4d555de07c5d548be5a32b489c222649971b88fcfa2cef841bb",
+      "reason": "Prior-temperature calibration readout/review",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/completed_readout.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/decision.json",
+      "bytes": 2210,
+      "sha256": "24b0d2399eb927a2e44633c539a39291083c44b587427b834aee3aa25535abfb",
+      "reason": "Prior-temperature calibration readout/review",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/decision.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/independent_review.json",
+      "bytes": 9145,
+      "sha256": "f40814dab268b3bddb49e66cde92b103cf8494a42747bfc57e81a1d095ece592",
+      "reason": "Prior-temperature calibration readout/review",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/manifest.json",
+      "bytes": 4758,
+      "sha256": "caa697dd67592787ad6e2e9fa2d13136b03bbd5f073667480e662de59849225b",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration_preregistration.md",
+      "bytes": 4005,
+      "sha256": "402ee38ba734beb9582d3350b61981b8328f8b952f8260b3949ceedc3d2250b6",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration_preregistration.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/completed_S0_G20T1_stage_chain.json",
+      "bytes": 3410,
+      "sha256": "4fe66b0dce96e9618df726d00e2d3e391122246cf04faca8b1dadf7f8e977397",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/completed_S0_G20T1_stage_chain.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/completed_full_screen_independent_review.json",
+      "bytes": 25028,
+      "sha256": "c7a84c318c269312ade96f623cd4b5a9486f95c388207c86e2035d1185b5e35c",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/completed_full_screen_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/completed_full_screen_readout.json",
+      "bytes": 33937,
+      "sha256": "07e59cb0803e077379f6946e4bae7176681f4ff20d424aaf0a6c552971375f24",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/completed_full_screen_readout.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/completed_full_screen_readout.receipt.json",
+      "bytes": 8140,
+      "sha256": "c5c783a5587664b9a9b801d65a733f37b678d72cd996aae6a68c5d2aaa4286f9",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/completed_full_screen_readout.receipt.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/global_vs_exact_ties_exploratory.json",
+      "bytes": 2732,
+      "sha256": "36c05e5806db8c29cf9a24193640b5284a0038da43c65f4671a2df6f92de21b4",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/global_vs_exact_ties_exploratory.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/global_vs_exact_ties_independent_review.json",
+      "bytes": 4931,
+      "sha256": "6a429b5a31742d0e36b0ae8b7eeab9c50e6da711e83b366be982ee429f9d049b",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/global_vs_exact_ties_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/matched_schedule_completed_G20T05.json",
+      "bytes": 732280,
+      "sha256": "5bb8e1173d53c1f300e4b10a45c473c2df2e13e34e4b9ccb5d0005640e3fa0fe",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/matched_schedule_completed_G20T05.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/preregistration.md",
+      "bytes": 7043,
+      "sha256": "4457c4f8ba407a2b16ad31f26dcebebc41e97760a82bbc5fe27a7cbc78c884e8",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/preregistration.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/recipe_selection_after_global.md",
+      "bytes": 3392,
+      "sha256": "84670d1cc9244ade86b128d9378fadd903e5f8262943188e7d26683d0863524f",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/recipe_selection_after_global.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/recipe_selection_after_global_independent_review.json",
+      "bytes": 1351,
+      "sha256": "ea45eac9ceb195d31862147d919bc826f94f4ebbfe209fccf0d82f018442dbfa",
+      "reason": "Global full-screen/scientific training reviews and planned interpretation",
+      "published_path": "scratchpad/bt4_joint20/global_run03/recipe_selection_after_global_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.1788670615248494747.gpu-charge.json",
+      "bytes": 144,
+      "sha256": "a4de24bd9dd15ddf11e21bdeb44b5dbd1a0fe1fc81c464cce1cb3bfef204cee7",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.1788670615248494747.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.complete.json",
+      "bytes": 364,
+      "sha256": "d434c149662d6bb699e7ed4a760c9a145d3ea35ab9546109ab5e1801a3e8ad68",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.games.jsonl",
+      "bytes": 433807,
+      "sha256": "971958cf1882ace0596827217efa811f20f380ca8a25d904bc557175b95bad08",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.process.json",
+      "bytes": 1248,
+      "sha256": "3656e51fa740b5fcb71aed685846084e5372f5fb77039febb5b41d13905ddb6f",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.results.jsonl",
+      "bytes": 3807,
+      "sha256": "432fc78f1773edb9c78ff51e4439955d4a65a7b3062a0b42468c9cce5b3dc3e3",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.1788668382616052578.gpu-charge.json",
+      "bytes": 143,
+      "sha256": "123a07456619e7a88e0966ed13a651a7831cf93c93f79280771fa2975f753afc",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.1788668382616052578.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.complete.json",
+      "bytes": 364,
+      "sha256": "d83a84ee2d53cd0f8589c7159387393366dbb8a880465702770c3dfd818a3019",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.games.jsonl",
+      "bytes": 433352,
+      "sha256": "55af2ba812271130a88a45ffbdb09f14b5146c627d39330bf3cf376bf79088e4",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.process.json",
+      "bytes": 1244,
+      "sha256": "3cf5794802787372b8070da45b8c3352076db7c80f7d57657a90ea080222efe8",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.results.jsonl",
+      "bytes": 3800,
+      "sha256": "f34d0f6c1f3258a7c5df4e53939712accc3367e759472034b490e0c0092c4710",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.1788673901620452628.gpu-charge.json",
+      "bytes": 140,
+      "sha256": "ddd1f384fd28abe2935924a907e618e349e010f87fda82c391771aa86a44ae59",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.1788673901620452628.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.complete.json",
+      "bytes": 364,
+      "sha256": "b3fd465bdc34b541d37ea8c4583c1d54a139a8684c82100ac07cd322f61cbfa0",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.games.jsonl",
+      "bytes": 434448,
+      "sha256": "20ae76e774408cb249ee9ff4858be985e790debd95620d41b60f44cb4587d342",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.process.json",
+      "bytes": 1248,
+      "sha256": "884a7f6fae6112bc1f59859682d91ad44bf1fffce2127fd4e66513ad14840246",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.results.jsonl",
+      "bytes": 3804,
+      "sha256": "ac4a5ab068dcecb692db4cea9d8c7665b52324e15638297f72377a313c83181c",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.1788703026990973835.gpu-charge.json",
+      "bytes": 148,
+      "sha256": "a6b9a93de751377d0db406df2f4c45fdb38d5b9faeec61c149b0306f42f3cfb5",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.1788703026990973835.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.complete.json",
+      "bytes": 364,
+      "sha256": "e9db9db7598be1fce7412db99a1fecd61f980239570861108d75cdd9d46f06f8",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.games.jsonl",
+      "bytes": 433655,
+      "sha256": "46b76edc631381320bfb99d7fb2d1e9d62c33beec2e9db4cf6afdefdb9829d36",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.process.json",
+      "bytes": 1263,
+      "sha256": "02bd6345f58754518a0afeed6a10daf7147f341b8807475c2f351764a0f33755",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.results.jsonl",
+      "bytes": 3832,
+      "sha256": "0d73953cb5fb8f8f12685545f19dad583783ada15120688966f3197d4b9a24c0",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.1788701325825937234.gpu-charge.json",
+      "bytes": 144,
+      "sha256": "236c287459d18b28caa4dd9d53b46e46977b0f3eb9d7469244ce336f041a8fc9",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.1788701325825937234.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.complete.json",
+      "bytes": 364,
+      "sha256": "213eda9aecbc0d4083e17cfc426842780ba933c63add44ab972f601663e49d12",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.games.jsonl",
+      "bytes": 433355,
+      "sha256": "031c1d4cd6e8fb4cb66f85c8b7103bf3c15f3b811aa171ef8f9f0e7d93ad0a87",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.process.json",
+      "bytes": 1259,
+      "sha256": "c954d3a448aef910e366b1be8510c8f0f43928c0d2cacd3e91b1359618d324e6",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.results.jsonl",
+      "bytes": 3822,
+      "sha256": "aa1b024d0a0a338f240dd037ec2e6771bd6650c2551b631d578beb52583f320f",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.1788705648731134302.gpu-charge.json",
+      "bytes": 147,
+      "sha256": "1402b0cf2af2adf93ae8b2134deeaec8456baf47cf384da47c8dd6cf8cf09e39",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.1788705648731134302.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.complete.json",
+      "bytes": 364,
+      "sha256": "b80636a9c3b68491ae051a7720691195d67aaaba3e5dfca05a1fa923839db40d",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.games.jsonl",
+      "bytes": 434251,
+      "sha256": "23c99fbdc5b2a3a5a9b7d305d118987c2b87a0405a3aa1c2d0590c4e9be349b9",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.process.json",
+      "bytes": 1263,
+      "sha256": "a8903a41dc85ce2db8c5f302637aadff6a7f7223ccbff917569ae8ac78a0fe4b",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.results.jsonl",
+      "bytes": 3831,
+      "sha256": "ea70ac2d3059de7e023a99c621efc6c932c93845ca4708e7b400ea4218278ccd",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.train.1788691634462496784.gpu-charge.json",
+      "bytes": 139,
+      "sha256": "23bd1ff50a2c42019933bc2440e72b6c14b8fa757f8097f3715bf92df7eb7527",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.train.1788691634462496784.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.train.complete.json",
+      "bytes": 182,
+      "sha256": "cd5910aa76ef2e25648e0a9216e9b37843b321e37c18a7843ccd6b91052f0f2f",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.train.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.train.completed-integrity.json",
+      "bytes": 703,
+      "sha256": "c19aa7a31ce276185a3ae021c202270c219ae4180ac42eca80026211db3a5b61",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.train.completed-integrity.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.train.launch-integrity.json",
+      "bytes": 2649,
+      "sha256": "042f677a7ef002cb9b7f3e10646a975708ef3ca7c5d3b02d346527803d210170",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.train.launch-integrity.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.train.process.json",
+      "bytes": 669,
+      "sha256": "be0141999a44bb209f5e43462648d9f7c6731d41309d14d3328badf13d93c33c",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.train.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.1788681859907069204.gpu-charge.json",
+      "bytes": 146,
+      "sha256": "c6fa752d43f405dd53ffdf1cbe78beb1723389decafbd394caec47684f28de9c",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.1788681859907069204.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.complete.json",
+      "bytes": 364,
+      "sha256": "5c5edef66a0fdf7db3f46272794839ca79794cf2e2f4171694736ef11943c72b",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.games.jsonl",
+      "bytes": 434250,
+      "sha256": "e9bafbc59a65314727b8e5ed783d2ede7f199fd8ebebc8ba2b1d8ec0bd6c3f1e",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.process.json",
+      "bytes": 1258,
+      "sha256": "282410429f23b83f64bc30cc91bfa3b4dcbbb1d1de03d840ee5bb3c4cc803259",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.results.jsonl",
+      "bytes": 3822,
+      "sha256": "bef0bed3e6c03ac2e7b81cdcafa17ada633fe8fce79c4ae55fd9757c2e0beeb7",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.1788680058844447221.gpu-charge.json",
+      "bytes": 146,
+      "sha256": "c6c502e6c98a2378b8d80938da76156003da6a9093b03e290e2c4ce6ca937bc7",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.1788680058844447221.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.complete.json",
+      "bytes": 364,
+      "sha256": "6bf2cdf6202ed7b67803279fa28eaade3ea6e1690ec967e124a02447ec47f508",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.games.jsonl",
+      "bytes": 433995,
+      "sha256": "a60082176666207d7898ab58652c6218bde65515360e75b993d33437f07cfe54",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.process.json",
+      "bytes": 1254,
+      "sha256": "9dea6f6ae5e418aa2215a08229e8645407fc43f0691a33bfbac230e65d35a211",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.results.jsonl",
+      "bytes": 3815,
+      "sha256": "a905b057de916fb9337d2dbc184a1829a3143a87328ebd489846a65411736fe2",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.1788684906985860279.gpu-charge.json",
+      "bytes": 146,
+      "sha256": "db8074c077dbf0e5e6ca792ab4ecdda68b592f6c2efc087c64f1b53f58f25345",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.1788684906985860279.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.complete.json",
+      "bytes": 364,
+      "sha256": "c65025dcc4da7d47830519843bdce0059e481a24860e828f1272f251372f2950",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.games.jsonl",
+      "bytes": 434610,
+      "sha256": "21fd37e59e92e300ad0a8c161cad7971f280d6f95b8455820e8969f2e868aeed",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.process.json",
+      "bytes": 1258,
+      "sha256": "bd8236d25bbda350ad71130a2997c97c3b6fa0f172baa154301941084e18aa6c",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.results.jsonl",
+      "bytes": 3823,
+      "sha256": "fc2f3a72e2282a3cebeb41c5263c26a5530301ce348b46501ae9e9be978207f2",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.train.adopted.json",
+      "bytes": 642,
+      "sha256": "309d05c05f5d0a440382ad2dc1cbc747527d792cc788fa7455a353661a0a42f8",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.train.adopted.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.train.complete.json",
+      "bytes": 182,
+      "sha256": "17200de5c287eaadf9ca9ce4b3033ad402b965b230adad5d59c52b4ea222463d",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.train.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/manifest.json",
+      "bytes": 4883,
+      "sha256": "64b45d136d7dd08c59791e14714c6cf2605ddd676cb538e478946ff814994132",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/C20T05.completed_epoch_identity.json",
+      "bytes": 5655,
+      "sha256": "9ec05c4f005e9ff7773fc126e480ac9171b958b5684b9b767af091ecfb6fcf57",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/C20T05.completed_epoch_identity.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/C20T05.completed_epoch_independent_review.json",
+      "bytes": 6746,
+      "sha256": "7ed7bd8863db4fb7bf2fa98016b7cdb269b751dc696c4f8827acc58f8cae5d5a",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/C20T05.completed_epoch_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_independent_review.json",
+      "bytes": 10417,
+      "sha256": "fc230b5db0ef7eecb686ae58220fb7b4a69ae358d9ed4ec48c7a419c6a6cbc76",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_readout.json",
+      "bytes": 12074,
+      "sha256": "2dde2ce5b46bc69b662be129b3752ffe37f93aa383f2d3bd06dbeb5d581a7257",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_readout.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_readout_provenance.json",
+      "bytes": 1184,
+      "sha256": "ecd281d27e6ce9524299c1374858747ccd7fc7ce11de16f6873e2242af2ca8c5",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_readout_provenance.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s100_independent_review.json",
+      "bytes": 5450,
+      "sha256": "7a840f31bac2bc247ad03d2663f081cb951c082e2e6ee39b9b498bb3c4f9f920",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s100_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s100_readout.json",
+      "bytes": 5128,
+      "sha256": "353d95c0f94cad1c1be1f9b23f6449d8cad50c6a41523c2b9ab5415f5cd6c12e",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s100_readout.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s100_readout_provenance.json",
+      "bytes": 1462,
+      "sha256": "c0b47ec5fc1a540f9018b9e8792691536ae221f3077599a764abfb4ebf182e6d",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s100_readout_provenance.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s25_independent_review.json",
+      "bytes": 8556,
+      "sha256": "b274ea656c08d9fbaf20b3bb97df3b9d7a794281ff99b353fdac2185ffde4ddf",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s25_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s25_readout.json",
+      "bytes": 5105,
+      "sha256": "f503ef802628da01cbf3720ef001be7cfcd5f9dfdafc33e558bbdd5fda0f6240",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s25_readout.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s25_readout_provenance.json",
+      "bytes": 1310,
+      "sha256": "7c88ad8998c83067d663133eb2e8d643379c03c9b5e0a9a7cbbbb44202e22b3e",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_s25_readout_provenance.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/direct_screen_launcher_independent_review_final.json",
+      "bytes": 4348,
+      "sha256": "ebaffea2f2398fe294591fdd8aeb6380cb46864f91a4fa06faf9ef03c4ac1049",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/direct_screen_launcher_independent_review_final.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/matched_schedule_completed_C20T05.json",
+      "bytes": 732281,
+      "sha256": "1f1529fa2247d56ad4cf457a8cb5bae0929c4ea917e2aab0c09d81fbaeedccbd",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/matched_schedule_completed_C20T05.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/optional_sharpened_ties_data_qualification.json",
+      "bytes": 70462,
+      "sha256": "48897206e4af6d37bb4fa351cebe1e1d4b493e07b63126fd8a65332bd85af8c1",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/optional_sharpened_ties_data_qualification.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/preparation/C20T05.materialization-readout.json",
+      "bytes": 3319,
+      "sha256": "7df9514f429a37ed408d71260ff2931a912bbf34bbc0315e4079a97cd01d28c1",
+      "reason": "SF-close target construction qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/preparation/C20T05.materialization-readout.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/preparation/C20T05.published-middle-shard-integrity.json",
+      "bytes": 5001,
+      "sha256": "21cf5fb955e23daf6e1f2c2085681bb17657f8d2e56c91ad45ecd695ff03ac8d",
+      "reason": "SF-close target construction qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/preparation/C20T05.published-middle-shard-integrity.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/preparation/independent_materialization_review.json",
+      "bytes": 945,
+      "sha256": "2ad2d142b8617375b75744157daa64599ec9c93af5c4176dab88597f85003fbd",
+      "reason": "SF-close target construction qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/preparation/independent_materialization_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/preparation/matched_schedule_published_C20T05.json",
+      "bytes": 732191,
+      "sha256": "839c27bdbebd0c7619f1a9ab7e01f5e427885518622357880d90af2eaeb4d85b",
+      "reason": "SF-close target construction qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/preparation/matched_schedule_published_C20T05.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/preparation/scheduling_amendment.md",
+      "bytes": 4693,
+      "sha256": "a60d1cb9a45aa63aef7f2961ae1943c84c411f824de153b4058a4f422b9720fc",
+      "reason": "SF-close target construction qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/preparation/scheduling_amendment.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/preregistration.md",
+      "bytes": 8766,
+      "sha256": "c4c5a0b861efce888a62c9fc085d61509da0ab805790e108f0f293ea33d029b4",
+      "reason": "SF-close complete readouts, independent reviews and source/schedule qualification",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/preregistration.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.1788723645349374826.gpu-charge.json",
+      "bytes": 149,
+      "sha256": "3165e93f2adae69a5504bf80cc77f75880bbc41d65b1df90c0164946d9bb1ce8",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.1788723645349374826.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.complete.json",
+      "bytes": 364,
+      "sha256": "bbeefc69de0e2db2ea697500c77739bbe46c25ed3957909063873a2cc31f2e6c",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.games.jsonl",
+      "bytes": 433023,
+      "sha256": "60b070d2f45bb05d52634bfc56675949d86ce9b982c1d59c454c5210851078ae",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.process.json",
+      "bytes": 1267,
+      "sha256": "9840215515462cfee37ff969316e311b65f63494688f7ddb3d2c2d1af338f8c4",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.results.jsonl",
+      "bytes": 3838,
+      "sha256": "544930e39195af6c5e83dc02c18afc298448e5f26f0d47e9b160b8bfa7896d13",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.1788721768891951572.gpu-charge.json",
+      "bytes": 147,
+      "sha256": "fa6fe116461c7466fee117be95046538f0b7149f627951f10ccb39dfbb614e39",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.1788721768891951572.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.complete.json",
+      "bytes": 364,
+      "sha256": "86fd3402ea63d61cd70f91786c3d797f91419f66afcf369efd0c0db6fe247c68",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.games.jsonl",
+      "bytes": 432369,
+      "sha256": "7143d2d508dabb90c04d9527fb3c2d91b4bce711dae94c16ace8aa9058141253",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.process.json",
+      "bytes": 1263,
+      "sha256": "c2b2c1f51e670e526ddef11d2ce80fe3cc5be916d55354e627f9e1aa531e4095",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.results.jsonl",
+      "bytes": 3829,
+      "sha256": "d54fcf0c7fa417afeb4c032e874e8b0736128458a9559bb546c5e00d9dab6361",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.1788726147530882878.gpu-charge.json",
+      "bytes": 148,
+      "sha256": "751af67b5103bca3e7e516ee9b220d1f4276f02d4a021655cfea89886b5e39a3",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.1788726147530882878.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.complete.json",
+      "bytes": 364,
+      "sha256": "332fbb8a168285ae38c6566bb29dd12c44b28fcebea1ea927b7767b9e9370de2",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.games.jsonl",
+      "bytes": 433544,
+      "sha256": "d7af69c0371904b4ce93ee2d75e6be3459b7f0d46ce863f12c076afd2d41f1fe",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.process.json",
+      "bytes": 1267,
+      "sha256": "027f2ac346b72b8f703ffd4874f1cc3e9fd4f38af41e0d46503e2b51aae2a0a2",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.results.jsonl",
+      "bytes": 3837,
+      "sha256": "52032ab53290dddaeb00acfff0f76b2f8a78f92f31c9930b92d0dc868f6b3bb3",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.1788712072203493219.gpu-charge.json",
+      "bytes": 138,
+      "sha256": "9ae1c7034758452e62ac25eb4dbf49eab0ba4c993ff8bfe1ca0de1cd1b7d16b4",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.1788712072203493219.gpu-charge.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.complete.json",
+      "bytes": 182,
+      "sha256": "abfe0bd7885620af8cdd494025403c66b3357dfe62a9ad2eeab0fdfb8a726008",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.launch-integrity.json",
+      "bytes": 4558,
+      "sha256": "e94cea309322e309addb5a514382b3a064e6ae326aab385f5f3781b36f62335a",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.launch-integrity.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.process.json",
+      "bytes": 671,
+      "sha256": "f93b46abfd6a8b9f82f8fb6637d7574d372feb52f62abe0dd3b0d70a810a77df",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.train.process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json",
+      "bytes": 7513,
+      "sha256": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+      "reason": "Complete arena bank and producing protocol/training provenance",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/author_validation.json",
+      "bytes": 5811,
+      "sha256": "d4899afdcddbdfc848da530ef240c01c9d8d47c7cf6c4e2baf3ca77efffe344b",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/author_validation.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/completed_screen_independent_review.json",
+      "bytes": 10991,
+      "sha256": "245a9baf86c36ebeebefa0ccfeb54dc0b72c8f3b08e474eda78cdf264eba0973",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/completed_screen_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/confirmation_selection_draft.md",
+      "bytes": 3936,
+      "sha256": "24d95cd20aa2b1f71e1352763c2cf6a7d7afb8ccde3f458af922c6a9ddb9ae22",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/confirmation_selection_draft.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/confirmation_selection_independent_review.json",
+      "bytes": 3563,
+      "sha256": "de1c9a2e3ed04206c5e909f9cff00b986b7220612ed6b46ec1ee8bd7d8b1b4e4",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/confirmation_selection_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/confirmation_selection_revised.md",
+      "bytes": 5503,
+      "sha256": "ce7866fbb304180ff2a16abda84105182f5bdf73175b769c626ea77c7096352f",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/confirmation_selection_revised.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/confirmation_selection_revised_independent_review.json",
+      "bytes": 1242,
+      "sha256": "c806b962f7a083752847461e3583802102320c2cf45989082b021342b7603c85",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/confirmation_selection_revised_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/arena.games.jsonl",
+      "bytes": 432963,
+      "sha256": "ec8d11a419b026b6c334705065a96834e54deda3378c29d94c72871f1247bfe6",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/arena.games.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/arena.results.jsonl",
+      "bytes": 3843,
+      "sha256": "926826c673c77e2961b2c98870741c7321e64dfde71aafbdecd90ebf6b7ac76c",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/arena.results.jsonl"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/complete.json",
+      "bytes": 6500,
+      "sha256": "88db42f679a500bf0b159fcb8339ec59d3408a76b29fa2040c83a2b1104a0578",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/manifest.json",
+      "bytes": 1630,
+      "sha256": "60299d79c9341e9d27689f85035fb14335b1f99ddcf6cd2203f2b28df5f231a7",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/process.json",
+      "bytes": 6240,
+      "sha256": "0909ad7479ccf0785ad3d9ba4391df9c2b1313ecb58668c641fa64238f95a361",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/readout.json",
+      "bytes": 3126,
+      "sha256": "b22f4baa0ca051de8a856a0498bd4166e5b19a1a983c64116758e87705d13973",
+      "reason": "Complete direct screen raw bank and protocol/readout receipts",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/readout.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena_manifest.json",
+      "bytes": 1630,
+      "sha256": "60299d79c9341e9d27689f85035fb14335b1f99ddcf6cd2203f2b28df5f231a7",
+      "reason": "Sharpened-tie realized training/source schedule",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena_manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/complete.json",
+      "bytes": 299,
+      "sha256": "8eec68ab977ed3d375da193f08fe114c60a685a38224ae3820297c5850f7f79f",
+      "reason": "Sharpened-tie realized training/source schedule",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/manifest.json",
+      "bytes": 2703,
+      "sha256": "c5fb774dd5ca3c3b776767956a6e09561a73b2f863227ec7d907e3147dd91da5",
+      "reason": "Sharpened-tie realized training/source schedule",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/realized_schedule.json",
+      "bytes": 732277,
+      "sha256": "4666179fe24887347e87154148e45bb56b59dc7bfffd3bdbdda0a3c299af9cd6",
+      "reason": "Sharpened-tie realized training/source schedule",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/realized_schedule.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/schedule/manifest.json",
+      "bytes": 2703,
+      "sha256": "c5fb774dd5ca3c3b776767956a6e09561a73b2f863227ec7d907e3147dd91da5",
+      "reason": "Sharpened-tie producing stage argv and completion",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/schedule/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/schedule/process.json",
+      "bytes": 1871,
+      "sha256": "53c20c35f547d67e4cd29d3b08d38cc81e7936428818a9dfb25d68edecaeb2f8",
+      "reason": "Sharpened-tie producing stage argv and completion",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/schedule/process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/training.complete.json",
+      "bytes": 3193,
+      "sha256": "3a19abb9d67edd83b07b13295db7d6ec9c6fecae82e15baf9a9b41fbce0afe0a",
+      "reason": "Sharpened-tie realized training/source schedule",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/training.complete.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/training/manifest.json",
+      "bytes": 2703,
+      "sha256": "c5fb774dd5ca3c3b776767956a6e09561a73b2f863227ec7d907e3147dd91da5",
+      "reason": "Sharpened-tie producing stage argv and completion",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/training/manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/training/process.json",
+      "bytes": 4988,
+      "sha256": "ebd32676b90151b5c1429661654af61482674e7249a23e66615a46aa96b67ed7",
+      "reason": "Sharpened-tie producing stage argv and completion",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/training/process.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/launch_manifest.json",
+      "bytes": 2703,
+      "sha256": "c5fb774dd5ca3c3b776767956a6e09561a73b2f863227ec7d907e3147dd91da5",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/launch_manifest.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/launcher_independent_review.json",
+      "bytes": 5029,
+      "sha256": "a68160539af5087953f7cd3faf2c1af1ce77ae3a685264d21951336546aad044",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/launcher_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/preregistration.md",
+      "bytes": 7846,
+      "sha256": "bba0d5c47c2715714dcf37f871ff9923aade25e98e75d82fb17998aa6cad0279",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/preregistration.md"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/prospective_schedule.json",
+      "bytes": 732721,
+      "sha256": "1aca8a7dfd7e2917927560c9eea285fe26e3db591ff8ebdd2cfa00dfba08cfd8",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/prospective_schedule.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/prospective_schedule_parent_review.json",
+      "bytes": 2104,
+      "sha256": "1e42fecebb50e9b27d749186dea9e49e8e127f70e4836c2ceaf683f046beb2a3",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/prospective_schedule_parent_review.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/runtime_probe.json",
+      "bytes": 1338,
+      "sha256": "ff24211990e107262311022058c34a46b2258e2b889615bec2550c2cf74b4815",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/runtime_probe.json"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/scientific_independent_review.json",
+      "bytes": 1719,
+      "sha256": "5c65b4049f11b22befa7fc3749e6a57003304952bddb9bb0cf3260dd9140fd18",
+      "reason": "Sharpened-tie protocol, completion, conditional selection and qualification",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/scientific_independent_review.json"
+    },
+    {
+      "source_path": "scratchpad/tailrl_bootstrap_v1/offline_integration_notes.json",
+      "published_path": "scratchpad/tailrl_bootstrap_v1/offline_integration_notes.json",
+      "bytes": 1658,
+      "sha256": "bedb08efaa044231aba79faad3cd6883258806b5ffd26bdc12b7de41504df06f",
+      "reason": "Read-only TailRL integration boundary cited by synthesis; no training claim"
+    }
+  ],
+  "total_files": 269,
+  "total_bytes": 70085935,
+  "raw_outcome_banks": [
+    {
+      "source_path": "scratchpad/bt4_joint20/af_run01/E0_sampler_diagnostic.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/af_run01/E0_sampler_diagnostic.games.jsonl",
+      "sha256": "f2080369e113ac381b554736e138d20cdd958045953f8999a796df052848be73",
+      "record_kinds": {
+        "header": 1,
+        "game": 384
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.games.jsonl",
+      "sha256": "88d7c7a915ca6c9889f55237462862bacf0c6baae6373eca67d668276a3a69f6",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/arena.games.jsonl",
+      "sha256": "bb97f201bad3db23d25fcb6ed34ade70447a8e65f9ce9f327abdd8ddcbcc9d86",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/E0.s100.arena.games.jsonl",
+      "sha256": "5302737b2d66405024c54348ca11ac774bc663653cdc6b30e525e975b99df71e",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/global_run03/calibration/S0.s100.arena.games.jsonl",
+      "sha256": "28dafc36894faae1b4cad06da5e4cdf9b18c4043ccdf8bb7741b0f9ad7d8b5d6",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s100.arena.games.jsonl",
+      "sha256": "971958cf1882ace0596827217efa811f20f380ca8a25d904bc557175b95bad08",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s25.arena.games.jsonl",
+      "sha256": "55af2ba812271130a88a45ffbdb09f14b5146c627d39330bf3cf376bf79088e4",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/E0.s400.arena.games.jsonl",
+      "sha256": "20ae76e774408cb249ee9ff4858be985e790debd95620d41b60f44cb4587d342",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s100.arena.games.jsonl",
+      "sha256": "46b76edc631381320bfb99d7fb2d1e9d62c33beec2e9db4cf6afdefdb9829d36",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s25.arena.games.jsonl",
+      "sha256": "031c1d4cd6e8fb4cb66f85c8b7103bf3c15f3b811aa171ef8f9f0e7d93ad0a87",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T05.s400.arena.games.jsonl",
+      "sha256": "23c99fbdc5b2a3a5a9b7d305d118987c2b87a0405a3aa1c2d0590c4e9be349b9",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s100.arena.games.jsonl",
+      "sha256": "e9bafbc59a65314727b8e5ed783d2ede7f199fd8ebebc8ba2b1d8ec0bd6c3f1e",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s25.arena.games.jsonl",
+      "sha256": "a60082176666207d7898ab58652c6218bde65515360e75b993d33437f07cfe54",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/global_run03/treatments/G20T1.s400.arena.games.jsonl",
+      "sha256": "21fd37e59e92e300ad0a8c161cad7971f280d6f95b8455820e8969f2e868aeed",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s100.arena.games.jsonl",
+      "sha256": "60b070d2f45bb05d52634bfc56675949d86ce9b982c1d59c454c5210851078ae",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s25.arena.games.jsonl",
+      "sha256": "7143d2d508dabb90c04d9527fb3c2d91b4bce711dae94c16ace8aa9058141253",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/sf-close/C20T05.s400.arena.games.jsonl",
+      "sha256": "d7af69c0371904b4ce93ee2d75e6be3459b7f0d46ce863f12c076afd2d41f1fe",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/arena.games.jsonl",
+      "sha256": "ec8d11a419b026b6c334705065a96834e54deda3378c29d94c72871f1247bfe6",
+      "record_kinds": {
+        "header": 1,
+        "game": 1000
+      }
+    }
+  ],
+  "document_hash_references_at_collection": [
+    {
+      "document": "docs/experiments/2026-09-05-bt4-global-search-scaling.md",
+      "line_at_collection": 147,
+      "sha256": "0efd4e6e5217237b90ebeffa33edf400019b02b360258b32233a2e3366bc1565",
+      "published_path": "scratchpad/bt4_joint20/global_run01/preregistration.md",
+      "external_reason": null,
+      "context": "The active immutable preregistration snapshot has SHA256 `0efd4e6e5217237b90ebeffa33edf400019b02b360258b32233a2e3366bc1565`."
+    },
+    {
+      "document": "docs/experiments/2026-09-05-bt4-global-search-scaling.md",
+      "line_at_collection": 171,
+      "sha256": "da9afa748f7f947986fd096c38d7dc2536932728d33322c0a3288ed2055ce205",
+      "published_path": null,
+      "external_reason": "Historical executable source external; original revision/path/hash retained.",
+      "context": "the existing G10 labeler yielded and now waits on the shared lease. The baseline driver SHA256 is `da9afa748f7f947986fd096c38d7dc2536932728d33322c0a3288ed2055ce205`."
+    },
+    {
+      "document": "docs/experiments/2026-09-05-bt4-joint-targets.md",
+      "line_at_collection": 27,
+      "sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json",
+      "external_reason": null,
+      "context": "  2,309 shards, derived from the first 20M raw rows; source summary SHA256   `391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef`."
+    },
+    {
+      "document": "docs/experiments/2026-09-05-bt4-joint-targets.md",
+      "line_at_collection": 34,
+      "sha256": "c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817",
+      "published_path": null,
+      "external_reason": "External checkpoint payload; completed summaries included.",
+      "context": "- E0: `runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100_epoch_v3/checkpoint.pt`,   SHA256 `c7d0bb38f952150db004b29699e0509437bcec7928d79cd44f69125ffa5fa817`."
+    },
+    {
+      "document": "docs/experiments/2026-09-05-bt4-joint-targets.md",
+      "line_at_collection": 37,
+      "sha256": "185fa5b2bd676246de2329f6b281b61e586cda2dffcb60f4ca2c500f97187041",
+      "published_path": null,
+      "external_reason": "Semantic ordered-schedule digest, not standalone file SHA; schedule receipts included.",
+      "context": "  repeats, matching planned/realized hashes, and complete=true. - E0 plan hash: `185fa5b2bd676246de2329f6b281b61e586cda2dffcb60f4ca2c500f97187041`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 74,
+      "sha256": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3",
+      "published_path": null,
+      "external_reason": "External checkpoint payload; completed summaries included.",
+      "context": "actual staging and recorded launch identities. Checkpoint SHA256: `8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 134,
+      "sha256": "bedb08efaa044231aba79faad3cd6883258806b5ffd26bdc12b7de41504df06f",
+      "published_path": "scratchpad/tailrl_bootstrap_v1/offline_integration_notes.json",
+      "external_reason": null,
+      "context": "The [prepared TailRL integration notes](../../scratchpad/tailrl_bootstrap_v1/offline_integration_notes.json) are now published unchanged (SHA256 `bedb08efaa044231aba79faad3cd6883258806b5ffd26bdc12b7de41504df06f`),"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 164,
+      "sha256": "4457c4f8ba407a2b16ad31f26dcebebc41e97760a82bbc5fe27a7cbc78c884e8",
+      "published_path": "scratchpad/bt4_joint20/global_run03/preregistration.md",
+      "external_reason": null,
+      "context": "| --- | --- | | `global_run03/preregistration.md` (prior correction) | `4457c4f8ba407a2b16ad31f26dcebebc41e97760a82bbc5fe27a7cbc78c884e8` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 165,
+      "sha256": "07e59cb0803e077379f6946e4bae7176681f4ff20d424aaf0a6c552971375f24",
+      "published_path": "scratchpad/bt4_joint20/global_run03/completed_full_screen_readout.json",
+      "external_reason": null,
+      "context": "| `global_run03/preregistration.md` (prior correction) | `4457c4f8ba407a2b16ad31f26dcebebc41e97760a82bbc5fe27a7cbc78c884e8` | | `global_run03/completed_full_screen_readout.json` | `07e59cb0803e077379f6946e4bae7176681f4ff20d424aaf0a6c552971375f24` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 166,
+      "sha256": "c7a84c318c269312ade96f623cd4b5a9486f95c388207c86e2035d1185b5e35c",
+      "published_path": "scratchpad/bt4_joint20/global_run03/completed_full_screen_independent_review.json",
+      "external_reason": null,
+      "context": "| `global_run03/completed_full_screen_readout.json` | `07e59cb0803e077379f6946e4bae7176681f4ff20d424aaf0a6c552971375f24` | | `global_run03/completed_full_screen_independent_review.json` | `c7a84c318c269312ade96f623cd4b5a9486f95c388207c86e2035d1185b5e35c` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 167,
+      "sha256": "36c05e5806db8c29cf9a24193640b5284a0038da43c65f4671a2df6f92de21b4",
+      "published_path": "scratchpad/bt4_joint20/global_run03/global_vs_exact_ties_exploratory.json",
+      "external_reason": null,
+      "context": "| `global_run03/completed_full_screen_independent_review.json` | `c7a84c318c269312ade96f623cd4b5a9486f95c388207c86e2035d1185b5e35c` | | `global_run03/global_vs_exact_ties_exploratory.json` | `36c05e5806db8c29cf9a24193640b5284a0038da43c65f4671a2df6f92de21b4` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 168,
+      "sha256": "6a429b5a31742d0e36b0ae8b7eeab9c50e6da711e83b366be982ee429f9d049b",
+      "published_path": "scratchpad/bt4_joint20/global_run03/global_vs_exact_ties_independent_review.json",
+      "external_reason": null,
+      "context": "| `global_run03/global_vs_exact_ties_exploratory.json` | `36c05e5806db8c29cf9a24193640b5284a0038da43c65f4671a2df6f92de21b4` | | `global_run03/global_vs_exact_ties_independent_review.json` | `6a429b5a31742d0e36b0ae8b7eeab9c50e6da711e83b366be982ee429f9d049b` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 169,
+      "sha256": "c4c5a0b861efce888a62c9fc085d61509da0ab805790e108f0f293ea33d029b4",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/preregistration.md",
+      "external_reason": null,
+      "context": "| `global_run03/global_vs_exact_ties_independent_review.json` | `6a429b5a31742d0e36b0ae8b7eeab9c50e6da711e83b366be982ee429f9d049b` | | `sf_close_run02/preregistration.md` | `c4c5a0b861efce888a62c9fc085d61509da0ab805790e108f0f293ea33d029b4` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 170,
+      "sha256": "1f1529fa2247d56ad4cf457a8cb5bae0929c4ea917e2aab0c09d81fbaeedccbd",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/matched_schedule_completed_C20T05.json",
+      "external_reason": null,
+      "context": "| `sf_close_run02/preregistration.md` | `c4c5a0b861efce888a62c9fc085d61509da0ab805790e108f0f293ea33d029b4` | | `sf_close_run02/matched_schedule_completed_C20T05.json` | `1f1529fa2247d56ad4cf457a8cb5bae0929c4ea917e2aab0c09d81fbaeedccbd` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 171,
+      "sha256": "7ed7bd8863db4fb7bf2fa98016b7cdb269b751dc696c4f8827acc58f8cae5d5a",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/C20T05.completed_epoch_independent_review.json",
+      "external_reason": null,
+      "context": "| `sf_close_run02/matched_schedule_completed_C20T05.json` | `1f1529fa2247d56ad4cf457a8cb5bae0929c4ea917e2aab0c09d81fbaeedccbd` | | `sf_close_run02/C20T05.completed_epoch_independent_review.json` | `7ed7bd8863db4fb7bf2fa98016b7cdb269b751dc696c4f8827acc58f8cae5d5a` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 172,
+      "sha256": "2dde2ce5b46bc69b662be129b3752ffe37f93aa383f2d3bd06dbeb5d581a7257",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_readout.json",
+      "external_reason": null,
+      "context": "| `sf_close_run02/C20T05.completed_epoch_independent_review.json` | `7ed7bd8863db4fb7bf2fa98016b7cdb269b751dc696c4f8827acc58f8cae5d5a` | | `sf_close_run02/completed_full_screen_readout.json` | `2dde2ce5b46bc69b662be129b3752ffe37f93aa383f2d3bd06dbeb5d581a7257` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 173,
+      "sha256": "fc230b5db0ef7eecb686ae58220fb7b4a69ae358d9ed4ec48c7a419c6a6cbc76",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_independent_review.json",
+      "external_reason": null,
+      "context": "| `sf_close_run02/completed_full_screen_readout.json` | `2dde2ce5b46bc69b662be129b3752ffe37f93aa383f2d3bd06dbeb5d581a7257` | | `sf_close_run02/completed_full_screen_independent_review.json` | `fc230b5db0ef7eecb686ae58220fb7b4a69ae358d9ed4ec48c7a419c6a6cbc76` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 174,
+      "sha256": "48897206e4af6d37bb4fa351cebe1e1d4b493e07b63126fd8a65332bd85af8c1",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/optional_sharpened_ties_data_qualification.json",
+      "external_reason": null,
+      "context": "| `sf_close_run02/completed_full_screen_independent_review.json` | `fc230b5db0ef7eecb686ae58220fb7b4a69ae358d9ed4ec48c7a419c6a6cbc76` | | `sf_close_run02/optional_sharpened_ties_data_qualification.json` | `48897206e4af6d37bb4fa351cebe1e1d4b493e07b63126fd8a65332bd85af8c1` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-bootstrap-results.md",
+      "line_at_collection": 175,
+      "sha256": "4b1d74ddafdf4e9443b23d51e0119bf991860525ad007fb79bae93b4cfc4f9da",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/data_transfer_notes.json",
+      "external_reason": null,
+      "context": "| `sf_close_run02/optional_sharpened_ties_data_qualification.json` | `48897206e4af6d37bb4fa351cebe1e1d4b493e07b63126fd8a65332bd85af8c1` | | `global_dose50_v1/data_transfer_notes.json` | `4b1d74ddafdf4e9443b23d51e0119bf991860525ad007fb79bae93b4cfc4f9da` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-direct-close-global.md",
+      "line_at_collection": 57,
+      "sha256": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3",
+      "published_path": null,
+      "external_reason": "External checkpoint payload; completed summaries included.",
+      "context": "- C20T05: runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt,   SHA256 8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-direct-close-global.md",
+      "line_at_collection": 59,
+      "sha256": "bd8c208a95247373f423be0649329e9c100db64ab1b5a5e68fd7a6aec3769a74",
+      "published_path": null,
+      "external_reason": "External checkpoint payload; completed summaries included.",
+      "context": "- G20T05: runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05_epoch_v2/checkpoint.pt,   SHA256 bd8c208a95247373f423be0649329e9c100db64ab1b5a5e68fd7a6aec3769a74."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-direct-close-global.md",
+      "line_at_collection": 64,
+      "sha256": "bdb6b2e2a2dc04c087b7ae36628211015aaba50ac96c4110a5f372c56cefd79f",
+      "published_path": null,
+      "external_reason": "Historical executable source external; original revision/path/hash retained.",
+      "context": "- Frozen reader: /tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py,   SHA256 bdb6b2e2a2dc04c087b7ae36628211015aaba50ac96c4110a5f372c56cefd79f."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-direct-close-global.md",
+      "line_at_collection": 112,
+      "sha256": "2dde2ce5b46bc69b662be129b3752ffe37f93aa383f2d3bd06dbeb5d581a7257",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_readout.json",
+      "external_reason": null,
+      "context": "scratchpad/bt4_joint20/sf_close_run02/completed_full_screen_readout.json, SHA256 2dde2ce5b46bc69b662be129b3752ffe37f93aa383f2d3bd06dbeb5d581a7257."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-direct-close-global.md",
+      "line_at_collection": 138,
+      "sha256": "bb97f201bad3db23d25fcb6ed34ade70447a8e65f9ce9f327abdd8ddcbcc9d86",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/arena.games.jsonl",
+      "external_reason": null,
+      "context": "- `arena/arena.games.jsonl`: SHA256   `bb97f201bad3db23d25fcb6ed34ade70447a8e65f9ce9f327abdd8ddcbcc9d86`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-direct-close-global.md",
+      "line_at_collection": 140,
+      "sha256": "3bec9d477266c6ac54e9f8f0280def3e6fc6de0da35d5965855589f419f3cf9d",
+      "published_path": "scratchpad/bt4_joint20/direct_close_global_run01/arena/readout.json",
+      "external_reason": null,
+      "context": "- `arena/readout.json`: SHA256   `3bec9d477266c6ac54e9f8f0280def3e6fc6de0da35d5965855589f419f3cf9d`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 26,
+      "sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json",
+      "external_reason": null,
+      "context": "shards; derive summary SHA256 `391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 28,
+      "sha256": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json",
+      "external_reason": null,
+      "context": "Raw BT4 sidecar: `data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m`; summary SHA256 `68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 30,
+      "sha256": "5fe8202f1e9681b042caeea06614cdbe3b55cf41ec2100182ce3e58e95e377c7",
+      "published_path": null,
+      "external_reason": "Historical executable source external; original revision/path/hash retained.",
+      "context": "Use frozen mixer `/tmp/deepfin-bt4-toolchain/scripts/bt4_policy_mix.py`, SHA256 `5fe8202f1e9681b042caeea06614cdbe3b55cf41ec2100182ce3e58e95e377c7`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 63,
+      "sha256": "08706292cf0c23156854772cfe2748aa314909c0ad72cbecc3a6e5deb5fbf1fe",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/preparation.md",
+      "external_reason": null,
+      "context": "`scratchpad/bt4_joint20/global_dose50_v1/preparation.md`, SHA256 `08706292cf0c23156854772cfe2748aa314909c0ad72cbecc3a6e5deb5fbf1fe`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 98,
+      "sha256": "392c470b56957effc8c1e3bf941c0b4aaac8ca4284ec44a9738dfb3d5b3692fd",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/preparation_plan.json",
+      "external_reason": null,
+      "context": "| --- | --- | | `preparation_plan.json` | `392c470b56957effc8c1e3bf941c0b4aaac8ca4284ec44a9738dfb3d5b3692fd` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 99,
+      "sha256": "a1c9b364f4767cf9251ff10bce785deb82c65a8a4ef8e0955cb5d67e5a3abdc0",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/run_preparation.py",
+      "external_reason": null,
+      "context": "| `preparation_plan.json` | `392c470b56957effc8c1e3bf941c0b4aaac8ca4284ec44a9738dfb3d5b3692fd` | | `run_preparation.py` | `a1c9b364f4767cf9251ff10bce785deb82c65a8a4ef8e0955cb5d67e5a3abdc0` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 100,
+      "sha256": "21aa7958d85360c110d934208650426b40f4b50e3688327a2187a1bb29c91809",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/preparation_independent_review.json",
+      "external_reason": null,
+      "context": "| `run_preparation.py` | `a1c9b364f4767cf9251ff10bce785deb82c65a8a4ef8e0955cb5d67e5a3abdc0` | | `preparation_independent_review.json` | `21aa7958d85360c110d934208650426b40f4b50e3688327a2187a1bb29c91809` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 101,
+      "sha256": "a35bcf7db4fea05ed636346bf2bd9d6c63fae9d86cb5bcf3a0ff17a2444a8550",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/audit_G50T05.json",
+      "external_reason": null,
+      "context": "| `preparation_independent_review.json` | `21aa7958d85360c110d934208650426b40f4b50e3688327a2187a1bb29c91809` | | `audit_G50T05.json` | `a35bcf7db4fea05ed636346bf2bd9d6c63fae9d86cb5bcf3a0ff17a2444a8550` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 102,
+      "sha256": "71d431fbb70b694c616cca206ba078b8250fc3f74bbb2bdb8e44b2e17adc8fe5",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/first_shard_integrity.json",
+      "external_reason": null,
+      "context": "| `audit_G50T05.json` | `a35bcf7db4fea05ed636346bf2bd9d6c63fae9d86cb5bcf3a0ff17a2444a8550` | | `first_shard_integrity.json` | `71d431fbb70b694c616cca206ba078b8250fc3f74bbb2bdb8e44b2e17adc8fe5` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 103,
+      "sha256": "bc7cf4288e7b4c2f902eddfa02993ae520635d3b504fc2145ac3fdab1fb811ae",
+      "published_path": "scratchpad/bt4_joint20/global_dose50_v1/publication_integrity_review.json",
+      "external_reason": null,
+      "context": "| `first_shard_integrity.json` | `71d431fbb70b694c616cca206ba078b8250fc3f74bbb2bdb8e44b2e17adc8fe5` | | `publication_integrity_review.json` | `bc7cf4288e7b4c2f902eddfa02993ae520635d3b504fc2145ac3fdab1fb811ae` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 106,
+      "sha256": "e78cc9eaeba0029faf2f036cdb54c35dba02575939c9633915d3606229e1b574",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05/bt4_policy_mix_summary.json",
+      "external_reason": null,
+      "context": "The published corpus's mix-summary SHA256 is `e78cc9eaeba0029faf2f036cdb54c35dba02575939c9633915d3606229e1b574`;"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md",
+      "line_at_collection": 108,
+      "sha256": "d2e1f2ad328d691bcd38c32342486728eb3e8a0f77e56e52f2eb958494b6edad",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05/derive_targets_summary.json",
+      "external_reason": null,
+      "context": "its derived-summary SHA256 is `d2e1f2ad328d691bcd38c32342486728eb3e8a0f77e56e52f2eb958494b6edad`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md",
+      "line_at_collection": 33,
+      "sha256": "a85ba1403c2477018bdc59b622311094027ca17cf045dc78090f6c0ee9f5463d",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050/bt4_policy_mix_summary.json",
+      "external_reason": null,
+      "context": "E0T05 mix summary SHA256: `a85ba1403c2477018bdc59b622311094027ca17cf045dc78090f6c0ee9f5463d`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md",
+      "line_at_collection": 35,
+      "sha256": "4354bafe8e1435bb030faaa161810bbfff667a2b83c647940ad371eb2ab1caf1",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050/derive_targets_summary.json",
+      "external_reason": null,
+      "context": "Derived summary SHA256: `4354bafe8e1435bb030faaa161810bbfff667a2b83c647940ad371eb2ab1caf1`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md",
+      "line_at_collection": 38,
+      "sha256": "48897206e4af6d37bb4fa351cebe1e1d4b493e07b63126fd8a65332bd85af8c1",
+      "published_path": "scratchpad/bt4_joint20/sf_close_run02/optional_sharpened_ties_data_qualification.json",
+      "external_reason": null,
+      "context": "`sf_close_run02/optional_sharpened_ties_data_qualification.json`, SHA256 `48897206e4af6d37bb4fa351cebe1e1d4b493e07b63126fd8a65332bd85af8c1`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md",
+      "line_at_collection": 60,
+      "sha256": "1aca8a7dfd7e2917927560c9eea285fe26e3db591ff8ebdd2cfa00dfba08cfd8",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/prospective_schedule.json",
+      "external_reason": null,
+      "context": "`sharpened_ties_run01/prospective_schedule.json`, SHA256 `1aca8a7dfd7e2917927560c9eea285fe26e3db591ff8ebdd2cfa00dfba08cfd8`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md",
+      "line_at_collection": 63,
+      "sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+      "published_path": null,
+      "external_reason": "Semantic ordered-schedule digest, not standalone file SHA; schedule receipts included.",
+      "context": "Canonical schedule SHA256: `dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md",
+      "line_at_collection": 65,
+      "sha256": "c81bd16b2589c31c2090501312c67ac313315866a12892e092d2460494776103",
+      "published_path": null,
+      "external_reason": "Semantic ordered-schedule digest, not standalone file SHA; schedule receipts included.",
+      "context": "Prospective E0T05 physical schedule SHA256: `c81bd16b2589c31c2090501312c67ac313315866a12892e092d2460494776103`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md",
+      "line_at_collection": 76,
+      "sha256": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3",
+      "published_path": null,
+      "external_reason": "External checkpoint payload; completed summaries included.",
+      "context": "`runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt`, SHA256 `8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3`."
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md",
+      "line_at_collection": 181,
+      "sha256": "ec8d11a419b026b6c334705065a96834e54deda3378c29d94c72871f1247bfe6",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/arena.games.jsonl",
+      "external_reason": null,
+      "context": "| --- | --- | | `experiment/arena/arena.games.jsonl` | `ec8d11a419b026b6c334705065a96834e54deda3378c29d94c72871f1247bfe6` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md",
+      "line_at_collection": 182,
+      "sha256": "b22f4baa0ca051de8a856a0498bd4166e5b19a1a983c64116758e87705d13973",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/readout.json",
+      "external_reason": null,
+      "context": "| `experiment/arena/arena.games.jsonl` | `ec8d11a419b026b6c334705065a96834e54deda3378c29d94c72871f1247bfe6` | | `experiment/arena/readout.json` | `b22f4baa0ca051de8a856a0498bd4166e5b19a1a983c64116758e87705d13973` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md",
+      "line_at_collection": 183,
+      "sha256": "245a9baf86c36ebeebefa0ccfeb54dc0b72c8f3b08e474eda78cdf264eba0973",
+      "published_path": "scratchpad/bt4_joint20/sharpened_ties_run01/completed_screen_independent_review.json",
+      "external_reason": null,
+      "context": "| `experiment/arena/readout.json` | `b22f4baa0ca051de8a856a0498bd4166e5b19a1a983c64116758e87705d13973` | | `completed_screen_independent_review.json` | `245a9baf86c36ebeebefa0ccfeb54dc0b72c8f3b08e474eda78cdf264eba0973` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 83,
+      "sha256": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/preregistration.md",
+      "external_reason": null,
+      "context": "| --- | --- | | `confirmation_registration_v1/preregistration.md` | `f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 84,
+      "sha256": "c07453d71ca01daf7dd45b93fc5d9fd0161a5f1ac5f50a25918559bd5f2b6d88",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/independent_launch_review.json",
+      "external_reason": null,
+      "context": "| `confirmation_registration_v1/preregistration.md` | `f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528` | | `confirmation_registration_v1/independent_launch_review.json` | `c07453d71ca01daf7dd45b93fc5d9fd0161a5f1ac5f50a25918559bd5f2b6d88` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 85,
+      "sha256": "345ac427b8559107bbb24a091974fdb621f340841a9fb2e2d6eeded5e91d7a68",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/launch.json",
+      "external_reason": null,
+      "context": "| `confirmation_registration_v1/independent_launch_review.json` | `c07453d71ca01daf7dd45b93fc5d9fd0161a5f1ac5f50a25918559bd5f2b6d88` | | `confirmation_registration_v1/launch.json` | `345ac427b8559107bbb24a091974fdb621f340841a9fb2e2d6eeded5e91d7a68` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 86,
+      "sha256": "33d4845ddcc131522e572c42b2ff6338850c4f5b4500295bf9f413fe073011a9",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/manifest.json",
+      "external_reason": null,
+      "context": "| `confirmation_registration_v1/launch.json` | `345ac427b8559107bbb24a091974fdb621f340841a9fb2e2d6eeded5e91d7a68` | | `confirmation_registration_v1/manifest.json` | `33d4845ddcc131522e572c42b2ff6338850c4f5b4500295bf9f413fe073011a9` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 87,
+      "sha256": "e0d13b2ea70c0ac278570a0e463c3c1c3030a18256522bcba864db23cdc07c98",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/openings.fen",
+      "external_reason": null,
+      "context": "| `confirmation_registration_v1/manifest.json` | `33d4845ddcc131522e572c42b2ff6338850c4f5b4500295bf9f413fe073011a9` | | `confirmation_openings_v1/openings.fen` | `e0d13b2ea70c0ac278570a0e463c3c1c3030a18256522bcba864db23cdc07c98` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 88,
+      "sha256": "85e88d4803e04a57fa8887c66c4171b91b2bf59753421aaf7a85add31076b0c1",
+      "published_path": "scratchpad/bt4_joint20/confirmation_openings_v1/completed_bank_overlap_final_E0T05.json",
+      "external_reason": null,
+      "context": "| `confirmation_openings_v1/openings.fen` | `e0d13b2ea70c0ac278570a0e463c3c1c3030a18256522bcba864db23cdc07c98` | | `confirmation_openings_v1/completed_bank_overlap_final_E0T05.json` | `85e88d4803e04a57fa8887c66c4171b91b2bf59753421aaf7a85add31076b0c1` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 107,
+      "sha256": "ef42d11276529178480a9d255315ee4bf07b2eb39a8516ecb0a7799d03392745",
+      "published_path": null,
+      "external_reason": "External checkpoint payload; completed summaries included.",
+      "context": "| --- | ---: | --- | | Reference C20T05 | 9,789.061950 | `ef42d11276529178480a9d255315ee4bf07b2eb39a8516ecb0a7799d03392745` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 108,
+      "sha256": "bc9f029ef1874ae0aa613def4295331e1a894d1a23e12fb466ee3e9ef6bae740",
+      "published_path": null,
+      "external_reason": "External checkpoint payload; completed summaries included.",
+      "context": "| Reference C20T05 | 9,789.061950 | `ef42d11276529178480a9d255315ee4bf07b2eb39a8516ecb0a7799d03392745` | | Candidate E0T05 | 9,284.944868 | `bc9f029ef1874ae0aa613def4295331e1a894d1a23e12fb466ee3e9ef6bae740` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 113,
+      "sha256": "4d75a181dea1e94e592f2bc78036e3b233452a3f85b8a1d6024e69fbb731510e",
+      "published_path": null,
+      "external_reason": "Semantic ordered-schedule digest, not standalone file SHA; schedule receipts included.",
+      "context": "the source metadata and canonical schedule `4d75a181dea1e94e592f2bc78036e3b233452a3f85b8a1d6024e69fbb731510e`."
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 135,
+      "sha256": "034f463d59f2b0a7263a29daf5a8c957e674d217a4a124c041753586f0fe56ae",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/runs/armB/confirmation_seed1_E0T05_vs_C20T05_reference_C20T05_v1/summary.json",
+      "external_reason": null,
+      "context": "| --- | --- | | Reference run `summary.json` under `runs/armB/confirmation_seed1_E0T05_vs_C20T05_reference_C20T05_v1/` (repository-relative) | `034f463d59f2b0a7263a29daf5a8c957e674d217a4a124c041753586f0fe56ae` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 136,
+      "sha256": "c28d2067501b263368cf2699b5b6ec4ff5df01ed6afbedd37bc4422942c9a662",
+      "published_path": "scratchpad/bt4_joint20/publication_originals/runs/armB/confirmation_seed1_E0T05_vs_C20T05_candidate_E0T05_v1/summary.json",
+      "external_reason": null,
+      "context": "| Reference run `summary.json` under `runs/armB/confirmation_seed1_E0T05_vs_C20T05_reference_C20T05_v1/` (repository-relative) | `034f463d59f2b0a7263a29daf5a8c957e674d217a4a124c041753586f0fe56ae` | | Candidate run `summary.json` under `runs/armB/confirmation_seed1_E0T05_vs_C20T05_candidate_E0T05_v1/` (repository-relative) | `c28d2067501b263368cf2699b5b6ec4ff5df01ed6afbedd37bc4422942c9a662` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 137,
+      "sha256": "6b4281eb68cf07404205166402011930497e251b6d69c3caa8a6d2651b0da334",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/matched_schedule.json",
+      "external_reason": null,
+      "context": "| Candidate run `summary.json` under `runs/armB/confirmation_seed1_E0T05_vs_C20T05_candidate_E0T05_v1/` (repository-relative) | `c28d2067501b263368cf2699b5b6ec4ff5df01ed6afbedd37bc4422942c9a662` | | `confirmation_seed1_E0T05_vs_C20T05_v1/matched_schedule.json` | `6b4281eb68cf07404205166402011930497e251b6d69c3caa8a6d2651b0da334` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 138,
+      "sha256": "c4190f1bbfe34aa321664656ab10d3c7708232b84058b4a6580628ffa405e380",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/independent_fresh_training_schedule_review.json",
+      "external_reason": null,
+      "context": "| `confirmation_seed1_E0T05_vs_C20T05_v1/matched_schedule.json` | `6b4281eb68cf07404205166402011930497e251b6d69c3caa8a6d2651b0da334` | | `confirmation_registration_v1/independent_fresh_training_schedule_review.json` | `c4190f1bbfe34aa321664656ab10d3c7708232b84058b4a6580628ffa405e380` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 139,
+      "sha256": "7f8d16cbccd1b3d5659329a55c7c17a56b3885926b401602743f6617065af5ac",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/parent_arena_start_observation.json",
+      "external_reason": null,
+      "context": "| `confirmation_registration_v1/independent_fresh_training_schedule_review.json` | `c4190f1bbfe34aa321664656ab10d3c7708232b84058b4a6580628ffa405e380` | | `confirmation_registration_v1/parent_arena_start_observation.json` | `7f8d16cbccd1b3d5659329a55c7c17a56b3885926b401602743f6617065af5ac` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 165,
+      "sha256": "cab8e9ccbf5d379d6dc03c9fa5c0502d2b865b50a649d5bf6c3f8093661505e0",
+      "published_path": "scratchpad/bt4_joint20/confirmation_registration_v1/independent_completed_confirmation_review.json",
+      "external_reason": null,
+      "context": "under `scratchpad/bt4_joint20/`, SHA256 `cab8e9ccbf5d379d6dc03c9fa5c0502d2b865b50a649d5bf6c3f8093661505e0`."
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 186,
+      "sha256": "88d7c7a915ca6c9889f55237462862bacf0c6baae6373eca67d668276a3a69f6",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.games.jsonl",
+      "external_reason": null,
+      "context": "| --- | --- | | `arena.games.jsonl` | `88d7c7a915ca6c9889f55237462862bacf0c6baae6373eca67d668276a3a69f6` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 187,
+      "sha256": "3719bd291ca7a7a2625eca2075eac1eb2b5cd1906e978bf6fc7a59fe2be355f7",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/readout.json",
+      "external_reason": null,
+      "context": "| `arena.games.jsonl` | `88d7c7a915ca6c9889f55237462862bacf0c6baae6373eca67d668276a3a69f6` | | `readout.json` | `3719bd291ca7a7a2625eca2075eac1eb2b5cd1906e978bf6fc7a59fe2be355f7` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 188,
+      "sha256": "82121c284aac074b466f1d5a58a3e440fd672311d8558e81db9c0df77f07cdff",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/complete.json",
+      "external_reason": null,
+      "context": "| `readout.json` | `3719bd291ca7a7a2625eca2075eac1eb2b5cd1906e978bf6fc7a59fe2be355f7` | | `complete.json` | `82121c284aac074b466f1d5a58a3e440fd672311d8558e81db9c0df77f07cdff` |"
+    },
+    {
+      "document": "docs/experiments/2026-09-07-bt4-fresh-confirmation.md",
+      "line_at_collection": 189,
+      "sha256": "99dae086f46afe8ea6d5b5f9591d090c4e183b117c053624b4d1071a2ce85eb8",
+      "published_path": "scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/arena.gpu-charge.json",
+      "external_reason": null,
+      "context": "| `complete.json` | `82121c284aac074b466f1d5a58a3e440fd672311d8558e81db9c0df77f07cdff` | | `arena.gpu-charge.json` | `99dae086f46afe8ea6d5b5f9591d090c4e183b117c053624b4d1071a2ce85eb8` |"
+    }
+  ],
+  "inspection": {
+    "all_selected_files_utf8_decoded": true,
+    "json_and_jsonl_parsed": true,
+    "credential_pattern_findings": 0,
+    "populated_secret_key_findings": 0,
+    "identity_or_remote_endpoint_field_findings": 0,
+    "url_references": 0,
+    "reviewed_content": "Scientific protocol, training metrics/configuration, chess moves/results, target audit statistics, local lineage paths, timing and review evidence. Original paths intentionally preserved under historical scratchpad policy."
+  },
+  "omissions": [
+    "Weights, optimizer/native/ONNX binaries, corpus shards, raw teacher payloads, bulk operational logs and monitoring status files.",
+    "Recorded SHA identifiers can also denote canonical schedule digests or bulk model/data/code artifacts; absence of a matching copied file does not mean missing arena evidence."
+  ],
+  "document_snapshots_at_reference_collection": {
+    "docs/experiments/2026-09-05-bt4-global-search-scaling.md": "0a5aa3d73e68bb21f78992f4224790566fd5d7e512fa71f2a001a9dab868c1b4",
+    "docs/experiments/2026-09-05-bt4-joint-targets.md": "37e7cf5e4681dba6dd3638cb02460c8fa9c18ce8f320da3f2474999b794623f7",
+    "docs/experiments/2026-09-06-bt4-bootstrap-results.md": "3c6c3bb9c0f308fd8ca028ee3abddb0f59cf522e3159adb779c748d712f998d8",
+    "docs/experiments/2026-09-06-bt4-direct-close-global.md": "38a90fd4e7ca4731f3882c125c478d8bd71e14d876c54bd0e0551e36363e4dfe",
+    "docs/experiments/2026-09-06-bt4-global-dose50-preparation.md": "6ca437d24ebb6117296de248d01eeef55320382b72410a80af57867ef7682d7f",
+    "docs/experiments/2026-09-06-bt4-sharpened-ties-screen.md": "6cc6f5a1c903d34421552ba2d7ba195d12934904d9967f6b9bd8a78abdb1b4a4",
+    "docs/experiments/2026-09-07-bt4-fresh-confirmation.md": "c5b8841016a583a4cee31279a644b99c0dfa61e6e5bc98263cc78d5532cf3a3f"
+  }
+}

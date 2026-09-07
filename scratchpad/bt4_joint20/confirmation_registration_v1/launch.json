@@ -1,0 +1,29 @@
+{
+  "status": "REGISTERED_REVIEWED_CONFIRMATION_COORDINATOR_LAUNCHED",
+  "coordinator_pid": 199324,
+  "started_unix": 1788751672.124662,
+  "command": [
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/python3",
+    "/tmp/deepfin-confirmation-publication/scripts/bt4_confirmation.py",
+    "--manifest",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/manifest.json",
+    "--execute"
+  ],
+  "log": "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_registration_v1/launch.log",
+  "manifest_sha256": "33d4845ddcc131522e572c42b2ff6338850c4f5b4500295bf9f413fe073011a9",
+  "preregistration_sha256": "f89a5a719aeb6c189f1ecf1d85b73815bd0bfbc1be145c5ebe4e4d25113cf528",
+  "independent_review_sha256": "c07453d71ca01daf7dd45b93fc5d9fd0161a5f1ac5f50a25918559bd5f2b6d88",
+  "state": "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1",
+  "candidate": "E0T05",
+  "reference": "C20T05",
+  "training_seed": 1,
+  "arena_seed": 20260907,
+  "gpu_cap_seconds": 37800,
+  "live_jobs_preserved": true
+}

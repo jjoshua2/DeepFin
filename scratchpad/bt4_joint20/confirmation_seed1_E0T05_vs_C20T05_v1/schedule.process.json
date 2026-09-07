@@ -1,0 +1,34 @@
+{
+  "cap_seconds_at_launch": 1800,
+  "command": [
+    "/usr/bin/python3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_tools/verify_matched_schedule.py",
+    "--seed",
+    "1",
+    "--run",
+    "reference=/home/josh/projects/chess/runs/armB/confirmation_seed1_E0T05_vs_C20T05_reference_C20T05_v1",
+    "--run",
+    "candidate=/home/josh/projects/chess/runs/armB/confirmation_seed1_E0T05_vs_C20T05_candidate_E0T05_v1",
+    "--output",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/matched_schedule.json"
+  ],
+  "cwd": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+  "live_config": "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/pbt2_small.yaml",
+  "pid": 217024,
+  "supervisor_command": [
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=30s",
+    "1770s",
+    "/usr/bin/python3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_tools/verify_matched_schedule.py",
+    "--seed",
+    "1",
+    "--run",
+    "reference=/home/josh/projects/chess/runs/armB/confirmation_seed1_E0T05_vs_C20T05_reference_C20T05_v1",
+    "--run",
+    "candidate=/home/josh/projects/chess/runs/armB/confirmation_seed1_E0T05_vs_C20T05_candidate_E0T05_v1",
+    "--output",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/confirmation_seed1_E0T05_vs_C20T05_v1/matched_schedule.json"
+  ]
+}

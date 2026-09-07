@@ -1,0 +1,23 @@
+{
+  "status": "PASS_COMPACT_PUBLICATION_VALIDATION",
+  "recorded_unix": 1788774406.4984996,
+  "document": "docs/experiments/2026-09-07-storage-archive.md",
+  "document_sha256": "922e8316e4172719103c4c7a8199728ad9198d21887e36aef2d3a5a5f171b8b6",
+  "manifest": "scratchpad/storage_audit_20260906/publication_manifest.json",
+  "manifest_sha256": "a2c4fcb5e284edf32ff20fefe83dc66be4bb465e5d1d8851800c9d5067e88e52",
+  "checks": {
+    "byte_identical_artifact_hashes_and_sizes": 69,
+    "json_parse": true,
+    "archive_receipts": 38,
+    "archive_bytes": 85320079360,
+    "completed_large_pool_receipts": 9,
+    "gross_removed_allocation_GiB": 32.53399658203125,
+    "dated_document_relative_links": true,
+    "focused_credential_pattern_check": true
+  },
+  "limits": [
+    "No transfer, archive payload hash readback, cleanup, restoration or runtime changes.",
+    "Secret-pattern check is focused, not a universal privacy certification; sampled records contain historical paths/PIDs/commands and hashes.",
+    "No whole lint claimed for this isolated documentation/evidence contribution; root owns final shared candidate validation."
+  ]
+}

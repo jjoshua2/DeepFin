@@ -1,0 +1,136 @@
+{
+  "status": "PASS_COMPLETED_REGISTERED_SCREEN_FAVORS_C20T05",
+  "reviewer": "/root/review_pr517_bootstrap",
+  "checked_unix": 1788751145.3515098,
+  "input_sha256": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/launch_manifest.json": "c5fb774dd5ca3c3b776767956a6e09561a73b2f863227ec7d907e3147dd91da5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/manifest.json": "c5fb774dd5ca3c3b776767956a6e09561a73b2f863227ec7d907e3147dd91da5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/complete.json": "8eec68ab977ed3d375da193f08fe114c60a685a38224ae3820297c5850f7f79f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/training.complete.json": "3a19abb9d67edd83b07b13295db7d6ec9c6fecae82e15baf9a9b41fbce0afe0a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/complete.json": "88db42f679a500bf0b159fcb8339ec59d3408a76b29fa2040c83a2b1104a0578",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/process.json": "0909ad7479ccf0785ad3d9ba4391df9c2b1313ecb58668c641fa64238f95a361",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/training/process.json": "ebd32676b90151b5c1429661654af61482674e7249a23e66615a46aa96b67ed7",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/schedule/process.json": "53c20c35f547d67e4cd29d3b08d38cc81e7936428818a9dfb25d68edecaeb2f8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/readout.json": "b22f4baa0ca051de8a856a0498bd4166e5b19a1a983c64116758e87705d13973",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/realized_schedule.json": "4666179fe24887347e87154148e45bb56b59dc7bfffd3bdbdda0a3c299af9cd6",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050_epoch_v1/summary.json": "52bf4c775c51a5ab8ef7215ff36ee820cb3a0c9f29e942dcecefa69b2a9cf472",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/preregistration.md": "bba0d5c47c2715714dcf37f871ff9923aade25e98e75d82fb17998aa6cad0279",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/prospective_schedule.json": "1aca8a7dfd7e2917927560c9eea285fe26e3db591ff8ebdd2cfa00dfba08cfd8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/confirmation_selection_revised.md": "ce7866fbb304180ff2a16abda84105182f5bdf73175b769c626ea77c7096352f",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050/bt4_policy_mix_summary.json": "a85ba1403c2477018bdc59b622311094027ca17cf045dc78090f6c0ee9f5463d",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050/derive_targets_summary.json": "4354bafe8e1435bb030faaa161810bbfff667a2b83c647940ad371eb2ab1caf1",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/optional_sharpened_ties_data_qualification.json": "48897206e4af6d37bb4fa351cebe1e1d4b493e07b63126fd8a65332bd85af8c1",
+    "/tmp/deepfin-bt4-esharp-screen/scripts/bt4_one_epoch_screen.py": "f62a7d6df672f410af81cb20f08b4c152cf0b2fa78f601cad20bd7614aa8a90d",
+    "/tmp/deepfin-bt4-esharp-screen/scripts/bt4_direct_screen.py": "ef531896876c7684dd7cbff54e400845cbef8a2814bdf4368072799470b7b172",
+    "/tmp/deepfin-bt4-prior-one/scripts/bt4_joint_readout.py": "bdb6b2e2a2dc04c087b7ae36628211015aaba50ac96c4110a5f372c56cefd79f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/arena.games.jsonl": "ec8d11a419b026b6c334705065a96834e54deda3378c29d94c72871f1247bfe6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/completed_s100_readout.json": "353d95c0f94cad1c1be1f9b23f6449d8cad50c6a41523c2b9ab5415f5cd6c12e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sharpened_ties_run01/experiment/arena/arena.results.jsonl": "926826c673c77e2961b2c98870741c7321e64dfde71aafbdecd90ebf6b7ac76c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/direct_close_global_run01/arena/arena.games.jsonl": "bb97f201bad3db23d25fcb6ed34ade70447a8e65f9ce9f327abdd8ddcbcc9d86"
+  },
+  "numeric_method": "Independent raw-result/color conversion; exact unique pair/half membership; mean of500 pair-average scores, unbiased sample variance(ddof1), SE=sqrt(variance/500), score +/-1.96SE, monotone400log10(p/(1-p)) Elo transform. No production reader or estimator invoked.",
+  "result": {
+    "candidate": "E0T05",
+    "reference": "C20T05",
+    "wins": 347,
+    "draws": 221,
+    "losses": 432,
+    "games": 1000,
+    "pairs": 500,
+    "orphan_or_duplicate_rows": 0,
+    "score": 0.4575,
+    "pair_sample_variance": 0.09601077154308617,
+    "score_standard_error": 0.013857183807908891,
+    "score_ci95": [
+      0.4303399197364986,
+      0.48466008026350144
+    ],
+    "elo": -29.60345764724001,
+    "elo_ci95": [
+      -48.721660878627155,
+      -10.662614235433077
+    ],
+    "pentanomial": {
+      "WW": 60,
+      "WD_DW": 75,
+      "DD_WL": 178,
+      "LD_DL": 94,
+      "LL": 93
+    },
+    "precommitted_outcome": "Interval wholly below zero favors C; automatic KILL label concerns this challenger screen only."
+  },
+  "protocol_checks": [
+    "All1000 raw game rows validated independently,500 unique color-swapped pairs, exact settings fingerprint/roles/scores, no orphans or superseded attempts.",
+    "Raw header and sole final summary match full qualified C100 search on both sides; search-prior1.0,100sims,seed42,book16plies,temperature0.1,max300plies,compileon,batch4096,concurrency128.",
+    "Executed historical3ec5 checkout and f62a epoch/ef531 direct script hashes intact; runtime/training/arena and final receipt hashes linked. Checkpoint/book/native payload identity reused from launcher receipts, not redundantly rehashed.",
+    "18,910,484rows/36,935batches/2,309shards/97,968games fully realized;420 contiguous windows(419x88+63),zero skipped gradients/retries,finite loss/gradient summaries. Last checkpoint role/path/hash agrees across training summary/completion/arena receipts.",
+    "Actual realized metadata and ordered source columns/shards match prospective proof; source/C canonicaldc687 and E physicalc81bd match saved and realized training hashes. No corpus rescan.",
+    "Process-only receipts retain complete:false by design; process_complete:true/exit0 plus separate training/arena/full completion receipts establish completion.",
+    "Training and arena charged durations9815.242410+2328.258763=12143.501173seconds(3.3732GPUh),below6h. CPU-only schedule290.149765seconds below1800,zeroGPUcharge."
+  ],
+  "budget": {
+    "training_seconds": 9815.242410188992,
+    "arena_seconds": 2328.2587630339985,
+    "gpu_total_seconds": 12143.50117322299,
+    "gpu_hours": 3.3731947703397194,
+    "schedule_cpu_seconds": 290.1497650730016,
+    "hard_gpu_seconds": 21600
+  },
+  "host_terminal_observation": {
+    "unix": 1788750966.488786,
+    "all_recorded_pids_absent": [
+      178538,
+      178947,
+      178948,
+      194525,
+      194526,
+      194982,
+      194983
+    ]
+  },
+  "conditional_confirmation_selection": {
+    "rule_sha256": "ce7866fbb304180ff2a16abda84105182f5bdf73175b769c626ea77c7096352f",
+    "provisional_leader": "C20T05",
+    "selected_challenger": "E0T05",
+    "E0T05_score_vs_C": 0.4575,
+    "G20T05_score_vs_C": 0.45699999999999996,
+    "difference": 0.000500000000000056,
+    "development_pair_alignment": "Exact ordered500 opening FENs and all non-role settings independently equal between completed E-versus-C and C-versus-G banks.",
+    "interpretation": "E chosen by the predefined heuristic with only0.0005 score advantage over G against C; no meaningful E-versus-G strength or significance claim. Fresh candidate E/reference C at matched seed1, expected negative candidate interval if development replicates.",
+    "remaining_condition": "Parent owns final reserved-bank overlap qualification, fresh preregistration, manifest and independent launch review; no new run authorized by this receipt."
+  },
+  "historical_control": {
+    "valid_control": false,
+    "problems": [
+      "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+      "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+      "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+    ],
+    "matched_summary_fields": [
+      "architecture_judged_against",
+      "trainer_judged_against",
+      "realized_after_guard",
+      "realized",
+      "realized_replay_after_guard",
+      "trainable_params",
+      "warmup_steps",
+      "configured_batch_size",
+      "pinned_production_game_frac",
+      "production_game_frac"
+    ]
+  },
+  "findings": [],
+  "limits": [
+    "Nominal development checkpoint screen with reused seed-zero control/openings; not fresh recipe confirmation, seed-variance estimate, search-scaling slope, RL benefit or100Mtransfer evidence.",
+    "No held-out purity receipt; original architecture/trainer committed-pin and game-epoch-versus-historical-control limitations retained.",
+    "Schedule verifies game metadata and batch order with pinned planner; it does not re-establish full-corpus feature/target byte identity.",
+    "No training/tests/inference/new runs or executed artifact edits; model/book/native payload hashes were not repeated."
+  ]
+}
