@@ -1,0 +1,248 @@
+{
+  "schema": 1,
+  "captured_utc": "2026-09-08T19:34:49.943676+00:00",
+  "scope": "Completed measurements and an original-protocol SoftSF prospective schedule launch; no new training or strength result. This compact projection keeps immutable original receipts external.",
+  "cuda_v2": {
+    "status": "PASS_BOUNDED_COMPLETED_CUDA_PROBE_REVIEW",
+    "observed": {
+      "parameters": 61444448,
+      "epochs": 2,
+      "optimizer_updates": 4,
+      "batch_size": 512,
+      "unique_graphs": 1,
+      "frames_ok": 1,
+      "inductor_graph_cache_events": 2,
+      "generated_kernels": 13389,
+      "stage_seconds": 1697.6718179120217,
+      "operator_inclusive_seconds": 1739.3667023181915,
+      "peak_cuda_allocated_bytes": 11118537728,
+      "peak_cuda_reserved_bytes": 13314818048,
+      "row_presentations": 2048,
+      "distinct_fixture_rows": 1024
+    },
+    "limitations": [
+      "1024-row single-shard fixture; four updates inside 1000-step warmup. No steady-state throughput, full-corpus memory, full LR schedule or playing-strength qualification.",
+      "Batch512 only; actual corpus has ragged511 batches not exercised here.",
+      "Compiled graph capture established; CUDA graph replay is a separate claim.",
+      "Checkpoint role/hash receipts traced to producer saves; payload hashes not independently recomputed.",
+      "Historical valid_control=false and all original validity problems remain preserved. Generic process complete=false is separate from process_complete=true and operator qualification status."
+    ],
+    "publication": "https://github.com/jjoshua2/DeepFin/pull/530#issuecomment-5590637482"
+  },
+  "full_corpus_planner": {
+    "status": "PASS_COMPLETED_SF_B100_TWO_EPOCH_PLANNER_REVIEW",
+    "counts_per_epoch": {
+      "rows": 18910484,
+      "games": 97968,
+      "shards": 2309,
+      "batches": 36935,
+      "full512": 36699,
+      "ragged511": 236,
+      "policy_mask_weight": 18910484.0,
+      "wdl_mask_weight": 18910484.0,
+      "other_12_objective_mask_weights": 0.0
+    },
+    "two_epoch_totals_per_arm": {
+      "rows": 37820968,
+      "batches": 73870
+    },
+    "logical_witnesses": [
+      "8fb1e9c65491080e56e8606a07474bd122f2e27a96bf866d2be7f5e4780d70e9",
+      "3a3eb08e44a92306531b81216a917fe08af0a80d9433950996ed47a74cef1da8"
+    ],
+    "physical_plan_hashes": {
+      "SF": [
+        "0f9626f4fe3b640a7eae9caa22e9a21fd1b2d62f3433bfe346e158f191d46ac4",
+        "3eea30faee43e3dca655958b396f7e4fb73dad9b64df810a9d93c2b61896f871"
+      ],
+      "B100": [
+        "6fac13b2e59dfb4783253bdcab8c216e3944284c284737bc1e6699bdf431d815",
+        "b232744ac909137c46c17bd6bb9a275cc3f1e767253f89e63e7e6bd471a4bfec"
+      ]
+    },
+    "planned_peak_working_set_bytes": [
+      7318953818,
+      6783115020
+    ],
+    "observed_planning_cost": {
+      "body_wall_seconds": 1478.8784482229967,
+      "GNU_time_wall_seconds": 1480.56,
+      "GNU_time_user_seconds": 932.49,
+      "GNU_time_system_seconds": 409.9,
+      "body_self_max_rss_kib": 999972,
+      "GNU_time_max_rss_kib": 1105128,
+      "exit_status": 0
+    },
+    "interpretation": "The real GameAwareEpochBuffer constructor performed content checks and objective census for seed0; seed1 replanned the same validated records in canonical order. Equal source-qualified identities, schedule-driving records and load/batch arrays imply matched row schedules under the pinned code. The witness is an input commitment, not an independently emitted replay row stream.",
+    "limitations": [
+      "The original completed producer still repeats prospective boilerplate (no execution authorized; prior CUDA probe remains failed). Those statements belong to its frozen preparation and do not describe current completion; original receipt preserved unchanged. Separate CUDA v2 completion is reviewed separately.",
+      "Planning read compressed corpus bytes and scalar masks/identities; it was not metadata-only. Review did not repeat those reads.",
+      "Observed RSS is planner process/maximum process accounting, not aggregate loader or CUDA training peak. Planned 6.82/6.32GiB estimates are not measured full-corpus training memory.",
+      "Actual full training and ragged511 CUDA path remain unexecuted here. No optimizer/strength qualification or old dc687 schedule-hash equality claim.",
+      "PASS_SF_B100_TWO_EPOCH_PLANNER_WITNESSES does not itself satisfy full PASS_TWO_EPOCH_PREPARATION admission; actual selected profile, registration, data and runtime qualification bindings still need assembly."
+    ],
+    "publication": "https://github.com/jjoshua2/DeepFin/pull/578#issuecomment-5590639848",
+    "finalist_scope": "SF is the source/schedule anchor, not a mandatory second horizon finalist."
+  },
+  "wdl_prefix": {
+    "status": "PASS_COMPLETED_PREFIX_METADATA_REVIEW",
+    "new_rows": 1048576,
+    "new_shards": 128,
+    "total_bank_rows_including_pilot": 1056768,
+    "total_bank_shards": 129,
+    "remaining_original_rows": 17853716,
+    "selection": "canonical source shards1..128 inclusive; pilot0 unchanged",
+    "native_wdl": {
+      "dtype": "float32",
+      "shape_per_shard": [
+        8192,
+        3
+      ],
+      "kind": "probabilities",
+      "order": [
+        "win",
+        "draw",
+        "loss"
+      ],
+      "pov": "side_to_move",
+      "output": "/output/wdl",
+      "model_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0"
+    },
+    "timing": {
+      "parent_seconds_including_lease_wait": 1795.9357521533966,
+      "operator_to_parent_completion_seconds": 1799.1060211658478,
+      "before_first_shard_publication_seconds": 1189.4706325531006,
+      "following127_shard_publication_span_seconds": 602.1216201782227,
+      "following127_rows": 1040384,
+      "publication_span_rows_per_second": 1727.8635497128562,
+      "remaining_rows_at_this_proxy_hours": 2.8702298606737346,
+      "lease_acquired_timestamp_recorded": false
+    },
+    "limits": [
+      "No inference, source feature reread or output-array rehash in this review; native validation/readback and saved digests come from completed producer.",
+      "Source-qualified original derived-history lineage retained; no fresh raw-history/input-key reconstruction or retroactive control qualification.",
+      "Publication-span rate amortizes the following127 shards; not a pure GPU timer or controlled speedup. Before-first time includes lease wait, metadata/model/session startup and first shard.",
+      "Remaining2.87h is a planning proxy, not authorized expansion or measured full-corpus completion.",
+      "No value target rewrite, training integration or playing-strength result."
+    ],
+    "metadata_verification": "128 complete attrs, all five array layouts and saved digest sets checked against registered selection. Pilot0 attrs, receipt, saved hashes and storage identity unchanged. No source features or output array payloads reread; producer native validation/readback reused."
+  },
+  "SoftSF10": {
+    "rows": 18910484,
+    "shards": 2309,
+    "raw_rows": 20000000,
+    "missing_result_rows": 1089516,
+    "changed_rows": 16696682,
+    "stored_mass_error_max": 0.000457763671875,
+    "materialization_resources": {
+      "wall_seconds": 17351.98,
+      "user_seconds": 16468.51,
+      "system_seconds": 728.13,
+      "max_rss_kib": 666064,
+      "filesystem_inputs": 98022072,
+      "filesystem_outputs": 26057232,
+      "exit_code": 0
+    },
+    "producer_elapsed_seconds": 17305.86453275301,
+    "operator_elapsed_seconds": 17357.66422867775,
+    "allocated_output_bytes": 12548145152,
+    "inspection_elapsed_seconds": 22.275026559829712,
+    "qualification_status": "PASS_REGISTERED_CORPUS_QUALIFICATION",
+    "qualification_sha256": "fe54f267dfb008cea9a5b7d875d7aedb9cba98f1b563e4eae253bb20859fc35b",
+    "rewrite_summary_sha256": "cead18347ff448e6f18caefd6cbfe26a5366f868a4f23c696a15958e8bf52276",
+    "derive_summary_sha256": "be4bc2b477574d0a1e0d72ef52d45273170964669253bec5d9f08a0f7fcaabc3",
+    "qualification_publisher_seconds": 2.8343136310577393,
+    "proof_scope": "Completed producer full-row/old-policy/nonpolicy-copy proof, plus all2309 source/output attrs and17 output-array layouts refreshed. Inherited history/control limits retained; no second payload scan.",
+    "prospective_schedule_status": "Launched once; completion pending at this snapshot. Original Python3.10 protocol, canonicaldc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f; 1800s inclusive, two CPUs/threads, GPU hidden. No training launched by this preparation.",
+    "preregistration": "https://github.com/jjoshua2/DeepFin/pull/569#issuecomment-5590602401"
+  },
+  "source_receipts": [
+    {
+      "source": "scratchpad/bt4_joint20/horizon_runtime_preparation_v1/cuda_probe_v2/completed.json",
+      "sha256": "4d105e3a7423dacc5b117554029faa8e9d3fa80e364d3c8aa9b0144745880ed6",
+      "bytes": 21409
+    },
+    {
+      "source": "scratchpad/bt4_joint20/horizon_runtime_preparation_v1/cuda_probe_v2/independent_completed_review.json",
+      "sha256": "aed6b51d8043ea8a18317cd19debb2800842f0fca825ebea69876a585e38f128",
+      "bytes": 3412
+    },
+    {
+      "source": "scratchpad/bt4_joint20/horizon_runtime_preparation_v1/full_corpus_plan_v1/run/completed.json",
+      "sha256": "226f0b458ab11bbfdaffcfe1f66484991da09c3e80ec7ff2f5f6b6ece59084ac",
+      "bytes": 2396
+    },
+    {
+      "source": "scratchpad/bt4_joint20/horizon_runtime_preparation_v1/full_corpus_plan_v1/independent_completed_review.json",
+      "sha256": "9efa397a0e7b05694b96d44cdb957b24f95a70453cdeab80a50b4c90e7643c49",
+      "bytes": 4543
+    },
+    {
+      "source": "scratchpad/bt4_joint20/bt4_derived_wdl_v1/prefix128_preparation_v1/completed_readout.json",
+      "sha256": "5f94706c55d96472f594c776902abdd4dddb07031bda69fb7db310b208d51f18",
+      "bytes": 3757
+    },
+    {
+      "source": "scratchpad/bt4_joint20/bt4_derived_wdl_v1/prefix128_preparation_v1/completed_metadata.json",
+      "sha256": "d91bfb3d50b372ba25ac45617e7c7ce59cebfa8998c19aa238e802f50665fbf8",
+      "bytes": 145033
+    },
+    {
+      "source": "scratchpad/bt4_joint20/bt4_derived_wdl_v1/prefix128_preparation_v1/operator_launch_actual.json",
+      "sha256": "fd2b477e56deaa68a2880be51b967945f78ea851e91092f73c98e630d57957b5",
+      "bytes": 2010
+    },
+    {
+      "source": "scratchpad/bt4_joint20/SoftSF10_preparation_v1/completed_qualification_v1/completed_readout.json",
+      "sha256": "0b07e68ec6300f7dcea52a037c35cf73a65d5aa98239d01f4576faacfe1af9d0",
+      "bytes": 3135
+    },
+    {
+      "source": "scratchpad/bt4_joint20/SoftSF10_preparation_v1/SoftSF10.dataset_qualification.json",
+      "sha256": "fe54f267dfb008cea9a5b7d875d7aedb9cba98f1b563e4eae253bb20859fc35b",
+      "bytes": 2176
+    },
+    {
+      "source": "scratchpad/bt4_joint20/SoftSF10_preparation_v1/materialization/status.json",
+      "sha256": "90e374964fc95b94417afa2ae628175276a83506f5ae128ab686f3dee4e6d098",
+      "bytes": 2386
+    },
+    {
+      "source": "scratchpad/bt4_joint20/SoftSF10_preparation_v1/prospective_schedule_v1/plan.json",
+      "sha256": "2572da58816543b0c5c87ec4fe813dc4020d0debd32c2626a3b959a974a5dafa",
+      "bytes": 4773
+    },
+    {
+      "source": "scratchpad/bt4_joint20/SoftSF10_preparation_v1/prospective_schedule_v1/run_once.py",
+      "sha256": "81547201044f20f91cefa9cad7c4e00b8609438c1f4d1a48e7bb9dedc7fd2c16",
+      "bytes": 4279
+    },
+    {
+      "source": "scratchpad/bt4_joint20/SoftSF10_preparation_v1/prospective_schedule_v1/started.json",
+      "sha256": "8433d9419390ad4b1d7dec1b5b3ba8b88c77946ceaac2194a283f7beef8cc0b8",
+      "bytes": 1133
+    },
+    {
+      "source": "scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/plan.json",
+      "sha256": "2b7cfb8a10f4e2231b23c62f4c378a1b91b8858807d165ce46929fce72b87a53",
+      "bytes": 24460
+    },
+    {
+      "source": "scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/independent_review.json",
+      "sha256": "efb6e414f10ddeea71fbce58061a71689f2390e0b116f7760fff151080c2371b",
+      "bytes": 3637
+    }
+  ],
+  "wdl_remainder_plan": {
+    "status": "PREPARED_NOT_LAUNCHED_OR_QUEUED",
+    "start_shard": 129,
+    "last_shard": 2308,
+    "new_shards": 2180,
+    "new_rows": 17853716,
+    "whole_invocation_seconds_including_cleanup": 14400,
+    "minimum_free_gib": 150,
+    "sampled_logical_file_size_gib": 2,
+    "existing_prefix_preserved": true,
+    "limits": "Later GPU gap only; no automatic queue or retry. Logical file size cap differs from physical disk allocation."
+  }
+}

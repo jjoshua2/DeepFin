@@ -7,8 +7,11 @@ work needed to run that test and the separate training-horizon comparison.
 
 Related science: [value-head readout](2026-09-08-sf-anchored-value-bootstrap.md)
 and [completed G50/B100 comparison](2026-09-08-bt4-g50-b100-dose-comparison.md).
-[Compact measured evidence and launch identities](evidence/value-bootstrap/collection-readiness.json)
-contain the exact receipt hashes; bulk labels and runtime logs remain external.
+[Historical launch evidence](evidence/value-bootstrap/collection-readiness.json) and
+[new completed evidence](evidence/value-bootstrap/collection-completed.json) retain
+the receipt identities. Bulk labels and runtime logs remain external.
+
+Snapshot: 2026-09-08, 19:36 UTC. Later completions are recorded separately.
 
 ## Completed value collection checks
 
@@ -41,22 +44,39 @@ unchanged, and parent completion followed successful child exit. The output bank
 occupied 388,122 bytes. No inference was repeated for this verification.
 [Prospective pilot and completed readout](https://github.com/jjoshua2/DeepFin/pull/582#issuecomment-5590014506).
 
-Charging every source shard this same total cost projects about **6.83 hours** for
-the whole corpus. This is a planning extrapolation from one fixed shard. Sharing
-session startup may reduce cost, while other shards may cost more.
+The original one-shard extrapolation was about 6.83 hours for the whole corpus.
+The completed larger prefix below now provides an amortized planning observation.
 
-## Next collection and value test
+## Completed larger value prefix
 
-Exactly the next **128 shards / 1,048,576 rows** are registered and queued behind
-the active horizon GPU check. The existing pilot is pinned and excluded from
-relabeling. The same model, output, batch 128 and two-thread settings apply.
-The one-hour inclusive bound covers lease wait and cleanup; the bank has a sampled
-128 MiB output cap, an 8 GiB ORT allocator budget and a 150 GiB free-disk reserve.
-Completed labels remain reusable. There is no automatic expansion or retry.
+Exactly the next **128 shards / 1,048,576 rows completed**, bringing the reusable
+bank to **1,056,768 rows across 129 shards**. The existing pilot was excluded from
+relabeling and its metadata, saved hashes and storage identity remain unchanged.
+All 128 completion records, native float32 W/D/L contracts, five array layouts and
+saved digest sets match the registered source selection. This readout reused the
+producer's native validation and readback; it did not repeat inference or reread
+source features or output-array payloads.
+
+Parent wall time was **1,795.94 seconds**, including GPU-lease wait; the outer
+operator-to-completion interval was 1,799.11 seconds, within the registered hour.
+The following 127 shards published 1,040,384 rows over **602.12 seconds**, about
+**1,728 rows/s**. No lease-acquisition timestamp was banked: the 1,189.47 seconds
+before first publication includes waiting, preflight, session startup and the first
+shard. The publication span is an amortized cost proxy, not a pure GPU timer or a
+controlled speedup measurement.
+
+At that proxy rate, the remaining 17,853,716 rows would take about **2.87 hours**,
+before startup, waiting and teardown. A reviewed **four-hour prospective plan**
+covers the remaining 2,180 shards, preserving the completed prefix. It retains the
+shared lease and 150 GiB reserve, with a sampled 2 GiB logical-file-size bank cap;
+physical allocation is tracked separately. It is prepared for a later GPU gap,
+**not launched or queued**.
+The same model, output, batch 128 and two-thread settings were used; the shared
+lease, sampled 128 MiB bank cap, 8 GiB ORT allocator budget and 150 GiB free-disk
+reserve were retained. Completed labels remain reusable, with no automatic retry.
 [Prefix registration](https://github.com/jjoshua2/DeepFin/pull/582#issuecomment-5590119219).
 
-The measured amortized cost will determine the remaining collection budget. After
-full coverage and target qualification, the first candidate is
+After full coverage and target qualification, the proposed value candidate is
 `0.9 * normalize(SF WDL) + 0.1 * normalize(BT4 winner WDL)`, stored as float16
 and normalized by the existing trainer. B100 policy supervision, other labels,
 initialization and the original one-epoch schedule remain fixed. This changes only
@@ -75,29 +95,61 @@ Resource-infeasible kernel candidates were discarded by autotuning; this does no
 establish an uncaught training numerical failure.
 [Independent timeout readout](https://github.com/jjoshua2/DeepFin/pull/530#issuecomment-5589805736).
 
-One new attempt is registered and running with fresh output and compiler caches.
-The actual 61,444,448-parameter model, 1,024-row fixture, batch 512, two epochs,
-max-autotune and two numeric/compiler threads are unchanged. The inclusive operator
-cap is 3,000 seconds. It refuses to begin unless at least 1,890 seconds remain,
-then grants a fixed 1,830-second stage including 30 seconds of termination grace.
-No automatic retry, eager fallback or smaller-model substitution is allowed.
-[Revised registration](https://github.com/jjoshua2/DeepFin/pull/530#issuecomment-5590016165).
+The separately registered second attempt **passed** with fresh output and compiler
+caches. The actual 61,444,448-parameter model completed two epochs of the
+1,024-row fixture: **four batch-512 optimizer updates**, finite losses, zero retries
+and zero skipped updates. The observer verified the actual compiled model wrapper
+and one captured graph, with compiler-error suppression disabled. This establishes
+compiled graph capture, not a separate CUDA-graph-replay claim.
 
-Success still requires actual compiled-graph evidence, four finite loss calls,
-zero retried/skipped updates, two completed seeded schedules, checkpoints and final
-source pins. Four warmup updates qualify narrow runtime plumbing; they do not
-qualify full-corpus memory, the release schedule, throughput or playing strength.
+The CUDA stage took **1,697.67 seconds**, and the inclusive operator took
+**1,739.37 seconds**, within its 1,830/3,000-second bounds. Peak CUDA allocation was
+11,118,537,728 bytes; peak reservation was 13,314,818,048 bytes. No eager fallback,
+smaller-model substitution or automatic retry was used. Original failed receipts
+remain unchanged. [Completed CUDA review](https://github.com/jjoshua2/DeepFin/pull/530#issuecomment-5590637482).
 
-In parallel, a separately registered CPU job computes actual SF/B100 plans for
-seeds 0 and 1 and compares source-qualified schedule inputs. It runs the real
-trainer objective-mask census and reads all compressed bytes twice per corpus;
-seed 1 reuses verified records. Logical parity is a code-backed commitment to
-sufficient scheduling inputs, not an emitted-row-stream hash. Different physical
-policy-content hashes are retained.
+These four warmup updates qualify narrow runtime plumbing. They do not measure
+steady-state throughput, full-corpus training memory, the complete learning-rate
+schedule, ragged batch-511 CUDA behavior or playing strength. Historical control
+limitations remain. They also do not migrate a live job to full-main native code.
 
-The planning job has a one-hour bound, two separate CPU cores, 12 GiB address-space
-cap, 32 MiB sampled output cap and 150 GiB reserve. Its prospective training loader
-budget is two workers / 8 GiB and must carry into any later manifest. Neither a
-partial plan nor a CPU success substitutes for completed CUDA qualification or
-realized training evidence.
-[Full-corpus planner registration](https://github.com/jjoshua2/DeepFin/pull/578#issuecomment-5590118274).
+The separately registered CPU planner also **passed** for SF and B100 with seeds
+0 and 1. Each epoch contains **18,910,484 rows, 2,309 shards and 36,935 batches**:
+36,699 batches of 512 and 236 of 511. Policy and WDL mask weights each equal the
+row count; the other 12 objective mask sums are zero. The two-epoch total per arm is
+37,820,968 rows and 73,870 batches. Source-qualified logical schedule witnesses
+match between arms for each seed; different physical policy-content hashes remain.
+SF is the planner's source and schedule anchor, not a mandatory second horizon
+finalist.
+
+The real planner performed its objective-mask census and compressed-content reads;
+this was not a metadata-only job. It finished in **1,480.56 seconds** process wall
+time (1,478.88 seconds body), with maximum process RSS 1,105,128 KiB. Its two-worker,
+8 GiB prospective loader budget is retained; the planned 6.82/6.32 GiB working-set
+estimates are not observed full-training memory. Logical witnesses commit to the
+schedule-driving inputs under pinned code, not an independently emitted row stream.
+No full two-epoch training comparison has completed, and the selected registration
+and full preparation bindings still need assembly.
+[Completed planner review](https://github.com/jjoshua2/DeepFin/pull/578#issuecomment-5590639848).
+
+## SoftSF10 materialization complete
+
+The raw-effective-cp policy alternative is now fully materialized and qualified:
+**18,910,484 rows across 2,309 shards**, preserving the original 20M-row source
+prefix and its 1,089,516 missing-result exclusions. At temperature 10 cp,
+16,696,682 stored policy rows changed; maximum stored probability-mass error was
+0.000457763671875. The producer retains the original cp/mate score semantics,
+checks the old policy before rewriting it, and copies the **16 non-policy columns**
+unchanged, including SF search value and history inputs.
+
+The CPU process completed in **17,351.98 seconds (4.82 hours)**, with 666,064 KiB
+maximum RSS and 12,548,145,152 allocated output bytes. Qualification reused that
+completed full-row and compressed-copy proof, then refreshed all shard attrs and
+array layouts without another payload scan. It preserves the original history
+lineage and historical-control limitations; a genuine SF rewrite receipt is used.
+
+One prospective schedule is now running under the **original one-epoch runtime**
+used for B100/G50, with a 1,800-second inclusive bound, two CPUs/threads and no GPU.
+Its completion and the final training manifest remain pending in this snapshot.
+This is not adoption of the newer two-epoch runtime or a training/strength result.
+[SoftSF training preregistration](https://github.com/jjoshua2/DeepFin/pull/569#issuecomment-5590602401).

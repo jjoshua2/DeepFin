@@ -6,6 +6,11 @@ Which families earn that compute remains conditional on the broad target screens
 This record qualifies part of the implementation; it does not launch that comparison
 or establish that longer training improves strength.
 
+**Later 2026-09-08 update:** the [bounded compiled-CUDA probe and full SF/B100
+planner completed](2026-09-08-value-collection-and-horizon-readiness.md#two-epoch-runtime-qualification).
+The earlier preparation and failed diagnostic below remain historical evidence;
+no full two-epoch training comparison has launched.
+
 ## Completed CPU check
 
 Main at `ee46d0f1139211be15d84e4f9391c240dc51dbc7` ran five existing focused
