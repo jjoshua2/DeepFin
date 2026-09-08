@@ -79,11 +79,16 @@ def make(tmp_path, monkeypatch, panel):
         orphan=False,
         reason="max_seconds",
         loop="rolling",
+        roles=None,
     ):
         folder = tmp_path / name
         folder.mkdir()
         values = values if values is not None else [0.0, 2.0] * (250 if low else 64)
         ids = list(range(len(values))) if order is None else order
+        identities = copy.deepcopy(common)
+        if roles is not None:
+            for side, role in zip(("candidate", "reference"), roles):
+                identities[side]["path"] = str(tmp_path / role / "checkpoint.pt")
         side = arena.SideSearch(
             shape="training",
             source="fixture",
@@ -93,8 +98,8 @@ def make(tmp_path, monkeypatch, panel):
         )
         settings = arena.arena_game_log_settings(
             mode="matched_sims",
-            candidate=common["candidate"]["path"],
-            reference=common["reference"]["path"],
+            candidate=identities["candidate"]["path"],
+            reference=identities["reference"]["path"],
             games=1000 if low else 256,
             seed=42,
             openings_path=common["book"]["path"],
@@ -245,7 +250,7 @@ def make(tmp_path, monkeypatch, panel):
             "settings": settings,
             "execution": execution,
             "opening_panel": opening,
-            "identities": common,
+            "identities": identities,
             "command": command,
             "candidate_role": "B100",
             "reference_role": "H20",

@@ -5,6 +5,17 @@ registered B100-candidate versus H20-reference development screen. It does not
 launch matches or select training. The historical `bt4_joint_readout.read_arm`
 continues to require its original fixed-size banks and reject SPRT.
 
+An explicit `matched_original_epoch` profile also supports other separately
+registered recipe pairs under the same original-corpus one-epoch protocol.
+The reader manifest and launch must name that profile. Launch `training` contains
+`candidate`, `reference`, `candidate_training` and `reference_training`, identical
+to the qualified launcher inputs; launch `identities` additionally pins both
+training receipts. The reader checks completed training/summary/schedule
+bindings and derives roles from them. Low and high must retain identical profile,
+direction and content identities. See [launcher admission](bt4_recipe_screen.md)
+for the fixed training scope. Legacy manifests without a profile retain the
+original B100/H20 role checks.
+
 The new reader has two explicit modes:
 
 - `low_sprt`: 100 simulations, at most 1,000 games / 500 canonical opening pairs;
