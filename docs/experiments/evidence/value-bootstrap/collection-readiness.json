@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "scope": "Value collection and horizon runtime readiness; no new playing-strength result",
+  "raw_future_capture": {
+    "status": "ADOPTED_GPU_JOINT_OUTPUT_OBSERVED",
+    "observed_unix": 1788891704.138324,
+    "runtime_commit": "8fd3940e60530aebdd7bd7f398cd04eb2679af1d",
+    "sample_rows": 8243,
+    "wdl_native_array_sha256": "b9811f194212c8b3e57e273584474bb7eaf96c047ed648361055491757ca313f",
+    "native_dtype": "float32",
+    "mass_max_abs_error": 1.407461240887642e-07,
+    "coverage_asof_unix": 1788891696.5929887,
+    "coverage": {
+      "run06_g10": {
+        "complete_rows": 66119,
+        "complete_shards": 8,
+        "policy_only_rows": 28078170,
+        "policy_only_shards": 3383
+      },
+      "run07_g10_companion4": {
+        "complete_rows": 33186,
+        "complete_shards": 4,
+        "policy_only_rows": 7358698,
+        "policy_only_shards": 887
+      }
+    }
+  },
+  "stored_input_pilot": {
+    "status": "PASS_ACTUAL_BOUNDED_GPU_PILOT",
+    "observed_unix": 1788892418.7427554,
+    "rows": 8192,
+    "shards": 1,
+    "actual_total_elapsed_seconds": 10.653313398361206,
+    "producer_parent_elapsed_seconds": 8.43140983581543,
+    "total_wall_rows_per_second": 768.9626404175973,
+    "same_cost_per_shard_whole_corpus_hours": 6.832916843560007,
+    "plan_sha256": "eee2a3b37c01942a2ea7e4c35b4665197b4baeeb5dd641b23d1c1812fb9d2cf6",
+    "runtime_commit": "9af7d44ddd9e65cf5869ba39f509b3d2ceed20c7",
+    "native_wdl_sha256": "52e171f5aa6c695b49d19cff4bb07ff895d9b63ca75bb5027b3040d3ee49f679",
+    "source_identity_unchanged": true,
+    "completed_receipt_sha256": "4a9e1deeeddb744a410b82ebee528386bc03b3c5bf87f332411f8c091002db17",
+    "all_five_output_array_hashes_match": true,
+    "child_exited_before_parent_completion": true,
+    "owned_processes_absent": true,
+    "providers": [
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "bytes_in_output": 388122
+  },
+  "receipt_sha256": {
+    "raw_adoption": "eb6c042a08683ab417a322a17edf3a0ee5fe0c66820c78d9d25dd639eae1ea75",
+    "pilot_independent_readout": "59d43dbee13dcd28f1fca80a550dda91132925858fbc104ad5d640aafdc52bb5",
+    "horizon_first_timeout_independent_review": "53498c676d2b851a715bdce67efafca58471384a00f5b6ce30ba21e08c6b6fd9",
+    "horizon_v2_independent_review": "910a8b1c2dc16f5c5ec8766da060503db7fbdc55dae3352454760b4e6bcc85c2"
+  },
+  "prefix128": {
+    "status_at_launch": "QUEUED_BEHIND_VERIFIED_HORIZON_GPU_OWNER",
+    "started_unix": 1788893214.0140684,
+    "deadline_unix": 1788896814.0140684,
+    "plan_sha256": "a12f9e34531e624b4c101973bd5c72d2a4a7ae61243338571dbceb1dfcdf018d",
+    "registration": "https://github.com/jjoshua2/DeepFin/pull/582#issuecomment-5590119219"
+  },
+  "horizon_v2": {
+    "status_at_launch": "LAUNCHED_OPERATOR_COMPLETION_REQUIRED",
+    "started_unix": 1788892658.9894693,
+    "deadline_unix": 1788895658.9894693,
+    "plan_sha256": "f36cbd37bd0a431aaf5e66b3055028f5122cb56446a668e1752f017681669e07",
+    "registration": "https://github.com/jjoshua2/DeepFin/pull/530#issuecomment-5590016165"
+  },
+  "full_corpus_planner": {
+    "status_at_launch": "LAUNCHED_COMPLETION_REQUIRED",
+    "started_unix": 1788893194.4664,
+    "deadline_unix": 1788896794.4664,
+    "plan_sha256": "312ccbdba673a8164a66d011020efe7cc98c463c795edb525c6446a02e9505b7",
+    "registration": "https://github.com/jjoshua2/DeepFin/pull/578#issuecomment-5590118274"
+  }
+}
