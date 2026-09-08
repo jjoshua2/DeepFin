@@ -1,0 +1,22 @@
+{
+  "status": "PASS_BOUNDED_SAMPLE_PRELAUNCH_REVIEW",
+  "checked_unix": 1788867432.4388444,
+  "reviewer": "root independent of collector author",
+  "pins": {
+    "plan.json": "8e7e4b3ca4af65c0e021eb0017003c45914e3bdc729a7d2a72e8837a18339bfc",
+    "collect.py": "f9b029f8f664c232f3988edf1d2a9f076966c6a0051101533c4947a6451bb94a",
+    "preregistration.md": "e3d0c9c8d5a370932380c8ca0a54813104f549d61f9827e30d2f4486f8f2e817"
+  },
+  "checks": [
+    "64 disjoint strata and 4096 target-blind fixed selected rows, exact inclusion-weight formula",
+    "source-qualified raw join refuses duplicate/missing game/ply; no FEN substitution or resampling",
+    "actual deriver history/SF bit equality, 16 C/SF nonpolicy columns and actual C recipe reconstruction",
+    "complete legal raw effective scores retain original mate encoding; weighted stored entropy chooses only after all selected rows qualify",
+    "600s inclusive timeout, fixed CPUs6,7, GPU hidden, source chunk and raw stability, final imported helper/native pins",
+    "original raw rows and per-row NPZ/metrics banked; partial failure preserved"
+  ],
+  "limits": [
+    "No payload execution yet; raw-scope/600s feasibility remains prospective",
+    "Stratified cluster sample; descriptive entropy matching does not establish strength or full-corpus readiness"
+  ]
+}

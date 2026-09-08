@@ -1,0 +1,48 @@
+{
+  "status": "PROPOSAL_NOT_REGISTERED_NOT_LAUNCHED",
+  "availability": {
+    "run06_g10": {
+      "selected_labelled": 244,
+      "missing_teacher_receipts": []
+    },
+    "run07_g10_companion4": {
+      "selected_labelled": 244,
+      "missing_teacher_receipts": []
+    }
+  },
+  "prior_reviews": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/independent_completed_review_v1/review.json",
+      "sha256": "1e4c06f0fd500212b4bac2f852936a20af2de21f7543c6e9eef2de6dc6924ecc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/independent_completed_review_v1/review.json",
+      "sha256": "56bf9e063b5d22cfd19ed5432b39750eefca2e42ca88759301a12a3b9a02fc71"
+    }
+  ],
+  "selected_rows": 4047239,
+  "row_linear_output_estimate_bytes": 4284047989.550764,
+  "twofold_estimate_bytes": 8568095979.101528,
+  "cap_bytes": 8589934592,
+  "row_linear_elapsed_estimate_seconds": 10573.245584875087,
+  "elapsed_with25pct_and30s_grace": 13246.556981093858,
+  "hard_seconds_proposed": 14400,
+  "minimum_free_bytes": 161061273600,
+  "cpu_affinities_proposed": [
+    [
+      2,
+      3
+    ],
+    [
+      4,
+      5
+    ]
+  ],
+  "limitations": [
+    "No throughput credit for newly adopted overlap; use slower prior sequential stages per lane.",
+    "Output sampling is not a quota; extrapolation is not a guarantee.",
+    "Larger manifest/index and shifted shard compositions can alter CPU/memory costs.",
+    "No source payload reads, exclusion census, inference or derivation. Raw SHA values are verified closed teacher receipt claims; actual consumers hash later.",
+    "Final runtime and omission budgets not bound; root reviews actual active Worker01 completion and host resources before registration."
+  ]
+}

@@ -10,10 +10,11 @@ measurements support which claims.
 | --- | --- |
 | [Faster recipe matches](2026-09-08-faster-recipe-matches.md) | Ordered-prefix SPRT, six completed capacity cells and provisional100/400 pool choices; no measured whole-match speedup |
 | [BT4 adapter identity collection](2026-09-08-bt4-adapter-single-pass.md) | Exact identity parity and 34.1% CPU component reduction in one closed-shard pair; full-pipeline benefit unmeasured |
+| [Qualified Soft-SF training sample](2026-09-08-soft-sf-qualified-training-sample.md) | 4,096 rows across 64 shards; 10cp matches C entropy most closely among four registered candidates, no training/strength selection |
 | [BT4 target geometry](2026-09-08-bt4-target-geometry.md) | Fixed 128-row training sample: C support/maxima and raw-cp controls; no temperature or strength selection |
 | [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity; first optimized group completed 132,467 rows, throughput descriptive only |
-| [G10 adapter/rank overlap](2026-09-08-g10-stage-overlap.md) | Opt-in same-lane preparation; historical ideal saving about 25%, no measured speedup or adoption |
-| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 3,165,265 common rows prepared; corrected block completed with 1,053,018 rows, original schema failure preserved |
+| [G10 adapter/rank overlap](2026-09-08-g10-stage-overlap.md) | Adopted in Worker01 attempt; cache failure, no measured speedup |
+| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 3,165,265 common rows prepared; Worker01 rank-cache failure preserves 2,111,278 derived rows; 4.047M raw-row proposal unlaunched |
 | [Pure BT4 policy endpoint](2026-09-08-bt4-pure-policy-endpoint.md) | B100 training started 09:09 UTC; exact prospective schedule qualified; no completion or playing result; future arenas separate |
 | [Bootstrap training-horizon readiness](2026-09-08-bootstrap-training-horizon-readiness.md) | Real tiny two-epoch CPU path checked on the older Torch environment; CUDA/full-corpus qualification and finalist selection remain |
 | [BT4 hybrid and global endpoints](2026-09-07-bt4-hybrid-endpoints.md) | H20 package complete: C100 +45.07, G100 +85.78, C400 +34.86 Elo; aligned search interaction unresolved; no promotion |

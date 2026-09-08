@@ -1,0 +1,1228 @@
+{
+  "schema": 1,
+  "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+  "source_config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+  "source_manifest_sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4",
+  "shards": [
+    {
+      "source_shard": "w02-00000.jsonl.zst",
+      "rows": 8263,
+      "source_sha256": "37edc60f0713f90b680f5911e219d5122869c7ed772a40c19f9f6bb4b6b7ce70"
+    },
+    {
+      "source_shard": "w02-00001.jsonl.zst",
+      "rows": 8351,
+      "source_sha256": "a35391e351d92022aae41c46c3cd49e477aa8c342efc8bed4671440d46e0aac5"
+    },
+    {
+      "source_shard": "w02-00002.jsonl.zst",
+      "rows": 8406,
+      "source_sha256": "9096c051ce6fe592d0b8ab3849e39d56a19f6f71c5bab5194c9184c0dd331924"
+    },
+    {
+      "source_shard": "w02-00003.jsonl.zst",
+      "rows": 8200,
+      "source_sha256": "2c28b363d09940a31d734a29c1fc1ea9b95c3afb35d3fb2b62bb413c4e0382c3"
+    },
+    {
+      "source_shard": "w02-00004.jsonl.zst",
+      "rows": 8246,
+      "source_sha256": "04a24f08bb85be1794f2faf6983f7fb4b16b7c50a7c26a2e48a942ce40afcc29"
+    },
+    {
+      "source_shard": "w02-00005.jsonl.zst",
+      "rows": 8304,
+      "source_sha256": "026c19ebde387ec4d5b9df2b2535afe4a6a8cdfd7c70c7ae6ace0c9cc99af46d"
+    },
+    {
+      "source_shard": "w02-00006.jsonl.zst",
+      "rows": 8387,
+      "source_sha256": "1403c74d4adb0e689f00628e9db588f2cee3e0ef86c921c1632fcbda27110168"
+    },
+    {
+      "source_shard": "w02-00007.jsonl.zst",
+      "rows": 8364,
+      "source_sha256": "6654bd038b19794b40daa27ebdafb1e51b7fdda87ef1d0cbbfcb04e4f9081880"
+    },
+    {
+      "source_shard": "w02-00008.jsonl.zst",
+      "rows": 8223,
+      "source_sha256": "53fb58397b61ca554ca1a32c6709922b10bb1ace018929c6a447f8cb0df09f38"
+    },
+    {
+      "source_shard": "w02-00009.jsonl.zst",
+      "rows": 8426,
+      "source_sha256": "8b22e69a452c0a785834a1250b6c86bf0d6ebe0d9625c8ab6d88a469aad23b98"
+    },
+    {
+      "source_shard": "w02-00010.jsonl.zst",
+      "rows": 8346,
+      "source_sha256": "a997f5dab5178c100de6b89553d6c63e950b080d21679409a855343759510e89"
+    },
+    {
+      "source_shard": "w02-00011.jsonl.zst",
+      "rows": 8424,
+      "source_sha256": "1c1bb5c348a4686e5126867bfa0f7080d883105b93e9e1f9a8d0848452fb76af"
+    },
+    {
+      "source_shard": "w02-00012.jsonl.zst",
+      "rows": 8203,
+      "source_sha256": "b6c20ce599e2c93fe93c49e48965648851250744000b93a252121b347db134be"
+    },
+    {
+      "source_shard": "w02-00013.jsonl.zst",
+      "rows": 8285,
+      "source_sha256": "b1332afa412839be9bdb42a9e7adea5aa023f71fe85773190c9c5ccbbfd68b30"
+    },
+    {
+      "source_shard": "w02-00014.jsonl.zst",
+      "rows": 8302,
+      "source_sha256": "fc194349478c7ddc5bcf744befb8f385ddb347cbd589cdef5b701321c546d816"
+    },
+    {
+      "source_shard": "w02-00015.jsonl.zst",
+      "rows": 8255,
+      "source_sha256": "fc64f77a145fa182624fcbc221135e630148f24f6f12aca7dd13a9c67304034d"
+    },
+    {
+      "source_shard": "w02-00016.jsonl.zst",
+      "rows": 8199,
+      "source_sha256": "86d8bc829ec6307361f36400f1d4cb5c10a170f05cf5ada635d975bc2e97bff4"
+    },
+    {
+      "source_shard": "w02-00017.jsonl.zst",
+      "rows": 8352,
+      "source_sha256": "c02c86b448a57a9af827b1c84d3930f7f8ce57ee44cb63529ddd9ee302773d29"
+    },
+    {
+      "source_shard": "w02-00018.jsonl.zst",
+      "rows": 8194,
+      "source_sha256": "8cec8d9f0d0f22a141569f03a8ddb40e58c16f021f66340335e408ce79d95bb2"
+    },
+    {
+      "source_shard": "w02-00019.jsonl.zst",
+      "rows": 8369,
+      "source_sha256": "6b9cd6aea6525382ccdb90078a0c2849a79c72df54b5660ba865031dd603a16b"
+    },
+    {
+      "source_shard": "w02-00020.jsonl.zst",
+      "rows": 8271,
+      "source_sha256": "3f8ec9f57bf6f28b42008ce33c800d3ab5bf6f07d543480f8472dc0a6032af5d"
+    },
+    {
+      "source_shard": "w02-00021.jsonl.zst",
+      "rows": 8248,
+      "source_sha256": "5b809486848c03579bde70bf1e0d808565f9c0cbfb125d7a5805df6ac5acd654"
+    },
+    {
+      "source_shard": "w02-00022.jsonl.zst",
+      "rows": 8383,
+      "source_sha256": "36a28b5ae26dc40a924922d8826e74d402c39f0018ce3b9b36a7df0c83378683"
+    },
+    {
+      "source_shard": "w02-00023.jsonl.zst",
+      "rows": 8241,
+      "source_sha256": "0c4b238fdd42b8796388b0c8578b1d2555636afc753eb06bfd909bfa33f69c1f"
+    },
+    {
+      "source_shard": "w02-00024.jsonl.zst",
+      "rows": 8311,
+      "source_sha256": "749daca618aedd7f465d6b3d0d3cde5a3e4050b5969ee5a8476b7f9374480514"
+    },
+    {
+      "source_shard": "w02-00025.jsonl.zst",
+      "rows": 8471,
+      "source_sha256": "ce49d9fa92f7306955beddbf013e4eadbb940d23ed7779785d371801e26da091"
+    },
+    {
+      "source_shard": "w02-00026.jsonl.zst",
+      "rows": 8339,
+      "source_sha256": "8c992d5304c2bbc63253bd0052de218c43d0fceba2117bcc31302fd70714df6d"
+    },
+    {
+      "source_shard": "w02-00027.jsonl.zst",
+      "rows": 8414,
+      "source_sha256": "a16c71a50cb6090ec9fd5f1eb6846757feb7bec1a6e959198e1e8a86ece63f64"
+    },
+    {
+      "source_shard": "w02-00028.jsonl.zst",
+      "rows": 8396,
+      "source_sha256": "71338bbcb9deac133f49daa484e432e4994657cdb43efbdb119c7b95ab2f73e0"
+    },
+    {
+      "source_shard": "w02-00029.jsonl.zst",
+      "rows": 8369,
+      "source_sha256": "ed29dfc50266b6e8c9ba493fa8f56042f89a0aba44430870d23adb35f68f7036"
+    },
+    {
+      "source_shard": "w02-00030.jsonl.zst",
+      "rows": 8256,
+      "source_sha256": "2767eff63a8f81353bd7b52ddd6467449c87cf2a37baed28ddbdab8b536fc770"
+    },
+    {
+      "source_shard": "w02-00031.jsonl.zst",
+      "rows": 8290,
+      "source_sha256": "ef6e8df04e22fd9975c9cbf6fae58f59531c2f0e9410940e9f6eae577c6c550a"
+    },
+    {
+      "source_shard": "w02-00032.jsonl.zst",
+      "rows": 8198,
+      "source_sha256": "aec930952c56685248b5afed967a34eee27cee5133235df689a46ac19e359c9e"
+    },
+    {
+      "source_shard": "w02-00033.jsonl.zst",
+      "rows": 8333,
+      "source_sha256": "9b4dc0c98860833588f15feec9d0fe28ebffa64caccdacb0fda3038857310b4b"
+    },
+    {
+      "source_shard": "w02-00034.jsonl.zst",
+      "rows": 8384,
+      "source_sha256": "abb4e8b8e45e2534dab2c09a82466a359b8aba0c65af0d6923576197f286bb7a"
+    },
+    {
+      "source_shard": "w02-00035.jsonl.zst",
+      "rows": 8391,
+      "source_sha256": "f298331d056b72deed535a9ce01c0f67ccae2897cfcc2b7fdb4499f3c6e6e36a"
+    },
+    {
+      "source_shard": "w02-00036.jsonl.zst",
+      "rows": 8409,
+      "source_sha256": "4bf8fd17f930a36ebd00d4e38d0a0a360cd71f1c467bb3a0277c8fae7eb544ca"
+    },
+    {
+      "source_shard": "w02-00037.jsonl.zst",
+      "rows": 8198,
+      "source_sha256": "3082a29996dce9261ab433a3fbe6ffea206f217f9afab6d298418873e132d5f4"
+    },
+    {
+      "source_shard": "w02-00038.jsonl.zst",
+      "rows": 8323,
+      "source_sha256": "af9073cb3c122d46a6e77dd15539fb2a81dc7f04a7881fe1fa73fa9497d73eee"
+    },
+    {
+      "source_shard": "w02-00039.jsonl.zst",
+      "rows": 8492,
+      "source_sha256": "d16bfa571ed7763f256a7675890673cca9c7151cc223a766ef6b98effb9d8389"
+    },
+    {
+      "source_shard": "w02-00040.jsonl.zst",
+      "rows": 8348,
+      "source_sha256": "6628654067eaf083baae02c2c0740732c7623c519f9a207127ee9b00d98080b2"
+    },
+    {
+      "source_shard": "w02-00041.jsonl.zst",
+      "rows": 8233,
+      "source_sha256": "9e7792d1c1ac769a9e3f8cf5d6ba2c9100dd858ce1d65500b17bcee3b826a643"
+    },
+    {
+      "source_shard": "w02-00042.jsonl.zst",
+      "rows": 8204,
+      "source_sha256": "73bca4b37105c1cdc07dc4ee85b9fe7fe73be04d8ac383de085d5ea9dbf6b3c1"
+    },
+    {
+      "source_shard": "w02-00043.jsonl.zst",
+      "rows": 8293,
+      "source_sha256": "6fa465b9cd616df63a642c4cd751c2a7baff87ee09f877b9d7eb24e294d1384a"
+    },
+    {
+      "source_shard": "w02-00044.jsonl.zst",
+      "rows": 8210,
+      "source_sha256": "eb2ea0dc3831f543b1df144e662b6b6a259cb84425016e07de935a6c404f5ccf"
+    },
+    {
+      "source_shard": "w02-00045.jsonl.zst",
+      "rows": 8460,
+      "source_sha256": "fbc50a5152b85978b5821b8cc44d852fc7f5fcfc6960cea05b6695ce1d6c23f1"
+    },
+    {
+      "source_shard": "w02-00046.jsonl.zst",
+      "rows": 8282,
+      "source_sha256": "b692389e1052bb09ea80fae0ea332d75ec76cb61dbfa87cd6c475535f215ab80"
+    },
+    {
+      "source_shard": "w02-00047.jsonl.zst",
+      "rows": 8322,
+      "source_sha256": "79aa94d30fee722a45283afb64a87996578126f314f82455099a83af3c74f27d"
+    },
+    {
+      "source_shard": "w02-00048.jsonl.zst",
+      "rows": 8296,
+      "source_sha256": "4e5512b22bd689cf9650f84ada67dcb9cd6184d94de888dc63fde464aab0c6b9"
+    },
+    {
+      "source_shard": "w02-00049.jsonl.zst",
+      "rows": 8299,
+      "source_sha256": "49f714f20ca4e0cf61f1a940e49f60601bb4ce318c8c37a735882126bbb1bd11"
+    },
+    {
+      "source_shard": "w02-00050.jsonl.zst",
+      "rows": 8243,
+      "source_sha256": "a2024c26296d2a184aa0bb754ec4a36054a910d78abd350ca7d192ba329a0e29"
+    },
+    {
+      "source_shard": "w02-00051.jsonl.zst",
+      "rows": 8448,
+      "source_sha256": "7f75f51f6902c7b162cbe9b92e3c0fc0a5c1719e62793018eafe5bd90b85f005"
+    },
+    {
+      "source_shard": "w02-00052.jsonl.zst",
+      "rows": 8202,
+      "source_sha256": "10ede3d347eb3610bdeaee0efa45a6ec0bdf0dc4932eeb8444bd54c0adb7a3dc"
+    },
+    {
+      "source_shard": "w02-00053.jsonl.zst",
+      "rows": 8323,
+      "source_sha256": "f9275478db59a440565b047acc3940d9f97cd69029a378e2f5c69f49f94f0a71"
+    },
+    {
+      "source_shard": "w02-00054.jsonl.zst",
+      "rows": 8267,
+      "source_sha256": "7cd8e303dad59e56bf2971452ed9ffd30caf1fa2b74bd673bd9e12718f75007d"
+    },
+    {
+      "source_shard": "w02-00055.jsonl.zst",
+      "rows": 8353,
+      "source_sha256": "0c7dab244d6ad7da603db5a5acba47fe637aedc7bff02d449a7f20c85fbb4ad6"
+    },
+    {
+      "source_shard": "w02-00056.jsonl.zst",
+      "rows": 8225,
+      "source_sha256": "bd571ec1e05c1c3c86696020bde55eec0203f62d19e3d42dfae80d1cd2fcf059"
+    },
+    {
+      "source_shard": "w02-00057.jsonl.zst",
+      "rows": 8351,
+      "source_sha256": "538c2f87f9071e82a3914fdb7459f0e249a16be822389575a59d296b0ecd894f"
+    },
+    {
+      "source_shard": "w02-00058.jsonl.zst",
+      "rows": 8339,
+      "source_sha256": "3fd6b08c49b478c1eeec4e7041dcd943f6920a47ac55be0547b5cd78fa7eedc3"
+    },
+    {
+      "source_shard": "w02-00059.jsonl.zst",
+      "rows": 8281,
+      "source_sha256": "67a7070139a572d0d6bb88fb3602bcbdae251ca58eec05e83577be89e4653cb8"
+    },
+    {
+      "source_shard": "w02-00060.jsonl.zst",
+      "rows": 8228,
+      "source_sha256": "b78ab18a9cca32afe35cad04168e58fb9618b9a6fa7e36adb759a4ec4b6580bd"
+    },
+    {
+      "source_shard": "w02-00061.jsonl.zst",
+      "rows": 8247,
+      "source_sha256": "c2c31d16e5c45e859f19275c9153ea7f229cdcda959121b1464e21c6cd1a6f40"
+    },
+    {
+      "source_shard": "w02-00062.jsonl.zst",
+      "rows": 8299,
+      "source_sha256": "cfca44f8f174bd7f11ff3ad3e7434fa70076e4a4561cd94289d12731db2feedd"
+    },
+    {
+      "source_shard": "w02-00063.jsonl.zst",
+      "rows": 8391,
+      "source_sha256": "037eb61a07501115954429965ebb7d88b86f1382ff3801e5d9bfedd90b8dc609"
+    },
+    {
+      "source_shard": "w02-00064.jsonl.zst",
+      "rows": 8277,
+      "source_sha256": "fd6608d73b6a75a4085961451eaf40b574e4d9260714a24d945e071747b3b46f"
+    },
+    {
+      "source_shard": "w02-00065.jsonl.zst",
+      "rows": 8321,
+      "source_sha256": "a559b1e90c20962d1d89fa35016a303e5692764fda1a2e697f47d6d6bafc16a3"
+    },
+    {
+      "source_shard": "w02-00066.jsonl.zst",
+      "rows": 8240,
+      "source_sha256": "336c2e8a6aec3c4d9d21195df4a38f78fe7d15cdad6dbf7d5b39cb695e4a4490"
+    },
+    {
+      "source_shard": "w02-00067.jsonl.zst",
+      "rows": 8353,
+      "source_sha256": "f6edc478abdca11b4d21f264e7aba984727cc79e34a4830fd311a62ea04221f1"
+    },
+    {
+      "source_shard": "w02-00068.jsonl.zst",
+      "rows": 8407,
+      "source_sha256": "cbfcf9920f404664c39b981b190cafb9f066a26696ccf2dd2424284d92e80808"
+    },
+    {
+      "source_shard": "w02-00069.jsonl.zst",
+      "rows": 8226,
+      "source_sha256": "a5ddb46e8764c0ef4183523bca0661b9505d78d1907f9a0da55af22b72ac1189"
+    },
+    {
+      "source_shard": "w02-00070.jsonl.zst",
+      "rows": 8462,
+      "source_sha256": "fdaffd3ca0f3b2d14cd5d38eaec0491bbfd31d96994688543630cbe527a1fcb6"
+    },
+    {
+      "source_shard": "w02-00071.jsonl.zst",
+      "rows": 8261,
+      "source_sha256": "6c43353bd51b2dbe15c9ece907d8f42df131eeffd42f47a252cdaa33b5ed0e1a"
+    },
+    {
+      "source_shard": "w02-00072.jsonl.zst",
+      "rows": 8359,
+      "source_sha256": "8d6ea0a5ca1d5c3aff111bbd52bc68a1ebf5312fb5e6fb3f6b53d6990d302b15"
+    },
+    {
+      "source_shard": "w02-00073.jsonl.zst",
+      "rows": 8273,
+      "source_sha256": "a04a7c1c18bf53c7097014943604f4fe8a0d52e5aa6697d0f1fcfb8ff21fce61"
+    },
+    {
+      "source_shard": "w02-00074.jsonl.zst",
+      "rows": 8243,
+      "source_sha256": "e08f22818f4c2cc8354e4f5a9ffc134bd8adf9227d33566ae5d4ed57fe650e22"
+    },
+    {
+      "source_shard": "w02-00075.jsonl.zst",
+      "rows": 8282,
+      "source_sha256": "a1069630fc856ab78cbb12bb169cb650b635e787b634c7b47cdf21805d28d14e"
+    },
+    {
+      "source_shard": "w02-00076.jsonl.zst",
+      "rows": 8292,
+      "source_sha256": "d3c859f79c89c70db6302c03275f1b0cf4e7ecf01ad443caddb2d203b9a010d4"
+    },
+    {
+      "source_shard": "w02-00077.jsonl.zst",
+      "rows": 8375,
+      "source_sha256": "05b771a5a0abe89de5ada800d32fde09f4dccff0da93c4a4edb6f49e0e18967a"
+    },
+    {
+      "source_shard": "w02-00078.jsonl.zst",
+      "rows": 8316,
+      "source_sha256": "8443bccfaf0e8cb220289a36f6eb32b60bdef288517d65edd2a3a9fbd6130119"
+    },
+    {
+      "source_shard": "w02-00079.jsonl.zst",
+      "rows": 8248,
+      "source_sha256": "77b9229830780b449ce24f3caab15e94d18f07ccd936ca9936246c493ca1be25"
+    },
+    {
+      "source_shard": "w02-00080.jsonl.zst",
+      "rows": 8251,
+      "source_sha256": "cab50c183153f4d2ad1d6eea49e6d26fc66b9704345eaf95fb65f43dd1b3bb40"
+    },
+    {
+      "source_shard": "w02-00081.jsonl.zst",
+      "rows": 8287,
+      "source_sha256": "3a1ad724c61517541e2e8baa11826b5faa3d24d9fe1b6142172814e3f8b8335c"
+    },
+    {
+      "source_shard": "w02-00082.jsonl.zst",
+      "rows": 8388,
+      "source_sha256": "66e42a0d53c613436cf142e3f2f4497b2c63701394cd08f3e943f43874cfab63"
+    },
+    {
+      "source_shard": "w02-00083.jsonl.zst",
+      "rows": 8236,
+      "source_sha256": "2e7248f2288295f54b04be0992d3833b216b1522fad6e2bbb583d97d371f05bc"
+    },
+    {
+      "source_shard": "w02-00084.jsonl.zst",
+      "rows": 8492,
+      "source_sha256": "41084cd05ca8b2eec85858a60fde4be9d7e77875746badd33729827c37d8d203"
+    },
+    {
+      "source_shard": "w02-00085.jsonl.zst",
+      "rows": 8285,
+      "source_sha256": "3b5612d210777a041bb32b43c321117c4d382b62592c3aaee5dc215b50a8b294"
+    },
+    {
+      "source_shard": "w02-00086.jsonl.zst",
+      "rows": 8378,
+      "source_sha256": "d7c7403dfdf47625a178cc6173a13aff83a7760376ebffb53d6575307beba1b2"
+    },
+    {
+      "source_shard": "w02-00087.jsonl.zst",
+      "rows": 8231,
+      "source_sha256": "e4775a539703f190a69e17624c152b1509987ff44e859b2efacb7e496d6fd9d3"
+    },
+    {
+      "source_shard": "w02-00088.jsonl.zst",
+      "rows": 8330,
+      "source_sha256": "bb7d50d93466f2bb902097aa7c096657f0e4d3169d86fffd215f6c7867fb29cb"
+    },
+    {
+      "source_shard": "w02-00089.jsonl.zst",
+      "rows": 8247,
+      "source_sha256": "ecd79720b0296ad0ddf253eee87fa7751608f927df0c997378e304d8cc71d516"
+    },
+    {
+      "source_shard": "w02-00090.jsonl.zst",
+      "rows": 8261,
+      "source_sha256": "70a693d6e93660f80f8cac7f4d0a92ff6b0c35185a15d3824c4e877b8676a398"
+    },
+    {
+      "source_shard": "w02-00091.jsonl.zst",
+      "rows": 8330,
+      "source_sha256": "44f229bed9498f52fee9f452634f45394fd722510eefc74a1166b4f4ba013b85"
+    },
+    {
+      "source_shard": "w02-00092.jsonl.zst",
+      "rows": 8254,
+      "source_sha256": "2f6b24e3eb97c888e0a26a107527817eb96bf0b5aedcc4554a35579ecff1536d"
+    },
+    {
+      "source_shard": "w02-00093.jsonl.zst",
+      "rows": 8193,
+      "source_sha256": "113e2c18c4328a8372c6090f78e3832407cca32e5ec17c49e6b254556d1332a3"
+    },
+    {
+      "source_shard": "w02-00094.jsonl.zst",
+      "rows": 8319,
+      "source_sha256": "1aac11f86e12b79ab12c8d04b03fef6ba181104320afe8bf73360e2a9ef8ea50"
+    },
+    {
+      "source_shard": "w02-00095.jsonl.zst",
+      "rows": 8212,
+      "source_sha256": "6e18d7f2aeb916914e01b85abb1bad3797fe7728fbab275a3df27b423fc30bf6"
+    },
+    {
+      "source_shard": "w02-00096.jsonl.zst",
+      "rows": 8354,
+      "source_sha256": "f4c790d9c49f37e5da9a693aa72a5fe75bdf6d44202c57eaade98c75e6bb9083"
+    },
+    {
+      "source_shard": "w02-00097.jsonl.zst",
+      "rows": 8254,
+      "source_sha256": "8d2ce5ed6ee502fffb33e03f6ce08b9a607a77d5c39381c123aafaeda2945360"
+    },
+    {
+      "source_shard": "w02-00098.jsonl.zst",
+      "rows": 8283,
+      "source_sha256": "bd8c7cd278e95a0be3d51b22bbea05cd622c4e036d5bf4340bd538ee91213c28"
+    },
+    {
+      "source_shard": "w02-00099.jsonl.zst",
+      "rows": 8343,
+      "source_sha256": "5fb553b11b985f32e364e95e19043601155eca004b6fa9aefca9cb6ad60a60af"
+    },
+    {
+      "source_shard": "w02-00100.jsonl.zst",
+      "rows": 8303,
+      "source_sha256": "0dce545d2af7dc923bc6cd6961a655da8eed5d0804ac25dfae8bda9976a67fc3"
+    },
+    {
+      "source_shard": "w02-00101.jsonl.zst",
+      "rows": 8237,
+      "source_sha256": "93e00ed470a41fd30dc261fc557c6624339c24fd01a3f5a92c783267b1f50c65"
+    },
+    {
+      "source_shard": "w02-00102.jsonl.zst",
+      "rows": 8286,
+      "source_sha256": "3bc2907efd7e8591f0e53679591e76a1d3012f13f5f91427fa5b78a5b3fbb2b0"
+    },
+    {
+      "source_shard": "w02-00103.jsonl.zst",
+      "rows": 8357,
+      "source_sha256": "95f0a264bf8f1bad2b174eb505d0ad216be6e608def5cba7184351cb40e918a4"
+    },
+    {
+      "source_shard": "w02-00104.jsonl.zst",
+      "rows": 8203,
+      "source_sha256": "e38d296fb7927c3e2c2cf7edd4f9d68f9b4451a1653c5f1c8ae3048065080c52"
+    },
+    {
+      "source_shard": "w02-00105.jsonl.zst",
+      "rows": 8271,
+      "source_sha256": "c67c5a64fde832304d64f6854fa875d6ee81da787b20ceaa03c05ab3e6473e78"
+    },
+    {
+      "source_shard": "w02-00106.jsonl.zst",
+      "rows": 8217,
+      "source_sha256": "91e5c475d4ef4360db664b278f69c6fa654375640dd5fa5a444572180d79cd85"
+    },
+    {
+      "source_shard": "w02-00107.jsonl.zst",
+      "rows": 8206,
+      "source_sha256": "ee902cf4ba3b43a764f3694a42e917cecbf805d3585084b902b9d19e3d598f9b"
+    },
+    {
+      "source_shard": "w02-00108.jsonl.zst",
+      "rows": 8377,
+      "source_sha256": "9b297a74072786ae4884488a0a122b9c5b4e4e52e562c9553c06fb8fccdf42fe"
+    },
+    {
+      "source_shard": "w02-00109.jsonl.zst",
+      "rows": 8211,
+      "source_sha256": "1d2262f6097d22b4e1a4b68e8b00a5602ff190e928e20e650f88aaff78937ef4"
+    },
+    {
+      "source_shard": "w02-00110.jsonl.zst",
+      "rows": 8225,
+      "source_sha256": "6a2d7f94ce3e0a27f658b45f51df83481623954eea6ee9a3bc106fde46562eb6"
+    },
+    {
+      "source_shard": "w02-00111.jsonl.zst",
+      "rows": 8411,
+      "source_sha256": "fb3ed91b125bb6bda1a92c3366df7b7d80dedd7cae9cad648133b697965373f2"
+    },
+    {
+      "source_shard": "w02-00112.jsonl.zst",
+      "rows": 8333,
+      "source_sha256": "668e376ce12583f2f188c9ecc4d528d30813e9ecf69591135af7c8f928795451"
+    },
+    {
+      "source_shard": "w02-00113.jsonl.zst",
+      "rows": 8199,
+      "source_sha256": "2509cc50d1f4076f965ecbae7333d834825b52cd17e14d8a1536e6f8d55e6abb"
+    },
+    {
+      "source_shard": "w02-00114.jsonl.zst",
+      "rows": 8330,
+      "source_sha256": "2cfb7a8d19776a3b3e866350f286478090422ece5e0f2c535330fa9af75d93f0"
+    },
+    {
+      "source_shard": "w02-00115.jsonl.zst",
+      "rows": 8228,
+      "source_sha256": "4252391af24bfb299aa3f55af0d09d94e23d4fb61a9e3bc6c5475024d5654c2e"
+    },
+    {
+      "source_shard": "w02-00116.jsonl.zst",
+      "rows": 8320,
+      "source_sha256": "e0cc9d5bd19e58f04716738a2a49e7200c96e46019602af6f880d2a7c8f84616"
+    },
+    {
+      "source_shard": "w02-00117.jsonl.zst",
+      "rows": 8196,
+      "source_sha256": "20b6a0c7d83a63349835545c0db5daeacfbe43b42ef8cbfd3ed7d7f1a0b2d8f1"
+    },
+    {
+      "source_shard": "w02-00118.jsonl.zst",
+      "rows": 8192,
+      "source_sha256": "9e427a29f660fa6ba703666ecb10bea3bcaf50ad6818482f5fac03b8c9119815"
+    },
+    {
+      "source_shard": "w02-00119.jsonl.zst",
+      "rows": 8358,
+      "source_sha256": "dd176e8cf7f88bd377f6ad1766a3942db4a8f6be77e48f36762c65596ab3392c"
+    },
+    {
+      "source_shard": "w02-00120.jsonl.zst",
+      "rows": 8288,
+      "source_sha256": "a5dde203428c4a459633be91c7e0409a4cc6094952dfa998ff88bd5ec070039b"
+    },
+    {
+      "source_shard": "w02-00121.jsonl.zst",
+      "rows": 8296,
+      "source_sha256": "bc405fcb52cede02165eaa86eb9ab2f1b491bab7f13b36b522b4ebe7cfad6190"
+    },
+    {
+      "source_shard": "w02-00122.jsonl.zst",
+      "rows": 8358,
+      "source_sha256": "0b2494863b307c39c16ddceed30dfe9a944ab24878933cc91f7b8e7c187a162e"
+    },
+    {
+      "source_shard": "w02-00123.jsonl.zst",
+      "rows": 8238,
+      "source_sha256": "79ef7dc1d115fd2735a4ab8be8a87cdeae7f997864872c39c920e3df8e253f88"
+    },
+    {
+      "source_shard": "w02-00124.jsonl.zst",
+      "rows": 8351,
+      "source_sha256": "4642780f3b77e74a07f4c490c21c4191ef1fbc123a5bf642a7d0a03dcc8f665e"
+    },
+    {
+      "source_shard": "w02-00125.jsonl.zst",
+      "rows": 8297,
+      "source_sha256": "91bdb48a09fd47ad2f09115372739304bac6a5961ac881e5b2bee5ef4c10da38"
+    },
+    {
+      "source_shard": "w02-00126.jsonl.zst",
+      "rows": 8201,
+      "source_sha256": "4e417a3bccba62e4704e31b68ab053179b0229560c923098f4f5b8761b76f58a"
+    },
+    {
+      "source_shard": "w02-00127.jsonl.zst",
+      "rows": 8249,
+      "source_sha256": "3eab4b281253a3f76ea317e72864b2e62bb5cf121bb8cf2cae07634005888c0a"
+    },
+    {
+      "source_shard": "w02-00128.jsonl.zst",
+      "rows": 8217,
+      "source_sha256": "a8b2d3d601d09aa44e1ffe887e63c110fb1d4779e681e3ff85ecc538db94dbc9"
+    },
+    {
+      "source_shard": "w02-00129.jsonl.zst",
+      "rows": 8340,
+      "source_sha256": "bcbee7af61b1e719402d26739e540298120076fc67535be8dab1b717f1632561"
+    },
+    {
+      "source_shard": "w02-00130.jsonl.zst",
+      "rows": 8323,
+      "source_sha256": "7d7ff1bdd18f9b39a19231c6f108ea01b594fa0b01064d5842b72dfd476417c3"
+    },
+    {
+      "source_shard": "w02-00131.jsonl.zst",
+      "rows": 8287,
+      "source_sha256": "90656e1872f47dc66abd2597bb5e5c20ae06895ce802a9b7e75e2170c7ad8104"
+    },
+    {
+      "source_shard": "w02-00132.jsonl.zst",
+      "rows": 8201,
+      "source_sha256": "6857014cd19cabecad025b9270343689262b1243615e08efce7fc3f905a1babb"
+    },
+    {
+      "source_shard": "w02-00133.jsonl.zst",
+      "rows": 8233,
+      "source_sha256": "9022769a21376bf0e712a4e3a11a3fabd2c5f38a7fa6b9f1b4e202f79591bce0"
+    },
+    {
+      "source_shard": "w02-00134.jsonl.zst",
+      "rows": 8347,
+      "source_sha256": "0fcda8fde237235960dd103087af926745856143c22c588d5f43f295e3686912"
+    },
+    {
+      "source_shard": "w02-00135.jsonl.zst",
+      "rows": 8229,
+      "source_sha256": "564206443648163596ebaa0b6773d8c75b3a76221e2c7e620f90cf1645186037"
+    },
+    {
+      "source_shard": "w02-00136.jsonl.zst",
+      "rows": 8349,
+      "source_sha256": "72b85c507f3c7b0d0f858819ad68ba6e21aa392e522b95346fc8c61c209363f5"
+    },
+    {
+      "source_shard": "w02-00137.jsonl.zst",
+      "rows": 8336,
+      "source_sha256": "65aae0dcdd3505391fac03696cd49728df975cbddca56e31d8a35c38a5e84160"
+    },
+    {
+      "source_shard": "w02-00138.jsonl.zst",
+      "rows": 8233,
+      "source_sha256": "4adb00b256a332f20935e5ec7556bcaf05c576dc91d909823d3b70d7921082fd"
+    },
+    {
+      "source_shard": "w02-00139.jsonl.zst",
+      "rows": 8231,
+      "source_sha256": "e6443a20d3bd290e447f3fcefc4189c9f36373188763107e503cdfc09251c274"
+    },
+    {
+      "source_shard": "w02-00140.jsonl.zst",
+      "rows": 8264,
+      "source_sha256": "3a5f2911bec85f6b95729150509dbbfc3feacc65f085abc4b0168c3bfe59556d"
+    },
+    {
+      "source_shard": "w02-00141.jsonl.zst",
+      "rows": 8324,
+      "source_sha256": "cf3453090a4fe70aaf5f6f0e4e9b61faa9c85d4b8eb56bda13c77c01ff2c51c7"
+    },
+    {
+      "source_shard": "w02-00142.jsonl.zst",
+      "rows": 8436,
+      "source_sha256": "26c6ba8b30a8007264f5cd97a1ff4f3562be3e062e846677cc2e231df5a3d939"
+    },
+    {
+      "source_shard": "w02-00143.jsonl.zst",
+      "rows": 8357,
+      "source_sha256": "f7ab91c8cdc3645dc44224880fc3f4f6bf0ca3b852860226a2c0748e18686238"
+    },
+    {
+      "source_shard": "w02-00144.jsonl.zst",
+      "rows": 8251,
+      "source_sha256": "9c246f8e1d315946c1ec21ba7a24cfbdbbfec23d241ff93a614b56da5d8098f1"
+    },
+    {
+      "source_shard": "w02-00145.jsonl.zst",
+      "rows": 8268,
+      "source_sha256": "68336a2e32daede076d0bf12135c6d1376cf557895d5caa51d3bff710f82b105"
+    },
+    {
+      "source_shard": "w02-00146.jsonl.zst",
+      "rows": 8255,
+      "source_sha256": "105e3cfab19fc448b7610823c8f4cf03fba587e4ee72f2f8bc61422fccc8cfde"
+    },
+    {
+      "source_shard": "w02-00147.jsonl.zst",
+      "rows": 8205,
+      "source_sha256": "786f15360ca21b337e0346aca13bb90d1cb091d6b9e3ec11d66f6ebc2f60bd18"
+    },
+    {
+      "source_shard": "w02-00148.jsonl.zst",
+      "rows": 8452,
+      "source_sha256": "90df8f57856732b7217f1d4e7e86b534f08105dc6baa96f93aac9b1a7e1022ab"
+    },
+    {
+      "source_shard": "w02-00149.jsonl.zst",
+      "rows": 8390,
+      "source_sha256": "ebfa442a85bf9f4ccd143b2619b09e4c18af5575754cdd10a33d948c4370b32d"
+    },
+    {
+      "source_shard": "w02-00150.jsonl.zst",
+      "rows": 8249,
+      "source_sha256": "e6ed76a1b3f977e70a0e3235f83fd229c184206dcbbc9e768e0427718f614cff"
+    },
+    {
+      "source_shard": "w02-00151.jsonl.zst",
+      "rows": 8245,
+      "source_sha256": "2cfcc7604b7ca3294c0b7010455ea12192856c6b0035422c28a15dc0d92b63b9"
+    },
+    {
+      "source_shard": "w02-00152.jsonl.zst",
+      "rows": 8354,
+      "source_sha256": "690b8e7791419b17d0dfa0db4e22e7b54f2360f9e9de5a2277a92c1783ecf364"
+    },
+    {
+      "source_shard": "w02-00153.jsonl.zst",
+      "rows": 8195,
+      "source_sha256": "e2c481d3fdc8b7f74a4c2abb9a75669812fc9a01c66708c3adb0df9fdc419b65"
+    },
+    {
+      "source_shard": "w02-00154.jsonl.zst",
+      "rows": 8339,
+      "source_sha256": "7c9b214bf23152360df709bdf9fa0e21adddc4e44a8d74d7c7055ee7fd653e15"
+    },
+    {
+      "source_shard": "w02-00155.jsonl.zst",
+      "rows": 8461,
+      "source_sha256": "96344600ed4de5dbd5d522f8815c86ae3623c3e9edb52159e2a7ddf74d890815"
+    },
+    {
+      "source_shard": "w02-00156.jsonl.zst",
+      "rows": 8242,
+      "source_sha256": "33b753caa13eb4d9b4338e6e927b5e68571668961ca7e8fda84e79bd181487ef"
+    },
+    {
+      "source_shard": "w02-00157.jsonl.zst",
+      "rows": 8229,
+      "source_sha256": "2bea674f5f707e46e0cc1675a35eda484f46e0dc40e8836e04ca2c796d5e2804"
+    },
+    {
+      "source_shard": "w02-00158.jsonl.zst",
+      "rows": 8368,
+      "source_sha256": "b8eedfb92636095ff3f78df92e2c25440d11725e8567ada408ee79f5daad02ce"
+    },
+    {
+      "source_shard": "w02-00159.jsonl.zst",
+      "rows": 8325,
+      "source_sha256": "34d14b41e143d7a272acec72cb5106162369a4d0e47af59633d2cd690b9b4d8c"
+    },
+    {
+      "source_shard": "w02-00160.jsonl.zst",
+      "rows": 8303,
+      "source_sha256": "ee4c28814086ab99b976ec355a75accddc40fe946a6eeed532a91110b146bdda"
+    },
+    {
+      "source_shard": "w02-00161.jsonl.zst",
+      "rows": 8248,
+      "source_sha256": "e0c0b312b474d9ca44cbeda88bcb5bbf12d48e85be85f6ad19f812d29bec85a7"
+    },
+    {
+      "source_shard": "w02-00162.jsonl.zst",
+      "rows": 8200,
+      "source_sha256": "5de28994f071a24187bef868753e0db9c74491aa4c7d3d5f4eb4e8b196698a74"
+    },
+    {
+      "source_shard": "w02-00163.jsonl.zst",
+      "rows": 8382,
+      "source_sha256": "d99e836c660ffbd83af79f4183f90636684c433d3694e4ec2553e8c7c3e3a33d"
+    },
+    {
+      "source_shard": "w02-00164.jsonl.zst",
+      "rows": 8299,
+      "source_sha256": "b8016b6ace512b755b85a5beacee13208a31bea6dc76dd999c804ad852cf9c10"
+    },
+    {
+      "source_shard": "w02-00165.jsonl.zst",
+      "rows": 8259,
+      "source_sha256": "80136cb3ba2a90c83fc163bb624329c86348c0888633ccfd2c30ca94ec9af116"
+    },
+    {
+      "source_shard": "w02-00166.jsonl.zst",
+      "rows": 8349,
+      "source_sha256": "70460868ee55405c98c3864509d4a7af89de58ed435891abc332c2f4d765b919"
+    },
+    {
+      "source_shard": "w02-00167.jsonl.zst",
+      "rows": 8352,
+      "source_sha256": "fbc338c2feb3c6938dca07fb5b6466c625b13b3c428eb3eca16edd70b313131b"
+    },
+    {
+      "source_shard": "w02-00168.jsonl.zst",
+      "rows": 8271,
+      "source_sha256": "a023f600af50a349d77405dcd0dba52863240671d7d5f9270f31fcb231e801f9"
+    },
+    {
+      "source_shard": "w02-00169.jsonl.zst",
+      "rows": 8408,
+      "source_sha256": "6ace473e017791201480baa9a35c8d95625429aa00ab68cdfefde321ebca3c2c"
+    },
+    {
+      "source_shard": "w02-00170.jsonl.zst",
+      "rows": 8336,
+      "source_sha256": "6e57386b3b646b791c5502b21d5158bec1cc3fc7eacf5cae103fa0fbcce26911"
+    },
+    {
+      "source_shard": "w02-00171.jsonl.zst",
+      "rows": 8384,
+      "source_sha256": "32187218b3bdbe6b85d3e04f088f0a7d2ee4045b944696a33c6be4bd39b5c87f"
+    },
+    {
+      "source_shard": "w02-00172.jsonl.zst",
+      "rows": 8196,
+      "source_sha256": "b069691b852de1c871b4e84faa33a1d45d2d89102c1410c2fbc07b9ac183fba2"
+    },
+    {
+      "source_shard": "w02-00173.jsonl.zst",
+      "rows": 8294,
+      "source_sha256": "bf8b9cd70cc55e60807068fb2281400874e562ff755e3469ffec54d32c2105ae"
+    },
+    {
+      "source_shard": "w02-00174.jsonl.zst",
+      "rows": 8267,
+      "source_sha256": "a3d9765ae02a2e93c49652fb6d4e276b3c94b78385df2e5f3d2246dbfacf9fe3"
+    },
+    {
+      "source_shard": "w02-00175.jsonl.zst",
+      "rows": 8388,
+      "source_sha256": "0f2b4e1d1c94f10888ddd8911bb705166d948a73894408639ebebe3fdbab39bc"
+    },
+    {
+      "source_shard": "w02-00176.jsonl.zst",
+      "rows": 8200,
+      "source_sha256": "97ccabb8d5b750af190a8a89d3bddf054d24a98d08c6f4b617cf9a53ea64e9d7"
+    },
+    {
+      "source_shard": "w02-00177.jsonl.zst",
+      "rows": 8226,
+      "source_sha256": "f2e073c713b7c59826672c864080985949282134839e329f59ec90b58d80567f"
+    },
+    {
+      "source_shard": "w02-00178.jsonl.zst",
+      "rows": 8236,
+      "source_sha256": "8cdfa68d4f6239b187acaf00c5cee15573288cc94fb04aa4f2b58a4ce613a811"
+    },
+    {
+      "source_shard": "w02-00179.jsonl.zst",
+      "rows": 8275,
+      "source_sha256": "75300c84dc35a3ac28cfe8dfdbb2aaf70ba53879925dbd185942cabf20fcad64"
+    },
+    {
+      "source_shard": "w02-00180.jsonl.zst",
+      "rows": 8374,
+      "source_sha256": "e85a94766937c5e674a1eb8a0d437cbe3714d113cef2d17fa1ac9d7e8c253565"
+    },
+    {
+      "source_shard": "w02-00181.jsonl.zst",
+      "rows": 8211,
+      "source_sha256": "bbb0fcc378e61d800b1e9d77a8eef0994f7c29bfcb079993dac6f1c382685282"
+    },
+    {
+      "source_shard": "w02-00182.jsonl.zst",
+      "rows": 8381,
+      "source_sha256": "a9ac6e8c15cc5c8c3d7d6fee52aae4a4339e5e0d456d7c71f759fbf06ae53d87"
+    },
+    {
+      "source_shard": "w02-00183.jsonl.zst",
+      "rows": 8244,
+      "source_sha256": "852f4c077dd1b9e2d9ee19f081fc082dd43531bfc903db86bd52e8a577b9ec4a"
+    },
+    {
+      "source_shard": "w02-00184.jsonl.zst",
+      "rows": 8215,
+      "source_sha256": "ee9b31ef2afddcd7fa1b862246b885804e0663daf11e78e3e8e25132ba34a327"
+    },
+    {
+      "source_shard": "w02-00185.jsonl.zst",
+      "rows": 8384,
+      "source_sha256": "00c816b424a9d78d41129c3f09e3b1c523adcca1dceeb1b0eb47ea0e1739d655"
+    },
+    {
+      "source_shard": "w02-00186.jsonl.zst",
+      "rows": 8295,
+      "source_sha256": "de0c4c42736d56a02fae6e630ce9473f883a503f7fb68fe09ae29e8eab8ce545"
+    },
+    {
+      "source_shard": "w02-00187.jsonl.zst",
+      "rows": 8367,
+      "source_sha256": "b5b1d8764c420bbc4e1a3145246f7e1e12994efc3c7550ef22e56179b2976f3f"
+    },
+    {
+      "source_shard": "w02-00188.jsonl.zst",
+      "rows": 8236,
+      "source_sha256": "2870e4d37b07fa4fb857c1fce46549b5b8e64ccce8478848891d760f0f4d79ea"
+    },
+    {
+      "source_shard": "w02-00189.jsonl.zst",
+      "rows": 8369,
+      "source_sha256": "7a7aefc15f59450db8d00b85e736131d7507921346fb8ddc9f2b89d7cc05d3ff"
+    },
+    {
+      "source_shard": "w02-00190.jsonl.zst",
+      "rows": 8245,
+      "source_sha256": "d0395d357c6b684b59d05a4b7302121e2648325878e1ce04fa88b37af1eea004"
+    },
+    {
+      "source_shard": "w02-00191.jsonl.zst",
+      "rows": 8315,
+      "source_sha256": "1a02e1d7bb0f359e57970f24a0f1b2e376a286a44851b6ec438fa73de012aad6"
+    },
+    {
+      "source_shard": "w02-00192.jsonl.zst",
+      "rows": 8280,
+      "source_sha256": "9710965d8fe2522ab09f05e14cced3cca411a2e7aa2740f3e3afc753686818ca"
+    },
+    {
+      "source_shard": "w02-00193.jsonl.zst",
+      "rows": 8246,
+      "source_sha256": "2922c0687c7ca095ae547e45c23fb012152a3b4ff3d40ee24df3592e5f149d4b"
+    },
+    {
+      "source_shard": "w02-00194.jsonl.zst",
+      "rows": 8298,
+      "source_sha256": "6274978334f84ce2081c46937cafa76a9da1142b7fe0558ea49b6dc54d7a9aa3"
+    },
+    {
+      "source_shard": "w02-00195.jsonl.zst",
+      "rows": 8248,
+      "source_sha256": "2a3a30a69c445797572eebbac6ef13986774921e1f326308a19e8071a0d5c17b"
+    },
+    {
+      "source_shard": "w02-00196.jsonl.zst",
+      "rows": 8244,
+      "source_sha256": "2e05a609205faec041dc30f4638840e36b2603dc0f25ff9675cc499da009071d"
+    },
+    {
+      "source_shard": "w02-00197.jsonl.zst",
+      "rows": 8256,
+      "source_sha256": "948e5c6573d1f464c3949a05769a6f6a13de0399b3fab1eaad3327604702bbce"
+    },
+    {
+      "source_shard": "w02-00198.jsonl.zst",
+      "rows": 8297,
+      "source_sha256": "6c905a9a14e32c63edc45643bc0ac06110f83cb808486672c1f38b03a50185be"
+    },
+    {
+      "source_shard": "w02-00199.jsonl.zst",
+      "rows": 8318,
+      "source_sha256": "4395b64da5272020ab9c079dcb5a8520863fa955a95d44313b97c3500517f42d"
+    },
+    {
+      "source_shard": "w02-00200.jsonl.zst",
+      "rows": 8402,
+      "source_sha256": "700c9290717d0be20a72c4274c12175875a46d5eeb7deebec0f8857cc16a63b4"
+    },
+    {
+      "source_shard": "w03-00000.jsonl.zst",
+      "rows": 8275,
+      "source_sha256": "744421a55e6e65f339b8a918e5b24d32d769a6fe98c75e2d86152b3d10bc1101"
+    },
+    {
+      "source_shard": "w03-00001.jsonl.zst",
+      "rows": 8287,
+      "source_sha256": "97ec562dd70edec616fe7ffebdee160af421a6a1d5791b5ee68b168e099a6916"
+    },
+    {
+      "source_shard": "w03-00002.jsonl.zst",
+      "rows": 8371,
+      "source_sha256": "b9ae6ad62346fb1a97fb93f7ab52a394d6911b56836110a603f6567b183fb030"
+    },
+    {
+      "source_shard": "w03-00003.jsonl.zst",
+      "rows": 8297,
+      "source_sha256": "c589cd876a86f7e2e99c0a457d0a912e357c4d0a03d11ee93a68817eabc71bb8"
+    },
+    {
+      "source_shard": "w03-00004.jsonl.zst",
+      "rows": 8195,
+      "source_sha256": "34e014088f6c7e8508adc1e5f1fd25324420a8512531a63c3eb1a8ee898f80ad"
+    },
+    {
+      "source_shard": "w03-00005.jsonl.zst",
+      "rows": 8331,
+      "source_sha256": "8d7e450ce4597c4f092e6cd895dae55f6d2386b0a3614c37b4b47cb8393a61a9"
+    },
+    {
+      "source_shard": "w03-00006.jsonl.zst",
+      "rows": 8284,
+      "source_sha256": "7d3d3d40c92a4b5ad1f0e8cffc8bcd7d79e09000580ccb843ea7dcf1f0cc9ff5"
+    },
+    {
+      "source_shard": "w03-00007.jsonl.zst",
+      "rows": 8319,
+      "source_sha256": "bbbe65112876e71db3c29c045a6557821e5e93fac1804611bfc7b5a924b932f5"
+    },
+    {
+      "source_shard": "w03-00008.jsonl.zst",
+      "rows": 8477,
+      "source_sha256": "7ece9c6b38da9d3f74706d6958f26f6fc85d18f641530d605b8953385cdc63f0"
+    },
+    {
+      "source_shard": "w03-00009.jsonl.zst",
+      "rows": 8222,
+      "source_sha256": "f1ac25a7f74d78467b30ab476b1995fb6943c765760dd9a4d548431fd085dfe0"
+    },
+    {
+      "source_shard": "w03-00010.jsonl.zst",
+      "rows": 8194,
+      "source_sha256": "c021faef327c9203d84f520e0a5fb79ff8c0b3c50f2e45d84a14a7f55e680817"
+    },
+    {
+      "source_shard": "w03-00011.jsonl.zst",
+      "rows": 8304,
+      "source_sha256": "e92fc5e755257765ae1bbaf3d9d88639f3126a4092813ccd96bfda608174289a"
+    },
+    {
+      "source_shard": "w03-00012.jsonl.zst",
+      "rows": 8284,
+      "source_sha256": "4fe596df5b3eb78de167c348698f1c6546abca8897aec30288a783782def52e2"
+    },
+    {
+      "source_shard": "w03-00013.jsonl.zst",
+      "rows": 8215,
+      "source_sha256": "142d97a5cbfc44c0f4233f5d5e305710416455f88394ef8485dcfd3ad7d640ca"
+    },
+    {
+      "source_shard": "w03-00014.jsonl.zst",
+      "rows": 8243,
+      "source_sha256": "e8d05e3eed74b0eb823700d6e73330ded8fd822ba40b7df92d8f3f38d2eb1911"
+    },
+    {
+      "source_shard": "w03-00015.jsonl.zst",
+      "rows": 8290,
+      "source_sha256": "c9fc1e9fe95b1d81f5c7951c523aabedcc3fde6b27150cc7de1302d6427b6869"
+    },
+    {
+      "source_shard": "w03-00016.jsonl.zst",
+      "rows": 8299,
+      "source_sha256": "024e3ae28da2b980ebba50715547487af2e5e06c0ceced54eb844251b20150c8"
+    },
+    {
+      "source_shard": "w03-00017.jsonl.zst",
+      "rows": 8496,
+      "source_sha256": "a5046158272c57efd661b7e368114fc59aa7940cbde64dcacc48764aaaa928fb"
+    },
+    {
+      "source_shard": "w03-00018.jsonl.zst",
+      "rows": 8264,
+      "source_sha256": "907cc6ce227c718575d97f90be0848c26685cb3bc39968c8ca5796b7cdab1127"
+    },
+    {
+      "source_shard": "w03-00019.jsonl.zst",
+      "rows": 8284,
+      "source_sha256": "9d1294baf56f1eb959d9168fdd0e95fd5d7e34531da9cac45924c244ee373120"
+    },
+    {
+      "source_shard": "w03-00020.jsonl.zst",
+      "rows": 8360,
+      "source_sha256": "fbfed010ca51779307ed9cb3234e559ea412046a586f7c044b7653571875e7e5"
+    },
+    {
+      "source_shard": "w03-00021.jsonl.zst",
+      "rows": 8371,
+      "source_sha256": "cc7b59c2d323e88b1c6dcbb505c8b613a63e735fe0c353e450e6f41b12b6aa9b"
+    },
+    {
+      "source_shard": "w03-00022.jsonl.zst",
+      "rows": 8259,
+      "source_sha256": "7c2e1ecedd8aa2addfc882908694cc4f9c897c81dcaa9f785d85528f5abfb0f0"
+    },
+    {
+      "source_shard": "w03-00023.jsonl.zst",
+      "rows": 8201,
+      "source_sha256": "059948fab4d81347c6d0896ced88e903f0a3aaaa28787e7687df006f44cb5f6b"
+    },
+    {
+      "source_shard": "w03-00024.jsonl.zst",
+      "rows": 8393,
+      "source_sha256": "4a4c1f1f19e9f042fe7a01f5cadf4982ca39fd3b116545a237b30d90b0d8ff40"
+    },
+    {
+      "source_shard": "w03-00025.jsonl.zst",
+      "rows": 8227,
+      "source_sha256": "3f981dc7a2a12bc57077fef26bf9d68c94dc8022c8a16a55b72c66e15057a174"
+    },
+    {
+      "source_shard": "w03-00026.jsonl.zst",
+      "rows": 8295,
+      "source_sha256": "cde1d629b1e6af5eb5e618d2c94547be1e89148c4b2422adb8bbfd4aed6e2a78"
+    },
+    {
+      "source_shard": "w03-00027.jsonl.zst",
+      "rows": 8453,
+      "source_sha256": "efe94bc66593d64524f5949c8617b0821d124b28f327c66b8d0996d4cd3ce462"
+    },
+    {
+      "source_shard": "w03-00028.jsonl.zst",
+      "rows": 8293,
+      "source_sha256": "dcb385ffcbb8598988ca738b71e1b30734149413e30ef947e396161914b0720d"
+    },
+    {
+      "source_shard": "w03-00029.jsonl.zst",
+      "rows": 8251,
+      "source_sha256": "760af6c1c7488c8738c021c82922cf61e6dfa9a067346d9e5c2cebe369d13abd"
+    },
+    {
+      "source_shard": "w03-00030.jsonl.zst",
+      "rows": 8258,
+      "source_sha256": "9faf41717e7639fe93ee43a311645a2e72fb9f3180d5dda2ccb6a2edf02d2ae0"
+    },
+    {
+      "source_shard": "w03-00031.jsonl.zst",
+      "rows": 8308,
+      "source_sha256": "37f7527cfbc63a6bbd4cef2be4c5f87c859911cab6b80a334f279ab96743c8a5"
+    },
+    {
+      "source_shard": "w03-00032.jsonl.zst",
+      "rows": 8225,
+      "source_sha256": "4563efd9686bd9349b29c0b06208683e90840d8286f54be15bbc6ffdd5800f0e"
+    },
+    {
+      "source_shard": "w03-00033.jsonl.zst",
+      "rows": 8463,
+      "source_sha256": "a9dacbde4105e043e010d0815489a4331107c87709404375db7879f4969cb593"
+    },
+    {
+      "source_shard": "w03-00034.jsonl.zst",
+      "rows": 8299,
+      "source_sha256": "71f447d240bcf1f40c50c53a8bc7b3e75d2968da526890b9ea8af74e45aeeb9b"
+    },
+    {
+      "source_shard": "w03-00035.jsonl.zst",
+      "rows": 8321,
+      "source_sha256": "6b6aa56104167d8126b3625238e86dc545b7a577a2be45510a70d31c49a5cfd1"
+    },
+    {
+      "source_shard": "w03-00036.jsonl.zst",
+      "rows": 8200,
+      "source_sha256": "5f8817045b3a78c987f34e5626760225c1e54dcf4ad391d0a9e0114a45b83dc7"
+    },
+    {
+      "source_shard": "w03-00037.jsonl.zst",
+      "rows": 8231,
+      "source_sha256": "cef761724ebf2f93bdc63a5b1494b48e19526c8ddcfbfa3feb2ac3b53a051166"
+    },
+    {
+      "source_shard": "w03-00038.jsonl.zst",
+      "rows": 8258,
+      "source_sha256": "c826084e9b1e618ad09aac62136144b49e4002bcc5d2280d9123e5acbfcfa2de"
+    },
+    {
+      "source_shard": "w03-00039.jsonl.zst",
+      "rows": 8229,
+      "source_sha256": "b0ee96f9341886841b66e3623e52102e0d39ab8f1bff71289cb938ce57dd4f2b"
+    },
+    {
+      "source_shard": "w03-00040.jsonl.zst",
+      "rows": 8285,
+      "source_sha256": "4f36ed420f88c5de25cfadb950a7de8db88193cc8c1303387fe37d8ab2918127"
+    },
+    {
+      "source_shard": "w03-00041.jsonl.zst",
+      "rows": 8404,
+      "source_sha256": "2182d0ae3adae96f9b955e8d88f4cc5c818b370b52add873df9e3513d3346baf"
+    },
+    {
+      "source_shard": "w03-00042.jsonl.zst",
+      "rows": 8346,
+      "source_sha256": "75d41352a940e78572eb9baefcff0f1cd8126bee1127f0e739a8cc2313c913a8"
+    }
+  ]
+}

@@ -1,5 +1,15 @@
 # G10 adapter/rank overlap preparation
 
+## Adoption status — September 8
+
+Worker01 adopted the explicit overlap mode after derivation and its storage
+snapshot. The attempt then stopped at rank-cache admission; adaptation, ranking
+and common-input qualification did not complete. This establishes operational
+adoption, **not a measured speedup**. The original failure and retained derivation
+status are recorded in the [Worker01 readout](2026-09-07-g10-transfer-readiness.md#worker01-stopped-at-rank-cache-admission--september-8).
+
+## Historical implementation and planning snapshot
+
 The common-input runner now supports explicit `overlap_adapt_rank: true` after
 derivation and the immutable storage snapshot. Raw-BT4 adaptation and phase-zero
 d9 ranking read the same frozen inputs and write separate sidecar directories.

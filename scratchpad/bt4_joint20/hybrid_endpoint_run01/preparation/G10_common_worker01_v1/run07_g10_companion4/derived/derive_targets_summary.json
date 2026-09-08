@@ -1,0 +1,2914 @@
+{
+  "corpus": {
+    "banked_rows_min_piece_count": 7,
+    "config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+    "corpus_complete": false,
+    "corpus_record": "manifest+progress",
+    "corpus_record_detail": {
+      "corpus_complete": false,
+      "document": "manifest.json + 4 w*.progress.jsonl",
+      "facts_only_in_summary": {
+        "config_realized_by_worker": "the per-worker REALIZED cp map. summary mode cross-checks it against config_requested (cp_map.realized_workers_cross_checked says how many workers); a manifest is written before the first worker starts, so here that cross-check covers ZERO workers and the requested map is taken on trust",
+        "rows / games": "the corpus totals. The progress inventory's own per-shard row counts stand in (corpus_record_detail.rows_claimed_by_inventory), and they count CLOSED shards only",
+        "search / dedup / terminations / opening_sources": "per-run counters accumulated in memory and written once at the end. Not read by this tool, and not reconstructible from the shards"
+      },
+      "mode": "manifest+progress",
+      "progress_files_read": [
+        "w00.progress.jsonl",
+        "w01.progress.jsonl",
+        "w02.progress.jsonl",
+        "w03.progress.jsonl"
+      ],
+      "progress_torn_tail_files": [],
+      "rows_claimed_by_inventory": 1063011,
+      "run_finished": false,
+      "run_finished_claim": null,
+      "shards_adopted": 128,
+      "shards_on_disk_not_in_inventory": [
+        "w00-00210.jsonl.zst",
+        "w01-00208.jsonl.zst",
+        "w02-00209.jsonl.zst",
+        "w03-00209.jsonl.zst"
+      ]
+    },
+    "dir": "run07_g10_companion4",
+    "row_schema": 3,
+    "row_schema_realized": 3,
+    "run_id": "nnue_bootstrap_run07_g10_companion4",
+    "staircase_gate": {
+      "adaptive": true,
+      "decision_after_phase": 1,
+      "decision_depth": 10,
+      "extend_when": "margin_cp<=threshold_cp",
+      "extended_depth": 12,
+      "extended_phase": 2,
+      "extended_width": 4,
+      "metric": "effective_cp_rank1_minus_rank2",
+      "no_margin_action": "stop",
+      "policy": "g10",
+      "threshold_cp": 10.0
+    },
+    "staircase_parsed": [
+      {
+        "depth": 9,
+        "width": "all"
+      },
+      {
+        "depth": 10,
+        "width": "8"
+      },
+      {
+        "depth": 12,
+        "width": "4"
+      }
+    ],
+    "tt_carried_across_phases": [
+      true
+    ]
+  },
+  "cp_map": {
+    "cp_draw_width": 120.0,
+    "cp_slope": 0.006,
+    "q_function": "scripts.audit_label_candidates.q_from_effective_cp",
+    "realized_cross_check_available": false,
+    "realized_workers_cross_checked": 0,
+    "source": "the corpus's own config_requested",
+    "wdl_function": "chess_anti_engine.stockfish.wdl.cp_to_wdl_array"
+  },
+  "floor_requested": 0.0,
+  "input": {
+    "encoder": "encode_position",
+    "history_frames_total": 8,
+    "history_rep_fix": true,
+    "input_extra_features": "v2_threats",
+    "input_history_encoding": "lc0_root_legacy_meta",
+    "why_zero_history": "row schema 1: a row is a bare FEN, chess.Board(fen) has an empty move stack, and the encoder fills history slot 0 only -- slots 1..7 (planes 13..103) and every repetition plane stay ZERO. Row schema 2 banks history_root_fen + history_uci and board_from_row replays them, so the 8 frames are the frames live play encodes; see row_schema_counts and history_slots_filled_histogram for which this run derived",
+    "zero_history": false
+  },
+  "limit_requested": 1063011,
+  "max_envelope_misses": 0,
+  "max_policy_support_misses": 64,
+  "policy": {
+    "construction": "softmax(q / temp) over the scheme's values",
+    "encoding": "lc0_1858",
+    "floor": 0.0,
+    "floor_max_legal_moves_bound": 218,
+    "temp_recovery_estimator": "closed_form_two_move",
+    "width": 1858
+  },
+  "policy_support_misses_file": "policy_support_misses.jsonl",
+  "python": "3.13.15",
+  "realized": {
+    "base_tier_moves": 27624222,
+    "deep_tier_moves": 0,
+    "envelope_miss_examples": [],
+    "floor_recovered_from_emitted_policy": {
+      "max": NaN,
+      "mean": NaN,
+      "min": NaN,
+      "n": 0
+    },
+    "floor_recovery_floor_tol": 1e-06,
+    "floor_recovery_min_distinct_values": 3,
+    "floor_recovery_min_rel_gap": 1e-09,
+    "floor_recovery_min_spread_per_tau": 0.0001,
+    "floor_recovery_skipped_few_values": 0,
+    "floor_recovery_skipped_ill_conditioned": 0,
+    "history_root_reason_counts": {
+      "irreversible": 1056966
+    },
+    "history_slots_filled_histogram": {
+      "8": 1056966
+    },
+    "history_slots_nonzero_max": 8,
+    "history_window_empty_rows": 0,
+    "input_key_verified": 1056966,
+    "nodes_floor_hits": 0,
+    "phases_per_row": {
+      "2": 758111,
+      "3": 298871
+    },
+    "policy_min_legal_prob_stored": {
+      "max": 1.0,
+      "mean": 0.021602567834411363,
+      "min": 0.0,
+      "n": 1056966
+    },
+    "policy_support_exclusions": [
+      {
+        "duplicate_moves": [
+          "c8b6",
+          "c8e7",
+          "h4e7"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 841,
+        "input_key": "962f1d3aac8c4721fe9f470b862b3f36",
+        "missing_moves": [
+          "c8d6",
+          "d7b5",
+          "d7e6",
+          "d7e8",
+          "h4d8",
+          "h4e1",
+          "h4f2",
+          "h4f6",
+          "h4g3",
+          "h7g6",
+          "h7g7",
+          "h7h6"
+        ],
+        "ply": 193,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 7770,
+        "source_shard": "w01-00004.jsonl.zst",
+        "stored_input_key": "5581121aa96e55ecb5ed1661e7206617",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "a8a7",
+          "d3d5",
+          "d3d7"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 1013,
+        "input_key": "666734a6fc61eea5746f728c081d4aef",
+        "missing_moves": [
+          "a8a6",
+          "b6c8",
+          "d3d2",
+          "h7h8"
+        ],
+        "ply": 195,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 8283,
+        "source_shard": "w01-00005.jsonl.zst",
+        "stored_input_key": "fa6776fcb7ef05d735ec26aa27d5314b",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "c4c1",
+          "c4c8",
+          "c4g4"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 1013,
+        "input_key": "f510f7e56c85e1cccf161e75c635c3a9",
+        "missing_moves": [
+          "b3c1",
+          "c4c2",
+          "c4c5",
+          "c4c6",
+          "c4c7",
+          "c4h4",
+          "h7h8"
+        ],
+        "ply": 199,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 8287,
+        "source_shard": "w01-00005.jsonl.zst",
+        "stored_input_key": "786d56cb02578dbfa44ee2e496fc5acb",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "a4c3",
+          "b2a2",
+          "b2a3",
+          "b2c1",
+          "e6b6",
+          "e6f6",
+          "e6g6"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 9625,
+        "input_key": "c5a726e4809c2017329bfb839402bdd8",
+        "missing_moves": [
+          "a4b6",
+          "a4c5",
+          "b2b1",
+          "b2c2",
+          "e6c6",
+          "e6e3",
+          "e6e4",
+          "e6h6",
+          "g4e2"
+        ],
+        "ply": 200,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 6212,
+        "source_shard": "w01-00056.jsonl.zst",
+        "stored_input_key": "1b7859511bff69ba4ea8312b8631d590",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "c3e4",
+          "e6b6",
+          "g4h3"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 9625,
+        "input_key": "48db0edaf4266b332309f7dab968364d",
+        "missing_moves": [
+          "a7c8",
+          "b2a2",
+          "b2c1",
+          "b2c2",
+          "c3a2",
+          "c3a4",
+          "c3e2",
+          "e6a6",
+          "e6c6",
+          "e6e2",
+          "e6e3",
+          "e6e5",
+          "e6e8",
+          "e6h6",
+          "g4d1",
+          "g4e2",
+          "g4f3",
+          "g4h5"
+        ],
+        "ply": 202,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 6214,
+        "source_shard": "w01-00056.jsonl.zst",
+        "stored_input_key": "83c8e93aa3ff349a2fd2e87e78610b95",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "d3b3",
+          "d3d7"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 9689,
+        "input_key": "9de7a3e5f8a6e0c579cce60ce4b37488",
+        "missing_moves": [
+          "b5a6",
+          "b5c4",
+          "b5c6",
+          "b5e8",
+          "d3a3",
+          "d3d1",
+          "d3d4",
+          "d3d5",
+          "d3e3",
+          "d3f3",
+          "f2e1",
+          "f2e3",
+          "f2f1"
+        ],
+        "ply": 268,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 948,
+        "source_shard": "w01-00057.jsonl.zst",
+        "stored_input_key": "6b729cc7a1d4c78611976bf2cac095f4",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "d7d2",
+          "f2f3"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 9689,
+        "input_key": "aa7ace24885fad343f17346bc48b1a6b",
+        "missing_moves": [
+          "b5c4",
+          "b5c6",
+          "c8b6",
+          "d7c7",
+          "d7d1",
+          "d7d3",
+          "d7d4",
+          "d7d5",
+          "d7d6",
+          "d7d8",
+          "d7e7",
+          "f2e3",
+          "f2g2"
+        ],
+        "ply": 270,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 950,
+        "source_shard": "w01-00057.jsonl.zst",
+        "stored_input_key": "9f3824c63a555a74d9aa70a9a9c8ff26",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "g5g2",
+          "g5g4"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 11277,
+        "input_key": "a11ca5d0de4a3e05963a2ff0ecd2ab8c",
+        "missing_moves": [
+          "e8a4",
+          "e8c6",
+          "e8g6",
+          "g5g1"
+        ],
+        "ply": 240,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 2841,
+        "source_shard": "w01-00066.jsonl.zst",
+        "stored_input_key": "8f1d9093cbab2c1fef03e5ae8b3d00bb",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "c8a8",
+          "c8e8",
+          "d6c5",
+          "e3f5",
+          "e3g4",
+          "g5g4",
+          "g6f7"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 12721,
+        "input_key": "9051358e0402db07651422e53cff5502",
+        "missing_moves": [
+          "a7a5",
+          "b7b5",
+          "b7b6",
+          "c8d8",
+          "c8f8",
+          "d5c6",
+          "e3c2",
+          "e3d1",
+          "g6f5",
+          "g6h5",
+          "g7f8",
+          "h7h5",
+          "h8d8",
+          "h8f8"
+        ],
+        "ply": 35,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 6561,
+        "source_shard": "w01-00074.jsonl.zst",
+        "stored_input_key": "92b9c8f5f5c8b7e4c3f06236c6b37389",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "b5a4",
+          "f7e5",
+          "f7h8",
+          "g4f5",
+          "g4h5",
+          "g8f6"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 13597,
+        "input_key": "cf4edf6bcdf7aee5383fe9373519c37a",
+        "missing_moves": [
+          "b5c6",
+          "b5d7",
+          "b5e2",
+          "b5e8",
+          "b5f1",
+          "f7d6",
+          "f7d8",
+          "f7h6",
+          "g4f3",
+          "g4f4",
+          "g8h6"
+        ],
+        "ply": 272,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 828,
+        "source_shard": "w01-00080.jsonl.zst",
+        "stored_input_key": "c2658caa880e8704a246788d30d7f550",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "c8b7"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 16633,
+        "input_key": "1545c8cf2f89ff5eaf3d90af5b3bbf8c",
+        "missing_moves": [
+          "a7a8"
+        ],
+        "ply": 41,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 8129,
+        "source_shard": "w01-00097.jsonl.zst",
+        "stored_input_key": "9149b087b12e8c62b9b32a9d8e6e4ebb",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "a2d2",
+          "f4f5"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 17425,
+        "input_key": "665a98bb68f86c598c32ba714757cc99",
+        "missing_moves": [
+          "a2b2",
+          "a2f2"
+        ],
+        "ply": 184,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 5395,
+        "source_shard": "w01-00102.jsonl.zst",
+        "stored_input_key": "635a26f453e733ff641710420d071a40",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "a2a4",
+          "a2a5",
+          "a2e2",
+          "a2g2",
+          "b8b4"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 17425,
+        "input_key": "6e02a8f45069ecc33d278c5c8ca885bd",
+        "missing_moves": [
+          "a1b1",
+          "a1b2",
+          "a2a3",
+          "a2b2",
+          "a2d2",
+          "a2f2",
+          "b8a8",
+          "b8b1",
+          "b8b2",
+          "b8b3",
+          "b8b5",
+          "b8b7",
+          "b8c8",
+          "b8d8",
+          "b8e8",
+          "b8f8",
+          "b8g8",
+          "b8h8",
+          "d4b3",
+          "d4b5",
+          "d4c2",
+          "d4c6",
+          "d4e2",
+          "d4e6",
+          "d4f3",
+          "f4f5"
+        ],
+        "ply": 186,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 5397,
+        "source_shard": "w01-00102.jsonl.zst",
+        "stored_input_key": "bf21dddf9fef72899d0355e094befdad",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "a2a4",
+          "a2d2",
+          "b4b6",
+          "b4b8",
+          "d4c2"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 17425,
+        "input_key": "17e560740832dffabaf228e2cd629f7a",
+        "missing_moves": [
+          "a1b1",
+          "a1b2",
+          "a2a3",
+          "a2b2",
+          "a2c2",
+          "a2e2",
+          "a2f2",
+          "b4a4",
+          "b4b2",
+          "b4b3",
+          "b4b7",
+          "b4c4",
+          "d4b3",
+          "d4b5",
+          "d4c6",
+          "d4e2",
+          "d4e6",
+          "d4f3"
+        ],
+        "ply": 188,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 5399,
+        "source_shard": "w01-00102.jsonl.zst",
+        "stored_input_key": "b52eb624793f42dc8f0c950cc78e006e",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "b4b2",
+          "b4b5",
+          "b4f4",
+          "c2c4"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 17425,
+        "input_key": "71b1cdd85989b7b65e5c4978989f1505",
+        "missing_moves": [
+          "a1b1",
+          "b4a4",
+          "b4b1",
+          "b4c4",
+          "b4g4",
+          "b4h4",
+          "c2a2",
+          "c2b2",
+          "c2e2",
+          "c2f2",
+          "c6d8",
+          "c6e7",
+          "f5f6"
+        ],
+        "ply": 196,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 5407,
+        "source_shard": "w01-00102.jsonl.zst",
+        "stored_input_key": "b800db1a12bd37c4e3b943a0a12ba8aa",
+        "worker_id": 1
+      },
+      {
+        "duplicate_moves": [
+          "a1c1",
+          "a2a4",
+          "b2c1",
+          "b2d4",
+          "f1a6",
+          "f1d1",
+          "f1e1",
+          "f1f6"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 21433,
+        "input_key": "f40b8dab9ddd4910f2901eda84fe71f6",
+        "missing_moves": [
+          "a1b1",
+          "a1d1",
+          "a1e1",
+          "b2c3",
+          "d7c8",
+          "e3e4",
+          "f1b1",
+          "f1b5",
+          "f1c4",
+          "f1d3",
+          "f1e2",
+          "f1f2",
+          "f1f3",
+          "f1f5",
+          "g5f6"
+        ],
+        "ply": 38,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 1119,
+        "source_shard": "w01-00126.jsonl.zst",
+        "stored_input_key": "f6e9423cc205984fc21a12dd190db84b",
+        "worker_id": 1
+      }
+    ],
+    "policy_support_lost_to_float16": 15032049,
+    "policy_support_max": 82,
+    "policy_support_min": 1,
+    "policy_width": 1858,
+    "realized_base_depth_histogram": {
+      "9": 1056966
+    },
+    "realized_value_depth_histogram": {
+      "9": 1056966
+    },
+    "repetition_planes_nonzero_rows": 15943,
+    "row_schema_counts": {
+      "3": 1056966
+    },
+    "rows_dropped_envelope": 0,
+    "rows_dropped_no_result": 6029,
+    "rows_dropped_policy_support": 16,
+    "rows_read": 1063011,
+    "rows_written": 1056966,
+    "support_checks": 1056966,
+    "temp_recovered_from_emitted_policy": {
+      "max": 0.0005007939425205402,
+      "mean": 0.0005000004076747282,
+      "min": 0.00048828125,
+      "n": 937506
+    },
+    "temp_recovery_saturation_q_spread_epsilon": 1e-09,
+    "temp_recovery_skipped_saturated": 119,
+    "value_depth_moved_rows": 1056966,
+    "value_scheme_realized": {
+      "blend_weight_w": {
+        "max": NaN,
+        "mean": NaN,
+        "min": NaN,
+        "n": 0
+      },
+      "boundary_suppressed_by_flag": 0,
+      "game_rows_max": 0,
+      "game_rows_min": 0,
+      "games": 0,
+      "games_cut_by_limit": 0,
+      "games_with_dropped_tail": 0,
+      "instability_u": {
+        "max": 2.1893667206168175,
+        "mean": 0.015459880491576507,
+        "min": 0.0,
+        "n": 1056966
+      },
+      "l1_delta_vs_search_value": {
+        "max": 0.0,
+        "mean": 0.0,
+        "min": 0.0,
+        "n": 1056966
+      },
+      "played_regret": {
+        "max": 2.0,
+        "mean": 0.10219266584346277,
+        "min": 0.0,
+        "n": 1056966
+      },
+      "ply_gaps_nonunit": 0,
+      "rows_differing_from_c_full": 0,
+      "rows_differing_from_search_value": 0,
+      "rows_missing_depths": 0,
+      "rows_missing_played_move": 0,
+      "single_row_games": 0,
+      "stop_boundary_ahead": 0,
+      "stop_boundary_self": 0,
+      "stop_terminal": 0,
+      "w_const_differs_from_map": 0
+    },
+    "values_by_phase": {
+      "0": 27624222
+    },
+    "x_planes": 175
+  },
+  "required_training_overrides": {
+    "search_wdl_frac": "the whole non-outcome share. These shards carry no sf_wdl, so losses.py would redirect any SF share onto the raw game outcome; the searched value is in search_wdl",
+    "sf_wdl_frac": 0.0,
+    "sf_wdl_frac_floor": 0.0
+  },
+  "row_flags": {
+    "is_network_turn": "true \u2014 no network played these plies; set so the rows are not dropped by the train-on-network-turns filter",
+    "is_selfplay": "true \u2014 Stockfish against itself, no curriculum arm",
+    "priority": "1.0 \u2014 no surprise weighting exists for a corpus row"
+  },
+  "row_provenance": {
+    "identity": "source directory/config, raw shard and physical row; original and stored history input keys",
+    "path_in_shard": "row_provenance.npz",
+    "schema": 1
+  },
+  "rows_per_shard": 8192,
+  "schema": 1,
+  "scheme": {
+    "canonical": "uniform-d9",
+    "deep_depth": null,
+    "depth": 9,
+    "kind": "uniform",
+    "nodes": null,
+    "policy_observation": "phase0",
+    "top_k": null,
+    "value_depth": null,
+    "value_observation": "latest-phase",
+    "value_source": "deepest_phase_covering"
+  },
+  "seed": 0,
+  "seed_effect": "permutes rows WITHIN each shard; changes no target value",
+  "shards": [
+    {
+      "path": "shard_000000.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "288d451870611d1e8cf4c9607cd10102f4376cb307798b38d9f6d85808230680"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000001.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "fe9b9065b836ff4f0b6925a0f42000588c715baf4930ecc68d7112fab1e7d1af"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000002.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "8f50cb77378095c2518446ddfcfa5ef73d4839e978c6964548be47c041a8ea78"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000003.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "8315cf24d6e8cbd8a670158a33e34d32b26440c1935115fd9ffca17ad10a213c"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000004.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "dc000e5b7e29a0c66f8a9a1d0cbc908a38dc73c627cb73f0ec53627431042225"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000005.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "b7fe0679b9f70eedecd1bfee217e68f4efdfbbf46bd4c49dcf05966b27168429"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000006.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "4e23fb6ec12a0704a7b8d2a801a1a45ae10d56ea35be8aa80f70947f3cbc6a11"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000007.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "921dc27ab91e35126b7304807a454f64cb9c071361e302f846521b0b5032186f"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000008.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "33d7dd6fe44921f951897e96284a84b28303dda87278cf72a8dab3f45b9ead8d"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000009.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "0aa9c6814f7d5febddb8b0cd33a71c042c868225cf26ad0da31a25f6378cee8d"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000010.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "10bab3d8b1166512141306422f2d511c23b366c54b32b28b7e3650f349390bf4"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000011.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "f33151344508a74355cff16d6c2d231a518f23672b378b468f2f7f430943ec36"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000012.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "f8ab3e99042117e6f9af8c8b6262249296d7393951e5515a4c0dd4df031eb5b9"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000013.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "563f572b0b88c422b13e1d3f27dce5796b8dee8dc47b4a4395d5c3d822a67039"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000014.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "715b60c51af24abc442434731a54b36453b8fe6b6eaaf8a916e71287e440e3b1"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000015.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "0e8b152e36ebf77800629d18b03fa497beb7e38c96404052c3af0099ee208f31"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000016.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "fa60960a643b4dfc4e9076cfe4c58330d6586047f71851b48533162d04f723cc"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000017.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "a3c050cac92ca160f653e74e5c64781eaa2ff7b34bb18cd901eee40e688c09e9"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000018.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "b1aeab6d47bb3089ae262234cba25184672082405bef1023709590019d4da7d3"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000019.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "55121754b37332e1888a91ea75a8846f72c8fb59716bec35781cce7792292d1c"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000020.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "be43f926546f4fc9f31d2fc778927119e083b0c3947a7a14101cf1de35ca7903"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000021.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "d5c4ceb46e1680b2850e7d8f686f9c57a630d3ab7ae7bac3235800bf6687fd5b"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000022.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "785778de52bc7a8a8f50c6600939042c228079aadc1a6b288c9a93043a41e480"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000023.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "da8617034fef7a46e4c8e9414d2d7e030af40a403b0e434a08d6ec109b124b69"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000024.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "c75857f4af83928ded85b98e8c40df268cde30317386b956983420eac6930fbb"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000025.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "1a4be8dbca7feb6d700e5865d2fdb33e9342528a1da285be34e08d7ce3e9787c"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000026.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "7f1def12cf19dcc33e5b4483ab6ea73b0feb72f4c7416dbf59ef9a3aa4a1c8cc"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000027.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "9060a5f46161c2f8cad1120afb66ec4e677b84ac33e89779321c5eeb3e3ea8c4"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000028.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "0d3c8cf2b1d63a2cf0d0b75a98446e1723960a59cf874f12084e97733782109e"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000029.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "3e24eebb5acb164058789e907eaf66aaee86b2f028c888e84eb473d940118927"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000030.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "d37fee9c00b32542c9098e5765f2c7ee3c5dbaf97adf28240bc3c00e5d27648e"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000031.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "3361fecf1424fba97e1d4d989c6677047ef4baec3b4f10bb9d4793cbaca095ff"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000032.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "f4d07d00068f1b2c4638352898f9ea5cedbff889ebeba6e1d5d803e5bb044485"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000033.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "cc77476ebbdae7affc7bc316310ebc850cb2ef1f677a23e20ace29e5351bbdc4"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000034.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "7b4257466fdf7f16e79eddb7769da7a65b9533b5fd7a09495752febac46c6d32"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000035.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "1384f2fd1ea4166555555a24e6b8e1d61984ec5ff8c321a34fed57bcfb6b031f"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000036.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "12d7d214c4f195baca3059145ef0cf642b03910bca5d3cbffd7d644e280cb2f4"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000037.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "7f001af76395af32be82ff4c160041f54d822f437d2e54002a47aff067e89dc9"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000038.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "44b474928f992456d01a18d86746161d7db2834e2e8966ca98c32c3ea37b88f8"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000039.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "82180a140eaa9e74c51cbc387b5963261c8b3df25b4a78ba260669b9d71e2949"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000040.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "298055c2a039ab0610268e5168977025b6a511e7346335e1cd9c77ceb6277683"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000041.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "c25c678cdf1651faa38a46d21d9cf22bc35cd1a4931bd18a8181ede39a76a897"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000042.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "34ecfc707050cd29d7a137a1d0ebfb854b182d4a393456cd318250d3ac3fce76"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000043.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "bd3156456bd05b08303c8076cd40ceb7d90c3f0b1d07c41298a5b113d65abfae"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000044.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "527a9b8be1458252428c56a7865812c105e389e2a1a4aa1b7d4d6b4462366e41"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000045.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "fbcc4c552b1c04c016810264f762d30dfee6be361850892b80d6eca557513b70"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000046.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "6ee8b4d6a051a7ac01edfac3556fbbb18c2e604ff21aa42412a7ea0aa34f8b86"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000047.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "99aa716a8b0c7ed0609d68f6fe501c1c3c585fe964fbb0d790050924635c7013"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000048.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "8d1d669f86e19603a831d3b5a8bb7aef58412efe8aaf3bc451df768120e207de"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000049.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "cca28f6a5c41fa2a43194c3c6dafd4e607dfe2122c4b33e5cf0373eb3752b483"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000050.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "ded8043801d576a2a6dceba94fca230e56be056a15cbc9524e681cabc52f3380"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000051.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "e9cb6cbbe50ca59a3a5af06642644aa18e9c8f4433fcbe29f841b4ec46cb0093"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000052.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "41ae4d02ebade0a63740c7e8d1a57f7857c3281a20be83c8a58ffd3148863f7b"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000053.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "6cd9468e5c5a9c5b38e48e190ae6f83ad83cc369e5dca69ebdf3dd3fb4c72da5"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000054.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "3523fa0b19a6dafb6ffdf8f3c629b34b6818d6d3474087a6de03cfb0594110c0"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000055.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "2ff71e407c14fc491a048ef66f05d4bd0fba72824624ef04cbad7e54eb34db29"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000056.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "0bfda9a5a8512c9268f471318b1177ca5e69abe2f8fca5fc42fab02846786e78"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000057.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "cb79a7126a642dbb82346e8ae89c7e8ea62f0ba61eea52f494e87aaaead8bcc3"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000058.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "0d7339fd2678e4c916e130c9a8a9d1579eb7f6d50ae6bc4cf76ca360a7695569"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000059.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "0db9fc171dfb2bb4ee5253ee0c2ea747f997c24c3bc532be37d95b9ccb2ebff0"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000060.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "3bd478db7305a5655d611c9b1901a290256c7ad06f8311136961995dd725f02d"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000061.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "a6261c39c0a15b076e9a2a8fbe8233679e1575fec5df68c04d650783fef756b3"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000062.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "90afc90aa2e9e6da8d6d3dcecb3c09a321e812f37ceaaac48bca264b13e969a5"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000063.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "6f1e324268c3a6d7994d3ca24163a8049d4ab7c3211cd2abf8ac235840cca53e"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000064.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "0a367027a6b30dc5306e9c219f074c4be3aaab2630fc60b6870c2565054fa224"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000065.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "89823648da2c930acea7f37b0bd3a6e750d12b525097eb10919dbfa0c1c5292b"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000066.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "0230d3434dd51c2f1e11420d33981299769d81b8673e6c1698becae1e69be293"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000067.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "ff26138f11fa97aa61d1e22b10ad30c383f5ff06faa9f5898972dee5321d9fea"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000068.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "03d1daa8119eb940f3e9d63cb22869ca7bccb471c271f97f9f61aa01c7a89d85"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000069.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "1c7b8bfe488c8e43df96fac6e9064e77fa792fa31e36720c4fcfc49776022e40"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000070.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "7753efde663582af6a98cf6d750bd112c6a66f472452128e616854a5393b2be2"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000071.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "085728419139dfdc9c9e447d73d15cc4a7c9eb2576b81bcf01bbdffd3d20aad3"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000072.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "975730541d61552064c42796f4f4c5dc51f6e6057693ffffd278ed12c2c2fed6"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000073.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "bd3235215159bd2a7951915857a942aead5687d1e04ffd12ff5ab97bfcdbccc0"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000074.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "67ab7b9283dc55279fb1c24b7269dd71e89ba3efa41767a5ecef0dc41b815dbe"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000075.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "d7c5488b8b78fa75eb3b5f54d3a5f9c55fcbd3cc035695b7640a5b7f53ebfa2e"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000076.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "bbfda288bce5e00d5847f6d530104ddc86954d6720dd0197983848e13bb9226c"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000077.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "20f80ab49802f69b9ebc08132bb8888cfd8cce99955e5aa078d0e62c02b38812"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000078.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "0d3816a3de7ebe1d9719c9d0a7e443088b7249ecb73755670c8f562554e496cb"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000079.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "b025b84a835f68c38eedba39fa0ad83228de38ef37c347d345e99cdcb70b190e"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000080.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "f993f8a9f111f6b45697056e4f1339f7c22ede24c3b40df6c4b603c6242df7da"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000081.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "6f6025730274cc0c9dbf6759b205a5131eb68d16105af4362e27a686e5dbc9e3"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000082.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "bf3f53a1415fe26a7541a03e51b430655e811ec9587eb7d277905908284aa2e5"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000083.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "4d88503fe522561bdaad93ef79d3cc1681dde70f92ca093839ba4b7fd1b00475"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000084.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "270e8b2df60a924aca41914b59f8664cb4d4a0d6c03d71e555eb220f57c2d2d5"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000085.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "f5e958eee78391a46d48cc4103e6aa67ddf9fe3f5821b8adf4c481de55ed2232"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000086.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "6c6201d5d1512592859599270ec519b2c2cda70f9feab65a0b81c9f732a16958"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000087.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "f99afae8f5703ba22ba0b5a106bd421eb7a7454209de449cda2be50cd7e4ac03"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000088.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "f141150a0231a03d495bf3f74ff1f87449608266868e3f52c97ae963e00e4735"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000089.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "33cf51f92289dcd261f1c5a1f7cb97830e8410322df9a1ad5fbebca905e2ef18"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000090.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "32c77b52c6eb15206029a9ae4d086cdc886bbba28148fedde44ac67ae9b18c66"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000091.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "d32edc879e507c45dea63abbc6ac12d1e1645bf7ce07d8d00d0082a27e374a0f"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000092.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "78a4d00b737f24bbc62c38bb0de7c4aacea023e6fbddb6daf8ba8f5fbd5309b2"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000093.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "04052d4ea6a761747fe4c9fb314b52845c0b7374746a7f41e305db19a4f9771a"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000094.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "98fd4e95dcb1927f20799f99eb1d59c305fc0d14f9ae01e0870dcc463f96b849"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000095.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "b42c2e0a3b9229ac598221fdc51826d22bdcd981778d83a127e7a89dfb8ae374"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000096.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "ddecfad8f0c6c5b8aa9a79ab8683a49c36a1dcbffe4aaa751fa687ba40f03f1e"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000097.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "7a060930e6e57c2ad52b10cae743d6e83ac9592ba53fdb21813174fd6a5c89fc"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000098.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "18842888da77dd180e18a554b553f37ee834fa2e92f9e760df3d0df544754a25"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000099.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "cdc955fc62edd8e7175afad706f24b46350a7b5a73a6ab949f486c8f3c51d569"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000100.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "1513a9c345cdc56d4d62cb335428438d426fcb12cc8c699ea899db4a37a17e91"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000101.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "362f1bb07f15828a4d6be22f2592ab5990eeea693834ed1b786ad12a4dbc28d7"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000102.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "f62aaf53a69c278846b181afa620c8f6a13ef3797d2d764e7d9b39a3b8d2a40d"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000103.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "f2fd8d1456a20a80c1b5b4408aabff2c1564aae40dd6c8cf5b26dc67eac4b17f"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000104.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "65b771d5f854f1d732f3c401ee41c70ef0d2825353ccfcf1bb2182cf570d918e"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000105.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "f76e1dbe2e9a7d5194c29e0b72f09817d182c062d7324faae22e380ed93859e8"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000106.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "7d787a67ccaf5dc10c7f6476f565b11d3a7ce081074f0c235146b93d78ceb489"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000107.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "cf4a69250a26029e639110ea5a1b49064b8b4a865a88096bc0b18ae30420b58a"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000108.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "7eb708f40cefc9fcfe86dc83db5e6be42581d622edfc92c554cb4cd01f373a22"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000109.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "9e651f52b2bde0a6352c8ea21ea1eb4489ef5e9c2571f729a2aaf1bddb16b0dc"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000110.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "5b0e305ba4a96a3c43118ac258dc26a7f6b64deafbe9e1698a8f601aacf36f85"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000111.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "05090c71d26ba48cf6d0b1604e0349f281380c2ed42304ea1774b6dc0a9bc365"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000112.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "a8de7c616e92bab2ffc61b795fa8b6e1c754fe15f3bc6a28ec807022f4e19307"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000113.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "b1cd275c3381b4bdd726919e3fce66b4ed255b7348be180fde8a4d0738253ecc"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000114.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "199e0be19c8529c4ab5c01b9c7cb8b1c90d3c67469c39e8474dc2b35d8c06d11"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000115.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "38c733ab481ae450b86dbb14cb7cc6cd13fe7e706ef6ebdc616d8e9c5eb53053"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000116.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "de5e73e78ce7796c9bb2ae4610ffc02d4d72481fdb0509559770131224c26b0e"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000117.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "20df25cd58d29dc3d79271643faf594d9f1631642522c660d179b5402d3e92e8"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000118.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "a149edf1cc18ff5277d9fb88707f37a3085a790d4525f8b11f254ffa416bc542"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000119.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "456f38e46ca02777a6db7203620cb9abaa56607ed40448fa7bd21d2b1bbab1ae"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000120.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "495026df671438c60e1366be0fdb90ab27f0b8ba988943a28015459a5e7d6a3d"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000121.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "0d7ceccd87c7475f16fa5e62132a7e28b27e9bd423aabc870530318201354004"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000122.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "05693ad2640fda63b004dff19478f9e8b2fd247f8571d24a60ec6ce2cd728c16"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000123.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "a321cab06b7f5fb3340669adf788b380bd0b4125380f481051226b9d10e028ea"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000124.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "fd810f780b31a713faab3024f1911d4fdcfcf39b2f4d026b12ebcc903210987c"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000125.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "578dfa7a698e1949c6f5933eeac24b58e20f0bb26f4a9b9d0943c69753a82367"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000126.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "00cc7488dd691efa7505ea8d4f4d0f189df8d9ca9df6f7c6d00cc6709dae025d"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000127.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "e6d348c2a5ded93eb0f2267b7ef45a79b4af07e882b733dfcb6eb772064a04e5"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000128.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 8192,
+        "schema": 1,
+        "sha256": "c794e3c9be6d5c43554dc6e0151c55bb6528702fdba8ca4faa040281073bd59d"
+      },
+      "rows": 8192
+    },
+    {
+      "path": "shard_000129.zarr",
+      "row_provenance": {
+        "path": "row_provenance.npz",
+        "record_bytes": 56,
+        "rows": 198,
+        "schema": 1,
+        "sha256": "095319a15c0ba0b0d5c6a8d8cb477c88f533e6a527c135728f02766007ef2936"
+      },
+      "rows": 198
+    }
+  ],
+  "source_selection": {
+    "order": "original corpus shard order; limit applies after selection",
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/run07_g10_companion4/source_shards.json",
+    "schema": 1,
+    "sha256": "0fab55cd3595725405948570088f55957435bf8f531200a4af9fbece15fb42cf",
+    "shards": [
+      {
+        "rows": 8221,
+        "source_sha256": "2fe2f373f627e47ff9d7382686807643bafe5ec31154b658db3215145515999a",
+        "source_shard": "w01-00000.jsonl.zst"
+      },
+      {
+        "rows": 8276,
+        "source_sha256": "764b46992ce6058c3e17de79546f552388221cbad82af1d34784a4fb23a7a65e",
+        "source_shard": "w01-00001.jsonl.zst"
+      },
+      {
+        "rows": 8373,
+        "source_sha256": "85085d2724ca030ce6e42cbd95a6d9c63c1132b79ba2db80261fa9b703a294ba",
+        "source_shard": "w01-00002.jsonl.zst"
+      },
+      {
+        "rows": 8221,
+        "source_sha256": "a561d01d32a28a110477d4c6bac80078b260a091f5398d9216b9885ba77f8f8d",
+        "source_shard": "w01-00003.jsonl.zst"
+      },
+      {
+        "rows": 8252,
+        "source_sha256": "f39757532ac98cf9263e5a7fd3e440eb19bb2664fc12ed9130230a1fa081856c",
+        "source_shard": "w01-00004.jsonl.zst"
+      },
+      {
+        "rows": 8313,
+        "source_sha256": "5d8b2bff8c1bebe2b62742679753ff59c74ce6ae99786f2864a1ca93d3b2ff40",
+        "source_shard": "w01-00005.jsonl.zst"
+      },
+      {
+        "rows": 8284,
+        "source_sha256": "c35850ba1d773371f24cb8e142c69d9edb6966fbbb0309b016fb461f6fbc4009",
+        "source_shard": "w01-00006.jsonl.zst"
+      },
+      {
+        "rows": 8252,
+        "source_sha256": "a9c311354287d9426caf6dfa2b3b475beac351a76091f50f340e5db6f41d788c",
+        "source_shard": "w01-00007.jsonl.zst"
+      },
+      {
+        "rows": 8266,
+        "source_sha256": "e18d5c461cbca52df96855f1e6a0600cb29e16feaa9e5f306cf71fd8067953dd",
+        "source_shard": "w01-00008.jsonl.zst"
+      },
+      {
+        "rows": 8326,
+        "source_sha256": "7e8035778ede9bc0b93e65437e75e326918e41dff5761c67f031ab23bef6ea91",
+        "source_shard": "w01-00009.jsonl.zst"
+      },
+      {
+        "rows": 8359,
+        "source_sha256": "9e2a1656a7466545a75c935de9d927eaad3b04649f8647b5f45852abd9ab9d91",
+        "source_shard": "w01-00010.jsonl.zst"
+      },
+      {
+        "rows": 8264,
+        "source_sha256": "c70fc4ba4b0fb800f37ee4c96f90aaa4398bde287b70c97458365653a248d3a2",
+        "source_shard": "w01-00011.jsonl.zst"
+      },
+      {
+        "rows": 8253,
+        "source_sha256": "1cc8c447acbb2376d460bba1ca699dcbb3ce6d0a362a53cb901a20b814fee213",
+        "source_shard": "w01-00012.jsonl.zst"
+      },
+      {
+        "rows": 8417,
+        "source_sha256": "5c64d2b1a8f5a493253c37ce5e12cddb94ecf9a406a350da74df959fce784193",
+        "source_shard": "w01-00013.jsonl.zst"
+      },
+      {
+        "rows": 8239,
+        "source_sha256": "bd92bfdf19ad509e5e58eade5ad55df88c570bd7e4db446ec0eefdc9bb394b63",
+        "source_shard": "w01-00014.jsonl.zst"
+      },
+      {
+        "rows": 8209,
+        "source_sha256": "cc1cf0d16b2cb64f003e99398dd5cb4e000c1ec21447966be7541b061e18688b",
+        "source_shard": "w01-00015.jsonl.zst"
+      },
+      {
+        "rows": 8242,
+        "source_sha256": "30ef3c5da0bcf33ef777eea2b6ea667f8123a1bbb5d9b157eea021b360195dfb",
+        "source_shard": "w01-00016.jsonl.zst"
+      },
+      {
+        "rows": 8260,
+        "source_sha256": "daddcfa8cfa754646a0e0eb5c497a803d25f5371fd61ab54ac35440e7365af04",
+        "source_shard": "w01-00017.jsonl.zst"
+      },
+      {
+        "rows": 8356,
+        "source_sha256": "2533c42e957a7431857d162aa1162697c89ed26160207efec1782a8c85b0d6e6",
+        "source_shard": "w01-00018.jsonl.zst"
+      },
+      {
+        "rows": 8318,
+        "source_sha256": "8a3a213dce780035f9ff4100e3013c0a3ba741898f9da8025c07d4645437ffae",
+        "source_shard": "w01-00019.jsonl.zst"
+      },
+      {
+        "rows": 8198,
+        "source_sha256": "7684ec82b975fd128a0b76ab19b14e6ee2b35a62b8a9c20fe2ef0f216c8c89f2",
+        "source_shard": "w01-00020.jsonl.zst"
+      },
+      {
+        "rows": 8380,
+        "source_sha256": "6758eb5b2ffb4282d94bb312bd63f0e1388bdca5798c839b616c4e290f311079",
+        "source_shard": "w01-00021.jsonl.zst"
+      },
+      {
+        "rows": 8330,
+        "source_sha256": "d05a45b70cf69dd3ddc71ff923ffb5da8b5c452ba8c8b56a75a61aeddb700772",
+        "source_shard": "w01-00022.jsonl.zst"
+      },
+      {
+        "rows": 8363,
+        "source_sha256": "db7bd277fb9f30d88970a34b6f9bb0a579aff6fae3d72a66a9293ebc91ee3154",
+        "source_shard": "w01-00023.jsonl.zst"
+      },
+      {
+        "rows": 8247,
+        "source_sha256": "0719becff717e32ece00be873e4b5b1ad9bd5b0f022483cd46c1dfc5528fdb9a",
+        "source_shard": "w01-00024.jsonl.zst"
+      },
+      {
+        "rows": 8199,
+        "source_sha256": "7e8b24318eddf132630ed42f67c656c2fbcc071d787c89557e2daa01cd911f88",
+        "source_shard": "w01-00025.jsonl.zst"
+      },
+      {
+        "rows": 8322,
+        "source_sha256": "4178d6be45511a7d47e34fd69aa8eeb15c34d5bf19810eccd1f5ead7e2d2deb9",
+        "source_shard": "w01-00026.jsonl.zst"
+      },
+      {
+        "rows": 8391,
+        "source_sha256": "57af37156a855570fd41aa2c3b020fba227b55431d8ec3a0d20fb421afe226bb",
+        "source_shard": "w01-00027.jsonl.zst"
+      },
+      {
+        "rows": 8220,
+        "source_sha256": "567cc1eebd63d0867e26fb1c2d05ed56f504c1898455cb74c81d8ffc7a765e0c",
+        "source_shard": "w01-00028.jsonl.zst"
+      },
+      {
+        "rows": 8308,
+        "source_sha256": "1078f4c2d144a525ff7bf19bd155b62f9521e75765de9da4b7d9b86ed09d95b5",
+        "source_shard": "w01-00029.jsonl.zst"
+      },
+      {
+        "rows": 8426,
+        "source_sha256": "152ae9958f73a31a9c6e76a01773506f2cdbb9e619192f4e81c4e9e34c1c9f42",
+        "source_shard": "w01-00030.jsonl.zst"
+      },
+      {
+        "rows": 8301,
+        "source_sha256": "68bc8e18c9ecdd6d31a13abdb553fd6994497aa83f55dad42e597f7be0b2d02d",
+        "source_shard": "w01-00031.jsonl.zst"
+      },
+      {
+        "rows": 8204,
+        "source_sha256": "ec243d165f023a61df3dc8b0d178af4224b2189be3b3258ac66f05561b7e390e",
+        "source_shard": "w01-00032.jsonl.zst"
+      },
+      {
+        "rows": 8225,
+        "source_sha256": "83066d102ad40c284141927916fe7ea8b0ea421b21809f672913e0be67985750",
+        "source_shard": "w01-00033.jsonl.zst"
+      },
+      {
+        "rows": 8306,
+        "source_sha256": "ea177ef8a26e4e3d656d1a1861c05b1fc5a322dd1c0d61fe59ef0b9099eb2af9",
+        "source_shard": "w01-00034.jsonl.zst"
+      },
+      {
+        "rows": 8218,
+        "source_sha256": "3a5f13de7b5983f8f2942f04691ac3fb17b96cc30e5481d7e311eed908794e2d",
+        "source_shard": "w01-00035.jsonl.zst"
+      },
+      {
+        "rows": 8296,
+        "source_sha256": "f665d6496a75bac71863230a7dd92d99ff31402d1d48f9f8de54582e0abfdd55",
+        "source_shard": "w01-00036.jsonl.zst"
+      },
+      {
+        "rows": 8320,
+        "source_sha256": "183aacdafde83ce99606aa123dd9382a258c3562d8fc7b7b0773e6f388752aec",
+        "source_shard": "w01-00037.jsonl.zst"
+      },
+      {
+        "rows": 8321,
+        "source_sha256": "4058a0c4c8080416c5650c7c485b858b9e3896cf30eb991dea3ec33b5eef6f1f",
+        "source_shard": "w01-00038.jsonl.zst"
+      },
+      {
+        "rows": 8352,
+        "source_sha256": "9291bda655bb696884d73b437d4f0839c6b0c5fdf2f6f2381b5d9241e4647085",
+        "source_shard": "w01-00039.jsonl.zst"
+      },
+      {
+        "rows": 8380,
+        "source_sha256": "fa9cb3acf482bdba9926fda5e7f5cd093b7f70351917750d4f3501f131e54205",
+        "source_shard": "w01-00040.jsonl.zst"
+      },
+      {
+        "rows": 8356,
+        "source_sha256": "8c4357fa14f825e7b632bdeecd15aca9a42cab3002cfdcb20fa26747ef7de79f",
+        "source_shard": "w01-00041.jsonl.zst"
+      },
+      {
+        "rows": 8286,
+        "source_sha256": "333be4d32f924f400f5017ffb4768b6113139df7fbfc5412f82f20e5d60e302d",
+        "source_shard": "w01-00042.jsonl.zst"
+      },
+      {
+        "rows": 8426,
+        "source_sha256": "02db1773c7f4fb62442722b955998983bdd7701274cf0cc05c88cec2ec40f959",
+        "source_shard": "w01-00043.jsonl.zst"
+      },
+      {
+        "rows": 8335,
+        "source_sha256": "3a4e0e5f7365ec6a2d704d37e7f3bb15ee0b14fb91e5a5b2484483f90123eaf4",
+        "source_shard": "w01-00044.jsonl.zst"
+      },
+      {
+        "rows": 8324,
+        "source_sha256": "e3abeec9613196caf92a42fe07ac69ca9431429b8cabc6534ff2a667406db0da",
+        "source_shard": "w01-00045.jsonl.zst"
+      },
+      {
+        "rows": 8216,
+        "source_sha256": "329eaaf2615397a0505f0c7302c488def7605386c9b9996fcf1cb742d4e61722",
+        "source_shard": "w01-00046.jsonl.zst"
+      },
+      {
+        "rows": 8296,
+        "source_sha256": "2a7439ed1fe4e0eb5f566b70eefe75f1274cb9e60329e59e9f985c2c35a109df",
+        "source_shard": "w01-00047.jsonl.zst"
+      },
+      {
+        "rows": 8280,
+        "source_sha256": "a43e9cffe44e20b20cff469e690205ef3555cc538bade1ebefcb0ff21dbe2fbd",
+        "source_shard": "w01-00048.jsonl.zst"
+      },
+      {
+        "rows": 8370,
+        "source_sha256": "4fd481dea13faeef02ed7ca2e46c366d52db6743fd85c74c40816e0f280eeae1",
+        "source_shard": "w01-00049.jsonl.zst"
+      },
+      {
+        "rows": 8303,
+        "source_sha256": "3adb00ab602a72075e7a6807997e71693132c8130096c87544800c9994c86c28",
+        "source_shard": "w01-00050.jsonl.zst"
+      },
+      {
+        "rows": 8394,
+        "source_sha256": "9e4507a5e65fe8b0306a6a1c1c67cfbd5e48dabb6586f894bb235e76c9362b9e",
+        "source_shard": "w01-00051.jsonl.zst"
+      },
+      {
+        "rows": 8388,
+        "source_sha256": "f84d03cc57f5188cbc861255694ddac7880f6829381e80a8c76ee2737960a7c6",
+        "source_shard": "w01-00052.jsonl.zst"
+      },
+      {
+        "rows": 8299,
+        "source_sha256": "1b3fa72feb4fcabc7e79c61fe82dd1ee0a35e5483b8f3d055036b7e59f843e5d",
+        "source_shard": "w01-00053.jsonl.zst"
+      },
+      {
+        "rows": 8337,
+        "source_sha256": "8897611a4b6c94d8fba099c6a866bb0d0f069f0907629e8ec692d87587099730",
+        "source_shard": "w01-00054.jsonl.zst"
+      },
+      {
+        "rows": 8345,
+        "source_sha256": "3b12d391b8c1786799e3511bebf6c444b1d651101ab200ff87d7be9da523f974",
+        "source_shard": "w01-00055.jsonl.zst"
+      },
+      {
+        "rows": 8284,
+        "source_sha256": "596d966f9ead9fc53930f4ea03a3b9804784fe3153dbb4521e32b2d4015102e3",
+        "source_shard": "w01-00056.jsonl.zst"
+      },
+      {
+        "rows": 8228,
+        "source_sha256": "9e0dd16b1cfd53ce88fba74276548ff966a6912c595d96373ea31c7540b41e93",
+        "source_shard": "w01-00057.jsonl.zst"
+      },
+      {
+        "rows": 8246,
+        "source_sha256": "51127709fb6aed8a1a43697e16a5cc1dcd3cd5a7628b60a2e614d6a293f88bda",
+        "source_shard": "w01-00058.jsonl.zst"
+      },
+      {
+        "rows": 8307,
+        "source_sha256": "1c5bb9f2915e3d62b7ed098f70dd545c69862496950a224f570cb2e6a2e1e5d0",
+        "source_shard": "w01-00059.jsonl.zst"
+      },
+      {
+        "rows": 8244,
+        "source_sha256": "895141bf04cd25d9746ba52c4e46387e3d0ca5a2b39ee8a4007b869606a465ff",
+        "source_shard": "w01-00060.jsonl.zst"
+      },
+      {
+        "rows": 8343,
+        "source_sha256": "d89fcffde5e06057d79fb9180db06d3b1d3028f30f48b1e886353bd62c2af9c5",
+        "source_shard": "w01-00061.jsonl.zst"
+      },
+      {
+        "rows": 8208,
+        "source_sha256": "8067dd48bb9fda4fceb0dce9f567278b110bce9fda710bac1c62fcd88c0769a8",
+        "source_shard": "w01-00062.jsonl.zst"
+      },
+      {
+        "rows": 8271,
+        "source_sha256": "70060b05d385a8d00c5ca16a4b332fa6d9e4a735c0a1daa21238f674e5301374",
+        "source_shard": "w01-00063.jsonl.zst"
+      },
+      {
+        "rows": 8387,
+        "source_sha256": "620645bbb46d7327cf69466a0bd9ba7f5d15a7d9e3226af11e35fc468710c0a0",
+        "source_shard": "w01-00064.jsonl.zst"
+      },
+      {
+        "rows": 8454,
+        "source_sha256": "dbeda190d6e2fc855f350cf09438a174c19fbcfa1a3d96a1799fa09bfc439145",
+        "source_shard": "w01-00065.jsonl.zst"
+      },
+      {
+        "rows": 8275,
+        "source_sha256": "59e46c85a678800ee4138db018c341749cbab8250d3be3d551bd1f3e6bcc66c6",
+        "source_shard": "w01-00066.jsonl.zst"
+      },
+      {
+        "rows": 8331,
+        "source_sha256": "a480af066309b7df9ebdbea21fb585f44b8f316fce39453162100122fcaca6ec",
+        "source_shard": "w01-00067.jsonl.zst"
+      },
+      {
+        "rows": 8192,
+        "source_sha256": "13ff1282e7fc6219b5d5e235ad64c9207c248ba75b356f3942f31a3839428dfa",
+        "source_shard": "w01-00068.jsonl.zst"
+      },
+      {
+        "rows": 8300,
+        "source_sha256": "ef9d4fe416d5934a6fbebacf1308fa22459ef0ba92d34a5d39ad932193dc2851",
+        "source_shard": "w01-00069.jsonl.zst"
+      },
+      {
+        "rows": 8396,
+        "source_sha256": "b06435627947002803ccc5d3db93eee87d6a20c6b131bbe2a0753859a70b5d1f",
+        "source_shard": "w01-00070.jsonl.zst"
+      },
+      {
+        "rows": 8386,
+        "source_sha256": "c799a6e27e38eebe17bac7b6c7459e91ea6dac831f8e9ceac98dfb5e9a761939",
+        "source_shard": "w01-00071.jsonl.zst"
+      },
+      {
+        "rows": 8320,
+        "source_sha256": "bd1dc67fc657f19071afd1a24e08952f432e241049e720de5dab32e9e8837978",
+        "source_shard": "w01-00072.jsonl.zst"
+      },
+      {
+        "rows": 8366,
+        "source_sha256": "af68cf63ad8c6c4dfcf5902dddb6bb2c4bcb40f37c73d248696aadf889f9d36c",
+        "source_shard": "w01-00073.jsonl.zst"
+      },
+      {
+        "rows": 8359,
+        "source_sha256": "5aacb756dddd7a6d4a9fbbc0e5b376fc63941bd09fa9edf76faa515d5acdde23",
+        "source_shard": "w01-00074.jsonl.zst"
+      },
+      {
+        "rows": 8314,
+        "source_sha256": "9b809f94caec6f43e872a24adfab727a660ee2a839bbf33f0c18fb735ff4dd0a",
+        "source_shard": "w01-00075.jsonl.zst"
+      },
+      {
+        "rows": 8306,
+        "source_sha256": "32c1658860aa89bcaa9758bc2f430417b7332c9c19d52fd5ff83a59c152f9b15",
+        "source_shard": "w01-00076.jsonl.zst"
+      },
+      {
+        "rows": 8300,
+        "source_sha256": "06c2c9b1948895335149deb1c75642ef64eac772302e077758332993e6438cb9",
+        "source_shard": "w01-00077.jsonl.zst"
+      },
+      {
+        "rows": 8310,
+        "source_sha256": "f3460dcf85f21e09ffb51001a5f6a4a01171f1a22d9819ebb3a1c8381dd02d01",
+        "source_shard": "w01-00078.jsonl.zst"
+      },
+      {
+        "rows": 8341,
+        "source_sha256": "097f00cdad510b18639393023648e3fa45550bd497746f411e8e0a735d88339d",
+        "source_shard": "w01-00079.jsonl.zst"
+      },
+      {
+        "rows": 8206,
+        "source_sha256": "cace9f2b61cc5f29a4c790fc3ff854246992d4df79ab99c287fcb5ed6d284af9",
+        "source_shard": "w01-00080.jsonl.zst"
+      },
+      {
+        "rows": 8197,
+        "source_sha256": "0f3951bede60ca9ab4dae1118ab4514fc0cc867f4124fd491fea7d3a569ca8ac",
+        "source_shard": "w01-00081.jsonl.zst"
+      },
+      {
+        "rows": 8198,
+        "source_sha256": "ef6f4793bacee8bc9b30c06b437818a42488d41255de72faa9a2b02206d7a43d",
+        "source_shard": "w01-00082.jsonl.zst"
+      },
+      {
+        "rows": 8208,
+        "source_sha256": "052bc6fb21fbf4bbedec4756840af1b3fd8ce02c4918717c137368f0e4cd7ace",
+        "source_shard": "w01-00083.jsonl.zst"
+      },
+      {
+        "rows": 8354,
+        "source_sha256": "ed59bb9947b63188b39e54eaf873c75e791880fdb2d5c150de6a492b5fa7d3a0",
+        "source_shard": "w01-00084.jsonl.zst"
+      },
+      {
+        "rows": 8288,
+        "source_sha256": "0abac8d59228c8b510fb2b9104c8523398184a705c2c1b3a30143512a67d9d9c",
+        "source_shard": "w01-00085.jsonl.zst"
+      },
+      {
+        "rows": 8504,
+        "source_sha256": "24b2de42eccbce3c3dc0a7b35b3426630b16819f13f33c5acf46a72c83d10705",
+        "source_shard": "w01-00086.jsonl.zst"
+      },
+      {
+        "rows": 8317,
+        "source_sha256": "ddeecea07c833f2cfda1e941fae9219b0f995c3f441d81af6deecc36af0f7e78",
+        "source_shard": "w01-00087.jsonl.zst"
+      },
+      {
+        "rows": 8476,
+        "source_sha256": "cc297f7d348a627f590dc49ce36147e2355afd16a98bffdc40607e72196f5699",
+        "source_shard": "w01-00088.jsonl.zst"
+      },
+      {
+        "rows": 8423,
+        "source_sha256": "7f519c4a83441f5e263519daf9665d97d27dfff9738b48ac134bed242b856b14",
+        "source_shard": "w01-00089.jsonl.zst"
+      },
+      {
+        "rows": 8237,
+        "source_sha256": "422da8066569937e0fbf08b6f685b3d97f7c4ee2c5d5cfe72c9ff05d17ac6424",
+        "source_shard": "w01-00090.jsonl.zst"
+      },
+      {
+        "rows": 8265,
+        "source_sha256": "272d4709b7d3aa3739d39bb79e8c0ab16a02a8d09ed8f08e58918b7892659dc4",
+        "source_shard": "w01-00091.jsonl.zst"
+      },
+      {
+        "rows": 8315,
+        "source_sha256": "0ce0265c7650b45887b5b8432a96ebb8206ae9f4fa186e44745a4b2686c6db11",
+        "source_shard": "w01-00092.jsonl.zst"
+      },
+      {
+        "rows": 8322,
+        "source_sha256": "49844e05c5cfce35ab3d7e4a5089220fd457a277a7c83cdfda93942baa6ed012",
+        "source_shard": "w01-00093.jsonl.zst"
+      },
+      {
+        "rows": 8266,
+        "source_sha256": "25c2ae45b92b4cab1e5c272fe83672e019bba9c2a3437048f87a9237d5c9380b",
+        "source_shard": "w01-00094.jsonl.zst"
+      },
+      {
+        "rows": 8410,
+        "source_sha256": "2688765a2add564432e069467592cbcad038742b2a66258fd57c185f19d7bd1b",
+        "source_shard": "w01-00095.jsonl.zst"
+      },
+      {
+        "rows": 8208,
+        "source_sha256": "d96b824692aece16453986cca7351c404fa8425ee253a191af611dea73c371cc",
+        "source_shard": "w01-00096.jsonl.zst"
+      },
+      {
+        "rows": 8220,
+        "source_sha256": "a9bfc12f389c4e9f4fd19b7c34bf08022edca32541e6eb449241f5ebd8eee1a1",
+        "source_shard": "w01-00097.jsonl.zst"
+      },
+      {
+        "rows": 8279,
+        "source_sha256": "eff60f2aa213ff7103d934b680ec478347cc9b291904c5bdf4f52fe0126e6c24",
+        "source_shard": "w01-00098.jsonl.zst"
+      },
+      {
+        "rows": 8214,
+        "source_sha256": "5c06bf5e4fd2f9e2317bb561b0d1ec9912300e1b2c6999cae29d16618f4059f2",
+        "source_shard": "w01-00099.jsonl.zst"
+      },
+      {
+        "rows": 8304,
+        "source_sha256": "494a99df3cf6387cde8ea6787fc2ce99a23417bec5bfe03ebd9d7d0d5f0b5e94",
+        "source_shard": "w01-00100.jsonl.zst"
+      },
+      {
+        "rows": 8312,
+        "source_sha256": "186e1380accd91af1c3e632a8b034ab9c817d61cd5fe95916f8bdb57246c5888",
+        "source_shard": "w01-00101.jsonl.zst"
+      },
+      {
+        "rows": 8324,
+        "source_sha256": "c626c755b3250c10d443803b1e2d25d620e638978f6b9636eea1233923ae6f22",
+        "source_shard": "w01-00102.jsonl.zst"
+      },
+      {
+        "rows": 8462,
+        "source_sha256": "c2649c871cc106436996eebcafd505cfa858bb85377e711f39f747141f9d3365",
+        "source_shard": "w01-00103.jsonl.zst"
+      },
+      {
+        "rows": 8334,
+        "source_sha256": "2b47f709ed6d4b3ea53193c1792996fd0afe4609a111a76b004ccc4a5ac450fb",
+        "source_shard": "w01-00104.jsonl.zst"
+      },
+      {
+        "rows": 8466,
+        "source_sha256": "77bfef8b61448ecd24104e09e805d252b6c76017f7f166b274deae3dae266900",
+        "source_shard": "w01-00105.jsonl.zst"
+      },
+      {
+        "rows": 8192,
+        "source_sha256": "78ccf943be964d9226c0174e5c344fcfb6426172af299d164ab5bab5ea21f5d0",
+        "source_shard": "w01-00106.jsonl.zst"
+      },
+      {
+        "rows": 8326,
+        "source_sha256": "71b0dd9d0960cd5388144c829e6ba96d3e16b92c99f66040a0761a4a2851f3a3",
+        "source_shard": "w01-00107.jsonl.zst"
+      },
+      {
+        "rows": 8264,
+        "source_sha256": "def20d72155a6ce5075870c949a4978cb02a3ce7838b5b6338017fc18c622447",
+        "source_shard": "w01-00108.jsonl.zst"
+      },
+      {
+        "rows": 8417,
+        "source_sha256": "2fed03109029c86dbb804f2f6e75c2ef16fec5ce7f77684bccf7bc78d47c2237",
+        "source_shard": "w01-00109.jsonl.zst"
+      },
+      {
+        "rows": 8192,
+        "source_sha256": "2af5a787ca004e8d3ea441b84e7d6846c1c166753043db4f608991b28c0c82e2",
+        "source_shard": "w01-00110.jsonl.zst"
+      },
+      {
+        "rows": 8247,
+        "source_sha256": "708e7234ea8ea822fb4b72ec4017d4bce93a5e65423a1ecad45380cc41351a3c",
+        "source_shard": "w01-00111.jsonl.zst"
+      },
+      {
+        "rows": 8227,
+        "source_sha256": "de9d0132999b0f196de47664552082051ad063b658b7c2b15414060b334d4c2e",
+        "source_shard": "w01-00112.jsonl.zst"
+      },
+      {
+        "rows": 8196,
+        "source_sha256": "68886dc8bbb9c547deb17b038741e97999598d18b6d75546c7c413368489431b",
+        "source_shard": "w01-00113.jsonl.zst"
+      },
+      {
+        "rows": 8405,
+        "source_sha256": "f8e7d5649fe19bcfde6a083e222f850ff1f43d2d9649b5453a9406e0d70cc4f6",
+        "source_shard": "w01-00114.jsonl.zst"
+      },
+      {
+        "rows": 8363,
+        "source_sha256": "c8393981f22922ad600d8adcec10218dc565c217b5f79e2108c09fa12d051155",
+        "source_shard": "w01-00115.jsonl.zst"
+      },
+      {
+        "rows": 8283,
+        "source_sha256": "897c297abd9925f6ed6c407496e31b2976ce68874b54935080ac418af5e54f99",
+        "source_shard": "w01-00116.jsonl.zst"
+      },
+      {
+        "rows": 8360,
+        "source_sha256": "3260845bc482bba1faa8a61354ad51080547fedf996bec87405fa3ce95011150",
+        "source_shard": "w01-00117.jsonl.zst"
+      },
+      {
+        "rows": 8372,
+        "source_sha256": "9c22cfb70ac76df868647d77ae7f41022c6f11f486248c875962fc3f4ad5da9e",
+        "source_shard": "w01-00118.jsonl.zst"
+      },
+      {
+        "rows": 8267,
+        "source_sha256": "96ce1c57af14f271fb2b59f536457c064adef77ac375ddcfe9c0f13e0e03fce3",
+        "source_shard": "w01-00119.jsonl.zst"
+      },
+      {
+        "rows": 8343,
+        "source_sha256": "853d210617cf6ddcb86736e38c327215480dec31d4f987bd2c5c2e614648f4d3",
+        "source_shard": "w01-00120.jsonl.zst"
+      },
+      {
+        "rows": 8392,
+        "source_sha256": "21791daf1d52fde78d40c12c598ca52477eb18711922379b5ef6a846b8adb66c",
+        "source_shard": "w01-00121.jsonl.zst"
+      },
+      {
+        "rows": 8296,
+        "source_sha256": "b60219f6342a7c574f7fd97d7f198f735d62d812bf372a16bc24bc477edf6ce3",
+        "source_shard": "w01-00122.jsonl.zst"
+      },
+      {
+        "rows": 8245,
+        "source_sha256": "b141477aad15c83f32fd7cfc8c76ddf16c2b82c598668e0778f4379f0ba39a41",
+        "source_shard": "w01-00123.jsonl.zst"
+      },
+      {
+        "rows": 8329,
+        "source_sha256": "d4e1a86495b7bbad87e3d1e9d85d5f0b9e9c548b8eb8d7d68d85dae734fc4e56",
+        "source_shard": "w01-00124.jsonl.zst"
+      },
+      {
+        "rows": 8220,
+        "source_sha256": "01501c495d03597387ce557b99af7bb60868fefd0f89f8ba81fbf2a8a836659b",
+        "source_shard": "w01-00125.jsonl.zst"
+      },
+      {
+        "rows": 8311,
+        "source_sha256": "9a14f13243bfe3a1c12c227e64ad471c3acfc3c1e13f0072f8e803cfe128664b",
+        "source_shard": "w01-00126.jsonl.zst"
+      },
+      {
+        "rows": 8224,
+        "source_sha256": "ae847ec6a30827431c9a1844b7db320aeda1a56e6cf0df34517cab83a5727328",
+        "source_shard": "w01-00127.jsonl.zst"
+      }
+    ],
+    "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+    "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+    "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+  },
+  "started_utc": "2026-09-08T10:56:35.555869+00:00",
+  "temp_requested": 0.0005,
+  "tool": "scripts/derive_corpus_targets.py",
+  "value_blend": {
+    "baked_into_rows": false,
+    "note": "the row carries the two components; the mixing weights are the trainer's, exactly as on data/lc0_rows"
+  },
+  "value_channels": {
+    "categorical_target": "ABSENT \u2014 outcome-derived, and wdl_target carries the outcome",
+    "moves_left": "ABSENT \u2014 a corpus row does not know its game's length",
+    "search_wdl": "cp_to_wdl_array of the best-move value from latest-phase observation at depth 9: Stockfish's searched root value, side-to-move POV. \u2691 NOT our MCTS's value, which is what this column means on production shards",
+    "sf_wdl": "ABSENT \u2014 deliberately. lc0_control_train.py's launch guard 1 (assert_pid_cannot_reassert_sf_wdl) refuses any config with sf_wdl_frac > 0 regardless of what the shards carry, so a value written here could never reach a loss on this rig",
+    "wdl_target": "the corpus row's exact game result, already stored from that row's own side-to-move seat (result_from_pov). 0=W/1=D/2=L"
+  },
+  "value_scheme": {
+    "construction": "Q_t \u2014 the searched root value, unchanged (V0)",
+    "frozen_by": "docs/experiment_ledger.md \u2014 2026-08-31 PREREG VALUE-TARGET ROUND and its two same-day amendments",
+    "grouped_by_game": false,
+    "name": "search",
+    "q_definition": "cp_to_wdl_array of the best-move latest-phase observation at depth 9; the policy observation is selected independently",
+    "z_definition": "one-hot of the row's own `result`, which result_from_pov already stored in that row's seat \u2014 never rotated again"
+  }
+}
