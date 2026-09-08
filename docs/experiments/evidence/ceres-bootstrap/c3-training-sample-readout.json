@@ -1,0 +1,303 @@
+{
+  "status": "COMPLETE_DESCRIPTIVE_TRAINING_SAMPLE",
+  "rows": 128,
+  "derived_shards": 64,
+  "raw_shards": 90,
+  "source_worker_games": 128,
+  "source_raw_shard_games": 128,
+  "units": {
+    "entropy": "nats",
+    "jsd": "nats",
+    "top1": "maximum policy probability, not accuracy"
+  },
+  "sf_nearclose_definition": "Union of all stored SF maxima and raw d9 rank<=3 within20cp",
+  "weighted_metrics": {
+    "SF": {
+      "entropy": 0.5406850990156297,
+      "effective_support": 3.534451808997736,
+      "positive_support": 6.4608055435253355,
+      "top1": 0.7951021467055025,
+      "raw_cp_best_mass": 0.8335596851257084,
+      "sf_nearclose_mass": 0.9617709352346313,
+      "sf_stored_maxima_mass": 0.9388087781028298
+    },
+    "C": {
+      "entropy": 0.42883771098103673,
+      "effective_support": 2.257777232677147,
+      "positive_support": 6.515374621048073,
+      "top1": 0.8513564769115813,
+      "raw_cp_best_mass": 0.7884168182059843,
+      "sf_nearclose_mass": 0.9617708448158111,
+      "sf_stored_maxima_mass": 0.8357958830915808
+    },
+    "BT4": {
+      "entropy": 2.074346817906323,
+      "effective_support": 10.982530832069132,
+      "positive_support": 27.11498484192291,
+      "top1": 0.40731875906289794,
+      "raw_cp_best_mass": 0.34328614949902103,
+      "sf_nearclose_mass": 0.4593296712010368,
+      "sf_stored_maxima_mass": 0.4043550171943179
+    },
+    "BT4_T05": {
+      "entropy": 1.1967024181048966,
+      "effective_support": 4.9470507391208125,
+      "positive_support": 27.11498484192291,
+      "top1": 0.6359704065796262,
+      "raw_cp_best_mass": 0.4914063988630434,
+      "sf_nearclose_mass": 0.6105713663578828,
+      "sf_stored_maxima_mass": 0.5379200975430859
+    },
+    "Ceres": {
+      "entropy": 2.1627365880314957,
+      "effective_support": 12.16919132866153,
+      "positive_support": 27.11498484192291,
+      "top1": 0.3788142242637142,
+      "raw_cp_best_mass": 0.32106801974126786,
+      "sf_nearclose_mass": 0.4388596068983897,
+      "sf_stored_maxima_mass": 0.38709965158497317
+    }
+  },
+  "weighted_comparisons": {
+    "SF__C": {
+      "jsd": 0.09722002598540722,
+      "total_variation": 0.20904089178931967,
+      "top1_agreement": 0.7035513209181464,
+      "a_mass_on_b_top1": 0.6878035334004573,
+      "b_mass_on_a_top1": 0.683576511878931
+    },
+    "SF__BT4": {
+      "jsd": 0.31636475745681003,
+      "total_variation": 0.6102677730060606,
+      "top1_agreement": 0.4692507579038545,
+      "a_mass_on_b_top1": 0.464409753819537,
+      "b_mass_on_a_top1": 0.27908576780103034
+    },
+    "SF__BT4_T05": {
+      "jsd": 0.2812600939871446,
+      "total_variation": 0.5287211680569133,
+      "top1_agreement": 0.4692507579038545,
+      "a_mass_on_b_top1": 0.464409753819537,
+      "b_mass_on_a_top1": 0.3950104464370528
+    },
+    "SF__Ceres": {
+      "jsd": 0.3230542624922407,
+      "total_variation": 0.6182007035290932,
+      "top1_agreement": 0.47704634040710264,
+      "a_mass_on_b_top1": 0.46681234875179234,
+      "b_mass_on_a_top1": 0.2668897798816588
+    },
+    "C__BT4": {
+      "jsd": 0.27547748734817995,
+      "total_variation": 0.5536559300201198,
+      "top1_agreement": 0.7345171069727154,
+      "a_mass_on_b_top1": 0.6157328624854116,
+      "b_mass_on_a_top1": 0.35294386006889283
+    },
+    "C__BT4_T05": {
+      "jsd": 0.20086587443089357,
+      "total_variation": 0.38636755163029873,
+      "top1_agreement": 0.7345171069727154,
+      "a_mass_on_b_top1": 0.6157328624854116,
+      "b_mass_on_a_top1": 0.5308225586972845
+    },
+    "C__Ceres": {
+      "jsd": 0.29106376046565235,
+      "total_variation": 0.5772549001873932,
+      "top1_agreement": 0.6797314854915548,
+      "a_mass_on_b_top1": 0.5941335184288041,
+      "b_mass_on_a_top1": 0.3302394035741668
+    },
+    "BT4__BT4_T05": {
+      "jsd": 0.06522742086267914,
+      "total_variation": 0.26182493501270065,
+      "top1_agreement": 1.0,
+      "a_mass_on_b_top1": 0.40731875906289794,
+      "b_mass_on_a_top1": 0.6359704065796262
+    },
+    "BT4__Ceres": {
+      "jsd": 0.00945792486519344,
+      "total_variation": 0.09220284384122594,
+      "top1_agreement": 0.8828497184928541,
+      "a_mass_on_b_top1": 0.398759347887433,
+      "b_mass_on_a_top1": 0.37162647145678157
+    },
+    "BT4_T05__Ceres": {
+      "jsd": 0.08924400683580616,
+      "total_variation": 0.3085706833189667,
+      "top1_agreement": 0.8828497184928541,
+      "a_mass_on_b_top1": 0.612586271678963,
+      "b_mass_on_a_top1": 0.37162647145678157
+    }
+  },
+  "bt4_ceres_top1_disagree_rows": 15,
+  "limitations": [
+    "Descriptive128-row64-cluster training sample, no iidconfidence/heldout/strength claim.",
+    "Original available history verified, unavailable pre-root history not invented; no native Ceres input oracle.",
+    "Rawfloat16 graph outputs retained; SF/C/BT4 reused from independently qualified bank.",
+    "SF agreement is descriptive only; no veto, fitted temperature or optimalmix. Prioritize retainedSF comparison later without banning pureBT4 diagnosticbaseline.",
+    "One actual ORT1.29 session; old8-position realgraph probe was1.23.2. Session compatibility is part of this bounded attempt."
+  ],
+  "schema": 1,
+  "selection_sha256": "2e24425b7ef5e9a84520b45a51c2dac81cc84bdc47a9c2eee2f52e74eac79d4f",
+  "plan_sha256": "e9538176e38a4270a3dc6c1b53e0dfcc0023923dd3b9507a1d69729a2b2ffbd4",
+  "model_sha256": "44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3",
+  "runtime_head": "4d1cf8531a73b7c9ba92db5c21a4e1809cd4909c",
+  "python": "3.13.15",
+  "onnxruntime": "1.29.0",
+  "numpy": "2.2.6",
+  "provider": "CPUExecutionProvider",
+  "graph_optimization": "extended",
+  "policy_temperature": 1.0,
+  "bt4_historical_context_temperature": 0.5,
+  "independent_completed_review_sha256": "2240c14c0bd0a4522b0419cd5e3901971a4009b3e3bcdd9d2163d121af81d6fa",
+  "original_readout_sha256": "a2ac85c39c22bb8832c0e41f033ff513d361784d0e6a624cae057bec79b18097",
+  "original_complete_sha256": "00a80db8f295dc8e7652deb5c571fb7128ac0abe2a49786f04a6b86f1a492396",
+  "source_batches": [
+    {
+      "name": "batch_000.npz",
+      "sha256": "56f6ac6ab7c42576e066bd87162fe6f731d4beadbb2d1cfd710193859bcf9d2d"
+    },
+    {
+      "name": "batch_001.npz",
+      "sha256": "a7fe1c67702559691554ee601bdf17c249fcb842313352200cdf05cebd6c8a10"
+    },
+    {
+      "name": "batch_002.npz",
+      "sha256": "eb550e5e9b596728f50cf53e992c6a622dddd80069b03017e1726dcd0726f60a"
+    },
+    {
+      "name": "batch_003.npz",
+      "sha256": "786d1db43082632a324325a377dda31ef48573c4eda902324c66d7eb85e3b012"
+    },
+    {
+      "name": "batch_004.npz",
+      "sha256": "f64d6d82ef02796d0e5b5ce3d0c4bf50d2dd44678ab7bb2f00df7a172b107ebf"
+    },
+    {
+      "name": "batch_005.npz",
+      "sha256": "94ca6f61a9c6d6aef46a4247726a9299ad063dfd14bf0a9441bc8a5a882da5f9"
+    },
+    {
+      "name": "batch_006.npz",
+      "sha256": "ff6a7516f850c5ef269519801050ec303bd56f66fcb95e2a28e6070459e6fde6"
+    },
+    {
+      "name": "batch_007.npz",
+      "sha256": "48a509dc8fc711c0c62b3c58ae0dc63bef16726ae1c8a3521c3a6c35a59a47e8"
+    },
+    {
+      "name": "batch_008.npz",
+      "sha256": "7d77e93fbfa557abba00d05932cfd9f5a791b6378d52bbc665aa7a1d0cbe0201"
+    },
+    {
+      "name": "batch_009.npz",
+      "sha256": "0ea53215446353fc80f61a90b5bab575019982ec599b39e669b0eae94b1699ab"
+    },
+    {
+      "name": "batch_010.npz",
+      "sha256": "0dd546a7d9be6accd957144ce2a77a95c1c16ac07a9db24937af6982047860dc"
+    },
+    {
+      "name": "batch_011.npz",
+      "sha256": "29378ce74c423526b5aa306d8588d353049af38d844eb622b44f673ddb575175"
+    },
+    {
+      "name": "batch_012.npz",
+      "sha256": "89824315c4fef872fb3e3e248b751fed422236b3ea883765886272730a4d9d13"
+    },
+    {
+      "name": "batch_013.npz",
+      "sha256": "eb81664d1c1d657f1eff80d7c53caa7c217d8f9c147e9a5f9b8fc53cb519ec4e"
+    },
+    {
+      "name": "batch_014.npz",
+      "sha256": "9293207b56040e57602859e82b2ab94fac8f49bef689325ce1a0aad58ef2a273"
+    },
+    {
+      "name": "batch_015.npz",
+      "sha256": "e559b5f6c9c64b1f0ef263cb6a5ae12f434cdf904f9ad118de62003bba635fd7"
+    },
+    {
+      "name": "batch_016.npz",
+      "sha256": "f0f23a1b54b4ee210211aca22e085332d9b25911aafb17acc91fcacf8fa2b07c"
+    },
+    {
+      "name": "batch_017.npz",
+      "sha256": "e6d0e5ef33460983f84f581087e5608dce1c1ece2b3167bc3e015f4d61dbad0b"
+    },
+    {
+      "name": "batch_018.npz",
+      "sha256": "09e95d5d071335afe767189dd0bfa703819f5bbd153e2306c600e38e6b8d07b8"
+    },
+    {
+      "name": "batch_019.npz",
+      "sha256": "a7ca9b76a647cfb6bb9bba2f2e9f734f2a6b01015618c9e595423d79ee36de2b"
+    },
+    {
+      "name": "batch_020.npz",
+      "sha256": "4186c877c0812cff79d5715a503367094c4b8f425d7790cd577b582e412df476"
+    },
+    {
+      "name": "batch_021.npz",
+      "sha256": "27f4c2439ea87e5765a709eac6d3cb2b1708b18c28c6ecb83d141297c97e5032"
+    },
+    {
+      "name": "batch_022.npz",
+      "sha256": "24d9c00f5798149574520b551bff8e24c0b2abf1512a7867629107717575c5a2"
+    },
+    {
+      "name": "batch_023.npz",
+      "sha256": "bc58ec9a97440eacfb635edd2256aa93da007dcfb11d3477e1cd313c97b4b61b"
+    },
+    {
+      "name": "batch_024.npz",
+      "sha256": "b4c8747dc192d0873199bc8892facf9ec537453065f3e529fbc52a7737225a9b"
+    },
+    {
+      "name": "batch_025.npz",
+      "sha256": "aaaa43e1846191c79490436ec29a09f1c912a2d7d1768203aa36112022f60286"
+    },
+    {
+      "name": "batch_026.npz",
+      "sha256": "96249fefaa0300ae31367e27ba7635d9859ef3271565c29fe71002466810696d"
+    },
+    {
+      "name": "batch_027.npz",
+      "sha256": "1fe5a79d65584c7643f6ec1b5eba478c2cf74124a260a3cf254b56778421a494"
+    },
+    {
+      "name": "batch_028.npz",
+      "sha256": "153bb2c2c730b2b1013563b5e14b3197306d46ccb303195cb8d1f6a454bc9be0"
+    },
+    {
+      "name": "batch_029.npz",
+      "sha256": "1a3746015ce48a31864122f328d1641737f81092d93f2e729bbffc711fc6359a"
+    },
+    {
+      "name": "batch_030.npz",
+      "sha256": "fbc26f01e9e8850d9dfda52a4d5f5341fc5d53c52aa44bd78ae32d07e9966635"
+    },
+    {
+      "name": "batch_031.npz",
+      "sha256": "f5d36ae8fa5f209ad2dd0cded85f229fff85cdc6a5a02c7b894f7f62de524e35"
+    }
+  ],
+  "publication": {
+    "scope": "Curated scientific fields and source histories; host operational records remain local. Raw byte/logit arrays are concatenated losslessly from32 original batches. Original source bank and native input oracle are not made self-contained by this export.",
+    "files": {
+      "c3-training-sample-bank.npz": {
+        "bytes": 459613,
+        "sha256": "c10ee5e2ab97459b8660c12267fe994f97a892d56d44f49dd7513f4a3350c420"
+      },
+      "c3-training-sample-rows.json": {
+        "bytes": 1409408,
+        "sha256": "286962b68a1b3d4fa3db3634f9ed72f68f07ac721b72e8fb4d7e11587803fc28"
+      },
+      "c3-training-sample-collector-source.txt": {
+        "bytes": 23123,
+        "sha256": "44163228a8db1a51db4a7f1ba656f4e200db418ae92aa1fad8c8a36d22e7b472"
+      }
+    }
+  }
+}

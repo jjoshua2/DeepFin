@@ -8,7 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | Retain SF; C3 CPU graph and byte-adapter checks pass; no teacher labeling or strength result |
+| [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 compatibility and 128-row training diagnostic complete: 88.28% top-move agreement with BT4 T=1; retained-SF comparison remains prospective |
 | [Faster recipe matches](2026-09-08-faster-recipe-matches.md) | First prospective SPRT plus fixed deep probe completed in46m35s; speculative scheduling bottleneck identified; no controlled speedup claim |
 | [BT4 adapter identity collection](2026-09-08-bt4-adapter-single-pass.md) | Exact identity parity and 34.1% CPU component reduction in one closed-shard pair; full-pipeline benefit unmeasured |
 | [Qualified Soft-SF training sample](2026-09-08-soft-sf-qualified-training-sample.md) | 4,096 rows across 64 shards; 10cp matches C entropy most closely among four registered candidates, no training/strength selection |
