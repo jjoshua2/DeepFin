@@ -40,6 +40,7 @@ from chess_anti_engine.encoding.lc0 import x_to_lc0_planes
 from chess_anti_engine.eval.rvg_surgery import FINGERPRINT_BYTES, position_fingerprints
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE, POLICY_ENCODING_LC0_1858
 from chess_anti_engine.moves.leela_index import compact_index_for_move
+from scripts import corpus_row_provenance as provenance
 from scripts import derive_corpus_targets as derive
 from scripts import gen_sf_rooted_corpus as corpus
 from scripts.bt4_policy_dump import (
@@ -689,8 +690,20 @@ def verify_shard(
     expected_providers: Sequence[str],
     expected_remap: Mapping[str, Any],
     batch_size: int,
+    identity_records: np.ndarray | None = None,
 ) -> dict[str, Any]:
-    """Deeply replay one raw shard and compare every stored sidecar row."""
+    """Deeply replay one raw shard and compare every stored sidecar row.
+
+    An optional caller-owned identity cache collects original/quantized keys and
+    worker/game/ply IDs during that same pass. It is valid only on successful
+    return; its allocation and eventual publication remain the caller's job.
+    """
+    if identity_records is not None:
+        if (identity_records.dtype != provenance.RECORD_DTYPE
+                or identity_records.shape != (pending.claimed_rows,)
+                or not identity_records.flags.writeable):
+            raise ValueError("identity cache must be writable, row-aligned provenance records")
+        identity_records.fill(0)
     attrs = validate_existing(
         pending,
         onnx_sha256=onnx_sha256,
@@ -760,6 +773,14 @@ def verify_shard(
             (policy_digest, policy),
         ):
             digest.update(np.ascontiguousarray(value).tobytes(order="C"))
+        if identity_records is not None:
+            records = identity_records[cursor:stop]
+            records['input_key'] = raw_keys
+            records['game_id'], records['ply'] = gids, plies
+            for offset, row in enumerate(rows):
+                records['stored_input_key'][offset] = np.frombuffer(bytes.fromhex(
+                    corpus.input_tensor_key(np.asarray(planes[offset], dtype=np.float16))), dtype=np.uint8)
+                records['worker_id'][offset] = int(row['worker_id'])
         cursor = stop
 
     for row in derive.iter_corpus_rows(pending.path):

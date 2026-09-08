@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "verdict": "PASS",
+  "scope": "Independent bounded source and test review; no production adoption or performance qualification",
+  "reviewed_utc": "2026-09-08T06:59:25.862572+00:00",
+  "base": "f77101a59fb2b38fd8e68c4cf44111e869a54115",
+  "files": {
+    "scripts/bt4_raw_corpus_sidecar.py": "eea20f9d114cc56fec62b2779e14ba2f58147bebc195f1b2db7b018c63f1920c",
+    "scripts/adapt_raw_bt4_sidecars.py": "e8952e031d93db83a589d9a23ae9eba7c1530e1df1901a00991cfe611272c2f7",
+    "tests/test_bt4_adapter_single_pass.py": "743329f31ea701ed233e3aff89c06b5a35e7536c4101003a9fba88bee8b74b41"
+  },
+  "patch": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/independent_review_v1/reviewed.patch",
+    "sha256": "178b4dcded96089b5b3a1d47f31c4518373d9febe540cfeb788cd310a4042c5d",
+    "includes_untracked_new_test": true
+  },
+  "findings": [],
+  "reasoning": [
+    "Shared verify_shard default keyword-only API and returned attributes remain unchanged. Optional exact-dtype writable row-aligned buffer collects data only from already reconstructed/verified batches. All prior source SHA, source/history keys, game/ply identity, policy finiteness/nonnegativity/normalization/legal support, exact row count and final stored-array digest checks remain in execution path.",
+    "RawInputs.get retains namespace/config/closed-receipt checks and row/disk allocation limits before allocating 56-byte-per-row records. Existing maximum two RAM cache entries and hashed disk cache remain. Allocation now overlaps verifier batch memory; increase is bounded by max_raw_rows (default 100000, 5.6MB per new index).",
+    "The same original float32 planes and exact float16 conversion supply raw/stored keys. Unused source/row fields remain zero, worker IDs preserve old assignment semantics; synthetic full structured-array comparison against old second pass covers byte parity and default return equivalence.",
+    "Caller publishes cache only after final verifier success, full receipt equality and before/after storage identity. Partial optional buffers are explicitly invalid on exceptions; independent late-digest fixture proves zero accepted cache entries/files after all rows have been processed.",
+    "Production shared callers traced: verify_all uses unchanged default, adapter supplies optional records. Adapter final provenance/input/storage and ordinary mixer admission checks are unchanged. No import cycle introduced."
+  ],
+  "validation": {
+    "author": "27 relevant focused tests (9 new, 18 existing), log inspected; whole Ruff/basedpyright (0 errors, 0 warnings)/Vulture PASS in 201.56s on unchanged files. One pre-existing fork/thread DeprecationWarning is preserved in test log.",
+    "independent": "One real tiny synthetic raw/derived/sidecar fixture injected an incorrect final published policy digest after metadata validation; get() raised stored array digest mismatch and left no stable/verified/RAM/disk cache or cache files. No production data or GPU used.",
+    "diff_check": "PASS",
+    "artifacts": {
+      "author_lint.log": "c30693bd67fb96f44f0d47f57e7ccff7fed0f83dcce753ef4826848455a7b46e",
+      "late_failure_fixture.log": "f5018e4fc35b58dddbdc036ddc6e2ac78d6f2d85e948602b7ab650c51591f142",
+      "late_failure_fixture.py": "3d6a704ac17a1478458483b3aa5c0a1a96af17d1e628c4f55a63d95497718b72",
+      "reviewed.patch": "178b4dcded96089b5b3a1d47f31c4518373d9febe540cfeb788cd310a4042c5d",
+      "author_tests.log": "ef5687ef91b7525d4cfc6f9416f3b5e68e061238d164d4c8d819390827350d99"
+    }
+  },
+  "limits": [
+    "No full corpus scan, inference, arena observation or production runtime change.",
+    "No speedup claim: separate author component observation remains outside this code verdict.",
+    "This patch removes duplicate reconstruction; it does not reduce or replace the full raw-source verification contract."
+  ]
+}
