@@ -23,6 +23,19 @@ OVERLAY = {
     "scripts/arena_standard.py": "fc6f42f5cc566ef1cd1948112d1ae9cde151851750438ba621b4b51327458095",
     "chess_anti_engine/eval/sprt.py": "8e8937c660783981636eed2e0b4b51bac62e8c5ad2055878ddaf994779d7fec1",
 }
+LOOKAHEAD_OVERLAY_HEAD = "82298a5d4010e7097f473712e3720de229522427"
+LOOKAHEAD_OVERLAY = {
+    "scripts/arena_standard.py": "c7df9061d119f0f53de90b529a38a641b4fabce88f3eab9afb37a80f11cd6a96",
+    "chess_anti_engine/eval/sprt.py": "5f778573d4a702e625b3b6d3220536076dd41fd866c749bda9c9fb8aff749056",
+}
+
+
+def arena_overlay(m: dict[str, Any]) -> tuple[str, dict[str, str]]:
+    if reader.lookahead_pairs(m) is not None:
+        return LOOKAHEAD_OVERLAY_HEAD, LOOKAHEAD_OVERLAY
+    return OVERLAY_HEAD, OVERLAY
+
+
 H20_SHA = "0a711fcf10ff87fc8360d3fd4b3035b170a7c15172616317c4a9687ae99d7017"
 HARD_SECONDS = 5400
 MAX_SECONDS = 5340.0
@@ -61,6 +74,7 @@ def environment(runtime: Path, *, gpu: bool) -> dict[str, str]:
 
 def inputs(m: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     """Validate immutable upstream qualification; no model loading or inference."""
+    overlay_head, overlay = arena_overlay(m)
     reader.require(m["schema"] == 1 and m["profile"] in ("B100_H20", reader.MATCHED_PROFILE), "unknown profile")
     for name, filename in [
         ("launcher_sha256", __file__),
@@ -91,14 +105,14 @@ def inputs(m: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     reader.require(len(heads) == 1, "ambiguous runtime root")
     runtime = Path(next(iter(heads)))
     reader.require(
-        runtime.is_absolute() and heads[str(runtime)] == OVERLAY_HEAD,
+        runtime.is_absolute() and heads[str(runtime)] == overlay_head,
         "wrong CUDA overlay",
     )
     reader.same(
         subprocess.check_output(
             ["git", "-C", str(runtime), "rev-parse", "HEAD"], text=True
         ).strip(),
-        OVERLAY_HEAD,
+        overlay_head,
         "overlay head",
     )
     reader.require(
@@ -119,15 +133,15 @@ def inputs(m: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     reader.require(
         qualification["status"]
         == "PASS_INACTIVE_ORDERED_ARENA_RUNTIME_CPU_QUALIFICATION"
-        and qualification["runtime_commit"] == OVERLAY_HEAD,
+        and qualification["runtime_commit"] == overlay_head,
         "wrong runtime qualification",
     )
     reader.same(
         qualification["difference"]["exact_merged_overlay_hashes"],
-        OVERLAY,
+        overlay,
         "qualified overlay",
     )
-    for name, digest in OVERLAY.items():
+    for name, digest in overlay.items():
         owned.pin(runtime / name, digest)
     original = reader.read_json(frozen["original_runtime_manifest"])
     rt = frozen["runtime"]
@@ -178,7 +192,7 @@ def storage(
         receipt = reader.read_json(m[role + "_training"])
         paths.add(Path(receipt["run"]) / "summary.json")
         paths.add(Path(receipt["schedule"]["path"]))
-    paths.update(runtime / name for name in OVERLAY)
+    paths.update(runtime / name for name in arena_overlay(m)[1])
     paths.update(Path(name) for name in rt["native_extension_sha256"])
     result = {}
     for path in paths:
@@ -247,6 +261,9 @@ print(json.dumps(dict(panel=panels[0],prefix_matches=True,settings=settings,exec
             timeout=305,
         )
     )
+    allowance = reader.lookahead_pairs(m)
+    if allowance is not None:
+        result["settings"]["low"]["sprt_lookahead_pairs"] = allowance
     reader.same(
         result["runtime"],
         {k: v for k, v in rt.items() if k != "native_extension_sha256"},
@@ -275,6 +292,7 @@ def prepare(m: dict[str, Any], out: Path) -> None:
         out,
         {
             "schema": 1,
+            **({"sprt_lookahead_pairs": m["sprt_lookahead_pairs"]} if "sprt_lookahead_pairs" in m else {}),
             **({"profile": m["profile"]} if m["profile"] == reader.MATCHED_PROFILE else {}),
             "status": "PASS_RECIPE_SCREEN_PREPARATION",
             "opening_panel": panel_pin,
@@ -302,6 +320,7 @@ def prepare(m: dict[str, Any], out: Path) -> None:
 
 def command(m: dict[str, Any], rt: dict[str, Any], stage: str, out: Path) -> list[str]:
     low = stage == "low"
+    allowance = reader.lookahead_pairs(m)
     cmd = [
         rt["executable"],
         "scripts/arena_standard.py",
@@ -351,6 +370,8 @@ def command(m: dict[str, Any], rt: dict[str, Any], stage: str, out: Path) -> lis
             "--sprt",
             "elo0=0,elo1=15,alpha=.05,beta=.10,first_pairs=128,step_pairs=64",
         ]
+    if low and allowance is not None:
+        cmd += ["--sprt-lookahead-pairs", str(allowance)]
     return cmd
 
 
@@ -416,6 +437,7 @@ def certify(cell: dict[str, Any], path: Path, out: Path) -> dict[str, Any]:
 def execute(m: dict[str, Any]) -> None:
     runtime, rt = inputs(m)
     proof = reader.read_json(m["preparation"])
+    reader.same(reader.lookahead_pairs(proof), reader.lookahead_pairs(m), "prepared lookahead")
     if m["profile"] == reader.MATCHED_PROFILE:
         reader.same(proof.get("profile"), m["profile"], "prepared profile")
     reader.require(
@@ -503,7 +525,7 @@ def execute(m: dict[str, Any]) -> None:
                     "preregistration",
                 )
             }
-            identities["runtime"]["git_sha"] = OVERLAY_HEAD
+            identities["runtime"]["git_sha"] = arena_overlay(m)[0]
             if m["profile"] == reader.MATCHED_PROFILE:
                 identities.update({k: m[k] for k in ("candidate_training", "reference_training")})
             launch = {

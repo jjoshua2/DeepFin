@@ -94,6 +94,16 @@ def same_sprt_field(actual: Any, expected: Any, name: str) -> None:
         same(actual, expected, f"SPRT {name}")
 
 
+def lookahead_pairs(evidence: dict[str, Any]) -> int | None:
+    """Absent retains historical execution; explicit values bind fresh low stages."""
+    if "sprt_lookahead_pairs" not in evidence:
+        return None
+    value = evidence["sprt_lookahead_pairs"]
+    require(type(value) is int and 0 <= value <= 500,
+            "SPRT lookahead must be an integer from 0 through 500")
+    return value
+
+
 def matched_training_pair(evidence: dict[str, Any]) -> tuple[str, str]:
     """Bind roles to completed original-corpus epochs, without loading weights.
 
@@ -262,6 +272,7 @@ def check_command(
     for flag in (
         "--device",
         "--sprt",
+        "--sprt-lookahead-pairs",
         "--label",
         "--report-every",
         "--compile-cache-dir",
@@ -285,6 +296,11 @@ def check_command(
         "command loop differs",
     )
     require(bool(parsed["sprt"]) == low, "command stopping mode differs")
+    allowance = lookahead_pairs(settings)
+    require(allowance is None or (low and execution["loop"] == "rolling"),
+            "lookahead requires rolling low SPRT")
+    same(parsed["sprt_lookahead_pairs"], None if allowance is None else [str(allowance)],
+         "command lookahead")
     if low:
         same(
             SprtSpec.from_cli(parsed["sprt"][0]).as_record(),
@@ -316,6 +332,8 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
     bank, result_path = pinned(manifest["bank"]), pinned(manifest["result"])
     process, launch = read_json(manifest["process"]), read_json(manifest["launch"])
     settings, execution = manifest["expected_settings"], manifest["expected_execution"]
+    allowance = lookahead_pairs(settings)
+    require(allowance is None or (low and execution["loop"] == "rolling"), "lookahead requires rolling low SPRT")
     same(launch["settings"], settings, "launch settings")
     same(launch["execution"], execution, "launch execution")
     same(launch["opening_panel"], manifest["opening_panel"], "launch opening panel")
@@ -492,6 +510,7 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
         "terminal bank binding differs",
     )
     same(result.get("argv"), process["command"][entrypoints[0] :], "terminal argv")
+    same(lookahead_pairs(result), allowance, "terminal lookahead")
     require(result.get("device") == "cuda", "terminal device differs")
     require(
         result.get("resumed_pairs") == result.get("resumed_orphan_pairs") == 0,
@@ -642,7 +661,7 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
             manifest["opening_panel"],
             "low/high panel identity",
         )
-        omitted = {"games", "sims_candidate", "sims_reference"}
+        omitted = {"games", "sims_candidate", "sims_reference", "sprt_lookahead_pairs"}
         same(
             {
                 k: v
@@ -690,6 +709,7 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
         "schema": 1,
         "status": "VALID_CELL",
         "mode": manifest["mode"],
+        **({"sprt_lookahead_pairs": allowance} if allowance is not None else {}),
         "candidate_role": candidate_role,
         "reference_role": reference_role,
         **({"profile": profile} if profile == MATCHED_PROFILE else {}),
@@ -706,6 +726,7 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
         "unstarted_game_ids": [list(k) for k in unstarted],
         "evidence": {k: manifest[k] for k in ("bank", "result", "process", "launch")},
         "limitations": [
+            *(["Bounded lookahead changes occupancy and shared RNG consumption; it does not establish a wall-time speedup or identical gameplay trajectories."] if allowance is not None else []),
             BIAS_CAVEAT
             if low
             else "Fixed128-pair probe; ordinary paired interval only.",
