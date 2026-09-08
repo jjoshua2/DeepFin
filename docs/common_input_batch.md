@@ -103,3 +103,10 @@ emitted references. A completed batch means qualified common inputs for later
 recipes, not a training schedule, recipe selection, throughput speedup or strength
 result. Compare timings across different batches only with their actual data,
 CPU concurrency and shared-host load disclosed.
+
+The runner and deriver share the exact selection-header validator, including the
+original `source_config_sha256` binding. A missing or mismatched configuration
+field fails preflight before an attempt or lane is started. This metadata check
+does not replace the deriver's selected-inventory, row-count or raw-payload hash
+checks. Runtime manifests must pin `scripts/corpus_selection_schema.py` alongside
+the runner and consuming scripts.
