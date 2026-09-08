@@ -14,7 +14,7 @@ measurements support which claims.
 | [BT4 target geometry](2026-09-08-bt4-target-geometry.md) | Fixed 128-row training sample: C support/maxima and raw-cp controls; no temperature or strength selection |
 | [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity; first optimized group completed 132,467 rows, throughput descriptive only |
 | [G10 adapter/rank overlap](2026-09-08-g10-stage-overlap.md) | Adopted in Worker01 attempt; cache failure, no measured speedup |
-| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 3,165,265 common rows prepared; Worker01 copied-derivation recovery active at 12:27 UTC; zero new qualified rows at snapshot; 4.047M raw-row proposal unlaunched |
+| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 5,276,543 common rows prepared after completed Worker01 recovery; original failure preserved; combined training qualification and strength remain unestablished |
 | [G50 versus B100 policy dose](2026-09-08-bt4-g50-b100-dose-comparison.md) | Prospective: fresh seed0 original epoch,50% versus100% global BT4; qualification/schedule pending, no launch |
 | [Pure BT4 policy endpoint](2026-09-08-bt4-pure-policy-endpoint.md) | B100 beats H20: shallow H1, deep +46.42 Elo [11.23,82.58]; search interaction unresolved, same-seed development |
 | [Bootstrap training-horizon readiness](2026-09-08-bootstrap-training-horizon-readiness.md) | Real tiny two-epoch CPU path checked on the older Torch environment; CUDA/full-corpus qualification and finalist selection remain |
