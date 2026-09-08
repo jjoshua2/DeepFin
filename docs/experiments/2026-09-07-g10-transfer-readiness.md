@@ -714,3 +714,21 @@ passed 317 cases, adapter tests passed eight, rank tests passed 13, and the comb
 repository lint passed with no findings. Independent checks covered actual mixer
 admission, shuffled source joins and rejection of changes during publication.
 Those checks preceded the real-data pilot; its completed readout is recorded above.
+
+
+## Worker01 recovery progress snapshot — September 8, 12:27 UTC
+
+At **12:27:41 UTC**, the separate copied-derivation recovery had verified the
+independent copy of run06's **1,054,312 derived rows** and completed its new storage
+snapshot. Adapter and rank were both running on the same two-core lane; neither
+had completed, and the full common-input qualifier had not started. Run07's
+1,056,966-row derivation remained available for the next lane. **New common-qualified
+rows: zero**; the completed inventory remains **3,165,265**.
+
+The [bounded progress review](../../scratchpad/bt4_joint20/publication_b100_completion_20260908/worker01_snapshot/independent_progress_review.json)
+and [process observation](../../scratchpad/bt4_joint20/publication_b100_completion_20260908/worker01_snapshot/independent_progress_observation.json)
+record active producers, no failure receipt and about 2h29 remaining to the original
+hard deadline. This is a timestamped progress observation, not completion or a
+throughput claim. Original failed artifacts are preserved, derivation is not repeated,
+and no recovery outcome changes B100's original-corpus comparison. The compact copies
+are bound in the [publication catalog](evidence/bt4-bootstrap/b100-completion-arena-launch-manifest.json).

@@ -1,0 +1,27 @@
+/home/josh/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[shape] production config [LIVE]: /tmp/deepfin-ordered-arena-runtime/configs/pbt2_small.yaml sha256=6e5e5dff3ed6 ($CHESS_ANTI_ENGINE_LIVE_CONFIG)
+[shape] --search-shape training: realized vs production selfplay
+[shape]   topk: 16
+[shape]   temperature: 1.0 (production 0.0) — DELIBERATE: arena move selection, not selfplay's stored-target temperature
+[shape]   policy_temp: 1.5
+[shape]   c_visit: 50.0
+[shape]   c_scale: 0.1
+[shape]   c_puct: 2.5
+[shape]   cpuct_factor: 0.0
+[shape]   cpuct_base: 38739.0
+[shape]   fpu_reduction: 1.2
+[shape]   target_q_rescale: True
+[shape]   halving_div: 2
+[shape]   c_visit_root: -1.0
+[shape]   c_scale_root: -1.0
+[shape]   q_visit_exp_root: 99.0
+[shape]   full_tree: True
+[shape]   input_history_encoding: 'legacy' (production 'lc0_root_legacy_meta') — DELIBERATE: read off the loaded checkpoint, not the yaml
+[shape]   volatility_q_scale: 0.0
+[shape]   volatility_fpu: 0.0
+[shape]   volatility_anchor: 0.05
+[shape]   volatility_factor_clip: 4.0
+[shape]   target_batch: 0
+[shape]   vloss_weight: 1
+[shape]   scope: covers every GumbelConfig field plus ['target_batch', 'vloss_weight'] (the config-derived argument set production's selfplay hands its search runner). NOT covered, and stated rather than implied: (1) the per-ply root-noise schedule (per_game_add_noise / per_game_gumbel_scale), a function of the move number with no field to compare; (2) the tablebase gate — the runner's tb_probe argument is gated on game.syzygy_in_search, which reaches it without passing through the shape, so syzygy_in_search/syzygy_path are value-compared separately by audit_targets.AUDIT_DIRECT_CONFIG_KEYS instead.
