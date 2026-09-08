@@ -1,0 +1,24 @@
+{
+  "banked_rows_min_piece_count": 7,
+  "complete": false,
+  "config_requested": {
+    "cp_draw_width": 120.0,
+    "cp_slope": 0.006,
+    "run_id": "test_corpus"
+  },
+  "config_sha256": "b67a8985f73c408ce4d40c2f619f69856b1705829dae78bfce85eaade0b79b1a",
+  "history_rep_fix": true,
+  "row_schema": 3,
+  "schema": 1,
+  "staircase_parsed": [
+    {
+      "depth": 9,
+      "width": "all"
+    },
+    {
+      "depth": 11,
+      "width": 3
+    }
+  ],
+  "started_utc": "2026-08-28T00:00:00+00:00"
+}

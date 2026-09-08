@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "status": "RECOVERED_ROW_EXCEPTION",
+  "lane": "w000",
+  "reason_lane1_not_replayed": "parent narrowed scope after saved boundary; healthy lane interrupted by STOP",
+  "raw": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00001.jsonl.zst",
+  "physical_start": 6100,
+  "max_rows": 2048,
+  "rows_replayed": 1324,
+  "elapsed_seconds": 4.936450004577637,
+  "failure": {
+    "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+    "source_shard": "w00-00001.jsonl.zst",
+    "source_row": 7423,
+    "worker_id": 0,
+    "game_id": 936,
+    "ply": 214,
+    "input_key": "23f91b118b2c071d26a639702e80e463",
+    "status": "exception",
+    "stage": "derive_row",
+    "exception_type": "scripts.derive_corpus_targets.CorpusIntegrityError",
+    "message": "row 936/214: the banked move set is not the legal move set (only banked: []; only legal: ['f3f4', 'f5b1', 'f5e4', 'f5h7', 'g2e3', 'g2f4', 'h1h2', 'h4e1', 'h4f2', 'h4g3', 'h4h3', 'h4h5', 'h4h7'])",
+    "traceback": "Traceback (most recent call last):\n  File \"/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/probe.py\", line 50, in <module>\n    derived = engine.derive_row(row)\n  File \"/tmp/deepfin-g10-pilot-tools/scripts/derive_corpus_targets.py\", line 3024, in derive_row\n    self._check_support(board, values, row)\n    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^\n  File \"/tmp/deepfin-g10-pilot-tools/scripts/derive_corpus_targets.py\", line 3324, in _check_support\n    raise CorpusIntegrityError(\n    ...<3 lines>...\n    )\nscripts.derive_corpus_targets.CorpusIntegrityError: row 936/214: the banked move set is not the legal move set (only banked: []; only legal: ['f3f4', 'f5b1', 'f5e4', 'f5h7', 'g2e3', 'g2f4', 'h1h2', 'h4e1', 'h4f2', 'h4g3', 'h4h3', 'h4h5', 'h4h7'])\n"
+  },
+  "options": {
+    "scheme": {
+      "kind": "uniform",
+      "depth": 9,
+      "deep_depth": null,
+      "top_k": null,
+      "nodes": null,
+      "value_depth": null,
+      "policy_observation": "phase0",
+      "value_observation": "latest-phase"
+    },
+    "temp": 0.0005,
+    "cp_slope": 0.006,
+    "cp_draw_width": 120.0,
+    "limit": 265528,
+    "seed": 0,
+    "rows_per_shard": 8192,
+    "max_envelope_misses": 0,
+    "floor": 0,
+    "value_scheme": "search",
+    "qz": {
+      "r_boundary": 0.27,
+      "u_scale": 0.05,
+      "w_const": null,
+      "no_boundary": false
+    },
+    "spill_chunk_rows": 2048,
+    "row_provenance": true
+  },
+  "raw_stable_metadata": {
+    "st_dev": 2096,
+    "st_ino": 10685287,
+    "st_size": 20166593,
+    "st_mtime_ns": 1788382176471061836,
+    "st_ctime_ns": 1788382176471061836
+  },
+  "script_sha256": "db46dc8ccf36e5c23110bbd7cc5d872c71551dd854a65200deb5e91cc22c172b",
+  "deriver_sha256": "7886094a27484ba86571819b86f3a1735d2078a3293981917dd983df292590bf",
+  "source_manifest_sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4",
+  "limits": [
+    "direct imported frozen module, no process pool or wrapper",
+    "no spill or output corpus written",
+    "following lane0 rows only; preceding raw bytes decoded solely to seek physical row",
+    "no tolerance or runtime changes; original corpus/stopped batch preserved"
+  ]
+}

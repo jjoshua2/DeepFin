@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "status": "PASS_COMPLETED_FAILURE_CENSUS_AND_PROPOSAL_PUBLICATION",
+  "reviewed_utc": "2026-09-08T00:59:17.487028+00:00",
+  "checkout": "/tmp/deepfin-g10-transfer-tools",
+  "base_commit": "5aa329f02c3591ce48ecaa283f9a0699ac1cc540",
+  "scope": "Working final dated G10 document/index plus 75-entry common-batch evidence manifest. Archival runner/diagnostic files are published evidence, not adoption of a new runtime or launch.",
+  "files": {
+    "docs/experiments/2026-09-07-g10-transfer-readiness.md": "cc8f8d3c2652044ebe64d1fe0d5e6d0a553a2079ca787b19005db8e29ae2172a",
+    "docs/experiments/README.md": "0e8672f9149a79d7d336297a65a4390008181fd5da986b4456e6c9db8e6fb77f",
+    "docs/experiments/evidence/bt4-bootstrap/g10-common-batch-manifest.json": "3f0975b58f73a2a09f07d55d9e85cadb11a06dde8a5bc426982a5ca86e369bf0"
+  },
+  "patch_sha256": "46ab40325d2aeb650cf0268fe324e14b7a4b3484f00ba23d2afeb8d5cfc165b9",
+  "independent_checks": {
+    "files": {
+      "docs/experiments/2026-09-07-g10-transfer-readiness.md": "cc8f8d3c2652044ebe64d1fe0d5e6d0a553a2079ca787b19005db8e29ae2172a",
+      "docs/experiments/README.md": "0e8672f9149a79d7d336297a65a4390008181fd5da986b4456e6c9db8e6fb77f",
+      "docs/experiments/evidence/bt4-bootstrap/g10-common-batch-manifest.json": "3f0975b58f73a2a09f07d55d9e85cadb11a06dde8a5bc426982a5ca86e369bf0"
+    },
+    "entries": 75,
+    "prior60entries_unchanged_reuses_gzip_check": true,
+    "new15_exact_source_copies": true,
+    "census_source_hash_and_count_receipt_joins": 64,
+    "failure_refs": 17,
+    "no_result_refs": 2850,
+    "sets_unique_disjoint": true,
+    "malformed_source_qualified_games": 9,
+    "counts_by_source": {
+      "run06_g10": {
+        "raw_rows": 265528,
+        "policy_malformed_with_result": 12,
+        "missing_result": 1600,
+        "result_policy_valid": 263916
+      },
+      "run07_g10_companion4": {
+        "raw_rows": 265884,
+        "policy_malformed_with_result": 5,
+        "missing_result": 1250,
+        "result_policy_valid": 264629
+      }
+    },
+    "valid_policy_rows": 528545,
+    "census_wall_seconds": 129.54290771484375,
+    "reviewed_patch_sha256": "46ab40325d2aeb650cf0268fe324e14b7a4b3484f00ba23d2afeb8d5cfc165b9",
+    "relative_links_resolve": true
+  },
+  "supporting_check_artifacts": {
+    "/tmp/g10-common-publication-check.py": "b08ca1348e0a9a41babf4e60cb6a000d8cb7c2f2e1389b4862d9dcf41314dde1",
+    "/tmp/g10-common-publication-check.json": "67638bed3d0044064eb4e95fb32ae2525069d3bca34982326a28ff400a17d725",
+    "/tmp/g10-common-census-publication-check.py": "fa0043867d37b471ee54783f84e5af00a6e2c6a99b720d53606bae042f4f69f0",
+    "/tmp/g10-common-census-publication-check.json": "7ee40efd3de07d6bf68d54817ebbc2af45aefd725c762e536384a9b673859574",
+    "/tmp/g10-common-publication-reviewed.patch": "46ab40325d2aeb650cf0268fe324e14b7a4b3484f00ba23d2afeb8d5cfc165b9"
+  },
+  "reused_exact_reviews": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/independent_direct_cli_review.json": "046e7f9fc979695944faa3c098d838578c0730f6817896205d93aefb496b03c0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/bad_row_probe_v1/independent_row_structure_check.json": "636f55b7876a3ceeca446f99beab25285acf80f0950e9c5077b6db7857790bbe"
+  },
+  "findings": [],
+  "interpretation_review": [
+    "Original common batch failed after828.64s with no common output qualified; empty GNU-time stage file supplies no throughput/resource result. Cleanup and protected-process statements derive from the preserved parent host observation, not a new reviewer process scan.",
+    "The source fault and operational exception-transport fault are distinct. Independent saved-row history/legal-move check confirms37 legal moves,24 distinct d9 moves,13 missing; d7/d8 each cover37. The parser complete flag covers ranks only; strict deriver correctly refuses before output.",
+    "Census readout counts independently reconstructed from64 per-shard receipts with exact registered source hash/count joins. All17 failure refs are unique,result-bearing,duplicate/missing support only; all2850 missing-result refs are unique and disjoint. Remaining528545 is result+phase0-policy support validity only. No original source payloads re-read.",
+    "Actual census implementation overwrites per-move latest values and checks finite availability; it does not validate later-phase roster ambiguity. Final prose and interpretation receipt correctly limit the misleading broader metric name. Supplemental ambiguity work remains prospective and no results from it were read.",
+    "The exact minimal direct-CLI proposal and original synthetic error/success/thread proofs were independently reviewed in046e7f9f receipt. No v2 registration/launch or source relaxation exists in this reviewed proposal.",
+    "Historical not-launched wording now explicitly refers to preparation snapshot. Semaphore warning causality is correctly unestablished, with original warning retained.",
+    "No playing-strength, training-schedule, all-G10, performance frontier or teacher optimality claim. Strict-default bounded exclusion is described as forthcoming work, not silently applied."
+  ],
+  "evidence_integrity": {
+    "all75entries_source_preserved": true,
+    "gzip_validation_reused_from_same_unchanged_entry": "1324 original JSON rows,14857953 bytes,SHA16928f78550dc10618ac7d724a14619e99bd0b29afb3957634468f26432cee03",
+    "new15copies_byte_identical": true,
+    "relative_links_resolve": true,
+    "credential_pattern_scan_no_hits": true,
+    "non_log_diff_check_pass": true,
+    "only_full_diff_check_finding": "Byte-preserved original direct_original_error.log line1 RemoteTraceback trailing whitespace; deliberately not rewritten."
+  },
+  "scientific_followup_recommendation": "After value ambiguity eligibility is resolved, a narrow opt-in bounded missing/duplicate policy-support drop with strict default unchanged is simpler than hand-picked exclusions. Emit all exact source-qualified dropped refs/reasons, validate history/input identity before accepting a new drop, keep illegal/identity/other corruption fatal, and build all recipes from identical survivors. Do not silently substitute d8, merge depths, deduplicate away missing scores or broad-catch CorpusIntegrityError. Original generation may have visited subsequent positions after malformed selections; exclusions produce a disclosed eligible subset, not a pristine-generation claim.",
+  "limits": [
+    "No full corpus/census rerun, no new teacher/model inference, no tests repeated for publication, no runtime edits or launches.",
+    "Census findings are independently recomputed from recorded counts/ref lists and source; source compressed hashes are producer-verified evidence, not new independent payload readbacks.",
+    "The review binds the75-entry snapshot before this receipt is appended. Parent may append this original receipt byte-for-byte as additional review evidence, preserving the reviewed75 entries and scientific prose."
+  ]
+}

@@ -1,0 +1,1 @@
+Actual multiprocessing result-handler thread died deserializing CorpusIntegrityError; parent remains alive but cannot complete normally. Stop invalid batch, preserve all inputs/partials; original worker error unresolved.
