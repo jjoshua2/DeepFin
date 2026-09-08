@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import chess
+import numpy as np
 
 from chess_anti_engine.eval.sprt import BIAS_CAVEAT, SprtMonitor, SprtSpec
 from chess_anti_engine.utils.game_log import read_game_log, settings_fingerprint
@@ -524,11 +525,25 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
             for i in range(128)
         ]
         mean = statistics.mean(differences)
-        half_width = 1.96 * statistics.stdev(differences) / math.sqrt(128)
+        # Registered aligned opening-pair percentile bootstrap; one paired draw
+        # retains covariance between the same low/high opening outcomes.
+        rng = np.random.Generator(np.random.PCG64(20260903))
+        means = np.empty(10000)
+        delta = np.asarray(differences, dtype=np.float64)
+        for start in range(0, 10000, 1000):
+            indices = rng.integers(0, 128, size=(1000, 128))
+            means[start : start + 1000] = delta[indices].mean(axis=1)
         contrast = {
             "fixed_pairs": 128,
             "score_advantage_400_minus_100": mean,
-            "paired_normal_ci95": [mean - half_width, mean + half_width],
+            "paired_bootstrap_ci95": np.percentile(means, [2.5, 97.5]).tolist(),
+            "bootstrap": {
+                "unit": "aligned opening pair",
+                "samples": 10000,
+                "seed": 20260903,
+                "generator": "PCG64",
+                "method": "percentile",
+            },
             "low_manifest": manifest["low_manifest"],
         }
         pinned(manifest["low_manifest"])

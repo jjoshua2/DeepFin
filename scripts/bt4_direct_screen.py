@@ -303,20 +303,24 @@ def acquire_gpu_lease(lease):
     fcntl.flock(lease, fcntl.LOCK_EX)
 
 
-def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, stop_paths=()) -> dict[str, Any]:
+def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, stop_paths=(), cwd=None, env=None) -> dict[str, Any]:
     """One bounded process group; caller owns the inherited GPU lease and pin checks."""
+    require((cwd is None) == (env is None), 'explicit stage cwd and env must be supplied together')
+    stage_cwd = RUNTIME if cwd is None else Path(cwd)
+    stage_env = environment(lease_fd is not None) if env is None else dict(env)
+    require(stage_cwd.is_absolute() and stage_cwd.is_dir(), 'invalid stage cwd')
     require(not any(p.exists() for p in (out / 'STOP', *stop_paths)), 'stop requested before stage')
     out.mkdir(exist_ok=False)
     write(out / 'manifest.json', manifest)
     wrapped = timeout_command(cmd, seconds)
     started = time.monotonic()
     receipt = {**metadata, 'complete': False, 'owner_pid': os.getpid(), 'started_unix': time.time(),
-               'command': cmd, 'supervisor_command': wrapped, 'cwd': str(RUNTIME), 'hard_seconds': seconds}
+               'command': cmd, 'supervisor_command': wrapped, 'cwd': str(stage_cwd), 'hard_seconds': seconds}
     child = None
     try:
         write(out / 'process.json', receipt)
         with (out / f'{stage}.log').open('x') as log:
-            child = subprocess.Popen(wrapped, cwd=RUNTIME, env=environment(lease_fd is not None), stdout=log,
+            child = subprocess.Popen(wrapped, cwd=stage_cwd, env=stage_env, stdout=log,
                                      stderr=subprocess.STDOUT, start_new_session=True, pass_fds=(() if lease_fd is None else (lease_fd,)))
             receipt['supervisor_pid'] = child.pid
             write(out / 'process.json', receipt)

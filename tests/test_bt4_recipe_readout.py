@@ -7,6 +7,7 @@ from pathlib import Path
 import random
 
 import chess
+import numpy as np
 import pytest
 
 from chess_anti_engine.eval.sprt import SprtMonitor
@@ -108,7 +109,7 @@ def make(tmp_path, monkeypatch, panel):
             volatility_candidate=None,
             uci_args="",
             syzygy_path=None,
-            tb_max_pieces=0,
+            tb_max_pieces=6,
         )
         execution = {
             "loop": loop,
@@ -467,3 +468,23 @@ def test_process_charge_and_actual_deadline_refused(make, changes):
     mutate(m, "process", lambda p: p.update(changes))
     with pytest.raises(tool.InvalidCell):
         tool.read_cell(m)
+
+
+def test_registered_interaction_resamples_aligned_pairs(make, tmp_path):
+    low_values = [0.0, 2.0] * 64
+    high_values = [2.0, 0.0, 1.0, 2.0] * 32
+    low = make(values=low_values)
+    high = make(name="high", low=False, values=high_values)
+    high["low_manifest"] = put(tmp_path / "low.json", low)
+    contrast = tool.read_cell(high)["fixed_core_cross_budget"]
+    # Independent row-at-a-time paired resampling; reversing or independently
+    # shuffling one side would destroy covariance and change this interval.
+    delta = (np.array(high_values) - np.array(low_values)) / 2
+    rng = np.random.Generator(np.random.PCG64(20260903))
+    draws = [float(delta[rng.integers(0, 128, size=128)].mean()) for _ in range(10000)]
+    assert (
+        contrast["paired_bootstrap_ci95"] == np.percentile(draws, [2.5, 97.5]).tolist()
+    )
+    assert contrast["score_advantage_400_minus_100"] == float(delta.mean())
+    assert contrast["bootstrap"]["samples"] == 10000
+    assert "paired_normal_ci95" not in contrast
