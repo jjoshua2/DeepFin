@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "status": "PASS_PREPARED_COPY_VERIFY_ONLY_NOT_LAUNCHED",
+  "reviewed_unix": 1788901413.8657713,
+  "author_freeze_confirmed": true,
+  "bindings": {
+    "archive_G20T1.py": "481a1ae3e01e4e09a8280ab122c925a79b38d6fb56822cceeb5323969e928e71",
+    "run_registered.py": "fcedb5eb73f91c8a48e5fc295f5e8ff55a0c7fc5cf3ba568a46c4d5e23c33cf8",
+    "plan.json": "4677ddb5a3797d1025d498d44190ae869c8ce84e1d076f8652194d4027383c96",
+    "operator_command.json": "b6722190958e4d989ac7bf3acc0136a8a41111fd63ce77a992c39ddd1e8f19bc",
+    "archive_pools.original.py": "f46f44a29ab303c8e8eb1ee4f41b83f7087031847a502ca26b5a6f6499381419",
+    "helper_delta.patch": "76b8ac248f76b9cc98a9a2ccd51cb455fc631bdb9cbc5ea0432bbc8221a7cc1a",
+    "fixture_results.json": "3b3ab95c2fae251967b736abfc40bb35f67ad1464c613d1888c92eb4c988956a",
+    "execution_binding_correction.json": "28a86d0fc5fcf39dc5ce0fc4ea62ca9c35b6ebd65dee096e53c326a587ed5eea",
+    "author_preparation.json": "1846526125d229acb40bf629ffc6159f0a5cab50a74f8c8100a86e86e1f92b92",
+    "README.md": "16997993cf26066312f067db8f6411ee6264990afbb5c9fb73541b62d0ac4f8c"
+  },
+  "findings": [],
+  "resolved_finding": {
+    "problem": "Original prepared helper used bare tar/rsync/findmnt via inherited PATH and Python3 alias despite executable-specific pins.",
+    "resolution": "Final helper uses absolute pinned tools; both inner and outer commands use pinned /usr/bin/python3.10. Independent reverse substitution reproduces exact prior helper/wrapper hashes, proving path-only delta; original six-case process evidence preserved."
+  },
+  "checks": {
+    "author_artifacts_hash_verified": 13,
+    "source_and_destination": "Only qtemp_0.0005_hist_20m_bt4_global_G20T1 beneath the fixed original derived root; destination /mnt/e/chess_derived_archive_20260908/G20T1_v1. Two source summaries and prospective root stamp identify the candidate; full source identity is collected during the archive, not claimed pre-scanned.",
+    "completeness": "Original inventory/walk/stamp/content verification algorithms retained. Every directory/file, top-level summaries and shard provenance included; symlink/special/hard-linked regular files refuse. Tar member names/types/modes/uid/gid/mtime/sizes and contents compared with streaming source inventory, with missing/extra member refusal. External tar SHA readback must equal verified local SHA and remain stat-stable; final original source stamps checked.",
+    "source_retention": "No source write or delete operation. Only unlink targets local staging tar after verified receipt and external readback. All failure paths preserve source and partial archive data; existing attempt/archive refuses, no automatic resume/adoption. Read-induced atime effects are outside the preserved stamp set.",
+    "deadline_and_ownership": "Required outer timeout14370s TERM+30s KILL bounds wrapper prelude; same supplied absolute deadline flows to driver and every tar/rsync timeout. Detached children receive TERM at deadline-30 and KILL20s later, so abrupt driver death does not remove child cap. Normal failures use owned-group TERM/KILL and wait; observed disposable resistant children/grandchildren were stopped and unrelated sentinel survived. Parent must capture actual outer exit; helper receipt alone is not terminal operator proof.",
+    "stop_resources_lock": "STOP checked before launch and by sampled driver alarm10s. Nonblocking existing preparation.lock, no queue. CPU0,1/numeric2/nice19/ionice3/GPUhidden;2GiB per-process address space,16GiB sampled host available memory.24GiB hard tar-stream ceiling plus sampled aggregate staging limit,150GiB local free reserve and initial26.4GiB extra reservation.48GiB destination admission requirement on verified writable E:9p mount.",
+    "mount": "Recorded E: mount is prospectively pinned by target/source/fstype; helper rechecks writable mount at execution and throughout archive/transfer/readback. No reviewer mount or destination traversal.",
+    "fixture_scope": "Six author checks21.4787s inspected, not repeated: exact command/deadline admission, inherited algorithms, STOP, owned resistant family cleanup, independent child deadline after driver kill, actual plan-only CLI. Final path-only execution-binding supplement independently checked.",
+    "fresh_state": "run and staging absent at final review."
+  },
+  "limits": [
+    "No transfer, dataset inventory/payload scan, source deletion, process-wide scan, model inference or repeated fixture/test run by reviewer.",
+    "Copy success is not source-removal authorization or deletion qualification; source still retained.",
+    "24GiB sampled aggregate may overshoot transiently; address-space limit is per process, not aggregate RSS. Software pacing is not a block-I/O quota.",
+    "ACL/xattrs captured by tar but not independently compared; no restore test or cold-device longevity claim.",
+    "Four hours is a failure ceiling, not completion prediction. Parent selects a G10-free preparation window and captures actual launch/terminal receipts."
+  ]
+}

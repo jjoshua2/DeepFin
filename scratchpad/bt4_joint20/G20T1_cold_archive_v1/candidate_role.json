@@ -1,0 +1,46 @@
+{
+  "status": "COMPLETED_EARLIER_RECIPE_SELECTED_FOR_COPY_ONLY_PREPARATION",
+  "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1",
+  "recipe": {
+    "kind": "global",
+    "alpha": 0.2,
+    "bt4_temperature": 1.0
+  },
+  "rows": 18910484,
+  "shards": 2309,
+  "training": {
+    "steps": 36935,
+    "windows": 420,
+    "seed": 0,
+    "checkpoint_sha256": "e94b5dc53d55d7fdb119b214f0b59ccc79a7963f933124d3e1f731478bb32b6d",
+    "valid_control": false
+  },
+  "scope": "Completed earlier literal20% raw-BT4 comparison; completed25/100/400-simulation review exists. Cold means no current finalist preparation need, not negative science. Historical control caveats are preserved; no new gameplay conclusions or process inventory.",
+  "pins": [
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/bt4_policy_mix_summary.json",
+      "sha256": "d0848a2357f8d1f8cd22850c6ba71cfe58ae57bf2a99ac63b1f91de4f1544fcb",
+      "bytes": 2623
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/derive_targets_summary.json",
+      "sha256": "dce36703e851d30437399f3c6f5b6d271238b4acc9b4334bce82c04d5565d58d",
+      "bytes": 165395
+    },
+    {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1_epoch_v2/summary.json",
+      "sha256": "ef68d18a6cd2b3f4d8446cd0277271a8aaae6a01fbfa018317915a918290fe36",
+      "bytes": 2455021
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/treatments/G20T1.train.complete.json",
+      "sha256": "17200de5c287eaadf9ca9ce4b3033ad402b965b230adad5d59c52b4ea222463d",
+      "bytes": 182
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run03/G20T1.completed_trio_independent_review.json",
+      "sha256": "2b7c699a609086c2eebf27d3cbb78601d062a83ca952c85432417b6153e319af",
+      "bytes": 3319
+    }
+  ]
+}

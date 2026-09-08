@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "status": "PREPARED_NOT_LAUNCHED",
+  "scope": "Byte-preserved operational preparation snapshot; publication does not execute or arm it. Original arrays, source summaries, interpreter/tool binaries and runtime files remain external at their pinned paths.",
+  "lineage_note": "The original helper is retained because focused checks compare inherited algorithms against that original snapshot. The redundant helper delta remains external with its hash. Both fixture-source versions preserve the actual pre-correction run and the later path-only correction; six process checks were not rerun.",
+  "files": [
+    {
+      "path": "archive_G20T1.py",
+      "sha256": "481a1ae3e01e4e09a8280ab122c925a79b38d6fb56822cceeb5323969e928e71",
+      "bytes": 20619
+    },
+    {
+      "path": "run_registered.py",
+      "sha256": "fcedb5eb73f91c8a48e5fc295f5e8ff55a0c7fc5cf3ba568a46c4d5e23c33cf8",
+      "bytes": 2570
+    },
+    {
+      "path": "plan.json",
+      "sha256": "4677ddb5a3797d1025d498d44190ae869c8ce84e1d076f8652194d4027383c96",
+      "bytes": 6987
+    },
+    {
+      "path": "operator_command.json",
+      "sha256": "b6722190958e4d989ac7bf3acc0136a8a41111fd63ce77a992c39ddd1e8f19bc",
+      "bytes": 1110
+    },
+    {
+      "path": "check_preparation.py",
+      "sha256": "43ec8a3400185009437ce7688cdcbed96b0cc6f9302b065cce95e26fb3642bec",
+      "bytes": 5799
+    },
+    {
+      "path": "check_preparation.before_path_binding.py",
+      "sha256": "c97a86fb7112681892ff8407b96e51692627384fe92fd1386d59a55824bcef47",
+      "bytes": 5597
+    },
+    {
+      "path": "fixture_results.json",
+      "sha256": "3b3ab95c2fae251967b736abfc40bb35f67ad1464c613d1888c92eb4c988956a",
+      "bytes": 742
+    },
+    {
+      "path": "execution_binding_correction.json",
+      "sha256": "28a86d0fc5fcf39dc5ce0fc4ea62ca9c35b6ebd65dee096e53c326a587ed5eea",
+      "bytes": 3228
+    },
+    {
+      "path": "author_preparation.json",
+      "sha256": "1846526125d229acb40bf629ffc6159f0a5cab50a74f8c8100a86e86e1f92b92",
+      "bytes": 4590
+    },
+    {
+      "path": "independent_review.json",
+      "sha256": "d83c285293fd8fe1cd308ceb967892461a56cddb0a992072f2b1d21f50655499",
+      "bytes": 5045
+    },
+    {
+      "path": "candidate_role.json",
+      "sha256": "3e22ef6de708c12a2e884a8876e6b373969c291e7cee3ad42c8ccce965c5734f",
+      "bytes": 1998
+    },
+    {
+      "path": "mount_observation.json",
+      "sha256": "6de334ed22c646472e582677aaff45652b9c4692663340acb0ef25c90c33ef47",
+      "bytes": 515
+    },
+    {
+      "path": "README.md",
+      "sha256": "16997993cf26066312f067db8f6411ee6264990afbb5c9fb73541b62d0ac4f8c",
+      "bytes": 3434
+    },
+    {
+      "path": "archive_pools.original.py",
+      "sha256": "f46f44a29ab303c8e8eb1ee4f41b83f7087031847a502ca26b5a6f6499381419",
+      "bytes": 18291
+    }
+  ],
+  "external_inputs": [
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/bt4_policy_mix_summary.json",
+      "sha256": "d0848a2357f8d1f8cd22850c6ba71cfe58ae57bf2a99ac63b1f91de4f1544fcb",
+      "bytes": 2623
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/derive_targets_summary.json",
+      "sha256": "dce36703e851d30437399f3c6f5b6d271238b4acc9b4334bce82c04d5565d58d",
+      "bytes": 165395
+    },
+    {
+      "path": "/usr/bin/python3.10",
+      "sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49",
+      "bytes": 5937704
+    },
+    {
+      "path": "/usr/bin/timeout",
+      "sha256": "8d21b4cf1b204cc2387377a63c542ecdd0ae0895613db67ceb7da1e253110741",
+      "bytes": 39880
+    },
+    {
+      "path": "/usr/bin/flock",
+      "sha256": "6df3b90adb5b23a86a39b94a04287ca8997ca5343b2cd3dc6482287c36f075e4",
+      "bytes": 23024
+    },
+    {
+      "path": "/usr/bin/time",
+      "sha256": "7310b9b4c51a8f4d26c1af0da250f03a49ec8a8141033123e79196ad18f6c81b",
+      "bytes": 27160
+    },
+    {
+      "path": "/usr/bin/ionice",
+      "sha256": "5681a648bb9901890cd58322f057a237d5eb9c0791d3e5bbf7c4164533973c67",
+      "bytes": 18816
+    },
+    {
+      "path": "/usr/bin/nice",
+      "sha256": "6e3fd69addd6cff40185a406577b80ca03072588d593387a6a6ef73e9bc36348",
+      "bytes": 35336
+    },
+    {
+      "path": "/usr/bin/taskset",
+      "sha256": "63e52c4b99a688ccd7bab6edbc6df2af1acad124eb852adcb4d20043d28eb2d3",
+      "bytes": 22912
+    },
+    {
+      "path": "/usr/bin/tar",
+      "sha256": "148313667aa9111de45fe3c70a1c7c963ae5f015071a106c4cdabea749d2db9f",
+      "bytes": 517952
+    },
+    {
+      "path": "/usr/bin/rsync",
+      "sha256": "9ef2b0cb0ca853676d804dabd88715c1aa44d7b3cfbaed63819db3b1a04899e2",
+      "bytes": 518272
+    },
+    {
+      "path": "/usr/bin/findmnt",
+      "sha256": "0218be2029f3a4378b60262c346d080418e91640f9381ec8358f3fba54119ceb",
+      "bytes": 65136
+    }
+  ],
+  "omitted_redundant_artifacts": [
+    {
+      "path": "helper_delta.patch",
+      "sha256": "76b8ac248f76b9cc98a9a2ccd51cb455fc631bdb9cbc5ea0432bbc8221a7cc1a",
+      "bytes": 9234,
+      "location": "Original frozen state; original and final helper source are both published, so this derived patch is not duplicated."
+    }
+  ]
+}

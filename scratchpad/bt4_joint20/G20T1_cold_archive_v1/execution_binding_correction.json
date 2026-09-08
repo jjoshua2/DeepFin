@@ -1,0 +1,68 @@
+{
+  "status": "PASS_FINAL_ABSOLUTE_EXECUTION_BINDING",
+  "scope": "Path-only correction after independent review. Original six-check fixture result preserved; no repeated child test or corpus read.",
+  "prior_pins": {
+    "archive_G20T1.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/archive_G20T1.py",
+      "sha256": "bfc2feac7e14ee5f8181f74198256f3ad19c005143fe35943970d6fd6566009e",
+      "bytes": 20592
+    },
+    "run_registered.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/run_registered.py",
+      "sha256": "f77db1706a2e09ce899f4e13caa50afa9c3c8d645db6fc32db999085468ac5a4",
+      "bytes": 2567
+    },
+    "plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/plan.json",
+      "sha256": "4f7d5e13482d59dc8e9406a6c7892c534f362a1d4738bed2208a577cdabe8620",
+      "bytes": 6987
+    },
+    "operator_command.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/operator_command.json",
+      "sha256": "3773eaefd659c1176f0d774af7bf7da7f813fffcb59c97abff979cf7993a7e34",
+      "bytes": 1107
+    },
+    "fixture_results.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/fixture_results.json",
+      "sha256": "3b3ab95c2fae251967b736abfc40bb35f67ad1464c613d1888c92eb4c988956a",
+      "bytes": 742
+    }
+  },
+  "final_pins": {
+    "archive_G20T1.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/archive_G20T1.py",
+      "sha256": "481a1ae3e01e4e09a8280ab122c925a79b38d6fb56822cceeb5323969e928e71",
+      "bytes": 20619
+    },
+    "run_registered.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/run_registered.py",
+      "sha256": "fcedb5eb73f91c8a48e5fc295f5e8ff55a0c7fc5cf3ba568a46c4d5e23c33cf8",
+      "bytes": 2570
+    },
+    "plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/plan.json",
+      "sha256": "4677ddb5a3797d1025d498d44190ae869c8ce84e1d076f8652194d4027383c96",
+      "bytes": 6987
+    },
+    "operator_command.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/operator_command.json",
+      "sha256": "b6722190958e4d989ac7bf3acc0136a8a41111fd63ce77a992c39ddd1e8f19bc",
+      "bytes": 1110
+    },
+    "helper_delta.patch": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/helper_delta.patch",
+      "sha256": "76b8ac248f76b9cc98a9a2ccd51cb455fc631bdb9cbc5ea0432bbc8221a7cc1a",
+      "bytes": 9234
+    },
+    "fixture_results.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/fixture_results.json",
+      "sha256": "3b3ab95c2fae251967b736abfc40bb35f67ad1464c613d1888c92eb4c988956a",
+      "bytes": 742
+    }
+  },
+  "checks": [
+    "Helper uses explicit /usr/bin/tar, /usr/bin/rsync, /usr/bin/findmnt; timeout already absolute.",
+    "Actual constructed inner argv and outer argv use the same resolved interpreter pinned by the plan.",
+    "All final plan pins match; code compiles; plan-hash argument refreshed."
+  ]
+}

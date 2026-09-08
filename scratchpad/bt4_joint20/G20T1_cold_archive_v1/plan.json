@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "status": "PREPARED_NOT_LAUNCHED",
+  "mode": "ONE_FULL_DATASET_COPY_AND_VERIFY_SOURCE_RETAINED",
+  "source_root": "/home/josh/projects/chess/data/nnue_derived/armB",
+  "archive_root": "/mnt/e/chess_derived_archive_20260908/G20T1_v1",
+  "mount": {
+    "target": "/mnt/e",
+    "source": "E:\\",
+    "fstype": "9p"
+  },
+  "pools": [
+    {
+      "name": "qtemp_0.0005_hist_20m_bt4_global_G20T1",
+      "estimated_tar_bytes": 25769803776,
+      "source_root_stat": {
+        "st_dev": 2096,
+        "st_ino": 14948375,
+        "st_mode": 16877,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 131072,
+        "st_mtime_ns": 1788635503543860867,
+        "st_ctime_ns": 1788635503543860867
+      }
+    }
+  ],
+  "preparation_lock": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation.lock",
+  "launch_timing": "A later G10-free CPU preparation window; nonblocking shared lock, no queue or automatic retry.",
+  "limits": {
+    "inclusive_wall_seconds": 14400,
+    "driver_TERM_seconds_before_deadline": 30,
+    "child_TERM_seconds_before_deadline": 30,
+    "child_KILL_grace_seconds": 20,
+    "outer_KILL_grace_seconds": 30,
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "numeric_threads": 2,
+    "nice": 19,
+    "ionice_class": 3,
+    "GPU_hidden": true,
+    "minimum_local_free_bytes": 161061273600,
+    "initial_local_reservation_extra_bytes": 28346784153,
+    "minimum_destination_free_bytes": 51539607552,
+    "minimum_available_RAM_bytes": 17179869184,
+    "per_process_RLIMIT_AS_bytes": 2147483648,
+    "staging_file_logical_bytes_ceiling": 25769803776,
+    "staging_guard_interval_seconds": 10,
+    "tar_stream_hard_ceiling_bytes": 25769803776,
+    "checksum_pacing_bytes_per_second": 33554432,
+    "rsync_bwlimit_KiB_per_second": 16384
+  },
+  "limit_interpretation": [
+    "24 GiB is an upper ceiling, not a measured or projected dataset size. Tar stream is capped per chunk; aggregate staging files are sampled and may transiently overshoot.",
+    "1 MiB stream buffers; inherited 2 GiB address-space cap is per process, not an aggregate RSS guarantee. Host minimum16 GiB available memory is sampled.",
+    "Checksum pacing and rsync bandwidth caps are software pacing, not strict total block-I/O quotas; metadata traffic and source re-reads remain.",
+    "At ceiling, five32 MiB/s-equivalent read/write passes plus16 MiB/s transfer are about90 minutes of idealized streaming; metadata/9p/fsync overhead unmeasured. Four hours is a failure bound, not a completion promise.",
+    "Stage includes original inventory, tar creation, all-member content verification, local digest, transfer, external readback digest and final source-stat verification; no preliminary size traversal."
+  ],
+  "source_scope": {
+    "rows_from_completed_summary": 18910484,
+    "shards_from_completed_summary": 2309,
+    "recipe": {
+      "kind": "global",
+      "alpha": 0.2,
+      "bt4_temperature": 1.0
+    },
+    "includes": "Every original directory/file under the source, including top-level derive/mix summaries and shard provenance. Symlinks/special/hard-linked regular files refuse under unchanged original admission.",
+    "source_removal": false
+  },
+  "source_identity_scope": "Root metadata and two small original summaries pinned prospectively. Complete per-file source identities and hashes are streamed progressively during this useful archive operation; no claim of prevalidated full-tree identity.",
+  "failure": "Preserve source, inventory and partial staging/external data. Existing attempt or archive refuses. Rsync retains partial bytes, but this operator does not automatically resume/adopt them.",
+  "success": "Original member names/types/modes/uid/gid/mtime, contents and source stability verified, external archive readback SHA equals local SHA. Source retained. Only verified local staging tar may be removed by inherited helper; metadata receipts remain. ACL/xattrs captured by tar but not independently compared.",
+  "input_pins": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/archive_G20T1.py",
+      "sha256": "481a1ae3e01e4e09a8280ab122c925a79b38d6fb56822cceeb5323969e928e71",
+      "bytes": 20619
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/run_registered.py",
+      "sha256": "fcedb5eb73f91c8a48e5fc295f5e8ff55a0c7fc5cf3ba568a46c4d5e23c33cf8",
+      "bytes": 2570
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/bt4_policy_mix_summary.json",
+      "sha256": "d0848a2357f8d1f8cd22850c6ba71cfe58ae57bf2a99ac63b1f91de4f1544fcb",
+      "bytes": 2623
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1/derive_targets_summary.json",
+      "sha256": "dce36703e851d30437399f3c6f5b6d271238b4acc9b4334bce82c04d5565d58d",
+      "bytes": 165395
+    },
+    {
+      "path": "/usr/bin/python3.10",
+      "sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49",
+      "bytes": 5937704
+    },
+    {
+      "path": "/usr/bin/timeout",
+      "sha256": "8d21b4cf1b204cc2387377a63c542ecdd0ae0895613db67ceb7da1e253110741",
+      "bytes": 39880
+    },
+    {
+      "path": "/usr/bin/flock",
+      "sha256": "6df3b90adb5b23a86a39b94a04287ca8997ca5343b2cd3dc6482287c36f075e4",
+      "bytes": 23024
+    },
+    {
+      "path": "/usr/bin/time",
+      "sha256": "7310b9b4c51a8f4d26c1af0da250f03a49ec8a8141033123e79196ad18f6c81b",
+      "bytes": 27160
+    },
+    {
+      "path": "/usr/bin/ionice",
+      "sha256": "5681a648bb9901890cd58322f057a237d5eb9c0791d3e5bbf7c4164533973c67",
+      "bytes": 18816
+    },
+    {
+      "path": "/usr/bin/nice",
+      "sha256": "6e3fd69addd6cff40185a406577b80ca03072588d593387a6a6ef73e9bc36348",
+      "bytes": 35336
+    },
+    {
+      "path": "/usr/bin/taskset",
+      "sha256": "63e52c4b99a688ccd7bab6edbc6df2af1acad124eb852adcb4d20043d28eb2d3",
+      "bytes": 22912
+    },
+    {
+      "path": "/usr/bin/tar",
+      "sha256": "148313667aa9111de45fe3c70a1c7c963ae5f015071a106c4cdabea749d2db9f",
+      "bytes": 517952
+    },
+    {
+      "path": "/usr/bin/rsync",
+      "sha256": "9ef2b0cb0ca853676d804dabd88715c1aa44d7b3cfbaed63819db3b1a04899e2",
+      "bytes": 518272
+    },
+    {
+      "path": "/usr/bin/findmnt",
+      "sha256": "0218be2029f3a4378b60262c346d080418e91640f9381ec8358f3fba54119ceb",
+      "bytes": 65136
+    }
+  ],
+  "original_helper": {
+    "path": "/home/josh/projects/chess/scratchpad/storage_audit_20260906/archive_pools.py",
+    "sha256": "f46f44a29ab303c8e8eb1ee4f41b83f7087031847a502ca26b5a6f6499381419",
+    "bytes": 18291
+  },
+  "required_outer_invocation": "timeout --signal=TERM --kill-after=30s 14370s python3 run_registered.py --plan-sha256 PLAN_SHA --deadline D; D is invocation start+14400 and shared by every child. Parent must capture the outer exit; wrapper cannot self-certify a killed process."
+}
