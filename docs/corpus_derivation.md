@@ -306,3 +306,68 @@ CPU/thread limits and a registered output allowance. This tool does not select a
 training arm, launch training, or replace corpus/schedule qualification. The
 [training-only sample](experiments/2026-09-08-soft-sf-qualified-training-sample.md) motivates
 10 cp as a descriptive entropy match; it is not evidence of playing strength.
+
+### WDL-only labels from the original derived SF corpus
+
+`scripts/bt4_derived_wdl_sidecar.py` can bank a named BT4 WDL head beside a
+pinned, completed original SF corpus. It reads only `x`, `game_id`, `ply_index`
+and their presence flags in batches. It does no raw-history replay, policy
+inference, legal-move mapping, deduplication or training-target blending. A bank
+joined by original source directory, shard and physical row can subsequently be
+shared by policy recipes that independently prove the same row/input lineage.
+That downstream training join is not implemented here.
+
+Supply the original `derive_targets_summary.json` SHA, model SHA and an explicit
+W/D/L side-to-move output name and `logits` or `probabilities` kind. Head semantics
+must come from the model contract; a three-wide shape alone does not establish
+order, point of view or activation. Only that named output is requested from ORT.
+Native float16/32/64 values are stored unchanged, with finite/shape validation and,
+for probabilities, bounded rounding tolerance around unit mass.
+
+```bash
+python scripts/bt4_derived_wdl_sidecar.py \
+  --source ORIGINAL_SF --expected-source-summary-sha256 SOURCE_SHA \
+  --onnx TEACHER.onnx --expected-onnx-sha256 MODEL_SHA \
+  --wdl-output EXACT_OUTPUT_NAME --wdl-output-kind probabilities \
+  --out NEW_WDL_BANK --start-shard 0 --max-shards 1 \
+  --batch-size 256 --threads 2 --gpu-mem-gb 0 \
+  --max-seconds 900 --minimum-free-gib 150 --max-output-gib 1
+```
+
+The selection follows the summary's canonical contiguous shard order; a final
+selection may end at the corpus boundary. For CUDA, use a positive memory budget
+and an **explicit absolute shared `--gpu-lock`**. The disposable child owns ORT
+and retains that lease until process exit. The parent bounds the invocation,
+including lease wait and 30 seconds reserved for termination, and monitors STOP
+and free space every two seconds. Output size is sampled every ten seconds and
+at completion; the cap can miss transient overshoot and is not a RAM limit.
+Use the usual low-priority affinity and numeric-thread environment for the host.
+`OUT/STOP` and optional `--stop PATH` stop only this invocation. Original source
+files and unrelated process owners are never modified.
+
+Source admission requires committed/finalized original SF shard attributes,
+verified history schema 3 and the `lc0_root_legacy_meta`/`v2_threats` regime.
+During consumption, all 175 stored float16 planes must be finite; consumed
+history, repetition, castling and side-to-move bits must be binary, metadata
+planes constant, and the rule-50 plane one of the 101 stored `integer/100`
+values. The shared `x_to_lc0_planes` converter recovers every clipped counter
+exactly after float16 storage. Planes 110/111 are replaced by the converter;
+extra planes are not teacher inputs. This preserves the actual LC0 feed on the
+validated writer domain. It does **not** recover the original full float32
+`input_key`, replay raw history, or retroactively qualify historical controls.
+
+Each completed Zarr sidecar contains `bt4_wdl_raw`, `row_index`, `game_id`,
+`ply_index` and a 32-byte `lc0_feed_sha256` per row, calculated after conversion
+to the model's input dtype. Attributes bind the source summary, source storage
+identity, hashes of the consumed source columns, teacher, output contract,
+converter/producer code and stored-array hashes. All batches are read back before
+atomic publication. Existing completed matching sidecars are content-verified and
+skipped without a session; changed source storage, teacher, output kind, content,
+or partial `.writing` output is refused. Partial output and per-invocation failure
+receipts remain for inspection; no automatic overwrite or different-kind backfill.
+
+At float32 WDL, payload overhead is 44 bytes per row for values plus feed digest,
+plus an 8-byte row index and the source-native game/ply fields (normally 8+4 bytes),
+before compression and small shard metadata. No dense policy or 112-plane feed
+copy is stored. This producer is preparation tooling; it supplies no teacher
+quality verdict or trained-value result.
