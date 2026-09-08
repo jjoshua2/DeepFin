@@ -22,6 +22,8 @@ import subprocess
 import time
 from typing import Any
 
+from scripts.corpus_selection_schema import validate_selection_metadata
+
 TOOLS = {
     "derive_corpus_targets.py",
     "adapt_raw_bt4_sidecars.py",
@@ -305,38 +307,22 @@ def validate_manifest(plan):
             "original source manifest required",
         )
         selection = read(source["selection"]["path"])
+        validate_selection_metadata(
+            selection,
+            source_dir=source_root,
+            source_config_sha256=read(source["source_manifest"]["path"]).get(
+                "config_sha256"
+            ),
+            source_manifest_sha256=source["source_manifest"]["sha256"],
+        )
         entries = selection["shards"]
-        require(
-            selection["schema"] == 1
-            and selection["source_dir"] == str(source_root)
-            and selection["source_manifest_sha256"]
-            == source["source_manifest"]["sha256"],
-            "foreign selected source",
-        )
-        require(
-            entries and all(type(e["rows"]) is int and e["rows"] > 0 for e in entries),
-            "empty/invalid selected rows",
-        )
         require(
             type(source["physical_rows"]) is int
             and sum(e["rows"] for e in entries) == source["physical_rows"],
             "selected row count differs",
         )
-        seen = set()
         for entry in entries:
             n = entry["source_shard"]
-            require(
-                isinstance(n, str)
-                and Path(n).name == n
-                and n not in (".", "..")
-                and n not in seen,
-                "unsafe/duplicate selected shard",
-            )
-            seen.add(n)
-            require(
-                re.fullmatch(r"[0-9a-f]{64}", entry["source_sha256"]) is not None,
-                "invalid selected SHA",
-            )
             key = (str(source_root), n)
             require(key not in all_refs, "overlapping source selections")
             all_refs.add(key)
@@ -414,6 +400,7 @@ def verify(plan):
     required = {str(Path(cwd) / "scripts" / s) for s in TOOLS} | {
         str(Path(plan["python"]).resolve()),
         str(Path(__file__).resolve()),
+        str(Path(cwd) / "scripts" / "corpus_selection_schema.py"),
         "/usr/bin/timeout",
         "/usr/bin/time",
     }

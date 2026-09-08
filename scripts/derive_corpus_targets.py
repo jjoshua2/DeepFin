@@ -445,6 +445,7 @@ from scripts import audit_label_candidates as gate
 from scripts import gen_random_selfplay_shards as gen
 from scripts import gen_sf_rooted_corpus as corpus
 from scripts import corpus_row_provenance as row_refs
+from scripts.corpus_selection_schema import validate_selection_metadata
 
 #: Derived-shard schema.  Bumped when the MEANING of an emitted column changes,
 #: which is a different event from the corpus row schema changing -- a consumer
@@ -3734,33 +3735,25 @@ def select_corpus_record(
     """
     raw = selection_path.read_bytes()
     selection = json.loads(raw)
-    required = {"schema", "source_dir", "source_config_sha256", "source_manifest_sha256", "shards"}
-    if not isinstance(selection, dict) or set(selection) != required or selection["schema"] != 1:
-        raise CorpusIntegrityError("invalid source-shards schema")
     source = corpus_dir.resolve()
     manifest = source / corpus.MANIFEST_NAME
-    if (selection["source_dir"] != str(source)
-            or selection["source_config_sha256"] != record.facts.get("config_sha256")
-            or selection["source_manifest_sha256"] != _selection_sha(manifest)):
-        raise CorpusIntegrityError("source-shards source binding mismatch")
+    try:
+        validate_selection_metadata(
+            selection, source_dir=source,
+            source_config_sha256=record.facts.get("config_sha256"),
+            source_manifest_sha256=_selection_sha(manifest),
+        )
+    except ValueError as exc:
+        raise CorpusIntegrityError(str(exc)) from exc
     entries = selection["shards"]
-    if not isinstance(entries, list) or not entries:
-        raise CorpusIntegrityError("source-shards must contain a nonempty shard list")
     available = {path.name: (path, rows) for path, rows in zip(record.shards, record.shard_rows)}
     requested: dict[str, dict[str, Any]] = {}
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) != {"source_shard", "rows", "source_sha256"}:
-            raise CorpusIntegrityError("invalid source-shards entry")
         name = entry["source_shard"]
-        if not isinstance(name, str) or Path(name).name != name or name in requested:
-            raise CorpusIntegrityError("duplicate or invalid selected shard name")
         if name not in available:
             raise CorpusIntegrityError(f"unknown or unclosed selected shard: {name}")
-        if (type(entry["rows"]) is not int or entry["rows"] <= 0
-                or entry["rows"] != available[name][1]):
+        if entry["rows"] != available[name][1]:
             raise CorpusIntegrityError(f"selected shard row claim mismatch: {name}")
-        if not isinstance(entry["source_sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", entry["source_sha256"]) is None:
-            raise CorpusIntegrityError("invalid selected raw SHA256")
         requested[name] = entry
     selected = tuple(path for path in record.shards if path.name in requested)
     stats = []

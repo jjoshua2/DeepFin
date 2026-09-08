@@ -76,7 +76,9 @@ def fixture(tmp_path: Path, concurrency: int = 2) -> dict[str, Any]:
         raw.mkdir()
         side = tmp_path / (name + "_side")
         side.mkdir()
-        manifest = pin(raw / "manifest.json", {"identity": name})
+        manifest = pin(
+            raw / "manifest.json", {"identity": name, "config_sha256": "b" * 64}
+        )
         entries = []
         metadata = []
         for k in (2, 4):
@@ -409,3 +411,29 @@ q=p/'common_input_qualification.json';q.write_text('{}')
             batch.fresh_outputs(plan)
     finally:
         batch.stop_owned_group(unrelated, grace=0.1)
+
+
+@pytest.mark.parametrize("corruption", ["missing_config", "wrong_config", "extra_key", "extra_entry_key", "empty_shards", "boolean_rows"])
+def test_preflight_refuses_consumer_header_mismatch(
+    tmp_path: Path, corruption: str
+) -> None:
+    plan = fixture(tmp_path)
+    source = plan["sources"][0]
+    path = Path(source["selection"]["path"])
+    selection = batch.read(path)
+    if corruption == "missing_config":
+        del selection["source_config_sha256"]
+    elif corruption == "wrong_config":
+        selection["source_config_sha256"] = "0" * 64
+    elif corruption == "extra_key":
+        selection["unexpected"] = True
+    elif corruption == "extra_entry_key":
+        selection["shards"][0]["unexpected"] = True
+    elif corruption == "empty_shards":
+        selection["shards"] = []
+    else:
+        selection["shards"][0]["rows"] = True
+    source["selection"] = pin(path, selection)
+    with pytest.raises(ValueError, match=r"source-shards|row claim"):
+        batch.validate_manifest(plan)
+    assert not (Path(plan["state"]) / "started.json").exists()

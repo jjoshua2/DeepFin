@@ -89,7 +89,7 @@ def test_nonprefix_cli_derivation_and_rank(tmp_path: Path, workers: int, limit: 
         rank.main(without)
 
 
-@pytest.mark.parametrize('corruption', ['duplicate', 'unknown', 'unclosed', 'source', 'config', 'manifest', 'rows', 'hash', 'traversal'])
+@pytest.mark.parametrize('corruption', ['duplicate', 'unknown', 'unclosed', 'source', 'config', 'missing_config', 'manifest', 'rows', 'hash', 'traversal'])
 def test_bad_selection_is_rejected(tmp_path: Path, corruption: str) -> None:
     source, path, selection = fixture(tmp_path)
     if corruption == 'duplicate':
@@ -101,6 +101,8 @@ def test_bad_selection_is_rejected(tmp_path: Path, corruption: str) -> None:
             shutil.copyfile(source / 'w00-00003.jsonl.zst', source / name)
     elif corruption == 'source':
         selection['source_dir'] = str(tmp_path / 'other')
+    elif corruption == 'missing_config':
+        del selection['source_config_sha256']
     elif corruption == 'config':
         selection['source_config_sha256'] = '0' * 64
     elif corruption == 'manifest':
