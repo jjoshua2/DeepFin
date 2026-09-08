@@ -309,3 +309,182 @@ def test_registered_window_cadence_rejects_duplicate_or_skipped_work(tmp_path, m
         windows[-1]['train_samples_seen'] -= 1
     with pytest.raises(ValueError, match=r'cadence/cumulative|sample total'):
         epoch.verify_window_cadence(summary)
+
+
+def training_only_manifest(tmp_path):
+    manifest = registered_manifest(tmp_path, 'B100')
+    for key in ('comparisons', 'reader', 'arena_seconds', 'total_seconds'):
+        del manifest[key]
+    manifest['stage_helper_sha256'] = manifest.pop('arena_launcher_sha256')
+    manifest.update(schema=3, mode='training_only')
+    return manifest
+
+
+@pytest.mark.parametrize('mutation', ['none', 'mode', 'reader', 'comparisons', 'cap', 'source'])
+def test_training_only_manifest_has_no_hidden_arena_work(tmp_path, mutation):
+    m = training_only_manifest(tmp_path)
+    if mutation == 'mode':
+        m['mode'] = 'full_package'
+    elif mutation in ('reader', 'comparisons'):
+        m[mutation] = registered_manifest(tmp_path)[mutation]
+    elif mutation == 'cap':
+        m['training_seconds'] = 27000
+    elif mutation == 'source':
+        m['input_pins'][str(epoch.SOURCE / 'derive_targets_summary.json')] = 'f' * 64
+    if mutation != 'none':
+        with pytest.raises(ValueError, match=r'training_only|keys differ|budget differs|pins differ'):
+            epoch.validate(m)
+        return
+    epoch.validate(m)
+    Path(m['runtime_manifest']['path']).write_text(json.dumps({'runtime': {'executable': sys.executable}}))
+    # Separating the stages must not change any trainer argument.
+    assert epoch.train_command(m) == epoch.train_command(registered_manifest(tmp_path, 'B100'))
+    assert epoch.comparisons(m) == ()
+
+
+@pytest.mark.parametrize('bad_qualification', [False, True])
+def test_training_only_checks_recipe_but_does_not_pin_arena_artifacts(tmp_path, monkeypatch, bad_qualification):
+    m = training_only_manifest(tmp_path)
+    corpus = epoch.corpus_for(m)
+    source_sha = epoch.COMMON_PINS[str(epoch.SOURCE / 'derive_targets_summary.json')]
+    mix = {'kind': 'global', 'algorithm': 'legal-normalized-global-arithmetic-v1', 'alpha': 1.,
+           'bt4_temperature': .5, 'rows': 18910484, 'expected_shards': 2309,
+           'source_dir': str(epoch.SOURCE), 'source_derive_summary_sha256': source_sha,
+           'mutated_arrays': ['policy_target']}
+    qualification = {'schema': 1, 'status': 'FAILED' if bad_qualification else 'PASS_REGISTERED_CORPUS_QUALIFICATION',
+                     'profile': 'B100', 'corpus': str(corpus), 'rows': 18910484, 'shards': 2309,
+                     'source': {'path': str(epoch.SOURCE), 'derive_sha256': source_sha},
+                     'derive_summary': {'path': str(corpus / 'derive_targets_summary.json'), 'sha256': 'b' * 64},
+                     'mix_summary': {'path': str(corpus / 'bt4_policy_mix_summary.json'), 'sha256': 'a' * 64}}
+    files = {str(corpus / 'bt4_policy_mix_summary.json'): mix,
+             str(corpus / 'derive_targets_summary.json'): {'policy_target_postprocess': mix},
+             m['data_qualification']['path']: qualification}
+    pins = []
+    monkeypatch.setattr(arena, 'read', lambda path: files[str(path)])
+    monkeypatch.setattr(arena, 'pin', lambda path, digest: pins.append((str(path), digest)))
+    monkeypatch.setattr(arena, 'runtime_identity', lambda _identity: {'verified_runtime': True})
+    if bad_qualification:
+        with pytest.raises(ValueError, match='data qualification failed'):
+            epoch.check_pins(m)
+        return
+    assert epoch.check_pins(m) == {'verified_runtime': True}
+    pinned = {p for p, _ in pins}
+    assert set(m['input_pins']) <= pinned
+    assert str(epoch.C_CHECKPOINT.parent / 'summary.json') in pinned  # canonical schedule witness
+    assert pinned.isdisjoint({str(epoch.C_CHECKPOINT), str(arena.BOOK), str(arena.READER), str(arena.EXTENDED_READER)})
+    assert (str(arena.__file__), m['stage_helper_sha256']) in pins
+
+
+@pytest.mark.parametrize('mutation', ['none', 'schedule', 'window', 'trainer_failure'])
+def test_training_only_runs_exact_epoch_qualification_without_dispatching_arena(tmp_path, monkeypatch, mutation):
+    m = training_only_manifest(tmp_path)
+    fixture = tmp_path / 'fixture'
+    fixture.mkdir()
+    fixture_run, summary, report = training_fixture(fixture)
+    run = Path(m['run'])
+    corpus = epoch.corpus_for(m)
+    summary['corpus']['shard_dirs'] = [str(corpus)]
+    summary['checkpoints'][0]['path'] = str(run / 'checkpoint.pt')
+    if mutation == 'window':
+        summary['train_window_metrics'][4]['transient_cuda_retry_batches'] = 1
+    report['arms']['B100'] = report['arms'].pop('E0T05')
+    report['arms']['B100']['corpus'] = str(corpus)
+    prospective = json.loads(json.dumps(report))
+    prospective['arms']['B100']['staging'] = 'prospective only'
+    prospective['arms']['C'] = {
+        'summary_sha256': epoch.INPUT_PINS[str(epoch.C_CHECKPOINT.parent / 'summary.json')],
+        'training_completion_verified': True, 'metadata_matches_source': True,
+        'canonical_plan_sha256': epoch.CANONICAL,
+    }
+    Path(m['prospective_schedule']['path']).write_text(json.dumps(prospective))
+    (tmp_path / 'scratchpad').mkdir()
+    monkeypatch.setattr(epoch, 'ROOT', tmp_path)
+    monkeypatch.setattr(epoch, 'check_pins', lambda _m: {'executable': sys.executable})
+    monkeypatch.setattr(epoch, 'training_runtime_probe', lambda _rt: {'training_runtime': True})
+    monkeypatch.setattr(arena, 'disk_guard', lambda _path: None)
+    monkeypatch.setattr(epoch.subprocess, 'check_output', lambda *_a, **_kw: '')
+    monkeypatch.setattr(epoch, 'train_command', lambda _m: ['qualified-trainer'])
+    def no_arena(*_args, **_kwargs):
+        pytest.fail('training-only mode reached an arena-only dependency')
+    monkeypatch.setattr(arena, 'runtime_probe', no_arena)
+    monkeypatch.setattr(arena, 'execute', no_arena)
+    stages = []
+    def stage(command, _out, seconds, lease_fd, name, _metadata, **_kwargs):
+        stages.append(name)
+        if name == 'training':
+            assert command == ['qualified-trainer']
+            assert seconds == 16200
+            assert lease_fd is not None
+            if mutation == 'trainer_failure':
+                raise ValueError('trainer failed')
+            run.mkdir()
+            (run / 'checkpoint.pt').write_bytes((fixture_run / 'checkpoint.pt').read_bytes())
+            (run / 'summary.json').write_text(json.dumps(summary))
+            return {'gpu_seconds': 9.}
+        assert name == 'schedule'
+        assert seconds == 1800
+        assert lease_fd is None
+        assert f'B100={run}' in command
+        report['arms']['B100']['summary_sha256'] = arena.sha(run / 'summary.json')
+        if mutation == 'schedule':
+            report['arms']['B100']['physical_plan_sha256'] = 'wrong'
+        Path(command[-1]).write_text(json.dumps(report))
+        return {'gpu_seconds': 0.}
+    monkeypatch.setattr(arena, 'run_owned_stage', stage)
+    state = Path(m['state'])
+    if mutation != 'none':
+        with pytest.raises(ValueError, match=r'schedule differ|skipped/retried|trainer failed'):
+            epoch.execute(m)
+        assert (state / 'failed.json').exists()
+        assert not (state / 'complete.json').exists()
+        assert not (state / 'training.complete.json').exists()
+        return
+    epoch.execute(m)
+    assert stages == ['training', 'schedule']
+    completed = arena.read(state / 'training.complete.json')
+    assert completed['checkpoint']['role'] == 'B100'
+    assert completed['canonical_plan_sha256'] == epoch.CANONICAL
+    assert completed['historical_valid_control'] is False
+    assert completed['historical_validity_problems'] == ['historical purity limitation']
+    final = arena.read(state / 'complete.json')
+    assert final['scope'] == 'training_only'
+    assert final['training_only_complete'] is True
+    assert final['training_receipt_sha256'] == arena.sha(state / 'training.complete.json')
+    assert 'complete' not in final
+    assert not any('arena' in path.name for path in state.iterdir())
+
+
+def test_training_only_cli_plan_explicitly_omits_arena_package(tmp_path, monkeypatch, capsys):
+    m = training_only_manifest(tmp_path)
+    path = tmp_path / 'manifest.json'
+    path.write_text(json.dumps(m))
+    Path(m['runtime_manifest']['path']).write_text(json.dumps({'runtime': {'executable': sys.executable}}))
+    monkeypatch.setattr(sys, 'argv', ['bt4_one_epoch_screen.py', '--manifest', str(path)])
+    epoch.main()
+    plan = json.loads(capsys.readouterr().out)
+    assert plan['scope'] == 'training_only'
+    assert plan['comparisons'] == []
+    assert plan['schedule_seconds'] == 1800
+    assert 'total_seconds' not in plan
+    assert not Path(m['state']).exists()
+
+
+@pytest.mark.parametrize('mismatch', [False, True])
+def test_training_runtime_probe_uses_cpu_environment_and_checks_imported_identity(tmp_path, monkeypatch, mismatch):
+    (tmp_path / 'torch.py').write_text(
+        'import os\nassert os.environ["CUDA_VISIBLE_DEVICES"] == ""\n'
+        'assert os.environ["OMP_NUM_THREADS"] == "2"\n'
+        'print("import diagnostic")\n__version__ = "fixture-torch"\n'
+        'class version:\n    cuda = "fixture-cuda"\n')
+    (tmp_path / 'numpy.py').write_text('__version__ = "fixture-numpy"\n')
+    native = tmp_path / 'fixture_native.py'
+    native.write_text('# isolated import identity fixture\n')
+    monkeypatch.setattr(arena, 'RUNTIME', tmp_path)
+    expected = {'python': sys.version, 'executable': sys.executable, 'torch': 'fixture-torch',
+                'cuda': 'fixture-cuda', 'numpy': 'wrong' if mismatch else 'fixture-numpy',
+                'native_extensions': {'fixture_native': str(native)}, 'native_extension_sha256': {}}
+    if mismatch:
+        with pytest.raises(ValueError, match='actual training runtime differs'):
+            epoch.training_runtime_probe(expected)
+    else:
+        assert epoch.training_runtime_probe(expected)['native_extensions'] == {'fixture_native': str(native)}

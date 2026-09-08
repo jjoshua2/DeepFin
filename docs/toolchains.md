@@ -111,6 +111,30 @@ the complete seed-zero epoch and run only that profile's fixed comparisons. The
 500-game higher-search probe is tied to the completed same-candidate C100 bank's
 first 250 opening pairs. Old profile defaults retain their original reader.
 
+For a separately registered training stage, `bt4_one_epoch_screen.py` also accepts
+`schema: 3`, `mode: "training_only"` and one of the same H20/B100/G50 profiles.
+Use the ordinary `--manifest FILE` preview and add `--execute` only to run it.
+The manifest retains `state`, `run`, `training_seconds: 16200`, `runtime_manifest`,
+`preregistration`, `prospective_schedule`, `launcher_sha256`, `input_pins` and
+`data_qualification`. It pins the shared supervision module with
+`stage_helper_sha256`; omit `arena_launcher_sha256`, `reader`, `comparisons`,
+`arena_seconds` and `total_seconds`. Extra arena fields are rejected.
+
+Training-only preserves the qualified old training runtime, exact 18,910,484-row
+seed-zero epoch, 512-row batches, complete finite-window checks and prospective /
+realized canonical schedule checks. The GPU stage keeps its 4.5-hour cap; the
+separate CPU schedule verifier keeps its 1,800-second cap. C's completed schedule
+summary remains a witness, but no opening book, arena reader or control-checkpoint
+payload is required. The CPU runtime probe checks actual package/native identities
+without resolving arena search settings.
+
+The existing `training.complete.json` checkpoint/schedule interface is unchanged.
+The top-level `complete.json` instead declares `scope: "training_only"` and
+`training_only_complete: true`, with its training receipt hash and GPU charge;
+it intentionally has no generic `complete: true` package flag. No arena is
+dispatched or implied. A later match needs its own registration, runtime and
+reader qualification. Schema 1/2 still run their original fixed comparisons.
+
 For H20 target construction, `scripts/bt4_policy_mix.py mix --scope c20-global`
 keeps `--shards` pointed at original SF. Supply the actual stored C corpus through
 `--c20-parent`, pin it with `--expected-c20-summary-sha256` and
