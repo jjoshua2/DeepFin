@@ -1,0 +1,144 @@
+{
+  "checks": {
+    "available_providers": [
+      "TensorrtExecutionProvider",
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "cuda_initialized": false,
+    "functional_remap_exact": true,
+    "live_head_and_tracked_files_unchanged": true,
+    "ort_session_created": false,
+    "same_interpreter_and_libraries": true,
+    "two_castling_boards_same_probabilities": true,
+    "two_existing_sidecars_ordinary_admission": [
+      {
+        "attrs_sha256": "1b384ab4f324eef8acbd199cc4e10d3cd56fdb6bd6a367c1adcad59e5b286b34",
+        "banked_receipt_exact": true,
+        "ordinary_validate_existing_pass": true,
+        "sidecar": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run06_g10/w00-00000.bt4.zarr",
+        "snapshot_sha256": "8684984ed17e457245f2e54c1e731aa46be7f20ecf2b46a51855eac28c88ab5e",
+        "source_id": "run06_g10",
+        "source_stat": {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst",
+          "st_ctime_ns": 1788379921244293574,
+          "st_dev": 2096,
+          "st_ino": 9783581,
+          "st_mtime_ns": 1788379921244293574,
+          "st_size": 21154455
+        }
+      },
+      {
+        "attrs_sha256": "55a10e5af9500edf3df9254e6aecd15a622a07834992f3d25a523102c6357b9e",
+        "banked_receipt_exact": true,
+        "ordinary_validate_existing_pass": true,
+        "sidecar": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run07_g10_companion4/w00-00000.bt4.zarr",
+        "snapshot_sha256": "f27dc5c265448ccc1ea38b57cd0dbc30a5db84fdb2f5317fdfc25ba7b84012ed",
+        "source_id": "run07_g10_companion4",
+        "source_stat": {
+          "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00000.jsonl.zst",
+          "st_ctime_ns": 1788472621199432022,
+          "st_dev": 2096,
+          "st_ino": 9748927,
+          "st_mtime_ns": 1788472621199432022,
+          "st_size": 20692331
+        }
+      }
+    ]
+  },
+  "code_pins": {
+    "scripts/bt4_policy_dump.py": {
+      "main_blob": "dcb91cc2b183f4cfd788b246dd63f48b7b9cec3c",
+      "sha256": "d6b62559952aee3b0baeeadfdb584aeb9a6fd88b0d2285ab162ee39776be2cf8"
+    },
+    "scripts/bt4_raw_corpus_sidecar.py": {
+      "main_blob": "e1e71331549776d61607c0bfeb453f25501736f2",
+      "sha256": "6a58dab2deddc8cae3d801ec988d25b4e80c16f530fb3fc3df756440f2748c23"
+    }
+  },
+  "created_utc": "2026-09-08T03:36:33.110749+00:00",
+  "evidence": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/candidate_imports.json": "59871680851bbe6869f1c56bf6bab950666b1f52fee896b5871b00cda8900aa3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/candidate_imports.log": "7ef55e4e93fc57e50834c150e92b996b346f94b99bf885e3da07a49f98457fe3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/live_imports.json": "0a4dc63f976f4db16d879bbbfd4fd1ee9adf11a59e9fd76e4c352376922fd6f5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/live_imports.log": "1b29943836e93b9c114cc177f7df8703cc47ab03384212e004062624ac0d4f22",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/proposed_launch.json": "6979835550d5744d5860e7aad43ce00380cc77871f92efb5e67554e71a5f51ba",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/qualify_imports.py": "0e3d7245c0a0db8316be78d30de943d9cce000b2a7eb194948066884f39fdbfd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/snapshot_preparation.json": "e7b1a8fcfdbe2311a02f52537bc43c7dab3b11f3015dcdd5a555f00e08cbf4f8"
+  },
+  "exact_changed_paths": [
+    "scripts/bt4_policy_dump.py",
+    "scripts/bt4_raw_corpus_sidecar.py"
+  ],
+  "limits": [
+    "GPU remains hidden throughout qualification; provider installation and sidecar identity checked, but no CUDA session initialization/inference was performed. The actual next group retains normal session/provider and writer/GPU-lease admission checks.",
+    "Libraries and native links use the existing installed stack, not a new dependency installation or copiedmain MCTS backend. Preserve linked native targets; detect changes against recorded identities before later groups.",
+    "No complete sidecar payload or raw corpus scan. Two closed-shard headers/arraylayouts and pinnedreceipts inspected read-only; fullpayload/history validation remains covered by previous pipelinequalification.",
+    "Native links and user-site packages remain externally located dependencies; runtimecommit pins trackedcode, and qualification separately pins native/libraryidentities."
+  ],
+  "merged_main": "e14101d586294042da9392e2b8cdebaed696ea4c",
+  "native_links": [
+    {
+      "runtime_path": "/tmp/deepfin-bt4-label-runtime-pr537/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+      "same_file": true,
+      "sha256": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df",
+      "source": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+      "stat": {
+        "st_ctime_ns": 1788374231332558372,
+        "st_dev": 2096,
+        "st_ino": 9748800,
+        "st_mtime_ns": 1788374225000000000,
+        "st_size": 612568
+      }
+    },
+    {
+      "runtime_path": "/tmp/deepfin-bt4-label-runtime-pr537/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+      "same_file": true,
+      "sha256": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c",
+      "source": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+      "stat": {
+        "st_ctime_ns": 1788374231332258135,
+        "st_dev": 2096,
+        "st_ino": 9748799,
+        "st_mtime_ns": 1788374223000000000,
+        "st_size": 198944
+      }
+    },
+    {
+      "runtime_path": "/tmp/deepfin-bt4-label-runtime-pr537/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so",
+      "same_file": true,
+      "sha256": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082",
+      "source": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so",
+      "stat": {
+        "st_ctime_ns": 1788374231333618294,
+        "st_dev": 2096,
+        "st_ino": 9748803,
+        "st_mtime_ns": 1788374231000000000,
+        "st_size": 644144
+      }
+    },
+    {
+      "runtime_path": "/tmp/deepfin-bt4-label-runtime-pr537/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+      "same_file": true,
+      "sha256": "9d8cc4ba5ab20e78cfc0d183c62801765002ca49d56dbf10010f16a95291e01d",
+      "source": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+      "stat": {
+        "st_ctime_ns": 1788374231333006229,
+        "st_dev": 2096,
+        "st_ino": 9748801,
+        "st_mtime_ns": 1788374229000000000,
+        "st_size": 954392
+      }
+    }
+  ],
+  "reused_validation": {
+    "main_patch": "PR537 merged;62focusedtests, independentreviewPASS, wholelintPASS and singleCPU A/B exactnumericalparity already banked in label_preparation_profile_v1 and mainreadout. No fullsuite orbenchmark repetition.",
+    "native_compatibility": "Runtime fork from exactlive7ec; no C/header/setup differences; four ABI3.10 native files are same physical files through links, SHA verified before andafterqualification."
+  },
+  "runtime": "/tmp/deepfin-bt4-label-runtime-pr537",
+  "runtime_commit": "4e600902e1fd08727e1d83e009d6e241be0c7cba",
+  "runtime_parent": "7ec261509fb7345cf1ca0ad73809193fc2749bb1",
+  "schema": 1,
+  "status": "PASS_INACTIVE_DEPLOYMENT_QUALIFICATION_NO_LABEL_LAUNCH",
+  "tracked_clean": true
+}

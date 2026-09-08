@@ -1,0 +1,213 @@
+{
+  "admissions": [
+    {
+      "attrs_sha256": "1b384ab4f324eef8acbd199cc4e10d3cd56fdb6bd6a367c1adcad59e5b286b34",
+      "banked_receipt_exact": true,
+      "ordinary_validate_existing_pass": true,
+      "sidecar": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run06_g10/w00-00000.bt4.zarr",
+      "snapshot_sha256": "8684984ed17e457245f2e54c1e731aa46be7f20ecf2b46a51855eac28c88ab5e",
+      "source_id": "run06_g10",
+      "source_stat": {
+        "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst",
+        "st_ctime_ns": 1788379921244293574,
+        "st_dev": 2096,
+        "st_ino": 9783581,
+        "st_mtime_ns": 1788379921244293574,
+        "st_size": 21154455
+      }
+    },
+    {
+      "attrs_sha256": "55a10e5af9500edf3df9254e6aecd15a622a07834992f3d25a523102c6357b9e",
+      "banked_receipt_exact": true,
+      "ordinary_validate_existing_pass": true,
+      "sidecar": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run07_g10_companion4/w00-00000.bt4.zarr",
+      "snapshot_sha256": "f27dc5c265448ccc1ea38b57cd0dbc30a5db84fdb2f5317fdfc25ba7b84012ed",
+      "source_id": "run07_g10_companion4",
+      "source_stat": {
+        "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00000.jsonl.zst",
+        "st_ctime_ns": 1788472621199432022,
+        "st_dev": 2096,
+        "st_ino": 9748927,
+        "st_mtime_ns": 1788472621199432022,
+        "st_size": 20692331
+      }
+    }
+  ],
+  "available_providers": [
+    "TensorrtExecutionProvider",
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "blosc_threads": 2,
+  "cuda_initialized": false,
+  "functional_remap": {
+    "blobs": {
+      "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+      "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+      "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+    },
+    "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+    "dirty": false
+  },
+  "helper_smoke": [
+    {
+      "fen": "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+      "probabilities_sha256": "70f03679888994fdca8765caba6c3651692357860885381ea9e40f8ddabca18f",
+      "uci": [
+        "h1h8",
+        "h1h7",
+        "h1h6",
+        "h1h5",
+        "h1h4",
+        "h1h3",
+        "h1h2",
+        "h1g1",
+        "h1f1",
+        "e1f2",
+        "e1e2",
+        "e1d2",
+        "e1f1",
+        "e1d1",
+        "a1a8",
+        "a1a7",
+        "a1a6",
+        "a1a5",
+        "a1a4",
+        "a1a3",
+        "a1a2",
+        "a1d1",
+        "a1c1",
+        "a1b1",
+        "e1g1",
+        "e1c1"
+      ]
+    },
+    {
+      "fen": "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+      "probabilities_sha256": "bb429bd8b69e776ec3ddf07f3f4069f915b6f511d1930898b0912e61e1f9980b",
+      "uci": [
+        "h8g8",
+        "h8f8",
+        "h8h7",
+        "h8h6",
+        "h8h5",
+        "h8h4",
+        "h8h3",
+        "h8h2",
+        "h8h1",
+        "e8f8",
+        "e8d8",
+        "e8f7",
+        "e8e7",
+        "e8d7",
+        "a8d8",
+        "a8c8",
+        "a8b8",
+        "a8a7",
+        "a8a6",
+        "a8a5",
+        "a8a4",
+        "a8a3",
+        "a8a2",
+        "a8a1",
+        "e8g8",
+        "e8c8"
+      ]
+    }
+  ],
+  "interpreter": {
+    "path": "/usr/bin/python3.10",
+    "st_ctime_ns": 1773693016214688042,
+    "st_dev": 2096,
+    "st_ino": 89253,
+    "st_mtime_ns": 1772538992000000000,
+    "st_size": 5937704
+  },
+  "interpreter_sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49",
+  "libraries": {
+    "chess": {
+      "file": {
+        "path": "/home/josh/.local/lib/python3.10/site-packages/chess/__init__.py",
+        "st_ctime_ns": 1783009396549171219,
+        "st_dev": 2096,
+        "st_ino": 33780536,
+        "st_mtime_ns": 1773456740000000000,
+        "st_size": 150843
+      },
+      "version": "1.11.2"
+    },
+    "numcodecs": {
+      "file": {
+        "path": "/home/josh/.local/lib/python3.10/site-packages/numcodecs/__init__.py",
+        "st_ctime_ns": 1783009407638549001,
+        "st_dev": 2096,
+        "st_ino": 33882548,
+        "st_mtime_ns": 1773703708322986153,
+        "st_size": 3101
+      },
+      "version": "0.13.1"
+    },
+    "numpy": {
+      "file": {
+        "path": "/home/josh/.local/lib/python3.10/site-packages/numpy/__init__.py",
+        "st_ctime_ns": 1787014331368818369,
+        "st_dev": 2096,
+        "st_ino": 34054365,
+        "st_mtime_ns": 1787014331368818369,
+        "st_size": 16754
+      },
+      "version": "1.26.2"
+    },
+    "onnxruntime": {
+      "file": {
+        "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/__init__.py",
+        "st_ctime_ns": 1783009385050018131,
+        "st_dev": 2096,
+        "st_ino": 33556126,
+        "st_mtime_ns": 1774996556538983259,
+        "st_size": 14874
+      },
+      "version": "1.23.2"
+    },
+    "onnxruntime.capi.onnxruntime_pybind11_state": {
+      "file": {
+        "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.cpython-310-x86_64-linux-gnu.so",
+        "st_ctime_ns": 1783009385055192582,
+        "st_dev": 2096,
+        "st_ino": 33556143,
+        "st_mtime_ns": 1774996560134982303,
+        "st_size": 22582104
+      },
+      "version": "None"
+    },
+    "torch": {
+      "file": {
+        "path": "/home/josh/.local/lib/python3.10/site-packages/torch/__init__.py",
+        "st_ctime_ns": 1787014877100414859,
+        "st_dev": 2096,
+        "st_ino": 33808281,
+        "st_mtime_ns": 1787014877100414859,
+        "st_size": 107845
+      },
+      "version": "2.11.0+cu128"
+    },
+    "zarr": {
+      "file": {
+        "path": "/home/josh/.local/lib/python3.10/site-packages/zarr/__init__.py",
+        "st_ctime_ns": 1783009407646747297,
+        "st_dev": 2096,
+        "st_ino": 33882704,
+        "st_mtime_ns": 1773703708490986101,
+        "st_size": 1425
+      },
+      "version": "2.18.3"
+    }
+  },
+  "loaded_dump_path": "/tmp/deepfin-bt4-label-runtime-pr537/scripts/bt4_policy_dump.py",
+  "loaded_raw_path": "/tmp/deepfin-bt4-label-runtime-pr537/scripts/bt4_raw_corpus_sidecar.py",
+  "ort_session_created": false,
+  "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+  "runtime": "/tmp/deepfin-bt4-label-runtime-pr537",
+  "status": "PASS_IMPORTS_AND_METADATA_ADMISSION_NO_GPU_SESSION",
+  "torch_threads": 2
+}

@@ -8,9 +8,9 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity; one CPU postprocessing observation took 49.08% less time, with end-to-end and artificial-logit limits |
+| [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity and CPU component benefit; existing runtime qualified, graceful handoff armed awaiting old group boundary |
 | [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 528,545 common rows prepared with exact exclusions; both shutdown warnings retained; larger transfer remains unqualified |
-| [BT4 hybrid and global endpoints](2026-09-07-bt4-hybrid-endpoints.md) | H20 corpus recovered and qualified; training started, outcomes pending; subsequent tests remain adaptive |
+| [BT4 hybrid and global endpoints](2026-09-07-bt4-hybrid-endpoints.md) | H20 training started; B100 cached audit complete and bulk preparation reviewed but unlaunched; outcomes pending |
 | [External archive and restore record](2026-09-07-storage-archive.md) | 38 verified archives, qualified local cleanup, retained dependencies and restore instructions |
 | [Fresh paired BT4 confirmation](2026-09-07-bt4-fresh-confirmation.md) | Completed fresh seed-one comparison: C beats E by 37.67 Elo [18.72, 56.85] at 100 sims |
 | [Direct SF-close versus global sharpened BT4](2026-09-06-bt4-direct-close-global.md) | Completed 100-simulation comparison favors C over G20T05 |

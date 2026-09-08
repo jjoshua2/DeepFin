@@ -1,0 +1,27 @@
+{
+  "status": "BLOCKED_PENDING_NARROW_CORRECTIONS",
+  "driver_sha256": "619eaa2acad0ade493ecf0614492af809f7fad1ade0170bd8d6fce5c2c1aa8d6",
+  "runtime_verifier_sha256": "8ac3f13d293b74e7b80ff3880d0e659e77bcae1e8573b7da9dea76c251c99b18",
+  "findings": [
+    {
+      "issue": "Request replacement between SHA check and mv consumes operator pause then resumes",
+      "reproduced": true,
+      "fixture": "/tmp/check_label_handoff.py",
+      "observation": "replace_during_move returned0 and created work marker; original pause path absent",
+      "correction": "Revalidate moved marker before any work; preserve/restore changed marker without overwriting newer operator pause."
+    },
+    {
+      "issue": "Recorded interpreter path metadata does not bind PATH-resolved python3 symlink",
+      "reproduced": false,
+      "correction": "Require resolved /usr/bin/python3 path equals recorded qualified interpreter path."
+    }
+  ],
+  "passed": [
+    "Held original driver.lock prevents new work",
+    "Matching request permits work only after lock release and original paused proof",
+    "Already changed request and separate new-OPS pause prevent work",
+    "Snapshot original driver equals actual original file",
+    "New runtime changes exactly two intended files against live parent; qualification records unchanged provider/data/lease semantics"
+  ],
+  "limits": "Fixtures replace verifier and worker with isolated no-op/work markers; no real OPS markers, labels, GPU or active process changed."
+}

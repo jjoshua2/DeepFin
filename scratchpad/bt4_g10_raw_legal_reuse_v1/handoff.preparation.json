@@ -1,0 +1,32 @@
+{
+  "status": "PREPARING_NOT_ARMED",
+  "original_driver_sha256": "e309086e111c9f7b4bd2b3807573e84ee38c39fb1a46b5e5385e6609207044e9",
+  "original_driver": "scratchpad/bt4_g10_raw/driver.sh",
+  "observed_old_driver_pid": 4251,
+  "observed_old_waiting_worker_pid": 288651,
+  "new_runtime": "/tmp/deepfin-bt4-label-runtime-pr537",
+  "new_operations_dir": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1",
+  "shared_driver_lock": "/home/josh/projects/chess/scratchpad/bt4_g10_raw/driver.lock",
+  "old_pause_marker": "/home/josh/projects/chess/scratchpad/bt4_g10_raw/pause.request",
+  "handoff_request_sha256": "54388b8f5a684b9b840b7489ff1e5b8a257cd8ab5de133d43a6e4c718ea8ffce",
+  "transition": "Start qualified new driver waiting for existing driver lease, then create absent old pause.request with exact owned content. Existing queuedgroup completes normally, old driver pauses atloopboundary, newdriver acquireslease, verifiesmatchinghandoff request andoldpaused proof thenconsumesownmarker. Newdriver respects bothnewandoriginalpause.request markers afterwards. No processkill.",
+  "limits": {
+    "driver_lease_wait_seconds": 21600,
+    "source_and_sidecar_state": "unchanged existing run06/run07raw+g10_raw sidecars",
+    "group_shards": 16,
+    "batch_size": 1024,
+    "ORT_threads": 16,
+    "OMP_MKL_OPENBLAS_threads": 2,
+    "gpu_mem_gb": 24,
+    "min_free_GiB": 150,
+    "group_boundary_sleep_seconds": 15
+  },
+  "adoption_evidence": "After takeover verify actualdriver/childcwd andsourcehashes, realizedCUDAprovider andfirstnewlycompletedsidecarstamps. Ordinarynextgroup provides descriptive throughput including ownstartup/identityscan time separately; no timingrepeats orreal-inference claim before completion.",
+  "recovery": "If qualification/launchfails, do notarmoldpause. If olddriverpaused butnewfails, preservepartialsidecarsandfailmarker; diagnose beforequalifiedresume. Neverclearanunowned/changedpausemarker.",
+  "old_environment_observation": {
+    "PATH": "/usr/bin:/bin:/home/josh/.local/bin",
+    "OMP_NUM_THREADS": "2",
+    "MKL_NUM_THREADS": "2",
+    "OPENBLAS_NUM_THREADS": "2"
+  }
+}
