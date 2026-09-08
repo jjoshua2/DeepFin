@@ -43,6 +43,7 @@ from scripts import derive_corpus_targets as derive
 from scripts import corpus_row_provenance as provenance
 from scripts import gen_sf_rooted_corpus as corpus
 from scripts.bt4_policy_dump import file_sha256
+from scripts.sidecar_cache import rank_cache_bytes, rank_identity_dtype
 
 
 SCHEMA = 1
@@ -416,15 +417,10 @@ def _bank_provenance(
     exclusions: Mapping[tuple[str, int], dict[str, Any]], exclusion_path: Path | None,
 ) -> tuple[list[dict[str, Any]], int, int, dict[str, Any]]:
     """Read raw rows once; join recorded physical rows even across output revisits."""
-    dtype = np.dtype([
-        ("game_id", "<i8"), ("ply", "<i4"), ("worker_id", "<i4"),
-        ("input_key", "u1", (16,)), ("stored_input_key", "u1", (16,)),
-        ("indices", "<u2", (top_k,)), ("gaps", "<f4", (top_k,)),
-        ("count", "u1"), ("valid", "u1"),
-    ])
+    dtype = rank_identity_dtype(top_k)
     corpus.apply_history_rep_fix()
     counts = derive.shard_row_counts(record)
-    required = limit * (dtype.itemsize + 1) + len(counts) * 512
+    required = rank_cache_bytes(limit, len(counts), top_k)
     if max_cache_bytes <= 0 or required > max_cache_bytes:
         raise ValueError(f"rank/history cache needs up to {required} bytes, cap {max_cache_bytes}")
     cache = writing / "._rank_identity_cache"

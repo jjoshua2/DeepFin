@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 import zarr
 
+from scripts.sidecar_cache import raw_identity_cache_bytes
 from scripts import bt4_policy_mix as mix
 from scripts import bt4_raw_corpus_sidecar as raw
 from scripts import corpus_row_provenance as provenance
@@ -135,7 +136,7 @@ class RawInputs:
         receipt = receipts[key[1]]
         rows = int(receipt['positions'])
         require(0 < rows <= self.max_rows, 'raw shard exceeds bounded identity-cache row limit')
-        require(self.index_bytes + rows * provenance.RECORD_DTYPE.itemsize + 4096 <= self.max_index_bytes,
+        require(self.index_bytes + raw_identity_cache_bytes(rows, 1) <= self.max_index_bytes,
                 'raw identity disk-cache budget exhausted')
         pending = raw.PendingShard(spec, spec.corpus_dir / key[1], rows, spec.out_dir / raw.sidecar_name(key[1]))
         before = {path: storage_identity(path) for path in (pending.path, pending.target)}

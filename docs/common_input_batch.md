@@ -127,3 +127,12 @@ output/cache guard is a sampled apparent-byte limit, **not a RAM limit**. Overla
 can increase simultaneous RAM and I/O use without changing CPU affinity; it must
 be explicit in the frozen batch manifest. Attempt/lane receipts record the
 effective `overlap_adapt_rank` value.
+
+Before creating an attempt, preflight sizes both identity caches from the complete
+selected raw row and shard counts. The rank writer and runner share its exact
+layout-based reservation; the adapter reserves its unchanged row layout plus a
+conservative NPY header allowance for every shard. Filtered rows still count
+toward these reservations because the underlying raw shards are verified in full.
+Insufficient declared caps fail before derivation starts. Raising a private cache
+cap does not raise the aggregate output/cache limit or establish a RAM bound.
+Runtime manifests must also pin `scripts/sidecar_cache.py`.

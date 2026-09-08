@@ -62,8 +62,16 @@ def test_rank_after_real_serial_or_spawn_support_exclusion(
         return original(row, top_k=top_k)
 
     monkeypatch.setattr(tool, 'rank_observation', observe)
+    required = tool.rank_cache_bytes(6, 2, 3)
+    with pytest.raises(ValueError, match='rank/history cache needs'):
+        tool.main([*_args(source, derived, tmp_path / 'insufficient-cache'),
+            '--max-provenance-cache-bytes', str(required - 1),
+        ])
+    assert visited == [], 'insufficient cache must refuse before raw rank extraction'
     out = tmp_path / 'ranks'
-    assert tool.main(_args(source, derived, out)) == 0
+    assert tool.main([*_args(source, derived, out),
+        '--max-provenance-cache-bytes', str(required),
+    ]) == 0
     assert sorted(visited) == [0, 2, 3, 5]
     receipt = json.loads((out / tool.SUMMARY_NAME).read_text())
     assert receipt['rows_dropped_policy_support'] == 1

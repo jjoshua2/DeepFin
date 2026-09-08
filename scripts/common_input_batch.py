@@ -23,6 +23,7 @@ import time
 from typing import Any
 
 from scripts.corpus_selection_schema import validate_selection_metadata
+from scripts.sidecar_cache import rank_cache_bytes, raw_identity_cache_bytes
 
 TOOLS = {
     "derive_corpus_targets.py",
@@ -325,6 +326,15 @@ def validate_manifest(plan):
             and sum(e["rows"] for e in entries) == source["physical_rows"],
             "selected row count differs",
         )
+        reservations = {
+            "rank_index_cache_bytes": rank_cache_bytes(source["physical_rows"], len(entries), 3),
+            "adapter_index_cache_bytes": raw_identity_cache_bytes(source["physical_rows"], len(entries)),
+        }
+        for field, required_bytes in reservations.items():
+            require(
+                limits[field] >= required_bytes,
+                f"{name}: {field} needs at least {required_bytes} bytes, cap {limits[field]}",
+            )
         for entry in entries:
             n = entry["source_shard"]
             key = (str(source_root), n)
@@ -405,6 +415,7 @@ def verify(plan):
         str(Path(plan["python"]).resolve()),
         str(Path(__file__).resolve()),
         str(Path(cwd) / "scripts" / "corpus_selection_schema.py"),
+        str(Path(cwd) / "scripts" / "sidecar_cache.py"),
         "/usr/bin/timeout",
         "/usr/bin/time",
     }
