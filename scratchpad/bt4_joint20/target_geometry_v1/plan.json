@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "status": "PREPARED_NOT_EXECUTED",
+  "created_utc": "2026-09-08T04:16:13.894883+00:00",
+  "source_main": "e14101d586294042da9392e2b8cdebaed696ea4c",
+  "pins": {
+    "/home/josh/projects/chess/scratchpad/tailrl_bootstrap_v1/bank.npz": "541a353090e375b528e27ea6c58df770651b214f04e49ebea50945c3d6cf444e",
+    "/home/josh/projects/chess/scratchpad/tailrl_bootstrap_v1/selected_raw_rows.jsonl": "f09cc1d98e95855af278ddeeb18af7936716d430016b10a05c0f6b98e6c83c5e",
+    "/home/josh/projects/chess/scratchpad/tailrl_bootstrap_v1/provenance.json": "5abe249b87b35874469b23ecf57d313ed7a8dd24dcc6481c07344107bd474fd0",
+    "/home/josh/projects/chess/scratchpad/tailrl_bootstrap_v1/selection.json": "bd7a7e23b3aae4ce1738044d141f1f3aaefb8af6ca6c530af4c2d79e75f322bb",
+    "/home/josh/projects/chess/scratchpad/tailrl_bootstrap_v1/teacher_targets_v1/targets.npz": "325ec0ac868ea50863d6bbe1e55b54ec6a286e955153675e08874ec49c204175",
+    "/home/josh/projects/chess/scratchpad/tailrl_bootstrap_v1/teacher_targets_v1/provenance.json": "15b24d87f75e9be0fd868758474e387de9314a3e2a0641ff70867a7f88e99a40",
+    "/tmp/deepfin-bt4-readiness-handoff/scripts/sf_d9_rank_sidecar.py": "1c8c6c1c93f9ec8786f7ac14c9be19ec86d3a8b6092c19c80d935a22148961c6",
+    "/tmp/deepfin-bt4-readiness-handoff/scripts/bt4_policy_mix.py": "cd8059e408a539e4617e13b576890c353a95bd8b3835142c27a92c7ab5917ce3",
+    "/tmp/deepfin-bt4-readiness-handoff/scripts/derive_corpus_targets.py": "c2af7b62644cf5658c1dfc2564b2196c51c8860dd91152f2db05d3d2614311a6",
+    "/tmp/deepfin-bt4-readiness-handoff/chess_anti_engine/stockfish/wdl.py": "11b80c842254e825272d2e84bff473fb12cd3cb5d61c98d5f0bd9f743af43b98",
+    "/tmp/deepfin-bt4-readiness-handoff/chess_anti_engine/moves/encode.py": "4c3227adfc74d9911d1db66e4abf7cb27e19d6fcd9006069f638f53966e7ac6f",
+    "/tmp/deepfin-bt4-readiness-handoff/chess_anti_engine/utils/bitboards.py": "faa1c98105039451d5601f2a0764068fab250c2e340a69d3163dd801babdfaf2"
+  },
+  "rows": 128,
+  "games": 43,
+  "temperatures_cp": [
+    10,
+    20,
+    40,
+    80
+  ],
+  "output": "readout.json",
+  "scope": "Fixed seen-training first-shard sample, not representative, not heldout, no final temperature choice. No corpus or inference access.",
+  "command": [
+    "env",
+    "CUDA_VISIBLE_DEVICES=",
+    "OMP_NUM_THREADS=2",
+    "MKL_NUM_THREADS=2",
+    "OPENBLAS_NUM_THREADS=2",
+    "NUMEXPR_NUM_THREADS=2",
+    "BLOSC_NTHREADS=2",
+    "nice",
+    "-n",
+    "19",
+    "ionice",
+    "-c",
+    "3",
+    "taskset",
+    "-c",
+    "0,1",
+    "timeout",
+    "--kill-after=10s",
+    "120s",
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/target_geometry_v1/analyze.py"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "status": "PASS_ROOT_SEMANTIC_REVIEW_BEFORE_RUN",
+  "script_sha256": "1350377a8d7e026dd7abe9ea700a0ed44bbcfcfa9b685ee18c75c2c942011987",
+  "checks": [
+    "Exact rank/C union functions and all-legal raw-bank alignment used",
+    "WDL subtraction exactly matches existing bank collector and q_from_effective_cp",
+    "Source softmax and float32-to-float16 functions reused",
+    "No new source scan, inference, policy selection or population inference",
+    "Known128rows43games limitation and fixed temperature/strata definitions preserved"
+  ],
+  "reviewer_authored_script": false,
+  "actual_helper_checkout_commit": "64aed9d2bf76aaeca3c4549e28d1e258a160e3ec",
+  "note": "plan source_main e14101 identifies unchanged helper code; actual64aed9 checkout additionally contains documentation only"
+}

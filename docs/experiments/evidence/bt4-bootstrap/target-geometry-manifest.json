@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "captured_utc": "2026-09-08T04:24:28.444792+00:00",
+  "purpose": "Immutable descriptive training-bank geometry evidence. Historical script contains original host paths; not portable execution instructions. No secret credentials, corpora, checkpoints or new inference.",
+  "files": [
+    {
+      "source_path": "scratchpad/bt4_joint20/target_geometry_v1/analyze.py",
+      "published_path": "scratchpad/bt4_joint20/target_geometry_v1/analyze.py",
+      "original_bytes": 9235,
+      "original_sha256": "1350377a8d7e026dd7abe9ea700a0ed44bbcfcfa9b685ee18c75c2c942011987",
+      "published_bytes": 9235,
+      "published_sha256": "1350377a8d7e026dd7abe9ea700a0ed44bbcfcfa9b685ee18c75c2c942011987",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/target_geometry_v1/plan.json",
+      "published_path": "scratchpad/bt4_joint20/target_geometry_v1/plan.json",
+      "original_bytes": 2715,
+      "original_sha256": "5be56feb1c568b983ad2a22f3644a706b699e7571c09767f5efd0ad189181b05",
+      "published_bytes": 2715,
+      "published_sha256": "5be56feb1c568b983ad2a22f3644a706b699e7571c09767f5efd0ad189181b05",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/target_geometry_v1/preregistration.md",
+      "published_path": "scratchpad/bt4_joint20/target_geometry_v1/preregistration.md",
+      "original_bytes": 2714,
+      "original_sha256": "5f6b1332cfbd55ff599bff8a1b34dbf43cfa3e568b630d2364bc2b3ea71e3aa8",
+      "published_bytes": 2714,
+      "published_sha256": "5f6b1332cfbd55ff599bff8a1b34dbf43cfa3e568b630d2364bc2b3ea71e3aa8",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/target_geometry_v1/prelaunch_review.json",
+      "published_path": "scratchpad/bt4_joint20/target_geometry_v1/prelaunch_review.json",
+      "original_bytes": 801,
+      "original_sha256": "6946975dc5b78e83afd1491039305dcd9936235652436f5cf83590d22aec128a",
+      "published_bytes": 801,
+      "published_sha256": "6946975dc5b78e83afd1491039305dcd9936235652436f5cf83590d22aec128a",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/target_geometry_v1/execution.json",
+      "published_path": "scratchpad/bt4_joint20/target_geometry_v1/execution.json",
+      "original_bytes": 584,
+      "original_sha256": "6ea440d56860e644215cb3cfaefd5e464e4dbbcc79c5edd6d6f725b1f4960d04",
+      "published_bytes": 584,
+      "published_sha256": "6ea440d56860e644215cb3cfaefd5e464e4dbbcc79c5edd6d6f725b1f4960d04",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/target_geometry_v1/execution.log",
+      "published_path": "scratchpad/bt4_joint20/target_geometry_v1/execution.log",
+      "original_bytes": 162,
+      "original_sha256": "813c096a295a4aac808d5ef4a5729c0d1aa0bd6a684e6f766cd6fd65905df866",
+      "published_bytes": 162,
+      "published_sha256": "813c096a295a4aac808d5ef4a5729c0d1aa0bd6a684e6f766cd6fd65905df866",
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/target_geometry_v1/readout.json",
+      "published_path": "scratchpad/bt4_joint20/target_geometry_v1/readout.json.gz",
+      "original_bytes": 622453,
+      "original_sha256": "6d66d3b4cbe40da2d3dd310fabfe88c6f7041003d9f0b6c3e1d4f74eaca796ef",
+      "published_bytes": 81722,
+      "published_sha256": "8026fca03ef9c60e25e09fccbbe27aa57e295ac9e17a940f21254c28284fc3a0",
+      "encoding": "gzip"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/target_geometry_v1/independent_review.json",
+      "published_path": "scratchpad/bt4_joint20/target_geometry_v1/independent_review.json",
+      "original_bytes": 4917,
+      "original_sha256": "5c6e4f23e9861f823681b19e4e42a28a790fe64d9c874bcdfa700f5be0fa1cfc",
+      "published_bytes": 4917,
+      "published_sha256": "5c6e4f23e9861f823681b19e4e42a28a790fe64d9c874bcdfa700f5be0fa1cfc",
+      "encoding": "identity"
+    }
+  ],
+  "external_inputs": [
+    {
+      "source_path": "scratchpad/tailrl_bootstrap_v1/bank.npz",
+      "bytes": 1847655,
+      "sha256": "541a353090e375b528e27ea6c58df770651b214f04e49ebea50945c3d6cf444e",
+      "reason": "Existing training bank/provenance, not republished by this change"
+    },
+    {
+      "source_path": "scratchpad/tailrl_bootstrap_v1/selected_raw_rows.jsonl",
+      "bytes": 1239909,
+      "sha256": "f09cc1d98e95855af278ddeeb18af7936716d430016b10a05c0f6b98e6c83c5e",
+      "reason": "Existing training bank/provenance, not republished by this change"
+    },
+    {
+      "source_path": "scratchpad/tailrl_bootstrap_v1/provenance.json",
+      "bytes": 120253,
+      "sha256": "5abe249b87b35874469b23ecf57d313ed7a8dd24dcc6481c07344107bd474fd0",
+      "reason": "Existing training bank/provenance, not republished by this change"
+    },
+    {
+      "source_path": "scratchpad/tailrl_bootstrap_v1/selection.json",
+      "bytes": 2018,
+      "sha256": "bd7a7e23b3aae4ce1738044d141f1f3aaefb8af6ca6c530af4c2d79e75f322bb",
+      "reason": "Existing training bank/provenance, not republished by this change"
+    },
+    {
+      "source_path": "scratchpad/tailrl_bootstrap_v1/teacher_targets_v1/targets.npz",
+      "bytes": 369417,
+      "sha256": "325ec0ac868ea50863d6bbe1e55b54ec6a286e955153675e08874ec49c204175",
+      "reason": "Existing training bank/provenance, not republished by this change"
+    },
+    {
+      "source_path": "scratchpad/tailrl_bootstrap_v1/teacher_targets_v1/provenance.json",
+      "bytes": 355900,
+      "sha256": "15b24d87f75e9be0fd868758474e387de9314a3e2a0641ff70867a7f88e99a40",
+      "reason": "Existing training bank/provenance, not republished by this change"
+    }
+  ],
+  "limits": "128 rows,43 games,one first-shard sample; not representative, heldout, training strength or full-corpus qualification.",
+  "finalized_utc": "2026-09-08T04:26:54.064351+00:00"
+}
