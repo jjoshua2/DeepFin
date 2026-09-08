@@ -1,0 +1,164 @@
+{
+  "baseline_reconstruction": {
+    "baseline_dump.py": "scripts/bt4_policy_dump.py",
+    "baseline_raw.py": "scripts/bt4_raw_corpus_sidecar.py",
+    "commit": "bb01468b1a0eb0e6a97102e069525911ef04f76a"
+  },
+  "copies": [
+    {
+      "bytes": 5209,
+      "path": "profile_plan.json",
+      "sha256": "a91c12e14a83397e2cd6164abf05f182e18decf42543e38f1870ab07d210d900",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/plan.json"
+    },
+    {
+      "bytes": 9152,
+      "path": "profile_script.py",
+      "sha256": "3a95ef725f91f8b7ec74908f288cb08daf0b719a5bf7da2d9579e9538aaa4007",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/profile_preparation.py"
+    },
+    {
+      "bytes": 702,
+      "path": "profile_command.sh",
+      "sha256": "0abcd722a93936cbb9cc6754eb6c1a90a1bc1c095c4e432b8469a926a98ec22e",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run_once.sh"
+    },
+    {
+      "bytes": 2696,
+      "path": "profile_completed.json",
+      "sha256": "cc60884cc3c056b9da69a7c6094bf91840fe96ded18a533b54d842eebab0b3d9",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/completed.json"
+    },
+    {
+      "bytes": 1026,
+      "path": "profile_resources.txt",
+      "sha256": "d26c55b9910926fd4f41c313a1856116c844bfea2006604c1d1fc11a471e858b",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/resources.txt"
+    },
+    {
+      "bytes": 8503,
+      "path": "profile_analysis.json",
+      "sha256": "694d58c7012ad0c2fd83eda56fccf67a1b9e9ce4ab85931f8ea127a0b914183a",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/analysis.json"
+    },
+    {
+      "bytes": 7522,
+      "path": "ab_plan.json",
+      "sha256": "2d7ffbd36b4aacd2de39b9a9a0299e6faeaf6a0c633d49a917a7a71ba53c22be",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/plan.json"
+    },
+    {
+      "bytes": 6856,
+      "path": "ab_script.py",
+      "sha256": "d74720f04b4c18b7eeb9c30b404d0971ace2424c87f063259305a0da0e1bfa0c",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/measure_once.py"
+    },
+    {
+      "bytes": 594,
+      "path": "ab_command.sh",
+      "sha256": "43fbadaecc4422f1ca54f5dbfda3b71fec7e8363b3caf3a9930b70ad71d226e9",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/run_once.sh"
+    },
+    {
+      "bytes": 1516,
+      "path": "ab_completed.json",
+      "sha256": "758a9bdb31c45518d8bef8153e5e9e7215452ecce9f45b299e6b11b34ab17a9a",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/run/completed.json"
+    },
+    {
+      "bytes": 943,
+      "path": "ab_resources.txt",
+      "sha256": "6eeba3d6a915e18615a4417f50eee874adeea6eb50b8a60e4d300579329a61d7",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/run/resources.txt"
+    },
+    {
+      "bytes": 1686,
+      "path": "ab_execution.txt",
+      "sha256": "6380927260e26394faa590727e97e58f6a102b7e17606f216bb81354872d0ed7",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/run/execution.log"
+    },
+    {
+      "bytes": 1243,
+      "path": "failed_import_v1.txt",
+      "sha256": "1824390aa03db7490b24e7e21ca732088827376c399930b2728df278b0ed372f",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v1/run/execution.log"
+    },
+    {
+      "bytes": 3609,
+      "path": "failed_import_v1_plan.json",
+      "sha256": "8e52fdbfdd09c350755f0c534a0aa14320a59a8cd904f0337e53db0c548d7779",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v1/plan.json"
+    },
+    {
+      "bytes": 1509,
+      "path": "failed_import_v2_preflight.txt",
+      "sha256": "fd5a67f84d376251d78f8cfe7cfdcd7189def346087a51f4bfa03f5faae67223",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v2/import_preflight.log"
+    },
+    {
+      "bytes": 2381,
+      "path": "author_validation.json",
+      "sha256": "f9507493a7129a2a91f09ffa0370a503357c0a9b2cd3dceddc151ab7740d3c50",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_author_validation.json"
+    },
+    {
+      "bytes": 655,
+      "path": "author_tests.txt",
+      "sha256": "d3b19f082836c8769762dc204e0e8cadfae1d9573b44595c22a6a5be127eeb80",
+      "source": "/tmp/bt4-legal-reuse-tests.log"
+    },
+    {
+      "bytes": 503,
+      "path": "author_lint.txt",
+      "sha256": "31b70a13995b1dbbe0308b0f48e3b6809b6aea3eef176229f450f6cf7936d3dd",
+      "source": "/tmp/bt4-legal-reuse-lint.log"
+    },
+    {
+      "bytes": 3925,
+      "path": "independent_review.json",
+      "sha256": "838bcd1724f73386d106aab08b72a361694d2f724f208f705e34784783c3ff2a",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/legal_move_reuse_v1/independent_review.json"
+    },
+    {
+      "bytes": 987,
+      "path": "independent_adoption_check.json",
+      "sha256": "d34cc8d437ab93dbcaea03b3c6b068a5d75b7031777b83e4f4c75e61f4c3b4ea",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/legal_move_reuse_v1/independent_adoption_check.json"
+    },
+    {
+      "bytes": 6414,
+      "path": "profile_top_functions.json",
+      "sha256": "924443d2db010952adbb9d42e91a1d7dc04ce26dad22dfb66db5ebb2ca29f4eb",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/functions.json",
+      "transformation": "first20 cumulative-time sorted records"
+    }
+  ],
+  "external_artifacts": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/baseline_dump.py": {
+      "bytes": 51103,
+      "sha256": "459de69ddb9923d0dac0c420ff355303c2f3687cf313412d8f2c384a28b639f2"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v3/baseline_raw.py": {
+      "bytes": 45325,
+      "sha256": "eb85a1d0db620f4e78d68685157fff73d3ac98840b92d732338c7ce07c59e632"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/functions.json": {
+      "bytes": 82428,
+      "sha256": "270f572be9f0772fc47b7a7ac8d0beb5e453b010d10ba1397377e966d9876eb6"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/legal_mapping.json": {
+      "bytes": 1067474,
+      "sha256": "e1280e9da1685b2ce231b6cdd8a60756f67fdcf416a370dfbb8ed75f19c29140"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/profile.pstats": {
+      "bytes": 43155,
+      "sha256": "01a81808d43ae945b85a87b4457d1415973b66d08c80ca2bbddaa44452af56c5"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/rows.jsonl": {
+      "bytes": 296244,
+      "sha256": "81c17cc5a5ba364559eb72ac0f23ec75416440a4fc8c4995d6f90aba229d63b3"
+    }
+  },
+  "note": "Original absolute paths are historical provenance; copied records are immutable and may describe the pending status at their own creation time. Later author validation records completed lint/benchmark without rewriting older review receipts.",
+  "schema": 1
+}

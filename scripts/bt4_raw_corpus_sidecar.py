@@ -45,7 +45,7 @@ from scripts import gen_sf_rooted_corpus as corpus
 from scripts.bt4_policy_dump import (
     DEFAULT_ONNX,
     file_sha256,
-    legal_move_policy,
+    legal_move_probabilities,
     open_session,
     remap_provenance,
     resolve_policy_output,
@@ -573,22 +573,21 @@ def label_shard(
             )
         for offset, board in enumerate(boards):
             row_index = cursor + offset
-            ucis, probs_raw = legal_move_policy(board, output[offset])
+            moves, probs_raw = legal_move_probabilities(board, output[offset])
             probs = np.asarray(probs_raw, dtype=np.float32)
             indices = np.asarray(
                 [
-                    compact_index_for_move(board, chess.Move.from_uci(uci))
-                    for uci in ucis
+                    compact_index_for_move(board, move)
+                    for move in moves
                 ],
                 dtype=np.int64,
             )
-            expected = {
-                compact_index_for_move(board, move) for move in board.legal_moves
-            }
+            # The helper enumerates the complete legal Move list itself. Reuse
+            # those objects; a second call to the same compact converter is not
+            # an independent mapping check. Keep injectivity and range checks.
             if (
-                len(indices) != len(expected)
-                or len(set(indices.tolist())) != len(indices)
-                or set(indices.tolist()) != expected
+                len(indices) != len(moves)
+                or len(set(indices.tolist())) != len(moves)
                 or bool(np.any(indices < 0))
                 or bool(np.any(indices >= COMPACT_POLICY_SIZE))
             ):

@@ -1,0 +1,77 @@
+{
+  "banked_source_sha256": "3c93d2d127bc6d11db9eb31425e0c795c96b417106d737632ef4b689569ae17d",
+  "end_unix": 1788836110.0690105,
+  "identity_hashes": {
+    "games": "6d8efc1ac2bbb6c4ca8522bd58c5628bc4031d022e87ab110eebb53ef0e4629f",
+    "input_keys": "e0583c9377b6492faa25967f71a3a633473031435a9c1f861a3fd78d0a1ebc59",
+    "lc0_planes": "344928fe0924556c1fdd3279ab001096f5ff0d5b8653a027d04431c0e55b3c53",
+    "legal_mapping": "e1280e9da1685b2ce231b6cdd8a60756f67fdcf416a370dfbb8ed75f19c29140",
+    "planes_float32": "7c84f20125d05164cd0653516f1089e056bdccce4739feb30095cd289aa8201e",
+    "plies": "4eb8c70ed8bb729c4850f8f4d6edad1ed4f377fc3dc191ef926f1319fed988c4",
+    "rows_jsonl": "81c17cc5a5ba364559eb72ac0f23ec75416440a4fc8c4995d6f90aba229d63b3"
+  },
+  "limitations": "One sequential prefix, cProfile overhead, no GPU/inference/softmax/sidecar writes or full labeler timing. No throughput or pipeline-bottleneck conclusion.",
+  "rows": 1024,
+  "runtime": {
+    "affinity": [
+      0
+    ],
+    "extra_features": "v2_threats",
+    "history_encoding": "lc0_root_legacy_meta",
+    "numpy": "1.26.2",
+    "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+    "rep_fix_process_state": null,
+    "row_schema": 3,
+    "threads_after": {
+      "blosc": 2,
+      "torch": 2
+    },
+    "threads_before": {
+      "blosc": 8,
+      "torch": 2
+    },
+    "torch": "2.11.0+cu128"
+  },
+  "source_after": {
+    "st_ctime_ns": 1788379921244293574,
+    "st_dev": 2096,
+    "st_ino": 9783581,
+    "st_mode": 33188,
+    "st_mtime_ns": 1788379921244293574,
+    "st_nlink": 1,
+    "st_size": 21154455
+  },
+  "source_before": {
+    "st_ctime_ns": 1788379921244293574,
+    "st_dev": 2096,
+    "st_ino": 9783581,
+    "st_mode": 33188,
+    "st_mtime_ns": 1788379921244293574,
+    "st_nlink": 1,
+    "st_size": 21154455
+  },
+  "source_hash_scope": "Banked closed-shard SHA and prior completed source check; this run checks frozen stat identity and original input keys for the first1024 rows, not a fresh whole-file SHA.",
+  "stages": {
+    "convert_lc0_planes": {
+      "cpu_seconds": 0.06243028400000039,
+      "wall_seconds": 0.0624267770035658
+    },
+    "decode_zstd_utf8_json": {
+      "cpu_seconds": 0.8738744860000001,
+      "wall_seconds": 0.8739261400187388
+    },
+    "history_encode_and_key_validation": {
+      "cpu_seconds": 0.9716776699999996,
+      "wall_seconds": 0.9716939399950206
+    },
+    "legal_mapping_only_no_logits": {
+      "cpu_seconds": 1.1002029430000002,
+      "wall_seconds": 1.1002522000053432
+    },
+    "position_fingerprints": {
+      "cpu_seconds": 0.01165404700000039,
+      "wall_seconds": 0.011650825006654486
+    }
+  },
+  "status": "COMPLETE_CPU_SUBSET_PROFILE"
+}

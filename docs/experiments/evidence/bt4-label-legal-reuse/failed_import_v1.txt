@@ -1,0 +1,14 @@
+/home/josh/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Traceback (most recent call last):
+  File "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v1/measure_once.py", line 121, in <module>
+    run()
+  File "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/legal_move_reuse_ab_v1/measure_once.py", line 42, in run
+    from scripts import bt4_raw_corpus_sidecar as raw
+  File "/tmp/deepfin-bt4-legal-reuse/scripts/bt4_raw_corpus_sidecar.py", line 43, in <module>
+    from scripts import derive_corpus_targets as derive
+  File "/tmp/deepfin-bt4-legal-reuse/scripts/derive_corpus_targets.py", line 443, in <module>
+    from scripts import audit_label_candidates as gate
+  File "/tmp/deepfin-bt4-legal-reuse/scripts/audit_label_candidates.py", line 154, in <module>
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+ModuleNotFoundError: No module named 'chess_anti_engine.encoding._lc0_ext'

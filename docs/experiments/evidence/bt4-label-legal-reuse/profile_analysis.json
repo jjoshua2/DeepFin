@@ -1,0 +1,87 @@
+{
+  "created_utc": "2026-09-08T02:59:09.224195+00:00",
+  "interpretation": [
+    "Legal mapping proxy is the largest measured component at1.100s/36.4% of these profiled stages, closely followed by combined history/encoding/key validation and JSON decoding. It excludes real softmax/probability validation and GPU output handling.",
+    "The history/encoding timer is not evidence that feature planes cost0.97s: actual encode_position cumulative time is0.184s and extra features0.030s; history reconstruction dominates that composite instead.",
+    "JSON raw_decode accounts for0.808s of0.874s decode stage; this sample implicates JSON parsing more than the combined UTF8/decompression remainder, without separately measuring every C decoder call.",
+    "Normal label_shard does not invoke full verify_shard reconstruction; full verifier is reserved for verify-all. No evidence supports deleting identity validation to gain speed."
+  ],
+  "limitations": [
+    "cProfile changes relative Python/C costs and especially charges the many calls targeted by reuse. Percentages are descriptive of instrumented subset only.",
+    "One early source prefix is not representative proof for all100M positions or later game phases.",
+    "GPU inference, softmax, final array validation/hash, compression/write, repeated bank inventory and session setup are absent from stage measurements. No end-to-end throughput estimate or strong pool-vs-reuse speed ranking is established.",
+    "No code, live process, receipt or runtime was changed by this analysis."
+  ],
+  "main_comparison": {
+    "finding": "All three files unchanged between qualified live code commit021124eeaff67a465e000a06a4a2e3b977afc801 and inspected origin/main. Raw labeler SHA independently equal on current live file and main blob.",
+    "origin_main": "bb01468b1a0eb0e6a97102e069525911ef04f76a",
+    "paths": [
+      "scripts/bt4_raw_corpus_sidecar.py",
+      "scripts/bt4_policy_dump.py",
+      "chess_anti_engine/moves/leela_index.py"
+    ]
+  },
+  "measurements": {
+    "identity": "All1024 original input keys verified; source dev/inode/size/mtime/ctime unchanged; saved source-qualified row/fingerprint and feature hashes.",
+    "mapping_counts": {
+      "compact_index_calls": 54850,
+      "legal_moves_total": 27425,
+      "mapping_uci_reparses_from_source_structure": 54850,
+      "teacher_index_calls": 27425
+    },
+    "max_rss_kib": 834776,
+    "nested_cumulative_seconds_not_additive": {
+      "board_from_row": 0.552703938,
+      "compact_index_for_move": 0.359495783,
+      "encode_position": 0.183646313,
+      "extra_feature_planes": 0.030431472,
+      "json_raw_decode": 0.808423571
+    },
+    "profiled_stage_sum_seconds": 3.019949882029323,
+    "rows": 1024,
+    "scope": "First original closed run06 shard prefix; one core; cProfile enabled; actual frozen Python3.10/NumPy1.26.2; no inference or sidecar writes.",
+    "stage_shares_of_profiled_subset": {
+      "convert_lc0_planes": 0.020671461263329555,
+      "decode_zstd_utf8_json": 0.28938431899786515,
+      "history_encode_and_key_validation": 0.3217582999563122,
+      "legal_mapping_only_no_logits": 0.3643279666833425,
+      "position_fingerprints": 0.0038579530991505904
+    },
+    "stage_wall_seconds": {
+      "convert_lc0_planes": 0.0624267770035658,
+      "decode_zstd_utf8_json": 0.8739261400187388,
+      "history_encode_and_key_validation": 0.9716939399950206,
+      "legal_mapping_only_no_logits": 1.1002522000053432,
+      "position_fingerprints": 0.011650825006654486
+    },
+    "whole_command_wall_seconds": 6.3
+  },
+  "parity_requirements": [
+    "Exact legal move order, teacher index vector and compact index vector versus current implementation on both colors, castling, en passant, all promotions/underpromotions, checks/pins and terminal positions.",
+    "Exact float64 probabilities then stored float32 sidecar arrays for finite logits and current nonfinite-logit fill behavior; preserve zero illegal mass, unit mass, entropy/top1 totals and missing mapping/duplicate/out-of-range refusal.",
+    "A tiny actual label_shard path with a deterministic fake session must match all content arrays and hashes, row order, source/input/game/ply identities and source/teacher provenance; publication timestamp/output path may differ. No GPU required.",
+    "After implementation and parity review, one bounded unprofiled old/new comparison on the same already selected bank can assess preparation cost; do not rerun real teacher inference or infer end-to-end label throughput from this CPU test."
+  ],
+  "pins": {
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/moves/leela_index.py": "ac8f6f07dc1ce8e382de1d94ce4053f92b9cf3bc0eefe730d7fd0763ca11e1cd",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/bt4_policy_dump.py": "459de69ddb9923d0dac0c420ff355303c2f3687cf313412d8f2c384a28b639f2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/bt4_raw_corpus_sidecar.py": "eb85a1d0db620f4e78d68685157fff73d3ac98840b92d732338c7ce07c59e632",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/plan.json": "a91c12e14a83397e2cd6164abf05f182e18decf42543e38f1870ab07d210d900",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/profile_preparation.py": "3a95ef725f91f8b7ec74908f288cb08daf0b719a5bf7da2d9579e9538aaa4007",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/completed.json": "cc60884cc3c056b9da69a7c6094bf91840fe96ded18a533b54d842eebab0b3d9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/exit_code.txt": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/functions.json": "270f572be9f0772fc47b7a7ac8d0beb5e453b010d10ba1397377e966d9876eb6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/profile.pstats": "01a81808d43ae945b85a87b4457d1415973b66d08c80ca2bbddaa44452af56c5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/label_preparation_profile_v1/run/resources.txt": "d26c55b9910926fd4f41c313a1856116c844bfea2006604c1d1fc11a471e858b"
+  },
+  "recommendation": {
+    "bounded_scope": "Main-based change in bt4_policy_dump.py and raw sidecar consumer, plus focused parity tests; keep legacy legal_move_policy(board, logits)->(ucis, probs) API intact via shared internal computation. No driver, multiprocessing, lease, encoder, data format or decoder change.",
+    "design": "Build list(board.legal_moves) once in a shared helper that owns legality enumeration, computes teacher indices directly from Move objects, and returns that list plus probabilities. Apply existing float64 legal-logit gather, nonfinite replacement, exp/max/sum normalization in unchanged order. Existing public legal_move_policy adapts moves to UCIs, preserving its API. Raw consumer computes compact indices once from the returned full legal Move list and retains injectivity, count/range, finite/nonnegative/unit-mass checks and zero illegal output. Other callers do not acquire unnecessary compact-index work. Do not add a cross-position cache or trust caller-supplied unverified move lists.",
+    "effect_expected_from_structure": "For this subset, remove the second27425 compact conversions, remove54850 UCI-to-Move round trips from mapping, and remove the second board legal-move enumeration. Preserve all teacher-index conversions and numerical normalization. This predicts less repeated CPU work, not a measured speedup.",
+    "guard_semantics": "The old expected set recomputes the same compact converter over a second legal enumeration; it is not an independent mapping implementation. Replace the redundant re-enumeration with a helper whose internally enumerated full legal move list is the source of count/coverage, retaining uniqueness/range checks and independent teacher mapping. Do not merely delete coverage checks at an arbitrary caller boundary.",
+    "priority": "Reuse one per-position legal Move list and its teacher/compact indices before introducing a CPU pool.",
+    "why_before_pool": "The duplicated work is localized and removable without adding worker lifetime, IPC, buffering, row-order or CPU contention behavior. A pool may later help both JSON and history but is a larger unmeasured intervention."
+  },
+  "schema": 1,
+  "status": "COMPLETED_PROFILE_ANALYSIS_ONLY_NO_IMPLEMENTATION_OR_NEW_BENCHMARK"
+}
