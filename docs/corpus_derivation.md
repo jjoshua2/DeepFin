@@ -371,3 +371,63 @@ plus an 8-byte row index and the source-native game/ply fields (normally 8+4 byt
 before compression and small shard metadata. No dense policy or 112-plane feed
 copy is stored. This producer is preparation tooling; it supplies no teacher
 quality verdict or trained-value result.
+
+### B100 policy with 90% SF / 10% native BT4 value
+
+`scripts/bt4_value_rewrite.py` consumes a complete original-derived WDL bank from
+`bt4_derived_wdl_sidecar.py` and an existing B100 policy corpus. It performs no
+inference. Every selected source shard must have a completed row-aligned WDL
+sidecar; partial banks, different teachers or heads, changed source storage,
+missing chunks and mismatched stored feeds are refused. There is no partial
+coverage fallback, overwrite or automatic resume.
+
+The single recipe is `sf90-bt4-native10`: normalize each stored SF WDL triple and
+each native BT4 probability triple, compute `0.9 * SF + 0.1 * BT4` in float64,
+then store once as float16 in `search_wdl`. W/D/L are from the side to move.
+No softmax, temperature adjustment, game outcome or calibration fit is added.
+The existing trainer normalizes the stored triple again in float32 before its
+WDL cross entropy. This is the optimized value target, rather than a new
+`sf_wdl_frac` setting: the historical offline config remains
+`search_wdl_frac=1`, `sf_wdl_frac=0`.
+
+The output is an ordinary independent copy of all 17 arrays. Only `search_wdl`
+changes; compressed bytes of the other 16 arrays, including B100 policy,
+history, identity, presence flags and raw game outcomes, must match the B100
+source. B100's original nonpolicy arrays must also match its SF parent.
+Categorical and moves-left targets remain absent. A shared model trunk means
+value training can still change the learned policy even with fixed policy
+labels.
+
+The producer writes a genuine `bt4_value_rewrite_summary.json` and
+`value_target_postprocess` provenance, retains the historical B100 policy
+summary, and stamps `derive_schema=2` with the distinct baked value scheme and
+source. The source stamp includes the teacher model SHA and requested head, so
+the old trainer refuses mixing different teacher identities even if both use the
+90/10 weights. The original derivation selectors stay recorded as source history.
+Per-shard receipts bind value checksums, source/sidecar storage, copied output
+bytes and all-row identity/feed checks. Publication uses a fresh `.writing`
+directory and preserves failed partials. Ordinary copies require space for
+another corpus; an operator must separately enforce time and output-size caps.
+The producer checks STOP and a free-space reserve while processing batches.
+
+For an explicitly pinned completed bank and B100 source:
+
+```bash
+python scripts/bt4_value_rewrite.py \
+  --source /path/to/B100 --sf-source /path/to/original_sf \
+  --wdl /path/to/derived_wdl_bank --out /path/to/new_B100V10 \
+  --expected-source-summary-sha256 B100_DERIVE_SHA \
+  --expected-policy-summary-sha256 B100_POLICY_SHA \
+  --expected-sf-summary-sha256 ORIGINAL_DERIVE_SHA \
+  --expected-onnx-sha256 BT4_MODEL_SHA --wdl-output /output/wdl
+```
+
+`bt4_one_epoch_screen.py` admits `B100V10` only in schema3 `training_only` mode,
+with the exact 90/10 recipe and original BT4 probability head/model. A separate
+completed data qualification and prospective schedule are still required. Its
+original training runtime, config, one-epoch seed-zero order, 512-row batches,
+16 planning/loading workers and 88-update windows are unchanged. No arenas are
+automatically selected. The matched scientific control is B100 with its original
+SF value, using the same historical trainer; changing trainer or objective would
+require a new matched control. Tiny CPU loader/loss and old-runtime checks
+establish the target path, not full-corpus or GPU training readiness.
