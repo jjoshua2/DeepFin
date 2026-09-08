@@ -388,10 +388,20 @@ q=p/'common_input_qualification.json';q.write_text('{}')
             if (p / "grandchild.pid").exists():
                 pid = int((p / "grandchild.pid").read_text())
                 status = Path(f"/proc/{pid}/stat")
-                assert (
-                    not status.exists()
-                    or status.read_text().rsplit(")", 1)[1].split()[0] == "Z"
-                )
+                # SIGKILL delivery and orphan exit are asynchronous. Waiting
+                # for the lane leader does not wait for this grandchild.
+                deadline = time.monotonic() + 2
+                while True:
+                    try:
+                        state = status.read_text().rsplit(")", 1)[1].split()[0]
+                    except FileNotFoundError:
+                        break
+                    if state == "Z":
+                        break
+                    assert time.monotonic() < deadline, (
+                        f"owned grandchild {pid} remained in state {state}"
+                    )
+                    time.sleep(0.01)
         assert (
             Path(plan["state"]) / ("failed.json" if failure else "completed.json")
         ).exists()
