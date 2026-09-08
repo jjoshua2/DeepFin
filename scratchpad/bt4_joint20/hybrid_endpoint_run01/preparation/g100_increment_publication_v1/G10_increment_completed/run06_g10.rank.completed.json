@@ -1,0 +1,52 @@
+{
+  "pid": 315116,
+  "argv": [
+    "/usr/bin/time",
+    "-o",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10.rank.time.json",
+    "-f",
+    "{\"wall_seconds\":%e,\"user_seconds\":%U,\"system_seconds\":%S,\"max_rss_kib\":%M,\"filesystem_inputs\":%I,\"filesystem_outputs\":%O,\"exit_code\":%x}",
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/tmp/deepfin-g10-increment-tools/scripts/sf_d9_rank_sidecar.py",
+    "--raw",
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+    "--shards",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived",
+    "--out",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/rank",
+    "--limit",
+    "266491",
+    "--top-k",
+    "3",
+    "--seed",
+    "0",
+    "--rows-per-shard",
+    "8192",
+    "--max-provenance-cache-bytes",
+    "67108864",
+    "--source-shards",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_shards.json",
+    "--expected-rows",
+    "262079",
+    "--expected-shards",
+    "32",
+    "--expected-source-summary-sha256",
+    "ab214d52665ee4ad6ccf756c0515344dc9653c3b51de15965fc74323198b7fd9"
+  ],
+  "start_unix": 1788851193.4213874,
+  "end_unix": 1788851566.625555,
+  "exit_code": 0,
+  "resources": {
+    "wall_seconds": 373.04,
+    "user_seconds": 360.87,
+    "system_seconds": 12.3,
+    "max_rss_kib": 650804,
+    "filesystem_inputs": 1076896,
+    "filesystem_outputs": 43488,
+    "exit_code": 0
+  },
+  "observed_owned_descendants": {
+    "315117": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /tmp/deepfin-g10-increment-tools/scripts/sf_d9_rank_sidecar.py --raw /home/josh/projects/chess/data/nnue_bootstrap/run06_g10 --shards /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived --out /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/rank --limit 266491 --top-k 3 --seed 0 --rows-per-shard 8192 --max-provenance-cache-bytes 67108864 --source-shards /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_shards.json --expected-rows 262079 --expected-shards 32 --expected-source-summary-sha256 ab214d52665ee4ad6ccf756c0515344dc9653c3b51de15965fc74323198b7fd9 "
+  },
+  "observed_spawn_worker_pids": []
+}

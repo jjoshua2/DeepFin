@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "verdict": "PASS_COMPLETE_REGISTERED_H20_VS_G20_DEVELOPMENT_SCREEN",
+  "reviewed_utc": "2026-09-08T07:29:08.299744+00:00",
+  "findings": [],
+  "status": "PASS_COMPLETE_DEVELOPMENT_SCREEN",
+  "computed": {
+    "wins": 493,
+    "draws": 256,
+    "losses": 251,
+    "score": 0.621,
+    "score_se": 0.012963568498543635,
+    "score_ci95": [
+      0.5955914057428545,
+      0.6464085942571455
+    ],
+    "elo": 85.78095608340313,
+    "elo_ci95": [
+      67.25121838268755,
+      104.80216849886237
+    ],
+    "pentanomial": {
+      "WD_DW": 136,
+      "WW": 115,
+      "DD_WL": 159,
+      "LD_DL": 56,
+      "LL": 34
+    }
+  },
+  "games": 1000,
+  "pairs": 500,
+  "unique_opening_fens": 500,
+  "terminations": {
+    "rules": 997,
+    "max_plies": 3
+  },
+  "full_qualified_search_match": true,
+  "original_development_opening_pair_mapping_match": true,
+  "checkpoint_identities": {
+    "candidate": {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt",
+      "role": "H20",
+      "sha256": "0a711fcf10ff87fc8360d3fd4b3035b170a7c15172616317c4a9687ae99d7017"
+    },
+    "reference": {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05_epoch_v2/checkpoint.pt",
+      "role": "G20T05",
+      "sha256": "bd8c208a95247373f423be0649329e9c100db64ab1b5a5e68fd7a6aec3769a74"
+    }
+  },
+  "stage_gpu_seconds": 2595.3640068329987,
+  "hard_seconds": 5400,
+  "training_charge_seconds": 9851.440138022997,
+  "historical_valid_control": false,
+  "historical_validity_problems": [
+    "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+    "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+    "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+  ],
+  "input_hashes": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/complete.json": "244be89bece5687e9f14081442e5029f7c08bdb8834eddac041f0c1f3edcacf9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/process.json": "d2ca3bf66dcc09aad920280deac4cd7a03b34c7e6daf6ae78fe2f8051864cd70",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/manifest.json": "9cd8fab6602ccc8320a6bd8a30b9a8558cb1c128b35a68c765132756f65c761b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/readout.json": "3daa6d0d88c8d20a5b657c9cde3582808c467c3c25ca367a9346ef0dcc460972",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/arena.games.jsonl": "2ba32ae8edd7b11b43c67b5e2965aaa9786cb4f0d128fd265e84bece70273d9a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/arena.results.jsonl": "f9393711c09f97916ecfa7ff54635ca55da68bb89ac9faa4961039f069646ee6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/training.complete.json": "821e0886e599d241573f7482b70e24c25887ed28c9255224ea6e29048388a9df",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/realized_schedule.json": "34948bf862fb937c9c7f57468d3d6a519f2a40b6b14361b6292f09002c2af6bc",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/completed_s100_readout.json": "353d95c0f94cad1c1be1f9b23f6449d8cad50c6a41523c2b9ab5415f5cd6c12e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20.launch_manifest.json": "20fa6a6be386bee435f0a12c75314d4dd5ba646213124c239a6247dec73f84dc",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+    "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_joint_readout.py": "a17c89537903c56ee7bb0ec084d5133e1139cc6c6cc605dc882b06279276ceeb",
+    "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_direct_screen.py": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48"
+  },
+  "registered_decision": {
+    "rule": "H20 versus G20: wholly positive interval favors H20; wholly negative favors G20; crossing zero unresolved.",
+    "outcome": "FAVORS_H20",
+    "interpretation": "The specified H20 selected-set target construction outperformed G20T05 at the registered shared 20% global dose and 100-simulation protocol, conditional on outside-target equality within previously verified storage tolerance.",
+    "package_status": "H20/C100 and H20/G100 completed; registered H20/C400 remains pending and unread in this review."
+  },
+  "provenance_checks": [
+    "One bank header, exactly 1000 game rows, 500 unique complete opening pairs with both colors and no duplicate/resumed/orphan pairs. Scores recomputed from result and candidate color.",
+    "Full effective search shapes equal both sides and the pinned qualified C100 search; 100 sims, prior temperature 1.0, book seed 42, 16 opening plies, 300 maximum plies, compile on/evaluator4096. All opening pair/FEN mappings match the original completed development bank.",
+    "Raw-game arithmetic, pentanomial, result JSON and automatic reader agree. Paired confidence interval uses sample variance of 500 pair scores (ddof=1), normal 1.96 score interval then logit Elo transform. No reader execution used for independent recomputation.",
+    "Process receipt marks process_complete true and exit0; separately bank-qualified complete receipt is complete true and hashes final bank/readout. The process receipt complete:false field is pre-readout state by design, not a partial-match verdict. No failed.json exists.",
+    "Candidate/reference roles, checkpoint path/SHA receipts, book identity, immutable launcher/reader, preregistration and runtime-manifest pins agree. Actual runtime versions/native paths and cwd/live config agree with already reviewed completed H20/C100 and frozen runtime. Large checkpoint hashes reused from qualified launcher rather than redundantly recomputed.",
+    "Registered seed-zero H20 training and realized source-normalized schedule reused from earlier independent review; canonical dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f. Completed G20 anchor SHA is exactly the preregistered checkpoint.",
+    "GPU stage 2595.364 seconds fits 5400-second inclusive cap. Three max-plies games are registered drawn adjudications; no wall-time truncation or optional stopping."
+  ],
+  "limits": [
+    "Same seed-zero trained checkpoints and reused development openings, not fresh confirmation or generalization proof.",
+    "This is a conditional target-construction result, not a universal claim about BT4, pure BT4, or the optimum mixture.",
+    "No search-scaling or production-adoption conclusion; C400 outcomes were not accessed.",
+    "Historical valid_control:false and all three recorded purity/committed-config/sampler limitations are retained.",
+    "No dataset scans, training, inference, tests, arena reruns, or live job changes. Parent supplies terminal host observation; this review verifies final process and bank receipts."
+  ],
+  "independent_calculation_script": {
+    "path": "/tmp/review_h20_g100.py",
+    "sha256": "76287a7e519348f8cd30279641b6501b01308df2a507f04b9a8b43da38b811e0"
+  },
+  "reused_training_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/independent_review.json",
+    "sha256": "f4674d5553c257a675864ed3e04d34af0c2847405dc2bc3fa5ab62e68fbf9348"
+  }
+}

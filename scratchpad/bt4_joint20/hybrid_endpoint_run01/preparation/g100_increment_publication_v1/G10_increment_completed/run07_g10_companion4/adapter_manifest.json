@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "derived_summary": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/derived/derive_targets_summary.json",
+    "sha256": "a370531f445fa9bd1716c0726ac41b441c855f2bf123a5800689f6859c7286e8"
+  },
+  "teacher": {
+    "onnx": {
+      "path": "/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
+      "sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0"
+    },
+    "policy_output": "/output/policy",
+    "providers": [
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "remap": {
+      "blobs": {
+        "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+        "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+        "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+      },
+      "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+      "dirty": false,
+      "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+    }
+  },
+  "sources": [
+    {
+      "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+      "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run07_g10_companion4",
+      "manifest": {
+        "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json",
+        "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "receipts": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/closed_bt4_receipts.jsonl",
+        "sha256": "918f291e649c2d3a7ad045cbea07592c486e224cf58768f1e4bac87e321ce7e3"
+      }
+    }
+  ]
+}
