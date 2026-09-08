@@ -96,5 +96,7 @@ and header protocol, apart from game count and simulation budget.
 Stopped low Elo/ordinary intervals are descriptive and selection-biased. H1 is
 not a +15 lower confidence bound; H0 is not equivalence. Fixed first128-core
 summaries and the paired 400-minus-100 score contrast retain their ordinary
-fixed-N interpretation. Neither mode establishes an optimal recipe, independent
+fixed-N interpretation. The exploratory cross-budget interval uses the registered
+aligned-pair percentile bootstrap: 10,000 PCG64 resamples, seed 20260903,
+preserving low/high covariance within each of the 128 pairs. Neither mode establishes an optimal recipe, independent
 confirmation or automatic promotion.
