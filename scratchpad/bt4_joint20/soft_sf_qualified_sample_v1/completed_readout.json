@@ -1,0 +1,452 @@
+{
+  "schema": 1,
+  "status": "COMPLETED_DESCRIPTIVE_TRAINING_SAMPLE",
+  "created_utc": "2026-09-08T11:46:48.048476+00:00",
+  "rows": 4096,
+  "derived_shards": 64,
+  "raw_shards": 127,
+  "unique_source_games": 2082,
+  "sampling": "Frozen target-blind64-stratum/64rowsper-selectedshard cluster design; self-normalized inverse inclusion weights, not iid.",
+  "overall": {
+    "rows": 4096,
+    "sum_inverse_probability_weights": 18915328.0,
+    "targets": {
+      "SF": {
+        "entropy": 0.5494697927127713,
+        "top1": 0.7954176208862531,
+        "support": 6.518649848419229,
+        "raw_cp_maxima_mass": 0.8308730710480365
+      },
+      "C": {
+        "entropy": 0.49358180789710543,
+        "top1": 0.822702165075379,
+        "support": 6.599691424859246,
+        "raw_cp_maxima_mass": 0.7632844987373303
+      },
+      "cp10_ideal": {
+        "entropy": 0.47767014601990476,
+        "top1": 0.8088931472460134,
+        "support": 22.31781886097878,
+        "raw_cp_maxima_mass": 0.8584147021543973
+      },
+      "cp10_stored": {
+        "entropy": 0.47767002929334834,
+        "top1": 0.8088922506456498,
+        "support": 8.48143135556518,
+        "raw_cp_maxima_mass": 0.8584137443088733
+      },
+      "cp20_ideal": {
+        "entropy": 0.7691579997058533,
+        "top1": 0.7167681466324093,
+        "support": 22.31781886097878,
+        "raw_cp_maxima_mass": 0.7642238846436581
+      },
+      "cp20_stored": {
+        "entropy": 0.7691591184117124,
+        "top1": 0.7167677776315662,
+        "support": 14.39484084019056,
+        "raw_cp_maxima_mass": 0.7642235297124924
+      },
+      "cp40_ideal": {
+        "entropy": 1.25088580335832,
+        "top1": 0.5806273098966381,
+        "support": 22.967031182330015,
+        "raw_cp_maxima_mass": 0.6234465548674841
+      },
+      "cp40_stored": {
+        "entropy": 1.2508855796995022,
+        "top1": 0.5806268231670323,
+        "support": 19.543809549588566,
+        "raw_cp_maxima_mass": 0.6234459609965184
+      },
+      "cp80_ideal": {
+        "entropy": 1.831957376373066,
+        "top1": 0.42204320885634755,
+        "support": 22.98557275877003,
+        "raw_cp_maxima_mass": 0.45864188492052493
+      },
+      "cp80_stored": {
+        "entropy": 1.831956722990659,
+        "top1": 0.4220432995289396,
+        "support": 22.02095739497618,
+        "raw_cp_maxima_mass": 0.45864219901979264
+      }
+    }
+  },
+  "strata": {
+    "mate_present": {
+      "rows": 1129,
+      "sum_inverse_probability_weights": 5213312.0,
+      "targets": {
+        "SF": {
+          "entropy": 1.1686209961934617,
+          "top1": 0.5853207246183145,
+          "support": 11.570895430774142,
+          "raw_cp_maxima_mass": 0.6357499223681814
+        },
+        "C": {
+          "entropy": 0.8356136083212193,
+          "top1": 0.7363861290093273,
+          "support": 11.585037688133761,
+          "raw_cp_maxima_mass": 0.7331431321722209
+        },
+        "cp10_ideal": {
+          "entropy": 0.29693732487107666,
+          "top1": 0.8470350983669088,
+          "support": 11.324265265535614,
+          "raw_cp_maxima_mass": 0.955898368948259
+        },
+        "cp10_stored": {
+          "entropy": 0.29693675441159784,
+          "top1": 0.847035053667366,
+          "support": 4.3649733605048,
+          "raw_cp_maxima_mass": 0.9558982584780332
+        },
+        "cp20_ideal": {
+          "entropy": 0.40692561585067666,
+          "top1": 0.8140054354010029,
+          "support": 11.324265265535614,
+          "raw_cp_maxima_mass": 0.9213436809559383
+        },
+        "cp20_stored": {
+          "entropy": 0.40692544997915175,
+          "top1": 0.8140059874061913,
+          "support": 7.918632915121903,
+          "raw_cp_maxima_mass": 0.9213441855576108
+        },
+        "cp40_ideal": {
+          "entropy": 0.7100996321363428,
+          "top1": 0.732968358174351,
+          "support": 11.515775000613813,
+          "raw_cp_maxima_mass": 0.8302968973726869
+        },
+        "cp40_stored": {
+          "entropy": 0.7100976849046552,
+          "top1": 0.7329695894820538,
+          "support": 10.189471875076727,
+          "raw_cp_maxima_mass": 0.8302981247082373
+        },
+        "cp80_ideal": {
+          "entropy": 1.1282395761322885,
+          "top1": 0.6072111337164023,
+          "support": 11.515775000613813,
+          "raw_cp_maxima_mass": 0.6880985853814807
+        },
+        "cp80_stored": {
+          "entropy": 1.1282385949033482,
+          "top1": 0.607211106125664,
+          "support": 11.140391367330404,
+          "raw_cp_maxima_mass": 0.6880985387446975
+        }
+      }
+    },
+    "nonmate": {
+      "rows": 2967,
+      "sum_inverse_probability_weights": 13702016.0,
+      "targets": {
+        "SF": {
+          "entropy": 0.3138965457598931,
+          "top1": 0.8753548119153993,
+          "support": 4.596382897232057,
+          "raw_cp_maxima_mass": 0.9051130845241907
+        },
+        "C": {
+          "entropy": 0.36344632348863254,
+          "top1": 0.8555434948925107,
+          "support": 4.70287817500724,
+          "raw_cp_maxima_mass": 0.774752617590082
+        },
+        "cp10_ideal": {
+          "entropy": 0.5464349602843941,
+          "top1": 0.7943809841101682,
+          "support": 26.500621222453688,
+          "raw_cp_maxima_mass": 0.8213243375029158
+        },
+        "cp10_stored": {
+          "entropy": 0.5464350161931111,
+          "top1": 0.7943797633805111,
+          "support": 10.047651965958877,
+          "raw_cp_maxima_mass": 0.8213230572499586
+        },
+        "cp20_ideal": {
+          "entropy": 0.9069793563252585,
+          "top1": 0.6797715233337075,
+          "support": 26.500621222453688,
+          "raw_cp_maxima_mass": 0.7044433005637404
+        },
+        "cp20_stored": {
+          "entropy": 0.9069809637842093,
+          "top1": 0.6797708039105765,
+          "support": 16.858893756947882,
+          "raw_cp_maxima_mass": 0.70444261859947
+        },
+        "cp40_ideal": {
+          "entropy": 1.4566429004063444,
+          "top1": 0.5226649330406489,
+          "support": 27.32397918671238,
+          "raw_cp_maxima_mass": 0.5447446052575515
+        },
+        "cp40_stored": {
+          "entropy": 1.4566433325286277,
+          "top1": 0.5226637926361043,
+          "support": 23.10292675180061,
+          "raw_cp_maxima_mass": 0.5447433184580613
+        },
+        "cp80_ideal": {
+          "entropy": 2.0997063304400307,
+          "top1": 0.35159093638140626,
+          "support": 27.349575420142553,
+          "raw_cp_maxima_mass": 0.37133871945979974
+        },
+        "cp80_stored": {
+          "entropy": 2.099705801795934,
+          "top1": 0.3515910720505612,
+          "support": 26.160770502676396,
+          "raw_cp_maxima_mass": 0.3713391708111025
+        }
+      }
+    },
+    "nonmate_below_-200": {
+      "rows": 1055,
+      "sum_inverse_probability_weights": 4870912.0,
+      "targets": {
+        "SF": {
+          "entropy": 0.20595500808482017,
+          "top1": 0.9133032180057378,
+          "support": 3.339097072581069,
+          "raw_cp_maxima_mass": 0.9441387722321362
+        },
+        "C": {
+          "entropy": 0.31659375885872254,
+          "top1": 0.8603789357568454,
+          "support": 3.4205865349240554,
+          "raw_cp_maxima_mass": 0.7760652801375172
+        },
+        "cp10_ideal": {
+          "entropy": 0.5257759909191319,
+          "top1": 0.7985534813892676,
+          "support": 19.8227256004625,
+          "raw_cp_maxima_mass": 0.8280115164725114
+        },
+        "cp10_stored": {
+          "entropy": 0.5257736505458332,
+          "top1": 0.7985534157790071,
+          "support": 10.186287906658958,
+          "raw_cp_maxima_mass": 0.8280114995103639
+        },
+        "cp20_ideal": {
+          "entropy": 0.9202681093215971,
+          "top1": 0.6715833859367023,
+          "support": 19.8227256004625,
+          "raw_cp_maxima_mass": 0.6992484031644353
+        },
+        "cp20_stored": {
+          "entropy": 0.9202716850459531,
+          "top1": 0.6715810685939346,
+          "support": 16.452357176643716,
+          "raw_cp_maxima_mass": 0.6992464018169308
+        },
+        "cp40_ideal": {
+          "entropy": 1.5064880797752906,
+          "top1": 0.5014527088415215,
+          "support": 20.412886950123507,
+          "raw_cp_maxima_mass": 0.5269488070945847
+        },
+        "cp40_stored": {
+          "entropy": 1.5064886120669698,
+          "top1": 0.5014508015869005,
+          "support": 19.563041992957377,
+          "raw_cp_maxima_mass": 0.5269470140894573
+        },
+        "cp80_ideal": {
+          "entropy": 2.121806297321615,
+          "top1": 0.32882023073217176,
+          "support": 20.412886950123507,
+          "raw_cp_maxima_mass": 0.35263147814480994
+        },
+        "cp80_stored": {
+          "entropy": 2.121802031792371,
+          "top1": 0.3288226870884193,
+          "support": 19.813239081305515,
+          "raw_cp_maxima_mass": 0.3526341227220536
+        }
+      }
+    },
+    "nonmate_within_200": {
+      "rows": 383,
+      "sum_inverse_probability_weights": 1767936.0,
+      "targets": {
+        "SF": {
+          "entropy": 0.18240920020021428,
+          "top1": 0.912779091866605,
+          "support": 2.0020996235157833,
+          "raw_cp_maxima_mass": 0.9990441075997503
+        },
+        "C": {
+          "entropy": 0.3153782595250039,
+          "top1": 0.8621399428189142,
+          "support": 2.4853750362004052,
+          "raw_cp_maxima_mass": 0.7965689966432112
+        },
+        "cp10_ideal": {
+          "entropy": 0.8135723824742643,
+          "top1": 0.691278609834372,
+          "support": 29.095786272806254,
+          "raw_cp_maxima_mass": 0.7599827157965602
+        },
+        "cp10_stored": {
+          "entropy": 0.8135772126579384,
+          "top1": 0.6912738328820581,
+          "support": 11.170503909643788,
+          "raw_cp_maxima_mass": 0.7599779769685104
+        },
+        "cp20_ideal": {
+          "entropy": 1.1910798177721305,
+          "top1": 0.5741908669234336,
+          "support": 29.095786272806254,
+          "raw_cp_maxima_mass": 0.6380296528219997
+        },
+        "cp20_stored": {
+          "entropy": 1.191077043797689,
+          "top1": 0.5741941681585774,
+          "support": 15.392339994207935,
+          "raw_cp_maxima_mass": 0.6380327143967113
+        },
+        "cp40_ideal": {
+          "entropy": 1.6497959000090823,
+          "top1": 0.43982662101352216,
+          "support": 29.44012452939473,
+          "raw_cp_maxima_mass": 0.49907036602473853
+        },
+        "cp40_stored": {
+          "entropy": 1.6497969227817046,
+          "top1": 0.4398269215972441,
+          "support": 25.734723428902402,
+          "raw_cp_maxima_mass": 0.49906989184365846
+        },
+        "cp80_ideal": {
+          "entropy": 2.143378034228565,
+          "top1": 0.30812864374875976,
+          "support": 29.44012452939473,
+          "raw_cp_maxima_mass": 0.3631145599746435
+        },
+        "cp80_stored": {
+          "entropy": 2.1433792623151153,
+          "top1": 0.3081264021002241,
+          "support": 29.082754126846222,
+          "raw_cp_maxima_mass": 0.36311353153252524
+        }
+      }
+    },
+    "nonmate_above_200": {
+      "rows": 1529,
+      "sum_inverse_probability_weights": 7063168.0,
+      "targets": {
+        "SF": {
+          "entropy": 0.42124709199061555,
+          "top1": 0.8398173479323656,
+          "support": 6.112792446675486,
+          "raw_cp_maxima_mass": 0.8546888658482386
+        },
+        "C": {
+          "entropy": 0.4077884628824857,
+          "top1": 0.8505577569499022,
+          "support": 6.1422228665663905,
+          "raw_cp_maxima_mass": 0.7683866603210592
+        },
+        "cp10_ideal": {
+          "entropy": 0.49381638405234207,
+          "top1": 0.8173104305145156,
+          "support": 30.456262119207697,
+          "raw_cp_maxima_mass": 0.8320667410566602
+        },
+        "cp10_stored": {
+          "entropy": 0.4938168974705327,
+          "top1": 0.8173093033249216,
+          "support": 9.67099182689694,
+          "raw_cp_maxima_mass": 0.8320654553049094
+        },
+        "cp20_ideal": {
+          "entropy": 0.826703794446595,
+          "top1": 0.7118454510777612,
+          "support": 30.456262119207697,
+          "raw_cp_maxima_mass": 0.7246493846912905
+        },
+        "cp20_stored": {
+          "entropy": 0.8267051412358606,
+          "top1": 0.7118448272292238,
+          "support": 17.506333701817656,
+          "raw_cp_maxima_mass": 0.7246486755808824
+        },
+        "cp40_ideal": {
+          "entropy": 1.3739217158279766,
+          "top1": 0.558028060664148,
+          "support": 31.560337797430275,
+          "raw_cp_maxima_mass": 0.5684493930572861
+        },
+        "cp40_stored": {
+          "entropy": 1.373921931029422,
+          "top1": 0.5580270884113732,
+          "support": 24.885359090991464,
+          "raw_cp_maxima_mass": 0.5684482519467793
+        },
+        "cp80_ideal": {
+          "entropy": 2.07353453738736,
+          "top1": 0.3781728689056102,
+          "support": 31.609992569906307,
+          "raw_cp_maxima_mass": 0.38629817020932716
+        },
+        "cp80_stored": {
+          "entropy": 2.073536146063419,
+          "top1": 0.37817199923026845,
+          "support": 29.80678131965713,
+          "raw_cp_maxima_mass": 0.3862974794625666
+        }
+      }
+    }
+  },
+  "entropy_matching_temperature_cp": 10,
+  "absolute_C_entropy_distance": 0.015911778603757087,
+  "timing": {
+    "elapsed_s": 285.72792116500204,
+    "cpu_seconds": 247.558786756,
+    "max_rss_kib": 663736
+  },
+  "pins": {
+    "plan.json": {
+      "sha256": "8e7e4b3ca4af65c0e021eb0017003c45914e3bdc729a7d2a72e8837a18339bfc",
+      "bytes": 713729
+    },
+    "preregistration.md": {
+      "sha256": "e3d0c9c8d5a370932380c8ca0a54813104f549d61f9827e30d2f4486f8f2e817",
+      "bytes": 3335
+    },
+    "collect.py": {
+      "sha256": "f9b029f8f664c232f3988edf1d2a9f076966c6a0051101533c4947a6451bb94a",
+      "bytes": 14234
+    },
+    "root_prelaunch_review.json": {
+      "sha256": "db2f0f15decfc828830fb5e49dd91e273a3c8cf3ce8ff3b2439546964dce7b1b",
+      "bytes": 1321
+    },
+    "operator_launch.json": {
+      "sha256": "b8d46ef6d3bda137c1b837a3424c1cc9280efe338fa2e4f7f2187cd1b9e644ef",
+      "bytes": 1166
+    },
+    "bank/complete.json": {
+      "sha256": "32a329ec01c0b205f9397c72928f407f3ef4131a0b1d165f461b3e4e78ae3dcb",
+      "bytes": 10683
+    },
+    "bank/observations.json": {
+      "sha256": "b39d0232339e22a61a8382a0dc383fc2eff2313ff7f8dd929090bf6b5bea775c",
+      "bytes": 8801970
+    }
+  },
+  "independent_review": "Pending at author readout creation; preserve this snapshot and link final review separately.",
+  "limits": [
+    "Stratified cluster training sample, not iid/heldout or gameplay evidence. No new GPU selection. Raw mate effective-cp unchanged. All selected joins must pass; no dropped/replacement rows. Full corpus Soft-SF derivation remains unqualified.",
+    "Temperature selection is the preregistered descriptive entropy match on the bank, not selection of a GPU experiment.",
+    "Raw mate effective-cp scores are kept unchanged; saturated/mate rows may sharpen while nonmate rows soften.",
+    "No repeated corpus payload scan, teacher evaluation, model inference or strength test."
+  ]
+}

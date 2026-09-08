@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "reviewed_unix": 1788867483.8515265,
+  "verdict": "REUSE_DERIVATION_SUPPORTED; NEW_EXPLICIT_POST_DERIVE_RECOVERY_REQUIRED; NO_LAUNCH_REVIEW",
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/runner_manifest_v2.json",
+      "sha256": "8db5b6b9be636a9a3436b16a5578d70fab90d8e5ccdcdebcb7e4b721021f813f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/failed.json",
+      "sha256": "d512c9d758a89adec1d17f34598c4591c7b3153341b3d31fb3ef854dd7dee056"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/started.json",
+      "sha256": "7b55b3ad1f52c20390b13421ae78b64c8cbbb9ce29c6e7c3efde0ca396c1e012"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/independent_failure_observation.json",
+      "sha256": "95ef686bb9efbf50f236cc12c8b5db0c5f033b3d871112f555bd89ea20c0fb41"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/independent_derived_reuse_observation.json",
+      "sha256": "4918dc942da14252916eca0d96f9a8e05ea2595a1f41d50dd1b092c611c7bcf5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/run06_g10/derive.completed.json",
+      "sha256": "16ae7852cfa0b04d4cce72c4deb030f50409b9b95c1d06d944236d8570466da8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/run06_g10/snapshot.completed.json",
+      "sha256": "da5d892f9858b3f39a92e6246a8b26398b77e6900088e9dc2f6a92574df7ef2a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/run06_g10/derived_identity.json",
+      "sha256": "99b16f59524492e2c1cf6c2ae36b9eb5d33e553ab86e5dc3890c914eef09770c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/run06_g10/derived/derive_targets_summary.json",
+      "sha256": "10850609c4b378ba15d6819ce5e7f03cb3947c26e2c81431cd8b828995d2f9e2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/run06_g10/adapter_manifest.json",
+      "sha256": "216ada2dbe7d8fcbdcb0ea3f7c9fb512a979a575beb8152087d5724708a73252"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/run07_g10_companion4/derive.completed.json",
+      "sha256": "54a9a800055601385a75257fd48e88bd8fd3f1c63bb7a9029d9b99b90d461b64"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/run07_g10_companion4/snapshot.completed.json",
+      "sha256": "3750ab11f3071e3e938f28883b181bdfb093f497aa88d0ca1fd53c80c5715e38"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/run07_g10_companion4/derived_identity.json",
+      "sha256": "b8976cfdd3eb9acf28b63622970f4eee35bed9669dc7959965087b328ffe4eee"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/run07_g10_companion4/derived/derive_targets_summary.json",
+      "sha256": "c7f750345d78b89fdb55ef2ab154cbf1a9da703a5910b2a4a6b5794a2be8fc03"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/run07_g10_companion4/adapter_manifest.json",
+      "sha256": "e22453231d3d862c5a9d0ecdfdca77809833418003d11e9bb9ac2d23bbc950ce"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/run07_g10_companion4/rank.log",
+      "sha256": "81f18a9e245e05231086f1cd7ff5a9200e914f73c6830ed2a1bc38bebb39dcd9"
+    },
+    {
+      "path": "/tmp/deepfin-g10-worker01-tools/scripts/common_input_batch.py",
+      "sha256": "882cc593494af55e6ac8a2ec1498438c4a7125d92f8ca58522eabe8ba2967468"
+    },
+    {
+      "path": "/tmp/deepfin-g10-worker01-tools/scripts/sf_d9_rank_sidecar.py",
+      "sha256": "4a230d849d87770d33a3896f9a4c96d96676a377116dae9fcb37beecafcd71fa"
+    },
+    {
+      "path": "/tmp/deepfin-g10-worker01-tools/scripts/adapt_raw_bt4_sidecars.py",
+      "sha256": "e8952e031d93db83a589d9a23ae9eba7c1530e1df1901a00991cfe611272c2f7"
+    }
+  ],
+  "failure": {
+    "classification": "deterministic rank-cache admission failure, not scientific/data-quality rejection",
+    "rank_cache_formula": "N * (68 + 1) + number_of_selected_raw_shards * 512, for top_k=3",
+    "run06_required_bytes": 73448830,
+    "run07_required_bytes": 73413295,
+    "original_cap_bytes": 67108864,
+    "proposed_explicit_rank_cap_bytes": 83886080,
+    "per_raw_shard_working_set_guard": "Retain existing 64MiB guard; separate from total disk-cache allocation.",
+    "adapter": "Existing 64MiB compact identity cache sufficient at 56 bytes/raw row plus bounded headers for 128 shards; no recipe change needed."
+  },
+  "completed_derivation": {
+    "rows_read": 2126537,
+    "rows_written": 2111278,
+    "rows_dropped_no_result": 15229,
+    "rows_dropped_policy_support": 30,
+    "rows_dropped_envelope": 0,
+    "output_shards": 259,
+    "qualification": "derive and snapshot successful; adapter/rank/common qualification incomplete"
+  },
+  "actual_observations": {
+    "owned_pids_checked": 21,
+    "known_pid_remaining": 0,
+    "owned_process_group_survivors": 0,
+    "raw_stat_and_teacher_attribute_checks": 256,
+    "mismatches": 0,
+    "derived_metadata_snapshots": "Both exact current metadata digests and summary hashes match retained snapshots. Metadata-only check took approximately 4.2 seconds.",
+    "partial_outputs": "run06 no bt4/rank finals or .writing; run07 bt4.writing contains ._raw_identity_cache, rank.writing empty. Original partials retained."
+  },
+  "minimal_recovery": [
+    "Create a distinct frozen recovery manifest/state and explicit post-derive-only path. Normal runner fresh-output and same-state-parent contracts deliberately reject this reuse; do not bypass with marker deletion or ordinary retry.",
+    "Pin original failed manifest and runtime, both successful derive/snapshot receipts, exact summary and snapshot hashes, selection/source/config/teacher receipts and all unchanged recipe parameters. Verify current metadata against ORIGINAL snapshots before admitting reused derived inputs; do not replace snapshots with newly trusted state.",
+    "Reuse existing derived directories in place as immutable inputs, preserving original summary paths/provenance and original derived_identity.json beside them. Qualifier already reads the snapshot relative to derived_output.parent; review any new wrapper path assumptions explicitly.",
+    "Leave all old failed outputs and receipts unchanged. Use fresh adapter/rank final and .writing locations under new recovery state; neither partial adapter nor rank result is eligible for adoption.",
+    "Execute only adapter and rank with existing full checks, explicit sufficient rank cache, then full unchanged all-row common-input qualifier. Keep qualifier output location and completion accounting explicitly bound to recovery state; require both sources qualified before total completion.",
+    "Keep same two-core lane ownership/affinity, inherited timeout groups, STOP, fail-one-stop-siblings, source checks before and after, 8GiB sampled disk/output cap and 150GiB free-space reserve. Count retained reused derived allocation explicitly if new state excludes it from automatic disk accounting; 8GiB is not a RAM bound.",
+    "Choose and register a bounded additional time allocation explicitly; preserve the failed 1897-second charge separately. No automatic retry. Reusing derivation saves repeating roughly 31.5 minutes of two-lane derivation, not a measured future recovery speedup."
+  ],
+  "review_limits": [
+    "No raw, teacher policy, model or checkpoint payload scan, training, inference, launch, deletion or process signal. Only compact receipts, source stat/teacher .zattrs and derived subtree metadata read.",
+    "Known historical child observations were sampled; current complete process-group scan found no survivors. No claim of observing every transient historical process.",
+    "Source metadata and process observations are snapshots; refresh at actual recovery admission. Original producers and final qualifier still supply full payload/history/identity validation.",
+    "Previous launch review did not catch the rank total-cache arithmetic. Preserve it historically; preflight should evaluate this exact deterministic bound before starting expensive derivation.",
+    "B100 runtime was not changed."
+  ]
+}

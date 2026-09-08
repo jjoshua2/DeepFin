@@ -1,0 +1,2125 @@
+{
+  "schema": 1,
+  "status": "PREPARED_NOT_LAUNCHED",
+  "captured_utc": "2026-09-08T11:29:41.073897+00:00",
+  "sources": [
+    {
+      "source_id": "run06_g10",
+      "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+      "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run06_g10",
+      "source_manifest": {
+        "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json",
+        "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+      },
+      "physical_rows": 2025055,
+      "shards": 244,
+      "games": 10316,
+      "compressed_raw_bytes": 5161367689,
+      "expected_survivors": null,
+      "manifest_snapshot": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/source_manifest.json",
+        "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+      },
+      "selection": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/source_shards.json",
+        "sha256": "1f960b2a45f5736178522ee4663d4e403942711fa87cfc1c4554cd3669fa22cf"
+      },
+      "closed_source_progress": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/closed_source_progress.jsonl",
+        "sha256": "92e705fe0054cb691c553d1372f180b7e7c2deb64a9fbf8ab439c6c03d1d07c6"
+      },
+      "closed_bt4_receipts": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/closed_bt4_receipts.jsonl",
+        "sha256": "b18384db808b2c5f0576dda84e8ce3ff1d8b147dfc61e96617ae594d2e04fc5e"
+      },
+      "source_metadata": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/source_metadata.json",
+        "sha256": "440ca531da771f0848ce06688cef38bdfb422907873c637dc6df5f165b3729d6"
+      },
+      "derived_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/derived",
+      "adapted_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/bt4",
+      "rank_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/rank",
+      "cpu_affinity": [
+        2,
+        3
+      ],
+      "prior_and_active_game_overlap": 0
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+      "sidecar_dir": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run07_g10_companion4",
+      "source_manifest": {
+        "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json",
+        "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "physical_rows": 2022184,
+      "shards": 244,
+      "games": 10380,
+      "compressed_raw_bytes": 5170528931,
+      "expected_survivors": null,
+      "manifest_snapshot": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/source_manifest.json",
+        "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "selection": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/source_shards.json",
+        "sha256": "8129dad2f860df173dd7784586762c4f75c43b7356af9c92f8029c78a3e1b81b"
+      },
+      "closed_source_progress": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/closed_source_progress.jsonl",
+        "sha256": "4014c270005996d9caa05e5a7e6303206bc5974135531d0a7a177faad88370f1"
+      },
+      "closed_bt4_receipts": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/closed_bt4_receipts.jsonl",
+        "sha256": "5e7fae4b6c512df5d02542d4113ff06f7e0e255e8a6b3911496eeb2a2ca520a3"
+      },
+      "source_metadata": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/source_metadata.json",
+        "sha256": "90c0c91841c95edb4b3477d735c21b7007db13d3637a10c84b0f4db5a5fce8bd"
+      },
+      "derived_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/derived",
+      "adapted_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/bt4",
+      "rank_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/rank",
+      "cpu_affinity": [
+        4,
+        5
+      ],
+      "prior_and_active_game_overlap": 0
+    }
+  ],
+  "physical_rows": 4047239,
+  "shards": 488,
+  "selected_window": {
+    "first": "w02-00000.jsonl.zst",
+    "last": "w03-00042.jsonl.zst",
+    "per_source": 244
+  },
+  "scope": "exact closed metadata only; payload pins are existing verified teacher claims; no raw or policy payload read",
+  "files": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/coverage_and_sizing.json",
+      "sha256": "227ea16ede1fbac6fb25138ee11871e0ae54543ed97f63779f223be39e94fa0c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/eligibility_and_resources.json",
+      "sha256": "712378452708d1253fd999984e233cf86e2b04beca3a15c4e4d1863b81edc905"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/game_disjointness.json",
+      "sha256": "2f4b3c729a393ddde0df6cd64016687ba63555651d851c886a437dadc8fba6f9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/metadata_admission.json",
+      "sha256": "4c089c4c8049f2af72c9d38b8dc429140763520214c19a3064e0a2e2149f6997"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/prepare_metadata.py",
+      "sha256": "33caafbe9c9fbdc8627da7f9e79b301e3413ca8a2bbd908e2093e02a9773277d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/prior_selection_review.json",
+      "sha256": "c8b012612430475d95f9f2e706f8f532c706fc8fb5e6d9bed125feb52e066fcd"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/closed_bt4_receipts.jsonl",
+      "sha256": "b18384db808b2c5f0576dda84e8ce3ff1d8b147dfc61e96617ae594d2e04fc5e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/closed_source_progress.jsonl",
+      "sha256": "92e705fe0054cb691c553d1372f180b7e7c2deb64a9fbf8ab439c6c03d1d07c6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/prior_closed_source_progress.jsonl",
+      "sha256": "b8409cc759ce87d19d0f4c2a8d1b7b7f9da4b83d6591c291b2b91d55865129c6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00000.bt4.zarr.json",
+      "sha256": "dab3751251f947c694a152f289361d4d06b27e1f03ef64d3e5422021437c8255"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00001.bt4.zarr.json",
+      "sha256": "0b7a01d5897fffffec498d52ffe855174f0f0446092c96e21bb0c6c277b4513e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00002.bt4.zarr.json",
+      "sha256": "acc0e4f8b4e087490eb0be6fecbcb1ae5ea90507ec6e973c7e1a1562c198710f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00003.bt4.zarr.json",
+      "sha256": "7de029b28234e4a34e51589d6a9dc87da92d38fa3b6abbd33d03c10c06b8d932"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00004.bt4.zarr.json",
+      "sha256": "d0fb7b255ab5fd12f1efa38cc73418b00867380628a5d5a1a10df7ee47433f50"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00005.bt4.zarr.json",
+      "sha256": "40f2367d29e2d2366b219948e77f39c63c95b0d2e7a692675367d8c3de685c6d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00006.bt4.zarr.json",
+      "sha256": "2fede5ee9e8a270af3d033de230c08841439fdd5df684f5fdc7e1cf0b643dc9a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00007.bt4.zarr.json",
+      "sha256": "175d0411630bb7b420b1009a8273476b1cc293e68607d1142dcbfaf8d93176b7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00008.bt4.zarr.json",
+      "sha256": "80078c56f47f076951c9c0ec760935d8e287aaa5dc31aa31ec6274a4c0a3096e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00009.bt4.zarr.json",
+      "sha256": "258347325c5e07fa5a40533ad6af87eaa62c6f233f2e7113046c38579e2f1931"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00010.bt4.zarr.json",
+      "sha256": "c848c2da849c62aa47ca06a2b117b0da9c6f82fe01889529082d7f0a29304396"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00011.bt4.zarr.json",
+      "sha256": "77fa85b767d278619922e07cc2bbfb0252d0daa5489ba30e6d00b0d21b0b88f7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00012.bt4.zarr.json",
+      "sha256": "12e9a6f347827e4eb4718f16edc1dbeadba92482f474acf3b6a041e753aea6ae"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00013.bt4.zarr.json",
+      "sha256": "43c16b923ed7c589db9b6692428f0ed27f829ca04361eed66da30d2887de0e2e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00014.bt4.zarr.json",
+      "sha256": "e4842c8c7475ee61845be1f442c87c170602716dee12785faecea2ee97e5d8de"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00015.bt4.zarr.json",
+      "sha256": "fc3c2be4a66f64c2b43ecc19838d3a3649270282f403b3d80b86d1bf1de03070"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00016.bt4.zarr.json",
+      "sha256": "baade49f68219c7268177a5f5c6d1e5ffd2f00d3cd1a8834db476fb87caafea7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00017.bt4.zarr.json",
+      "sha256": "c919b7f68cd1e8197f68d6e82a68aa40f4dee2f70234a6a8917f4913bd237c2a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00018.bt4.zarr.json",
+      "sha256": "76add3e502e99826fc195f6d31a69e2ff96163792d81f22c91aa2531e05f5d0e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00019.bt4.zarr.json",
+      "sha256": "4efac61330430aaf5b7347cc4eea846e7c6dbd670856b6ff8d548e27b25a6155"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00020.bt4.zarr.json",
+      "sha256": "7076d3d58f6658f902d4252d30e29ac652db4af1043919eb7165e071ad7bf8ca"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00021.bt4.zarr.json",
+      "sha256": "a92a6842dd6bd8e89ca52bd83af2143246fad1a254f0e8d9fcd0578f6eaf722d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00022.bt4.zarr.json",
+      "sha256": "6d15a76d74394462b723c5077c610febb0ed8fed05e7262dd4cb0b5ff6471290"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00023.bt4.zarr.json",
+      "sha256": "b39c96fcf6105e2528afd0c35d5b8c282f41a40412d2be7d9a1cb243910dc43a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00024.bt4.zarr.json",
+      "sha256": "94c65cc597409bf46e0faaad2783e6a11ce5fb68e6cd520164a1a8315c5e7728"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00025.bt4.zarr.json",
+      "sha256": "509847e14088887b65f14a7758710352f7a12bbcea4c00cff4d92a115f3091a8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00026.bt4.zarr.json",
+      "sha256": "7c1b5499c47de25c98b6288f47be79de274722f3fe56cffb1d61505bf0de60aa"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00027.bt4.zarr.json",
+      "sha256": "cfac15ee923284b487fb9ce74fffa143d5f23c98466d165bfc392f66b4643724"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00028.bt4.zarr.json",
+      "sha256": "180ecf5a9a16ab3dca283fb9715efb5cd7c3fa55c35a21cae8c19e713cc93175"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00029.bt4.zarr.json",
+      "sha256": "6f43f767bfed8c1ef521c951cf25f25766675dad23f3d3a1fb7000f917a97020"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00030.bt4.zarr.json",
+      "sha256": "70c4169444d060058961ad559fc114c967e9069cf0639955a73c45b1c9215af1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00031.bt4.zarr.json",
+      "sha256": "638649930cdc19a0314f7a6af6feb2675e36b13bd317b3b1b4222826ef3d4f1f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00032.bt4.zarr.json",
+      "sha256": "829d48da30854f58eee4257b46297beef73f214d0a3ce8a5ccb3e7d949146b4f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00033.bt4.zarr.json",
+      "sha256": "c9161f0384555fd3baabf515bd128f87ef791cfc2738105c2c2ab399bd6fcd7f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00034.bt4.zarr.json",
+      "sha256": "88fa0615666cabe5535f80b4079bf9f0fc108cbaea85b2e1a14b5bc25c45069b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00035.bt4.zarr.json",
+      "sha256": "ef28305f672bce41c51b28c8bd758449bdaf8f231bd2d9391e99097120d571df"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00036.bt4.zarr.json",
+      "sha256": "d8ddfd85276153311fe05874219a63b78e838910e4013e4acf0181430ba8ec57"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00037.bt4.zarr.json",
+      "sha256": "27df00da7182bf5f1221234d485b6bdf4b3a4698529244e5eeb8cbd8c6e74f81"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00038.bt4.zarr.json",
+      "sha256": "6ef5b794288903fb916b5cebdbe5d777c50bc74a4e582c33b60d092ed34bcb95"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00039.bt4.zarr.json",
+      "sha256": "d5bc85cc1393494df809750c03182fa1f2e0d4b90dcefdbc7ebba03a13efc5f5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00040.bt4.zarr.json",
+      "sha256": "6e64c7f182aeca0057587e2a1785a153ae61c73bb8f85c48d1a7b5c9474a7fa6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00041.bt4.zarr.json",
+      "sha256": "dc213949be45b1fccd5ff00ad66a92eb41d5b2121f3da2338638ae7208139166"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00042.bt4.zarr.json",
+      "sha256": "6150dde3853aace536db3824d951db6ec597412f9a1d3333ecd861acc053e104"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00043.bt4.zarr.json",
+      "sha256": "b65faedd22673cd181063006108ad049a05a219a8540084be3896f70254cca62"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00044.bt4.zarr.json",
+      "sha256": "d1c1c87154ff6b0cb099f2d7f88ba2473b51813fd7434b9e2ef9470650f33846"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00045.bt4.zarr.json",
+      "sha256": "02ddb023d2fb0abcb87c3c49982cfda8cf5d00ccdc745177cce83c6f62d4ed3c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00046.bt4.zarr.json",
+      "sha256": "d0f9191104f75f22b5bbb897797d2d3e3e98c4d43fa87b99fc9d3fd46428fba1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00047.bt4.zarr.json",
+      "sha256": "8093d2a6fccfecc3ec8b336fcf5fb67eeec683b4e54a694411af9c5fb762108a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00048.bt4.zarr.json",
+      "sha256": "b7b0969499183d6e71947c13400783d7ca8f998e1b06e0ef6fb145958485ef58"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00049.bt4.zarr.json",
+      "sha256": "25e56b8b3096b4ec8021a9cf76751cff6b5313fbb683e2f6a5c8c9215f63944d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00050.bt4.zarr.json",
+      "sha256": "bdb06e7db08fc5e0080628f5047b23f36b86aba6b807f5135178487741adaf95"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00051.bt4.zarr.json",
+      "sha256": "94de5ded9cf2dd2d83553d526080c9918c8a012e4bb430d66c8c2c934c47cf64"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00052.bt4.zarr.json",
+      "sha256": "12ab32cb161262ef700f60cddf8fc320d87122b8761da769bf71499da4e14a15"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00053.bt4.zarr.json",
+      "sha256": "c78205574ec86fe68badafa6c7dbd1892638caacb5d40c67a68b1be7b8a9abe4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00054.bt4.zarr.json",
+      "sha256": "e78b6d616ce544d0a59db9f7e78b7f0c2338f23dce427d73ed0a64391dc82e4d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00055.bt4.zarr.json",
+      "sha256": "81c0a738d194cf18b8b4ed7f566e3dce7771355a6c52a68ca16fddddd8d44efa"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00056.bt4.zarr.json",
+      "sha256": "d43ade3e42f932576bb67c1ae7139ca935731324eb06769864231b83c0a1dd05"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00057.bt4.zarr.json",
+      "sha256": "8622524b976d9acbcb62b1c7ba63d8da480b4cdad26688418c60daeb2eb38303"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00058.bt4.zarr.json",
+      "sha256": "bcc0cbcbc93ffc50750eb2bb4029ca77a4ca2d29292ed1147908b14612e200c3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00059.bt4.zarr.json",
+      "sha256": "d0e3d6798d6fcf62210241e5cace7d9b053527d4f1d2be84ac2a1566b53b4a9f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00060.bt4.zarr.json",
+      "sha256": "45cf3289f934685d07b4975b9121a380d059ce837386306f1fa7b7999f6aeeeb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00061.bt4.zarr.json",
+      "sha256": "d220429f1a1cd3c210fbcbb4cea4f716949d1f83a880d28c26e80d57a341994f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00062.bt4.zarr.json",
+      "sha256": "6b486c0cd660caa3564b1769a560b73271bc81fb652b4657d38ef12a1b842282"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00063.bt4.zarr.json",
+      "sha256": "aa9ec4763a25a201208794fba9b14348ef34a2f6473d5df024f058d47454d176"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00064.bt4.zarr.json",
+      "sha256": "1972f919a8a798e70a02588f3006c924e4f68af8559a81af475235521f855d85"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00065.bt4.zarr.json",
+      "sha256": "9bcdb5f349a34bd72fa8f2c9aca816ec1b94a4a72b387a65be5bf6071be64fdc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00066.bt4.zarr.json",
+      "sha256": "a783882caa0ae44cd0de987464ae08df705ed3021f82d695189728a588b0b75e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00067.bt4.zarr.json",
+      "sha256": "711636eb79dfbb1ec103860806d45bad5c3534c55fdc73978337c1c770f6c721"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00068.bt4.zarr.json",
+      "sha256": "a6dbd30c21cff3f1227e8f839c46392332a60a83388014c8c0f36b45bba62c1a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00069.bt4.zarr.json",
+      "sha256": "86bf15a5b3be9ac759b5edb2a4a390cbfbcebf8ebfcd35c599f2b35f37a57958"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00070.bt4.zarr.json",
+      "sha256": "12129ce123c765a5d632858f60673b0c6a23812010b7a6fa5e92ef3fb7219f58"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00071.bt4.zarr.json",
+      "sha256": "2fdab083d11af65db5650821a1744b32f278fc1e0a709eb8308475fcd0c185e9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00072.bt4.zarr.json",
+      "sha256": "6f6f7f45be28f1030ceb2a6054746e30e5bd793c6f8b59e0ce3396e11b67fa8a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00073.bt4.zarr.json",
+      "sha256": "004c6996f1edc541fd29e9f769b8a6e4944e32c94da5cade2eb934627b2b743f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00074.bt4.zarr.json",
+      "sha256": "232cabbcff5b00ca1de3d50c74d1d3bdd3bf898356b7963b48df7f6d936ccaad"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00075.bt4.zarr.json",
+      "sha256": "7cc4fdd731c15ab053d1f94b3c7d7742c673be90de9239b11907014b88a8555c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00076.bt4.zarr.json",
+      "sha256": "a619530348e44c68cc6fba7865bd23b0bc162b326af71ea3c263c3dfb52e4a76"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00077.bt4.zarr.json",
+      "sha256": "87422087dc5f230b0c0fb52c71b72602445231b788d96f5ee013e79431c2c32d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00078.bt4.zarr.json",
+      "sha256": "eee1c529e968a8f9a2aebf9c3b1ca7a7f0209f262b8e90cd84188640269d762a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00079.bt4.zarr.json",
+      "sha256": "9f2d24f7199d22a221fd2750447b743e9574d26e8ebdd4a82cc45abd7704d903"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00080.bt4.zarr.json",
+      "sha256": "582329c06a2f3193010cc985a6f7bb727259006fe0fa0c66d620c020c67f93e8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00081.bt4.zarr.json",
+      "sha256": "b9d2d91bb96dd27764798ebcbea88f2797e8f180ca4fd8e675149eca91fe3c47"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00082.bt4.zarr.json",
+      "sha256": "0c737428c0a211272d5ac5ad9b239cd76bf6f93d5da22bdc69ee782e959121f8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00083.bt4.zarr.json",
+      "sha256": "019a2b0d79230bc6151b935285f99dd47c690b77ab8feca964be8e73662ea2a1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00084.bt4.zarr.json",
+      "sha256": "14ec5cd9882c6ab805041a8499d3f3cb20ac221569796edda6d8316e8fffff98"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00085.bt4.zarr.json",
+      "sha256": "e1db8e396a4a75ff6feeeb6162fe1eed24c156f6626e2e8400210bd978ddb5c8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00086.bt4.zarr.json",
+      "sha256": "9b994f41c2ff8bc4b585052a41bddb634f54f9ff586fd19a767df0cc376588b4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00087.bt4.zarr.json",
+      "sha256": "74535a5781803b4eeefe933f57d9bfe9546e78d029aae53df3eddc89affeac6c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00088.bt4.zarr.json",
+      "sha256": "eaab722fdae58ec96684c859a040d9711ce1070292bb6d57ce268be8daa59c76"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00089.bt4.zarr.json",
+      "sha256": "6c25f5570d949d702c943058bc713bbc7fdf4d5ad1fd4607e065a3eb96ab3340"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00090.bt4.zarr.json",
+      "sha256": "f04832c75cbe22e568e66307fbc18a643e97f22d0dadd9d1791cc92676f56717"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00091.bt4.zarr.json",
+      "sha256": "94972b4877b7887f77ae3b19ec10c1fff6f3a86d4229ba52a91a3e70b6f64715"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00092.bt4.zarr.json",
+      "sha256": "6cdc8230f87bcff851d2cf98843a3e1abcd082ec65dc15e5f87d0b5a35576279"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00093.bt4.zarr.json",
+      "sha256": "b3cf697c9d5646dcc3e2fbe140b89b6324e346722fe157fca2b9c2100bd7f750"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00094.bt4.zarr.json",
+      "sha256": "594e6594401d77394640dfab5db915585ed13b310d9b68e524a19da325355412"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00095.bt4.zarr.json",
+      "sha256": "abcc556c2ebbd9facd3eec27d3a128dc73ff312754c81ce3e99af539541de6e7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00096.bt4.zarr.json",
+      "sha256": "82689645306ad24676175cddba3290d718fde82fb00bfc20fffa955c6ada61ad"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00097.bt4.zarr.json",
+      "sha256": "04b059ee671035d1ef0cb602d9788de4d5745d70985f215603aa9e577f17095d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00098.bt4.zarr.json",
+      "sha256": "41535c3a40e75ed8d3950360a113bd65615e1edea402d32dbc56cccbff6ff90a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00099.bt4.zarr.json",
+      "sha256": "8e67f1ae5ce235a2a9b4aff335256631d2f2fafef7c6f2c0aee030156e5fbcb1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00100.bt4.zarr.json",
+      "sha256": "388722e8cb50b53b5b867dc93371485ff63fd4735c01a0fb090c540e5b8aae2e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00101.bt4.zarr.json",
+      "sha256": "f3488abaf7a9ead65b27bddbf7e07b8b7673817235eebbee2a3ef8f924e1fc94"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00102.bt4.zarr.json",
+      "sha256": "0962dc68b45618296d2ac250f30c7103412a0585869176ed1728535a2809dafb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00103.bt4.zarr.json",
+      "sha256": "8803ee7a1eed62a5566b3898aa4db9003a320c48546260f18003a5720c03c68d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00104.bt4.zarr.json",
+      "sha256": "48b93752fc518d926bf4f631bb737c2d1e09df83092a5f85a58ed14a45db7468"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00105.bt4.zarr.json",
+      "sha256": "f35acb59a0c7ebc52ef24dceff238df3049d8296eff1eae2e1a2619f3b465f46"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00106.bt4.zarr.json",
+      "sha256": "9c8a5383fc0e6f62a5e226fbfc9a76eb8610f01d0099f7ab1c1a8e44110ce250"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00107.bt4.zarr.json",
+      "sha256": "bda0f7df682f2a77746ff5971db48bb9d7c36eec02bf8a5170820b11cb710ff0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00108.bt4.zarr.json",
+      "sha256": "d479a147b347b2176875454131fad85a5ce36234430194e543606e1ca1d14abd"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00109.bt4.zarr.json",
+      "sha256": "925e6d3811a8491318dbaa45ec272b85d51360ed44996b886354f61d422a9083"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00110.bt4.zarr.json",
+      "sha256": "2a9c6d07af2ffafcc0f5b1f6dff010c5b03f742c2d00ee9d456e4dea5d6842aa"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00111.bt4.zarr.json",
+      "sha256": "37e9fb0a8177a36fe4a26b089c800be83cb3836aab3f704969c9cfbdd056fd3b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00112.bt4.zarr.json",
+      "sha256": "140f5bf03d26778d96808826d0130c030fd8ed99a4739a0316e1cd872707c3c1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00113.bt4.zarr.json",
+      "sha256": "7d1d16acfd3705e7fe57d6040fd70d6e476098f893d5c8440fbb3e76eff56959"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00114.bt4.zarr.json",
+      "sha256": "5c2c92d9f6dcb261ea95b304e3a54ec170f890b0b4ea09bd0cf1947bccfd8ccf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00115.bt4.zarr.json",
+      "sha256": "c9de558ca3d0dcdef7e51c35cbc1b048fc3c10930cf281aa3567c319a9bd52f2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00116.bt4.zarr.json",
+      "sha256": "bb14803cd4f17b0f33e4d695d47a5e291758ee4d0da7545257f83da633b2f374"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00117.bt4.zarr.json",
+      "sha256": "40215bbf2ef4cbb09306769721e0139328600b08b9efe99e0f07d1b42b75dcad"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00118.bt4.zarr.json",
+      "sha256": "742b2e6b9316de85d8f13f3252b76aff65f90207c48579222019f0c62db2a9db"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00119.bt4.zarr.json",
+      "sha256": "d9ae25ffb9aa9ef5e30b83fd0407fee48bc13445dc8707551af28537fe13e522"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00120.bt4.zarr.json",
+      "sha256": "52b0c6c086a939b459d09ab76e2049b6cc1e91c77878d5f38ff9358e34771e4f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00121.bt4.zarr.json",
+      "sha256": "e467c99062ff7cf6d6768628e14ec10976b2466e569cf05af3ea95c659cd3155"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00122.bt4.zarr.json",
+      "sha256": "bc0b3e74d43c86b16833ef0086b6dc8d733b1be7fedea0a3b12aba0c43c45c92"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00123.bt4.zarr.json",
+      "sha256": "e995ff169edd25f5dac18a12faecbd842f7a39073c8a1c7bbc63652ca5dc1741"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00124.bt4.zarr.json",
+      "sha256": "b49d2341ba895995a6e81d079b20b67cfe1632b68e5aa7982c2fa00aa4ff475d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00125.bt4.zarr.json",
+      "sha256": "6b2bf6b328a7475c40260893dda4581707b1c27dc9b4e2d293e6d56dc75cbaa6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00126.bt4.zarr.json",
+      "sha256": "70b8cf8a10a9ecfdc57ba7ea907ca49eadf203986a6c84dcd3dd08756193eb07"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00127.bt4.zarr.json",
+      "sha256": "fef551bb633fff2b0f5da5602f07b0680a350363bb240ec45a8764577a1bd40c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00128.bt4.zarr.json",
+      "sha256": "5a067dcefcfc7224e2a017841ce4e4612c12bd1c2a66dae2039520970b4482e0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00129.bt4.zarr.json",
+      "sha256": "b30b328c12cb9a903ec164031daa68b1483cd383b6efb1159b332527af289817"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00130.bt4.zarr.json",
+      "sha256": "88b1ee5e4df28329c0483c274d5fac61d8124de5baebb5812eedc4ddeabc7eb2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00131.bt4.zarr.json",
+      "sha256": "71d56dbebf3c74a94cae30b068e99712dc8ef03b58ad4d1d7d4e77c82cf68060"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00132.bt4.zarr.json",
+      "sha256": "ee3b5eee8c663af2a9bcf55c0aca271852358c921b7ed294ecbb2cd96c2edb8c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00133.bt4.zarr.json",
+      "sha256": "c48ad5d0b07e6f3db4f2990a1229c2fa2456e6e6c9efdce2a4a959ad93e9dd45"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00134.bt4.zarr.json",
+      "sha256": "2bffe020d4fad1a56e1ed79b5f451600cf7033f92eb05da9324f9e8c4a2b0dd3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00135.bt4.zarr.json",
+      "sha256": "20485ad36b82534cfb2220f3589b7b2201f729126ec26920a6026067b127be10"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00136.bt4.zarr.json",
+      "sha256": "14356be5639471217fe8b1eae4c2c3716910189de4647e615cfd140497953871"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00137.bt4.zarr.json",
+      "sha256": "9323f6eacf97d42713f44015b6e52852b219d8c636d71ce3d3c9fd99d5d7a415"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00138.bt4.zarr.json",
+      "sha256": "85311457e9a0bff4679fafeac82c95b99ed904c6c4ca90544733c03fa5c4acb5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00139.bt4.zarr.json",
+      "sha256": "71594a39969dc05d1d1bd257a7fa9133647fc7031898be001ce9975db034bd05"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00140.bt4.zarr.json",
+      "sha256": "405d4941b3d3d020fd02e7039f5eb4aded5d67270ffd1dced84ba511ab3973bb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00141.bt4.zarr.json",
+      "sha256": "8e4f904711b8f1a35751991ce9e285296cfce1f5b477d3df7a9a48459c8f5022"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00142.bt4.zarr.json",
+      "sha256": "226556c4f45b07c8eb91106a4195ab0ea7f16f5869308dd878a2fa60484328b8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00143.bt4.zarr.json",
+      "sha256": "92a36ecf11881a61d5f7b560dfcdc304bfb5c32b852d7ca7cd27fd313cf50467"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00144.bt4.zarr.json",
+      "sha256": "473338f3463b219e382a0a6ca3c0296aa7086a6e1a15c8e18f6ba39a37ba209a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00145.bt4.zarr.json",
+      "sha256": "53ec6329ad9fdc567e6f4792fa882cfbd40be76abfa0c21109d9e2abd2fdb9ca"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00146.bt4.zarr.json",
+      "sha256": "53ea6235c39607feb611e7ed19504bf2497f9e554c023f47022e2fecec578466"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00147.bt4.zarr.json",
+      "sha256": "e1a9afe890c32e79e8467299b9c6d0a267f9c9d14b932144aadf2f86fbbf49da"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00148.bt4.zarr.json",
+      "sha256": "c78af0ef8dd110634ad7593590148e6755ef6b882da2846307019bb77e7cd781"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00149.bt4.zarr.json",
+      "sha256": "4072660e891fc692bd29b53466c1b2ddc03f2665be5218c77998841f21c6e9f3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00150.bt4.zarr.json",
+      "sha256": "b161e992f36e160a52f951ecf6db54a7e563db3217834997c01432b990b901f5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00151.bt4.zarr.json",
+      "sha256": "9074985e822be76e776def0578f0b4b680e3df29b3e7202611e1c7de14468f42"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00152.bt4.zarr.json",
+      "sha256": "557835e965e64a4dab8f98e44b16cdf5a64a7da07ca46b3deef309340a91e93e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00153.bt4.zarr.json",
+      "sha256": "888ac5e7810e80d5f43531b643dea9c26744dbca9267720664bb7c524539ad93"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00154.bt4.zarr.json",
+      "sha256": "3c3d807ce22239facffd1584a39923522a923c39b512415d1707b6a7c815af46"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00155.bt4.zarr.json",
+      "sha256": "162ff96abdd51893a5a48324c3c7b7151bc19e6f4fed9b1e72483661c4ea13e3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00156.bt4.zarr.json",
+      "sha256": "c05b8d1ed4ecf5621082f5f38b59fdddf909e47119f0653794681215b98952ab"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00157.bt4.zarr.json",
+      "sha256": "70526d43ddcfaad9eef68fed63ccb3601a15ed8fe0a48f46384fee16d8251940"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00158.bt4.zarr.json",
+      "sha256": "78a51c430b57bca0a3c2398b92c69ea61552407b7b93c28af4c944e400689a03"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00159.bt4.zarr.json",
+      "sha256": "0c7a18bec76e543d5a1619ee06a5a383d0f76a65d8312c111488408ab30ffe28"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00160.bt4.zarr.json",
+      "sha256": "cb9a5983ecaf32e72a070a7c8d3c0477f9b01b0868a28eba4d45426561f3de39"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00161.bt4.zarr.json",
+      "sha256": "4095e9b19d560af4bfa8e4e7172a138a34dd59e3dac74c34ec2285b3abbe8cde"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00162.bt4.zarr.json",
+      "sha256": "82143ce8af75be08d44b9d18fb5d20b3a90a056324a164878317078e9a9e59ff"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00163.bt4.zarr.json",
+      "sha256": "c25e943738043e58899853839130b1d49282a4505e4a1588b06e9b3a9c6581c0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00164.bt4.zarr.json",
+      "sha256": "8e6b37e80dbd7ec08d1fdf3a6d600d3f37fa377e66dcc336f23371427bc1b21d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00165.bt4.zarr.json",
+      "sha256": "17f9eeb97a14afd00ace3fc94429b23676f5bd295be2170c7fd0e758c7ad24d3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00166.bt4.zarr.json",
+      "sha256": "708f762ce590488558c4e8f20881a80e3fc4c7d4bab94944755352445b8c9a00"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00167.bt4.zarr.json",
+      "sha256": "23d57be222c10e81827633f9d1a1135e713baf4e421ab87f7deb05ec17708c6d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00168.bt4.zarr.json",
+      "sha256": "ba40333829608a3221dc9944684579fa71fe041d231a64f3a5d5eee179c1f264"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00169.bt4.zarr.json",
+      "sha256": "10f4106302cf4443b944deeb243434e9094c16e00d302346f2867f7903bc69a0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00170.bt4.zarr.json",
+      "sha256": "170eed506fd62b56f8bf24536fe6082f79a76b56303249f4407c4bff1c1011b2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00171.bt4.zarr.json",
+      "sha256": "52fc87744aae3b83f1732aed3a13f56aea3d097ba3ee5f6224865617d10f4569"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00172.bt4.zarr.json",
+      "sha256": "9fef2fe09c910e547cb217d5eb2268493663287c992ff5ad9a0b8df9b2194542"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00173.bt4.zarr.json",
+      "sha256": "3572446f7fe2f2fa4eff0184845ed79d5fb7306421c100b9a7e99a6d5c05e2ee"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00174.bt4.zarr.json",
+      "sha256": "92f134eec271d089ab0a30eea549eda0739d21381bf4d04a282da1337c114cdc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00175.bt4.zarr.json",
+      "sha256": "cfa4a207fbe172115f740b942335ac4df58cd6840c5da80b3bf801656e961b16"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00176.bt4.zarr.json",
+      "sha256": "a0977daa11f80504aef76861c6343ce665c58f46d383e1a647d0eb47624b0131"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00177.bt4.zarr.json",
+      "sha256": "4b74666f4eacf545d3c006c4c50465b62fddaf59952dbe5cf47ae1e6bd2d10ba"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00178.bt4.zarr.json",
+      "sha256": "2176b033ff30e65100a0384ab24c21c2ebe1c1397a534166462bc993d743aa68"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00179.bt4.zarr.json",
+      "sha256": "217c02100d27d99fbae69f41161270c4944977cb03e1c43ea56f254f343bcef5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00180.bt4.zarr.json",
+      "sha256": "3a587af05877385842fda193fc493a23d00febd359ee4e7f76e5dd321a8d3880"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00181.bt4.zarr.json",
+      "sha256": "151f0c31c4d77846f3f81c1d4365f23980aa582b6ee4cb183468c5537c4574b1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00182.bt4.zarr.json",
+      "sha256": "eccd9cb0e692f52bbf2a1ecfe0d9b6bd988bb196d9e82ad375fd5204dc7ca1be"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00183.bt4.zarr.json",
+      "sha256": "5be3d72bfe36b933371c215eaf7c0ea272ea6e8c29fdb12b5311a399c250a18d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00184.bt4.zarr.json",
+      "sha256": "dd62fd9938aecba4da3042ca47b3e56b10acf1c9ac48ac22339312936a5cd860"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00185.bt4.zarr.json",
+      "sha256": "e08a0af496dc33ae3c713b7bbdf0fc1ca1c2dd791e8fd471e14a45628a364a06"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00186.bt4.zarr.json",
+      "sha256": "049477771e40df8e01a4ebf8a42a31522c3f2e205566567562b409fde38edd2f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00187.bt4.zarr.json",
+      "sha256": "ef43593e0c03207740c93c70d1515213a824ea9a7ebec2125e79210219329136"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00188.bt4.zarr.json",
+      "sha256": "879a7142466260e9de7351b9d70fbde2b1537e45fccaeb5f14de384caadf914c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00189.bt4.zarr.json",
+      "sha256": "5637e7f782e0ffbbec99edbef539564a0789acd63995ff37c4c797430a1d6762"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00190.bt4.zarr.json",
+      "sha256": "092235c59fb12f852ff2d91a18d1f8703fc08abaadb177dbc890206a99062c2f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00191.bt4.zarr.json",
+      "sha256": "d6552655a970c97ea3673377a703d58d3c9f134b27863e7c478ffaa2a6bacd67"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00192.bt4.zarr.json",
+      "sha256": "655a160302412be23d9c9b835aaca54695d1ab8ab1353af55fb11afb725eeaaa"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00193.bt4.zarr.json",
+      "sha256": "08909c751cda3cfa34fa398eab1bfbc8ff5a569c691b2de8823444af94bebaad"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00194.bt4.zarr.json",
+      "sha256": "9571a1bf87d5fe797fc3b7bf8007f5497be9d73335c4f94217c088a287e8876d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00195.bt4.zarr.json",
+      "sha256": "a38206821ae90f1fa7bfade34d9d58ce8749caae663b84226cb1dc0eb3315081"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00196.bt4.zarr.json",
+      "sha256": "9e0117f1c227d5f13ad05f644f525726c3e9ba031c33cda26766f967855872d0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00197.bt4.zarr.json",
+      "sha256": "ab8f6c4d1bd5af624d46425fc9a9ce07f974187dfdd4f7108169ec2434a67e33"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00198.bt4.zarr.json",
+      "sha256": "bf72566b33fce980f4604273718307b899a4ebdb7d1fef4ddc8c58786d013b36"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00199.bt4.zarr.json",
+      "sha256": "9ef119fccc3b2d4549d2305bf5f00bcab87e1e58b8cec18369382fe66d50b82f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w02-00200.bt4.zarr.json",
+      "sha256": "7978283dae8b558e612d9fc4f46896243a10dcfdcb3396edf0b67623223e3035"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00000.bt4.zarr.json",
+      "sha256": "b66c94c44889b711fe0c6926905753307fde5be3add2ed2463da83bf830c1c9d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00001.bt4.zarr.json",
+      "sha256": "cff34dc08cf7c17a4c3316e82de48838b5eeaa4dcd108edc77307df64d962845"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00002.bt4.zarr.json",
+      "sha256": "3a8a5e567e6779fcb7b9654163a438687b38d1d0148e858dbe1e61f729045d87"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00003.bt4.zarr.json",
+      "sha256": "51ef46f1e79f0f199f1ab0023bf5f260a7e4ef1cb398207aabeaf3cc4820019b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00004.bt4.zarr.json",
+      "sha256": "0066106ec56e86e8bf2ec886ef418a00ea57822f654fae7c1d501eaed5849db5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00005.bt4.zarr.json",
+      "sha256": "87e55fbae966080175625b360fd3e17448ec33874e220ddb5b2635e7cdf0784f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00006.bt4.zarr.json",
+      "sha256": "14847e5ddb71b4fc0514e9bb1f9fbc6dc07563725cd328709daa6d5916f16b4a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00007.bt4.zarr.json",
+      "sha256": "f42c52091228f83f55a042690a56b1bfbde1fafb8d5e0b27695cb3557c1bdd95"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00008.bt4.zarr.json",
+      "sha256": "f2c992201d326c683d2bd28a3ec42bda369a7908b005afcbcf42fd03bbf6252f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00009.bt4.zarr.json",
+      "sha256": "3b71048b113cf88782896fa6c8d702cdf8f15ee121bc3e25aa2ee1111da227f8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00010.bt4.zarr.json",
+      "sha256": "6989db9a8675e95df1cc9b26e3efcd44b7337e9b81f7c5a200c03be998ae627f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00011.bt4.zarr.json",
+      "sha256": "0627e857e9782a07dcc037c18263eaaaa21de9ff0eb4946094d5a93c75236d62"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00012.bt4.zarr.json",
+      "sha256": "fc370ccd1c5349309f7c8aceeae84755c56a2f1890965a21d5b3ce7385685d13"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00013.bt4.zarr.json",
+      "sha256": "1b9c673ad3a93a58a6b272ee14d9e87b89fb022db3991401e295f0357748511f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00014.bt4.zarr.json",
+      "sha256": "b7fcb3e542a963ae52cc15b0e06f97db6f122702c634c3f5320fe18187256ae5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00015.bt4.zarr.json",
+      "sha256": "5d4968f498a29b4151d42494a2aa7c52eec7cb1a04ef04ac75dca84c206db730"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00016.bt4.zarr.json",
+      "sha256": "ef250a1dbfd24bdfbff4c99bc95cdcd03110ca6366b446e8d3540372292b2924"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00017.bt4.zarr.json",
+      "sha256": "ea4455ac52abfeea9737ba8c95e9699132e4babda692fa418d40197623e08ecc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00018.bt4.zarr.json",
+      "sha256": "dddb6421a806a65e616fea923ec5474221367d7a9fc7b8e755e34296f0717f66"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00019.bt4.zarr.json",
+      "sha256": "0b39ced447ea1a90039903bcf55de03c497991599980f52cb128788984f63c8f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00020.bt4.zarr.json",
+      "sha256": "6f010301716e96073945167967552ffd0550450f237bedc583e4f1d95cb74bbd"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00021.bt4.zarr.json",
+      "sha256": "322b2bde35cb6feca712e2211b07718e4942f0a17a3b07e2241f146dd91a1824"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00022.bt4.zarr.json",
+      "sha256": "495e4ed46493c160de37080cd00d8d2cfaaeabe07c0d55b2f8452391cef23bcd"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00023.bt4.zarr.json",
+      "sha256": "ed50174355d9283c656f9157b6f55887a5997a32ca9f7976151cfe2d69916c12"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00024.bt4.zarr.json",
+      "sha256": "0f966339327111173ac985f5450131ef686da8508f7db42bfff07b1fb155ba63"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00025.bt4.zarr.json",
+      "sha256": "3aaedf15aa938c7558e88e19190ca0e220db0cdfed5cd108f5538c74c0a2eb7d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00026.bt4.zarr.json",
+      "sha256": "8d62f7c5b0bc9a76b1eb36d5cd7a5dcaeb52240ab444f57ba494c6f689176840"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00027.bt4.zarr.json",
+      "sha256": "1207967b4a63fe842ad31e06f43ad86c993211b2fec3151c37585a69e9d02668"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00028.bt4.zarr.json",
+      "sha256": "9da1f6202ea60695d4fdb02d068b40ff2d6b70422786cef0dd24ecd77bf4146a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00029.bt4.zarr.json",
+      "sha256": "1d076969efea05d19e973fef35219a4b2a06c096fc35f22793ba30835c191b0d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00030.bt4.zarr.json",
+      "sha256": "026b6c347aebc44be80f94153d25b0169b8d1b7aba9c5afdb40acbb77fc9f522"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00031.bt4.zarr.json",
+      "sha256": "09414c4194e5da69a9c445752ddc9f6d956b31af105eb921f9408b9be09f6036"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00032.bt4.zarr.json",
+      "sha256": "4d69b91a87ce8836f522bda6d125e4bb7c578df47c6397d04f387db573c3a3ec"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00033.bt4.zarr.json",
+      "sha256": "a544bb20ea5e5c416ec2b985e830e643b1a510122b473a2a63adeaabb97707cb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00034.bt4.zarr.json",
+      "sha256": "98817b0bd6bd55013508aeac7ac59ccba1eb0f51729d11d0f2e80e6b4706ad74"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00035.bt4.zarr.json",
+      "sha256": "9814bf1839b32bb3fd1e711e252a3feaf0fc7339365cb520d0b4d6e6762f4aa1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00036.bt4.zarr.json",
+      "sha256": "e081e8f47322cc04e190a4cf52b235598a6a10fb94686fbce181c79c1dfc9766"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00037.bt4.zarr.json",
+      "sha256": "1e1a194084e4a08818baf3dd4c51a67b3812450624c996486c351bd6b27e34a2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00038.bt4.zarr.json",
+      "sha256": "fdcf0b7aa1a5876ab1d361cc98b804ae9b6545df179131e89aa5640ea02f17e0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00039.bt4.zarr.json",
+      "sha256": "99fb1d69bdca521488124a3f97a9c90887212761adc4a4f135f00a1f92cd29e7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00040.bt4.zarr.json",
+      "sha256": "66981a16fe328833261d13747ebfc8f8b0468b2f14468c708236f9d922e02fd8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00041.bt4.zarr.json",
+      "sha256": "c9de01199108b44f57f8beab34c92e29349256803c2095ee8633a1fc256651f3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/sidecar_attrs/w03-00042.bt4.zarr.json",
+      "sha256": "542698982ad7ffb4696104995f2a1bba4931b0084f5f3fbf0e4451e812dc79d6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/source_manifest.json",
+      "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/source_metadata.json",
+      "sha256": "440ca531da771f0848ce06688cef38bdfb422907873c637dc6df5f165b3729d6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run06_g10/source_shards.json",
+      "sha256": "1f960b2a45f5736178522ee4663d4e403942711fa87cfc1c4554cd3669fa22cf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/closed_bt4_receipts.jsonl",
+      "sha256": "5e7fae4b6c512df5d02542d4113ff06f7e0e255e8a6b3911496eeb2a2ca520a3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/closed_source_progress.jsonl",
+      "sha256": "4014c270005996d9caa05e5a7e6303206bc5974135531d0a7a177faad88370f1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/prior_closed_source_progress.jsonl",
+      "sha256": "754b9400537b7742d7c0141abaa8a394e7ea69eb732d45b3db92ea3f2b895ee6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00000.bt4.zarr.json",
+      "sha256": "1b60fe58fd8c0a755b6e7d5cc92edf65dc5fa98943199a9759f5e255d230da85"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00001.bt4.zarr.json",
+      "sha256": "7b798a36e5519e05103c25fac276da9bd4fce03a05ab8d45ec78f31e6dd4383b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00002.bt4.zarr.json",
+      "sha256": "05d2727610be8e2ba0696889ffb449aa103ccf4d6007d8e7782e9038b6855957"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00003.bt4.zarr.json",
+      "sha256": "15d7f68fd772c06e942054c90d668a1c635320dc9fb019cda50729610beb9e46"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00004.bt4.zarr.json",
+      "sha256": "51dfc4f13a344871a3380a097c1d1a23ca4c2c454709810bda62091d58d1fb1c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00005.bt4.zarr.json",
+      "sha256": "a9c11b250be31b0a915607f05a730d8f759d92cd24f06e767844cf2bb3dcbe4a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00006.bt4.zarr.json",
+      "sha256": "73f15629d67035c3c6d7d12faf96f1d4bda270348e7a4f589832bbb0753f18c4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00007.bt4.zarr.json",
+      "sha256": "65a17d344dba77680f9d91442af1048e0d61a48413bba48adc8b56cb936591f1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00008.bt4.zarr.json",
+      "sha256": "0588efd6986e9989c270a22326e63e259aac5991f63b295c82a22399b3df3caf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00009.bt4.zarr.json",
+      "sha256": "8de5d8fc28c789b54f99d8bd80bf56c3e22fb764082a807887c970ce7bca1839"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00010.bt4.zarr.json",
+      "sha256": "6cc07bff41e7bd6fe91189827878e2e4f536c2e5ca07a10e1fcecdca9ccb3902"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00011.bt4.zarr.json",
+      "sha256": "352eb7a4de83e857e572db4379533435feb07d6ea4d6c067dadcf75de4b1ff80"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00012.bt4.zarr.json",
+      "sha256": "c377f82e4d5841e96368eccff7c235d7f9d205fc18233d4d7bb75a8b8e2b1daf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00013.bt4.zarr.json",
+      "sha256": "6a29331048a1babf4e2c7b7b5cfa16ec7fabc4956534805b9873ba9d83dbc205"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00014.bt4.zarr.json",
+      "sha256": "6adafaeea1779adbdb2c3ced13d3bca74e309fea094e1fdbf6cfce7d6d677eef"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00015.bt4.zarr.json",
+      "sha256": "22524279a62998004b89fedef837c4d959e290aed3f54d3f3ee67bdd95618af0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00016.bt4.zarr.json",
+      "sha256": "119cb68dab2f5d2ef12dafb233e69492b494be14a9d8f790346b9795c00c1c12"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00017.bt4.zarr.json",
+      "sha256": "8257b9fed61c9a1b4bc2a1705b1875ff87d8b6c300dfb8f3ddc5f319e7813533"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00018.bt4.zarr.json",
+      "sha256": "1f06d23332dd6d0b775983011776d9600cc797b22e49f0f9eb574cc835b56264"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00019.bt4.zarr.json",
+      "sha256": "6ec9fd449cfd0e17a34c03b23c7f9ab4e9d72bb7dad9d3ea734dd4e5816ca9f0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00020.bt4.zarr.json",
+      "sha256": "5e52ac261e0cdeb32ea9f8207909cbe3a110561aef630f1b20a5f0c2a310a551"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00021.bt4.zarr.json",
+      "sha256": "4e6c282b4191dd53c63b87d18bf87bb85f258a4cfc0f56739d3492c8184016ae"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00022.bt4.zarr.json",
+      "sha256": "b749ad38f93ca6fd5ee525685be19f10b3fc741f8512812bfcd97777b6d433ea"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00023.bt4.zarr.json",
+      "sha256": "59bba5d84daa4ed5ece77c2973857a0268562c51fc8d293a9b952731036be816"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00024.bt4.zarr.json",
+      "sha256": "31aca4d6a6b4f3ee46ae0a80fe46ae71bbb92137de7371e8ba52c31e43cfeb25"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00025.bt4.zarr.json",
+      "sha256": "b1c4aaeb0da016e6aaca1d7727bceb6ec7aeec410d7a3f5195becd3c7beab397"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00026.bt4.zarr.json",
+      "sha256": "4ef3d6bf4b78ccaefd1134d13e23888be8ce50f033387e43620794a003f7ce1e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00027.bt4.zarr.json",
+      "sha256": "0b5bd1ad5cdc74b85eacf5a62d5824bcd9c3abfcfc00ddd10fcfa2a2e69817c3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00028.bt4.zarr.json",
+      "sha256": "dbb83978c11d892db9310efdfba6450101ba2ede49046b102dc133d7ca997af8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00029.bt4.zarr.json",
+      "sha256": "4fa93c9fe6f22000717ceae7724cfd68f06f3159559b76aa752634e20811950d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00030.bt4.zarr.json",
+      "sha256": "70c43bb38c19f0ddc6202d32982b22f515cb4a4f877dbd551e0ded8c583d90ba"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00031.bt4.zarr.json",
+      "sha256": "ed5acab7e37601e8ae8a79a941681787dcd29f2eb9b993576fdcb4a21672bde9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00032.bt4.zarr.json",
+      "sha256": "04ae8a1b488d79390ea5b9e1fa359b09664af0710bcbf120f48c6b6b982059a5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00033.bt4.zarr.json",
+      "sha256": "63b00d0cfec95f7d4b449424adb5d01add257a6475b592afb285f79030fc515b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00034.bt4.zarr.json",
+      "sha256": "ac0a42cf56dfe651cc54ac09e7cc12c0f0a875bf0de3ef87ad7f0bb3cefaacae"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00035.bt4.zarr.json",
+      "sha256": "88d222b46c10aaa3fd911589bde3b7ff6f3aa433e1b43a0857310c71fd623835"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00036.bt4.zarr.json",
+      "sha256": "407e97a0f81214a7a16f776e73b9e5b52a12e6de0fcf43bb9e3cf91ba5a8aad6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00037.bt4.zarr.json",
+      "sha256": "1e4ebc20a175f7d1b37a6e573a1a40df9914ecadfdaca14a3ac6b65468e307c3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00038.bt4.zarr.json",
+      "sha256": "725fc0ffc53cd4cd6f04e92c16a9aded703b16ceb6143265e00f3b8a4b695309"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00039.bt4.zarr.json",
+      "sha256": "89ba41a398786b027fbdb669764ba2c8e634dca5149cc86eeb3987281d34f55a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00040.bt4.zarr.json",
+      "sha256": "4022f981dd59047ed6d7d5b01a1e80cb72b6041a8d081dc46fa0aa61b89f4b0e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00041.bt4.zarr.json",
+      "sha256": "2fc3d44610def752c71cd03596c8ad094f8b382db8700bd44132031d222fcfd5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00042.bt4.zarr.json",
+      "sha256": "c4c1b5de372f682f2e5bfef0040d674b5a5c4675f1f19b536fdd4c73f4709dd7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00043.bt4.zarr.json",
+      "sha256": "752eadb418cefd62d45c1ca2e21867552417b493a2875bd1d78bf6a978c3cb0a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00044.bt4.zarr.json",
+      "sha256": "abb08bde77f10becaa7b64d4ec5ca5e9f9470f9aef9a43b1d3672180fdbeeac4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00045.bt4.zarr.json",
+      "sha256": "3208f11618c3c2be102123cb0a8ecd3cdfb4f15116caab0321710dbfd45d73c6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00046.bt4.zarr.json",
+      "sha256": "1b10d8c0af0b014fa2c8a6eedce4aef88d018e276d520c852bfacd11ab6dfa5b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00047.bt4.zarr.json",
+      "sha256": "009f31f05710d6c0c4715c654ac3155d9ce0c350a6f9ce3437a1e87d389ac1ce"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00048.bt4.zarr.json",
+      "sha256": "fb6c5ea390e42ee0c8ab297566667f28e8d7a9885c8955288eadb017d61ed96a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00049.bt4.zarr.json",
+      "sha256": "4f2bf9d4829ede3992c21eeef2e5f1870c91328726a2b3616a06086c99ab828d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00050.bt4.zarr.json",
+      "sha256": "d62cda90dfe73b6bb41e6e2890c29e7de18cafb7f2b902deb429fc61eab77ad8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00051.bt4.zarr.json",
+      "sha256": "bad4e57372053675a8a9d189f09cd98cabc9da12ba1b816a542c7897e7d63a92"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00052.bt4.zarr.json",
+      "sha256": "69ef911915b9bc9d739763076080283027cb5e97123344ad66e703b5c4de2e46"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00053.bt4.zarr.json",
+      "sha256": "68fa03157aa6579ff972f87e9c21e45bf76e7714f852cd91a2b192254c1c11fc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00054.bt4.zarr.json",
+      "sha256": "b2c5f6056b14a8d1e70a2cdae1fb299f03653b1e51f96857da50f0c0694a2601"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00055.bt4.zarr.json",
+      "sha256": "719285b2413d143eae92a2cb96d2a5404a4c85dc458e712e4f8b38b786bd6731"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00056.bt4.zarr.json",
+      "sha256": "b4998d55eca09b90563d92be115be5565981121341039cfd86148cbc52cd403c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00057.bt4.zarr.json",
+      "sha256": "79df16a27c9230c67b79806f1e6a3151ac288641764265f7bf22b115a9d96b85"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00058.bt4.zarr.json",
+      "sha256": "282469e719551b932409fe86b84120dc3c98efcac8c3889ee7df79287f48b66c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00059.bt4.zarr.json",
+      "sha256": "9d3a75daa2723828025b98fcad88898a9b3edb4dfc02ffeb33a06c7e3a4eaf53"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00060.bt4.zarr.json",
+      "sha256": "121a1af454ef049bc7fde6965ef18ad1fdb991771828293b6c9af5719f84eadb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00061.bt4.zarr.json",
+      "sha256": "3760b803196381804ccfc3f70fc8da049e98e9fe985ba6de57a2f233ab721ad1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00062.bt4.zarr.json",
+      "sha256": "f634e6ffe239f8bbbfa0164d1e9ae92ee58dc8391f4e269779645353621b0f60"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00063.bt4.zarr.json",
+      "sha256": "35fde555f0e7bbc370d1b8ef697223e21a5da3c9435414af1b2a72ba485ad73f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00064.bt4.zarr.json",
+      "sha256": "682e162bb4b0128d1dd1b76583361a431243f38de7de4b4a127c48b439248492"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00065.bt4.zarr.json",
+      "sha256": "adf661441febade558aeeda87fa9b5ce1c54628aa085e5f6635301bcfd352234"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00066.bt4.zarr.json",
+      "sha256": "4dbff9489e55f443872b5402a4ffa283a4d408e029dc59e68cc2602311d83f64"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00067.bt4.zarr.json",
+      "sha256": "88db96b0f1c0c3d3f3d5dbdf614311ee0c13ce06559411ff56ace5fb940208e7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00068.bt4.zarr.json",
+      "sha256": "572a80bb52ceaaedbe5afd63f6db172e50762c17d7ec1aed834da2c6468203b2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00069.bt4.zarr.json",
+      "sha256": "f87d5cd933a6b1d01d3652431f50998a6487a1e22c372275b5762847ebbb1ab7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00070.bt4.zarr.json",
+      "sha256": "5b733077b9c5899671cb4b3931140fe3eb70cc6e52101dbf917ac61ce91d5e33"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00071.bt4.zarr.json",
+      "sha256": "50bee42f358050e9ca94ae0a722c1ee36911a4c3b2173c34bb94a7d0e8c2f93d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00072.bt4.zarr.json",
+      "sha256": "92aa404be8c388ef13cbd53a4410d06d49685e7a0c76d8aec96d43c28551cb28"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00073.bt4.zarr.json",
+      "sha256": "34673fec7881b8aa7d321e377c5a411a236663e17bd74259e9b3d5e417b034d0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00074.bt4.zarr.json",
+      "sha256": "653ee4afc403517f85b37c6037d6373a53a9d29234311b1f274e222ceb4dbc9b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00075.bt4.zarr.json",
+      "sha256": "a5651fd85bac20950d924bc11b7f7899829534fe4a30fa006ea2def9163ef179"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00076.bt4.zarr.json",
+      "sha256": "834120c7954a25dbacfb13be927f32e6e5f81aea24f53aeb73441823b9e6b449"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00077.bt4.zarr.json",
+      "sha256": "f05f22c21f552ecd08912a49ad1228557824d0ec3dd42f8a874cf9e930654b86"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00078.bt4.zarr.json",
+      "sha256": "5a7d3d30ef3141e4c9b3f13f662a75b41a5d18c81e2db55548a77a71850022be"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00079.bt4.zarr.json",
+      "sha256": "f277a79ef2f6c31480002726ec4cc3d56ec96ce3d62156fa01c33451a9e353c0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00080.bt4.zarr.json",
+      "sha256": "b499fa235804ef7374597fac49d29fded2f53066a896abeb5f7c65e7b75df63e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00081.bt4.zarr.json",
+      "sha256": "368eb2619c1c305e37d0abcd9d79bf40416aec5c624b97a4c5706e4e3f432231"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00082.bt4.zarr.json",
+      "sha256": "7b89f86d6ee327cfc82e67b0610603603a06e018e109ae9ad1fd99742b8f9f9e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00083.bt4.zarr.json",
+      "sha256": "8e5632000544fe28cf6b097f0568348b2d72f2458164564687e65320e68b97e8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00084.bt4.zarr.json",
+      "sha256": "212a9fa631d064878ea7d7df2c583202ef1b870b6880a9899185bdac00578433"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00085.bt4.zarr.json",
+      "sha256": "a0d04eb4cff0fdce19165692aa568e146ad2e2813848a6fd5f4fff5316e613d5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00086.bt4.zarr.json",
+      "sha256": "252c1283a84281eb8f51e9fc17872dbc47c834a86e39cf7e472cd92bdb7a1aed"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00087.bt4.zarr.json",
+      "sha256": "2615f0656ffbce728d492dad3df1a3a66e7254939a9bd598daf35e762e5f6b16"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00088.bt4.zarr.json",
+      "sha256": "67d1383a5a2842c5c0e0a9711562f78dc77d8052c729c88f03893bf2bed3466c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00089.bt4.zarr.json",
+      "sha256": "9075363b458f17e8542eaaaa7a5dad4908e03fa009e60886f7d7d1b4bd96129f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00090.bt4.zarr.json",
+      "sha256": "403f1cbfcd236a704c56183386881a8e1fae4f8caf4383c9b0e6c7bb2356b42e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00091.bt4.zarr.json",
+      "sha256": "8dfea5730bca6e43cf539e8b446355ab7adbfb0281f23d084ab43fed7384b35a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00092.bt4.zarr.json",
+      "sha256": "b882b69afbaeb5feb009e9a8165bae7ef53e52907510f329ae7d194f377c4029"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00093.bt4.zarr.json",
+      "sha256": "b74fcbe444e7c672681e159a0d6ec888d08fa67ed23655205a984ed06c8cdde5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00094.bt4.zarr.json",
+      "sha256": "5d42100b38b8c30776650ba4c306c0e188254392ab25ae6f130db0a9f2be8caf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00095.bt4.zarr.json",
+      "sha256": "3f78382b1c4172e7a17af6589720ef658db01ae4600d10d81d48aa4451a9f085"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00096.bt4.zarr.json",
+      "sha256": "54c5dff680ccbe0c390af87674423abf59c84c047dd7cc54612a4a47ed8335f0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00097.bt4.zarr.json",
+      "sha256": "44c2f0bb24a0facc3e01b1cd4bfedae824716addb9155beaa469640a03834291"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00098.bt4.zarr.json",
+      "sha256": "ffa2aa6f800ff74f584c3053c228439d7627f32029b8c87d72ca5a798324efee"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00099.bt4.zarr.json",
+      "sha256": "b6eb3f85251ff9170d49a18576f6bd1609c64e2a439735baf649671303afc78b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00100.bt4.zarr.json",
+      "sha256": "e17410c14929f62509e868fcd75fe940aae8f49b6847c231d6400d1787ba7e54"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00101.bt4.zarr.json",
+      "sha256": "10f37e058fa412bc969233b9331d0a32d8e17dcd743f7e7f5971d088498d4144"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00102.bt4.zarr.json",
+      "sha256": "c16f2a4f0fa32b999ad6806eaaf16dc1e5d54d817379544c02b58862bce60733"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00103.bt4.zarr.json",
+      "sha256": "44064e1537af52521ac04cb8e0f42fc77030531c37a3f374accdde5e1b6f356f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00104.bt4.zarr.json",
+      "sha256": "46bd1020bed7d0c2294ac6e441b4c50e4e1bb76221a28da08917a6cfbc8ed982"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00105.bt4.zarr.json",
+      "sha256": "77dbdebee7b3c20d5dcf505fc5cc40df15477c7681bf5f8da85065d3e0653b87"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00106.bt4.zarr.json",
+      "sha256": "7f9b2f0f79ac1abda6baa2db5e7a80365b3808204c8e7dfe603c5e65e9a13aa8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00107.bt4.zarr.json",
+      "sha256": "e511ce58a323bf44405d415034880ccdfd598707e4284e72ad94844995de5d1a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00108.bt4.zarr.json",
+      "sha256": "3391b4a37e95b6f5844d27bd71c802c1dba33c79a22cfd939795b1e19d6ce3e3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00109.bt4.zarr.json",
+      "sha256": "b48094784cce8e743c448250954c0d09d10b2c72d2aa305a9a638f04e00e9ab5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00110.bt4.zarr.json",
+      "sha256": "2aa04899ac059e3586b2fce40e5b14d1e3295d618d40a946fe4b2176022dcecc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00111.bt4.zarr.json",
+      "sha256": "c0420a4248cc70d409c90566ca1b2f95137dc9387a87982f8845f79a831583eb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00112.bt4.zarr.json",
+      "sha256": "e955c07d4dfbe73ad630a07b1337f42c659577d5c3250a42a0839b545e2eb9cb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00113.bt4.zarr.json",
+      "sha256": "bfc966ded94a629a14b3accc1ee9c920d7e3be9d12960b25c5d775a2b392573e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00114.bt4.zarr.json",
+      "sha256": "9685fa645215bffb4cc3644bee98ac9cacf769234e6ac62e71ff4f48717be4d5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00115.bt4.zarr.json",
+      "sha256": "ac602e4ecb361f5f5e84b68fcfba56762b2c07aec25705ef4c261ce10c593002"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00116.bt4.zarr.json",
+      "sha256": "360d14b46f929ed832f01263cd63974f2757a3b831c4bc5befc79c5f0349d9f7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00117.bt4.zarr.json",
+      "sha256": "11439fc9949bbdee9094dcf35674af46124cc9ce17789ba5247751c02bbf71d2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00118.bt4.zarr.json",
+      "sha256": "0607f27d4698ae8f7b7ec54113e29fc4b72aee4c32b84cc61312e4a8d2c75c8d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00119.bt4.zarr.json",
+      "sha256": "c78c9437abe909b0ec198c992fb6d68a909205d233db4a386b0696e9d942c092"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00120.bt4.zarr.json",
+      "sha256": "a2272e3ce1cc52bbc9a5558181d6366470452dadc5b7bee42b5611446c4e08a1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00121.bt4.zarr.json",
+      "sha256": "4f36c7d5715c4f5fe869cf5c6cca3ef25f749f712b99b6251aa0570f200ad477"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00122.bt4.zarr.json",
+      "sha256": "bb1ec2e251e81a240a95faeabd6cc48633d32c637a33bcf831c8b341d78fe534"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00123.bt4.zarr.json",
+      "sha256": "56813f78e08e08a82899d74b120bb9ba1db3c135a5620c879817c86aa59816ae"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00124.bt4.zarr.json",
+      "sha256": "bc9f56a8cb67cafa110cc1cd29af27cbaba9e908b776f28bf53a0ecb4d3ec721"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00125.bt4.zarr.json",
+      "sha256": "797a51df3eb7eb6828cd15b87fb72b6545a17b26c4d14f460b4a0b32f7c0198f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00126.bt4.zarr.json",
+      "sha256": "f236211a37a9e2b494064232a94c218c63f2164ca306a310050e9428bc349a4a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00127.bt4.zarr.json",
+      "sha256": "e628a353290e85440ba1d5accc4d22d119d017a0b3ece285ff2a66fc5b5172de"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00128.bt4.zarr.json",
+      "sha256": "a8631a9a910835f0df97c347791cb26f6a9f6c584f23e6be3712b30639696a2b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00129.bt4.zarr.json",
+      "sha256": "766618dcd65bfffa9887c4d83a44c42f825ea07f873309f7f74f89fda307375e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00130.bt4.zarr.json",
+      "sha256": "6e93073797a0b3193723b36cb36dc2933b8cfc905c38bc66bccba7cd055a2020"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00131.bt4.zarr.json",
+      "sha256": "ec1ea3a6bb780199944b87861bedf83719e7caa9d815488f978cace09d9a061a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00132.bt4.zarr.json",
+      "sha256": "c2d6d977e2365bb2edf02f981ede6c704bcce44e9f5a15f030deb1a5613c6051"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00133.bt4.zarr.json",
+      "sha256": "f016561ceeffe71c30758ccf52b88a1294c4f36ea85fbfbe65e84d2271b10679"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00134.bt4.zarr.json",
+      "sha256": "3bffdbb153ba8e4be455ff94b4057a4ad541b504da006de61567b48fb3b5f03c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00135.bt4.zarr.json",
+      "sha256": "93ad06336e7b942f94187535ceea7f79839c08f12f7bb2104b4e34f5ffc00dd5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00136.bt4.zarr.json",
+      "sha256": "24081dc4874bd25c293a9a54c603eacc2cf4a140d61a0ca28f3c90652a5753b5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00137.bt4.zarr.json",
+      "sha256": "d0e61a5c857d59fcbe8cd4a30771d9d57d3cef4c0ad76a2e25150ead1266b8f0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00138.bt4.zarr.json",
+      "sha256": "178999a0b59393db6c7a04c989d89175c5d8adb530e873935eab462b2b4ecee3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00139.bt4.zarr.json",
+      "sha256": "b9ea06f6ea8e92773d120c03ed6065694834a15d62e7c780cab601f9a4b803d2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00140.bt4.zarr.json",
+      "sha256": "5d06ad515157c636f3312c72747c976ef4e6b28553cf23d4d3fe840b0f6780aa"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00141.bt4.zarr.json",
+      "sha256": "a7013f8f7afd2130233a0c5071d2b9e8f1eb8ca690cab6a5f265ceea0e1d5568"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00142.bt4.zarr.json",
+      "sha256": "b478c6e67dcc06fb46eb82e062103b246a1caf4cae222f1cb4e2be24362d7d42"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00143.bt4.zarr.json",
+      "sha256": "491b33c008c146c7919e45117726f05a2a7222ac1b71f031fb7def57cab7160c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00144.bt4.zarr.json",
+      "sha256": "82733f629eb7efdaf1e226131fe1897fc5d1322c5fc2c85b70d7751495f40e6f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00145.bt4.zarr.json",
+      "sha256": "cc01ed5d5fe9117da64b348a8e401a01cc341608e9f88a6ecd7ac1995d13317a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00146.bt4.zarr.json",
+      "sha256": "79847bfcfae4b24f51d02c0a4628ff155a0ceabb76d8e771b29dd2c70a830758"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00147.bt4.zarr.json",
+      "sha256": "99aaeaa060a06bd3229878e41b507f289a5ac74dc12a5e3aea44b6925e6c12c9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00148.bt4.zarr.json",
+      "sha256": "1d90d37e66b08ecd5500ecd993d77f632e969831687ab286c3171ebc4cdb12e0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00149.bt4.zarr.json",
+      "sha256": "fabe02fdee09c11fdd8249164ed08a5ad93b262c087ae99b48a0c8bb0fcee9df"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00150.bt4.zarr.json",
+      "sha256": "059ddffde4f1e460fff189988f13aa120600c66eeb9e1cb82b67dc009c064fce"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00151.bt4.zarr.json",
+      "sha256": "71143a23a1a329ef3932b0b92e77f8eb0ff17be6679c48ca4b8524e7d9580a03"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00152.bt4.zarr.json",
+      "sha256": "ba837dfd24ca70bf561b171daad85a4b011583cf5855fa31f4fdc583505cfcb0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00153.bt4.zarr.json",
+      "sha256": "8c511d197fd16e977ce15f39c8a9b6f126945e516742b297ad3c52a355490e8f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00154.bt4.zarr.json",
+      "sha256": "a96928933b32354e2a5260291df80389219b1eb424e20d21a26e4cbc295fac07"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00155.bt4.zarr.json",
+      "sha256": "d5c8269c56e390a86e664abb243242b036f1aa61ba5cb1357e205fc2b3c48ea9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00156.bt4.zarr.json",
+      "sha256": "f21a9baee2129eb950e080bd1b8c506c3d748ce136bf240c72a7e221f3417953"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00157.bt4.zarr.json",
+      "sha256": "1938377a664747078cf1978eaec5addbf453cf3a50db1cc8dc3e6f3423fc5efa"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00158.bt4.zarr.json",
+      "sha256": "88cc9f1f09a28d85e4ae29fa30b4c2c730d8d4cdc590e67522c152f501b0d428"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00159.bt4.zarr.json",
+      "sha256": "469329ea28c359d8378c9804da011f08708cfa239766b281bc292bd7ffd0458d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00160.bt4.zarr.json",
+      "sha256": "480aeb744c91ade43dbde709b03cf347f3118789aca0b6b51faab12ece943315"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00161.bt4.zarr.json",
+      "sha256": "6ce364e9ae8af9b6ce3a7652779163f58b6d3aa13f7572d74f6823a19ea894fc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00162.bt4.zarr.json",
+      "sha256": "2c034e803b3dfa27db9eab8d5b9df075dfda3f55a519f36c3134efe300ca3fa1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00163.bt4.zarr.json",
+      "sha256": "6d94876ac320a0607e857830ff4374503d5b0a11469a610212a962b07c9d66a3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00164.bt4.zarr.json",
+      "sha256": "6a09be2d3797374436cd603cfe8d9496bb528b9b420caa1c02e7e396428e91fc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00165.bt4.zarr.json",
+      "sha256": "e2b77a5a071715ee086317c0d01016b459f05559c25d690aa706c9b0ec330562"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00166.bt4.zarr.json",
+      "sha256": "c6b77e2054baa50f8a198a0113be09ea2a73e6040b09207d48482fe40a2fcd77"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00167.bt4.zarr.json",
+      "sha256": "d38d2513f537a71167c00af513c3dc7ea8b63dddc8b2a6330da2aa0331d6c6df"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00168.bt4.zarr.json",
+      "sha256": "917260d0069c5252895b1e3555467d86d8c932c2a1ee2798dde200882f8d5c1e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00169.bt4.zarr.json",
+      "sha256": "d4e41855ea8d8be7ea16b4643f2233c9352bc21b33eecee427f93aa84933d7fc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00170.bt4.zarr.json",
+      "sha256": "2277ff50e18a049230938a6208fa7cad849ca882ea77aec13a79c5554aff06a2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00171.bt4.zarr.json",
+      "sha256": "abc82b4f28d786bf72fafa813cf806cfc726825065e3ce2df1a2dc87ce8e2a53"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00172.bt4.zarr.json",
+      "sha256": "eb0a1ea8758467f69922e0259a64745f7adc1de0396227fc8a8f59df4d7cab15"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00173.bt4.zarr.json",
+      "sha256": "6a4b65f9caf97aa7db99bce94cc703e9f2acda183f7c0f2a694a6348bbd88566"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00174.bt4.zarr.json",
+      "sha256": "f03a5ffbdf8190cd9c1483445388bcb17d819326facc988cc81ef408f9df2a0b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00175.bt4.zarr.json",
+      "sha256": "ab5ad63a8a5d7b039d370e62f01da60ad977a4d30da57f37da9f3eb17d370fcf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00176.bt4.zarr.json",
+      "sha256": "f06fc2a44e18ba6732f87a258a1c8552d560982451d8b79f3a0bba452f8323fc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00177.bt4.zarr.json",
+      "sha256": "5e6883912e5cadf0d6bb15d1a09a3dfc15c26aeacb91bef9b6b969623e2e3750"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00178.bt4.zarr.json",
+      "sha256": "8e9d86963d26f6ff025be8dc51cfda970afbef0e1a6d785f96190fd763005842"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00179.bt4.zarr.json",
+      "sha256": "e4dac09414e117a625284bf394ec924cc383b7bf82866044fa1d3e12dc466381"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00180.bt4.zarr.json",
+      "sha256": "5f4e3759190a93b30f1d834e2d0794d5781b2270a3b90bbd7ebe81e11b3a20fe"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00181.bt4.zarr.json",
+      "sha256": "766be81d36f88b78334a3656b8ffda8acebf1d70e56774584391f4fb9c2591fe"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00182.bt4.zarr.json",
+      "sha256": "6de4bb5d2a1523636a0d2c4dbef9b813b8632206b434ac3979b5eb43b5075764"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00183.bt4.zarr.json",
+      "sha256": "5d4fe42fe3c8f6229947d69a34ced4c617734fe69f41dc572f8debbd8fc00267"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00184.bt4.zarr.json",
+      "sha256": "419e2c65ecfb6a3c772f29f68956d415e210f675fbfd5661b0546e9d7ef99e14"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00185.bt4.zarr.json",
+      "sha256": "f7bd7f3c82c3be05dc2f1adbfd611782533300723381e64b1540a9732774d96f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00186.bt4.zarr.json",
+      "sha256": "2fa65333e9eaae164ec9f7e6fec6f6f6badf8c39fa225a2eed2482762ad934d4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00187.bt4.zarr.json",
+      "sha256": "3e03d7615fafedea295b7646869983dc39ad3e395bc7cf7ee83e765fac6961fc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00188.bt4.zarr.json",
+      "sha256": "70790e6934d58b14f37532c487f283b7832628696587c51adad9b8044d0c55e7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00189.bt4.zarr.json",
+      "sha256": "c1788c632f46f50e72e376f8ae4992f55f6873651ff279bc35307229ed3614cd"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00190.bt4.zarr.json",
+      "sha256": "3ec635d9ba04bf6e78568b6929cc7eabaade1768823f20f9ef6fd45e0a25a2c3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00191.bt4.zarr.json",
+      "sha256": "e6792b3268fdda9784e4490ed922c2aefff2487b9c57ab07a781cfce59ee7fec"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00192.bt4.zarr.json",
+      "sha256": "2a9d4977de60279685aa57cc521d609c5800fdeaf521aca0f29c66f9f9faaa39"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00193.bt4.zarr.json",
+      "sha256": "8e09ac9fa6e66c4bb136d5e49421f50c1d5d31b5bef282904a13ad09c8eff1bc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00194.bt4.zarr.json",
+      "sha256": "0ec3e71a3f7b9891863b334ef5f3d4c5b8be2f78b7e0c56fe87a3d314c889efa"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00195.bt4.zarr.json",
+      "sha256": "039fda93c4dda1cd162baaca3d9a92bcffadde68e51bdb2a7f53d21329f80df9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00196.bt4.zarr.json",
+      "sha256": "9fc618bbd42393a2758fa4367ecc151b0357d6de12c604b7aebb2e6be4fb1039"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00197.bt4.zarr.json",
+      "sha256": "cce6b856b13fd1151bfa005ae04f530b9ffec47adab6e68a05dec26ca14dbb2e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00198.bt4.zarr.json",
+      "sha256": "69ed7bb4ec5ee0e1364b4c0e0692c19a278a370a53b31b4d6f01af0efc4797e7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00199.bt4.zarr.json",
+      "sha256": "ed59a09fe78a3c5b32ace003700d654e577f0612032ea7b0f2ad12355fc8f059"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w02-00200.bt4.zarr.json",
+      "sha256": "f3101fad388119334a59a029f9d6b68efc6563d8b929539d668df3be65a3e3c9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00000.bt4.zarr.json",
+      "sha256": "a0296610908b5eadd79116563f5aa7aa26aef6abf11026b75f4ad60fa71a8b19"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00001.bt4.zarr.json",
+      "sha256": "0ee7bc1f63791a0f7d18d49d49f2d6d648ca1767581053d0be9ed84676820141"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00002.bt4.zarr.json",
+      "sha256": "9dbb0df4a4a3e5713265ad2ea4ffa8e54c1060a8c5bc9edbd988c909288a9c19"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00003.bt4.zarr.json",
+      "sha256": "5290ec74e9fabb00c9eab4a2e9e55479ad4239acac560c551c3a0f94e8829295"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00004.bt4.zarr.json",
+      "sha256": "0302ac3db895ab779340e2e4b7a56d248cb292b7f4e9454bdcfd9fc2db0f1860"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00005.bt4.zarr.json",
+      "sha256": "ca0637745c2b51fb7a299acff26367350bf3430aea534d08f47505f535e12e98"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00006.bt4.zarr.json",
+      "sha256": "aa9104ced614beba17503b9c548deb568d85274b819729a934adb7a89b20cf20"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00007.bt4.zarr.json",
+      "sha256": "371dbd7a95f7a82e6b73fb632c9bc57715059331384978dd3741470c46a2cb9a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00008.bt4.zarr.json",
+      "sha256": "3e0d61fcd4486bf3c21ece328f42f7581e813b699dcf17700328f44afaf44347"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00009.bt4.zarr.json",
+      "sha256": "0aa75b7aaca2f3341cbb5d7bec9c0df5766df60867dba6384ed8e4bb40c0bd22"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00010.bt4.zarr.json",
+      "sha256": "1f47f6e378e40dfbde3ae25a58263253b01f061b8d93906c7399d88c3bd6012f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00011.bt4.zarr.json",
+      "sha256": "370c5b16260c6f0d1dbaff9c1ca49d809b9937be3462a14dc3d7fa3ec9f93d2e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00012.bt4.zarr.json",
+      "sha256": "e1c3b416a2a83230e406a6adc52600b8262dfcc9c6a6161ddcd3615439f6da94"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00013.bt4.zarr.json",
+      "sha256": "490e8543c8d0e0b40cadcb3fadd76bb2e75fd69c74394e1031187173fc754758"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00014.bt4.zarr.json",
+      "sha256": "b6a3c577f6ecb8da189d3ed3366e7dcd8d174464c1c25fc68f54154ca51bc84c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00015.bt4.zarr.json",
+      "sha256": "621e0c5b2b28cb5d4bbdec3053b254db7ea1e1c49ce20433b4acda118bded889"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00016.bt4.zarr.json",
+      "sha256": "8a7771ac1fa712206657887740cf2c4f4ff7e9efdbb43559718c1056708e80d0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00017.bt4.zarr.json",
+      "sha256": "ee0dc165bfcbbfe63eee0072a68bb1c1a13068b98e1c5f35ce84156931510b13"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00018.bt4.zarr.json",
+      "sha256": "553af0acd2a023292ee3b6518bf9f06a40712cbec1089ce4b06a80a7d4629c8b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00019.bt4.zarr.json",
+      "sha256": "90fc2c65f177e8f6952836fb6de2db490bd30c2bdee1f6103acc70a0dc541766"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00020.bt4.zarr.json",
+      "sha256": "5ca640e101ce8f784a1743df286ade6e260312b62aa270e3fd77353ac6ff6d5b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00021.bt4.zarr.json",
+      "sha256": "cc9d2f81096f4fb2e64e5abb55df51744971d9ffdd42ca340411dc8593350d17"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00022.bt4.zarr.json",
+      "sha256": "6050e10f83940907b86aeff04154532f151499f3cc3f805652c60e61b115a572"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00023.bt4.zarr.json",
+      "sha256": "f66ff903e49480b4e2062bdc3bd8f0a932daab58c3c0fc7fa9df23f3a1cd924a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00024.bt4.zarr.json",
+      "sha256": "3069371ab175c472e4481090afc2e49aa0f17124165edabfcdfe12e58b04ccfb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00025.bt4.zarr.json",
+      "sha256": "9dffd95c257109abc72b75ac6757a6d68ef601ca8c46882cbc6d82256ff06297"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00026.bt4.zarr.json",
+      "sha256": "6fb0a7cc7ee8a59d34a8a7e9a8d27264df6512b2b3dbf64e8889c30af172f5df"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00027.bt4.zarr.json",
+      "sha256": "f5c6d3dcb12ee03e5cdaf9449c091ffeb8a1232d72502b9f80a2da0fd1853243"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00028.bt4.zarr.json",
+      "sha256": "68256d74dd8752e2495301b55bc322844352bb68e73cc6e390e33a0329affcaf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00029.bt4.zarr.json",
+      "sha256": "3945d7c3fc0f70e81c02e010fb580788f3f2acf6dba1978f402aef0c5f40b19c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00030.bt4.zarr.json",
+      "sha256": "33851181c30ce5c5276ff3ff9cb176cb46ba0efe5772ee6a0b7a6b5af0ece4f9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00031.bt4.zarr.json",
+      "sha256": "ab2cb4998ff0880d5109ddf390c83d039fb4be3ca5d7f91189f3fa46df1a648a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00032.bt4.zarr.json",
+      "sha256": "44d3027c8462eb7777ffdc1c7ade05da1631674e10bdd43239767364cb3883dc"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00033.bt4.zarr.json",
+      "sha256": "c1584374369c51368fde3a9e99bde6db6d2bf4f6d4b1396fff35e4b1240ef60a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00034.bt4.zarr.json",
+      "sha256": "fb593e672360f5594c19f0a5118de5c571f552954d7cff1c34b1b44f4c9bffcd"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00035.bt4.zarr.json",
+      "sha256": "475591b5b84ed1992f6e39780800376a4843811f772b0c0b952372a3dc3499f2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00036.bt4.zarr.json",
+      "sha256": "de396efb7e2a1841f0d05784357ac1df1b9f834cdf1350925832cb93ee277a01"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00037.bt4.zarr.json",
+      "sha256": "acb1bea868ca30c33992b2ab6d7b0034eb9d48900aadac9bb0e29fdf7c423609"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00038.bt4.zarr.json",
+      "sha256": "f63035d9dd3670d8b4bd86e38cbb2b6c7014c1f61c8c5ddb30f152ecb5d990b5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00039.bt4.zarr.json",
+      "sha256": "dc2b99213f0712510786bbb82a8c6506d68afb6260a57ba216d6ce9afe4b9a10"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00040.bt4.zarr.json",
+      "sha256": "87986d7f5b3b02fbdaa132cd6df3afd249d0aea41cbf61b760d826a66f6e3503"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00041.bt4.zarr.json",
+      "sha256": "5167e2faad4401bb9bd325771154ff95749fd05d305a01596aa740333e8ec061"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/sidecar_attrs/w03-00042.bt4.zarr.json",
+      "sha256": "caf32cbe77040ea315ca6e3bc794b3989c1d5d2ef45da4c792cb15e489dbced8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/source_manifest.json",
+      "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/source_metadata.json",
+      "sha256": "90c0c91841c95edb4b3477d735c21b7007db13d3637a10c84b0f4db5a5fce8bd"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_large_readiness_v1/run07_g10_companion4/source_shards.json",
+      "sha256": "8129dad2f860df173dd7784586762c4f75c43b7356af9c92f8029c78a3e1b81b"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "time_unix": 1788867373.5085633,
+  "known_owned_pids": [
+    356449,
+    356450,
+    356465,
+    356467,
+    356483,
+    356484,
+    356485,
+    356486,
+    356489,
+    356490,
+    356491,
+    356498,
+    356499,
+    356500,
+    361233,
+    361234,
+    361241,
+    361244,
+    361245,
+    361247,
+    361276
+  ],
+  "known_pid_remaining": [],
+  "owned_process_groups": [
+    356449,
+    356450,
+    356465,
+    356467
+  ],
+  "group_survivors": [],
+  "source_metadata_checks": [
+    {
+      "source": "run06_g10",
+      "raw_stat_and_teacher_attrs_count": 128,
+      "mismatches": []
+    },
+    {
+      "source": "run07_g10_companion4",
+      "raw_stat_and_teacher_attrs_count": 128,
+      "mismatches": []
+    }
+  ],
+  "limits": "No source payload reads; sidecar attributes only. Sampled historical descendants are incomplete; full current owned process-group scan complements known PID checks. No process changes."
+}

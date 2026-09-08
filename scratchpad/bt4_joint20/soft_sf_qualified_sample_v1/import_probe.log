@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/tmp/soft-sf-import-probe.py", line 3, in <module>
+    from scripts import derive_corpus_targets as d, bt4_policy_mix as m
+  File "/tmp/deepfin-soft-sf-qualified-sample/scripts/derive_corpus_targets.py", line 444, in <module>
+    from scripts import audit_label_candidates as gate
+  File "/tmp/deepfin-soft-sf-qualified-sample/scripts/audit_label_candidates.py", line 154, in <module>
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+ModuleNotFoundError: No module named 'chess_anti_engine.encoding._lc0_ext'

@@ -146,3 +146,11 @@ historical-archive convention. Its author/reviewer receipts are preserved byte
 for byte; their validation did not close the tracked-file path-hygiene check. The
 follow-up relocation corrects that publication gap without redaction, changes to
 scientific results, or changes to the existing hygiene scanner and exemptions.
+
+[Qualified Soft-SF training sample](soft-sf-qualified-sample-manifest.json) includes
+the fixed sampling plan, original completion, row-level metrics and lossless raw d9
+observations; array-bank parts remain external with published identities.
+
+[Worker01 failure and larger-data proposal](g10-worker01-failure-and-large-readiness-manifest.json)
+preserves the failed rank admission and incomplete common-input status separately
+from the unregistered metadata-only proposal.

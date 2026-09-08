@@ -4,6 +4,40 @@ September 7, 2026. This preparation work supports the larger-data stage of the
 [adaptive bootstrap research](2026-09-07-bt4-hybrid-endpoints.md). It does not choose
 another recipe before H20's completed comparison or establish playing strength.
 
+## Worker01 stopped at rank-cache admission — September 8
+
+The `w01-00000..00127` attempt failed after **1,897.14 seconds**. Both derivations
+and their snapshots completed: **2,126,537 raw rows → 2,111,278 derived rows**, with
+15,229 missing-result exclusions, 30 policy-support exclusions and zero envelope
+drops. These rows are **not completed common inputs**: adaptation, ranking and
+final common qualification did not finish. The previously qualified total remains
+**3,165,265 common rows**.
+
+The rank consumer required 73,413,295 cache bytes for run07, exceeding its registered
+67,108,864-byte limit. The independently calculated run06 requirement was also over
+that cap. This is a deterministic cache-admission failure, not a rejection of the
+labels or a negative scientific result. The original failure and partial outputs
+are preserved; no successful completion was substituted.
+
+The [failure and recovery review](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_v1/independent_failure_recovery_review.json)
+found that both retained derivations still matched their metadata snapshots and
+that all observed owned processes had exited. Reusing those derivations requires
+a new explicit post-derivation recovery with sufficient cache allocation and final
+qualification; the review itself is not a recovery launch.
+
+A separate metadata-only proposal identifies **4,047,239 raw rows in 488 closed,
+BT4-labelled shards** (244 from each source). It has not been registered or launched;
+actual eligible rows are unknown. The proposal includes larger private cache
+budgets, a four-hour bound, four CPU cores, sampled 8GiB aggregate output/cache cap
+and 150GiB free-space reserve. Estimates are planning assumptions, not measured
+throughput or a promise that the next batch will fit. Final runtime and omission
+budgets remain unbound; this is not an automatic queue or a training selection.
+
+The [pipeline evidence catalog](evidence/bt4-bootstrap/g10-worker01-failure-and-large-readiness-manifest.json)
+contains the exact rank failure, retained derivation summaries, independent review
+and non-executable larger-data proposal. This operational status is separate from
+the completed [Soft-SF training-sample result](2026-09-08-soft-sf-qualified-training-sample.md).
+
 ## Corrected block completed — September 8, 10:32 UTC
 
 The corrected `G10_common_parallel_next_v2` batch completed at **10:32:54 UTC**,
@@ -43,13 +77,13 @@ ledgers and independent review. The failed first attempt and corrected registrat
 below remain unchanged. This completion advances data readiness, not playing-strength
 evidence. Full-corpus training qualification and larger-data comparisons remain.
 
-### Next available inputs
+### Earlier Worker01 readiness snapshot
 
 Metadata inspection identified another **2,126,537 raw rows in 256 closed,
 BT4-labelled shards**, `w01-00000..00127` from each source: 1,063,526 run06 rows
 and 1,063,011 run07 rows. Source-qualified games do not overlap the previous
-`w00-00000..00191` selections or other selected shards. These inputs are ready
-for a new bounded preparation; no pipeline has been launched for them.
+`w00-00000..00191` selections or other selected shards. At that readiness snapshot, no pipeline had been launched for these inputs;
+the subsequent failed attempt is recorded above.
 
 The [worker01 readiness evidence](evidence/bt4-bootstrap/g10-worker01-readiness-manifest.json)
 records the source/config bindings, closed teacher coverage, prior selections,
