@@ -19,6 +19,7 @@ and do not launch experiments.
 | Repair an existing corpus's history | `scripts/repair_corpus_history.py` | Distinct output, inventory coverage, unchanged labels unless explicitly relabeling, truthful completion stamp |
 | Derive replay targets | [`scripts/derive_corpus_targets.py`](corpus_derivation.md) | Input corpus identity, target recipe, history/encoding stamps and completed-shard inventory |
 | Train a controlled LC0-shaped comparison | `scripts/lc0_control_train.py` | Declared architecture, data lineage, objective, view/step budget and checkpoint identity |
+| Prepare selected common-input batches | [scripts/common_input_batch.py](common_input_batch.md) | Frozen closed-shard manifest; one/two bounded source lanes; independent survivor and BT4/rank qualification |
 | Registered BT4 exact-epoch screen | [scripts/bt4_one_epoch_screen.py](experiments/2026-09-07-bt4-hybrid-endpoints.md) | One explicitly selected profile; qualified corpus, completed training and fixed comparisons |
 | Offline target/loss comparison | `scripts/retarget_retrain.py` | Same-seed controls and a frozen readout appropriate to the hypothesis |
 | Replay epoch reference runner | `scripts/offline_replay_epoch.py` | Distinguish its sampling contract from the game-aware exact-epoch mode |
