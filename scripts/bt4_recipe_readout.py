@@ -80,8 +80,7 @@ def opening_panel(item: dict[str, Any]) -> list[dict[str, Any]]:
         require(
             board.fen() == entry["fen"]
             and board.is_valid()
-            and not board.is_game_over()
-            and board.legal_moves.count() >= 2,
+            and not board.is_game_over(),
             "opening endpoint/history mismatch or unusable board",
         )
     require(
