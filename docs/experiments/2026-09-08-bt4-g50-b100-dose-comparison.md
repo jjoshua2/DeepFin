@@ -1,6 +1,6 @@
 # G50 versus B100: original-epoch policy-dose comparison
 
-Prospective registration draft, 2026-09-08. No G50 training or match has launched. B100 is the current development leader after its completed comparison with H20. This next comparison asks whether retaining a 50% Stockfish policy contribution improves on the pure BT4 policy endpoint while preserving the same SF value supervision.
+Registered comparison, 2026-09-08. G50 training has launched after dataset qualification and prospective schedule verification; no completed G50 training or match result is available at this update. B100 is the current development leader after its completed comparison with H20. This next comparison asks whether retaining a 50% Stockfish policy contribution improves on the pure BT4 policy endpoint while preserving the same SF value supervision.
 
 G50 is already materialized: `data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05`, 18,910,484 rows in 2,309 shards. Its policy is the legal-normalized global arithmetic mixture of 50% stored SF policy and 50% BT4 at temperature0.5; B100 uses 100% of that same BT4 component. Both preserve the original value/history/nonpolicy targets. Reuse the [completed materialization evidence](2026-09-07-bt4-hybrid-endpoints.md), rather than repeat the cached teacher audit or rewrite the corpus.
 
@@ -24,8 +24,18 @@ Low H1 supports further consideration of G50 under this stopping rule; H0 favors
 
 This same-seed development comparison isolates a meaningful50% versus100% global policy dose before a finer grid. It does not establish a globally optimal mixture, independent confirmation or general search/data scaling. Keep the corpus and one-epoch horizon fixed here; larger G10 data and extra epochs answer different questions and remain separate adaptive options. Soft-SF remains a distinct prospective target family, not a mandatory queue following G50.
 
-## Remaining preparation
+## Original preparation checklist (completed through training launch)
 
 Bind the existing completed producer and publication receipts to the compact G50 qualification schema, retaining their distinction between all-shard process/metadata proof and the independently decoded first-shard check. Verify the prospective G50 physical schedule once using the existing canonical verifier. Then freeze the training-only manifest/runtime and register the final launch command. G50's training checkpoint and CPU arena preparation pins remain absent until their stages complete; draft manifests deliberately contain invalid pending hashes.
 
 No full-corpus payload scan, corpus regeneration, teacher inference, training or match was performed to author this registration. The inherited training-control/purity limitations remain in force; development selection does not create a held-out claim.
+
+## Training launch update — September 8
+
+Dataset qualification and the prospective canonical schedule passed. The frozen
+training-only manifest was independently reviewed and launched with the registered
+settings. Training has progressed through finite-epoch windows. The
+[launch status](https://github.com/jjoshua2/DeepFin/pull/571#issuecomment-5586493437)
+is published; completed training, realized schedule verification and CPU arena
+preparation remain prerequisites for matches. The optional lookahead scheduler from
+PR #573 has not been adopted in this registered comparison.
