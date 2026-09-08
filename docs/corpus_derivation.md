@@ -148,6 +148,43 @@ completed summary retains transitive raw receipt and teacher/remap provenance.
 The existing mixer admission checks remain in force. Output reuse and input
 changes during preparation are refused; no live receipt adoption occurs.
 
+
+## Optional raw BT4 value retention
+
+`bt4_raw_corpus_sidecar.py --wdl-output NAME --wdl-output-kind probabilities`
+can retain a previously qualified W/D/L side-to-move head while labeling future
+closed shards. Use `logits` for a graph that emits logits. Both flags are required;
+the writer never guesses a three-wide head, its activation, or a blend of heads.
+The operator must establish the named head's W/D/L order and perspective from
+that model's contract. Shape alone does not prove semantics.
+
+The existing ORT call requests policy and value together from exactly the same
+full-history input. `bt4_wdl_raw` stores three unmodified native float16/32/64
+values per row; no softmax, normalization, clipping or dtype conversion is
+applied. Finite shape/dtype checks always apply; probability heads also require
+nonnegative bounded values and unit mass within native storage tolerance.
+
+Optional `wdl` metadata binds the named output, declared kind/order/perspective,
+native dtype, row count and array hash. Existing model/source hashes and
+source/input/game/ply keys bind the same rows and teacher call. The progress
+receipt retains this metadata; deep verification checks value bytes and shared
+row identity without rerunning the teacher. At float32, raw triples add 12 bytes
+per row (1.2 GB per 100 million rows before compression). Inference cost is
+unmeasured; shared inputs and the teacher trunk are reused.
+
+Policy-only defaults and existing compressed policy/key arrays remain unchanged.
+Opting in at the same output root skips already completed policy-only shards and
+labels only missing closed shards. It never backfills, overwrites or interprets
+old policy completion as value coverage. Status and caught-up output report
+value-bearing and policy-only rows separately. Existing value-bearing shards
+must match the requested contract. `--verify-all` with both WDL flags explicitly
+requires that value contract for every closed row and fails on missing coverage;
+without those flags it validates any optional values that are present.
+
+The current raw-to-derived adapter still transfers policy only. Retaining WDL is
+banking evidence for a future explicitly qualified value join/blend; it does not
+change training values, choose a mixture, or adopt a new runtime in a live driver.
+
 ## Phase0 d9 ranks
 
 `scripts/sf_d9_rank_sidecar.py` always extracts the complete initial d9 observation;
