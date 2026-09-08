@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run one frozen common-input batch with one or two bounded source lanes.
 
-Only derive -> snapshot -> adapt existing BT4 -> rank -> qualify. No inference,
+Only derive -> snapshot -> (adapt existing BT4 + rank) -> qualify. No inference,
 training, target mixing, resume or automatic retry. See docs/common_input_batch.md.
 """
 
@@ -136,7 +136,7 @@ def available_cpus():
 
 def validate_manifest(plan):
     require(
-        set(plan)
+        set(plan) - {"overlap_adapt_rank"}
         == {
             "schema",
             "state",
@@ -158,6 +158,10 @@ def validate_manifest(plan):
         and type(plan["max_concurrent_sources"]) is int
         and plan["max_concurrent_sources"] in (1, 2),
         "invalid concurrency/schema",
+    )
+    require(
+        type(plan.get("overlap_adapt_rank", False)) is bool,
+        "overlap_adapt_rank must be boolean",
     )
     sources = plan["sources"]
     require(1 <= len(sources) <= 2, "one or two source lanes required")
@@ -887,6 +891,97 @@ def stage(name, argv, plan, source, guard):
     )
 
 
+def adapt_and_rank(adapt_argv, rank_argv, plan, source, guard):
+    """Own just the two independent post-snapshot stages on the lane's CPU pair."""
+    state = Path(plan["state"]) / source["source_id"]
+    active: dict[str, tuple[subprocess.Popen, Any, list[str], float, dict]] = {}
+    try:
+        for name, argv in (("adapt", adapt_argv), ("rank", rank_argv)):
+            guard.check(force=True)
+            metrics = state / (name + ".time.json")
+            require(not os.path.lexists(metrics), "existing stage timing")
+            # Inherit the existing lane timeout group, affinity and environment.
+            # Neither child gets a new deadline or an independently detached group.
+            timed = [
+                "/usr/bin/time",
+                "-o",
+                str(metrics),
+                "-f",
+                '{"wall_seconds":%e,"user_seconds":%U,"system_seconds":%S,"max_rss_kib":%M,"filesystem_inputs":%I,"filesystem_outputs":%O,"exit_code":%x}',
+                *argv,
+            ]
+            log = (state / (name + ".log")).open("xb")
+            started = time.time()
+            try:
+                child = subprocess.Popen(
+                    timed,
+                    cwd=plan["checkout"],
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                )
+            except BaseException:
+                log.close()
+                raise
+            active[name] = (child, log, timed, started, {})
+            write(
+                state / (name + ".started.json"),
+                {
+                    "pid": child.pid,
+                    "argv": timed,
+                    "start_unix": started,
+                    "deadline_unix": guard.deadline,
+                    "cpu_affinity": sorted(os.sched_getaffinity(0)),
+                },
+            )
+        while active:
+            guard.check()
+            for name, (child, log, timed, started, observed) in list(active.items()):
+                observed.update(descendants(child.pid))
+                if child.poll() is None:
+                    continue
+                code = child.returncode
+                require(code == 0, f"{source['source_id']}.{name} exit {code}")
+                child.wait()
+                log.close()
+                del active[name]
+                measured = read(state / (name + ".time.json"))
+                require(measured["exit_code"] == 0, "stage resource status differs")
+                guard.check(force=True)
+                write(
+                    state / (name + ".completed.json"),
+                    {
+                        "pid": child.pid,
+                        "argv": timed,
+                        "start_unix": started,
+                        "end_unix": time.time(),
+                        "exit_code": code,
+                        "resources": measured,
+                        "deadline_unix": guard.deadline,
+                        "observed_owned_descendants": observed,
+                        "descendant_observation": "sampled; short-lived children may exit between observations",
+                    },
+                )
+            if active:
+                time.sleep(1)
+    finally:
+        # Signal all siblings before waiting through cleanup. This also handles
+        # receipt-write failures and the lane's SIGTERM handler raising SystemExit.
+        for child, *_ in active.values():
+            try:
+                child.terminate()
+            except ProcessLookupError:
+                pass
+        for child, log, *_ in active.values():
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait()
+            log.close()
+        # Any failure propagates to existing coordinator lane-group cleanup,
+        # which also terminates descendants of these direct time wrappers.
+
+
 def internal_command(plan, manifest, digest, action, source):
     return [
         plan["python"],
@@ -973,58 +1068,51 @@ def lane(plan, manifest, digest, source, deadline):
     }
     mapping_path = parent / "adapter_manifest.json"
     write(mapping_path, mapping)
-    stage(
-        "adapt",
-        command(
-            plan,
-            "adapt_raw_bt4_sidecars.py",
-            "--manifest",
-            mapping_path,
-            "--expected-manifest-sha256",
-            sha(mapping_path),
-            "--out",
-            source["adapted_output"],
-            "--max-index-bytes",
-            plan["limits"]["adapter_index_cache_bytes"],
-        ),
+    adapt_argv = command(
         plan,
-        source,
-        guard,
+        "adapt_raw_bt4_sidecars.py",
+        "--manifest",
+        mapping_path,
+        "--expected-manifest-sha256",
+        sha(mapping_path),
+        "--out",
+        source["adapted_output"],
+        "--max-index-bytes",
+        plan["limits"]["adapter_index_cache_bytes"],
     )
-    stage(
-        "rank",
-        command(
-            plan,
-            "sf_d9_rank_sidecar.py",
-            "--raw",
-            source["source_dir"],
-            "--shards",
-            source["derived_output"],
-            "--out",
-            source["rank_output"],
-            "--limit",
-            source["physical_rows"],
-            "--top-k",
-            3,
-            "--seed",
-            opts["seed"],
-            "--rows-per-shard",
-            opts["rows_per_shard"],
-            "--max-provenance-cache-bytes",
-            plan["limits"]["rank_index_cache_bytes"],
-            "--source-shards",
-            source["selection"]["path"],
-            "--expected-rows",
-            summary["realized"]["rows_written"],
-            "--expected-shards",
-            len(summary["shards"]),
-            "--expected-source-summary-sha256",
-            sha(summary_path),
-        ),
+    rank_argv = command(
         plan,
-        source,
-        guard,
+        "sf_d9_rank_sidecar.py",
+        "--raw",
+        source["source_dir"],
+        "--shards",
+        source["derived_output"],
+        "--out",
+        source["rank_output"],
+        "--limit",
+        source["physical_rows"],
+        "--top-k",
+        3,
+        "--seed",
+        opts["seed"],
+        "--rows-per-shard",
+        opts["rows_per_shard"],
+        "--max-provenance-cache-bytes",
+        plan["limits"]["rank_index_cache_bytes"],
+        "--source-shards",
+        source["selection"]["path"],
+        "--expected-rows",
+        summary["realized"]["rows_written"],
+        "--expected-shards",
+        len(summary["shards"]),
+        "--expected-source-summary-sha256",
+        sha(summary_path),
     )
+    if plan.get("overlap_adapt_rank", False):
+        adapt_and_rank(adapt_argv, rank_argv, plan, source, guard)
+    else:
+        stage("adapt", adapt_argv, plan, source, guard)
+        stage("rank", rank_argv, plan, source, guard)
     stage(
         "qualify",
         internal_command(plan, manifest, digest, "qualify", source),
@@ -1039,6 +1127,7 @@ def lane(plan, manifest, digest, source, deadline):
         parent / "lane_complete.json",
         {
             "status": "complete",
+            "overlap_adapt_rank": plan.get("overlap_adapt_rank", False),
             "end_unix": time.time(),
             "qualification_sha256": sha(parent / "common_input_qualification.json"),
             "peak_sampled_aggregate_output_bytes": guard.peak_observed_output_bytes,
@@ -1169,6 +1258,7 @@ def execute(plan, manifest, digest, deadline=None):
         state / "started.json",
         {
             "pid": os.getpid(),
+            "overlap_adapt_rank": plan.get("overlap_adapt_rank", False),
             "start_unix": started,
             "deadline_unix": deadline,
             "manifest_sha256": digest,
@@ -1211,6 +1301,7 @@ def execute(plan, manifest, digest, deadline=None):
                         "argv": argv,
                         "cpu_affinity": source["cpu_affinity"],
                         "numeric_threads": 2,
+                        "overlap_adapt_rank": plan.get("overlap_adapt_rank", False),
                         "manifest_sha256": digest,
                     },
                 )
