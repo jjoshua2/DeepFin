@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "created_utc": "2026-09-08T08:05:51.158431+00:00",
+  "status": "REGISTERED_COMPONENT_PROBE_NOT_LAUNCHED",
+  "hard_seconds": 1200,
+  "pins": {
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt": "0a711fcf10ff87fc8360d3fd4b3035b170a7c15172616317c4a9687ae99d7017",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3",
+    "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/probe_batch_capacity.py": "35d1f9ad0da3da5be682d9bceddd8fd1bbb5f0db0e0c55fbe6d0014f2076413b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/run_batch_capacity.py": "a194179f4805373fecddab999f6e0e80525de112f82b7b25f8cb011aa5b1aac2",
+    "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_direct_screen.py": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/arena_standard.py": "bc91cfc38acd00ad475061d12e6358a4bace2c7ac5cdc77675001de063c378d7",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/selfplay/match.py": "6daed1d7d5ed5e2afc60b14a8e448f229fa415aad68645104e551a58f2f1ceb3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/pbt2_small.yaml": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624"
+  },
+  "runtime_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json",
+    "sha256": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df"
+  },
+  "book": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+  "checkpoints": [
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt"
+  ],
+  "resolved_search": {
+    "gumbel": {
+      "c_scale": 0.1,
+      "c_scale_root": -1.0,
+      "c_visit": 50.0,
+      "c_visit_root": -1.0,
+      "full_tree": true,
+      "halving_div": 2,
+      "policy_temp": 1.0,
+      "q_visit_exp_root": 99.0,
+      "target_max_visit_cap": 5,
+      "target_q_rescale": true,
+      "target_untempered_prior": true,
+      "topk": 16,
+      "volatility_anchor": 0.05,
+      "volatility_factor_clip": 4.0,
+      "volatility_fpu": 0.0,
+      "volatility_q_scale": 0.0
+    },
+    "shape": "training",
+    "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+    "target_batch": 0,
+    "tree_reuse": "cold",
+    "vloss_weight": 1
+  },
+  "cells": [
+    [
+      100,
+      32
+    ],
+    [
+      100,
+      128
+    ],
+    [
+      100,
+      64
+    ],
+    [
+      400,
+      128
+    ],
+    [
+      400,
+      32
+    ],
+    [
+      400,
+      64
+    ]
+  ],
+  "measured_boards_per_model_per_cell": 1024,
+  "warmup_separate_prefix_rows": 128,
+  "CPU_affinity": [
+    4,
+    5
+  ],
+  "numeric_threads": 2,
+  "nice": 19,
+  "io_priority_class": 3,
+  "GPU_allocator_fraction": 0.75,
+  "disk_reserve_GiB": 150,
+  "stop_on": "Any failed pin, legality check, capacity check, OOM, stage error, STOP or20minute cap; no retry",
+  "inference_only": true,
+  "gumbel_add_noise": true,
+  "temperature": 0.1,
+  "outcome": "One actual search-throughput observation per width/budget; no complete games, strength/CI or adoption claim",
+  "decision": "Use results only to choose whether prospective complete rolling arenas should retain128 or try256 concurrent slots. Final arena choice also needs true pool leaf-bound checks; do not claim proportional speedup.",
+  "limits": [
+    "Opening-only fixed common board panel omits whole-game length mix, pool refilling, bookkeeping and final drain.",
+    "A common maximum-sized evaluator remains uncapped at all widths; this is a search dispatch capacity screen, not exact current-process memory reproduction.",
+    "Warmup is separate and uses different positions; remaining dynamic compilation may still affect timed cells. One fixed order, no repeat or cache-order control.",
+    "Same seed does not promise identical stochastic search samples across batch widths. Action legality is checked; chosen-move equality is not expected.",
+    "Current registered C400 must complete before lease-owned GPU launch."
+  ],
+  "preflight_correction": "Compare realized SideSearch.as_record against banked search, not sparse raw dataclass overrides; no search values change."
+}

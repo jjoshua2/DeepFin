@@ -1,9 +1,10 @@
 # Faster recipe matches with ordered sequential decisions
 
-**Status:** future protocol and tool preparation. The existing H20 package keeps
-its original fixed banks. Its C100 and G100 comparisons are complete; the
-registered C400 probe is outside this readout. No match used the new sequential
-path, and no rolling throughput gain has been measured.
+**Status:** ordered sequential tools are merged, and the six-cell batch-capacity
+component probe is complete. The H20 package retained its original fixed banks;
+its completed strength results are reported in the
+[H20 record](2026-09-07-bt4-hybrid-endpoints.md). No match in this record used the
+new sequential path, and no whole-match rolling speedup has been measured.
 
 ## What is worth changing
 
@@ -43,7 +44,8 @@ out of 128**, with about **28% of chunk time below 32 active games**. This estim
 slot occupancy from completed-game durations, not GPU utilization. Rounded
 timestamps, compilation/stalls inside chunks and the smaller final chunk affect
 it; startup and between-chunk costs are excluded. Unused slots are not removable
-wall time. A separate bounded component probe is prospective at this snapshot.
+wall time. The separate component probe below measures search calls on a fixed
+opening panel, not the occupancy or elapsed time of a rolling match.
 
 Rolling execution can refill slots while long games finish, but its old SPRT
 path used whichever pairs completed first. Both colors being complete does not
@@ -65,6 +67,62 @@ conversion are rejected; completed observations cannot acquire prospective
 meaning by changing a resume flag. Fixed-N execution and its strict BT4 readers
 remain unchanged. A future sequential experiment launcher/readout still needs to
 bind these outputs to its registration before scientific adoption.
+
+## Completed batch-capacity component — September 8
+
+All six registered cells completed once, using the same 1,024 measured opening
+positions per model and two checkpoints (H20 and C). Each cell therefore contains
+2,048 root decisions. A separate 128-position prefix was used for warmup. All
+1,152 retained opening histories contain 16 legal plies and replay to their
+unique banked endpoints. Search retained the qualified full settings, prior
+policy temperature 1.0, Gumbel noise on, move temperature .1 and compilation on.
+
+| Simulations | Width per model | Measured roots/second | Timed seconds |
+| ---: | ---: | ---: | ---: |
+| 100 | 32 | 60.98 | 33.59 |
+| 100 | 64 | 53.10 | 38.57 |
+| 100 | 128 | 63.53 | 32.24 |
+| 400 | 32 | 19.49 | 105.10 |
+| 400 | 64 | 25.15 | 81.43 |
+| 400 | 128 | 22.76 | 89.98 |
+
+At 100 simulations, width128 was 19.6% faster than width64 in this observation,
+but only 4.2% faster than width32. At 400, width128 was 9.5% slower than width64;
+width32 was also slower. The actual fixed order was 100:32,128,64 then
+400:128,32,64. There was one observation per cell, without randomized order or
+independent compilation/cache state; these percentages are descriptive, with no
+causal speedup interval or throughput-optimality claim.
+
+Use **rolling pool256 at 100 simulations and pool128 at 400**, both with
+**evaluator capacity4096**, as provisional choices for the next registered
+matches. The actual models had both dynamic-relation flags false, and the leaf
+requirement covered all calls through pool256 without lowering a bound. A new
+model must pass that same actual-model capacity check. Balanced width128 means
+256 total roots across two models; a rolling pool256 can temporarily place all
+256 on one side. Capacity4096 covers that case, but its throughput and memory
+shape were not measured here. Do not equate these component rates with complete
+match speedup: gameplay, refills, long-game tails and concurrent GPU load remain
+outside the measurement.
+
+The owned stage took **820.74 seconds**, within its 1,200-second cap including
+termination grace. Timed cells totaled 380.91 seconds; warmups totaled 297.12,
+including a 269.89-second first warmup; other stage work took 142.72 seconds.
+Warmup is not a complete measure of compilation cost, and timed cells may still
+include compilation. Peak allocated memory was 1.56 GiB and peak reserved memory
+5.43 GiB; retained allocator cache prevents an independent per-width comparison.
+The frozen producer checked every returned action for legality, but retained
+only action hashes, so the independent review could not replay action vectors.
+These are throughput observations, not playing-strength observations.
+
+The [original cells](../../scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/cells.jsonl),
+[full-history panel (gzip)](../../scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution/panel.json.gz),
+and [independent completed review](../../scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/independent_completed_review.json)
+are bound in the [capacity and launch evidence manifest](evidence/bt4-bootstrap/capacity-g10-launch-manifest.json).
+It also preserves the original CPU-only preflight failure: raw dataclass settings
+were compared with effective arena settings. The corrected serializer and passing
+CPU preflight preceded the GPU probe; no unsuccessful GPU measurement was
+repeated. Original source, runtime, plan, process and operator receipts are
+included; bulk weights, opening book and compile caches remain external.
 
 ## What a result would establish
 
@@ -96,5 +154,6 @@ sequential contract and conditional precision.
 Validation and independent implementation review are recorded with this PR.
 Tests exercise delayed prefix release, earliest crossing before a reversing
 suffix, explicit look cadence, persisted suffix accounting, changed-spec refusal,
-noncontiguous resume and fixed-N behavior. Synthetic CPU checks qualify control
-flow; no new match, inference or production change is part of this record.
+noncontiguous resume and fixed-N behavior. Synthetic CPU checks qualify the sequential control flow. The separately
+registered GPU component above qualifies provisional capacity choices; it does
+not run a match or alter production.

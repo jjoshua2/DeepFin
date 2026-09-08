@@ -4,13 +4,67 @@ September 7, 2026. This preparation work supports the larger-data stage of the
 [adaptive bootstrap research](2026-09-07-bt4-hybrid-endpoints.md). It does not choose
 another recipe before H20's completed comparison or establish playing strength.
 
-## Next larger disjoint batch registered — September 8
+## Completed two-lane common-input batch — September 8
+
+The next disjoint batch completed at **08:59:02 UTC**, with both lanes and all ten
+stages successful. It emitted **1,057,326 common rows across 130 derived shards**
+from 1,062,946 registered raw rows. Together with the earlier prefix and increment,
+**2,112,247 common rows across 261 shards** are prepared in their source-specific
+batch directories. This is not a merged training corpus, a new deduplication
+claim or a qualified training schedule.
+
+| Source | Raw rows | Common rows | Derived shards | Missing result | Support exclusions |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| run06 | 531,791 | 528,983 | 65 | 2,800 | 8 |
+| run07 | 531,155 | 528,343 | 65 | 2,800 | 12 |
+| Total | 1,062,946 | 1,057,326 | 130 | 5,600 | 20 |
+
+Both sources had zero envelope drops and remained below their registered 2%
+missing-result and 64-support-exclusion ceilings. Their original per-row support
+ledgers are retained. Independent rank eligibility and injective source-qualified
+physical/full-history joins account for the entire selected survivor complement;
+omitted identities can be reconstructed from selected rows minus emitted refs.
+The successful pinned qualifiers checked ordinary BT4/rank admission, adapted
+payload hashes and legal normalized mass, with derived storage unchanged.
+
+The [independent completed review](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/independent_completed_review_v1/review.json)
+reconciled six final summary hashes, all 390 derived/BT4/rank attribute records,
+130-shard memberships and per-shard survivor sums. It checked that the original
+128 selected raw-file storage identities were unchanged and all 30 recorded task
+PIDs were absent. It did not repeat raw/policy payload or row-provenance NPZ
+reads: the complete per-row proof relies on the inspected, successfully executed
+frozen consumers and qualifier. The original qualifiers, summaries, ledgers and
+stage receipts are in the [completion evidence manifest](evidence/bt4-bootstrap/capacity-g10-launch-manifest.json).
+
+The coordinator took **2,714.28 seconds (45.24 minutes)**, within its four-hour
+cap; including the outer launch interval gives 2,714.71 seconds. The two CPU
+lanes overlapped. GNU-time stage wall measurements were:
+
+| Stage | run06 seconds | run07 seconds |
+| --- | ---: | ---: |
+| Derive | 924.34 | 919.02 |
+| Storage snapshot | 4.07 | 4.46 |
+| BT4 adapter | 1,000.30 | 1,003.46 |
+| Rank | 679.01 | 673.85 |
+| Qualification | 97.00 | 95.44 |
+
+Each derivation exited zero after reporting two semaphore objects for resource
+tracker cleanup. The warning's cause is unestablished; both downstream
+qualifications passed. Optional diagnostic aggregates with zero observations
+retain NaN placeholders in the original summaries; they are not consumed-target
+nonfiniteness. Different source data, the single-pass adapter and concurrent
+source lanes changed together, so elapsed time is operational evidence, not a
+controlled speedup estimate. No teacher inference, target mixing, training or
+playing-strength measurement was part of this preparation.
+
+## Next larger disjoint batch launched — September 8
 
 The [prospective registration](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_parallel/preregistration.md)
 selects **1,062,946 raw rows in 128 closed shards**, w00-00064 through w00-00127
 from each original source (531,791 run06; 531,155 run07). The frozen metadata
 records no source-qualified game overlap with the earlier prefix and increment.
-Survivor counts remain unknown. Original receipts, source metadata and selections
+Survivor counts were unknown at registration; the completed accounting is above.
+Original receipts, source metadata and selections
 are retained in the [138-member metadata archive](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_parallel_metadata.tar.gz),
 with per-member hashes in the [publication manifest](evidence/bt4-bootstrap/h20-g100-increment-launch-manifest.json).
 Raw payloads were not scanned to prepare this registration.
@@ -21,18 +75,27 @@ value and full-history row provenance; at most 64 evidenced support defects and
 2% missing results per source, with zero envelope drops. Each consumer must
 verify its selected raw payloads and close exact eligible-survivor accounting.
 
-This batch is **registered, not launched**. The proposal uses the merged
+This batch **launched at 08:13:47 UTC on September 8**, outer supervisor PID
+326106. Its two lane-start receipts at 08:13:49 bind PIDs326128/326130,
+disjoint CPU pairs0,1 and2,3, and the same absolute four-hour deadline. This is
+the preserved launch-time snapshot; the final counts are now reported above. It
+uses the merged
 [single-pass adapter](2026-09-08-bt4-adapter-single-pass.md) and two concurrent
 source lanes, each with two workers, two numerical threads and disjoint CPU pairs,
-after the current materializer and increment release those cores. The overall
+after admission confirmed the previous owners were absent. The overall
 cap is four hours including termination, with nice 19, idle I/O priority, hidden
 GPU, a periodically sampled 8 GiB output/cache bound and a 150 GiB free-space
-reserve. The sampled output bound is not a filesystem quota. Final reviewed
-runner/runtime/manifest bindings remain pending; these metadata records do not
-claim an executable launch is ready.
+reserve. The sampled output bound is not a filesystem quota. The
+[reviewed launch manifest](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/runner_manifest_v2.json)
+binds qualified frozen runtime `56d650e06`, original selected inputs and exact
+commands. The [operator receipt](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/operator_launch.json),
+[root launch review](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/root_launch_review.json)
+and both actual lane-start receipts are preserved in the
+[capacity and launch evidence manifest](evidence/bt4-bootstrap/capacity-g10-launch-manifest.json).
+Earlier unlaunched registration snapshots remain unchanged.
 
 This distinct-data preparation changes both adapter implementation and source
-concurrency. Its eventual timings will describe operational practicality, not a
+concurrency. Its completed timings describe operational practicality, not a
 controlled parallel-scaling result. It selects no teacher mix, training run or
 playing-strength conclusion.
 

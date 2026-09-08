@@ -1,0 +1,68 @@
+{
+  "plan_sha256": "23ca10d872abc19507f21000966b80707bed0c00000857da1f7a36f6df77000f",
+  "panel_sha256": "f4f1d76538426f6589d9f3f69464ceefa996a7578fa6d7386c30ce137f9955c2",
+  "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+  "torch": "2.11.0+cu128",
+  "cuda": "12.8",
+  "numpy": "1.26.2",
+  "resolved_search": {
+    "shape": "training",
+    "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+    "gumbel": {
+      "c_scale": 0.1,
+      "c_scale_root": -1.0,
+      "c_visit": 50.0,
+      "c_visit_root": -1.0,
+      "full_tree": true,
+      "halving_div": 2,
+      "policy_temp": 1.0,
+      "q_visit_exp_root": 99.0,
+      "target_max_visit_cap": 5,
+      "target_q_rescale": true,
+      "target_untempered_prior": true,
+      "topk": 16,
+      "volatility_anchor": 0.05,
+      "volatility_factor_clip": 4.0,
+      "volatility_fpu": 0.0,
+      "volatility_q_scale": 0.0
+    },
+    "vloss_weight": 1,
+    "target_batch": 0,
+    "tree_reuse": "cold"
+  },
+  "actual_overrides": {
+    "shape": "training",
+    "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+    "gumbel": {
+      "topk": 16,
+      "policy_temp": 1.0,
+      "c_visit": 50.0,
+      "c_scale": 0.1,
+      "c_puct": 2.5,
+      "cpuct_factor": 0.0,
+      "cpuct_base": 38739.0,
+      "fpu_reduction": 1.2,
+      "target_max_visit_cap": 5,
+      "target_untempered_prior": true,
+      "target_q_rescale": true,
+      "halving_div": 2,
+      "c_visit_root": -1.0,
+      "c_scale_root": -1.0,
+      "q_visit_exp_root": 99.0,
+      "full_tree": true,
+      "volatility_q_scale": 0.0,
+      "volatility_fpu": 0.0,
+      "volatility_anchor": 0.05,
+      "volatility_factor_clip": 4.0
+    },
+    "vloss_weight": 1,
+    "target_batch": 0,
+    "tree_reuse": "cold"
+  },
+  "actual_max_batch": 4096,
+  "dynamic_relations": [
+    false,
+    false
+  ],
+  "component_only": true
+}

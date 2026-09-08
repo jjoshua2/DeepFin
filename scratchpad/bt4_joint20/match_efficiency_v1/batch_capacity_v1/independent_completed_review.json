@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "status": "PASS_COMPLETED_COMPONENT_READOUT",
+  "reviewed_utc": "2026-09-08T08:44:12.575681+00:00",
+  "reviewer": "review_pr517_bootstrap independent of probe author and initial static reviewer",
+  "findings": [],
+  "inputs": {
+    "plan.json": "23ca10d872abc19507f21000966b80707bed0c00000857da1f7a36f6df77000f",
+    "completed.json": "57813f8a066d87a5a8b4a29f4de7948c8b5472516c044f964f71a201c7efceee",
+    "execution/manifest.json": "23c0edbcbe1edd9663536466a0d11a244d04abe4ad79445bd30e24640877b2c8",
+    "execution/metadata.json": "3df8edb9f32844da747cccc33eb453a442d46d3775cfbc7dbd85915e3d6bcf72",
+    "execution/panel.json": "f4f1d76538426f6589d9f3f69464ceefa996a7578fa6d7386c30ce137f9955c2",
+    "execution/cells.jsonl": "f90a6b0c24147ab5640defa2bc5773c38abb397acb674c33a12a18fa5805be58",
+    "execution/complete.json": "b130390b664e7ec58cafe49448c4f83c6b886e47fce8afa1f9d6365cde5c39e5",
+    "execution/process.json": "ccf18a7c33a09e079471c754e965270cd4a65aa089a8f04d77983801c0961a6d",
+    "execution/capacity.log": "5d55af7653314416697d59b7481a2b09b07daf86c725534a9aae8ae61a682b24",
+    "operator_launch.json": "4cf62d9368d448c5657124fb24221fde60c2f4a0d0c12569de29e69dfd350283",
+    "cpu_preflight.json": "dd2308a5ed5d1e4360787355634a1bb6b90f3d394a7442077b2c40d48a4fc874",
+    "runtime_probe.json": "995d933fbf553e16e012f02dacc29be21994dfc665548212ef972a5062210e3b",
+    "independent_review.json": "33f47cfefe101edeb6a0ebf9516c998495d66cd86fc25dbf7d0c6c4f5ada0363",
+    "serializer_correction_independent_supplement.json": "f65383fdd36aab1986e5d1d070238dd043c24cf380f67c9673734fbc22145729"
+  },
+  "current_small_source_pins": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/probe_batch_capacity.py": "35d1f9ad0da3da5be682d9bceddd8fd1bbb5f0db0e0c55fbe6d0014f2076413b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/run_batch_capacity.py": "a194179f4805373fecddab999f6e0e80525de112f82b7b25f8cb011aa5b1aac2",
+    "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_direct_screen.py": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/arena_standard.py": "bc91cfc38acd00ad475061d12e6358a4bace2c7ac5cdc77675001de063c378d7",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/selfplay/match.py": "6daed1d7d5ed5e2afc60b14a8e448f229fa415aad68645104e551a58f2f1ceb3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/pbt2_small.yaml": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624"
+  },
+  "arithmetic": {
+    "panel_rows": 1152,
+    "panel_unique_fens": 1152,
+    "full_history_plies": 16,
+    "measured_rows_per_model_per_cell": 1024,
+    "warmup_prefix_rows": 128,
+    "cells": 6,
+    "roots_per_cell": 2048,
+    "total_measured_roots": 12288,
+    "rates": {
+      "100sim_width32": 60.977858494366714,
+      "100sim_width128": 63.5272105948634,
+      "100sim_width64": 53.09813573290777,
+      "400sim_width128": 22.7598137090802,
+      "400sim_width32": 19.48555667639936,
+      "400sim_width64": 25.15194168475089
+    },
+    "relative_128_vs_64_100": 0.19641131874037088,
+    "relative_128_vs_64_400": -0.0951070897687788,
+    "relative_128_vs_32_100": 0.04180783260422638,
+    "relative_32_vs_64_400": -0.2252861858290227,
+    "measured_seconds_total": 380.90598418502486,
+    "warmup_seconds_total": 297.1178014340403,
+    "first_warmup_seconds": 269.88749767802074,
+    "owned_stage_seconds": 820.7403198910179,
+    "other_stage_seconds": 142.7165342719527,
+    "peak_allocated_GiB": 1.5620040893554688,
+    "peak_reserved_GiB": 5.427734375
+  },
+  "verified": [
+    "Six unique registered cells in fixed order,2048 measured root decisions each, each1024-board measured panel searched once by both models",
+    "All1152 retained root/history/FEN records replay legally to exact terminalFEN;16plies each and1152uniqueFENs; measured128:1152 disjoint fromwarmup0:128",
+    "Actual metadata fullsearch equalsregistered SideSearch.as_record:policy_temp1,topk16,full_tree,cold,vloss1,target_batch0; noiseon andtemperature0.1 flow explicitly to actual search call",
+    "Checkpoint loader uses eval mode; inference_only true, compiled persistent two-slot evaluators; actual relation flagsfalse/false and4096capacity exceed allrange bounds2016/2048/4096",
+    "GPU synchronization brackets warmup/measurement; recordedroots/seconds exactly reproduce allrates; every returned action checked against board legal action set beforecell publication by frozen producer",
+    "Completedprocess exit0/process_complete;820.7403s GPUstage within1170+30=1200cap; finalcells/metadata/panel hashes match chain; process receipt complete:false is intermediate stage qualification field, not failure",
+    "Inherited GPUlease/ownedtimeout, affinity4,5/nice19/numeric2/ionice3 andallocatorfraction0.75 are enforced in frozen supervisor/probe; compact runtime/package/source pins and priorCPUpreflightcorrection inspected"
+  ],
+  "recommendation": {
+    "future_100sim_pool": 256,
+    "future_400sim_pool": 128,
+    "eval_max_batch": 4096,
+    "qualification": "Reasonable bounded prospective choices among tested options; actualnewmodels must retain relationsfalse andqualifiedfullsearch/leafbound. Not a proven throughput optimum or measured complete-arena speedup."
+  },
+  "limits": [
+    "Onefixed-order observation percell; cache/compilation/order andnoise differences uncontrolled, no confidenceinterval or stablecausal throughput claim",
+    "100simwidth128 beatswidth32 byonly4.18%; nonmonotonewidth64measurement underscores that this is a provisional trial choice, not evidence tolaunchmorewidthsweeps",
+    "Equivalent balanced pool=2*width does not measure actual rolling imbalance:pool256 may hand one modelup to256boards whilelargest measuredwidthwas128; full4096leafbound covers thatrange butthroughput/memoryshapeofthosecalls remainsunmeasured",
+    "Opening-only static panel excludes gameplay trajectory, refills, finaldrain, logging andGPU contention; no strength, searchscaling, fullmatchspeedup oroptimality conclusion",
+    "Firstwarmup269.8875s; allwarmups297.1178s, timedwork380.9060s andotherstage142.7165s. Warmup is not the complete compilation cost; timedcells may stillinclude dynamic compilation",
+    "Peakreserved5.4277GiB carries allocatorcache acrosscells andis not an independent perwidthmemory comparison;75%PyTorch allocator limit is not awholeprocessGPU memory cap",
+    "Action hashes were retained but actionvectors were not: legality/count proof uses inspectedfrozenproducer pluscompletionreceipts, not independent action-by-action readback",
+    "No repeatedcheckpoint/book/nativepayload hashes, GPUmeasurement, opening sampling, search orprobeexecution; only existingpanel history replay andstdlibarithmetic performed"
+  ],
+  "skipped_bulk_hashes_reused_launch_evidence": [
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt",
+    "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip"
+  ]
+}

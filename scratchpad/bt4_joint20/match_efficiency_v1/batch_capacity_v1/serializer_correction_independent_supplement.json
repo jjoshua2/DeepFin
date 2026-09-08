@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "status": "PASS_SERIALIZER_CORRECTION_PENDING_CPU_PREFLIGHT",
+  "reviewed_utc": "2026-09-08T08:19:18.175866+00:00",
+  "prior_review_sha256": "33f47cfefe101edeb6a0ebf9516c998495d66cd86fc25dbf7d0c6c4f5ada0363",
+  "failure_sha256": "8495ad39f6ac59fb1739d8abd1dadbd5f81d142ab1b63382a55698fa479cd172",
+  "plan_sha256": "23ca10d872abc19507f21000966b80707bed0c00000857da1f7a36f6df77000f",
+  "probe_sha256": "35d1f9ad0da3da5be682d9bceddd8fd1bbb5f0db0e0c55fbe6d0014f2076413b",
+  "supervisor_sha256": "a194179f4805373fecddab999f6e0e80525de112f82b7b25f8cb011aa5b1aac2",
+  "verified": [
+    "Inverse two-line byte transformation reconstructs exact reviewed original probe SHA. Plan differs only in this producer hash and an explanatory preflight_correction field; supervisor unchanged.",
+    "Actual SideSearch.as_record uses realized_gumbel to expand effective defaults and remove inert knobs; original dataclasses.asdict is sparse raw overrides and cannot equal the banked realized search.",
+    "Equality and metadata now use the same serializer as qualified arena/runtime_probe; actual_overrides preserves original sparse dataclass for traceability. Search call parameters and actual computation unchanged."
+  ],
+  "review_correction": "Initial static review missed this serializer mismatch. Parent CPU preflight caught it before GPU launch; previous exact-realized-settings assertion was not executable as written. This supplement supersedes that aspect while preserving original evidence.",
+  "limits": [
+    "No GPU, imports, preflight rerun or measurement by reviewer. Parent reruns only failed CPU check.",
+    "C400 completion status reported by parent; outcome bank not reread for this serializer delta. Other original static review limits remain."
+  ]
+}

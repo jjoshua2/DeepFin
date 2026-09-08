@@ -1,0 +1,9 @@
+{
+  "status": "CPU_PREFLIGHT_FAILED_BEFORE_GPU",
+  "prior_plan_sha256": "b7c372f10284f951785e0d788c86e5c2bacd6a9489271652922d6025d9673235",
+  "new_plan_sha256": "23ca10d872abc19507f21000966b80707bed0c00000857da1f7a36f6df77000f",
+  "failure": "dataclasses.asdict(side) contains sparse raw overrides including inert knobs whereas banked settings use side.as_record with realized effective knobs. Compare using the same actual arena serializer.",
+  "fix": "Use side.as_record for equality/realizedmetadata, retain raw dataclass separately fortraceability",
+  "GPU_initialized": false,
+  "timestamp": "2026-09-08T08:16:26.649850+00:00"
+}

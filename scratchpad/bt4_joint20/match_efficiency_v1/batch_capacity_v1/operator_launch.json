@@ -1,0 +1,20 @@
+{
+  "status": "QUEUED_FOR_EXCLUSIVE_GPU_LEASE",
+  "command": [
+    "/usr/bin/env",
+    "OMP_NUM_THREADS=2",
+    "OPENBLAS_NUM_THREADS=2",
+    "MKL_NUM_THREADS=2",
+    "NUMEXPR_NUM_THREADS=2",
+    "CUDA_VISIBLE_DEVICES=",
+    "/usr/bin/python3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/run_batch_capacity.py",
+    "23ca10d872abc19507f21000966b80707bed0c00000857da1f7a36f6df77000f"
+  ],
+  "plan_sha256": "23ca10d872abc19507f21000966b80707bed0c00000857da1f7a36f6df77000f",
+  "started_unix": 1788855650.959326,
+  "scope": "single six-cell search capacity probe,1200second childstage cap",
+  "independent_review": "33f47cfefe101edeb6a0ebf9516c998495d66cd86fc25dbf7d0c6c4f5ada0363",
+  "serializer_supplement": "f65383fdd36aab1986e5d1d070238dd043c24cf380f67c9673734fbc22145729",
+  "pid": 327377
+}
