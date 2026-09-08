@@ -410,6 +410,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import io
 import json
 import os
@@ -3663,6 +3664,8 @@ class CorpusRecord:
     #: for a corpus it did not finish, and before this field the deriver read
     #: "summary exists" as "complete" and derived it silently (#498 rebase).
     run_finished: bool | None = None
+    source_selection: dict[str, Any] | None = None
+    selection_stats: tuple[tuple[Path, tuple[int, ...]], ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -3704,6 +3707,87 @@ class CorpusRecord:
                 {} if self.complete else dict(FACTS_ONLY_IN_SUMMARY)
             ),
         }
+
+
+def _selection_stat(path: Path) -> tuple[int, ...]:
+    info = path.stat()
+    if path.is_symlink() or not path.is_file():
+        raise CorpusIntegrityError(f"selected source must be a regular file: {path}")
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _selection_sha(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def select_corpus_record(
+    corpus_dir: Path, record: CorpusRecord, selection_path: Path,
+) -> CorpusRecord:
+    """Select closed original shards; --limit subsequently cuts this ordered subset.
+
+    The generator's manifest is static configuration, not its growing progress log.
+    Only selected files are hashed. Unrelated closed-shard growth remains harmless.
+    """
+    raw = selection_path.read_bytes()
+    selection = json.loads(raw)
+    required = {"schema", "source_dir", "source_config_sha256", "source_manifest_sha256", "shards"}
+    if not isinstance(selection, dict) or set(selection) != required or selection["schema"] != 1:
+        raise CorpusIntegrityError("invalid source-shards schema")
+    source = corpus_dir.resolve()
+    manifest = source / corpus.MANIFEST_NAME
+    if (selection["source_dir"] != str(source)
+            or selection["source_config_sha256"] != record.facts.get("config_sha256")
+            or selection["source_manifest_sha256"] != _selection_sha(manifest)):
+        raise CorpusIntegrityError("source-shards source binding mismatch")
+    entries = selection["shards"]
+    if not isinstance(entries, list) or not entries:
+        raise CorpusIntegrityError("source-shards must contain a nonempty shard list")
+    available = {path.name: (path, rows) for path, rows in zip(record.shards, record.shard_rows)}
+    requested: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"source_shard", "rows", "source_sha256"}:
+            raise CorpusIntegrityError("invalid source-shards entry")
+        name = entry["source_shard"]
+        if not isinstance(name, str) or Path(name).name != name or name in requested:
+            raise CorpusIntegrityError("duplicate or invalid selected shard name")
+        if name not in available:
+            raise CorpusIntegrityError(f"unknown or unclosed selected shard: {name}")
+        if (type(entry["rows"]) is not int or entry["rows"] <= 0
+                or entry["rows"] != available[name][1]):
+            raise CorpusIntegrityError(f"selected shard row claim mismatch: {name}")
+        if not isinstance(entry["source_sha256"], str) or re.fullmatch(r"[0-9a-f]{64}", entry["source_sha256"]) is None:
+            raise CorpusIntegrityError("invalid selected raw SHA256")
+        requested[name] = entry
+    selected = tuple(path for path in record.shards if path.name in requested)
+    stats = []
+    for path in selected:
+        before = _selection_stat(path)
+        if _selection_sha(path) != requested[path.name]["source_sha256"] or _selection_stat(path) != before:
+            raise CorpusIntegrityError(f"selected raw content changed or mismatched: {path.name}")
+        stats.append((path, before))
+    proof = {**selection, "shards": [requested[path.name] for path in selected],
+             "path": str(selection_path.resolve()), "sha256": hashlib.sha256(raw).hexdigest(),
+             "order": "original corpus shard order; limit applies after selection"}
+    result = replace(record, shards=selected, shard_rows=tuple(requested[p.name]["rows"] for p in selected),
+                     rows_claimed=sum(requested[p.name]["rows"] for p in selected),
+                     source_selection=proof, selection_stats=tuple(stats))
+    verify_source_selection(result)
+    return result
+
+
+def verify_source_selection(record: CorpusRecord) -> None:
+    """Refuse late selected-source mutation without rehashing raw payloads."""
+    proof = record.source_selection
+    if proof is None:
+        return
+    if (_selection_sha(Path(proof["path"])) != proof["sha256"]
+            or _selection_sha(Path(proof["source_dir"]) / corpus.MANIFEST_NAME) != proof["source_manifest_sha256"]
+            or any(_selection_stat(path) != before for path, before in record.selection_stats)):
+        raise CorpusIntegrityError("selected source or selection manifest changed during processing")
 
 
 def read_corpus_record(corpus_dir: Path) -> CorpusRecord:
@@ -5254,8 +5338,10 @@ def build_summary(
     tt_carried: set[bool],
 ) -> dict[str, Any]:
     """The output manifest.  Every knob appears as a REALIZED reading."""
+    verify_source_selection(corpus_record)
     facts = corpus_record.facts
     return {
+        **({"source_selection": corpus_record.source_selection} if corpus_record.source_selection is not None else {}),
         "schema": derive_schema_for(options.value_scheme),
         "started_utc": started_utc,
         "tool": "scripts/derive_corpus_targets.py",
@@ -7136,6 +7222,8 @@ def _remove_spill(spill_dir: Path) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     parser.add_argument("--corpus", type=Path, required=True)
+    parser.add_argument("--source-shards", type=Path,
+                        help="source-bound closed-shard JSON selection; --limit cuts the selected original-order stream")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--scheme", required=True, help=" | ".join(_SCHEME_FORMS))
     parser.add_argument("--temp", type=float, default=1.0)
@@ -7372,6 +7460,8 @@ def main(argv: list[str] | None = None) -> int:
     corpus_dir = Path(args.corpus)
     # ⚑ ONCE, and the SNAPSHOT of a live corpus's inventory is taken here.
     corpus_record = read_corpus_record(corpus_dir)
+    if args.source_shards is not None:
+        corpus_record = select_corpus_record(corpus_dir, corpus_record, args.source_shards)
     slope, draw_width = cp_map_params(corpus_record.facts)
     options = DeriveOptions(
         scheme=scheme,
