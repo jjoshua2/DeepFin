@@ -3,8 +3,8 @@
   "scope": "Metadata-only next worker01 input readiness; no registration, pipeline execution or output qualification. Full273 captured metadata files remain host-local and are identified by these records.",
   "files": [
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/g10-worker01-readiness/readiness_validation.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/readiness_validation.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/g10-worker01-readiness/readiness_validation.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/readiness_validation.json",
       "source_bytes": 1714,
       "source_sha256": "7a7305f95128326b7f46f70c77d9546ad8612c1c14a508b86a88ae30866e6d6b",
       "published_bytes": 1714,
@@ -12,8 +12,8 @@
       "encoding": "identity"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/g10-worker01-readiness/metadata_snapshot.json.gz",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/metadata_snapshot.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/g10-worker01-readiness/metadata_snapshot.json.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/metadata_snapshot.json",
       "source_bytes": 82704,
       "source_sha256": "f415bc4429b280d5956db1dcc2960d845947afd553fddba6921b0f66bbc2f76d",
       "published_bytes": 13579,
@@ -21,8 +21,8 @@
       "encoding": "gzip"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/g10-worker01-readiness/game_disjointness.json.gz",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/game_disjointness.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/g10-worker01-readiness/game_disjointness.json.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/game_disjointness.json",
       "source_bytes": 157177,
       "source_sha256": "6e81925b357dd520cc6217e8dedad860b1660a1d281d717c22281327542fb55b",
       "published_bytes": 29510,
@@ -30,8 +30,8 @@
       "encoding": "gzip"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/g10-worker01-readiness/prior_selection_review.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/prior_selection_review.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/g10-worker01-readiness/prior_selection_review.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/prior_selection_review.json",
       "source_bytes": 19916,
       "source_sha256": "900db3fc09fba1d21b01fdb38c08318f11610f986c4fae6f747ef768c96ed114",
       "published_bytes": 19916,
@@ -39,8 +39,8 @@
       "encoding": "identity"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/g10-worker01-readiness/eligibility_and_resources.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/eligibility_and_resources.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/g10-worker01-readiness/eligibility_and_resources.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/eligibility_and_resources.json",
       "source_bytes": 1509,
       "source_sha256": "0542c400c3ae9e750c940ac977c2d1159d9e5c0d9ef31fd0ef47d79f78934056",
       "published_bytes": 1509,
@@ -48,8 +48,8 @@
       "encoding": "identity"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/g10-worker01-readiness/metadata_admission.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/metadata_admission.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/g10-worker01-readiness/metadata_admission.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/metadata_admission.json",
       "source_bytes": 766,
       "source_sha256": "4c089c4c8049f2af72c9d38b8dc429140763520214c19a3064e0a2e2149f6997",
       "published_bytes": 766,
@@ -57,8 +57,8 @@
       "encoding": "identity"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/g10-worker01-readiness/prepare_metadata.py",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/prepare_metadata.py",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/g10-worker01-readiness/prepare_metadata.py",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/prepare_metadata.py",
       "source_bytes": 11359,
       "source_sha256": "45d4cfdc84dda5f1ff15e9d2b2a87f9fbc514d0da53e6518d6f34a3c64f30aff",
       "published_bytes": 11359,
@@ -66,13 +66,18 @@
       "encoding": "identity"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/g10-worker01-readiness/validate_metadata.py",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/validate_metadata.py",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/g10-worker01-readiness/validate_metadata.py",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/validate_metadata.py",
       "source_bytes": 2695,
       "source_sha256": "8b115402fd671105fe154d64bf7f115ae818fcd215a7e50b6068a0661ccfcd79",
       "published_bytes": 2695,
       "sha256": "8b115402fd671105fe154d64bf7f115ae818fcd215a7e50b6068a0661ccfcd79",
       "encoding": "identity"
     }
-  ]
+  ],
+  "path_conventions": {
+    "path": "Published repository-relative location of the byte-preserved historical archive.",
+    "source_path": "Original producing-checkout-relative provenance, not a claim that the original source exists in this clone. Archived originals retain their historical absolute paths.",
+    "execution": "Historical evidence scripts are not portable launch instructions."
+  }
 }

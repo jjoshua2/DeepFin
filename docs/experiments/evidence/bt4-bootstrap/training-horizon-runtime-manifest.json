@@ -3,88 +3,93 @@
   "scope": "Original bounded CPU qualification evidence. Tiny generated model weights/corpus fixtures remain host-local and can be regenerated from pinned test/probe code.",
   "files": [
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/plan.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/plan.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/plan.json",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/plan.json",
       "bytes": 3897,
       "sha256": "970ff30354af371899a21f0f24ddc026ba87d5c9d35e90e30781ff21122bf031"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/completed.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/completed.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/completed.json",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/completed.json",
       "bytes": 12573,
       "sha256": "363358db6aebe36ac83cdec9859f3b451faa1bfc723d58a8b9c9f3556f6c4186"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/independent_review.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/independent_review.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/independent_review.json",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/independent_review.json",
       "bytes": 3147,
       "sha256": "2d99135e41e4671d2e85eb987691c00998d8f34039cfe362d4695d4631d68614"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/commands.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/commands.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/commands.json",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/commands.json",
       "bytes": 3824,
       "sha256": "af5d8a7415ffcf15d48a542de187ca86066af0ed52dc81d906050bf76506fb04"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/scheduler_probe.py",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/scheduler_probe.py",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/scheduler_probe.py",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/scheduler_probe.py",
       "bytes": 3838,
       "sha256": "4e367a8599581665a78cccb6a62890e6853fd95859780819cd94585abcaf0d71"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/scheduler_probe_v2.py",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/scheduler_probe_v2.py",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/scheduler_probe_v2.py",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/scheduler_probe_v2.py",
       "bytes": 4137,
       "sha256": "1fe229d171c05e13f6d14363d2bbec6f4c46351eddabefcb89b428c42308dd25"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/finalize_readout.py",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/finalize_readout.py",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/finalize_readout.py",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/finalize_readout.py",
       "bytes": 5853,
       "sha256": "7f1532da853711adfd5514fcb31353489513c7bf07ab71de2204319da9a60a51"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/py310.log",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/py310.log",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/py310.log",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/py310.log",
       "bytes": 747,
       "sha256": "83fcab338552c65ee5adf56760080172a6226ec05c537ac926b38f2e6bc36645"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/scheduler_probe.log",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/scheduler_probe.log",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/scheduler_probe.log",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/scheduler_probe.log",
       "bytes": 2768,
       "sha256": "84ab46e71cf29fb4c44ed625fefb07b973ff77c4ce91c910f6885715b5208f8a"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/scheduler_probe_v2.log",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/scheduler_probe_v2.log",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/scheduler_probe_v2.log",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/scheduler_probe_v2.log",
       "bytes": 15627,
       "sha256": "a2bd0da573cbcca1142c2c3e13decc131238fec17ef1c62421a824fbb43e5213"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/readout.log",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/readout.log",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/readout.log",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/readout.log",
       "bytes": 2096,
       "sha256": "64bf3befe2ec31aed81758ffac6b126896e3754d0ee82e4ec68a3827e777fdfa"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/scheduler_fixture_v2/run/summary.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/scheduler_fixture_v2/run/summary.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/scheduler_fixture_v2/run/summary.json",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/scheduler_fixture_v2/run/summary.json",
       "bytes": 49808,
       "sha256": "80e9cd90ab9f15b430657918ead5e7edc57762d6854049a02705828f97a6cfb1"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/py310_fixture/test_two_epochs_use_every_row_0/two/summary.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/py310_fixture/test_two_epochs_use_every_row_0/two/summary.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/py310_fixture/test_two_epochs_use_every_row_0/two/summary.json",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/py310_fixture/test_two_epochs_use_every_row_0/two/summary.json",
       "bytes": 50277,
       "sha256": "82526eaad842f37bbd920bc20a84f3fdc009da8fbbc56cd2f4fa3124d6f2dac7"
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/training-horizon-runtime/py310_fixture/test_two_epochs_use_every_row_0/one/summary.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/py310_fixture/test_two_epochs_use_every_row_0/one/summary.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/training-horizon-runtime/py310_fixture/test_two_epochs_use_every_row_0/one/summary.json",
+      "source_path": "scratchpad/offline_game_epochs_runtime_v1/py310_fixture/test_two_epochs_use_every_row_0/one/summary.json",
       "bytes": 29939,
       "sha256": "ccc5754ef99122c7eef8fc67bd60a4bf202b7d3ca38cbc8a97f956ea4ecdcf37"
     }
-  ]
+  ],
+  "path_conventions": {
+    "path": "Published repository-relative location of the byte-preserved historical archive.",
+    "source_path": "Original producing-checkout-relative provenance, not a claim that the original source exists in this clone. Archived originals retain their historical absolute paths.",
+    "execution": "Historical evidence scripts are not portable launch instructions."
+  }
 }

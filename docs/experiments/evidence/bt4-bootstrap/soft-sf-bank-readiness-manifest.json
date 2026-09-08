@@ -3,34 +3,39 @@
   "scope": "Bank provenance inspection and reuse of already-published128-row training sample; no new target training or full-corpus temperature selection.",
   "files": [
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/soft-sf-bank-readiness/plan.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/soft_sf_readiness_v1/plan.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/soft-sf-bank-readiness/plan.json",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_readiness_v1/plan.json",
       "sha256": "341e8a5e4cf17d73c5454edad2dc792b8e76d384babe3ba00ac562eeca393cb6",
       "bytes": 615
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/soft-sf-bank-readiness/readiness.json",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/soft_sf_readiness_v1/readiness.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/soft-sf-bank-readiness/readiness.json",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_readiness_v1/readiness.json",
       "sha256": "a78d68de088a1faec049adb2452af12e351ca97ae45515e28d9602cff7a512e3",
       "bytes": 9663
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/soft-sf-bank-readiness/README.md",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/soft_sf_readiness_v1/README.md",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/soft-sf-bank-readiness/README.md",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_readiness_v1/README.md",
       "sha256": "7ab2d983293c3d08e5e2ba1a2316af4c78a99a13ffcf5eed5d4b9946404844c7",
       "bytes": 2048
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/soft-sf-bank-readiness/inspect_bank.py",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/soft_sf_readiness_v1/inspect_bank.py",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/soft-sf-bank-readiness/inspect_bank.py",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_readiness_v1/inspect_bank.py",
       "sha256": "a1c070262cb6b5960df75f7a86a378744ebe5ec171c46689844affa42328887b",
       "bytes": 4584
     },
     {
-      "path": "docs/experiments/evidence/bt4-bootstrap/soft-sf-bank-readiness/inspection.log",
-      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/soft_sf_readiness_v1/inspection.log",
+      "path": "scratchpad/bt4_joint20/publication_20260908_followup/soft-sf-bank-readiness/inspection.log",
+      "source_path": "scratchpad/bt4_joint20/soft_sf_readiness_v1/inspection.log",
       "sha256": "b11d4e2270e8693d62c1d08b236d9e7383a89bef6b3ba832a75b983caf9e74a0",
       "bytes": 347
     }
-  ]
+  ],
+  "path_conventions": {
+    "path": "Published repository-relative location of the byte-preserved historical archive.",
+    "source_path": "Original producing-checkout-relative provenance, not a claim that the original source exists in this clone. Archived originals retain their historical absolute paths.",
+    "execution": "Historical evidence scripts are not portable launch instructions."
+  }
 }

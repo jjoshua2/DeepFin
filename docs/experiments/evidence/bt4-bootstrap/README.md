@@ -134,3 +134,15 @@ def elo(p):
     return -math.inf if p == 0 else math.inf if p == 1 else 400 * math.log10(p / (1 - p))
 print({"candidate_score": score, "score_ci95": ci, "elo": elo(score), "elo_ci95": list(map(elo, ci))})
 ```
+
+The four follow-up catalogs above point to frozen originals under
+`scratchpad/bt4_joint20/publication_20260908_followup/`. Catalog `path` values
+name published repository-relative artifacts; `source_path` values preserve the
+original producing-checkout-relative provenance. The originals retain historical
+absolute paths and are evidence, not portable executable instructions.
+
+PR559 initially placed these 84 artifacts below `docs/`, outside the existing
+historical-archive convention. Its author/reviewer receipts are preserved byte
+for byte; their validation did not close the tracked-file path-hygiene check. The
+follow-up relocation corrects that publication gap without redaction, changes to
+scientific results, or changes to the existing hygiene scanner and exemptions.
