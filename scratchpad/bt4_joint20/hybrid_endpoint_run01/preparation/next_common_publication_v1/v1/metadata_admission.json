@@ -1,0 +1,19 @@
+{
+  "status": "PASS_METADATA_ONLY_NOT_LAUNCHED",
+  "manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/runner_manifest.json",
+    "sha256": "18e2f33dfdbdef5677d4e5773e039e6d73aa896cd39899ac7e16891f6178a461"
+  },
+  "runner": {
+    "path": "/tmp/deepfin-g10-parallel-tools/scripts/common_input_batch.py",
+    "sha256": "7bf575fd3adce492404ba6e03fff30c0ee72d0a7b4a25a3e7bf246ba40d07613"
+  },
+  "checks": [
+    "actual validate_manifest and fresh_outputs",
+    "exact receipt/attrs/source metadata row and teacher/function lineage",
+    "source-qualified game disjointness from prior128 and within selected64",
+    "all derived/adapted/rank outputs absent"
+  ],
+  "not_repeated": "Full native/library pin hashing and import qualification are reused; full verify occurs under registered launch deadline.",
+  "draft_setup_correction": "Initial metadata validation ran under author CPU6,7 affinity, correctly rejected intended lane0..3 admission. Repeated metadata-only validation under actual intended aggregate CPU0..3; no operational stage was invoked. Initial collector registration inherited stale descriptive prior fields; corrected before freeze."
+}

@@ -1,0 +1,37 @@
+{
+  "status": "PREPARED_NOT_LAUNCHED",
+  "manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/runner_manifest.json",
+    "sha256": "18e2f33dfdbdef5677d4e5773e039e6d73aa896cd39899ac7e16891f6178a461"
+  },
+  "registration": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/registration.json",
+    "sha256": "48e7287a646e60af0359bb4302897aa9b388aef6c3b26272218d911e76427131"
+  },
+  "preregistration": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/preregistration.md",
+    "sha256": "65fa600d228f777219248b7c88c86770d435b74c13792d744f3c409456944954"
+  },
+  "metadata": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/metadata_snapshot.json",
+    "sha256": "82ddc7ff9c93e0c166a2f50860ffd94e8e798440ba3cbe4dd3f0426a6f4678a8"
+  },
+  "admission": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/metadata_admission.json",
+    "sha256": "f629a765c1e6e786bf85a487d78e00b3d9d8cc83aed283dce956e2adcae3a6c9"
+  },
+  "launch": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/launch_preparation.json",
+    "sha256": "0b4ba8dbf093a46fddf1265fdf3dc29accf2dde30858ea904895025e46f30243"
+  },
+  "initial_preparer": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/prepare_metadata_initial.py",
+    "sha256": "1d03f0145a5d1bba7ca04cc1b442ecf9d974855d98d43b919d9ce0788c52603a"
+  },
+  "finalizer": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/finalize_metadata.py",
+    "sha256": "20827ebf8a159c1c6b8e6c0e0bf269c48b7d42cf3713175138723df68c82abf4"
+  },
+  "rows": 1061905,
+  "shards": 128
+}

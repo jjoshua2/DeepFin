@@ -1,0 +1,18 @@
+{
+  "status": "PASS_ROOT_OPERATIONAL_ADMISSION",
+  "created_unix": 1788860797.4377983,
+  "selection_review_sha256": "942a0bab753344d5887a8d9bba182c7fbf3a3e4cf46811a948f9b895e383a89d",
+  "manifest_sha256": "802615056d68a8268a0eb340e3efc3273b883dc12415e0fcbb36ab62d5294733",
+  "pins_rehashed": 319,
+  "free_bytes": 438922305536,
+  "mem_available_bytes": 52632698880,
+  "prior_attempt": "next_v1 failedconsumerheader andrecordedtaskPIDsabsent;originalpreserved",
+  "checks": [
+    "Corrected actualconsumer metadata contract reviewed independently",
+    "Exact runtime and manifest pins; actual runner fresh-output admission",
+    "No competing batch owner or STOP; B100/generation preserved"
+  ],
+  "limits": [
+    "No completed rows claimed; actual consumers still verify payloads"
+  ]
+}

@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/tmp/deepfin-g10-parallel-tools/scripts/derive_corpus_targets.py", line 7507, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/tmp/deepfin-g10-parallel-tools/scripts/derive_corpus_targets.py", line 7464, in main
+    corpus_record = select_corpus_record(corpus_dir, corpus_record, args.source_shards)
+  File "/tmp/deepfin-g10-parallel-tools/scripts/derive_corpus_targets.py", line 3739, in select_corpus_record
+    raise CorpusIntegrityError("invalid source-shards schema")
+CorpusIntegrityError: invalid source-shards schema

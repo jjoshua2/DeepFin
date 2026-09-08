@@ -1,0 +1,211 @@
+{
+  "schema": 1,
+  "scope": "Frozen first-attempt early failure and corrected second-attempt startup only; no partial survivor results. Historical paths/PIDs are evidence, not a portable launch bundle.",
+  "files": [
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/metadata.tar.gz",
+      "sha256": "f4176f72a0dbcec69d5899abe6683df066eb77a1bec2e16937a92e9b513ed926",
+      "bytes": 208358
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/metadata_members.json.gz",
+      "sha256": "ec09256b158ea1fb268dd7ad542732070466f1101d09347b5ec5be1714d8420c",
+      "bytes": 7480
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/preregistration.md",
+      "sha256": "65fa600d228f777219248b7c88c86770d435b74c13792d744f3c409456944954",
+      "bytes": 2995,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/preregistration.md"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/registration.json",
+      "sha256": "48e7287a646e60af0359bb4302897aa9b388aef6c3b26272218d911e76427131",
+      "bytes": 2309,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/registration.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/runner_manifest.json.gz",
+      "sha256": "af9ca98387bed923977fef698959d686129e076cbd6ffea3715d36e598a71d60",
+      "bytes": 16741,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/runner_manifest.json",
+      "encoding": "gzip",
+      "source_sha256": "18e2f33dfdbdef5677d4e5773e039e6d73aa896cd39899ac7e16891f6178a461",
+      "source_bytes": 67578
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/launch_preparation.json",
+      "sha256": "0b4ba8dbf093a46fddf1265fdf3dc29accf2dde30858ea904895025e46f30243",
+      "bytes": 3209,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/launch_preparation.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/prepared.json",
+      "sha256": "160bf07dde214b7a547149c786ffaf4403ced336f636e02c22d0cc61500b9b03",
+      "bytes": 2097,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/prepared.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/metadata_admission.json",
+      "sha256": "f629a765c1e6e786bf85a487d78e00b3d9d8cc83aed283dce956e2adcae3a6c9",
+      "bytes": 1236,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/metadata_admission.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/operator_launch.json",
+      "sha256": "b33b77862705f6f824c8d4ba3f2c91e596b691319acb2ce31fc1d14ecacef405",
+      "bytes": 1825,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/operator_launch.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/root_launch_review.json",
+      "sha256": "0bbbeae088538a33277d0dce0ab15e535adb7832e507b45045366539920f9f01",
+      "bytes": 840,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/root_launch_review.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/started.json",
+      "sha256": "246f9c5b6bff244feebdf61bee68c2cadc71ac034501ee1c60ab3b768ce64dd5",
+      "bytes": 183,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/started.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/run06_g10/lane.started.json",
+      "sha256": "2b2cce9f508185a782aa9b06c4a4c50481c6b5733c84a04026ca0a10548bc9ab",
+      "bytes": 933,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/run06_g10/lane.started.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/run07_g10_companion4/lane.started.json",
+      "sha256": "c63e71dec6e658b3cd7caf48dfc4e8674bc998e7472ed63b933afece28cded15",
+      "bytes": 944,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/run07_g10_companion4/lane.started.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/independent_launch_review.json.gz",
+      "sha256": "2018019be9f67b71ddc78a500733b4bf1c568182f0779416070a61c9735f26ab",
+      "bytes": 10684,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/independent_launch_review.json",
+      "encoding": "gzip",
+      "source_sha256": "a806792a7ceaa5c66108bf2e2bed43162827fbcb71f93e8ac2f0a87a1068306d",
+      "source_bytes": 63418
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/failed.json",
+      "sha256": "5082c23d0ae0b813f46945ec0a28a38c46023fe922279c42c8264765ac14830a",
+      "bytes": 368,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/failed.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/terminal_process_observation.json",
+      "sha256": "cccce2848c4aa4c550bab185dfad5229efa584648817619a1a58fd5dfd813d7b",
+      "bytes": 282,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/terminal_process_observation.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/run06_g10/derive.log",
+      "sha256": "3c1c2dd73b5b92a39b5925123f01067bfa2a85eb958387969a1a4ec72c3b19fc",
+      "bytes": 596,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/run06_g10/derive.log"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v1/run07_g10_companion4/derive.log",
+      "sha256": "3c1c2dd73b5b92a39b5925123f01067bfa2a85eb958387969a1a4ec72c3b19fc",
+      "bytes": 596,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/run07_g10_companion4/derive.log"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/metadata.tar.gz",
+      "sha256": "99cc05f48370dd178e3b70f6a02ecad19846575c8b547a988d31f8b1f636ee35",
+      "bytes": 204888
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/metadata_members.json.gz",
+      "sha256": "45a56933e6c9ea2ffbc6cee33899eafa9c35d380d818f01afc9d7d394c21f9da",
+      "bytes": 7570
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/preregistration.md",
+      "sha256": "401e824ebc08d2d3cced3260006e474e051a84cda8286b396b087bd2b4fc2e95",
+      "bytes": 3649,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/preregistration.md"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/registration.json",
+      "sha256": "38594d284d3810b7cd8b6b8710ec6c0e494cad8f97670c160badcf06bb18b632",
+      "bytes": 2555,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/registration.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/runner_manifest.json.gz",
+      "sha256": "d303c665c5303fb1bdaae38f1a0c5e4454ac2b4a1a2848986ca5cd06ae65dcfa",
+      "bytes": 16788,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/runner_manifest.json",
+      "encoding": "gzip",
+      "source_sha256": "802615056d68a8268a0eb340e3efc3273b883dc12415e0fcbb36ab62d5294733",
+      "source_bytes": 67780
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/launch_preparation.json",
+      "sha256": "fc668c88bf244cca561b07708b904ceb72466aae10644a5988375461908d5101",
+      "bytes": 3209,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/launch_preparation.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/prepared.json",
+      "sha256": "57bc298d6a9c261da782cb4ba49d0d3937bca8c23d42b7ad6d2e7f1fa173d321",
+      "bytes": 1841,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/prepared.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/metadata_admission.json",
+      "sha256": "89ffcea7424303a976269cabe38eb34e6ca9d0d13f811f74cc61876faf0cccd0",
+      "bytes": 1553,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/metadata_admission.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/operator_launch.json",
+      "sha256": "d4eebd64618a2fe30d45898f10e2969621d61865b3c13a6323e6f5345691b4fa",
+      "bytes": 1760,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/operator_launch.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/root_launch_review.json",
+      "sha256": "3fd2e8202178c5fefae39f912373771e13d430addff712d6180749ff2d17d354",
+      "bytes": 787,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/root_launch_review.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/started.json",
+      "sha256": "182fe3afade6d2b3bc5d81fcfc51ce63e92e3129fa55ebbb034170699cd4a2fd",
+      "bytes": 184,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/started.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/run06_g10/lane.started.json",
+      "sha256": "ee80db9cba615180db680bf4e9126323ae56d52de42960dc6b74a1947eb0b1a7",
+      "bytes": 934,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/lane.started.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/run07_g10_companion4/lane.started.json",
+      "sha256": "efb842ef332c76ed96f4a668c3d19be7f77d9f5f5e4b44d946859e70dc8fa41c",
+      "bytes": 944,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/lane.started.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/root_selection_review.json",
+      "sha256": "942a0bab753344d5887a8d9bba182c7fbf3a3e4cf46811a948f9b895e383a89d",
+      "bytes": 1173,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/root_selection_review.json"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/next_common_publication_v1/v2/correction.json",
+      "sha256": "cfcb8df6cef77d73a5435bf9521338e1ccbe0905edc6061c299c47f26b145d5b",
+      "bytes": 1311,
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/correction.json"
+    }
+  ],
+  "metadata_archives": "Each v1/v2 metadata_members.json.gz lists exact archive member hashes and original source paths. Archives contain only closed metadata and producing scripts; no raw or Zarr payloads.",
+  "unchanged_runtime": "56d650e06ca208a8b134155c5a7fad4dd19b105d; qualification and prior completed-batch evidence remain in capacity-g10-launch-manifest.json."
+}

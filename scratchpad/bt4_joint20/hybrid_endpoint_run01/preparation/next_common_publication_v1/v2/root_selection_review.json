@@ -1,0 +1,19 @@
+{
+  "status": "PASS_ROOT_INDEPENDENT_CORRECTED_SELECTION_REVIEW",
+  "created_unix": 1788860695.0369172,
+  "manifest_sha256": "802615056d68a8268a0eb340e3efc3273b883dc12415e0fcbb36ab62d5294733",
+  "prior_failed_manifest_sha256": "18e2f33dfdbdef5677d4e5773e039e6d73aa896cd39899ac7e16891f6178a461",
+  "actual_frozen_consumer_sha256": "d2fbde7291d6662032431f71f8551e6b580ffd37b671a2b77422987708dcfff2",
+  "checks": [
+    "Exact original consumer five-field header plus original source-config and source-manifest bindings",
+    "Exact syntactic entry contract; all128selectedentriesunchangedfromv1",
+    "All128original raw storage stamps remain unchanged; closed sidecarattributes match capturedbytes",
+    "Derivation semantics and resource limits unchanged; fresh v2 output namespace",
+    "Prior independent source-game/teacher joins reused only for unchanged entries; failedv1 preserved"
+  ],
+  "limits": [
+    "No raw payload hashes or full consumer execution repeated; boundedpipeline remains responsible",
+    "Does not rely on mutable draft helper referenced by author admission",
+    "This corrects a preparation schema error, not an excluded scientific outcome"
+  ]
+}

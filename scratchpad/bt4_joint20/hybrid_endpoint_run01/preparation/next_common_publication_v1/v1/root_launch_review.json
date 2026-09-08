@@ -1,0 +1,18 @@
+{
+  "status": "PASS_ROOT_OPERATIONAL_ADMISSION",
+  "created_unix": 1788860034.7337058,
+  "independent_review_sha256": "a806792a7ceaa5c66108bf2e2bed43162827fbcb71f93e8ac2f0a87a1068306d",
+  "manifest_sha256": "18e2f33dfdbdef5677d4e5773e039e6d73aa896cd39899ac7e16891f6178a461",
+  "pins_rehashed": 318,
+  "runtime_commit": "56d650e06ca208a8b134155c5a7fad4dd19b105d",
+  "free_bytes": 439323344896,
+  "mem_available_bytes": 50543972352,
+  "competing_common_input_owners": [],
+  "checks": [
+    "Exact runtime and all manifest pins rehashed; tracked checkout clean",
+    "Actual runner metadata/fresh-output admission passed",
+    "New output and STOP checks; prior owners absent",
+    "Same bounded two-source command; active B100 and generation preserved"
+  ],
+  "scope": "Metadata/runtime/operator admission only; no survivor counts claimed"
+}
