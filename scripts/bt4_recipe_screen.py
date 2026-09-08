@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two fixed B100/H20 arena stages using a separately qualified CUDA overlay."""
+"""Two fixed arena stages for qualified original-corpus recipe checkpoints."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def environment(runtime: Path, *, gpu: bool) -> dict[str, str]:
 
 def inputs(m: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     """Validate immutable upstream qualification; no model loading or inference."""
-    reader.require(m["schema"] == 1 and m["profile"] == "B100_H20", "unknown profile")
+    reader.require(m["schema"] == 1 and m["profile"] in ("B100_H20", reader.MATCHED_PROFILE), "unknown profile")
     for name, filename in [
         ("launcher_sha256", __file__),
         ("reader_sha256", reader.__file__),
@@ -71,16 +71,17 @@ def inputs(m: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     reader.pinned(m["preregistration"])
     reader.require(m["book"]["sha256"] == owned.BOOK_SHA, "unregistered book")
     owned.pin(m["book"]["path"], m["book"]["sha256"])
-    for key, role in [("candidate", "B100"), ("reference", "H20")]:
+    roles = (reader.matched_training_pair(m) if m["profile"] == reader.MATCHED_PROFILE
+             else ("B100", "H20"))
+    for key, role in zip(("candidate", "reference"), roles):
         reader.require(m[key]["role"] == role, "candidate/reference direction differs")
         owned.pin(m[key]["path"], m[key]["sha256"])
         # Existing complete training, checkpoint, summary and canonical schedule contract.
         owned.verify_candidate_training(
             {"candidate": m[key], "candidate_training": m[key + "_training"]}
         )
-    reader.require(
-        m["reference"]["sha256"] == H20_SHA, "reference is not qualified H20"
-    )
+    if m["profile"] == "B100_H20":
+        reader.require(m["reference"]["sha256"] == H20_SHA, "reference is not qualified H20")
     frozen = reader.read_json(m["runtime"])
     reader.require(
         frozen["status"] == "CPU_QUALIFIED_INACTIVE_RUNTIME_IDENTITY",
@@ -274,6 +275,7 @@ def prepare(m: dict[str, Any], out: Path) -> None:
         out,
         {
             "schema": 1,
+            **({"profile": m["profile"]} if m["profile"] == reader.MATCHED_PROFILE else {}),
             "status": "PASS_RECIPE_SCREEN_PREPARATION",
             "opening_panel": panel_pin,
             "inputs": {
@@ -414,6 +416,8 @@ def certify(cell: dict[str, Any], path: Path, out: Path) -> dict[str, Any]:
 def execute(m: dict[str, Any]) -> None:
     runtime, rt = inputs(m)
     proof = reader.read_json(m["preparation"])
+    if m["profile"] == reader.MATCHED_PROFILE:
+        reader.same(proof.get("profile"), m["profile"], "prepared profile")
     reader.require(
         proof["status"] == "PASS_RECIPE_SCREEN_PREPARATION", "preparation not complete"
     )
@@ -500,16 +504,22 @@ def execute(m: dict[str, Any]) -> None:
                 )
             }
             identities["runtime"]["git_sha"] = OVERLAY_HEAD
+            if m["profile"] == reader.MATCHED_PROFILE:
+                identities.update({k: m[k] for k in ("candidate_training", "reference_training")})
             launch = {
                 "settings": settings,
                 "execution": execution,
                 "opening_panel": proof["opening_panel"],
-                "candidate_role": "B100",
-                "reference_role": "H20",
+                "candidate_role": m["candidate"]["role"],
+                "reference_role": m["reference"]["role"],
                 "command": cmd,
                 "identities": identities,
                 "preparation": m["preparation"],
             }
+            if m["profile"] == reader.MATCHED_PROFILE:
+                launch.update(profile=m["profile"], training={
+                    k: m[k] for k in ("candidate", "reference", "candidate_training", "reference_training")
+                })
             launch_pin = write(out / f"{stage}.launch.json", launch)
             with gpu_lease(out) as fd:
                 # Recheck after any lease wait, before reading weights in the arena.
@@ -541,6 +551,8 @@ def execute(m: dict[str, Any]) -> None:
                 "expected_settings": settings,
                 "expected_execution": execution,
             }
+            if m["profile"] == reader.MATCHED_PROFILE:
+                cell["profile"] = m["profile"]
             if stage == "high":
                 cell["low_manifest"] = low_manifest
             cell_path = out / f"{stage}.reader_manifest.json"
@@ -566,7 +578,9 @@ def execute(m: dict[str, Any]) -> None:
             out / "complete.json",
             {
                 "complete": True,
-                "profile": "B100_H20",
+                "profile": m["profile"],
+                **({"candidate_role": m["candidate"]["role"], "reference_role": m["reference"]["role"]}
+                   if m["profile"] == reader.MATCHED_PROFILE else {}),
                 "gpu_seconds": charges,
                 "training_gpu_seconds": training_charge,
                 "package_gpu_seconds": training_charge + charges,

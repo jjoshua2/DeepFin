@@ -52,9 +52,10 @@ def test_owned_stage_forwards_runtime_and_environment(tmp_path, monkeypatch, exp
 
 
 @pytest.fixture
-def package(make, tmp_path, monkeypatch):
-    low = make(values=[0.0] * 128)
-    high = make(name="high_template", low=False)
+def package(make, tmp_path, monkeypatch, request):
+    roles = getattr(request, "param", None)
+    low = make(values=[0.0] * 128, roles=roles)
+    high = make(name="high_template", low=False, roles=roles)
     manifests = {"low": low, "high": high}
     base_launch = json.loads(Path(low["launch"]["path"]).read_text())
     m: dict[str, Any] = {
@@ -65,7 +66,7 @@ def package(make, tmp_path, monkeypatch):
     for key in ("candidate", "reference", "book", "runtime", "preregistration"):
         m[key] = dict(base_launch["identities"][key])
         m[key].pop("git_sha", None)
-    m["candidate"]["role"], m["reference"]["role"] = "B100", "H20"
+    m["candidate"]["role"], m["reference"]["role"] = roles or ("B100", "H20")
     m["candidate_training"] = put(
         tmp_path / "train.json", {"training_charge_seconds": 100.0}
     )

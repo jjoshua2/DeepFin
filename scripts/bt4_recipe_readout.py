@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Certify one no-resume B100/H20 sequential cell or its fixed 128-pair probe.
+"""Certify a qualified recipe-pair sequential cell or its fixed 128-pair probe.
 
 Consumes pinned launch evidence and completed banks. Does not qualify training,
 launch jobs, or change the historical fixed-N bt4_joint_readout API.
@@ -23,6 +23,16 @@ from chess_anti_engine.utils.game_log import read_game_log, settings_fingerprint
 from scripts.arena_standard import pentanomial_counts, summarize_pentanomial
 
 SPEC = SprtSpec(elo0=0, elo1=15, alpha=0.05, beta=0.10, first_pairs=128, step_pairs=64)
+MATCHED_PROFILE = "matched_original_epoch"
+CANONICAL_EPOCH = "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f"
+# Historical training protocol, not the arena overlay or current-main trainer.
+TRAINING_PINS = {
+    "scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+    "configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+    "chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+    "data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+}
+SCHEDULE_VERIFIER = "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18"
 
 
 class InvalidCell(ValueError):
@@ -82,6 +92,94 @@ def same_sprt_field(actual: Any, expected: Any, name: str) -> None:
             same_likelihood(observed[1], reconstructed[1], "SPRT trajectory likelihood")
     else:
         same(actual, expected, f"SPRT {name}")
+
+
+def matched_training_pair(evidence: dict[str, Any]) -> tuple[str, str]:
+    """Bind roles to completed original-corpus epochs, without loading weights.
+
+    Consumes existing completion and schedule proofs; it does not reconstruct
+    training, decode a corpus, or extend qualification to another runtime.
+    """
+    roles = []
+    for side in ("candidate", "reference"):
+        checkpoint = evidence[side]
+        role = checkpoint["role"]
+        require(isinstance(role, str) and bool(role) and role.isascii()
+                and all(c.isalnum() or c in "_-" for c in role), "invalid recipe role")
+        receipt = read_json(evidence[side + "_training"])
+        require(receipt["complete"] is True, "training incomplete")
+        charge = receipt["training_charge_seconds"]
+        require(type(charge) in (int, float) and math.isfinite(charge) and 0 < charge <= 16200,
+                "training charge exceeds qualified cap")
+        same(receipt["role"], role, "training role")
+        same(receipt["checkpoint"], checkpoint, "training checkpoint")
+        run = Path(receipt["run"])
+        require(run.is_absolute() and Path(checkpoint["path"]) == run / "checkpoint.pt",
+                "training checkpoint path differs")
+        same(receipt["canonical_plan_sha256"], CANONICAL_EPOCH, "training canonical epoch")
+        for suffix, digest in TRAINING_PINS.items():
+            matches = [v for k, v in receipt["input_pins"].items()
+                       if Path(k).is_absolute() and k.endswith("/" + suffix)]
+            same(matches, [digest], "training protocol pin " + suffix)
+        summary = read_json({"path": str(run / "summary.json"), "sha256": receipt["summary_sha256"]})
+        schedule = read_json(receipt["schedule"])
+        same(schedule["verifier_sha256"], SCHEDULE_VERIFIER, "schedule verifier")
+        same(schedule["seed"], 0, "schedule seed")
+        same(schedule["batch_size"], 512, "schedule batch size")
+        runtime = schedule["runtime"]
+        require(runtime["python"].startswith("3.10.12") and runtime["torch"] == "2.11.0+cu128"
+                and runtime["numpy"] == "1.26.2", "unqualified training schedule runtime")
+        source_pin = "data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json"
+        source_summary = str(Path(schedule["source"]) / "derive_targets_summary.json")
+        require(Path(source_summary).is_absolute() and source_summary.endswith("/" + source_pin),
+                "unqualified original corpus")
+        same(schedule["pins"][source_summary], TRAINING_PINS[source_pin], "schedule source identity")
+        for key, value in {"plan_sha256": CANONICAL_EPOCH, "rows_planned": 18910484,
+                           "batches_planned": 36935, "seed": 0, "batch_size": 512}.items():
+            same(schedule["source_plan"].get(key), value, "source plan " + key)
+        same(list(schedule["arms"]), [role], "completed schedule role")
+        arm = schedule["arms"][role]
+        require(arm["metadata_matches_source"] is True and arm["training_completion_verified"] is True
+                and arm["staging"] == "verified actual", "unqualified realized schedule")
+        same(arm["canonical_plan_sha256"], CANONICAL_EPOCH, "realized canonical epoch")
+        same(arm["summary_sha256"], receipt["summary_sha256"], "realized summary")
+        physical = receipt["physical_plan_sha256"]
+        same(arm["physical_plan_sha256"], physical, "realized physical epoch")
+        same(summary["corpus"]["shard_dirs"], [arm["corpus"]], "training corpus")
+        expected = {"mode": "game_epoch", "complete": True, "seed": 0, "batch_size": 512,
+                    "rows_planned": 18910484, "rows_realized": 18910484,
+                    "batches_planned": 36935, "batches_realized": 36935, "shards": 2309,
+                    "games": 97968, "plan_workers": 16, "load_workers": 16,
+                    "same_game_repeats_max": 0, "decoded_rows_resident": 0,
+                    "plan_sha256": physical, "realized_sha256": physical}
+        for key, value in expected.items():
+            same(summary["sampling"].get(key), value, "training sampling " + key)
+        for key, value in {"seed": 0, "batch_size": 512, "warmup_steps": 1000, "train_window_steps": 88,
+                           "steps_realized": 36935, "compute_loss_calls": 36935}.items():
+            same(summary.get(key), value, "training " + key)
+        windows = summary["train_window_metrics"]
+        same(summary["train_windows"], 420, "training windows")
+        require(len(windows) == 420, "incomplete training windows")
+        for index, window in enumerate(windows, 1):
+            steps = min(88, 36935 - (index - 1) * 88)
+            for key, value in {"window_index": index, "steps_requested": steps,
+                               "train_steps_done": steps, "steps_cumulative": min(index * 88, 36935)}.items():
+                same(window[key], value, "training window " + key)
+            require(window["grad_nonfinite_skip_rate"] == 0 and window["transient_cuda_retry_batches"] == 0
+                    and math.isfinite(window["loss"]) and math.isfinite(window["grad_norm_mean"]),
+                    "training skipped/retried or nonfinite window")
+        same(sum(w["train_samples_seen"] for w in windows), 18910484, "training sample total")
+        require(any(c["role"] == "last" and c["path"] == checkpoint["path"]
+                    and c["sha256"] == checkpoint["sha256"] for c in summary["checkpoints"]),
+                "summary checkpoint differs")
+        same(receipt["historical_valid_control"], summary["valid_control"], "historical validity")
+        same(receipt["historical_validity_problems"], summary["validity_problems"], "historical limitations")
+        roles.append(role)
+    require(roles[0] != roles[1], "recipe roles must differ")
+    require(evidence["candidate"]["path"] != evidence["reference"]["path"]
+            and evidence["candidate"]["sha256"] != evidence["reference"]["sha256"],
+            "candidate is reference")
+    return roles[0], roles[1]
 
 
 def opening_panel(item: dict[str, Any]) -> list[dict[str, Any]]:
@@ -242,10 +340,20 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
             f"{name} launch identity differs",
         )
     require(settings["candidate"] != settings["reference"], "candidate is reference")
-    require(
-        launch["candidate_role"] == "B100" and launch["reference_role"] == "H20",
-        "recipe direction differs",
-    )
+    profile = launch.get("profile", "B100_H20")
+    candidate_role, reference_role = "B100", "H20"
+    if profile == MATCHED_PROFILE:
+        same(manifest.get("profile"), profile, "reader recipe profile")
+        training = launch["training"]
+        candidate_role, reference_role = matched_training_pair(training)
+        for side in ("candidate", "reference"):
+            same({k: training[side][k] for k in ("path", "sha256")}, identities[side], "trained " + side)
+            same(training[side + "_training"], identities[side + "_training"], "training proof " + side)
+    else:
+        require(profile == "B100_H20" and manifest.get("profile", "B100_H20") == profile,
+                "unknown recipe profile")
+    same([launch["candidate_role"], launch["reference_role"]], [candidate_role, reference_role],
+         "recipe direction")
     fixed = {
         "games": 2 * cap,
         "mode": "matched_sims",
@@ -526,6 +634,9 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
             "high requires one directly pinned low manifest",
         )
         low_report = read_cell(low_manifest)
+        same([low_report["candidate_role"], low_report["reference_role"]],
+             [candidate_role, reference_role], "low/high recipe direction")
+        same(low_manifest.get("profile", "B100_H20"), profile, "low/high recipe profile")
         same(
             low_manifest["opening_panel"],
             manifest["opening_panel"],
@@ -579,8 +690,9 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
         "schema": 1,
         "status": "VALID_CELL",
         "mode": manifest["mode"],
-        "candidate_role": "B100",
-        "reference_role": "H20",
+        "candidate_role": candidate_role,
+        "reference_role": reference_role,
+        **({"profile": profile} if profile == MATCHED_PROFILE else {}),
         "result": measured,
         "sprt": sequential,
         "fixed_core_cross_budget": contrast,
@@ -598,7 +710,9 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
             if low
             else "Fixed128-pair probe; ordinary paired interval only.",
             "Panel root/history is reconstructed and bank endpoints checked; game rows do not bank the consumed initial history. Actual history consumption depends on frozen launcher/input-generation evidence.",
-            "Launch pins attest checkpoint/book/runtime identities; upstream training and original payload qualification are not repeated.",
+            ("Pinned completed training and schedule receipts are checked; original payload qualification is inherited, without corpus decoding or retraining."
+             if profile == MATCHED_PROFILE else
+             "Launch pins attest checkpoint/book/runtime identities; upstream training and original payload qualification are not repeated."),
             "Same-seed development comparison, no recipe promotion or independent confirmation.",
             "Finished-bank identities validate accounting; inflight membership and consultation count remain terminal producer telemetry.",
         ],

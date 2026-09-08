@@ -6,6 +6,35 @@ checkpoint identities and completed training/schedule receipts must already
 qualify. The launcher does not retry, resume, select another recipe or promote a
 checkpoint. It preserves historical-control limitations.
 
+The existing schema-1 `B100_H20` profile keeps its literal roles and fixed H20
+checkpoint. Schema 1 also accepts the explicit `matched_original_epoch` profile
+for a separately registered pair of completed recipes. It uses the same manifest
+fields, arena runtime, book, two budgets, stopping rule, preparation and resource
+guards. Each checkpoint's `role` must match its own pinned completed training
+receipt; the two roles, paths and checkpoint hashes must differ.
+
+This profile consumes both pinned training summaries and realized schedule proofs.
+It requires the original 18,910,484-row, 36,935-batch, seed-zero epoch with batch
+512 and 88-step windows, the original canonical schedule, and the qualified
+historical trainer/config/sampler/verifier identities. Actual window completion,
+finite metrics, checkpoint identity and physical schedule must agree. Both
+training charges must fit 16,200 seconds. This admission consumes existing
+completed producer receipts, pinned trainer code and a schedule-environment
+witness using Python 3.10.12, Torch 2.11 CUDA and NumPy 1.26.2. It does not
+independently attest the training-process runtime. A different source corpus,
+runtime, horizon or unfinished checkpoint requires separate tooling and
+qualification; a role label alone cannot grant admission.
+
+Preparation pins the new profile. Launch and low/high reader manifests carry
+the same training receipt bindings and candidate/reference direction. Reports
+identify those roles; positive scores always favor the candidate. The new profile
+does not select a comparison or provide a training launcher for a new recipe.
+It relies on the completed producer's dataset qualification for unchanged
+non-policy payloads; the arena does not rescan a corpus or erase the receipts'
+historical-control limitations. The candidate training plus two arena stages
+retain the existing 27,000-second package ceiling; reference training is prior
+evidence, not a new stage.
+
 | Stage | Allocation | Execution |
 | --- | --- | --- |
 | Low | 100 simulations; 500-pair cap; ordered SPRT 0/+15, alpha .05, beta .10, first128 then64 | Rolling256, evaluator4096 |
