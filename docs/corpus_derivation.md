@@ -210,3 +210,59 @@ shard paths and physical row offsets in `row_provenance.npz` are unchanged; outp
 shuffle and filtering still use the existing writer. No-flag commands retain their
 original prefix behavior and emit no selection field. The mechanism selects data;
 it does not qualify new data quality, a training schedule or playing strength.
+
+## Raw-score policy rewrite on the legacy SF corpus
+
+[`sf_policy_rewrite.py`](../scripts/sf_policy_rewrite.py) rewrites only
+`policy_target` on an already derived, pinned schema3 corpus with the original
+single-phase, all-legal d9 recipe. Its default `--score-space q --temperature
+0.0005` is an identity control. The distinct Soft-SF control uses
+`--score-space effective-cp --temperature 10`; temperature is then in centipawns,
+not the saturated WDL-derived q scale. Scores come from the original float64
+observation, including the generator's existing effective-cp mate-distance
+encoding. No rank-gap rounding, alternate mate mapping, value change or inference
+is involved. Softening ordinary centipawn gaps can coexist with sharpening
+q-saturated mate positions.
+
+```bash
+PYTHONPATH=. python scripts/sf_policy_rewrite.py \
+  --raw data/nnue_bootstrap/run03_s3 \
+  --source data/nnue_derived/armB/qtemp_0.0005_hist_20m \
+  --expected-source-summary-sha256 <pinned-original-summary-sha256> \
+  --out <new-output-directory> --score-space effective-cp --temperature 10
+```
+
+The producer follows the original raw prefix, missing-result filter and seeded
+within-shard permutation. It checks source-qualified raw configuration and ordered
+worker/game/ply identities, complete legal d9 support, two compact-move mappings,
+stored legal masks, and exact reconstruction of every original q/.0005 policy.
+It requires the original zero-floor/search-value/history recipe and committed
+shard attributes. Selected-source/provenance-repacked or already postprocessed
+corpora are outside this narrow legacy path. Existing derivation defaults are
+unchanged.
+
+All 16 non-policy columns, including value labels and `x`, are copied with
+compressed-file SHA-256 equality checks. Only game/ply, legal-mask and policy
+arrays are decoded; raw observations are streamed and at most one output shard's
+sparse legal scores is buffered. There is no dense full-corpus score intermediate.
+The policies use float64 softmax, then float32 and float16 storage, with exact
+readback and finite/legal-mass checks. Float16 can remove tiny tails; downstream
+entropy calculations should normalize the actually stored targets.
+
+The new summary records score space, temperature, source/code hashes, consumed raw
+files, copied-file hashes and output policy hashes. The original derive summary
+and shard provenance are preserved with explicit postprocessing metadata. Raw and
+derived source storage identities are checked again before final publication.
+History is **inherited** from the pinned original `input_key_verified` evidence
+and unchanged `x`: this is not fresh history reconstruction, and it does not
+retroactively qualify the original historical controls. The source input keys are
+retained as an emitted-order digest rather than duplicated per-row text.
+
+A failed run retains its `.writing` output and failure evidence and refuses reuse;
+there is no resume or implicit partial-corpus success. The producer checks STOP
+and a configurable free-disk reserve (150 GiB by default) between raw shards and
+output commits. Operational runs still need an independently surviving time cap,
+CPU/thread limits and a registered output allowance. This tool does not select a
+training arm, launch training, or replace corpus/schedule qualification. The
+[training-only sample](experiments/2026-09-08-soft-sf-qualified-training-sample.md) motivates
+10 cp as a descriptive entropy match; it is not evidence of playing strength.
