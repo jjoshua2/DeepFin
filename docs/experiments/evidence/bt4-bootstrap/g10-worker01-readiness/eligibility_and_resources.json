@@ -1,0 +1,32 @@
+{
+  "status": "METADATA_ONLY_PREPARED_NOT_LAUNCHED",
+  "availability": {
+    "run06_g10": {
+      "requested128_labelled": 128,
+      "missing_teacher_receipts": []
+    },
+    "run07_g10_companion4": {
+      "requested128_labelled": 128,
+      "missing_teacher_receipts": []
+    }
+  },
+  "selection_reason": "All128 w01 shards per source are closed and teacher-labelled; readiness only, no automatic launch or expansion",
+  "prior_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/independent_completed_review_v1/review.json",
+    "sha256": "1e4c06f0fd500212b4bac2f852936a20af2de21f7543c6e9eef2de6dc6924ecc"
+  },
+  "prior_peak_sampled_bytes": 1125140293,
+  "prior_rows": 1062946,
+  "selected_rows": 2126537,
+  "row_linear_output_estimate_bytes": 2250963325.7525225,
+  "twofold_estimate_bytes": 4501926651.505045,
+  "cap_bytes": 8589934592,
+  "prior_coordinator_seconds": 2714.280749797821,
+  "row_linear_elapsed_estimate_seconds": 5430.2085363064625,
+  "limitations": [
+    "Output projection is descriptive, not a quota or guaranteed bound.",
+    "No measured scaling extrapolation; same two source lanes and two cores per lane.",
+    "Training now has16 planner/load workers; root must refresh host resources and monitor interference.",
+    "No source/sidecar payload rereads, exclusion census, inference or derivation during preparation. Raw SHA values are closed teacher receipt claims; actual consumers verify bytes."
+  ]
+}

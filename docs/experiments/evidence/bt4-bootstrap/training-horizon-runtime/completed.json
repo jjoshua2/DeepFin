@@ -1,0 +1,270 @@
+{
+  "status": "PASS_BOUNDED_CPU_PATH_WITH_DIAGNOSTIC_LIMITS",
+  "checkout": "/tmp/deepfin-two-epoch-cpu-qualification",
+  "commit": "ee46d0f1139211be15d84e4f9391c240dc51dbc7",
+  "tracked_checkout_clean": true,
+  "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+  "executable": "/usr/bin/python3",
+  "versions": {
+    "torch": {
+      "version": "2.11.0+cu128",
+      "path": "/home/josh/.local/lib/python3.10/site-packages/torch/__init__.py"
+    },
+    "numpy": {
+      "version": "1.26.2",
+      "path": "/home/josh/.local/lib/python3.10/site-packages/numpy/__init__.py"
+    },
+    "zarr": {
+      "version": "2.18.3",
+      "path": "/home/josh/.local/lib/python3.10/site-packages/zarr/__init__.py"
+    },
+    "pytest": {
+      "version": "9.0.2",
+      "path": "/home/josh/.local/lib/python3.10/site-packages/pytest/__init__.py"
+    }
+  },
+  "torch_cuda_build": "12.8",
+  "cuda_initialized": false,
+  "torch_threads": 2,
+  "blosc_threads": 2,
+  "affinity": [
+    6,
+    7
+  ],
+  "native_loaded": {
+    "chess_anti_engine.encoding._lc0_ext": {
+      "path": "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df"
+    },
+    "chess_anti_engine.encoding._features_ext": {
+      "path": "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c"
+    }
+  },
+  "source_pins": {
+    "/tmp/deepfin-two-epoch-cpu-qualification/scripts/lc0_control_train.py": "dd9ec4b3146adae343343e5cf69ca7d2e5a283955951de7be4f65f97f7c55891",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/replay/game_epoch.py": "382677700752fe7e977c9df70cddda2470fdb1c363191c1434b43623edc85b5e",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/replay/shard.py": "df71483c42a1fe01544bc352669696bae885c90dee57312a6847033b9543318b",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/train/trainer.py": "2d1759dda4d22157b404c0f87b74ef61d1f696accd67d0fbab66c2a80195472b",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/train/losses.py": "955e9f82007a72d84bb8296504b86249b458c8cd12aacf0e20a8c42059150437",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/train/target_builder.py": "9234a205c56bd23cf8cc1bafa37119c797ef4d04c47e1495990b14e150d456f6",
+    "/tmp/deepfin-two-epoch-cpu-qualification/tests/test_offline_game_epochs.py": "ce20c29ca1d6c736ae2bd0c7beb0448fee244580b223839b6570446022dde5e5",
+    "/tmp/deepfin-two-epoch-cpu-qualification/tests/test_lc0_control_drivers.py": "d775b897db50684943876021fac557ae24fa3ca46314e1ced390bd8c5164819c",
+    "/tmp/deepfin-two-epoch-cpu-qualification/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+    "/tmp/deepfin-two-epoch-cpu-qualification/configs/pbt2_small.yaml": "52a6c0b7200b7fa34259cee982ef3233616acc79796c14549d2eb7a388034570"
+  },
+  "existing_tests": {
+    "passed": 5,
+    "coverage": [
+      "Real uninterrupted20-row two-epoch pass with sampler seeds0/1 and different complete orders",
+      "Same optimizer/trainer/augmentation RNG identities and monotonicsteps",
+      "Epoch1 weights bit-equal standalone default1epoch under this runtime",
+      "Failure duringepoch2 refuses completed summary/final or published epoch1, retains pending diagnostic",
+      "Underreported optimizer update refuses output",
+      "Both large ragged midpoint examples"
+    ]
+  },
+  "scheduler_diagnostic": {
+    "actual_training_complete": true,
+    "rows_per_epoch": 20,
+    "steps": [
+      5,
+      10
+    ],
+    "window_steps": [
+      2,
+      2,
+      1,
+      2,
+      2,
+      1
+    ],
+    "epochs": [
+      {
+        "epoch_index": 1,
+        "steps_start": 0,
+        "steps_end": 5,
+        "window_count": 3,
+        "sampling": {
+          "mode": "game_epoch",
+          "rows_planned": 20,
+          "batches_planned": 5,
+          "full_batches_planned": 5,
+          "ragged_batches_planned": 0,
+          "min_batch_rows_planned": 4,
+          "min_optimizer_batch_fill_ratio": 0.99,
+          "shards": 1,
+          "sources": 1,
+          "games": 20,
+          "game_identity": "resolved_shard_parent+game_id",
+          "row_order": "seeded_shuffle_within_shard_game_segments",
+          "batch_size": 4,
+          "policy_size": 1858,
+          "input_history_encoding": "lc0_root_legacy_meta",
+          "history_rep_fix": true,
+          "seed": 0,
+          "load_workers_planned": 2,
+          "max_working_set_bytes": 8589934592,
+          "peak_working_set_bytes_planned": 2801560,
+          "mirror_augmentation": true,
+          "mirror_working_set_batch_copies": 7,
+          "collation_working_set_batch_copies": 3,
+          "validated_load_payload_copies": 5,
+          "corpus_identity": "sha256(resolved shard paths + per-shard sha256(sorted relative paths + sizes + bytes))",
+          "corpus_sha256": "5837662cacfd25e30cef4d98a869ec8cc96bc77f99e4ed0ac88bfae1fbab604e",
+          "objective_mask_weights": {
+            "policy": 20.0,
+            "soft_policy": 0.0,
+            "future_policy": 0.0,
+            "sf_own": 0.0,
+            "sf_own_regret": 0.0,
+            "wdl": 20.0,
+            "sf_move": 0.0,
+            "sf_eval": 0.0,
+            "categorical": 0.0,
+            "volatility": 0.0,
+            "sf_volatility": 0.0,
+            "moves_left": 20.0,
+            "sf_policy_floor": 0.0,
+            "sf_shape": 0.0
+          },
+          "plan_sha256": "7f0365974cd32619ba88dbb97e3f0a9ed1d520c6766e57b9f8e0aa2494ddfefb",
+          "plan_workers": 2,
+          "load_workers": 2,
+          "rows_realized": 20,
+          "batches_realized": 5,
+          "same_game_repeats_max": 0,
+          "peak_decoded_rows": 20,
+          "peak_decoded_shards": 1,
+          "peak_decoded_bytes": 560312,
+          "peak_working_set_bytes": 2801560,
+          "decoded_rows_resident": 0,
+          "decoded_bytes_resident": 0,
+          "realized_sha256": "7f0365974cd32619ba88dbb97e3f0a9ed1d520c6766e57b9f8e0aa2494ddfefb",
+          "complete": true
+        }
+      },
+      {
+        "epoch_index": 2,
+        "steps_start": 5,
+        "steps_end": 10,
+        "window_count": 3,
+        "sampling": {
+          "mode": "game_epoch",
+          "rows_planned": 20,
+          "batches_planned": 5,
+          "full_batches_planned": 5,
+          "ragged_batches_planned": 0,
+          "min_batch_rows_planned": 4,
+          "min_optimizer_batch_fill_ratio": 0.99,
+          "shards": 1,
+          "sources": 1,
+          "games": 20,
+          "game_identity": "resolved_shard_parent+game_id",
+          "row_order": "seeded_shuffle_within_shard_game_segments",
+          "batch_size": 4,
+          "policy_size": 1858,
+          "input_history_encoding": "lc0_root_legacy_meta",
+          "history_rep_fix": true,
+          "seed": 1,
+          "load_workers_planned": 2,
+          "max_working_set_bytes": 8589934592,
+          "peak_working_set_bytes_planned": 2801560,
+          "mirror_augmentation": true,
+          "mirror_working_set_batch_copies": 7,
+          "collation_working_set_batch_copies": 3,
+          "validated_load_payload_copies": 5,
+          "corpus_identity": "sha256(resolved shard paths + per-shard sha256(sorted relative paths + sizes + bytes))",
+          "corpus_sha256": "5837662cacfd25e30cef4d98a869ec8cc96bc77f99e4ed0ac88bfae1fbab604e",
+          "objective_mask_weights": {
+            "policy": 20.0,
+            "soft_policy": 0.0,
+            "future_policy": 0.0,
+            "sf_own": 0.0,
+            "sf_own_regret": 0.0,
+            "wdl": 20.0,
+            "sf_move": 0.0,
+            "sf_eval": 0.0,
+            "categorical": 0.0,
+            "volatility": 0.0,
+            "sf_volatility": 0.0,
+            "moves_left": 20.0,
+            "sf_policy_floor": 0.0,
+            "sf_shape": 0.0
+          },
+          "plan_sha256": "1d22d546124cd1ff458e827578b4acd50fe9ba4d3354fdcb341f1bda8e2c749f",
+          "plan_workers": 2,
+          "load_workers": 2,
+          "rows_realized": 20,
+          "batches_realized": 5,
+          "same_game_repeats_max": 0,
+          "peak_decoded_rows": 20,
+          "peak_decoded_shards": 1,
+          "peak_decoded_bytes": 560312,
+          "peak_working_set_bytes": 2801560,
+          "decoded_rows_resident": 0,
+          "decoded_bytes_resident": 0,
+          "realized_sha256": "1d22d546124cd1ff458e827578b4acd50fe9ba4d3354fdcb341f1bda8e2c749f",
+          "complete": true
+        }
+      }
+    ],
+    "continuity_assertions_reached_and_passed": "Same trainer/optimizer/scheduler/augmentation RNG identities; every prior after-state equals next before-state for step/Torch RNG/augmentation RNG/scheduler/LR across epoch boundary. Preserved probe source and traceback establish these before its final failed assertion.",
+    "diagnostic_status": "Final extra assertion incorrectly required Torch RNG change in a deterministic fixture. It failed after successful training; no rerun was performed. Unchanged RNG is consistent with no stochastic Torch draw, not evidence of reseeding.",
+    "prior_setup_refusal": "First short-warmup fixture was refused before training by trainer pin. Second explicitly waived diagnostic used --allow-leak to permit warmup2 and is not value-guard qualification. The five unchanged cases provide normal guard evidence.",
+    "lr_boundary_caveat": "Existing sqrt-release scheduler returns baseLR for a1-step window; historical63-step final windows reach minimum. Both toy epoch endpoints here use the same1-step boundary.",
+    "lr_window_metrics": [
+      {
+        "steps_cumulative": 2,
+        "opt_lr_mean": 0.00030000000000000003,
+        "opt_lr_max": 0.0004000000000000001
+      },
+      {
+        "steps_cumulative": 4,
+        "opt_lr_mean": 0.00033000000000000005,
+        "opt_lr_max": 0.0006000000000000001
+      },
+      {
+        "steps_cumulative": 5,
+        "opt_lr_mean": 0.0006000000000000001,
+        "opt_lr_max": 0.0006000000000000001
+      },
+      {
+        "steps_cumulative": 7,
+        "opt_lr_mean": 0.00033000000000000005,
+        "opt_lr_max": 0.0006000000000000001
+      },
+      {
+        "steps_cumulative": 9,
+        "opt_lr_mean": 0.00033000000000000005,
+        "opt_lr_max": 0.0006000000000000001
+      },
+      {
+        "steps_cumulative": 10,
+        "opt_lr_mean": 0.0006000000000000001,
+        "opt_lr_max": 0.0006000000000000001
+      }
+    ],
+    "summary_sha256": "80e9cd90ab9f15b430657918ead5e7edc57762d6854049a02705828f97a6cfb1"
+  },
+  "wall_seconds_since_registered_plan": 384.4298667907715,
+  "limits": [
+    "CPU-only tiny eager model, no CUDA compatibility/compile/61M-model memory/full-corpus planner/schedule qualification.",
+    "No old-checkpoint continuation or comparison to frozen historical epoch1 implied.",
+    "Old MCTS native differs and was not linked/imported; this does not qualify main search backend.",
+    "No native rebuild or active runtime edits.",
+    "Only the separate scheduler probe explicitly measured Blosc2; initial pytest command requested it via environment and reported actual Torch2."
+  ],
+  "files": {
+    "plan.json": "970ff30354af371899a21f0f24ddc026ba87d5c9d35e90e30781ff21122bf031",
+    "scheduler_probe_v2.py": "1fe229d171c05e13f6d14363d2bbec6f4c46351eddabefcb89b428c42308dd25",
+    "scheduler_probe.log": "84ab46e71cf29fb4c44ed625fefb07b973ff77c4ce91c910f6885715b5208f8a",
+    "scheduler_probe.py": "4e367a8599581665a78cccb6a62890e6853fd95859780819cd94585abcaf0d71",
+    "finalize_readout.py": "7f1532da853711adfd5514fcb31353489513c7bf07ab71de2204319da9a60a51",
+    "py310.log": "83fcab338552c65ee5adf56760080172a6226ec05c537ac926b38f2e6bc36645",
+    "scheduler_probe_v2.log": "a2bd0da573cbcca1142c2c3e13decc131238fec17ef1c62421a824fbb43e5213",
+    "commands.json": "af5d8a7415ffcf15d48a542de187ca86066af0ed52dc81d906050bf76506fb04"
+  },
+  "instrumentation": "Positive existing test and short-warmup probe wrap and call the real Trainer.train_steps; no fake trainer or fake optimization. Existing negative cases intentionally inject sampler failure or underreported actual update metrics. Two ragged-boundary cases are pure arithmetic.",
+  "readout_log": "readout.log contains the producer stdout and a pre-finalization receipt digest; excluded from producer-time file pins because the stream was still open. Source/test/runtime/results were not changed during final receipt assembly."
+}

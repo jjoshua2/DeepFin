@@ -1,0 +1,37 @@
+{
+  "status": "REGISTERED_CPU_QUALIFICATION",
+  "registered_unix": 1788862574.2194378,
+  "hard_seconds_total": 600,
+  "checkout": "/tmp/deepfin-two-epoch-cpu-qualification",
+  "commit": "ee46d0f1139211be15d84e4f9391c240dc51dbc7",
+  "preferred_python": "/usr/bin/python3",
+  "cpu_affinity": [
+    6,
+    7
+  ],
+  "numeric_threads": 2,
+  "CUDA_VISIBLE_DEVICES": "",
+  "scope": "Existing tiny real two-epoch fixture and failure/checkpoint cases; no corpus, GPU, native rebuild or live mutation. Old MCTS native source differs and is deliberately not adopted. If its required import blocks3.10, use already source-compatible3.13 development modules and report that precise limitation.",
+  "native_pins": {
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_features_impl.h": "2c493fe44eb486cee95adcf5f3cec7e549d206a1ca0793c612073c96ed0a8335",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_features_ext.c": "1aca319fa2ae1eae4bba5707c61a7767421f1cf53a1510a8a739fb2557d9e053",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_cboard_impl.h": "13560b4908282aca68c3f6c5747dc3848f036f3a494f24500e76fc44a3646572",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_slider_attacks_impl.h": "4bcd20d696241a218adfb15bdf31d0e72ba0a5c75d5c6dd29bbd53ec79d59d5d",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_lc0_ext.c": "dad4106e18c6da4757aec828a1aefa6991ac99964317b0716d03b1daf659c86f",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_bitboard_planes_impl.h": "8fdc0ea17025c5543d15997573b2080a1ef99dd9f0b55dab0bb9c3af41cb8d9b",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/nnue/_fastq_certificate.h": "ae2bbacdfc1120e37c6c926a31536f5e362924bbe40c4ef085f8ae50b76d55e9",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/nnue/_fastq_see.h": "94ad8e2ea1129d5e5589870b3c675a5427b7ad7eb62e8a79f8c65950576a3b26",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/nnue/_nnue_dag_store.h": "ec7b273cb213f379aa66d5e80fcd8f0b5da8daf982479f54cebd344219b6ee46",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/nnue/_fastq_search.h": "c2e2bd7f7a47d676a681e2f794eeb87fcea013c413e8c33d99b51c041329b925",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/nnue/_nnue_ext.c": "f618c3617f736bb61ee2b68eb7146cb62ef30740f4f55e6d0d8204246b005e5f",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/nnue/_nnue_provider.h": "0e3de96f06ef2e12361d977bb0eb6d8602468c9f56606a6e70b151856fe526a9",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/nnue/_nnue_state.h": "f3e55228ae4648e401de32dbd5777fb785681a96ece3005314edeeaf6f0bbfff",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/nnue/_arm_providers.h": "6188fa6d85f34c7aff99f674adee705c6a11b82ad54ab78a92dc5d5a6eca192d",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/nnue/_nnue_impl.h": "b086f94530b1c5898e088aa92f2c8fd12c0439746f998bbf3754870601a7672b",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/nnue/_nnue_dag_api.h": "9e68c3e7eb0960d147c1f36c405180a237100674d6f182625a503808634e9e6e",
+    "/tmp/deepfin-two-epoch-cpu-qualification/setup.py": "e20da672deebd4b92da4264cf8529e98f0c006d70f16e0c155bb00128a3da66f",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df",
+    "/tmp/deepfin-two-epoch-cpu-qualification/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082"
+  }
+}

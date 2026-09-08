@@ -15,6 +15,17 @@ old manifests to resume work. The live runtime and development checkout are sepa
 
 ## Coverage
 
+September 8 preparation/readiness supplements have their own manifests:
+
+- [Completed corrected G10 block](g10-next-completion-manifest.json): 1,053,018
+  common rows, original stage logs and independent accounting.
+- [Next worker01 inputs](g10-worker01-readiness-manifest.json): metadata-only
+  readiness for 2,126,537 raw rows; no pipeline launch.
+- [Training-horizon runtime](training-horizon-runtime-manifest.json): tiny real
+  two-epoch CPU tests and preserved diagnostic failures/limits.
+- [Soft-SF bank readiness](soft-sf-bank-readiness-manifest.json): audit-bank
+  provenance check and reuse of the existing small training sample.
+
 The bundle contains all nine completed global treatment cells, all three SF-close
 cells, both direct development comparisons, the fresh paired confirmation, and both
 prior-temperature calibration banks: **17 complete 1,000-game banks**. The earlier

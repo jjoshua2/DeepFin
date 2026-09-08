@@ -1,0 +1,25 @@
+{
+  "status": "PASS_READINESS_ONLY",
+  "metadata_sha256": "f415bc4429b280d5956db1dcc2960d845947afd553fddba6921b0f66bbc2f76d",
+  "prepared_sha256": "81f150e334c5314b94f1f3102352197bb1bced0a35a2bcda062f01c3961c9a38",
+  "metadata_files_checked": 273,
+  "selected_source_stats_and_attrs_rechecked": 256,
+  "raw_payload_reads": 0,
+  "policy_chunk_reads": 0,
+  "commands": [
+    "nice -n 19 ionice -c 3 taskset -c 6,7 python3 /tmp/prepare_w01_readiness_actual.py",
+    "nice -n 19 ionice -c 3 taskset -c 6,7 python3 /tmp/validate_w01_readiness.py"
+  ],
+  "collector": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker01_readiness_v1/prepare_metadata.py",
+    "sha256": "45d4cfdc84dda5f1ff15e9d2b2a87f9fbc514d0da53e6518d6f34a3c64f30aff"
+  },
+  "completed_utc": "2026-09-08T10:32:04.523433+00:00",
+  "notes": [
+    "Initial taskset compact option refused before execution; fixed spacing.",
+    "Initial metadata collector compared entire stat including atime; first metadata read updated atime and assertion refused. Incomplete state preserved at G10_common_worker01_readiness_incomplete_atime. Successful collector explicitly checks dev/inode/size/mtime/ctime, never raw payloads.",
+    "Source objects retain historical support_drop_ceiling64 and missing_result_fraction_ceiling0.02 as reference defaults only, not a registered choice. Parent must finalize omission/resource/runtime contracts.",
+    "Four-hour cap, two two-core lanes, two numeric threads,8GiB sampled output and150GiB reserve are intended future bounds, not launched or qualified concurrency.",
+    "No registration, launch manifest, pipeline outputs or runtime changes created."
+  ]
+}

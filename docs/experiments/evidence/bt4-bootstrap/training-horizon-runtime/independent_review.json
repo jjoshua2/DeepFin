@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "status": "PASS_BOUNDED_CPU_PATH_WITH_EXPLICIT_EVIDENCE_LIMITS",
+  "created_unix": 1788863229.8482637,
+  "completed_sha256": "363358db6aebe36ac83cdec9859f3b451faa1bfc723d58a8b9c9f3556f6c4186",
+  "source_and_artifact_pins": "All completed.json files/source_pins and actual summary SHA independently verified; no native/checkpoint payload reread.",
+  "checks": [
+    "Five existing tests in retained py310.log pass: actual uninterrupted training/standalone epoch1 parity, second-epoch failure, underreported optimizer update and two ragged midpoint arithmetic cases.",
+    "Wrappers call original Trainer.train_steps; no fake optimizer/scheduler replaces real training. Existing injected negative cases remain intentional.",
+    "Additional short-warmup probe first refused the trainer pin; explicit --allow-leak second probe completed two20-row epochs,10updates and6windows with seeds0/1 and matching planned/realized schedules. Summary remains valid_control:false.",
+    "Second probe failed only at final extra Torch RNG-change assertion after trainer/optimizer/scheduler/augmentation-generator identity and adjacent state continuity assertions. Claims after that line rely on the separately completed finalize_readout.py, not unreachable probe code.",
+    "Finalizer actually read retained tiny checkpoints and checked steps5/10, nonempty optimizer objects, same scheduler base_lrs and summary completion; reviewer inspected code/log rather than reloading torch payloads.",
+    "Per-window LR metrics and actual trainer source support deliberate train-window sqrt-release behavior; one-step windows are degenerate base-LR endpoints, not evidence for production63-step release shape."
+  ],
+  "interpretation_clarifications": [
+    "Unchanged Torch RNG is consistent with no stochastic draw and is not evidence of reseeding. It also cannot independently rule out resetting to the same state in this deterministic fixture. No stochastic RNG-progression qualification should be inferred.",
+    "Optimizer continuity evidence is same live instance, real update steps, code retention and nonempty saved optimizer state. Probe did not bank or compare every optimizer moment tensor across the boundary.",
+    "Scheduler and augmentation state continuity assertions were reached, but full per-window observer records were not written because final assertion aborted first. Source plus traceback supports their passage; no numerical observer trajectory is available for independent reanalysis.",
+    "CPU metadata/version/native-import fields in completed.json come from finalizer process. They corroborate frozen runtime and CPU-only execution but are not per-process CUDA/thread telemetry for every prior pytest child."
+  ],
+  "limits": [
+    "No rerun, checkpoint payload load, corpus scan, GPU, code edits or PR.",
+    "No full-size model/CUDA/compile/full-corpus schedule, historical checkpoint continuation, production purity or playing-strength qualification.",
+    "Existing completed receipt is preserved unchanged; these clarifications narrow interpretation without turning successful CPU path into failed methodology."
+  ]
+}

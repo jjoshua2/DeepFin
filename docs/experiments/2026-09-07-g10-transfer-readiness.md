@@ -4,6 +4,60 @@ September 7, 2026. This preparation work supports the larger-data stage of the
 [adaptive bootstrap research](2026-09-07-bt4-hybrid-endpoints.md). It does not choose
 another recipe before H20's completed comparison or establish playing strength.
 
+## Corrected block completed — September 8, 10:32 UTC
+
+The corrected `G10_common_parallel_next_v2` batch completed at **10:32:54 UTC**,
+producing **1,053,018 common rows in 130 derived shards**. Added to the previously
+reviewed 2,112,247 rows, this gives **3,165,265 prepared common rows**. These remain
+separate source-bound batches, not a merged or fully qualified training corpus.
+
+| Source | Raw rows | Common rows | Missing result | Policy-support exclusions |
+| --- | ---: | ---: | ---: | ---: |
+| run06_g10 | 531,281 | 527,604 | 3,662 | 15 |
+| run07_g10_companion4 | 530,624 | 525,414 | 5,198 | 12 |
+| Total | 1,061,905 | 1,053,018 | 8,860 | 27 |
+
+There were no envelope exclusions. Both sources stayed within their registered
+missing-result and support-exclusion limits. Derivation, BT4 adaptation, SF ranking
+and final qualification completed successfully, preserving the phase-zero d9
+policy/rank observation and later-phase search-value selection.
+
+The coordinator took **2,776.88 seconds (46.28 minutes)**. Peak sampled aggregate
+output/cache use was 1,103,278,381 bytes, below the 8GiB limit; minimum sampled free
+space was 435,320,913,920 bytes. These are sampled disk measurements, not RAM limits
+or continuous maxima. The two lanes retained their existing two-core allocations.
+Adaptation and ranking still ran serially; the proposed overlap optimization was
+not used. Changed source data prevents treating this as a controlled speed trial.
+
+Independent accounting reconciled six final summaries, all ten stage completions,
+source-qualified survivor and exclusion counts, all 390 shard attribute records,
+and unchanged raw-source storage identities. All 30 recorded supervisor/stage or
+observed descendant PIDs were absent at review. Two derivation resource-tracker
+warnings are retained in the logs; their cause is not established. No payloads were
+reread or qualification rerun: full per-row integrity evidence comes from the
+successful frozen consumers and their inspected checks, supported by these receipts.
+
+The [completion evidence manifest](evidence/bt4-bootstrap/g10-next-completion-manifest.json)
+publishes the original summaries, stage logs/resource receipts, support-exclusion
+ledgers and independent review. The failed first attempt and corrected registration
+below remain unchanged. This completion advances data readiness, not playing-strength
+evidence. Full-corpus training qualification and larger-data comparisons remain.
+
+### Next available inputs
+
+Metadata inspection identified another **2,126,537 raw rows in 256 closed,
+BT4-labelled shards**, `w01-00000..00127` from each source: 1,063,526 run06 rows
+and 1,063,011 run07 rows. Source-qualified games do not overlap the previous
+`w00-00000..00191` selections or other selected shards. These inputs are ready
+for a new bounded preparation; no pipeline has been launched for them.
+
+The [worker01 readiness evidence](evidence/bt4-bootstrap/g10-worker01-readiness-manifest.json)
+records the source/config bindings, closed teacher coverage, prior selections,
+game disjointness and metadata checks. This inspection read no raw or sidecar
+chunks. Its output/time estimates and historical omission-limit defaults are
+planning references; the next registration must bind the chosen runtime,
+effective stage concurrency and limits before execution.
+
 ## Next disjoint block: corrected launch after early failure — September 8
 
 A fresh block selects **1,061,905 raw rows in 128 closed, BT4-labelled shards**:
