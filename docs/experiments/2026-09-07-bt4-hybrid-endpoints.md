@@ -2,11 +2,70 @@
 
 Registered September 7, 2026, after the [fresh C/E confirmation](2026-09-07-bt4-fresh-confirmation.md)
 completed and before training or playing outcomes for the new arms. **Status:
-Reviewed implementation merged; CPU corpus materialization running as of 2026-09-07 21:57 UTC. No new training or arena launched.**
+Original CPU materialization timed out at 2026-09-08 01:50 UTC after completing 2,292 of 2,309 shard validation stamps. The partial is preserved; reviewed bounded recovery is prepared. No H20 training or arena has launched.**
 The previous screen is complete. This registration selects H20 as the next bounded
 comparison. Subsequent tests are chosen from completed results, not a mandatory
 three-arm or 168-hour queue. Routine choices within the research goal do not need
 individual user approval. Production adoption remains separate.
+
+## Timeout and bounded recovery — September 8, 2026
+
+The original mixer reached its registered GNU timeout after 14,370.09 seconds
+(exit 124). Its coordinator and two child PIDs are absent; the failed receipt and
+partial output remain intact. The [timeout readout](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_timeout_v1/readout.json)
+and [all-shard metadata inventory](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_timeout_v1/shard_metadata.jsonl)
+record 2,292 contiguous fully stamped shards / 18,776,064 rows. Seventeen shards /
+134,420 rows remain. The final corpus was not published. This is an operational
+preparation failure, with no training or playing-strength result.
+
+The continuation will reuse the completed prefix and process the remaining shards
+from their first chunk with the original checks. It will retain the original
+failure and attach separate recovery provenance. The original validated prefix is
+accepted as executed-process evidence, the same kind of evidence used by the
+previously prepared normal qualifier. This is not a new independent payload
+checksum or a claim of protection against later external file mutation.
+
+The original process lost its aggregate statistics at timeout. They will be marked
+unavailable, including full-corpus entropy, changed-row counts and measured mass
+mean/max. The remaining shards provide a measured non-inertness witness, without
+being presented as a representative sample. The original final empirical
+normalization gate did not run. For this fixed normalized H20 arithmetic, the
+[independent recovery design review](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_minimal_design_review.json)
+derives a conservative uniform float64 → float32 → float16 mass-error bound of
+0.000545 across at most 1,858 coordinates, including subnormal rounding. That is
+below the existing row and mean limit of `2^-10`. It is an analytic guarantee,
+not an observed statistic; the normalization limit is unchanged. Prefix source,
+parent and teacher checks will not be repeated merely to reconstruct descriptive
+aggregates.
+
+The proposed continuation is limited to 30 minutes including termination grace,
+with CUDA hidden, two numeric threads, low CPU/I/O priority and the existing
+150 GiB free-disk reserve. It requires the failed writer to be absent and the
+original preparation lock. The recipe, source rows, stored C parent, teacher,
+training seed/runtime, exact epoch, canonical schedule and three playing
+comparisons below remain unchanged. Qualification of the recovered publication
+and matched schedule precede training. A failed continuation is preserved and
+inspected; it is not automatically retried.
+
+The recovery implementation passed eight focused recovery tests and 24 existing
+normal-mixer/H20 regressions, scoped Ruff/type/dead-code checks, and an independent
+correctness review. A regression forbids every prefix payload read and checks the
+completed prefix remains byte-identical while the remaining shard is processed.
+Malformed metadata, an unknown producing version, a live original PID, changed
+recipe and damaged suffix non-policy data refuse publication. Final host launch
+bindings remain a separate recorded check; passing these tests is not a recovery
+completion claim.
+
+The [recovery evidence manifest](evidence/bt4-bootstrap/h20-recovery-manifest.json)
+links exact original failure, validation logs, implementation/design reviews, CPU
+runtime import, preparation registration and launch bindings. The complete prefix
+metadata is losslessly gzip-compressed, with both compressed and original hashes
+in that manifest. Archived operational scripts identify this host-bound attempt;
+they are not portable instructions to relaunch it.
+
+Only H20 is selected for training now. Subsequent substantive alternatives remain
+adaptive choices from completed evidence. Routine trial selection within the
+research goal does not require individual user approval.
 
 ## Preparation readout — September 7
 

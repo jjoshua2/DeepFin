@@ -1,0 +1,39 @@
+{
+  "status": "qualified",
+  "checkout": "/tmp/deepfin-h20-recovery-tools",
+  "commit": "44aafa625f7143008625b5ed26087279ef296577",
+  "python": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+  "pins": {
+    "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13": "93a93f4c8af5ae6f127fb0310f923d5fab89eb7257a0b801eec2e44b3f199840",
+    "/tmp/deepfin-h20-recovery-tools/uv.lock": "4add8d8c91906df42eb15fe28bda3eb613192fdd257059e3ec7d097f917e66ef",
+    "/tmp/deepfin-h20-recovery-tools/pyproject.toml": "6cf79d98f28a2258fa4a64247d20b8faf251dba549bd8771851eb5787934d082",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so": "6f4bb0ec267a4ebd73ffe0a0d699a427f4e1a29d261b3a21658033056567722d",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so": "73798b545d5351ca3cde0f1221bf3008675ef459d6765c62ba8193120299ab84",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so": "7dad156c2793b60f685582ebacdbaa51eb5ecc22fd462865da203955c28fd49a",
+    "/tmp/deepfin-h20-recovery-tools/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so": "b9cb9a26ff7c017f995a6ce6d7852ff90ec3e43cf2772bc14dafff8c1836f8fc",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/python_bootstrap/sitecustomize.py": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad",
+    "/tmp/deepfin-h20-recovery-tools/scripts/bt4_policy_mix.py": "cd8059e408a539e4617e13b576890c353a95bd8b3835142c27a92c7ab5917ce3",
+    "/tmp/deepfin-h20-recovery-tools/scripts/sf_d9_rank_sidecar.py": "1c8c6c1c93f9ec8786f7ac14c9be19ec86d3a8b6092c19c80d935a22148961c6",
+    "/tmp/deepfin-h20-recovery-tools/scripts/derive_corpus_targets.py": "c2af7b62644cf5658c1dfc2564b2196c51c8860dd91152f2db05d3d2614311a6",
+    "/tmp/deepfin-h20-recovery-tools/configs/pbt2_small.yaml": "52a6c0b7200b7fa34259cee982ef3233616acc79796c14549d2eb7a388034570"
+  },
+  "qualification": {
+    "method": "Reuse unchanged qualified CPU environment and same-inode native binaries after exact comparison of all tracked native source/build files. No build, environment mutation, or active runtime edit.",
+    "native_source_files_verified": 23,
+    "prior_runtime_receipt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/runtime_qualification.json",
+      "sha256": "585848ed40b71cd7a610814d27eed814456e30eb1112fe99fad1f53d5b255352"
+    },
+    "runtime_metadata": {
+      "python": "3.13.15 (main, Sep  1 2026, 14:18:08) [Clang 22.1.3 ]",
+      "packages": {
+        "torch": "2.14.0+cpu",
+        "numpy": "2.2.6",
+        "zarr": "2.18.7",
+        "numcodecs": "0.15.1",
+        "python-chess": "1.999"
+      }
+    },
+    "created_unix": 1788833756.9074776
+  }
+}

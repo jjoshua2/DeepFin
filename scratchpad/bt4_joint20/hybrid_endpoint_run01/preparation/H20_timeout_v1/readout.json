@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "status": "TIMED_OUT_PARTIAL_PRESERVED_NOT_A_TRAINING_RESULT",
+  "observed_utc": "2026-09-08T01:57:00.076937+00:00",
+  "exit_code": 124,
+  "started_unix": 1788817874.478069,
+  "completed_unix": 1788832244.5687327,
+  "wall_seconds": 14370.090663671494,
+  "original_status_sha256": "ae847094c421a26cc62205c4aff7016b6b1e13a46e4e240c633eb249b31599e4",
+  "host_process_observation": {
+    "original_pids": [
+      247353,
+      247356,
+      247357
+    ],
+    "all_absent": true,
+    "method": "host ps -p confirmed no entries after terminal status"
+  },
+  "partial_directory": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05.writing",
+  "final_directory_exists": false,
+  "total_shards": 2309,
+  "fully_stamped_contiguous_prefix_shards": 2292,
+  "remaining_shards": 17,
+  "stamped_rows": 18776064,
+  "total_rows": 18910484,
+  "metadata_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_timeout_v1/shard_metadata.jsonl",
+    "sha256": "5273d7e4c8b141bb2f28fcbe3d0e5f03e2f755f9d25b3ccf9e48093ab228dfe2"
+  },
+  "limits": [
+    "Stamps are original per-shard process evidence, not a fresh payload scan.",
+    "Original final aggregate checks and atomic publication did not run.",
+    "No H20 training or arena launched."
+  ],
+  "decision": "Prepare separately reviewed recovery that preserves completed work, finishes remainder, and restores missing final normalization validation; no full blind rerun or overwritten failure receipt."
+}

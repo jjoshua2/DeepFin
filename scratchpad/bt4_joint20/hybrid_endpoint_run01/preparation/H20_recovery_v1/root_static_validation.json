@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "status": "PASS_SUPPLEMENTAL_STATIC_CHECKS",
+  "created_unix": 1788833923.394083,
+  "checks": [
+    {
+      "command": "CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 nice -n 19 ionice -c 3 taskset -c 0,1 .venv/bin/vulture --min-confidence 80 scripts/bt4_policy_mix.py tests/test_bt4_policy_mix_recovery.py",
+      "cwd": "/tmp/deepfin-h20-recovery",
+      "exit_code": 0,
+      "stdout": "",
+      "wall_seconds": 0.410930358
+    },
+    {
+      "method": "Python compile() syntax parsing",
+      "paths": [
+        "run_recovery.py",
+        "../qualify_H20_recovered_dataset.py"
+      ],
+      "result": "PASS"
+    }
+  ],
+  "validation_scope": "New recovery32focusedcases+authorRuff/types+independentsource review. Added missingdeadcodecheck; didnotrepeatpassedtests/typechecks orwhole-suite. NewCLI/recovered-summarypathonly; no downstreamruntime consumer of nullable descriptivefields found."
+}
