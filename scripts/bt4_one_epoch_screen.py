@@ -2,7 +2,7 @@
 """One registered seed-zero epoch and its fixed comparison sequence; plan by default.
 
 E0T05 retains schema1; schema2 explicitly selects H20, B100 or G50, never a grid.
-Schema3 trains one of those profiles only; arenas require a separate registration.
+Schema3 also admits the original-source SoftSF10 rewrite; arenas are separate.
 
 Existing published targets only. No mixing, resume, retries or automatic promotion.
 The prospective and realized schedule checks use the frozen seed-zero verifier.
@@ -45,6 +45,7 @@ CORPORA = {
     'H20': SOURCE.with_name(SOURCE.name + '_bt4_hybrid_H20T05'),
     'B100': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05'),
     'G50': SOURCE.with_name(SOURCE.name + '_bt4_global_G50T05'),
+    'SoftSF10': SOURCE.with_name(SOURCE.name + '_softsf_cp10'),
 }
 TOTAL_CAPS = {'H20': 32400, 'B100': 27000, 'G50': 21600}
 C_CORPUS = SOURCE.with_name(SOURCE.name + '_bt4_sfclose_C20T05')
@@ -55,6 +56,63 @@ C_CORPUS_PINS = {
 COMMON_PINS = {path: digest for path, digest in INPUT_PINS.items()
                if path not in {str(CORPUS / 'bt4_policy_mix_summary.json'), str(CORPUS / 'derive_targets_summary.json'),
                                str(ROOT / 'scratchpad/bt4_joint20/sf_close_run02/optional_sharpened_ties_data_qualification.json')}}
+
+
+# The completed legacy raw-source producer reviewed for the cp10 control.
+# These are producing-code identities, not a requirement to run that CPU runtime
+# during training. Training still uses the unchanged historical CUDA runtime.
+SOFTSF_PRODUCER_PINS = {
+    'scripts/sf_policy_rewrite.py': '85152a4e70e85f2f9ddf8d799ff726f3b4e6ccbc385c1693079cb97edb606a3b',
+    'scripts/derive_corpus_targets.py': '248574582a904a563217ce6cb86b0dc1fb000b3fc4bb6c6c232d3dbc9770380f',
+    'scripts/sf_d9_rank_sidecar.py': '53c2d1d1638c9e0646e68430c56a413c2b0b78a5ca815996eda770eecd8d3def',
+}
+SOFTSF_RAW = ROOT / 'data/nnue_bootstrap/run03_s3'
+SOFTSF_RAW_SUMMARY_SHA = '55a9cf043b9b90a005bd1adf1dc6d810cb282341bcc11a4eccf127c07c09d6af'
+
+
+def recipe_summary_name(m):
+    return 'sf_policy_rewrite_summary.json' if role_for(m) == 'SoftSF10' else 'bt4_policy_mix_summary.json'
+
+
+def verify_softsf_recipe(m, rewritten, derived):
+    """Admit the genuine cp10 producer proof; never synthesize a BT4 mix receipt."""
+    corpus = corpus_for(m)
+    arena.require(corpus.is_dir() and not corpus.is_symlink()
+                  and not corpus.with_name(corpus.name + '.writing').exists()
+                  and not corpus.with_name(corpus.name + '.writing').is_symlink()
+                  and not (corpus / 'failed.json').exists(), 'SoftSF10 output is incomplete')
+    source = arena.read(SOURCE / 'derive_targets_summary.json')
+    rest = {k: v for k, v in derived.items() if k != 'policy_target_postprocess'}
+    # Historical diagnostics contain NaNs. Compare their serialized source bytes
+    # semantically without interpreting NaN as a valid scientific measurement.
+    arena.require(json.dumps(rest, sort_keys=True) == json.dumps(source, sort_keys=True),
+                  'SoftSF10 changed source selectors/value/history metadata')
+    expected = {'schema': 1, 'status': 'COMPLETE', 'kind': 'sf_policy_score_rewrite',
+                'score_space': 'effective-cp', 'temperature': 10.0,
+                'source_dir': str(SOURCE), 'raw_dir': str(SOFTSF_RAW),
+                'raw_limit': 20000000, 'rows': 18910484, 'shards': 2309,
+                'rows_dropped_no_result': 1089516, 'mutated_arrays': ['policy_target'],
+                'nonpolicy_arrays_copied': 16, 'raw_manifest_present': False,
+                'source_derive_summary_sha256': COMMON_PINS[str(SOURCE / 'derive_targets_summary.json')]}
+    arena.require(all(rewritten.get(k) == v for k, v in expected.items()),
+                  'SoftSF10 score/source/nonpolicy recipe differs')
+    count, error = rewritten.get('changed_rows'), rewritten.get('stored_mass_error_max')
+    arena.require(type(count) is int and 0 < count <= 18910484
+                  and type(error) in (float, int) and math.isfinite(error) and 0 <= error <= 2**-10,
+                  'SoftSF10 is inert or has invalid stored mass')
+    producers = rewritten.get('producer_sha256', {})
+    arena.require(len(producers) == len(SOFTSF_PRODUCER_PINS), 'SoftSF10 producer identities differ')
+    for suffix, digest in SOFTSF_PRODUCER_PINS.items():
+        matches = [v for k, v in producers.items() if Path(k).is_absolute() and k.endswith('/' + suffix)]
+        arena.require(matches == [digest], 'SoftSF10 producer identities differ')
+    metadata = rewritten.get('metadata_sha256', {})
+    arena.require(metadata.get(str(SOFTSF_RAW / 'summary.json')) == SOFTSF_RAW_SUMMARY_SHA
+                  and metadata.get(str(SOURCE / 'derive_targets_summary.json'))
+                  == expected['source_derive_summary_sha256'], 'SoftSF10 source metadata pins differ')
+    outputs = rewritten.get('outputs', [])
+    arena.require(len(outputs) == 2309 and [(o['path'], o['rows']) for o in outputs]
+                  == [(o['path'], o['rows']) for o in source['shards']],
+                  'SoftSF10 completed shard inventory differs')
 
 
 def role_for(m):
@@ -92,12 +150,13 @@ def validate(m):
     if registered:
         keys |= {'profile', 'data_qualification'}
         arena.require(m['schema'] in (2, 3) and role_for(m) in CORPORA, 'unsupported registered profile')
+        arena.require(role_for(m) != 'SoftSF10' or only, 'SoftSF10 requires schema3 training_only')
         if not only:
             keys |= {'reader', 'comparisons'}
             arena.require(m['comparisons'] == [list(cell) for cell in comparisons(m)], 'registered comparison order differs')
             arena.require(m['reader']['path'] == str(arena.EXTENDED_READER) and set(m['reader']) == {'path', 'sha256'}, 'wrong registered reader')
         corpus = corpus_for(m)
-        expected_keys = set(COMMON_PINS) | {str(corpus / 'bt4_policy_mix_summary.json'), str(corpus / 'derive_targets_summary.json')}
+        expected_keys = set(COMMON_PINS) | {str(corpus / recipe_summary_name(m)), str(corpus / 'derive_targets_summary.json')}
         arena.require(set(m['input_pins']) == expected_keys and all(m['input_pins'][k] == v for k, v in COMMON_PINS.items()),
                       'registered source/runtime input pins differ')
         arena.require(all(isinstance(v, str) and len(v) == 64 and all(c in '0123456789abcdef' for c in v)
@@ -137,8 +196,9 @@ def verify_data_qualification(m):
         'source': {'path': str(SOURCE), 'derive_sha256': COMMON_PINS[str(SOURCE / 'derive_targets_summary.json')]},
         'derive_summary': {'path': str(corpus / 'derive_targets_summary.json'),
                            'sha256': input_pins(m)[str(corpus / 'derive_targets_summary.json')]},
-        'mix_summary': {'path': str(corpus / 'bt4_policy_mix_summary.json'),
-                        'sha256': input_pins(m)[str(corpus / 'bt4_policy_mix_summary.json')]},
+        ('rewrite_summary' if role_for(m) == 'SoftSF10' else 'mix_summary'): {
+            'path': str(corpus / recipe_summary_name(m)),
+            'sha256': input_pins(m)[str(corpus / recipe_summary_name(m))]},
     }
     arena.require(all(receipt.get(key) == value for key, value in expected.items()),
                   'data qualification failed or profile/corpus/final identities differ')
@@ -178,10 +238,13 @@ def check_pins(m):
     for key in ('preregistration', 'prospective_schedule'):
         arena.pin(m[key]['path'], m[key]['sha256'])
     corpus = corpus_for(m)
-    mix = arena.read(corpus / 'bt4_policy_mix_summary.json')
-    arena.require(arena.read(corpus / 'derive_targets_summary.json')['policy_target_postprocess'] == mix,
-                  'published recipe lineage differs')
-    if 'profile' in m:
+    mix = arena.read(corpus / recipe_summary_name(m))
+    derived = arena.read(corpus / 'derive_targets_summary.json')
+    expected_postprocess = {k: v for k, v in mix.items() if k != 'outputs'} if role_for(m) == 'SoftSF10' else mix
+    arena.require(derived['policy_target_postprocess'] == expected_postprocess, 'published recipe lineage differs')
+    if role_for(m) == 'SoftSF10':
+        verify_softsf_recipe(m, mix, derived)
+    elif 'profile' in m:
         kind, algorithm, alpha = ('c20-global', 'stored-c20t05-then-global-bt4-v1', .2) if role_for(m) == 'H20' else (
             'global', 'legal-normalized-global-arithmetic-v1', 1. if role_for(m) == 'B100' else .5)
         arena.require(mix['kind'] == kind and mix['algorithm'] == algorithm and mix['alpha'] == alpha
