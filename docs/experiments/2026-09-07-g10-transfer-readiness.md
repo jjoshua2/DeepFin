@@ -4,6 +4,47 @@ September 7, 2026. This preparation work supports the larger-data stage of the
 [adaptive bootstrap research](2026-09-07-bt4-hybrid-endpoints.md). It does not choose
 another recipe before H20's completed comparison or establish playing strength.
 
+## Worker01 recovery completed — September 8
+
+**The prepared common-input inventory is now 5,276,543 rows.** The completed
+Worker01 recovery adds **2,111,278 qualified rows** to the previously reviewed
+3,165,265. Both source lanes completed BT4 adaptation, SF ranking and common-input
+qualification.
+
+| Source | Selected raw rows | Qualified common rows | Missing result | Policy-support exclusions |
+| --- | ---: | ---: | ---: | ---: |
+| run06_g10 | 1,063,526 | 1,054,312 | 9,200 | 14 |
+| run07_g10_companion4 | 1,063,011 | 1,056,966 | 6,029 | 16 |
+| Total added | 2,126,537 | 2,111,278 | 15,229 | 30 |
+
+There were zero envelope exclusions. The selection remains the closed,
+BT4-labelled `w01-00000..00127` shards from each named source. Policy and SF ranks
+use the phase-zero depth-nine observation; search-value targets retain the
+separately selected later-phase observation. Source-qualified row identities,
+original/stored-history joins, legal BT4 policy support and identical survivor
+membership across the common-input outputs remain part of the qualification.
+
+The first attempt failed at rank-cache admission after completing derivation.
+The recovery reused independently copied, verified derivations and completed the
+remaining stages. It did not regenerate the source labels or repeat derivation.
+The original failed attempt remains failed in its historical record; the separate
+successful recovery supplies the new qualified rows.
+
+These are source-bound batches, not a flattened, deduplicated or training-qualified
+combined corpus. The previously reviewed source-qualified game-disjointness checks
+separate this Worker01 selection from earlier blocks. They do not establish unique
+chess positions or independence between related positions. Existing history and
+historical-control limitations remain; combining batches for training still needs
+its own corpus and schedule qualification. This completion establishes data
+readiness, not playing strength or search scaling.
+
+The final independent recovery review is identified by SHA-256
+`5c62875fa8bf2f7a2915436eb3ecf86def95d14d1c62c689d4c0329191b8bee5`.
+Its original operational receipts remain local; this update publishes the scientific
+accounting and success/failure lineage, not those raw artifacts. The earlier failed
+attempt and intermediate snapshots below are historical evidence, not the current
+qualified inventory.
+
 ## Worker01 stopped at rank-cache admission — September 8
 
 The `w01-00000..00127` attempt failed after **1,897.14 seconds**. Both derivations
