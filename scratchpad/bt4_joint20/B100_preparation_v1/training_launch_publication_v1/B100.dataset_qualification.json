@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "status": "PASS_REGISTERED_CORPUS_QUALIFICATION",
+  "profile": "B100",
+  "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05",
+  "rows": 18910484,
+  "shards": 2309,
+  "source": {
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+    "derive_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef"
+  },
+  "derive_summary": {
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/derive_targets_summary.json",
+    "sha256": "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43"
+  },
+  "mix_summary": {
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/bt4_policy_mix_summary.json",
+    "sha256": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38"
+  },
+  "completed_unix": 1788854385.9957936,
+  "qualifier_sha256": "dd95de895cc10c07577775f5a75b65fcd3d636e5d14169320fa2872d9e0d99dc",
+  "input_hashes": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/materialization/launch.json": "5830a332beeb57f50a21495fb318afebdd47ca64a9fc7b4621ded82b7363a37c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/materialization/independent_review.json": "a36dc771ea310cd5d87e6ef34a67a6ca86efc12b0ce66e4d7ae101abc76f84ce",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/launch.json": "66fef04553ae637725f2add0a7b73405fb8f24e3eb97da13446269ba69f6b640",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/materialization/run_materialization.py": "239b6436055f6c5abca229ac3263640049a218e98bede1900f2bcd70443290b8",
+    "/tmp/deepfin-h20-recovery-tools/scripts/bt4_policy_mix.py": "cd8059e408a539e4617e13b576890c353a95bd8b3835142c27a92c7ab5917ce3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/status.json": "2aa077496616b7c62c7842dfd4219d694655d2052fe5938ea7597846c4827f88",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/materialization/status.json": "4c5d5550c24f1f240dbb053025db2eacea83bcd995c335a79c8c8294c3fbe7f3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/audit_B100T05.json": "4f3f204439b3f6cd900b2754df83c60d5bb3dd18efdce70d5656382757c776fa",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/derive_targets_summary.json": "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/bt4_policy_mix_summary.json": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+    "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json": "68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3"
+  },
+  "metadata_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/qualification_preparation_v1/B100.publication_metadata.jsonl",
+    "sha256": "9296c205e6ec4d34c3c58e197d884fcbfd50853a0dc58a144a96eea879e9fb63",
+    "bytes": 7141737,
+    "shards": 2309
+  },
+  "process_proof": "Pinned successful global mixer copied original SF tree, changed only policy_target, validated source/BT4 row identity and legal normalized output chunks before stamps/final mass gates. No C-parent or rank reconstruction applies.",
+  "limits": [
+    "Metadata/process qualification only; no second corpus payload scan or independent non-policy payload checksum.",
+    "The cached4000-row FEN audit is descriptive, not whole-corpus SF strength admission.",
+    "Schedule qualification, final comparator/registration, manifest review and launch remain separate; no training selected."
+  ]
+}

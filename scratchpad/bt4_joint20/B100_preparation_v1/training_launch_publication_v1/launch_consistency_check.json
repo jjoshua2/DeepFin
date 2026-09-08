@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "status": "PASS_STARTED_TRAINING_NOT_A_RESULT",
+  "observed_unix": 1788858862.1781921,
+  "source_process": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training/process.json",
+  "snapshot_sha256": "4f97a63e1ddb0d0580c71fd072f347f2adc9f4f37bb7da6ee79cd24c2ff50eaa",
+  "source_stat_at_snapshot": {
+    "st_dev": 2096,
+    "st_ino": 71043436,
+    "st_size": 4670,
+    "st_mtime_ns": 1788858550991696257,
+    "st_ctime_ns": 1788858550991696257
+  },
+  "actual_training_pid": 336571,
+  "supervisor_pid": 336570,
+  "coordinator_pid": 336548,
+  "training_started_unix": 1788858549.9852834,
+  "training_started_utc": "2026-09-08T09:09:09.985283+00:00",
+  "checks": [
+    "Actual recorded training_cmdline equals process command and root prelaunch reviewed command",
+    "Actual runtime dictionary equals qualified CPU probe; original input pins and manifest/data/schedule/registration identities checked",
+    "Native payload hashes in root launch review equal runtime qualification evidence; no new native rehash",
+    "Owned startup identities/time and inclusive16200-second timeout agree; operator-launch receipt precedes actual startup",
+    "First18 startup log lines confirm2309shards and model onCUDA; no training-window metrics read",
+    "No completion/failure/training.complete receipt at snapshot"
+  ],
+  "authorship": "Publication author prepared the coordinator/manifest; this is a separate launch-record consistency check, not an independent implementation audit. Root publication review follows.",
+  "limits": [
+    "Startup proof only. No completed epoch, realized post-training schedule, trained checkpoint or strength result claimed.",
+    "No live process attachment/signals, GPU query/inference, source payload scan or runtime edits.",
+    "operator_launch.training_started:false and historical preparation statuses are preserved as originally recorded; this later process snapshot supplies actual-start evidence."
+  ]
+}
