@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -290,6 +291,62 @@ def test_delayed_prefix_crossing_preserves_speculation_orphan_and_inflight(make)
     assert report["raw_finished_games"] == 401
     assert report["orphan_finished_halves"] == [[205, 0]]
     assert len(report["unstarted_game_ids"]) == 596
+
+
+def test_python310_bank_likelihoods_accept_identical_counts_on_new_reader(make):
+    # Completed B100/H20 bank: counts at 128, followed by the next 64 pairs.
+    # Reorder only within each block: the registered aggregate looks are exact.
+    values = [
+        score
+        for counts in ((9, 16, 42, 31, 30), (3, 8, 16, 15, 22))
+        for score, count in zip((0.0, 0.5, 1.0, 1.5, 2.0), counts)
+        for _ in range(count)
+    ]
+    m = make(values=values)
+    mutate(m, "result", lambda r: r["sprt"].update(
+        llr_first=-9.313381984274466e-06,
+        llr_trajectory=[[128, 2.8172437906778454], [192, 4.830781243313984]],
+        llr=4.830781243313984,
+    ))
+    report = tool.read_cell(m)
+    assert report["sprt"]["verdict"] == "H1"
+    assert report["sprt"]["pairs"] == 192
+    assert report["sprt"]["scored_pair_ids"] == list(range(192))
+    # Literal differences measured by replaying identical source under both
+    # interpreters. Test these even on CI Python versions using the old sum.
+    tool.same_likelihood(-9.313381984274466e-06, -9.313381984274265e-06, "initial")
+    tool.same_likelihood(2.8172437906778454, 2.817243790677846, "look128")
+
+
+@pytest.mark.parametrize("value", [99.0, float("nan"), float("inf"), True, 1, "1.0"])
+def test_likelihood_material_nonfinite_and_type_tampering_refused(make, value):
+    m = make(values=[2.0] * 128)
+    mutate(m, "result", lambda r: r["sprt"].__setitem__("llr_first", value))
+    with pytest.raises(tool.InvalidCell, match=r"finite float|differs"):
+        tool.read_cell(m)
+
+
+@pytest.mark.parametrize("bound", [tool.SPEC.bound_h0, tool.SPEC.bound_h1])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_sub_ulp_scale_tolerance_cannot_change_boundary_decision(bound, reverse):
+    # Adjacent floats are far inside the numeric tolerance but on opposite
+    # sides of an inclusive stopping boundary. Neither direction is accepted.
+    inside = math.nextafter(bound, 0.0)
+    observed, expected = (bound, inside) if reverse else (inside, bound)
+    with pytest.raises(tool.InvalidCell, match="decision boundary"):
+        tool.same_sprt_field([[128, observed]], [[128, expected]], "llr_trajectory")
+
+
+@pytest.mark.parametrize(("field", "observed", "expected"), [
+    ("llr_trajectory", [[128.0, 1.0]], [[128, 1.0]]),
+    ("llr_trajectory", [[192, 1.0]], [[128, 1.0]]),
+    ("llr_trajectory", [[128, 1.0], [192, 1.0]], [[128, 1.0]]),
+    ("verdict", "H0", "H1"),
+    ("s1", math.nextafter(tool.SPEC.s1, 0.0), tool.SPEC.s1),
+])
+def test_likelihood_tolerance_does_not_relax_look_or_protocol(field, observed, expected):
+    with pytest.raises(tool.InvalidCell, match="differs"):
+        tool.same_sprt_field(observed, expected, field)
 
 
 @pytest.mark.parametrize(

@@ -82,6 +82,14 @@ are refused. The monitor rebuilds every declared look from all complete banked
 pairs in canonical order, reproducing the **first** crossing even when a delayed
 pair released several looks together. Terminal spec, trajectory, prefix,
 pentanomial counts, rounded score/Elo, speculative identities and caps must match.
+Computed `llr`, `llr_first` and trajectory likelihoods allow an absolute difference
+of at most `1e-12`, with no relative tolerance. Python 3.10 and 3.13 can differ
+by a few ulps because their floating-point `sum` implementations differ. Values
+must be finite JSON floats and remain on the same side of both inclusive stopping
+boundaries; even an adjacent-float change that alters a crossing is rejected.
+Trajectory look indices, verdicts, counts, IDs and all protocol fields remain
+exact. `llr_first` records the regularized initial sample, not the first scheduled
+look. This compatibility check changes neither producer arithmetic nor sampling.
 Finished halves, unique inflight IDs and the unstarted complement account for the
 whole schedule. Actual inflight membership and repeated consultation count remain
 producer telemetry; the final bank can validate consistency, not observe missing

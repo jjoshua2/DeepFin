@@ -57,6 +57,33 @@ def same(actual: Any, expected: Any, name: str) -> None:
     )
 
 
+def same_likelihood(actual: Any, expected: float, name: str) -> None:
+    # Python 3.12 changed float sum precision. The qualified 3.10 producer and
+    # 3.13 reader can differ by a few ulps with identical counts and source.
+    # This absolute tolerance applies ONLY to computed likelihoods, never to
+    # protocol fields or identities, and cannot change either boundary side.
+    require(type(actual) is float and math.isfinite(actual), f"{name} must be a finite float")
+    require(math.isclose(actual, expected, rel_tol=0.0, abs_tol=1e-12), f"{name} differs")
+    require(
+        (actual <= SPEC.bound_h0, actual >= SPEC.bound_h1)
+        == (expected <= SPEC.bound_h0, expected >= SPEC.bound_h1),
+        f"{name} decision boundary differs",
+    )
+
+
+def same_sprt_field(actual: Any, expected: Any, name: str) -> None:
+    if name in ("llr", "llr_first"):
+        same_likelihood(actual, expected, f"SPRT {name}")
+    elif name == "llr_trajectory":
+        require(type(actual) is list and len(actual) == len(expected), "SPRT trajectory length differs")
+        for observed, reconstructed in zip(actual, expected):
+            require(type(observed) is list and len(observed) == 2, "SPRT trajectory entry differs")
+            same(observed[0], reconstructed[0], "SPRT trajectory look")
+            same_likelihood(observed[1], reconstructed[1], "SPRT trajectory likelihood")
+    else:
+        same(actual, expected, f"SPRT {name}")
+
+
 def opening_panel(item: dict[str, Any]) -> list[dict[str, Any]]:
     panel = read_json(item)
     require(
@@ -431,7 +458,7 @@ def read_cell(manifest: dict[str, Any]) -> dict[str, Any]:
         skip = {"looks", "inflight_games", "not_started_games"}
         for key, value in reconstructed.items():
             if key not in skip:
-                same(observed.get(key), value, f"SPRT {key}")
+                same_sprt_field(observed.get(key), value, key)
         require(
             type(observed.get("looks")) is int
             and observed["looks"] >= len(monitor.trajectory),
