@@ -1,6 +1,6 @@
 # G50 versus B100: original-epoch policy-dose comparison
 
-Registered comparison, 2026-09-08. G50 training has launched after dataset qualification and prospective schedule verification; no completed G50 training or match result is available at this update. B100 is the current development leader after its completed comparison with H20. This next comparison asks whether retaining a 50% Stockfish policy contribution improves on the pure BT4 policy endpoint while preserving the same SF value supervision.
+Registered comparison, 2026-09-08. G50 training is complete and the registered arena sequence has launched; no match result is available at this update. B100 is the current development leader after its completed comparison with H20. This next comparison asks whether retaining a 50% Stockfish policy contribution improves on the pure BT4 policy endpoint while preserving the same SF value supervision.
 
 G50 is already materialized: `data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05`, 18,910,484 rows in 2,309 shards. Its policy is the legal-normalized global arithmetic mixture of 50% stored SF policy and 50% BT4 at temperature0.5; B100 uses 100% of that same BT4 component. Both preserve the original value/history/nonpolicy targets. Reuse the [completed materialization evidence](2026-09-07-bt4-hybrid-endpoints.md), rather than repeat the cached teacher audit or rewrite the corpus.
 
@@ -39,3 +39,19 @@ settings. Training has progressed through finite-epoch windows. The
 is published; completed training, realized schedule verification and CPU arena
 preparation remain prerequisites for matches. The optional lookahead scheduler from
 PR #573 has not been adopted in this registered comparison.
+
+
+## Completed training and arena launch — September 8
+
+G50 completed the registered 18,910,484 rows, 36,935 updates and 420 windows,
+with no skipped or retried updates. Completion, independent review and arena launch
+status are summarized in the
+[GitHub update](https://github.com/jjoshua2/DeepFin/pull/571#issuecomment-5588865298). Final checkpoint SHA256:
+`dfc4de6e7cfc9fab68acbc590f1b14cd9c2433c933f1aaacb29c353006cf5ae0`.
+
+The coordinator launched the original low 100-simulation ordered SPRT followed by
+the fixed 128-pair, 400-simulation probe. The frozen launch manifest is
+`98e3ccb0420c5992449096d30210ff5a28e7216aee1dfb12e231fff81a75308c`;
+effective prior temperature is 1, the original 500-opening panel is unchanged,
+and the optional lookahead scheduler is absent. This updates readiness and launch
+status only. Match outcomes remain unread in this record.
