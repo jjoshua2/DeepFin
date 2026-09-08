@@ -276,3 +276,35 @@ def test_stop_during_final_summary_prevents_publication(
         rewrite.rewrite(args(raw, source, tmp_path / "out"))
     assert not (tmp_path / "out").exists()
     assert (tmp_path / "out.writing" / "failed.json").is_file()
+
+
+def test_completed_summary_only_legacy_source(tmp_path: Path) -> None:
+    raw, source, _ = fixture(tmp_path)
+    (raw / "manifest.json").unlink()
+    result = rewrite.rewrite(args(raw, source, tmp_path / "out"))
+    assert result["rows"] == 6
+    assert result["changed_rows"] == 0
+    assert result["raw_manifest_present"] is False
+    assert str(raw / "summary.json") in result["metadata_sha256"]
+    assert str(raw / "manifest.json") not in result["metadata_sha256"]
+
+
+def test_manifest_appearing_after_legacy_admission_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw, source, _ = fixture(tmp_path)
+    path = raw / "manifest.json"
+    original_manifest = path.read_bytes()
+    path.unlink()
+    copy_shard = rewrite.copy_shard
+
+    def add_manifest(src: Path, dst: Path) -> dict[str, str]:
+        copied = copy_shard(src, dst)
+        path.write_bytes(original_manifest)
+        return copied
+
+    monkeypatch.setattr(rewrite, "copy_shard", add_manifest)
+    with pytest.raises(ValueError, match="raw manifest presence changed"):
+        rewrite.rewrite(args(raw, source, tmp_path / "out"))
+    assert not (tmp_path / "out").exists()
+    assert (tmp_path / "out.writing" / "failed.json").exists()

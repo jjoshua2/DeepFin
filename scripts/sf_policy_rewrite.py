@@ -328,20 +328,25 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         "source summary pin differs",
     )
     summary = json.loads(summary_bytes)
-    metadata = {
-        p: file_sha256(p) for p in (raw_dir / "manifest.json", raw_dir / "summary.json")
-    }
+    # Completed legacy corpora can predate launch manifests. Their own summary
+    # remains mandatory; a manifest, when present, is still independently bound.
+    manifest_path = raw_dir / "manifest.json"
+    manifest_present = os.path.lexists(manifest_path)
+    metadata = {raw_dir / "summary.json": file_sha256(raw_dir / "summary.json")}
+    if manifest_present:
+        metadata[manifest_path] = file_sha256(manifest_path)
     metadata[source_summary_path] = args.expected_source_summary_sha256
     record = derive.read_corpus_record(raw_dir)
     source_contract(summary, record)
-    manifest = derive.corpus.read_launch_manifest(raw_dir)
-    require(
-        all(
-            manifest[k] == record.facts[k]
-            for k in ("config_sha256", "row_schema", "staircase_parsed")
-        ),
-        "raw manifest/summary identity differs",
-    )
+    if manifest_present:
+        manifest = derive.corpus.read_launch_manifest(raw_dir)
+        require(
+            all(
+                manifest[k] == record.facts[k]
+                for k in ("config_sha256", "row_schema", "staircase_parsed")
+            ),
+            "raw manifest/summary identity differs",
+        )
     specs = summary["shards"]
     require(
         [p.name for p in sorted(source.glob("shard_*.zarr"))]
@@ -515,6 +520,10 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 rank._file_identity(Path(path)) == proof["identity"],
                 "raw source changed before publication",
             )
+        require(
+            os.path.lexists(manifest_path) == manifest_present,
+            "raw manifest presence changed",
+        )
         for path, digest in metadata.items():
             require(file_sha256(path) == digest, "source metadata changed")
         result = {
@@ -535,6 +544,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             "nonpolicy_arrays_copied": 16,
             "producer_sha256": producer_hashes,
             "source_derive_summary_sha256": args.expected_source_summary_sha256,
+            "raw_manifest_present": manifest_present,
             "metadata_sha256": {str(p): h for p, h in metadata.items()},
             "raw_files": raw_proofs,
             "raw_history_keys_sha256_in_emitted_order": keys.hexdigest(),
