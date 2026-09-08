@@ -1,0 +1,11 @@
+scheme=uniform-d9 temp=0.0005 floor=0.0 value_source=deepest_phase_covering
+corpus_record=manifest+progress (run_finished=False) shards adopted=2985 rows claimed by inventory=24774529 unlisted on disk=11
+rows read=8236 written=8236 dropped(no result)=0 dropped(envelope)=0
+nodes_floor_hits=0 base depths={'9': 8236} values by phase={'0': 217607}
+value depths={'9': 8236} moved rows=8236 (--value-depth None)
+temp recovered from the emitted policy: n=7442 min=0.000500 max=0.000500 skipped(saturated)=2 estimator=closed_form_two_move
+floor recovered from the emitted policy: n=0 min=nan max=nan skipped(few values)=0 skipped(ill-conditioned)=0
+min stored mass on a legal move: min=0 max=1 mean=0.0189251 n=8236
+value_scheme=search games=0 rows differing from V0=0 L1 vs V0 mean=0 max=0 | stop terminal/self/ahead=0/0/0 w mean=nan u mean=0.01581 regret mean=0.1063 | missing played_move=0 depths=0 nonunit ply gaps=0 dropped tails=0
+x planes=175 policy width=1858 support 1..70 history slots filled<=8 {'8': 8236} row schemas={'3': 8236}
+shards=2

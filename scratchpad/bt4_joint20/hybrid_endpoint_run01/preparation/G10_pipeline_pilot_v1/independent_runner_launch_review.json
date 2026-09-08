@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "status": "PASS_FIXED_CPU_PILOT_PROCEDURE_AND_FINAL_LAUNCH_BINDING",
+  "reviewer": "review_pr517_bootstrap",
+  "reviewed_unix": 1788824524.9842925,
+  "files": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run_pilot.py": "3f3309653d4d4d00c8107e459696c321b57fd3400ed91779062d5d36539b152a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/runner_preparation.md": "b234a9e2647e28181758524d78c882044c5dfe2add20d99280315493d791d7e9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/launch.json": "7a25dcd9f2a6dff5d2420078fee51dd032ad227316d3ca727e83c97801015c1f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/runtime_qualification.json": "45085357cd4c6382d65c6c6a5f0dc2d9d71747022666054bc958dd48b311cc7f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/preregistration.json": "a8b0d58b0ce3873c776dc9941efe2e6d90058eb516e26e9faea77c8c53f22e85"
+  },
+  "launch_sha256": "7a25dcd9f2a6dff5d2420078fee51dd032ad227316d3ca727e83c97801015c1f",
+  "checkout": "/tmp/deepfin-g10-pilot-tools",
+  "commit": "ac4a246ba025ca54329d6e4dc380473f1ea4b728",
+  "findings": [],
+  "resolved_findings": [
+    "Both stage and coordinator started-receipt writes now occur inside owned-child cleanup try blocks.",
+    "Final comparison checks exact source/C/H shard inventories, array sets, complete non-policy shapes and dtypes before chunkwise equality.",
+    "Comparison helper explicitly sets Blosc threads to2 rather than relying solely on ambient environment.",
+    "Expensive runtime verification moved beneath surviving GNU timeout; worker checks pins before any stage and again at completion.",
+    "Preparation prose now correctly places started receipts immediately after Popen and distinguishes coordinator SIGINT cleanup from SIGTERM/SIGKILL relying on surviving timeout."
+  ],
+  "independent_fixtures": {
+    "g10-pilot-independent-fixtures": {
+      "script": {
+        "path": "/tmp/g10-pilot-independent-fixtures.py",
+        "sha256": "7ab9413d1c8a6553bd44e0fefb17305c9ea211eb5387882f9cf26bd9ac7d31aa"
+      },
+      "result": {
+        "path": "/tmp/g10-pilot-independent-fixtures.json",
+        "sha256": "e5e37ac57a68fd58cc27afed2da518e338e3faa98aef4a4228c217dd9945e4ca"
+      },
+      "evidence": {
+        "cases": [
+          {
+            "case": "stage_started_write_failure",
+            "pass": true,
+            "elapsed_seconds": 0.014,
+            "child_returncodes": [
+              -15
+            ]
+          },
+          {
+            "case": "coordinator_started_write_failure",
+            "pass": true,
+            "elapsed_seconds": 0.049,
+            "child_returncodes": [
+              -15
+            ]
+          },
+          {
+            "case": "resistant_worker_timeout",
+            "pass": true,
+            "elapsed_seconds": 0.414,
+            "child_returncodes": [
+              -9
+            ]
+          }
+        ],
+        "scope": "Real disposable subprocesses and GNU timeout; redirected STATE, resource guard stubbed and real pilot worker replaced. No operational data/runtime read."
+      }
+    },
+    "g10-pilot-compare-fixtures": {
+      "script": {
+        "path": "/tmp/g10-pilot-compare-fixtures.py",
+        "sha256": "bf3779cf1da12aa5714ec4c269c2b5175dbf8ad1bb9b9c449feb7650a347f70f"
+      },
+      "result": {
+        "path": "/tmp/g10-pilot-compare-fixtures.json",
+        "sha256": "cd36f8f652e325a87cd9cae992516e3ac5e670af736f0fb2e4906387e5ed2066"
+      },
+      "evidence": {
+        "cases": [
+          {
+            "case": "identical",
+            "pass": true
+          },
+          {
+            "case": "trailing_rows",
+            "pass": true
+          },
+          {
+            "case": "dtype_drift",
+            "pass": true
+          },
+          {
+            "case": "extra_shard",
+            "pass": true
+          }
+        ],
+        "scope": "Real tiny Zarr compare path; provenance.read returns controlled references, so this checks comparison and thread cap only, not history join."
+      }
+    }
+  },
+  "checks": [
+    "Actual merged ac4a246ba025ca54329d6e4dc380473f1ea4b728 is tracked-clean and has no tree delta versus qualified a6859ba5f6919d9915366868e9257cdb3730bdf1. All accepted G10 executable/test hashes match combined validation.",
+    "17 of20 launch pins independently hashed, including resolved CPython interpreter,4native binaries, lock/project files, registration/runner/runtime receipt/timeout and selected small source/receipt/sidecar metadata.3 frozen audit-bank payload hashes reused from prior qualification and freeze; worker rechecks them under cap.",
+    "Actual selected attrs/closed receipts have8236/8243rows, matching source/teacher/provider/remap identities and raw manifest SHA. Source cp-map .006/120 matches unchanged mixer admission. No raw payload rehash during review.",
+    "Stage arguments preserve phase0uniform-d9 policy/latest-phase searched value, exact physical prefix limit, temperature.0005floor0, seed0/shards8192, provenance, raw adapter16MiBcache and ranktop3/16MiBcache.",
+    "C audit/mix scope sf-cp-window alpha1 T.5 top3 window20; H scope c20-global alpha.2 with exact completed C derive/mix hashes. Both use ordinary admission, contextual descriptive reanalysis of the same frozen bank and registered JSON experiment record. No teacher inference.",
+    "Source preflight verifies first resolved shard/count and registered raw SHA; whole-run final raw dev/inode/size/mtime/ctime and raw SHA checks retain the closed raw payload across derive/adapt/rank stages.",
+    "Compare qualifies source-qualified row sequence and non-policy arrays, not a training planner execution. Ordinary adapter/rank/mixer stages establish their own target legality/formula contracts.",
+    "One newly owned GNU-timeout session includes 30s termination grace inside1800s total cap. CUDA hidden, numeric/compression threads2, CPU0,1,nice19, idleIO; no GPU lease or existing process group touched. Three real subprocess fixtures show receipt failure cleanup and TERM-resistant worker timeout; unrelated sentinel remained alive.",
+    "Sampled STOP/output/free-space guards run at boundaries and each second during stages.8GiB new output/cache is a sampled stopping threshold, not a quota; each private cache has independent16MiB admission cap. Free space observed471968468992bytes exceeds150GiB reserve.",
+    "All ten registered output/partial paths and started receipt absent at review; exclusive artifacts prevent adoption/retry. Partial files/logs preserved on failures; only exit0 plus worker completion within deadline produces completed status.",
+    "Final combined whole-lint log hash independently checked; no test or lint rerun. Guide and dated-record documentation exceptions inspected and retained explicitly below."
+  ],
+  "documentation_receipt_exceptions": {
+    "docs/toolchains.md": {
+      "receipt_sha256": "447613e55db03630c0e058ce5f682c375f5ae8817f43916a78d00c9415c5a0a0",
+      "actual_sha256": "6f593d1d8e406c899f33ee77255f8a1c503e70236741f078d77599edd234bca9"
+    },
+    "docs/experiments/2026-09-07-g10-transfer-readiness.md": {
+      "receipt_sha256": "9628dd427ec93eca174b786b37299dad8d2415b90142b24f08433a6164cc65f2",
+      "actual_sha256": "49d49abd3de7bc53b0c933065474cb70f0f6585a2bede2e0569e03372534c6c0"
+    }
+  },
+  "documentation_exception_reason": "Original combined receipt predates inherited already-reviewed multi-epoch guide section and final G10 validation-manifest link/results paragraph. Both changes inspected; executable code/tests unchanged.",
+  "prior_evidence": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/selector_provenance_independent_review.json": "ee077bf4b06b921067924af3e7f5b4ba0b4ec6ed7aa4bcf76f5786e3dd81c2ad",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/adapter_independent_review.json": "c72c04f6da47e77258cab444def856187956476233927097f22e2fb095126025",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/rank_consumer_independent_review.json": "eae40812da549a88fe6926386124cb7c97a2188c6fa560705a86f85bd154cac1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/pilot_publication_independent_supplement.json": "1848792c0b507c5c155e1b02ba0c18f02f03403d90a0acae09141b43013a4d63",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/combined_validation.json": "888b8196c7a1e35703830092ff999b72a9ec4c39fd05d53d4286044ae436217b"
+  },
+  "limits": [
+    "No operational pilot, actual source/corpus scan, teacher/GPU work, training, job restart, or bulk payload hash was performed.",
+    "Disposable tests substitute STATE/resource guards and fake worker commands; compare fixtures substitute provenance.read after separately qualified real provenance/adapter/rank tests. They exercise real subprocess/timeout and tiny Zarr comparison paths, not operational stage throughput.",
+    "Runtime versions and native-source equivalence reuse recorded qualified environment; actual interpreter/native/lock pins were checked, but package imports and tests were not repeated.",
+    "SIGKILL coordinator survival follows retained separate-session GNU-timeout design; current tiny checks directly exercised deadline and cleanup, not an additional coordinator-SIGKILL scenario.",
+    "Acceptance is for this fixed unlaunched two-shard CPU pipeline under exact reviewed bindings. It does not qualify large G10 preparation, playing strength, training schedule equivalence, production adoption or automatic input expansion."
+  ]
+}

@@ -1,0 +1,290 @@
+{
+  "schema": 1,
+  "status": "PASS_REGISTERED_COMPLETED_PIPELINE_WITH_REPORTED_EXCLUSIONS",
+  "reviewer": "review_pr517_bootstrap",
+  "reviewed_unix": 1788825454.321791,
+  "findings": [],
+  "corrected_count": "Initial parent prompt assumed16479 emitted/no exclusions. Original per-source receipts instead establish16479 raw rows read,16429 emitted,50 missing-result exclusions in run07 and0envelope exclusions. Registration explicitly required reporting exclusions; no rerun or scientific-rule change needed.",
+  "readout": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/readout.json",
+    "sha256": "ece9555a995b65fd7f66647e39f6e58215482f5d8a571708c534309d8f7b1467"
+  },
+  "elapsed_seconds": 204.07728171348572,
+  "physical_rows_read": 16479,
+  "emitted_fixture_rows": 16429,
+  "excluded_missing_result_rows": 50,
+  "excluded_envelope_rows": 0,
+  "sources": [
+    {
+      "source_id": "run06_g10",
+      "raw_rows": 8236,
+      "emitted_rows": 8236,
+      "excluded_no_result": 0,
+      "excluded_envelope": 0,
+      "derived_shard_rows": [
+        8192,
+        44
+      ],
+      "source_qualified_input_schedule_sha256": "0fabaf794a3b5d4361fd7f6dbae51dd571a565ee0671c2e26d95c5d2fea3b4a1",
+      "adapter_identity_cache_bytes": 461472,
+      "C_changed_rows": 3332,
+      "H_changed_rows": 8196
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "raw_rows": 8243,
+      "emitted_rows": 8193,
+      "excluded_no_result": 50,
+      "excluded_envelope": 0,
+      "derived_shard_rows": [
+        8192,
+        1
+      ],
+      "source_qualified_input_schedule_sha256": "b64d4ab79ce18aefa918e29875c2c5b09de798aca4cc0f7c998ebbe4c628cea8",
+      "adapter_identity_cache_bytes": 461864,
+      "C_changed_rows": 3542,
+      "H_changed_rows": 8148
+    }
+  ],
+  "stages": [
+    {
+      "stage": "run06_g10.source_check",
+      "pid": 267954,
+      "seconds": 4.017707109451294,
+      "exit_code": 0
+    },
+    {
+      "stage": "run07_g10_companion4.source_check",
+      "pid": 267962,
+      "seconds": 3.0131852626800537,
+      "exit_code": 0
+    },
+    {
+      "stage": "audit_C",
+      "pid": 267964,
+      "seconds": 11.031121730804443,
+      "exit_code": 0
+    },
+    {
+      "stage": "audit_H",
+      "pid": 267979,
+      "seconds": 11.030107021331787,
+      "exit_code": 0
+    },
+    {
+      "stage": "run06_g10.derive",
+      "pid": 268000,
+      "seconds": 24.098991632461548,
+      "exit_code": 0
+    },
+    {
+      "stage": "run06_g10.adapt",
+      "pid": 268005,
+      "seconds": 23.44257879257202,
+      "exit_code": 0
+    },
+    {
+      "stage": "run06_g10.rank",
+      "pid": 268035,
+      "seconds": 14.301642179489136,
+      "exit_code": 0
+    },
+    {
+      "stage": "run06_g10.C",
+      "pid": 268120,
+      "seconds": 7.2577223777771,
+      "exit_code": 0
+    },
+    {
+      "stage": "run06_g10.H",
+      "pid": 268134,
+      "seconds": 9.34028697013855,
+      "exit_code": 0
+    },
+    {
+      "stage": "run06_g10.compare",
+      "pid": 268147,
+      "seconds": 7.399195671081543,
+      "exit_code": 0
+    },
+    {
+      "stage": "run07_g10_companion4.derive",
+      "pid": 268154,
+      "seconds": 25.280576705932617,
+      "exit_code": 0
+    },
+    {
+      "stage": "run07_g10_companion4.adapt",
+      "pid": 268194,
+      "seconds": 23.328811168670654,
+      "exit_code": 0
+    },
+    {
+      "stage": "run07_g10_companion4.rank",
+      "pid": 268208,
+      "seconds": 13.977270603179932,
+      "exit_code": 0
+    },
+    {
+      "stage": "run07_g10_companion4.C",
+      "pid": 268212,
+      "seconds": 7.6073527336120605,
+      "exit_code": 0
+    },
+    {
+      "stage": "run07_g10_companion4.H",
+      "pid": 268225,
+      "seconds": 9.873641967773438,
+      "exit_code": 0
+    },
+    {
+      "stage": "run07_g10_companion4.compare",
+      "pid": 268260,
+      "seconds": 7.710309982299805,
+      "exit_code": 0
+    }
+  ],
+  "input_hashes": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/preregistration.json": "a8b0d58b0ce3873c776dc9941efe2e6d90058eb516e26e9faea77c8c53f22e85",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/launch.json": "7a25dcd9f2a6dff5d2420078fee51dd032ad227316d3ca727e83c97801015c1f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/runtime_qualification.json": "45085357cd4c6382d65c6c6a5f0dc2d9d71747022666054bc958dd48b311cc7f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/independent_runner_launch_review.json": "609d8074e6edaeefbc160ef8a3145ac40cddcd4d317e0f7b8758ce5a3f4ef7db",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/completed.json": "2f17deaf5425fe22ace64b801f35160346085c410f46025aafd1b09e9c3fc8b0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/worker_complete.json": "734eb65ea87deb5d31fc70b1864a5ffadf645c77fa0a5f2c2179da98b8407e8e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/started.json": "45c2afd79f919fc2594f2bc025d45347d037178671156623995fcd295770cbc0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/coordinator_launch.json": "0020eedbc5d966a7888f708886e0c381dc8e0913bdd4118d1d68922e236ea861",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/derived/derive_targets_summary.json": "1f99839119ea4ca7d5a97b14ef8c1cf739dfa07c983ebb56df245afbde79c2d5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/all_row_qualification.json": "a701004426198a9396ecf9699830281ccb3235c120d0eb5f558ef92d34f1e99f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/bt4/bt4_policy_sidecar_summary.json": "9d7725e29bd7b2be38834ed7379339ac793ada9737a277d95b317ad6080ed62e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/rank/sf_d9_rank_sidecar_summary.json": "e7bd2a9b80e4373a942f1700d18dcd802bbbb192982d9157270d99b0267a10bb",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/adapter_manifest.json": "45b8481ca3cdacd8477813916c0887ed73ede04991ac66f00f0128089408709e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.closed_receipt.jsonl": "4248301efc9798b8f276cabdeaa16a7df72f411ba1978891fc6a93351d60a984",
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/C20T05/bt4_policy_mix_summary.json": "052012471e4b68e90189491617328d2547bbc7ec2a64f102b52734dd99f7792b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/C20T05/derive_targets_summary.json": "0f44c133b9dad4691cc7a46a7d6266ce57c96bdfd6b0b84b88d45b44a2831108",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.json": "ea44e62d8c818d61346ef523df4729740f48212957249654f6fb1fc52642abe5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/H20T05/bt4_policy_mix_summary.json": "c7c244af98b3604627373ec48c0c4b845da26b5930fde41d214773903366b8d5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/H20T05/derive_targets_summary.json": "65f5def7b4bdb5176f396093c3e1457aa9ad79fceab85ea3ab4cea712ec801a7",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.json": "ff90681c56e83f7f2fe6a49187378d8d0a09473513e5032df975bd0623db4d67",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/derived/derive_targets_summary.json": "e55a86c0be0c7a800fad7636f4684e7dbb2c0c6bd694603fbac7256eccaa1b67",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/all_row_qualification.json": "831d4aa0d277a18461dbbe3644ec6f60bd8c05bce58ce32fdfe9323ed352049a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json": "902707d4f95ca13de534dacfc526bffc84c3ffc75446598a90ebe52fec0cab5c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json": "75b24dff25ac0185f64abb5e39e56a735b14ec42005c9c4d413d615989785734",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/adapter_manifest.json": "dfaf04c0fed4d9f4223023563acdde6b6db62771f6a53e46c2a88488d64a729a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.closed_receipt.jsonl": "f16bbbc8d38731dc7d18efdce93b8c4b4711b0bfdce7abba72002f23517c6056",
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/C20T05/bt4_policy_mix_summary.json": "f063a53c200e3c226729316432379e648932dfed0a6cd358e0f75d7a8a8ce532",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/C20T05/derive_targets_summary.json": "0f00e4c0d7c3f58aeb6445b5cabe5b487cbed887a3c74a82d33f40b65bda82d0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/H20T05/bt4_policy_mix_summary.json": "6e9916d9bb3b1b80e5e27f1547365c9d2b8720a6c1eb44aaada310d29f439026",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/H20T05/derive_targets_summary.json": "04e07f3fe6b13815f540c0d8f62f0164c39078a22c0bcda0013334ee571bc319",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.source_check.started.json": "03ca7322a5abc9de73079dc07fde8bb18439ff3542cb128de7bc179a959911a5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.source_check.completed.json": "0e2aae115797ff3d8de80e9d3f5b176131439895b04bca1a34b9e749658ed3a0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.source_check.started.json": "10a80c7301165954735b3845a7a6b6edb53c34521b5521cc0fb73dc9f89cd2b1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.source_check.completed.json": "b875c83922801d5f7c0740e849737f4f3ee58819befbeafa3d440ce385d4c03f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.started.json": "3c0018426d98786d9be3c43de9105abaf3e2e739d2837da64ec7341307adbd06",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.completed.json": "e23eaea7d07151a0e9ab44eaa76936b9c6271bc516ee4cd71665e46c3f063aff",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.started.json": "e01a8fe966a1fa7e33da3795fd775e65b3cba6798216040ba283445b75007647",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.completed.json": "130cf0eafb6cfd478010dba3eafc154825d9a1faaeaf71ff81c01ff511482201",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.derive.started.json": "be1b4fe36f0ed8f19b173b5e47dc3c925666a17c83cfad80945cfe3b12e4d92f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.derive.completed.json": "d002ff3afa87639236f1f329a35d20f587eedfa8aed5c4b86e0d1ba7e563534a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.adapt.started.json": "ec719a920951b84cb0e2e07b2c993da19cf57bdc9196df49800dd80c9daaafd6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.adapt.completed.json": "1a42f9adfecc27d3f944df7c373170eb058479802a9f00c5e3c22b743fb445e6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.rank.started.json": "52a4d64467394afdddcb6832ccd21ee2dfd7e925440f158659dc58773f81a495",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.rank.completed.json": "8a382a6849aa9bcf493a83aa2001445a33568ad52aa2f39f3f6d88d672908bc4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.C.started.json": "566dcab6b86f7faaf533d1b4ef5f951f80b7e7e6498cf5e3f972bafa9c309e0e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.C.completed.json": "af70ebf5801bf58aabfe59c2b1ed2380b951423d25a1ae497244a2a10eb1cd8e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.H.started.json": "20db3fa13924144ca7bd3225601633be62ad465347cf0962fffeee8e7b89d42b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.H.completed.json": "214324e85c290759e9d040518ccbc241cee09051aa288642a46d37a98cc9056c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.compare.started.json": "09f71ebab0bfa2f5babe69476221a2df8ed5d481e7199f04478ff87a3294f30d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.compare.completed.json": "cfd91cf67cd4a6806b5f454319dfc734cc389b006754a3a66e5f8e9110bda5c9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.derive.started.json": "707222b27321945544d75605f48dee3ad08fe6026ff0e19757e83c7f80ee2fe5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.derive.completed.json": "d6026cb18786fc6658de4b848b55c2c16f9f57530d18e000616562d5fb2f0642",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.adapt.started.json": "fafe4f6f23264c8e83914f0d401ba34c9d45a7b012fd665c155ac73c12fa6120",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.adapt.completed.json": "d05428b9f2c73a49a84ae9e7fb5210e96dd994fed5115096299bd31d7930e220",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.rank.started.json": "79378278ab18b104ae29060a26198900cc08d6e31de4149e31325582aa8cd8f3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.rank.completed.json": "3ed5318e1e97e0dde1b602e6797c3c07d4e871d38230e96a5d6fde36e013a090",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.C.started.json": "e97f6fd863a884977e8e84091b0c29a9cd6a59e58cd6e9f242870b446d52fc08",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.C.completed.json": "e226e542739293041f254ee1e74e048320e4941f7f3c94a9d7db8f82681bca7d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.H.started.json": "07d9e817f6e3a6002ae51b81cad24d03145bdac3d4f209a5d51852a7783606fe",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.H.completed.json": "f5fd18befe5f218c38408aec52387e1b324fa6f8cfe242817d18ffe580ef9e24",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.compare.started.json": "c6324a7b3cb97bba8612fce0cd250e5607276b86130a545b7283aa24ef9ca67e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.compare.completed.json": "f7b16e275535c867283d74ee8bd69bd0c9b0bdf1e02fdef21760b0c7184157f2"
+  },
+  "independent_compact_provenance_recomputation": {
+    "status": "PASS_COMPACT_PROVENANCE_RECOMPUTATION",
+    "sources": [
+      {
+        "source_id": "run06_g10",
+        "rows": 8236,
+        "unique_physical_rows": 8236,
+        "excluded_physical_rows": 0,
+        "source_qualified_games_represented": 44,
+        "row_sequence_digest": "0fabaf794a3b5d4361fd7f6dbae51dd571a565ee0671c2e26d95c5d2fea3b4a1"
+      },
+      {
+        "source_id": "run07_g10_companion4",
+        "rows": 8193,
+        "unique_physical_rows": 8193,
+        "excluded_physical_rows": 50,
+        "source_qualified_games_represented": 40,
+        "row_sequence_digest": "b64d4ab79ce18aefa918e29875c2c5b09de798aca4cc0f7c998ebbe4c628cea8"
+      }
+    ],
+    "scope": "Four compact original NPZ provenance files only; no replay arrays, raw corpus, labels or encoding/inference rerun."
+  },
+  "publication": {
+    "worktree": "/tmp/deepfin-g10-transfer-tools",
+    "base": "ac4a246ba025ca54329d6e4dc380473f1ea4b728",
+    "files": {
+      "docs/experiments/evidence/bt4-bootstrap/g10-pipeline-pilot-manifest.json": "8a8116e816d9e43b46b140f5fb577bfbbf70b5e9d4a42faca1eee0bbccac472e",
+      "docs/experiments/2026-09-07-g10-transfer-readiness.md": "46e71bde7029e61df12a3cac05e4e347fc6e163823ff2e44bbec9671c649f4bf",
+      "docs/experiments/README.md": "f140e6f2fa4df56b7f1a62af97fad54d80c601bfca01888b29155856375dade7"
+    },
+    "original_copies": 87,
+    "total_bytes": 8340053,
+    "checks": "All87 original files byte-identical, manifest SHA/size matches; authored doc/index links resolve and diff whitespace passes; selected text/code/log credential pattern scan has no hits. Four original compact NPZ provenance files are included; bulk replay/policy Zarr arrays excluded.",
+    "scope": "Bound to pre-review-append manifest8a8116e8. This receipt is outside candidate at review time and can be appended byte-identically as supporting review evidence without changing scientific content."
+  },
+  "checks": [
+    "All16 expected stages present once, each started/completed PID/argv/start time agrees and exit0. Independently reconstructed full expected argv from registration and completed predecessor hashes matches actual source-check/audit/derive/adapter/rank/C/H/compare commands exactly. Stage times sequential, within total204.0772817seconds and1800-second cap.",
+    "Reviewed launch7a25dcd9, runner3f330965, runtime45085357, prerega8b0d58b and prior launch review remain unchanged. Current immutable checkout HEADac4a246b matches runtime qualification and is tracked-clean. Worker completion follows its final all-pin/raw-metadata/raw-SHA and resource guards.",
+    "Host read-only /proc check found both coordinator267942/supervisor267943 and all16 recorded stage PIDs absent. No live job or process group changed.",
+    "Derived summaries retain uniform-d9 phase0 policy/latest-phase searched value, temperature.0005floor0, seed0,8192-row output shards and independent value selection. Both sources report full original input-key/support checks on every emitted row and no value-target changes against searched-value convention.",
+    "Adapter summaries bind exact closed raw receipt, source manifest, derived summary, actual adapter mapping and accepted code hash. Each verifies one raw shard; recorded identity cache461472/461864bytes is below16MiB. Teacher output remains original float32 BT4 with verified exact quantized replay correspondence.",
+    "Rank summaries match actual emitted rows/shards and raw prefix lengths, phase0 d9/top3 observations, latest-value setting, source summary hashes and raw metadata identities. run07 accounts for50 missing-result rows.",
+    "C/H summaries and transitive derive summaries match original source exactly apart from policy postprocess. Recipe scopes/alpha/T/rank/window, sidecar/rank/audit pins and exact C parent identities all verified. Recorded mass-drift maxima/means stay within applicable bounds; only policy_target mutated.",
+    "All-row qualification receipts cover8236 and8193rows across shard partitions8192+44 and8192+1. Independent four-NPZ read with allow_pickle=False reconstructed both full source-qualified row-sequence digests, checked namespaces/physical bounds and found no duplicate physical references.84source-qualified games are represented (44+40), not asserted complete games.",
+    "Raw/derived payload content checks were executed by the reviewed producing tools and final compare. Their completion provenance was independently checked; no payload checker rerun. The final compare qualifies input ordering/non-policy equality rather than executing a game-aware training planner.",
+    "Parent readout counts, per-source qualification hashes and all stage timings independently agree. Published narrative distinguishes original inventory snapshot from completed fixture rows and does not extrapolate strength, full-G10 coverage or100M costs. Audits are explicitly contextual reanalysis of old saved observations, not new teacher evidence."
+  ],
+  "analysis_artifacts": {
+    "g10-completed-independent-check.py": {
+      "path": "/tmp/g10-completed-independent-check.py",
+      "sha256": "542bcb3f73829d40512f6ddfe295004d7dcea690071030a18b1a5e283285f3ae"
+    },
+    "g10-completed-independent-check.json": {
+      "path": "/tmp/g10-completed-independent-check.json",
+      "sha256": "8a9422d84a6a5f81b85e6f881eb2fb8c698057f76a7f18b6da1cd8c317d5d696"
+    },
+    "g10-provenance-independent-check.py": {
+      "path": "/tmp/g10-provenance-independent-check.py",
+      "sha256": "33ea54cd3ed6c3140cf69e86ad834077ae5df40214d2c4a78e45d2dd2c2307a7"
+    },
+    "g10-provenance-independent-check.json": {
+      "path": "/tmp/g10-provenance-independent-check.json",
+      "sha256": "4e321984e9f8d5d8d0d3dad26ef4d5e1d0afc562f1f0cd81544e300879299955"
+    },
+    "g10-pilot-publication-check.json": {
+      "path": "/tmp/g10-pilot-publication-check.json",
+      "sha256": "312027c79a01dc19e3b5bdfaacf19dd762b55f025f5665d43039a49315d77976"
+    }
+  },
+  "limits": [
+    "No pipeline, raw corpus/replay payload scan, teacher inference, GPU, tests, training, arena or restart was performed in this review. Only actual compact metadata/receipts, four compact provenance NPZ files and publication copies were read.",
+    "All-row target legality/history and non-policy payload equality rely on the previously independently reviewed executed code plus its actual completion receipts; large original arrays were not independently reread.",
+    "Resource enforcement is the registered sampled stop mechanism, not a disk quota. No peak RAM/disk/CPU telemetry series is present; do not claim measured full-scale throughput or exact peak resource use.",
+    "No actual training-planner or training schedule is qualified. First closed shards are selected construction fixtures, not a random sample, held-out result, globally deduplicated corpus or full-game epoch.",
+    "The50missing-result exclusions are verified as recorded by executed deriver/rank/compare and reflected in independent physical-row references; excluded raw rows themselves were not reread.",
+    "Publication review binds the current87-file manifest and authored documentation hashes; a later content change beyond byte-preserved review evidence needs its own bounded assessment."
+  ]
+}
