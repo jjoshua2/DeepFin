@@ -3,6 +3,9 @@
 `scripts/common_input_batch.py` prepares a frozen selection from one or two
 original rooted-corpus sources. Each source runs derive → storage snapshot →
 adapt already-completed raw BT4 → phase-zero d9 ranks → common-input qualification.
+With explicit `overlap_adapt_rank: true`, only adaptation and ranking overlap after
+the immutable derived-storage snapshot and adapter manifest; qualification waits
+for both successful stage receipts. Missing or false retains the serial order.
 It performs no labeling inference, policy mixing, training or automatic retry.
 
 Use a fresh state/output layout and an immutable JSON manifest. The default action
@@ -31,6 +34,7 @@ No example below constitutes an executable registration.
 | `runtime_qualification` | Pinned receipt with `status: qualified`, matching checkout/commit/python, transitive `pins`, and true `features.closed_shard_selection` / `features.support_exclusion_requires_result` |
 | `preregistration` | Pinned scientific/resource registration; separate from this executable manifest |
 | `pins` | Absolute-path→SHA256 map including all qualified runtime pins, resolved interpreter, runner, three consumer scripts, `/usr/bin/time` and `/usr/bin/timeout` |
+| `overlap_adapt_rank` | Optional strict boolean, default `false`; overlap the independent adapter/rank pair within each existing two-core lane |
 | `max_concurrent_sources` | `1` for sequential preparation or `2` for concurrent lanes |
 | `derive_options` | `scheme: uniform-d9`, `policy_observation: phase0`, `value_observation: latest-phase`, `value_scheme: search`, `temp: 0.0005`, `floor: 0`, `workers: 2`, `row_provenance: true`; explicit nonnegative integer `seed` and positive integer `rows_per_shard` |
 | `limits` | Positive integer `wall_seconds_including_kill` (>30), `new_output_cache_bytes`, `minimum_free_bytes`, `adapter_index_cache_bytes`, `rank_index_cache_bytes`; fixed `numeric_threads: 2`, `nice: 19`, `ionice_class: 3`, `CUDA_VISIBLE_DEVICES: ""` |
@@ -78,6 +82,12 @@ surviving preflight timeout.
 Each lane has its own GNU timeout process group, with that same absolute deadline
 and 30-second kill grace. Its two-worker deriver and later stages inherit the
 lane's CPU affinity, low priority, hidden GPU and two numeric/compression threads.
+When overlap is enabled, both producer wrappers stay in that same lane process
+group. One parent polling loop checks guards and records separate stage timings;
+no threads, new CPU pairs or detached timeout groups are added. Failure or STOP
+terminates and waits for both direct wrappers, then propagates to the existing
+coordinator lane-group cleanup for their descendants. The stage helper alone is
+not a standalone descendant supervisor.
 A failed lane cancels all remaining owned lanes; unrelated jobs are untouched.
 The timeout survives coordinator death. Each live lane also checks the resource
 limits while waiting for its stages. All failures preserve partial outputs and
@@ -110,3 +120,10 @@ field fails preflight before an attempt or lane is started. This metadata check
 does not replace the deriver's selected-inventory, row-count or raw-payload hash
 checks. Runtime manifests must pin `scripts/corpus_selection_schema.py` alongside
 the runner and consuming scripts.
+
+The overlap rationale and historical timing limits are recorded in the
+[dated design note](experiments/2026-09-08-g10-stage-overlap.md). The existing
+output/cache guard is a sampled apparent-byte limit, **not a RAM limit**. Overlap
+can increase simultaneous RAM and I/O use without changing CPU affinity; it must
+be explicit in the frozen batch manifest. Attempt/lane receipts record the
+effective `overlap_adapt_rank` value.

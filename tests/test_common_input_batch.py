@@ -249,10 +249,12 @@ def test_admission_rejects_invalid_frozen_contract(tmp_path: Path, change: str) 
         batch.validate_manifest(plan)
 
 
+@pytest.mark.parametrize("overlap", [False, True])
 def test_lane_builds_real_selected_commands(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overlap: bool
 ) -> None:
     plan = fixture(tmp_path)
+    plan["overlap_adapt_rank"] = overlap
     source = plan["sources"][0]
     calls = []
     monkeypatch.setattr(batch, "verify", lambda _p: None)
@@ -274,6 +276,14 @@ def test_lane_builds_real_selected_commands(
             )
 
     monkeypatch.setattr(batch, "stage", run_stage)
+    monkeypatch.setattr(
+        batch,
+        "adapt_and_rank",
+        lambda a, r, p, s, g: (
+            run_stage("adapt", a, p, s, g),
+            run_stage("rank", r, p, s, g),
+        ),
+    )
     batch.lane(plan, tmp_path / "manifest.json", "d" * 64, source, time.time() + 60)
     assert [n for n, _ in calls] == ["derive", "snapshot", "adapt", "rank", "qualify"]
     derive = dict(zip(calls[0][1][2::2], calls[0][1][3::2]))
@@ -413,7 +423,17 @@ q=p/'common_input_qualification.json';q.write_text('{}')
         batch.stop_owned_group(unrelated, grace=0.1)
 
 
-@pytest.mark.parametrize("corruption", ["missing_config", "wrong_config", "extra_key", "extra_entry_key", "empty_shards", "boolean_rows"])
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing_config",
+        "wrong_config",
+        "extra_key",
+        "extra_entry_key",
+        "empty_shards",
+        "boolean_rows",
+    ],
+)
 def test_preflight_refuses_consumer_header_mismatch(
     tmp_path: Path, corruption: str
 ) -> None:
@@ -437,3 +457,161 @@ def test_preflight_refuses_consumer_header_mismatch(
     with pytest.raises(ValueError, match=r"source-shards|row claim"):
         batch.validate_manifest(plan)
     assert not (Path(plan["state"]) / "started.json").exists()
+
+
+@pytest.mark.parametrize("value", [1, "false", None])
+def test_overlap_flag_requires_boolean(tmp_path: Path, value: Any) -> None:
+    plan = fixture(tmp_path)
+    plan["overlap_adapt_rank"] = value
+    with pytest.raises(ValueError, match="overlap_adapt_rank must be boolean"):
+        batch.validate_manifest(plan)
+
+
+@pytest.mark.parametrize("mode", ["serial", "overlap", "failure", "stop"])
+def test_real_post_snapshot_pair_barrier_and_lane_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """Only producer payload work is synthetic; lane/execute/time/guards are real."""
+    plan = fixture(tmp_path, concurrency=1)
+    plan["sources"] = plan["sources"][:1]
+    plan["sources"][0]["cpu_affinity"] = sorted(os.sched_getaffinity(0))[:2]
+    plan["overlap_adapt_rank"] = mode != "serial"
+    manifest = tmp_path / "plan.json"
+    pin(manifest, plan)
+    fake = tmp_path / "producer.py"
+    fake.write_text("""import json,os,pathlib,signal,subprocess,sys,time
+p=pathlib.Path(sys.argv[1]);name=sys.argv[2];mode=sys.argv[3]
+(p/(name+'.begin')).write_text(str(time.time()))
+(p/(name+'.env')).write_text(json.dumps({'cpus':sorted(os.sched_getaffinity(0)),'nice':os.getpriority(os.PRIO_PROCESS,0),'threads':os.environ['OMP_NUM_THREADS'],'gpu':os.environ['CUDA_VISIBLE_DEVICES'],'pgid':os.getpgrp()}))
+if name=='derive':
+ (p/'derived').mkdir()
+ (p/'derived'/'derive_targets_summary.json').write_text(json.dumps({'realized':{'rows_written':8},'shards':[{}]}))
+elif name=='snapshot':
+ assert (p/'derive.done').exists()
+elif name in ('adapt','rank'):
+ assert (p/'snapshot.done').exists()
+ if mode!='serial':
+  peer='rank' if name=='adapt' else 'adapt'
+  deadline=time.time()+10
+  while not (p/(peer+'.begin')).exists():
+   assert time.time()<deadline,'second independent stage never started'
+   time.sleep(.01)
+ if name=='rank' and mode in ('failure','stop'):
+  child=subprocess.Popen([sys.executable,'-c','import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(60)'])
+  (p/'grandchild.pid').write_text(str(child.pid))
+  if mode=='stop':(p.parent/'STOP').touch()
+  time.sleep(60)
+ if name=='adapt' and mode=='failure':
+  deadline=time.time()+10
+  while not (p/'grandchild.pid').exists():
+   assert time.time()<deadline
+   time.sleep(.01)
+  raise SystemExit(7)
+ time.sleep(.15 if name=='adapt' else .3)
+elif name=='qualify':
+ assert (p/'adapt.done').exists() and (p/'rank.done').exists()
+ assert (p/'adapt.completed.json').exists() and (p/'rank.completed.json').exists()
+ (p/'common_input_qualification.json').write_text('{}')
+(p/(name+'.done')).write_text(str(time.time()))
+""")
+    lane_driver = tmp_path / "lane_driver.py"
+    lane_driver.write_text(f"""import json,pathlib,signal,sys
+sys.path.insert(0,{str(Path(batch.__file__).resolve().parents[1])!r})
+from scripts import common_input_batch as b
+plan=json.loads(pathlib.Path(sys.argv[1]).read_text());source=plan['sources'][0]
+def stop(*_args):raise SystemExit('termination requested')
+signal.signal(signal.SIGTERM,stop)
+b.verify=lambda _p:None
+p=str(pathlib.Path(plan['state'])/source['source_id'])
+names={{'derive_corpus_targets.py':'derive','adapt_raw_bt4_sidecars.py':'adapt','sf_d9_rank_sidecar.py':'rank'}}
+b.command=lambda _p,script,*args:[sys.executable,{str(fake)!r},p,names[script],{mode!r}]
+b.internal_command=lambda _p,_m,_d,action,_s:[sys.executable,{str(fake)!r},p,action,{mode!r}]
+b.lane(plan,pathlib.Path(sys.argv[1]),'f'*64,source,float(sys.argv[2]))
+""")
+    monkeypatch.setattr(batch, "verify", lambda _p: None)
+    original = batch.lane_command
+
+    def actual_lane(p, m, d, source, deadline):
+        argv = original(p, m, d, source, deadline)
+        return [
+            *argv[: argv.index(p["python"])],
+            sys.executable,
+            str(lane_driver),
+            str(manifest),
+            str(deadline),
+        ]
+
+    monkeypatch.setattr(batch, "lane_command", actual_lane)
+    sentinel = subprocess.Popen(
+        [sys.executable, "-c", "import time;time.sleep(60)"], start_new_session=True
+    )
+    state = Path(plan["state"])
+    parent = state / plan["sources"][0]["source_id"]
+    try:
+        if mode in ("failure", "stop"):
+            with pytest.raises(ValueError, match=r"exit|STOP"):
+                batch.execute(plan, manifest, batch.sha(manifest))
+            assert (state / "failed.json").exists()
+            assert not (parent / "qualify.begin").exists()
+            pid = int((parent / "grandchild.pid").read_text())
+            deadline = time.monotonic() + 2
+            while True:
+                try:
+                    child_state = (
+                        Path(f"/proc/{pid}/stat")
+                        .read_text()
+                        .rsplit(")", 1)[1]
+                        .split()[0]
+                    )
+                except FileNotFoundError:
+                    break
+                if child_state == "Z":
+                    break
+                assert time.monotonic() < deadline, (
+                    "owned grandchild survived lane failure"
+                )
+                time.sleep(0.01)
+        else:
+            batch.execute(plan, manifest, batch.sha(manifest))
+            assert (state / "completed.json").exists()
+            begin = {
+                n: float((parent / (n + ".begin")).read_text()) for n in batch.STAGES
+            }
+            done = {
+                n: float((parent / (n + ".done")).read_text()) for n in batch.STAGES
+            }
+            assert (
+                done["derive"]
+                <= begin["snapshot"]
+                <= done["snapshot"]
+                <= begin["adapt"]
+            )
+            if mode == "overlap":
+                assert max(begin["adapt"], begin["rank"]) < min(
+                    done["adapt"], done["rank"]
+                )
+            else:
+                assert done["adapt"] < begin["rank"]
+            assert max(done["adapt"], done["rank"]) < begin["qualify"]
+            assert batch.read(parent / "lane_complete.json")["overlap_adapt_rank"] == (
+                mode != "serial"
+            )
+            lane_pid = batch.read(parent / "lane.started.json")["pid"]
+            for name in batch.STAGES:
+                env = batch.read(parent / (name + ".env"))
+                assert env == {
+                    "cpus": plan["sources"][0]["cpu_affinity"],
+                    "nice": 19,
+                    "threads": "2",
+                    "gpu": "",
+                    "pgid": lane_pid,
+                }
+                assert (
+                    batch.read(parent / (name + ".completed.json"))["resources"][
+                        "exit_code"
+                    ]
+                    == 0
+                )
+        assert sentinel.poll() is None
+    finally:
+        batch.stop_owned_group(sentinel, grace=0.1)
