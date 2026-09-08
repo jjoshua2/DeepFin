@@ -237,7 +237,10 @@ within-shard permutation. It checks source-qualified raw configuration and order
 worker/game/ply identities, complete legal d9 support, two compact-move mappings,
 stored legal masks, and exact reconstruction of every original q/.0005 policy.
 It requires the original zero-floor/search-value/history recipe and committed
-shard attributes. Selected-source/provenance-repacked or already postprocessed
+shard attributes. Completed legacy raw corpora may supply only their mandatory
+`summary.json`; an optional `manifest.json` is checked when present, and its
+presence or absence must remain unchanged through publication.
+Selected-source/provenance-repacked or already postprocessed
 corpora are outside this narrow legacy path. Existing derivation defaults are
 unchanged.
 
