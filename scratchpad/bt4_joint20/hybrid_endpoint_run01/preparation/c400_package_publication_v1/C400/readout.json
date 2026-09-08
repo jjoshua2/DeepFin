@@ -1,0 +1,107 @@
+{
+  "candidate_role": "H20",
+  "confirmation_input": null,
+  "execution": [
+    "on",
+    "4096"
+  ],
+  "match_complete": true,
+  "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/arena.games.jsonl",
+  "promotion": "NONE; exploratory direct checkpoint screen",
+  "raw_game_rows": 500,
+  "reference_role": "C20T05",
+  "result": {
+    "elo": 34.86007028756008,
+    "elo_ci95": [
+      9.880575829846755,
+      60.20464083736324
+    ],
+    "games": 500,
+    "pairs": 250,
+    "pentanomial": {
+      "DD_WL": 85,
+      "LD_DL": 41,
+      "LL": 23,
+      "WD_DW": 65,
+      "WW": 36
+    },
+    "score": 0.55,
+    "score_ci95": [
+      0.5142154595763292,
+      0.5857845404236709
+    ],
+    "verdict": "SUCCESS"
+  },
+  "settings": {
+    "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt",
+    "games": 500,
+    "gumbel_add_noise": true,
+    "max_plies": 300,
+    "mode": "matched_sims",
+    "ms_per_move": null,
+    "opening_plies": 16,
+    "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+    "openings_kind": "book",
+    "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt",
+    "search_candidate": {
+      "gumbel": {
+        "c_scale": 0.1,
+        "c_scale_root": -1.0,
+        "c_visit": 50.0,
+        "c_visit_root": -1.0,
+        "full_tree": true,
+        "halving_div": 2,
+        "policy_temp": 1.0,
+        "q_visit_exp_root": 99.0,
+        "target_max_visit_cap": 5,
+        "target_q_rescale": true,
+        "target_untempered_prior": true,
+        "topk": 16,
+        "volatility_anchor": 0.05,
+        "volatility_factor_clip": 4.0,
+        "volatility_fpu": 0.0,
+        "volatility_q_scale": 0.0
+      },
+      "shape": "training",
+      "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+      "target_batch": 0,
+      "tree_reuse": "cold",
+      "vloss_weight": 1
+    },
+    "search_reference": {
+      "gumbel": {
+        "c_scale": 0.1,
+        "c_scale_root": -1.0,
+        "c_visit": 50.0,
+        "c_visit_root": -1.0,
+        "full_tree": true,
+        "halving_div": 2,
+        "policy_temp": 1.0,
+        "q_visit_exp_root": 99.0,
+        "target_max_visit_cap": 5,
+        "target_q_rescale": true,
+        "target_untempered_prior": true,
+        "topk": 16,
+        "volatility_anchor": 0.05,
+        "volatility_factor_clip": 4.0,
+        "volatility_fpu": 0.0,
+        "volatility_q_scale": 0.0
+      },
+      "shape": "training",
+      "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+      "target_batch": 0,
+      "tree_reuse": "cold",
+      "vloss_weight": 1
+    },
+    "seed": 42,
+    "sims_candidate": 400,
+    "sims_reference": 400,
+    "syzygy": "",
+    "syzygy_max_pieces": 6,
+    "temperature": 0.1,
+    "uci_args": "",
+    "volatility_candidate": null
+  },
+  "sha256": "61183238c272ceac962d2de80110d5f6a94144c308080852eb051e4c460a2e23",
+  "superseded_orphan_rows": 0
+}

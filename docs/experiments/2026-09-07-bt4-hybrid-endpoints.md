@@ -2,11 +2,66 @@
 
 Registered September 7, 2026, after the [fresh C/E confirmation](2026-09-07-bt4-fresh-confirmation.md)
 completed and before training or playing outcomes for the new arms. **Status:
-H20/C100 completed at +45.07 Elo [27.00, 63.39] and H20/G100 at +85.78 Elo [67.25, 104.80]. The registered C400 probe has launched; its outcomes remain unread. The full package is incomplete.**
-The previous screen is complete. This registration selects H20 as the next bounded
-comparison. Subsequent tests are chosen from completed results, not a mandatory
+The original H20 package is complete: C100 +45.07, G100 +85.78 and C400 +34.86 Elo, all with positive nominal intervals. The aligned search interaction is unresolved. H20 is the development incumbent; B100 is selected next, with launch qualification pending.**
+The original registration selected H20 as the next bounded comparison.
+Subsequent tests are chosen from completed results, not a mandatory
 three-arm or 168-hour queue. Routine choices within the research goal do not need
 individual user approval. Production adoption remains separate.
+
+## Completed C400 probe and package — September 8
+
+The original H20 package is complete. At 400 simulations, H20 scored **55.00%**
+against C20T05: **202 wins, 146 draws and 152 losses**, or **+34.86 Elo
+[9.88, 60.20]** from all 500 games / 250 color-reversed opening pairs.
+The interval uses the registered opening-pair sample variance and normal score
+interval before the Elo transform. One game reached the registered 300-ply
+adjudication limit; no game was cut short by the wall-time cap.
+
+| Completed comparison | Games / pairs | H20 Elo advantage, nominal 95% interval | Registered interpretation |
+| --- | --- | --- | --- |
+| C20T05, 100 simulations | 1,000 / 500 | +45.07 [27.00, 63.39] | Promising primary screen: estimate ≥15 and lower bound >0 |
+| G20T05, 100 simulations | 1,000 / 500 | +85.78 [67.25, 104.80] | Favors H20's specified selected-set construction at equal global dose |
+| C20T05, 400 simulations | 500 / 250 | +34.86 [9.88, 60.20] | Positive predeclared higher-search probe |
+
+The exploratory search comparison uses **the same first 250 opening pairs** at
+both budgets. H20's score was **54.60% at 100** and **55.00% at 400**: an aligned
+400-minus-100 difference of **+0.4 percentage points [−4.6, +5.5]**. The registered
+10,000-replicate PCG64 bootstrap, seed 20260903, resamples whole aligned opening
+pairs, preserving both colors. This does not resolve a change in relative score
+with more search. Subtracting the two full-bank Elo estimates would compare
+different samples and is not this interaction estimate.
+
+The [completed-bank review](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/independent_review.json)
+independently recomputed every C400 game and the C100 opening-aligned scores,
+checked exact pair/color identities, full search settings, checkpoint lineage,
+training/schedule receipts and terminal process state. It agrees with the original
+reader. The reviewer authored portions of the historical launcher; this is a
+separate numerical/accounting review, not a new independent implementation review
+of that launcher. The publication author is that same reviewer; publication review
+is supplied separately on the PR.
+
+The C400 [completion](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/complete.json)
+closed at **08:05:25 UTC**, charging **2,794.09 seconds / 0.7761 GPU hours**.
+The [package receipt](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/package.complete.json)
+records **17,651.51 seconds / 4.9032 GPU hours** for training and all three arenas,
+within the original nine-hour cap. The earlier `process.json` retains its
+pre-readout `complete:false`; `process_complete:true`, exit zero and the separate
+qualified `complete.json` establish completion. The arena, timeout and coordinator
+were absent in the subsequent read-only host observation.
+
+The [evidence manifest](evidence/bt4-bootstrap/h20-c400-package-manifest.json)
+binds the [compressed final game bank](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/arena.games.jsonl.gz),
+[aligned pair scores](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/independent_calculation/aligned_pairs.csv.gz),
+[bootstrap replicates](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/independent_calculation/bootstrap_replicates.npy.gz),
+and exact calculation source, receipts and original registration. Original bytes
+and compressed hashes are recorded. Earlier launch snapshots remain historical.
+
+H20 becomes the **development incumbent**, with no production promotion or fresh
+confirmation claim. These are one-epoch seed-zero trajectories on reused
+development openings; the intervals omit training-seed variability and adaptive
+selection uncertainty. Historical purity/configuration/sampler limits remain.
+The [next selected experiment](2026-09-08-bt4-pure-policy-endpoint.md) tests the
+pure sharpened-BT4 policy endpoint against H20, with SF value targets unchanged.
 
 ## Completed H20/G100 comparison — September 8
 
@@ -43,10 +98,9 @@ The [C400 launch snapshot](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/pr
 records the next registered probe starting at **07:18:51 UTC**: H20 versus C20T05,
 400 simulations, 500 games / 250 paired openings, prior temperature 1.0, and the
 same 90-minute cap. Arena PID 316336 is owned by timeout 316335 and coordinator
-288450. This snapshot establishes launch only; no C400 games, results or rolling
-logs were read for this publication. The completed C100 and G100 cells favor H20
-at the development budget; the registered C400 cell remains necessary before a
-verdict on the full package.
+288450. This historical snapshot establishes launch only; no C400 outcomes were read
+for that publication. The completed C400/package readout above supersedes its
+then-pending status.
 
 ## Completed H20/C100 primary screen — September 8
 
@@ -342,6 +396,10 @@ uncertainties, but require qualified implementation changes. These remain condit
 options: no next candidate has been selected before H20's completed readout.
 
 ## Question and candidate options
+
+The following sections preserve the original H20 registration and then-unselected
+follow-up options. The dated B100 selection above supersedes its prospective
+reference and allocation; it does not change any completed H20 rule or result.
 
 C20T05 remains the incumbent. Its fresh seed-one advantage over E0T05 is
 +37.67 Elo [18.72, 56.85]. C's earlier win over G20T05 compared complete recipes:

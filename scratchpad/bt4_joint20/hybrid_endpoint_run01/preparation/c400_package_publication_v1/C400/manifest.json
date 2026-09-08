@@ -1,0 +1,48 @@
+{
+  "book": {
+    "path": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+    "sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c"
+  },
+  "candidate": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt",
+    "role": "H20",
+    "sha256": "0a711fcf10ff87fc8360d3fd4b3035b170a7c15172616317c4a9687ae99d7017"
+  },
+  "candidate_training": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/training.complete.json",
+    "sha256": "821e0886e599d241573f7482b70e24c25887ed28c9255224ea6e29048388a9df"
+  },
+  "games": 500,
+  "hard_seconds": 5400,
+  "launcher_sha256": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48",
+  "opening_anchor": {
+    "bank": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/arena.games.jsonl",
+      "sha256": "98064bf64dce7581182403bc2a3c57c7f35e07675fd2a9c7e66c109179755ad1"
+    },
+    "completion": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/complete.json",
+      "sha256": "62578be405f53144d0eb5e5cf8936489dabed6a8bfcec30af2bc598dc13db664"
+    }
+  },
+  "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400",
+  "preregistration": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md",
+    "sha256": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6"
+  },
+  "reader": {
+    "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_joint_readout.py",
+    "sha256": "a17c89537903c56ee7bb0ec084d5133e1139cc6c6cc605dc882b06279276ceeb"
+  },
+  "reference": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt",
+    "role": "C20T05",
+    "sha256": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3"
+  },
+  "runtime_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json",
+    "sha256": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df"
+  },
+  "schema": 2,
+  "sims": 400
+}

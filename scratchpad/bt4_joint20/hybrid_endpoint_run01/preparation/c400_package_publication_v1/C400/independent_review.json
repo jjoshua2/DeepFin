@@ -1,0 +1,192 @@
+{
+  "schema": 1,
+  "status": "PASS_COMPLETE_REGISTERED_H20_PACKAGE",
+  "reviewed_unix": 1788855367.6454186,
+  "findings": [],
+  "computed_c400": {
+    "draws": 146,
+    "losses": 152,
+    "wins": 202,
+    "games": 500,
+    "pairs": 250,
+    "score": 0.55,
+    "score_se": 0.018257418583505537,
+    "score_ci95": [
+      0.5142154595763292,
+      0.5857845404236709
+    ],
+    "elo": 34.860070287560106,
+    "elo_ci95": [
+      9.880575829846752,
+      60.20464083736324
+    ],
+    "pentanomial": {
+      "LL": 23,
+      "LD_DL": 41,
+      "DD_WL": 85,
+      "WD_DW": 65,
+      "WW": 36
+    },
+    "terminations": {
+      "rules": 499,
+      "max_plies": 1
+    }
+  },
+  "computed_c100": {
+    "losses": 319,
+    "wins": 448,
+    "draws": 233,
+    "games": 1000,
+    "pairs": 500,
+    "score": 0.5645,
+    "score_se": 0.013125320875932609,
+    "score_ci95": [
+      0.538774371083172,
+      0.590225628916828
+    ],
+    "elo": 45.07031476692186,
+    "elo_ci95": [
+      26.997398757567264,
+      63.38930847938394
+    ],
+    "pentanomial": {
+      "LL": 48,
+      "LD_DL": 62,
+      "DD_WL": 193,
+      "WD_DW": 107,
+      "WW": 90
+    },
+    "terminations": {
+      "rules": 998,
+      "max_plies": 2
+    }
+  },
+  "g100_reused_independently_reviewed_result": {
+    "wins": 493,
+    "draws": 256,
+    "losses": 251,
+    "score": 0.621,
+    "score_se": 0.012963568498543635,
+    "score_ci95": [
+      0.5955914057428545,
+      0.6464085942571455
+    ],
+    "elo": 85.78095608340313,
+    "elo_ci95": [
+      67.25121838268755,
+      104.80216849886237
+    ],
+    "pentanomial": {
+      "WD_DW": 136,
+      "WW": 115,
+      "DD_WL": 159,
+      "LD_DL": 56,
+      "LL": 34
+    }
+  },
+  "aligned_search_interaction": {
+    "exploratory": true,
+    "estimand": "mean aligned opening-pair candidate score at400 minus100 simulations; pair score is mean of both color games",
+    "pairs": 250,
+    "score100_first250": 0.546,
+    "score400": 0.55,
+    "delta_score": 0.004,
+    "delta_percentage_points": 0.4,
+    "bootstrap_ci95_score": [
+      -0.046,
+      0.055
+    ],
+    "bootstrap_ci95_percentage_points": [
+      -4.6,
+      5.5
+    ],
+    "bootstrap": {
+      "generator": "PCG64",
+      "seed": 20260903,
+      "replicates": 10000,
+      "percentiles": [
+        2.5,
+        97.5
+      ],
+      "quantile_method": "linear",
+      "numpy": "2.2.6"
+    },
+    "interpretation": "No resolved change in relative score across these two budgets"
+  },
+  "registered_package_verdict": {
+    "C100": "PROMISING: point>=15 Elo and lower bound>0",
+    "G100": "FAVORS_H20: wholly positive interval",
+    "C400": "Positive higher-search probe; not a separately registered primary-screen classification",
+    "package": "H20 promising versusC at100; specified selected-set construction favored versusG at100; H20 also wins registered400 probe. No resolved increasing search advantage."
+  },
+  "protocol_checks": [
+    "Exactly500 C400 games/250 complete unique pairs, no duplicates/orphans/replay; all500 C100 pairs independently rescored",
+    "C400 endpoints and both colors match exactly first250 C100 canonical opening IDs",
+    "Full settings identical between budgets except requestedgames/sims; noSPRT or rolling execution",
+    "Checkpoint paths/SHA lineage, book, actualruntime/native paths, training schedule receipt, preregistration and opening anchor pins agree",
+    "Terminal process/complete/package receipts and actual host PID absence checked; no failed receipt; actual stage charge closed",
+    "Result/automatic readout and independent unrounded pair-sample-variance95percent normal interval agree"
+  ],
+  "charges": {
+    "training_seconds": 9851.440138022997,
+    "arena_seconds": [
+      2410.6167047259805,
+      2595.3640068329987,
+      2794.0926392889814
+    ],
+    "c400_seconds": 2794.0926392889814,
+    "package_gpu_seconds": 17651.513488870958,
+    "package_gpu_hours": 4.903198191353044,
+    "hard_package_seconds": 32400
+  },
+  "historical_valid_control": false,
+  "historical_validity_problems": [
+    "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+    "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+    "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+  ],
+  "limits": [
+    "Same seed-zero trajectories and reused development openings; intervals do not include training-seed variation or adaptive selection uncertainty.",
+    "400-minus100 contrast is exploratory with registered aligned250-pair PCG64 bootstrap; no Elo subtraction, no full scaling curve claim.",
+    "Independent raw arithmetic and metadata checks; original launcher checkpoint payload hashes and earlier training qualification reused rather than reread.",
+    "Reviewer authored portions of historical launcher plumbing; this is independent completed numerical/accounting review, not a fresh review of all inherited implementation.",
+    "No games, model inference, GPU access, training, corpus scans or runtime mutation."
+  ],
+  "input_hashes": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20.launch_manifest.json": "20fa6a6be386bee435f0a12c75314d4dd5ba646213124c239a6247dec73f84dc",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/training.complete.json": "821e0886e599d241573f7482b70e24c25887ed28c9255224ea6e29048388a9df",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/complete.json": "ad305885b6b13819fd9ebaea6d82ff109c96c01e653b3ab58cc7f504d4510850",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/realized_schedule.json": "34948bf862fb937c9c7f57468d3d6a519f2a40b6b14361b6292f09002c2af6bc",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/complete.json": "62578be405f53144d0eb5e5cf8936489dabed6a8bfcec30af2bc598dc13db664",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/complete.json": "244be89bece5687e9f14081442e5029f7c08bdb8834eddac041f0c1f3edcacf9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/complete.json": "62311b6c483bf1da2f56d8601e9c6f2e3d655d4f117bada268e648b65611ce6f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/independent_terminal_observation.json": "73783024c8ec03430d2d1ee18e11449dcf82bc9733f47030c0efdf6cb0dc8afe",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/independent_review.json": "f4674d5553c257a675864ed3e04d34af0c2847405dc2bc3fa5ab62e68fbf9348",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/independent_review.json": "60e6bfffe2982324d37391f1ab686106f524b9065c613e41f06f0026fdb1ebd8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/process.json": "3d6e5481dac5db7d2f0cc6766ac104229b733a45a3d4d81638bdd07e1fdd87ff",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/manifest.json": "382449a1d37ddda6aefbddb7437feb80aa4d0025b88b12e6673d76eaf84f03b5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/readout.json": "3d9c971b3415bd45e84ed911fc7716b715bc97706d27774e47cd92c8219dd232",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/arena.games.jsonl": "98064bf64dce7581182403bc2a3c57c7f35e07675fd2a9c7e66c109179755ad1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/arena.results.jsonl": "6a184c9837877eda1fa5680e93baeff45bb5cbb50907b481ffd964ada6f303d6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/completed_s100_readout.json": "353d95c0f94cad1c1be1f9b23f6449d8cad50c6a41523c2b9ab5415f5cd6c12e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/process.json": "d2ca3bf66dcc09aad920280deac4cd7a03b34c7e6daf6ae78fe2f8051864cd70",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/manifest.json": "9cd8fab6602ccc8320a6bd8a30b9a8558cb1c128b35a68c765132756f65c761b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/readout.json": "3daa6d0d88c8d20a5b657c9cde3582808c467c3c25ca367a9346ef0dcc460972",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/arena.games.jsonl": "2ba32ae8edd7b11b43c67b5e2965aaa9786cb4f0d128fd265e84bece70273d9a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/arena.results.jsonl": "f9393711c09f97916ecfa7ff54635ca55da68bb89ac9faa4961039f069646ee6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+    "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_joint_readout.py": "a17c89537903c56ee7bb0ec084d5133e1139cc6c6cc605dc882b06279276ceeb",
+    "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_direct_screen.py": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/process.json": "416b44b2c21e1a1fc9f4c43204cc9508870991ffd59a2c8abb5fd9f46a093fc9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/manifest.json": "d97277a454f20fafd1ddb01e63c3df8498685c689b5e03657cae213b7cf1f8c5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/readout.json": "ffa44522c2a64ce86d5b9675ba47952940a60d92e4aa923505ff1698dba8864d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/arena.results.jsonl": "6ecaf8c131b45b6c7d37b37daf55fc905398ecbe08487382b232f9817d6d2b17",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/arena.games.jsonl": "61183238c272ceac962d2de80110d5f6a94144c308080852eb051e4c460a2e23"
+  },
+  "calculation_script_sha256": "6869d17112ab56711ef7921c10d6e41e5b9923c8254aee5a11d17cbfd71cc697",
+  "artifacts": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/independent_calculation/aligned_pairs.csv": "288542f76e1478ff4b82506f3cccd864b1c3b733a38f7bd9d4c4d62a7612dcf2",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/independent_calculation/bootstrap_replicates.npy": "dd41d1623b9887a67832da42089deb6e818dc4ee8f5d0de9d714da57a8342347"
+  }
+}

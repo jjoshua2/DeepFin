@@ -1,0 +1,21 @@
+{
+  "arena_receipts": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/complete.json",
+      "sha256": "62578be405f53144d0eb5e5cf8936489dabed6a8bfcec30af2bc598dc13db664"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/G20T05.s100/complete.json",
+      "sha256": "244be89bece5687e9f14081442e5029f7c08bdb8834eddac041f0c1f3edcacf9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/complete.json",
+      "sha256": "62311b6c483bf1da2f56d8601e9c6f2e3d655d4f117bada268e648b65611ce6f"
+    }
+  ],
+  "complete": true,
+  "gpu_seconds": 17651.513488870958,
+  "profile": "H20",
+  "promotion": "NONE; apply preregistered rule",
+  "training_receipt_sha256": "821e0886e599d241573f7482b70e24c25887ed28c9255224ea6e29048388a9df"
+}
