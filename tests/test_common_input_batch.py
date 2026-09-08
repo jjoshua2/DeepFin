@@ -65,7 +65,7 @@ def fixture(tmp_path: Path, concurrency: int = 2) -> dict[str, Any]:
             "CUDA_VISIBLE_DEVICES": "",
             "new_output_cache_bytes": 2**24,
             "minimum_free_bytes": 1,
-            "adapter_index_cache_bytes": 4096,
+            "adapter_index_cache_bytes": batch.raw_identity_cache_bytes(10, 2),
             "rank_index_cache_bytes": 8192,
         },
         "sources": [],
@@ -298,7 +298,7 @@ def test_lane_builds_real_selected_commands(
     assert rank[rank.index("--source-shards") + 1] == source["selection"]["path"]
     assert rank[rank.index("--max-provenance-cache-bytes") + 1] == "8192"
     adapt = calls[2][1]
-    assert adapt[adapt.index("--max-index-bytes") + 1] == "4096"
+    assert adapt[adapt.index("--max-index-bytes") + 1] == str(plan["limits"]["adapter_index_cache_bytes"])
     with pytest.raises(ValueError, match="unregistered tool"):
         batch.command(plan, "lc0_control_train.py")
 
@@ -615,3 +615,24 @@ b.lane(plan,pathlib.Path(sys.argv[1]),'f'*64,source,float(sys.argv[2]))
         assert sentinel.poll() is None
     finally:
         batch.stop_owned_group(sentinel, grace=0.1)
+
+
+@pytest.mark.parametrize(("field", "sizing"), [
+    ("rank_index_cache_bytes", lambda: batch.rank_cache_bytes(10, 2, 3)),
+    ("adapter_index_cache_bytes", lambda: batch.raw_identity_cache_bytes(10, 2)),
+])
+def test_cache_reservation_boundary_refuses_before_verify_or_spawn(tmp_path, monkeypatch, field, sizing):
+    plan = fixture(tmp_path)
+    plan["limits"][field] = sizing()
+    batch.validate_manifest(plan)
+    plan["limits"][field] -= 1
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("insufficient cache must fail before verification or process launch")
+
+    monkeypatch.setattr(batch, "verify", unexpected)
+    monkeypatch.setattr(batch.subprocess, "Popen", unexpected)
+    with pytest.raises(ValueError, match=field + " needs at least"):
+        batch.execute(plan, tmp_path / "manifest.json", "a" * 64)
+    assert not (Path(plan["state"]) / "started.json").exists()
+    assert all(not Path(source["derived_output"]).exists() for source in plan["sources"])

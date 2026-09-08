@@ -16,14 +16,9 @@ from typing import Any
 import numpy as np
 
 from scripts import gen_sf_rooted_corpus as corpus
+from scripts.sidecar_cache import RAW_IDENTITY_DTYPE as RECORD_DTYPE
 
 FILENAME = "row_provenance.npz"
-# 56 bytes/row; source paths and configs occur once per source/shard table entry.
-RECORD_DTYPE = np.dtype([
-    ("source", "<u4"), ("row", "<u4"), ("game_id", "<i8"),
-    ("ply", "<i4"), ("worker_id", "<i4"),
-    ("input_key", "u1", (16,)), ("stored_input_key", "u1", (16,)),
-])
 SOURCE_FIELDS = ("source_namespace", "source_dir", "source_config_sha256", "source_shard")
 SCHEMA = 1
 
