@@ -1,78 +1,23 @@
-"""Pentanomial GSPRT — a preregistered sequential stop rule for paired arenas.
+"""Pentanomial GSPRT on canonical, complete opening-pair prefixes.
 
-WHY THIS EXISTS, AND WHY IT IS NOT "PEEKING". ``scripts/arena_standard.py`` is
-fixed-N and final-only on purpose: reading a rolling arena and stopping when it
-looked good manufactured **+112 Elo out of a true null** (see the ledger's
-``rolling_arena_optional_stopping`` entry). That is the optional-stopping
-fallacy, and the remedy the repo adopted was "never look early".
+The constrained multinomial likelihood follows Fishtest's LLR_logistic:
+https://github.com/official-stockfish/fishtest/blob/master/server/fishtest/stats/LLRcalc.py
+Pair outcomes are normalized scores in {0, .25, .5, .75, 1}. For empirical
+probabilities phat_i and hypothesized mean s, the constrained MLE is
+p_i = phat_i / (1 + t * (a_i - s)), with t solving the mean constraint.
 
-A GSPRT is the OTHER remedy: look as often as you like, but at a boundary
-declared BEFORE the first game, whose crossing probabilities are approximately
-BOUNDED by alpha and beta — Wald's bounds are conservative (type-I <=
-alpha/(1 - beta), type-II <= beta/(1 - alpha)), not exact equalities.
-The four numbers (``elo0``, ``elo1``, ``alpha``, ``beta``) are the
-hypothesis, and this module deliberately supplies none of them by default — an
-unstated hypothesis is not a hypothesis, it is a post-hoc reading with a test
-statistic stapled to it.
+This is a generalized likelihood ratio with estimated nuisance parameters.
+Its error/efficiency guarantees are asymptotic, not exact finite-sample Wald
+bounds. Alpha/beta set nominal boundaries. Fishtest now ordinarily uses
+normalized Elo; this module explicitly uses logistic Elo.
 
-⚑ The VERDICT is the deliverable. The Elo point estimate of a sequentially
-stopped sample is BIASED AWAY FROM ZERO (a run stops early exactly when the
-sample looks extreme), so it is descriptive colour, not the reading. See
-``BIAS_CAVEAT``.
+A boundary favors one separated hypothesis over the other. Accepting H1 does
+not establish a lower confidence bound at elo1; the indifference region can
+resolve either way. Stopped point estimates are selection-biased and ordinary
+fixed-N confidence intervals have no nominal sequential coverage.
 
-THE MATH — Michel Van den Bergh's generalized SPRT over the pentanomial
-pair-outcome distribution, i.e. what fishtest computes.
-
-  Source: fishtest ``server/fishtest/stats/LLRcalc.py`` (``regularize``,
-  ``results_to_pdf``, ``MLE_expected``, ``LLR``, ``LLR_alt``, ``LLR_logistic``),
-  which cites Van den Bergh's note
-  "Maximum likelihood estimation of a multinomial distribution with a given
-  expectation", http://hardy.uhasselt.be/Fishtest/support_MLE_multinomial.pdf
-  (Proposition 1.1). Reimplemented here rather than vendored: the fishtest file
-  pulls in ``scipy.optimize.brentq`` and a Monte-Carlo harness we do not want in
-  an arena's import graph, and the part we need is one root-find.
-
-  The unit is the PAIR, not the game — the arena plays every opening twice with
-  colours swapped, so the two games of a pair are correlated and a trinomial
-  (per-game W/D/L) SPRT would understate the variance and stop too early. The
-  pair's normalized score is x in {0, 0.25, 0.5, 0.75, 1}.
-
-  Given the observed pair counts n_i over those five outcomes, write
-  ``phat_i = n_i / N`` for the empirical distribution. For a hypothesized mean
-  score ``s``, the maximum-likelihood multinomial CONSTRAINED to expectation s is
-
-      p_i(s) = phat_i / (1 + t (a_i - s))
-
-  where ``a_i`` is the outcome value and ``t`` is the unique root of
-
-      g(t) = sum_i phat_i (a_i - s) / (1 + t (a_i - s)) = 0
-
-  on ``t in (-1/(w - s), 1/(s - v))`` with v/w the smallest/largest outcome
-  value carrying mass. (The mean constraint implies normalization: expanding
-  ``sum_i phat_i = 1`` gives ``sum_i p_i + t sum_i p_i (a_i - s) = 1``.) ``g`` is
-  strictly decreasing on that interval and runs from ``+inf`` to ``-inf``, so a
-  plain bisection is both sufficient and deterministic.
-
-  The generalized log-likelihood ratio for ``s = s1`` against ``s = s0`` is then
-
-      LLR = sum_i n_i log( p_i(s1) / p_i(s0) )
-
-  with ``s0 = L(elo0)``, ``s1 = L(elo1)`` and ``L(e) = 1 / (1 + 10^(-e/400))``
-  (logistic Elo, the same scale ``arena_standard._elo_from_score`` inverts).
-
-  ``regularize`` mixes a 1e-3 prior into empty bins, exactly as fishtest does:
-  without it an all-draws sample is a point mass, the constrained MLE for any
-  other mean does not exist, and the LLR is undefined at precisely the sample
-  a null test spends its life looking at.
-
-Stop boundaries are Wald's:
-
-    accept H1 (the candidate is at least elo1) when LLR >= log((1-beta)/alpha)
-    accept H0 (the candidate is at most elo0)  when LLR <= log(beta/(1-alpha))
-
-Neither crossing by the game cap is INCONCLUSIVE, and it is reported as such —
-never silently rewritten into a fixed-N verdict, which would be the
-optional-stopping fallacy wearing a lab coat.
+Every declared look is evaluated in canonical pair order, independently of
+which games finish first. A cap/deadline without crossing is inconclusive.
 """
 from __future__ import annotations
 
@@ -101,11 +46,10 @@ PAIR_OUTCOME_LABELS: tuple[str, ...] = ("LL", "LD_DL", "DD_WL", "WD_DW", "WW")
 REGULARIZATION_MASS = 1e-3
 
 BIAS_CAVEAT = (
-    "a sequentially stopped Elo point estimate is BIASED AWAY FROM ZERO: the "
-    "run stopped at the moment the sample looked extreme enough to cross, so "
-    "the magnitude is inflated (by more the earlier it stopped). The SPRT "
-    "VERDICT is the deliverable; the Elo and its CI are descriptive only, and "
-    "the CI in particular has no nominal coverage after a sequential stop."
+    "a sequentially stopped Elo estimate is subject to selection bias; "
+    "the ordinary fixed-N CI has no nominal coverage after stopping. "
+    "Report the declared hypotheses, stopping prefix and SPRT verdict. "
+    "H1 is not a lower confidence bound at elo1; H0 is not equivalence."
 )
 
 VERDICT_H1 = "H1"
@@ -223,8 +167,14 @@ class SprtSpec:
     elo1: float
     alpha: float
     beta: float
+    first_pairs: int = 1
+    step_pairs: int = 1
 
     def __post_init__(self) -> None:
+        for name in ("first_pairs", "step_pairs"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 1:
+                raise ValueError(f"--sprt {name} must be a positive integer")
         for name in ("elo0", "elo1", "alpha", "beta"):
             value = float(getattr(self, name))
             if not math.isfinite(value):
@@ -296,7 +246,7 @@ class SprtSpec:
                 )
             key, _, raw = field.partition("=")
             key, raw = key.strip(), raw.strip()
-            if key not in required:
+            if key not in (*required, "first_pairs", "step_pairs"):
                 raise ValueError(
                     f"--sprt: unknown key {key!r}; expected exactly "
                     f"{', '.join(required)}"
@@ -316,18 +266,29 @@ class SprtSpec:
                 f"{', '.join(required)} are REQUIRED — there is no default, "
                 "because an unstated hypothesis is not a hypothesis."
             )
-        return cls(**seen)
+        look_fields = {}
+        for key in ("first_pairs", "step_pairs"):
+            if key in seen:
+                value = seen.pop(key)
+                if not math.isfinite(value) or not value.is_integer():
+                    raise ValueError(f"--sprt {key} must be a positive integer")
+                look_fields[key] = int(value)
+        return cls(**seen, **look_fields)
 
     def describe(self) -> str:
         return (
             f"H0: elo <= {self.elo0:+.2f} (score {self.s0:.5f})  "
             f"H1: elo >= {self.elo1:+.2f} (score {self.s1:.5f})  "
             f"alpha={self.alpha:.4g} beta={self.beta:.4g}  "
+            f"first_pairs={self.first_pairs} step_pairs={self.step_pairs}  "
             f"boundaries: H0 <= {self.bound_h0:+.4f}, H1 >= {self.bound_h1:+.4f}"
         )
 
-    def as_record(self) -> dict[str, float]:
+    def as_record(self) -> dict[str, Any]:
         return {
+            "sampling": "canonical_pair_prefix_v1",
+            "first_pairs": self.first_pairs,
+            "step_pairs": self.step_pairs,
             "elo0": float(self.elo0),
             "elo1": float(self.elo1),
             "alpha": float(self.alpha),
@@ -340,65 +301,96 @@ class SprtSpec:
 
 
 class SprtMonitor:
-    """Running GSPRT over the pairs an arena has COMPLETED.
+    """GSPRT on a declared prefix of canonical opening-pair IDs.
 
-    The LLR is recomputed from every banked pair score on every look — resumed
-    pairs included — rather than being accumulated incrementally. That is not an
-    efficiency oversight: the GSPRT statistic is a function of the whole
-    empirical distribution (the constrained MLE re-fits on all of it), so an
-    incremental form would be a different number, and a resumed run would carry
-    a stale one.
-
-    ``granularity`` is recorded and printed because it is a real property of the
-    reading: the rolling loop can look after every completed pair, the chunked
-    loop only between chunks. Both are valid stopping times; the coarser one
-    just looks less often.
+    Completion can arrive out of order. Only IDs 0..N-1 may contribute, and
+    every declared look newly released by a late pair is checked in order.
+    Completed suffix pairs remain banked but cannot change a crossed verdict.
+    Storage is bounded by the registered pair cap.
     """
 
     def __init__(
-        self,
-        spec: SprtSpec,
-        *,
-        prior_pair_scores: Sequence[float] = (),
-        pairs_cap: int,
+        self, spec: SprtSpec, *, prior_pair_scores: Sequence[float] = (),
+        prior_pair_ids: Sequence[int] | None = None, pairs_cap: int,
         granularity: str,
     ) -> None:
+        if type(pairs_cap) is not int or pairs_cap < spec.first_pairs:
+            raise ValueError("SPRT pair cap must be at least first_pairs")
         self.spec = spec
-        self.pairs_cap = int(pairs_cap)
-        self.granularity = str(granularity)
-        self._prior: list[float] = [float(s) for s in prior_pair_scores]
-        self.pairs: int = 0
+        self.pairs_cap = pairs_cap
+        self.granularity = granularity
+        self._prior = list(prior_pair_scores)
+        self._complete: dict[int, float] = {}
+        self._sample: list[float] = []
+        self.pairs = 0
         self.counts: tuple[int, int, int, int, int] = (0, 0, 0, 0, 0)
-        self.llr: float = 0.0
-        self.llr_first: float = 0.0
-        self.looks: int = 0
-        # (pairs, llr) sampled once per DISTINCT pair count, so a rolling loop
-        # that looks every ply does not bank thousands of identical rows.
+        self.llr = 0.0
+        self.llr_first = 0.0
+        self.looks = 0
         self.trajectory: list[tuple[int, float]] = []
         self.verdict: str | None = None
         self.stop_reason: str | None = None
-        # The resumed pairs are evidence like any other: a run that already
-        # crossed must not play more games just because the process restarted.
-        self.update(())
+        self._next_look = spec.first_pairs
+        self.inflight_games: list[tuple[int, int]] = []
+        self.not_started_games = 0
+        ids = list(range(len(self._prior))) if prior_pair_ids is None else prior_pair_ids
+        self.update(self._prior, pair_ids=ids)
         self.llr_first = self.llr
 
-    def update(self, new_pair_scores: Sequence[float]) -> str | None:
-        """Fold in this loop's own completed pairs and re-decide. Returns the verdict."""
-        scores = self._prior + [float(s) for s in new_pair_scores]
-        pairs = len(scores)
-        self.looks += 1
-        if pairs == self.pairs and self.trajectory:
-            return self.verdict  # nothing new completed; the statistic cannot move
-        self.pairs = pairs
+    @property
+    def pair_scores(self) -> list[float]:
+        return list(self._sample)
+
+    @property
+    def complete_pairs(self) -> dict[int, float]:
+        return dict(self._complete)
+
+    def _set_sample(self, scores: Sequence[float]) -> None:
+        self._sample = list(scores)
+        self.pairs = len(scores)
         self.counts = pentanomial_ascending(scores)
         self.llr = gsprt_llr(self.counts, s0=self.spec.s0, s1=self.spec.s1)
-        self.trajectory.append((pairs, self.llr))
-        if self.verdict is None:
+
+    def update(
+        self, new_pair_scores: Sequence[float], *, pair_ids: Sequence[int] | None = None,
+    ) -> str | None:
+        """Merge cumulative completed observations; repeated IDs must agree."""
+        ids = (list(range(len(self._prior), len(self._prior) + len(new_pair_scores)))
+               if pair_ids is None else list(pair_ids))
+        if len(ids) != len(new_pair_scores) or len(set(ids)) != len(ids):
+            raise ValueError("SPRT pair IDs must be unique and score-aligned")
+        for pair_id, score in zip(ids, new_pair_scores):
+            if type(pair_id) is not int or not 0 <= pair_id < self.pairs_cap:
+                raise ValueError("SPRT pair ID is outside the registered cap")
+            value = float(score)
+            if value not in (0.0, 0.5, 1.0, 1.5, 2.0):
+                raise ValueError("invalid SPRT pair score")
+            if pair_id in self._complete and self._complete[pair_id] != value:
+                raise ValueError("SPRT completed pair score changed")
+            self._complete[pair_id] = value
+        self.looks += 1
+        if self.verdict is not None:
+            return self.verdict
+        prefix = []
+        while len(prefix) in self._complete:
+            prefix.append(self._complete[len(prefix)])
+        while self._next_look <= len(prefix):
+            self._set_sample(prefix[:self._next_look])
+            self.trajectory.append((self.pairs, self.llr))
             if self.llr >= self.spec.bound_h1:
                 self.verdict, self.stop_reason = VERDICT_H1, "boundary"
             elif self.llr <= self.spec.bound_h0:
                 self.verdict, self.stop_reason = VERDICT_H0, "boundary"
-        return self.verdict
+            if self.verdict is not None:
+                return self.verdict
+            if self._next_look == self.pairs_cap:
+                self._next_look += 1
+            else:
+                self._next_look = min(self.pairs_cap, self._next_look + self.spec.step_pairs)
+        # A deadline may land between looks. Bank the available prefix and its
+        # descriptive LLR, without turning an undeclared look into a decision.
+        self._set_sample(prefix)
+        return None
 
     def crossed(self) -> bool:
         return self.verdict is not None
@@ -412,9 +404,9 @@ class SprtMonitor:
 
     def verdict_line(self) -> str:
         if self.verdict == VERDICT_H1:
-            claim = f"ACCEPT H1 — the candidate is at least {self.spec.elo1:+.2f} Elo"
+            claim = f"FAVORS H1 ({self.spec.elo1:+.2f}) over H0 ({self.spec.elo0:+.2f}); not an effect lower bound"
         elif self.verdict == VERDICT_H0:
-            claim = f"ACCEPT H0 — the candidate is at most {self.spec.elo0:+.2f} Elo"
+            claim = f"FAVORS H0 ({self.spec.elo0:+.2f}) over H1 ({self.spec.elo1:+.2f}); not equivalence"
         else:
             claim = (
                 "INCONCLUSIVE — neither boundary was crossed; this is NOT a "
@@ -451,6 +443,12 @@ class SprtMonitor:
             "llr_first": self.llr_first,
             "llr_trajectory": [[p, llr] for p, llr in self.trajectory],
             "pairs": self.pairs,
+            "scored_pair_ids": list(range(self.pairs)),
+            "completed_pair_ids": sorted(self._complete),
+            "speculative_completed_pair_ids": sorted(i for i in self._complete if i >= self.pairs),
+            "inflight_games": [list(item) for item in self.inflight_games],
+            "not_started_games": self.not_started_games,
+            "last_decision_look_pairs": self.trajectory[-1][0] if self.trajectory else 0,
             "pairs_cap": self.pairs_cap,
             "games": 2 * self.pairs,
             "games_cap": 2 * self.pairs_cap,
@@ -464,6 +462,6 @@ class SprtMonitor:
             "check_granularity": self.granularity,
             "pentanomial_ascending": dict(zip(PAIR_OUTCOME_LABELS, self.counts)),
             "resumed_pairs": len(self._prior),
-            "elo_estimate_biased_away_from_zero": True,
+            "elo_estimate_selection_biased": True,
             "caveat": BIAS_CAVEAT,
         }

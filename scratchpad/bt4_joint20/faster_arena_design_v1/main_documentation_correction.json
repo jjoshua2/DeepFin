@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "correction": "Initial note blanket-1000/BOTH-modes critique describes the older deployed root eval_protocol, not current main. Current main already starts with staged decisions and no universal1000-game requirement. Current patch updates stale SPRT semantics/precision text only.",
+  "current_main_base": "cab78e5a8",
+  "historical_note_preserved": true
+}
