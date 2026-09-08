@@ -1,0 +1,71 @@
+{
+  "status": "PASS",
+  "driver_sha256": "6ffb75dbc950c35ded80b794880949b04a5e7159d66f36fbf120d7884a98ebdd",
+  "helper_sha256": "ea20ed7050a29e4f782097e76461808b3a7fda8fa39a72864ad6febabf9f758c",
+  "checks": [
+    {
+      "case": "helper_matching",
+      "PASS": true,
+      "accepted": true
+    },
+    {
+      "case": "helper_changed",
+      "PASS": true,
+      "accepted": false
+    },
+    {
+      "case": "helper_replace_during_rename",
+      "PASS": true,
+      "accepted": false
+    },
+    {
+      "case": "helper_newer_operator_pause",
+      "PASS": true,
+      "accepted": false
+    },
+    {
+      "case": "helper_initial_symlink",
+      "PASS": true,
+      "accepted": false
+    },
+    {
+      "case": "helper_racing_symlink",
+      "PASS": true,
+      "accepted": false
+    },
+    {
+      "case": "helper_existing_archive",
+      "PASS": true,
+      "accepted": false
+    },
+    {
+      "case": "shell_matching_boundary",
+      "PASS": true,
+      "returncode": 0,
+      "work_started": true,
+      "lock_prevented_work_before_boundary": true
+    },
+    {
+      "case": "shell_changed_request",
+      "PASS": true,
+      "returncode": 0,
+      "work_started": false,
+      "lock_prevented_work_before_boundary": true
+    },
+    {
+      "case": "shell_new_operator_pause",
+      "PASS": true,
+      "returncode": 0,
+      "work_started": false,
+      "lock_prevented_work_before_boundary": true
+    },
+    {
+      "case": "shell_old_fail_proof",
+      "PASS": true,
+      "returncode": 1,
+      "work_started": false,
+      "lock_prevented_work_before_boundary": true
+    }
+  ],
+  "limits": "Actual helper/filesystem/rename and shell/flock in disposable paths. Runtime verifier and labeling replaced with no-op/work marker only in shell fixture; no operational marker or GPU touched."
+}

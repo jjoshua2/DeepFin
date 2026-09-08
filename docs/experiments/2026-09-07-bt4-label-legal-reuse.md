@@ -104,16 +104,67 @@ full-bank metadata checks and session startup. It supports keeping this bounded
 reuse change; it does not establish a 49% improvement for the whole labeler or any
 playing-strength result. Live adoption remains a separate operation.
 
+## Qualified runtime and armed handoff — September 8
+
+[PR #537](https://github.com/jjoshua2/DeepFin/pull/537) merged the reusable change.
+An inactive deployment snapshot, `4e600902e1fd08727e1d83e009d6e241be0c7cba`,
+starts from the existing frozen runtime and changes only the two reviewed Python
+files. It retains **Python 3.10.12, ONNX Runtime 1.23.2, Torch 2.11.0+cu128 and
+NumPy 1.26.2**, with the same four physical CPython 3.10 native binaries. No
+packages were installed or live checkout changed.
+
+The [runtime qualification](../../scratchpad/bt4_joint20/label_preparation_profile_v1/runtime_adoption_pr537/qualification.json)
+passed actual imports, exact functional remap identity and both-color castling
+probability checks. Existing sidecars from **both run06 G10 and run07 G10
+companion4** passed ordinary source/model/provider/layout admission against their
+banked receipts. Qualification kept CUDA hidden and created no ORT session;
+installed providers alone do not prove a successful new GPU inference group.
+
+**The graceful handoff was armed at 03:51:30 UTC; takeover remains unconfirmed.**
+The [start receipt](../../scratchpad/bt4_g10_raw_legal_reuse_v1/started.json) and
+[armed snapshot](../../scratchpad/bt4_g10_raw_legal_reuse_v1/armed.json) record new
+driver 295443 waiting for the original driver lock. Only after confirming that
+waiter was ready did the parent exclusively create the owned pause request. Old
+driver 4251 and queued group 288651 were preserved; the group finishes normally.
+After acquiring the lock, the replacement must verify the old paused proof and
+actually consumed handoff request before continuing. It retains the original two sources, teacher, output tree,
+writer/GPU leases, 1,024-row batches, 16 ORT threads, OMP/MKL/OpenBLAS limits of
+two, and the 150 GiB free-space reserve. The observed old resource regime was
+explicitly preserved: nice 19, CPU affinity 0–31 and I/O priority class 0 (none).
+The CPU-only qualification limits were not substituted for the normal labeler
+regime. Both original and new pause markers remain effective.
+Qualification is rechecked before normal groups; no process kill is part of this
+transition.
+
+An [independent prelaunch review](../../scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_findings_v1.json)
+reproduced a race in the first proposal: replacement of the pause request between
+its hash check and move could consume an operator's changed pause. It also found
+that the PATH-resolved interpreter alias was not bound to the qualified target.
+The correction validates the actually consumed request in a private archive,
+restores a changed request without overwriting a newer pause, stays paused on a
+mismatch, and binds the resolved interpreter. The blocked review and original v1
+files remain alongside the corrected proposal. The [final independent review](../../scratchpad/bt4_g10_raw_legal_reuse_v1/independent_handoff_review_v2.json)
+passed eleven isolated helper/shell checks and closed both findings before arming.
+The armed snapshot has **no confirmed takeover, new label group or throughput
+result**; it establishes no new GPU labels or end-to-end speedup.
+
+The [readiness and handoff evidence manifest](evidence/bt4-bootstrap/b100-readiness-labeler-handoff-manifest.json)
+binds these runtime and operational records. Archived driver/verifier scripts are
+host-specific evidence, not portable instructions to restart the labeler. Actual
+adoption requires the new child/runtime identity, realized CUDA provider and first
+new completed sidecar stamps; an ordinary completed group can then provide a
+single descriptive throughput observation without timing repeats.
+
 ## Evidence
 
-The [evidence manifest](evidence/bt4-label-legal-reuse/manifest.json) binds compact
+The [evidence manifest](../../scratchpad/bt4_joint20/label_preparation_profile_v1/published_evidence/manifest.json) binds compact
 records, exact commands/scripts, source-qualified input hashes and external bulk
-artifacts. Start with the [CPU profile](evidence/bt4-label-legal-reuse/profile_completed.json),
-[analysis](evidence/bt4-label-legal-reuse/profile_analysis.json),
-[A/B plan](evidence/bt4-label-legal-reuse/ab_plan.json),
-[A/B result](evidence/bt4-label-legal-reuse/ab_completed.json),
-[author validation](evidence/bt4-label-legal-reuse/author_validation.json) and
-[independent review](evidence/bt4-label-legal-reuse/independent_review.json).
+artifacts. Start with the [CPU profile](../../scratchpad/bt4_joint20/label_preparation_profile_v1/published_evidence/profile_completed.json),
+[analysis](../../scratchpad/bt4_joint20/label_preparation_profile_v1/published_evidence/profile_analysis.json),
+[A/B plan](../../scratchpad/bt4_joint20/label_preparation_profile_v1/published_evidence/ab_plan.json),
+[A/B result](../../scratchpad/bt4_joint20/label_preparation_profile_v1/published_evidence/ab_completed.json),
+[author validation](../../scratchpad/bt4_joint20/label_preparation_profile_v1/published_evidence/author_validation.json) and
+[independent review](../../scratchpad/bt4_joint20/label_preparation_profile_v1/published_evidence/independent_review.json).
 The review's pending-at-creation lint/benchmark fields are preserved; the later
 author receipt records their completion.
 

@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "status": "PASS_GRACEFUL_HANDOFF_PRELAUNCH_REVIEW",
+  "reviewer": "independent review_pr517_bootstrap",
+  "reviewed_utc": "2026-09-08T03:46:52.385584+00:00",
+  "files": {
+    "driver.sh": "6ffb75dbc950c35ded80b794880949b04a5e7159d66f36fbf120d7884a98ebdd",
+    "original_driver.sh": "e309086e111c9f7b4bd2b3807573e84ee38c39fb1a46b5e5385e6609207044e9",
+    "consume_handoff.py": "ea20ed7050a29e4f782097e76461808b3a7fda8fa39a72864ad6febabf9f758c",
+    "verify_runtime.py": "c2e170daca34b60bfa2e5f18bd4cae6d60e561f373805b4f9d2bdd686e7ce99a",
+    "handoff.launch.json": "9dd0e6bbfca6a4a02c30181e8e764555253b17a54ba11671ede3e3d3c7711838",
+    "handoff.request.template.json": "54388b8f5a684b9b840b7489ff1e5b8a257cd8ab5de133d43a6e4c718ea8ffce",
+    "independent_handoff_fixture_v2.json": "99f5512f9c627f38e526577ea2039b4a5ce68197c9409ac1946bf602be1b7af5",
+    "independent_handoff_fixture_v2.py": "6a280ef63e9a9d0ed893ac3e4d5bd301891ab466a08bb102911ec63e0516e7cd"
+  },
+  "runtime_commit": "4e600902e1fd08727e1d83e009d6e241be0c7cba",
+  "runtime_parent": "7ec261509fb7345cf1ca0ad73809193fc2749bb1",
+  "runtime_qualification_sha256": "aed87c6f60fdc826380bd01c562f976ead23359fe4566b88ce69adbd7a0a6ac9",
+  "closed_findings": [
+    "Reproduced v1 check-before-move pause race closed: exact archived object is verified after rename; changed marker restored using no-overwrite hard link, including racing symlink without target dereference. Newer source pause is preserved alongside archived changed request.",
+    "Runtime verifier now binds resolved /usr/bin/python3 to recorded qualified interpreter before metadata checks."
+  ],
+  "checks": [
+    "Eleven isolated helper and real-shell checks passed: matching, changed, rename replacement, newer operator pause, initial/racing symlink, existing archive, lock boundary, changed request, new-OPS pause and old failure proof.",
+    "Shell syntax passes; final launch and request hashes agree with actual files. Original snapshot equals original live driver bytes.",
+    "Candidate runtime changes exactly the two intended scripts relative to original qualified live parent. Qualification records preserve interpreter, provider, representative libraries, four native files and existing-sidecar compatibility; verifier checks these without importing CUDA.",
+    "Old driver lease is shared and inherited by normal worker commands; new work waits for release and requires old paused proof without fail/done. Only matching owned marker permits handoff. No PID kill or source/sidecar change.",
+    "Original group size16, batch1024, ORTthreads16, GPU24GiB,150GiBreserve, originalOMP/MKL/OPENBLAS2 and PATH, writer/GPU lease, provider/model settings and15-second boundary yield remain unchanged."
+  ],
+  "limits": [
+    "Review and fixtures only; no real driver launch, pause marker creation/removal, runtime mutation, source scan, inference or GPU operation.",
+    "Parent must arm absent owned pause request only after confirming new waiter is ready; this review does not itself execute that transition.",
+    "Pause is checked at group boundaries, preserving already queued work. Driver still performs its original final verification behavior.",
+    "Dependency guard covers recorded interpreter/library representatives/native identities, not a hermetic whole environment. No new CUDA session was qualified by these checks.",
+    "No readiness claim from live throughput or partial outcome observations; actual takeover identity/provider/new-sidecar evidence remains parent-owned."
+  ],
+  "blockers": []
+}

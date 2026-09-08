@@ -1,0 +1,14 @@
+{
+  "status": "AUTHOR_PREPARATION_COMPLETE_NOT_EXECUTED",
+  "files": {
+    "README.md": "998c677c2d3c33853b57ab1ca990201a6f621ef69ee9efd272d2bf76a19ff860",
+    "command.txt": "4872929ab1216a3f5c0a7103dc94bcfb92d6b64dcb721172ad72e3965a362da3",
+    "launch.json": "5830a332beeb57f50a21495fb318afebdd47ca64a9fc7b4621ded82b7363a37c",
+    "preparation_receipt.json": "5eff9f8847d3f47c53c4f3b86bdbd7bad774073a6c7fbfd89ad04d21a8a6e35c",
+    "qualify_supervisor.fixture.py": "bf3f8a6ac1b0368b49f3fec91d2e7bf2428afbe6739021db1bafe6aab64b8bbc",
+    "run_materialization.py": "239b6436055f6c5abca229ac3263640049a218e98bede1900f2bcd70443290b8",
+    "supervisor.patch": "7b1f07ab4ac1080cb8c2e7a7595ac2bb611e94acecb1cebe8f525f755f2acfc5",
+    "supervisor_qualification.json": "3d0ba88b6666858f07bd0def5923bc24054db08384728d0092a8f9ad9344598c"
+  },
+  "tests": "Five isolated process/filesystem checks PASS; syntax parsed; no bulk operation, watcher or runtime mutation. Independent parent review pending."
+}

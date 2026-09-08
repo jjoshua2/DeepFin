@@ -1,7 +1,11 @@
 # BT4 legal-move reuse evidence
 
 See the [readout](../../2026-09-07-bt4-label-legal-reuse.md).
-`manifest.json` maps every copied artifact to its original path and SHA-256.
+The immutable records now live in the tracked
+[historical archive](../../../../scratchpad/bt4_joint20/label_preparation_profile_v1/published_evidence/).
+Its [manifest](../../../../scratchpad/bt4_joint20/label_preparation_profile_v1/published_evidence/manifest.json)
+maps every copied artifact to its original path and SHA-256. The records and
+manifest moved byte-for-byte; only documentation links changed.
 Absolute paths inside historical plans and commands describe the measured machine;
 they are not portable defaults or instructions to rerun a live job.
 

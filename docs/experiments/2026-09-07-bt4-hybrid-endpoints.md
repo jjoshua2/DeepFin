@@ -50,6 +50,48 @@ launch evidence alongside the separately completed G10 common-input preparation.
 Large text records use lossless gzip with original and compressed hashes. Earlier
 failure and preregistration files retain their original bytes and dated statuses.
 
+## B100 readiness while H20 trains — September 8
+
+The distinct pure-BT4 policy endpoint now has its own completed cached audit and
+reviewed bulk-preparation plan. **Bulk materialization has not launched, and B100
+has not been selected for training.** H20's registered comparison package remains
+the next deciding evidence.
+
+The [B100 audit](../../scratchpad/bt4_joint20/B100_preparation_v1/audit_B100T05.json.gz)
+completed in **8.37 seconds** on the existing **4,000-position FEN-only BT4 cache**,
+with global alpha 1 and teacher temperature 0.5. Treatment invariants passed.
+Candidate-minus-original-SF expected deep-SF regret was **−0.32 cp [−2.79, +2.13]**;
+top-choice regret was **−8.08 cp [−11.30, −4.93]**. These are position-bootstrap
+95% intervals (10,000 replicates, seed 20260903). Expected-regret improvement is
+unresolved at this precision. Neither result measures playing strength, search
+scaling or a trained recipe; the cached teacher is not the history-aware teacher
+used for eventual corpus materialization. No teacher inference or GPU work ran.
+The legacy audit's `training_permitted` field records descriptive tool admission,
+not a new training decision. The [completed receipt](../../scratchpad/bt4_joint20/B100_preparation_v1/completed_readout.json)
+retains exact input pins, timing and limitations.
+
+The [bulk plan and independent review](../../scratchpad/bt4_joint20/B100_preparation_v1/materialization/independent_review.json)
+prepare the same 18,910,484 original SF/history rows and 2,309 shards. The policy
+becomes legal-normalized sharpened BT4; all SF value and non-policy fields remain
+from the original source. The normal mixer retains full source/history/teacher
+admission and policy write/read/legal-mass checks. Final corpus qualification and
+prospective schedule checks still follow any successful materialization.
+
+The measured G50 global materialization cost, **7,382.36 seconds / 2.05 hours**,
+is a planning reference rather than a B100 runtime prediction. B100's child cap
+is four hours including termination grace, with two CPU cores and numerical
+threads, low CPU/I/O priority, a shared preparation lock, a 150 GiB free-space
+reserve and a sampled 32 GiB output allocation limit. These are sampled guards,
+not disk quotas; timeout survives coordinator loss but disk/STOP polling does not.
+Failures and partial outputs are retained without automatic retry. Bulk copying
+and compression can contend with H20's prefetch, so launch timing is reserved for
+a suitable arena-phase I/O window rather than inferred safe from hidden CUDA.
+
+The [readiness and handoff manifest](evidence/bt4-bootstrap/b100-readiness-labeler-handoff-manifest.json)
+contains the full losslessly compressed audit, exact command/runtime bindings,
+supervisor fixtures and unlaunched plan. It also links the separate labeler-runtime
+qualification below; neither record selects another training experiment.
+
 ## Original timeout and recovery registration — September 8, 2026
 
 The original mixer reached its registered GNU timeout after 14,370.09 seconds
