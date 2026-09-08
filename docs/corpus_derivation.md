@@ -166,3 +166,46 @@ partial evidence; successful completion removes the private cache.
 A real transfer still needs its preregistered bounded pilot, completed sidecars,
 phase0 rank coverage and a matched game-aware schedule qualification. These tools
 do not retrospectively relabel the existing 20M corpus or launch training.
+
+## Incremental closed-shard selection
+
+Both `derive_corpus_targets.py` and `sf_d9_rank_sidecar.py` accept optional
+`--source-shards selection.json`. This selects original closed shards without
+creating an alias corpus or rereading an earlier prefix. The JSON contract is:
+
+```json
+{
+  "schema": 1,
+  "source_dir": "<original resolved corpus directory>",
+  "source_config_sha256": "<original configuration SHA-256>",
+  "source_manifest_sha256": "<original manifest.json SHA-256>",
+  "shards": [
+    {"source_shard": "w00-00032.jsonl.zst", "rows": 8192,
+     "source_sha256": "<closed raw shard SHA-256>"}
+  ]
+}
+```
+
+The row count is the actual closed-inventory claim, not a fixed shard size.
+Duplicate names, path traversal, unknown or unclosed shards, wrong row counts,
+source/config mismatches and wrong raw hashes are rejected. Selected payloads are
+hashed once before processing, with bounded-memory reads. Final publication checks
+that those files' device/inode/size/mtime/ctime and the selection/static manifest
+remain unchanged. This is a local stable-file contract, not protection against a
+privileged actor restoring file metadata. Growing progress logs and newly closed
+unselected shards are not pinned, so continued generation is allowed.
+
+Selection always follows the original corpus's canonical shard order, regardless
+of JSON entry order. `--limit N` then caps raw physical rows in that selected
+concatenation, before result/support/envelope filtering; it can stop inside its last
+shard. The deriver's existing `--limit 0` means all selected rows. The rank tool
+retains its positive, exact `--limit` contract: derive with the same explicit raw
+count when producing a rank-joinable batch, and pass the same selection file to
+both tools. A missing or different selection at rank generation is refused.
+
+Both summaries record `source_selection`, including the original source binding,
+canonical entries and selection-file path/hash. Original source namespaces, raw
+shard paths and physical row offsets in `row_provenance.npz` are unchanged; output
+shuffle and filtering still use the existing writer. No-flag commands retain their
+original prefix behavior and emit no selection field. The mechanism selects data;
+it does not qualify new data quality, a training schedule or playing strength.

@@ -635,6 +635,11 @@ def bank(args: argparse.Namespace) -> int:
         if path.is_file()
     }
     record = derive.read_corpus_record(raw_dir)
+    selection_path = getattr(args, "source_shards", None)
+    if selection_path is not None:
+        record = derive.select_corpus_record(raw_dir, record, Path(selection_path))
+    if record.source_selection != source_summary.get("source_selection"):
+        raise ValueError("raw and derived source selections differ; pass the same --source-shards")
     raw_config_sha = str(record.facts.get("config_sha256", ""))
     source_corpus = source_summary.get("corpus", {})
     if not isinstance(source_corpus, dict) or source_corpus.get(
@@ -736,7 +741,9 @@ def bank(args: argparse.Namespace) -> int:
                 raise ValueError("source summary or raw manifest changed during rank publication")
             provenance_proof["raw_record_sha256"] = {str(path): digest for path, digest in raw_record_pins.items()}
             shutil.rmtree(writing / "._rank_identity_cache")
+        derive.verify_source_selection(record)
         summary = {
+            **({"source_selection": record.source_selection} if record.source_selection is not None else {}),
             "schema": SCHEMA,
             "kind": "sf_d9_rank_gap_sidecar",
             "raw_dir": str(raw_dir),
@@ -778,6 +785,8 @@ def bank(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--raw", type=Path, required=True)
+    parser.add_argument("--source-shards", type=Path,
+                        help="same source-bound selection used by derivation; --limit cuts its ordered stream")
     parser.add_argument("--shards", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--limit", type=int, required=True)
