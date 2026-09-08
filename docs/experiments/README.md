@@ -8,7 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | Native WDL capture adopted; 8,192-row pilot complete; 1.05M prefix and horizon checks launched |
+| [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | 1.05M additional WDL rows complete; compiled CUDA and SF/B100 planners pass; SoftSF10 materialized and qualified |
 | [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row neural WDL diagnostic complete; BT4/Ceres primary values similar, efficient derived-input backfill identified; value training pending |
 | [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 compatibility and 128-row training diagnostic complete: 88.28% top-move agreement with BT4 T=1; retained-SF comparison remains prospective |
 | [Faster recipe matches](2026-09-08-faster-recipe-matches.md) | First prospective SPRT plus fixed deep probe completed in46m35s; speculative scheduling bottleneck identified; no controlled speedup claim |
@@ -20,7 +20,7 @@ measurements support which claims.
 | [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 5,276,543 common rows prepared after completed Worker01 recovery; original failure preserved; combined training qualification and strength remain unestablished |
 | [G50 versus B100 policy dose](2026-09-08-bt4-g50-b100-dose-comparison.md) | Complete: G50 loses shallow SPRT and fixed deep comparison (−50.57 Elo); B100 retained, depth interaction unresolved |
 | [Pure BT4 policy endpoint](2026-09-08-bt4-pure-policy-endpoint.md) | B100 beats H20: shallow H1, deep +46.42 Elo [11.23,82.58]; search interaction unresolved, same-seed development |
-| [Bootstrap training-horizon readiness](2026-09-08-bootstrap-training-horizon-readiness.md) | Real tiny two-epoch CPU path checked on the older Torch environment; CUDA/full-corpus qualification and finalist selection remain |
+| [Bootstrap training-horizon readiness](2026-09-08-bootstrap-training-horizon-readiness.md) | CPU and bounded compiled-CUDA checks passed; full SF/B100 planner passed; training comparison not launched |
 | [BT4 hybrid and global endpoints](2026-09-07-bt4-hybrid-endpoints.md) | H20 package complete: C100 +45.07, G100 +85.78, C400 +34.86 Elo; aligned search interaction unresolved; no promotion |
 | [External archive and restore record](2026-09-07-storage-archive.md) | 38 verified archives, qualified local cleanup, retained dependencies and restore instructions |
 | [Fresh paired BT4 confirmation](2026-09-07-bt4-fresh-confirmation.md) | Completed fresh seed-one comparison: C beats E by 37.67 Elo [18.72, 56.85] at 100 sims |
