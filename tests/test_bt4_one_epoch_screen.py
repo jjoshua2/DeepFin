@@ -496,3 +496,144 @@ def test_training_runtime_probe_uses_cpu_environment_and_checks_imported_identit
             epoch.training_runtime_probe(expected)
     else:
         assert epoch.training_runtime_probe(expected)['native_extensions'] == {'fixture_native': str(native)}
+
+
+def softsf_manifest(tmp_path):
+    manifest = training_only_manifest(tmp_path)
+    old = epoch.CORPORA['B100']
+    corpus = epoch.CORPORA['SoftSF10']
+    manifest['profile'] = 'SoftSF10'
+    for name in ('derive_targets_summary.json', 'bt4_policy_mix_summary.json'):
+        del manifest['input_pins'][str(old / name)]
+    manifest['input_pins'].update({str(corpus / 'derive_targets_summary.json'): 'b' * 64,
+                                 str(corpus / 'sf_policy_rewrite_summary.json'): 'a' * 64})
+    return manifest
+
+
+def softsf_files(tmp_path, monkeypatch):
+    """Synthetic final metadata only; no fake corpus payload/operational PASS."""
+    corpus = tmp_path / 'softsf_corpus'
+    corpus.mkdir()
+    monkeypatch.setitem(epoch.CORPORA, 'SoftSF10', corpus)
+    m = softsf_manifest(tmp_path)
+    source_sha = epoch.COMMON_PINS[str(epoch.SOURCE / 'derive_targets_summary.json')]
+    source = {'scheme': {'canonical': 'uniform-d9', 'value_source': 'deepest_phase_covering'},
+              'input': {'input_history_encoding': 'lc0_root_legacy_meta', 'history_rep_fix': True},
+              'value_scheme': {'name': 'search'},
+              'shards': [{'path': f'shard_{i:06d}.zarr', 'rows': 8192 if i < 2308 else 3348}
+                         for i in range(2309)]}
+    rewrite = {'schema': 1, 'status': 'COMPLETE', 'kind': 'sf_policy_score_rewrite',
+               'score_space': 'effective-cp', 'temperature': 10., 'source_dir': str(epoch.SOURCE),
+               'raw_dir': str(epoch.SOFTSF_RAW), 'raw_limit': 20000000, 'rows': 18910484,
+               'shards': 2309, 'rows_dropped_no_result': 1089516, 'mutated_arrays': ['policy_target'],
+               'nonpolicy_arrays_copied': 16, 'raw_manifest_present': False,
+               'source_derive_summary_sha256': source_sha, 'changed_rows': 100,
+               'stored_mass_error_max': .0001,
+               'producer_sha256': {str(tmp_path / suffix): digest for suffix, digest in epoch.SOFTSF_PRODUCER_PINS.items()},
+               'metadata_sha256': {str(epoch.SOURCE / 'derive_targets_summary.json'): source_sha,
+                                   str(epoch.SOFTSF_RAW / 'summary.json'): epoch.SOFTSF_RAW_SUMMARY_SHA},
+               'outputs': source['shards']}
+    derived = {**source, 'policy_target_postprocess': {k: v for k, v in rewrite.items() if k != 'outputs'}}
+    qualification = {'schema': 1, 'status': 'PASS_REGISTERED_CORPUS_QUALIFICATION',
+                     'profile': 'SoftSF10', 'corpus': str(corpus), 'rows': 18910484, 'shards': 2309,
+                     'source': {'path': str(epoch.SOURCE), 'derive_sha256': source_sha},
+                     'derive_summary': {'path': str(corpus / 'derive_targets_summary.json'), 'sha256': 'b' * 64},
+                     'rewrite_summary': {'path': str(corpus / 'sf_policy_rewrite_summary.json'), 'sha256': 'a' * 64}}
+    files: dict[str, dict[str, Any]] = {str(corpus / 'sf_policy_rewrite_summary.json'): rewrite,
+             str(corpus / 'derive_targets_summary.json'): derived,
+             str(epoch.SOURCE / 'derive_targets_summary.json'): source,
+             m['data_qualification']['path']: qualification,
+             m['runtime_manifest']['path']: qualification}
+    # The fixture reuses one evidence path; provide actual runtime fixture only when
+    # constructing a train command. Admission does not parse this as a runtime.
+    monkeypatch.setattr(arena, 'read', lambda path: files[str(path)])
+    pins = []
+    monkeypatch.setattr(arena, 'pin', lambda path, digest: pins.append((str(path), digest)))
+    monkeypatch.setattr(arena, 'runtime_identity', lambda _identity: {'verified_runtime': True})
+    return m, files, pins
+
+
+@pytest.mark.parametrize('mutation', ['none', 'bt4_kind', 'temperature', 'score_space', 'selector',
+                                      'nonpolicy', 'producer', 'writing', 'failed', 'inert',
+                                      'nan_mass', 'raw_source', 'inventory', 'fake_mix_receipt'])
+def test_softsf_requires_genuine_completed_rewrite_and_original_source(tmp_path, monkeypatch, mutation):
+    m, files, pins = softsf_files(tmp_path, monkeypatch)
+    corpus = epoch.corpus_for(m)
+    rewrite = files[str(corpus / 'sf_policy_rewrite_summary.json')]
+    derived = files[str(corpus / 'derive_targets_summary.json')]
+    if mutation == 'bt4_kind':
+        rewrite['kind'] = 'global'
+    elif mutation == 'temperature':
+        rewrite['temperature'] = 40.
+    elif mutation == 'score_space':
+        rewrite['score_space'] = 'q'
+    elif mutation == 'selector':
+        derived['scheme'] = {'canonical': 'uniform-d9', 'value_source': 'phase0'}
+    elif mutation == 'nonpolicy':
+        rewrite['nonpolicy_arrays_copied'] = 15
+    elif mutation == 'producer':
+        rewrite['producer_sha256'][str(tmp_path / 'scripts/sf_policy_rewrite.py')] = 'f' * 64
+    elif mutation == 'writing':
+        corpus.with_name(corpus.name + '.writing').mkdir()
+    elif mutation == 'failed':
+        rewrite['status'] = 'FAILED'
+    elif mutation == 'inert':
+        rewrite['changed_rows'] = 0
+    elif mutation == 'nan_mass':
+        rewrite['stored_mass_error_max'] = float('nan')
+    elif mutation == 'raw_source':
+        rewrite['metadata_sha256'][str(epoch.SOFTSF_RAW / 'summary.json')] = 'f' * 64
+    elif mutation == 'inventory':
+        rewrite['outputs'] = list(reversed(rewrite['outputs']))
+    elif mutation == 'fake_mix_receipt':
+        qualification = files[m['data_qualification']['path']]
+        qualification['mix_summary'] = qualification.pop('rewrite_summary')
+    # Preserve the real producer's projected summary relation even for negative
+    # cases, so the substantive recipe/source admission catches each mutation.
+    derived['policy_target_postprocess'] = {k: v for k, v in rewrite.items() if k != 'outputs'}
+    epoch.validate(m)
+    if mutation != 'none':
+        with pytest.raises(ValueError, match=r'SoftSF10|data qualification failed'):
+            epoch.check_pins(m)
+        return
+    assert epoch.check_pins(m) == {'verified_runtime': True}
+    assert epoch.comparisons(m) == ()
+    assert set(m['input_pins']) <= {p for p, _ in pins}
+    assert all('bt4_policy_mix_summary' not in p for p, _ in pins)
+    # Different target path only: same original runtime/config/workers/seed/window.
+    files[m['runtime_manifest']['path']] = {'runtime': {'executable': sys.executable}}
+    soft = epoch.train_command(m)
+    ordinary = epoch.train_command(training_only_manifest(tmp_path))
+    soft[soft.index('--shards') + 1] = ordinary[ordinary.index('--shards') + 1]
+    assert soft == ordinary
+
+
+@pytest.mark.parametrize('mutation', ['schema2', 'bt4_pin'])
+def test_softsf_admission_is_training_only_and_never_relabels_mix_pins(tmp_path, mutation):
+    m = softsf_manifest(tmp_path)
+    if mutation == 'schema2':
+        m['schema'] = 2
+    else:
+        corpus = epoch.corpus_for(m)
+        digest = m['input_pins'].pop(str(corpus / 'sf_policy_rewrite_summary.json'))
+        m['input_pins'][str(corpus / 'bt4_policy_mix_summary.json')] = digest
+    with pytest.raises(ValueError, match=r'SoftSF10 requires|pins differ'):
+        epoch.validate(m)
+
+
+def test_softsf_completed_epoch_uses_shared_schedule_and_retains_history_limits(tmp_path):
+    m = softsf_manifest(tmp_path)
+    run, summary, report = training_fixture(tmp_path)
+    corpus = epoch.corpus_for(m)
+    summary['corpus']['shard_dirs'] = [str(corpus)]
+    report['arms']['SoftSF10'] = report['arms'].pop('E0T05')
+    report['arms']['SoftSF10']['corpus'] = str(corpus)
+    (run / 'summary.json').write_text(json.dumps(summary))
+    report['arms']['SoftSF10']['summary_sha256'] = arena.sha(run / 'summary.json')
+    path = tmp_path / 'realized.json'
+    path.write_text(json.dumps(report))
+    receipt: dict[str, Any] = epoch.completed_training(m, path)
+    assert receipt['role'] == receipt['checkpoint']['role'] == 'SoftSF10'
+    assert receipt['complete'] is True
+    assert receipt['historical_valid_control'] is False
+    assert receipt['historical_validity_problems'] == ['historical purity limitation']

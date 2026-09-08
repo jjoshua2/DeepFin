@@ -120,6 +120,21 @@ The manifest retains `state`, `run`, `training_seconds: 16200`, `runtime_manifes
 `stage_helper_sha256`; omit `arena_launcher_sha256`, `reader`, `comparisons`,
 `arena_seconds` and `total_seconds`. Extra arena fields are rejected.
 
+`SoftSF10` is an additional **schema3-only** profile for the original-source
+raw effective-cp10 SF policy rewrite. It requires the actual
+`sf_policy_rewrite_summary.json` and a `rewrite_summary` pin in the corpus
+qualification; it never adopts a renamed BT4 mix receipt. The final rewrite must
+match the reviewed producer, original raw/source identities, all 2,309 shards,
+unchanged 16 non-policy columns, finite stored-policy mass and positive changed
+rows. The derived summary must preserve the original source selectors, value and
+history metadata, with only its documented postprocess projection added. A
+`.writing` directory or failed/incomplete publication is refused. Qualification
+reuses the completed producer proof and checks current metadata; this launcher
+does not claim a second full payload verification or fresh history encoding.
+SoftSF10 has no schema2 comparison schedule. After its qualified epoch, the
+separate `matched_original_epoch` arena profile can bind it to a completed
+reference such as B100 under a new match registration.
+
 Training-only preserves the qualified old training runtime, exact 18,910,484-row
 seed-zero epoch, 512-row batches, complete finite-window checks and prospective /
 realized canonical schedule checks. The GPU stage keeps its 4.5-hour cap; the
