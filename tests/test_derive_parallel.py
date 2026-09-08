@@ -1226,6 +1226,7 @@ def test_the_merge_rules_do_not_name_a_field_twice() -> None:
         + derive._CONSTANT_FIELDS
         + derive._SENTINEL_MIN_FIELDS
         + derive._ORDERED_EXAMPLE_FIELDS
+        + derive._POLICY_SUPPORT_FIELDS
         + derive._REPACK_OWNED_FIELDS
         + derive._GAME_OWNED_FIELDS
         + tuple(n for owned in derive._STREAM_OWNED_FIELDS.values() for n in owned)

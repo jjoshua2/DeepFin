@@ -14,8 +14,8 @@ to use its existing phase0 budget selection.
 
 For uniform-depth schemes, `--policy-observation phase0` reads only the initial
 complete all-legal block at that depth. It never overlays later narrowed searches.
-A missing complete block or legal-support mismatch fails through the existing
-bounded envelope checks. This aligns a uniform-d9 policy with the phase0 d9
+A missing complete block uses the existing envelope budget; a legal-support
+mismatch is fatal by default. This aligns a uniform-d9 policy with the phase0 d9
 observations used by the rank sidecar; it does not qualify a whole corpus merely
 because the flag was accepted.
 
@@ -36,6 +36,44 @@ value, and source row references:
 
 These are target semantics, not a registered compute plan. Choose the corpus
 snapshot, temperature, limit, output and resource budget for the actual experiment.
+
+## Bounded phase0 policy-support exclusions
+
+`--max-policy-support-misses N` is a separate opt-in budget, defaulting to zero.
+A positive budget requires a uniform-depth scheme with
+`--policy-observation phase0`. It permits excluding a row only when its selected
+complete phase0 policy block is missing legal moves or lists a legal move twice,
+while preserving all legal-count rank slots and its full-width metadata.
+Truncated/appended rank sequences and narrowed/incorrect width metadata are fatal.
+Illegal extras, malformed selected-block ranks/scores, and source/history/input-key
+failures remain fatal. An absent complete block still belongs to the separate
+`--max-envelope-misses` budget; missing results keep their existing counter.
+
+Before counting a support exclusion, the deriver reconstructs the full banked
+history and verifies its original input key. This check does not increment the
+emitted-row identity counters. It records source namespace, resolved source path,
+config hash, shard, physical row, worker/game/ply, original and stored input keys,
+selected depth, missing/duplicate move lists and reason in
+`policy_support_misses.jsonl`. The completed summary includes the same records as
+`realized.policy_support_exclusions`, the separate
+`realized.rows_dropped_policy_support` count, the requested budget, and the evidence
+filename (null when no row was excluded). Default-zero runs retain their existing
+summary shape.
+
+The budget applies to the entire source derivation, not independently to each
+worker. Workers stop if their own count exceeds it; the coordinator checks their
+combined count before repacking or publishing the completed summary. Failed runs
+retain partial outputs and encountered exclusion evidence, including worker-local
+files when a lane fails. Those files do not establish a completed corpus.
+
+All target recipes intended for comparison must use the same source snapshot,
+selector and exclusion bound so their surviving inputs match. The provenance-aware
+rank sidecar verifies the exclusion ledger against the pinned summary, reconstructs
+each excluded row's history and support defect, and refuses a derived reference to
+an excluded row. Legacy rank traversal does not accept these drops without row
+provenance. No raw row is changed, no shallower policy is substituted, and value
+selection remains independent and unchanged. This narrow policy check does not
+claim that every later-phase value observation has been structurally qualified.
 
 ## Optional compact row provenance
 
