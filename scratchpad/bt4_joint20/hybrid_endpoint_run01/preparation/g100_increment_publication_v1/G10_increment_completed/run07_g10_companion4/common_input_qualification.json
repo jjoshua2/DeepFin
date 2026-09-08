@@ -1,0 +1,368 @@
+{
+  "status": "complete",
+  "rows": 264297,
+  "physical_rows": 265898,
+  "derive_realized": {
+    "base_tier_moves": 6931120,
+    "deep_tier_moves": 0,
+    "envelope_miss_examples": [],
+    "floor_recovered_from_emitted_policy": {
+      "max": NaN,
+      "mean": NaN,
+      "min": NaN,
+      "n": 0
+    },
+    "floor_recovery_floor_tol": 1e-06,
+    "floor_recovery_min_distinct_values": 3,
+    "floor_recovery_min_rel_gap": 1e-09,
+    "floor_recovery_min_spread_per_tau": 0.0001,
+    "floor_recovery_skipped_few_values": 0,
+    "floor_recovery_skipped_ill_conditioned": 0,
+    "history_root_reason_counts": {
+      "irreversible": 264297
+    },
+    "history_slots_filled_histogram": {
+      "8": 264297
+    },
+    "history_slots_nonzero_max": 8,
+    "history_window_empty_rows": 0,
+    "input_key_verified": 264297,
+    "nodes_floor_hits": 0,
+    "phases_per_row": {
+      "2": 189961,
+      "3": 74337
+    },
+    "policy_min_legal_prob_stored": {
+      "max": 1.0,
+      "mean": 0.02237903931601171,
+      "min": 0.0,
+      "n": 264297
+    },
+    "policy_support_exclusions": [
+      {
+        "duplicate_moves": [
+          "c3g7",
+          "c6b8",
+          "g8f8"
+        ],
+        "full_history_input_key_verified": true,
+        "game_id": 6792,
+        "input_key": "98f9ed82f9f573e5c45e60f2b98d19ff",
+        "missing_moves": [
+          "c3a1",
+          "c3a3",
+          "c3b2",
+          "c3h8",
+          "c6a5",
+          "c6d4",
+          "c6d8",
+          "c6e5",
+          "c6e7"
+        ],
+        "ply": 237,
+        "policy_depth": 9,
+        "reason": "selected_phase0_policy_support",
+        "schema": 1,
+        "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+        "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "source_namespace": "eac2ec8e91453dcf58302bcf68634d80abab7b7d40bc468e78f3ed1a109731e8",
+        "source_row": 1446,
+        "source_shard": "w00-00040.jsonl.zst",
+        "stored_input_key": "3c03397e77838946cfe7f7e26d94aa45",
+        "worker_id": 0
+      }
+    ],
+    "policy_support_lost_to_float16": 3729642,
+    "policy_support_max": 77,
+    "policy_support_min": 1,
+    "policy_width": 1858,
+    "realized_base_depth_histogram": {
+      "9": 264297
+    },
+    "realized_value_depth_histogram": {
+      "9": 264297
+    },
+    "repetition_planes_nonzero_rows": 3871,
+    "row_schema_counts": {
+      "3": 264297
+    },
+    "rows_dropped_envelope": 0,
+    "rows_dropped_no_result": 1600,
+    "rows_dropped_policy_support": 1,
+    "rows_read": 265898,
+    "rows_written": 264297,
+    "support_checks": 264297,
+    "temp_recovered_from_emitted_policy": {
+      "max": 0.0005007846211803883,
+      "mean": 0.0005000003998585352,
+      "min": 0.0004996441816110034,
+      "n": 233582
+    },
+    "temp_recovery_saturation_q_spread_epsilon": 1e-09,
+    "temp_recovery_skipped_saturated": 28,
+    "value_depth_moved_rows": 264297,
+    "value_scheme_realized": {
+      "blend_weight_w": {
+        "max": NaN,
+        "mean": NaN,
+        "min": NaN,
+        "n": 0
+      },
+      "boundary_suppressed_by_flag": 0,
+      "game_rows_max": 0,
+      "game_rows_min": 0,
+      "games": 0,
+      "games_cut_by_limit": 0,
+      "games_with_dropped_tail": 0,
+      "instability_u": {
+        "max": 1.9929077507986221,
+        "mean": 0.015458556181327522,
+        "min": 0.0,
+        "n": 264297
+      },
+      "l1_delta_vs_search_value": {
+        "max": 0.0,
+        "mean": 0.0,
+        "min": 0.0,
+        "n": 264297
+      },
+      "played_regret": {
+        "max": 2.0,
+        "mean": 0.10261000658492207,
+        "min": 0.0,
+        "n": 264297
+      },
+      "ply_gaps_nonunit": 0,
+      "rows_differing_from_c_full": 0,
+      "rows_differing_from_search_value": 0,
+      "rows_missing_depths": 0,
+      "rows_missing_played_move": 0,
+      "single_row_games": 0,
+      "stop_boundary_ahead": 0,
+      "stop_boundary_self": 0,
+      "stop_terminal": 0,
+      "w_const_differs_from_map": 0
+    },
+    "values_by_phase": {
+      "0": 6931120
+    },
+    "x_planes": 175
+  },
+  "source_selection": {
+    "schema": 1,
+    "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+    "source_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+    "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9",
+    "shards": [
+      {
+        "source_shard": "w00-00032.jsonl.zst",
+        "rows": 8366,
+        "source_sha256": "57368e354172d0235dc793d499baacebbb9eeeb5fd71753adca613eb0b1e5c1e"
+      },
+      {
+        "source_shard": "w00-00033.jsonl.zst",
+        "rows": 8262,
+        "source_sha256": "45e5154fd0b3921bfa1a46e5bec37aa385e681752b5c6a071b3c8b9cb5289263"
+      },
+      {
+        "source_shard": "w00-00034.jsonl.zst",
+        "rows": 8218,
+        "source_sha256": "e820956e6e16b64e8cd8e99469762f4ca9124fef38b0f1faa57a21de79a1612a"
+      },
+      {
+        "source_shard": "w00-00035.jsonl.zst",
+        "rows": 8312,
+        "source_sha256": "621c4feb8f3267744aba2f8306a8b4329c8c39333946ca34e53b0d1ebab8a773"
+      },
+      {
+        "source_shard": "w00-00036.jsonl.zst",
+        "rows": 8209,
+        "source_sha256": "1c54dbea09d520d01cb9eb724c4b11bc1b84d9d605a91709d7f5eb967971169a"
+      },
+      {
+        "source_shard": "w00-00037.jsonl.zst",
+        "rows": 8316,
+        "source_sha256": "6f54e0e28635a36766f0c35ad5c5777ee6bb3cfe893c5b82218472b4a8a46c63"
+      },
+      {
+        "source_shard": "w00-00038.jsonl.zst",
+        "rows": 8219,
+        "source_sha256": "4d3e46a2178e18a7c4f4a58d26814a71a010162daa880afcfa1553e293f8f9e9"
+      },
+      {
+        "source_shard": "w00-00039.jsonl.zst",
+        "rows": 8425,
+        "source_sha256": "579debb4cd96e4797da9b0893f59281133961349e3c390300c2c4132b83a20bf"
+      },
+      {
+        "source_shard": "w00-00040.jsonl.zst",
+        "rows": 8310,
+        "source_sha256": "37d116e2f3837d73048e3bb5bd8bfcc107721c3a00d692849777928072d96ea1"
+      },
+      {
+        "source_shard": "w00-00041.jsonl.zst",
+        "rows": 8293,
+        "source_sha256": "b1fcc9250d789cf6a21490586268040d8f0fc6828e407d29cbd25f64b2971e58"
+      },
+      {
+        "source_shard": "w00-00042.jsonl.zst",
+        "rows": 8355,
+        "source_sha256": "3915eff6b5ade44e402a871d70dd53b190bb0735bb94e1b0f0590b8d6449e773"
+      },
+      {
+        "source_shard": "w00-00043.jsonl.zst",
+        "rows": 8472,
+        "source_sha256": "61c21004a1fb0fca4953cbbe8a5ebf6eee2a1db46886e746d37ad228919dd37f"
+      },
+      {
+        "source_shard": "w00-00044.jsonl.zst",
+        "rows": 8285,
+        "source_sha256": "f3d6c2d0ed7ae691f7da00745e2b38475c72d86114aa0ba9e8f6240733f221e2"
+      },
+      {
+        "source_shard": "w00-00045.jsonl.zst",
+        "rows": 8263,
+        "source_sha256": "130cce5a3b5542214722070436fce5587fa868fa1bf38c11e6b8566f38f21181"
+      },
+      {
+        "source_shard": "w00-00046.jsonl.zst",
+        "rows": 8299,
+        "source_sha256": "e2d19bd0d7428972d9e3b4eb1e4ab44f952d6478a5f007491329be94842196b4"
+      },
+      {
+        "source_shard": "w00-00047.jsonl.zst",
+        "rows": 8299,
+        "source_sha256": "d3cd6cdf33f6a710e6e9d5a319ae3768d6aa72ba766dc60d33c4043959216af0"
+      },
+      {
+        "source_shard": "w00-00048.jsonl.zst",
+        "rows": 8341,
+        "source_sha256": "2a3e968b45fa1ca0a9db48c64e53e19d09756aa488a89d0d891115def81b4686"
+      },
+      {
+        "source_shard": "w00-00049.jsonl.zst",
+        "rows": 8336,
+        "source_sha256": "d1cbdc616e8814677e37f95a20fdf9da5262933aa0a94de6ec6d0dc32ca8c376"
+      },
+      {
+        "source_shard": "w00-00050.jsonl.zst",
+        "rows": 8358,
+        "source_sha256": "557150a8874d93e6aa69084c5c9f3e3e9f03379a499e6ba2aab0d840f59f1c28"
+      },
+      {
+        "source_shard": "w00-00051.jsonl.zst",
+        "rows": 8283,
+        "source_sha256": "b2d5fbff8658283c528cfbc07f6a404897fef35b47d8c6bbf815fa0661facb93"
+      },
+      {
+        "source_shard": "w00-00052.jsonl.zst",
+        "rows": 8197,
+        "source_sha256": "466c30fa5b2e4bdaa2c4860e164ee118b7560b2535cd7d3cb464f85c6d98e714"
+      },
+      {
+        "source_shard": "w00-00053.jsonl.zst",
+        "rows": 8224,
+        "source_sha256": "841dd36cc434ef51f490cf7d71a35b9754a49bc288adbed3205739bceedc6a06"
+      },
+      {
+        "source_shard": "w00-00054.jsonl.zst",
+        "rows": 8377,
+        "source_sha256": "d30a048fff0a1fd8e2318eb8c73fb0090ee427ef13d14b129e590bdf40475816"
+      },
+      {
+        "source_shard": "w00-00055.jsonl.zst",
+        "rows": 8333,
+        "source_sha256": "401892524f42872ce4f3828216e80870d30166a556f9ef0ddb6c655a49ffa930"
+      },
+      {
+        "source_shard": "w00-00056.jsonl.zst",
+        "rows": 8256,
+        "source_sha256": "22fede9ed38f1b0777c8c35c4dd7a02d1ba62d18088d8ef7281cea1323676697"
+      },
+      {
+        "source_shard": "w00-00057.jsonl.zst",
+        "rows": 8287,
+        "source_sha256": "bc6f4085d9e106c655e63b396d10aa10d2bb088751b48812f2b1f6eed60f59d6"
+      },
+      {
+        "source_shard": "w00-00058.jsonl.zst",
+        "rows": 8314,
+        "source_sha256": "b0f445280d0bb585eb3fb3ce64aadeb56dc3aedaac5af952c16049b6141f1f40"
+      },
+      {
+        "source_shard": "w00-00059.jsonl.zst",
+        "rows": 8275,
+        "source_sha256": "9c204570c599d48d371dd6bc1ef9edc10bdd7ae52cdae2de3b08391a83baa8d9"
+      },
+      {
+        "source_shard": "w00-00060.jsonl.zst",
+        "rows": 8282,
+        "source_sha256": "5a31590acd47030e20d55e1d9432152b19f966660d2bda50a815a53042ca4d12"
+      },
+      {
+        "source_shard": "w00-00061.jsonl.zst",
+        "rows": 8297,
+        "source_sha256": "6d63a5051c696aad1f85e10cce36a4d5fc3f7005f0bb2009cff5b73e79ae1a6d"
+      },
+      {
+        "source_shard": "w00-00062.jsonl.zst",
+        "rows": 8296,
+        "source_sha256": "edee0c70d4b24f2fc528acd8b30aa845d8075216280bab7fd955b8a8beaceb75"
+      },
+      {
+        "source_shard": "w00-00063.jsonl.zst",
+        "rows": 8539,
+        "source_sha256": "7935fb1a57bf104a15c38ed7b56f2d5bfd1e6ea82c41ecc7c07c7335b8b676a1"
+      }
+    ],
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_shards.json",
+    "sha256": "4964faba4857721f945b96a909914ae97fc206f907df5b8dc97d89b97dd170dd",
+    "order": "original corpus shard order; limit applies after selection"
+  },
+  "independent_rank_missing_result_rows": 1600,
+  "verified_support_exclusion_rows": 1,
+  "omitted_rows": 1601,
+  "complement_proof": "rank eligibility plus injective full-history physical joins and exact universe cardinality; omitted IDs reconstructible from selection universe minus emitted refs",
+  "per_raw_shard_survivors": {
+    "w00-00032.jsonl.zst": 8366,
+    "w00-00033.jsonl.zst": 8262,
+    "w00-00034.jsonl.zst": 8218,
+    "w00-00035.jsonl.zst": 8312,
+    "w00-00036.jsonl.zst": 8209,
+    "w00-00037.jsonl.zst": 8316,
+    "w00-00038.jsonl.zst": 8219,
+    "w00-00039.jsonl.zst": 8425,
+    "w00-00040.jsonl.zst": 7909,
+    "w00-00041.jsonl.zst": 8293,
+    "w00-00042.jsonl.zst": 8355,
+    "w00-00043.jsonl.zst": 8472,
+    "w00-00044.jsonl.zst": 8285,
+    "w00-00045.jsonl.zst": 8263,
+    "w00-00046.jsonl.zst": 8299,
+    "w00-00047.jsonl.zst": 7899,
+    "w00-00048.jsonl.zst": 7941,
+    "w00-00049.jsonl.zst": 7936,
+    "w00-00050.jsonl.zst": 8358,
+    "w00-00051.jsonl.zst": 8283,
+    "w00-00052.jsonl.zst": 8197,
+    "w00-00053.jsonl.zst": 8224,
+    "w00-00054.jsonl.zst": 8377,
+    "w00-00055.jsonl.zst": 8333,
+    "w00-00056.jsonl.zst": 8256,
+    "w00-00057.jsonl.zst": 8287,
+    "w00-00058.jsonl.zst": 8314,
+    "w00-00059.jsonl.zst": 8275,
+    "w00-00060.jsonl.zst": 8282,
+    "w00-00061.jsonl.zst": 8297,
+    "w00-00062.jsonl.zst": 8296,
+    "w00-00063.jsonl.zst": 8539
+  },
+  "source_qualified_input_sequence_sha256": "0f062b81a26f298af2b3d67d57b82a98220502030162ab85b7614f2c0850976d",
+  "unchanged_derived_storage_identity": "ddd5f03e4e525a54f12f698499b0b8cee670dd9377261f6e8787d76aa72b0471",
+  "summary_pins": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/derived/derive_targets_summary.json": "a370531f445fa9bd1716c0726ac41b441c855f2bf123a5800689f6859c7286e8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json": "47c4eadde86742d2453494e78130242446e7f952b23cb3a8ebe4e33ae086d3d8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json": "2809607049fd1756c37a1fa7fa9164b60f3d1a901fb7998a25c2070e79b701b4"
+  },
+  "scope": "All emitted rows admitted by source-bound BT4/rank consumers, unique source physical rows and immutable derived non-policy lineage; no training schedule execution."
+}

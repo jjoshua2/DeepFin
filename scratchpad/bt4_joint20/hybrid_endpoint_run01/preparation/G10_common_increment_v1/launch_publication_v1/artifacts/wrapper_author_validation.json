@@ -1,0 +1,20 @@
+{
+  "status": "PASS_PREPARED_OPERATIONAL_WRAPPER_NOT_FROZEN",
+  "created_utc": "2026-09-08T06:29:22.772651+00:00",
+  "files": {
+    "run_common.py": "196464104f2da3cace69032212098356d497296575e0f0a31dc5c3f8dfe0ee86",
+    "qualify_wrapper.py": "508e3b25ae7d6888ecb72d4be1e428a9c45e5a0725e3b58a203dd30a126adb20",
+    "wrapper_qualification_v2.json": "771bc38c7176219f512911dd2beb984fec65367dcb5d3ceedaea833fd5e6560b",
+    "wrapper_preparation.md": "23bd182ca6516bac690f502ed5a6f386ab813f80b9acbf3047ae5097d6e50c6d",
+    "python_bootstrap/sitecustomize.py": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad"
+  },
+  "fixtures": 7,
+  "scoped_ruff": "python -m ruff check --select E9,F63,F7,F82 run_common.py qualify_wrapper.py: PASS",
+  "fixture_command": "env CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 BLOSC_NTHREADS=2 nice -n 19 ionice -c 3 taskset -c 2,3 /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/qualify_wrapper.py",
+  "no_operational_outputs": true,
+  "limits": [
+    "No actual freeze, preparation, source payload scan, training or GPU",
+    "Final merged selection runtime/native pins and independent wrapper review still required",
+    "No broad lint/type or full-suite run; bounded operational fixture/static scope only"
+  ]
+}

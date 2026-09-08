@@ -4,13 +4,93 @@ September 7, 2026. This preparation work supports the larger-data stage of the
 [adaptive bootstrap research](2026-09-07-bt4-hybrid-endpoints.md). It does not choose
 another recipe before H20's completed comparison or establish playing strength.
 
-## Registered common-input increment — September 8
+## Next larger disjoint batch registered — September 8
 
-The next bounded preparation selects closed shards **w00-00032 through
+The [prospective registration](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_parallel/preregistration.md)
+selects **1,062,946 raw rows in 128 closed shards**, w00-00064 through w00-00127
+from each original source (531,791 run06; 531,155 run07). The frozen metadata
+records no source-qualified game overlap with the earlier prefix and increment.
+Survivor counts remain unknown. Original receipts, source metadata and selections
+are retained in the [138-member metadata archive](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_parallel_metadata.tar.gz),
+with per-member hashes in the [publication manifest](evidence/bt4-bootstrap/h20-g100-increment-launch-manifest.json).
+Raw payloads were not scanned to prepare this registration.
+
+The target semantics and exclusion categories remain unchanged: complete
+phase-zero d9 policy, temperature 0.0005, floor zero, separate latest-phase search
+value and full-history row provenance; at most 64 evidenced support defects and
+2% missing results per source, with zero envelope drops. Each consumer must
+verify its selected raw payloads and close exact eligible-survivor accounting.
+
+This batch is **registered, not launched**. The proposal uses the merged
+[single-pass adapter](2026-09-08-bt4-adapter-single-pass.md) and two concurrent
+source lanes, each with two workers, two numerical threads and disjoint CPU pairs,
+after the current materializer and increment release those cores. The overall
+cap is four hours including termination, with nice 19, idle I/O priority, hidden
+GPU, a periodically sampled 8 GiB output/cache bound and a 150 GiB free-space
+reserve. The sampled output bound is not a filesystem quota. Final reviewed
+runner/runtime/manifest bindings remain pending; these metadata records do not
+claim an executable launch is ready.
+
+This distinct-data preparation changes both adapter implementation and source
+concurrency. Its eventual timings will describe operational practicality, not a
+controlled parallel-scaling result. It selects no teacher mix, training run or
+playing-strength conclusion.
+
+## Completed common-input increment — September 8
+
+The disjoint increment completed at **07:40:52 UTC**, exit zero, in **54.48
+minutes** (3,268.85 seconds), within its registered two-hour cap. It produced
+**526,376 common rows across 65 derived shards**. Together with the earlier
+528,545-row prefix, **1,054,921 common rows across 131 shards** are now prepared
+in their original source-specific directories. This does not claim a merged
+training corpus or a completed training schedule.
+
+| Source | Raw rows | Common rows | Shards | Missing result | Support exclusions |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| run06 | 266,491 | 262,079 | 32 | 4,400 | 12 |
+| run07 | 265,898 | 264,297 | 33 | 1,600 | 1 |
+| Total | 532,389 | 526,376 | 65 | 6,000 | 13 |
+
+There were zero envelope drops. Each source remained below its registered 2%
+missing-result ceiling and 64-support-exclusion ceiling. The
+[run06](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_increment_completed/run06_g10/common_input_qualification.json)
+and [run07 qualifications](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_increment_completed/run07_g10_companion4/common_input_qualification.json)
+record complete source-qualified survivor accounting, matching independent rank
+eligibility counts, unique physical-row/full-history joins, ordinary BT4/rank
+admission and unchanged derived storage. Omitted identities remain reconstructible
+from the pinned selection minus emitted row provenance; the 13 support-defect
+identities are also published in their actual ledgers.
+
+The [completed-metadata review](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_increment_completed/completion_review_v1/review.json)
+checked six final summary hashes, all 65 derived/BT4/rank attribute-lineage joins,
+65 row-provenance NPZ byte hashes, selected raw storage identities and exact
+complement arithmetic. It did not replay source or policy payloads: the full
+eligibility and legal-distribution checks rely on the successfully executed pinned
+consumers and qualifier. The reviewer authored earlier pilot plumbing, so this is
+a separate completed-accounting check rather than a new independent audit of all
+inherited qualification code. The
+[terminal observation](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/G10_increment_completed/completion_review_v1/terminal_observation.json)
+found all 28 recorded coordinator, stage and observed descendant PIDs absent.
+
+Both sources ran sequentially on the registered two-CPU allocation. GNU-time
+wall measurements, summed across the two sources, were 951.35 seconds for
+derivation, 8.18 for storage snapshots, 1,419.26 for BT4 adaptation, 765.60 for
+rank generation and 97.73 for qualification. The largest reported individual
+stage maximum RSS was 1,286,628 KiB. These are one completed distinct-data batch
+and sampled process/resource records, not a controlled speedup measurement.
+This batch used the pre-single-pass adapter at `f77101a59`; it does not measure
+the later PR #544 optimization or the prospective two-source concurrency change.
+
+The [completion evidence manifest](evidence/bt4-bootstrap/g10-increment-completion-manifest.json)
+binds the supervisor/worker completion, ten stage receipts, full qualifications,
+losslessly compressed summaries, ledgers and review. Earlier launch snapshots
+below retain their original bytes and capture-time status.
+
+The registered preparation selected closed shards **w00-00032 through
 w00-00063 from each original source**: **532,389 physical rows** in 64 shards
 (266,491 run06; 265,898 run07). This is disjoint from the completed prefix below;
-its survivor and exclusion counts are still unknown. Receipt/metadata checks
-bound the original source identities and completed history-aware BT4 sidecars
+its realized survivor and exclusion counts are reported above. The prior
+receipt/metadata checks bound the original source identities and completed history-aware BT4 sidecars
 without scanning raw payloads or rerunning the teacher.
 
 The [preregistration](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/preregistration.json),
@@ -29,9 +109,20 @@ The limit is **two hours**, two CPUs (2–3), nice 19/idle I/O priority, hidden 
 8 GiB of output/cache and a 150 GiB free-space reserve. The previous 56.62-minute
 batch is a planning reference, not a throughput guarantee. Closed-shard selection
 is implemented and merged in [PR #542](https://github.com/jjoshua2/DeepFin/pull/542);
-the separately reviewed wrapper and exact runtime binding are still pending.
-**This increment has not launched.** It prepares common inputs only: no policy
-mixture, teacher inference, training or new recipe selection is included.
+the wrapper and CPU runtime were subsequently qualified before launch.
+The [operator receipt](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/operator_launch.json)
+records startup at **06:46:23 UTC**, with coordinator 312086. The
+[06:49:31 host snapshot](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/startup_observation.json)
+confirms the owned worker processes, CPUs 2–3, nice 19 and hidden GPU. That
+historical snapshot establishes launch only; the later completed receipts above supply the realized counts. The
+operation prepared common inputs only: no policy mixture, teacher
+inference, training or new recipe selection is included.
+
+The [22-artifact launch archive](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/manifest.json)
+preserves the exact wrapper, reviews, final launch manifest, actual runtime
+qualification and startup receipts. It binds merged PR #542 at `f77101a59` and
+the existing Python 3.13.15 / Torch 2.14.0 CPU environment. The later single-pass
+adapter is not retroactively attributed to this batch.
 
 The [77-member frozen metadata archive](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/G10_increment_metadata.tar.gz)
 contains original manifests, selected closed receipts and sidecar attributes.

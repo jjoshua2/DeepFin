@@ -1,0 +1,21 @@
+usage: adapt_raw_bt4_sidecars.py [-h] --manifest MANIFEST
+                                 --expected-manifest-sha256 EXPECTED_MANIFEST_SHA256
+                                 --out OUT [--max-raw-rows MAX_RAW_ROWS]
+                                 [--max-index-bytes MAX_INDEX_BYTES]
+
+Join pinned raw BT4 labels to derived rows through verified full-history
+provenance. CPU-only preparation. Input manifest: schema1, derived_summary
+{path,sha256}, teacher {onnx {path,sha256}, policy_output, providers, remap},
+sources list of {source_dir, sidecar_dir, manifest {path,sha256}, receipts
+{path,sha256}}. Receipts must be immutable snapshots of closed-shard raw
+progress, never live logs.
+
+options:
+  -h, --help            show this help message and exit
+  --manifest MANIFEST
+  --expected-manifest-sha256 EXPECTED_MANIFEST_SHA256
+  --out OUT
+  --max-raw-rows MAX_RAW_ROWS
+  --max-index-bytes MAX_INDEX_BYTES
+                        cap temporary disk identity cache (56 bytes/raw row
+                        plus headers)

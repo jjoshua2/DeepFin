@@ -1,0 +1,265 @@
+{
+  "checked_unix": 1788850171.9389198,
+  "owned_processes": {
+    "312086": {
+      "argv": [
+        "/usr/bin/python3",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run_common.py",
+        "--execute",
+        "--expected-plan-sha256",
+        "87a33a55678ff0c02daa61bfe7aaab0acb82dd019753247a26c8a1323d9aa752"
+      ],
+      "cpu_affinity": [
+        2,
+        3
+      ],
+      "nice": 19,
+      "rss_kib": "18488 kB",
+      "selected_environment": {
+        "CUDA_VISIBLE_DEVICES": "",
+        "OMP_NUM_THREADS": "2",
+        "OPENBLAS_NUM_THREADS": "2",
+        "MKL_NUM_THREADS": "2",
+        "NUMEXPR_NUM_THREADS": "2",
+        "BLOSC_NTHREADS": "2",
+        "PYTHONPATH": "<unset>"
+      }
+    },
+    "312101": {
+      "argv": [
+        "/usr/bin/timeout",
+        "--signal=TERM",
+        "--kill-after=30s",
+        "7168.575s",
+        "/usr/bin/nice",
+        "-n",
+        "19",
+        "/usr/bin/ionice",
+        "-c",
+        "3",
+        "/usr/bin/taskset",
+        "-c",
+        "2,3",
+        "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run_common.py",
+        "--worker",
+        "--expected-plan-sha256",
+        "87a33a55678ff0c02daa61bfe7aaab0acb82dd019753247a26c8a1323d9aa752"
+      ],
+      "cpu_affinity": [
+        2,
+        3
+      ],
+      "nice": 19,
+      "rss_kib": "2048 kB",
+      "selected_environment": {
+        "CUDA_VISIBLE_DEVICES": "",
+        "OMP_NUM_THREADS": "2",
+        "OPENBLAS_NUM_THREADS": "2",
+        "MKL_NUM_THREADS": "2",
+        "NUMEXPR_NUM_THREADS": "2",
+        "BLOSC_NTHREADS": "2",
+        "PYTHONPATH": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/python_bootstrap:/tmp/deepfin-g10-increment-tools"
+      }
+    },
+    "312102": {
+      "argv": [
+        "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run_common.py",
+        "--worker",
+        "--expected-plan-sha256",
+        "87a33a55678ff0c02daa61bfe7aaab0acb82dd019753247a26c8a1323d9aa752"
+      ],
+      "cpu_affinity": [
+        2,
+        3
+      ],
+      "nice": 19,
+      "rss_kib": "45076 kB",
+      "selected_environment": {
+        "CUDA_VISIBLE_DEVICES": "",
+        "OMP_NUM_THREADS": "2",
+        "OPENBLAS_NUM_THREADS": "2",
+        "MKL_NUM_THREADS": "2",
+        "NUMEXPR_NUM_THREADS": "2",
+        "BLOSC_NTHREADS": "2",
+        "PYTHONPATH": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/python_bootstrap:/tmp/deepfin-g10-increment-tools"
+      }
+    },
+    "312109": {
+      "argv": [
+        "/usr/bin/time",
+        "-o",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10.derive.time.json",
+        "-f",
+        "{\"wall_seconds\":%e,\"user_seconds\":%U,\"system_seconds\":%S,\"max_rss_kib\":%M,\"filesystem_inputs\":%I,\"filesystem_outputs\":%O,\"exit_code\":%x}",
+        "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+        "/tmp/deepfin-g10-increment-tools/scripts/derive_corpus_targets.py",
+        "--corpus",
+        "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+        "--out",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived",
+        "--limit",
+        "266491",
+        "--max-policy-support-misses",
+        "64",
+        "--source-shards",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_shards.json",
+        "--scheme",
+        "uniform-d9",
+        "--policy-observation",
+        "phase0",
+        "--value-observation",
+        "latest-phase",
+        "--value-scheme",
+        "search",
+        "--temp",
+        "0.0005",
+        "--floor",
+        "0",
+        "--seed",
+        "0",
+        "--rows-per-shard",
+        "8192",
+        "--workers",
+        "2",
+        "--row-provenance"
+      ],
+      "cpu_affinity": [
+        2,
+        3
+      ],
+      "nice": 19,
+      "rss_kib": "1568 kB",
+      "selected_environment": {
+        "CUDA_VISIBLE_DEVICES": "",
+        "OMP_NUM_THREADS": "2",
+        "OPENBLAS_NUM_THREADS": "2",
+        "MKL_NUM_THREADS": "2",
+        "NUMEXPR_NUM_THREADS": "2",
+        "BLOSC_NTHREADS": "2",
+        "PYTHONPATH": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/python_bootstrap:/tmp/deepfin-g10-increment-tools"
+      }
+    },
+    "312110": {
+      "argv": [
+        "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+        "/tmp/deepfin-g10-increment-tools/scripts/derive_corpus_targets.py",
+        "--corpus",
+        "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+        "--out",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived",
+        "--limit",
+        "266491",
+        "--max-policy-support-misses",
+        "64",
+        "--source-shards",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_shards.json",
+        "--scheme",
+        "uniform-d9",
+        "--policy-observation",
+        "phase0",
+        "--value-observation",
+        "latest-phase",
+        "--value-scheme",
+        "search",
+        "--temp",
+        "0.0005",
+        "--floor",
+        "0",
+        "--seed",
+        "0",
+        "--rows-per-shard",
+        "8192",
+        "--workers",
+        "2",
+        "--row-provenance"
+      ],
+      "cpu_affinity": [
+        2,
+        3
+      ],
+      "nice": 19,
+      "rss_kib": "266696 kB",
+      "selected_environment": {
+        "CUDA_VISIBLE_DEVICES": "",
+        "OMP_NUM_THREADS": "2",
+        "OPENBLAS_NUM_THREADS": "2",
+        "MKL_NUM_THREADS": "2",
+        "NUMEXPR_NUM_THREADS": "2",
+        "BLOSC_NTHREADS": "2",
+        "PYTHONPATH": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/python_bootstrap:/tmp/deepfin-g10-increment-tools"
+      }
+    },
+    "312112": {
+      "argv": [
+        "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+        "-c",
+        "from multiprocessing.resource_tracker import main;main(6)"
+      ],
+      "cpu_affinity": [
+        2,
+        3
+      ],
+      "nice": 19,
+      "rss_kib": "39640 kB",
+      "selected_environment": {
+        "CUDA_VISIBLE_DEVICES": "",
+        "OMP_NUM_THREADS": "2",
+        "OPENBLAS_NUM_THREADS": "2",
+        "MKL_NUM_THREADS": "2",
+        "NUMEXPR_NUM_THREADS": "2",
+        "BLOSC_NTHREADS": "2",
+        "PYTHONPATH": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/python_bootstrap:/tmp/deepfin-g10-increment-tools"
+      }
+    },
+    "312113": {
+      "argv": [
+        "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+        "-c",
+        "from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=7, pipe_handle=13)",
+        "--multiprocessing-fork"
+      ],
+      "cpu_affinity": [
+        2,
+        3
+      ],
+      "nice": 19,
+      "rss_kib": "509708 kB",
+      "selected_environment": {
+        "CUDA_VISIBLE_DEVICES": "",
+        "OMP_NUM_THREADS": "2",
+        "OPENBLAS_NUM_THREADS": "2",
+        "MKL_NUM_THREADS": "2",
+        "NUMEXPR_NUM_THREADS": "2",
+        "BLOSC_NTHREADS": "2",
+        "PYTHONPATH": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/python_bootstrap:/tmp/deepfin-g10-increment-tools"
+      }
+    },
+    "312114": {
+      "argv": [
+        "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+        "-c",
+        "from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=7, pipe_handle=15)",
+        "--multiprocessing-fork"
+      ],
+      "cpu_affinity": [
+        2,
+        3
+      ],
+      "nice": 19,
+      "rss_kib": "510048 kB",
+      "selected_environment": {
+        "CUDA_VISIBLE_DEVICES": "",
+        "OMP_NUM_THREADS": "2",
+        "OPENBLAS_NUM_THREADS": "2",
+        "MKL_NUM_THREADS": "2",
+        "NUMEXPR_NUM_THREADS": "2",
+        "BLOSC_NTHREADS": "2",
+        "PYTHONPATH": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/python_bootstrap:/tmp/deepfin-g10-increment-tools"
+      }
+    }
+  },
+  "status": "LIVE_STARTUP_OBSERVATION_NOT_COMPLETION",
+  "scope": "No corpus result or playing outcomes read."
+}

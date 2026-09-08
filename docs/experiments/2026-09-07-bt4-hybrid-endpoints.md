@@ -2,11 +2,51 @@
 
 Registered September 7, 2026, after the [fresh C/E confirmation](2026-09-07-bt4-fresh-confirmation.md)
 completed and before training or playing outcomes for the new arms. **Status:
-H20/C100 completed: +45.07 Elo [27.00, 63.39], a promising primary development screen. H20/G100 has launched; H20/C400 remains pending. The full registered package is incomplete.**
+H20/C100 completed at +45.07 Elo [27.00, 63.39] and H20/G100 at +85.78 Elo [67.25, 104.80]. The registered C400 probe has launched; its outcomes remain unread. The full package is incomplete.**
 The previous screen is complete. This registration selects H20 as the next bounded
 comparison. Subsequent tests are chosen from completed results, not a mandatory
 three-arm or 168-hour queue. Routine choices within the research goal do not need
 individual user approval. Production adoption remains separate.
+
+## Completed H20/G100 comparison — September 8
+
+H20 scored **62.10%** against G20T05 at matched 100 simulations: **493 wins,
+256 draws and 251 losses**, giving **+85.78 Elo [67.25, 104.80]**. All 1,000 games
+and 500 color-reversed opening pairs completed, with zero orphan rows. The nominal
+95% interval uses opening-pair mean scores and the same registered Elo transform
+as the primary C100 screen. This conditional comparison favors H20 over G20T05
+for the registered selected-move-set construction at a shared 20% global BT4
+dose, conditional on the previously verified outside-set target equality within
+storage tolerance.
+
+The [independent review](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/H20_G100/independent_review.json)
+recomputed the completed bank and checked both checkpoint identities, complete
+realized search dictionaries, book, paired openings, execution settings and
+training/schedule provenance. Prior temperature was 1.0 for both networks.
+The [completion receipt](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/H20_G100/complete.json)
+records **2,595.36 seconds / 0.7209 charged GPU hours**, ending at **07:13:10 UTC**,
+within the 90-minute cap. Three games reached the registered 300-ply limit; none
+was cut short by the wall-time cap. The earlier process receipt retains `complete:false`
+from before scientific qualification; `complete.json` separately records the
+subsequent successful qualification.
+
+The [readout](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/H20_G100/readout.json)
+and [losslessly compressed game bank](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/H20_G100/arena.games.jsonl.gz)
+are published with original and compressed hashes in the
+[evidence manifest](evidence/bt4-bootstrap/h20-g100-increment-launch-manifest.json).
+These results concern one seed-zero epoch on reused development openings. They
+do not measure seed variation, remove adaptive-selection uncertainty, establish
+search scaling or authorize production promotion. The historical-control
+limitations below remain unchanged.
+
+The [C400 launch snapshot](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/g100_increment_publication_v1/C20T05.s400.process.snapshot.json)
+records the next registered probe starting at **07:18:51 UTC**: H20 versus C20T05,
+400 simulations, 500 games / 250 paired openings, prior temperature 1.0, and the
+same 90-minute cap. Arena PID 316336 is owned by timeout 316335 and coordinator
+288450. This snapshot establishes launch only; no C400 games, results or rolling
+logs were read for this publication. The completed C100 and G100 cells favor H20
+at the development budget; the registered C400 cell remains necessary before a
+verdict on the full package.
 
 ## Completed H20/C100 primary screen — September 8
 
@@ -32,8 +72,9 @@ This is one seed-zero epoch on reused development openings. The interval measure
 match sampling, not training-seed variation or adaptive-selection uncertainty.
 The recorded historical-control purity/config/sampler limitations below remain.
 It does not establish search scaling, a universal recipe winner or production
-promotion, and it selects no new training arm. H20/G100 and H20/C400 are still
-needed to complete the registered package. The
+promotion, and it selected no new training arm. At this C100 snapshot, H20/G100 and H20/C400
+were still needed to complete the package; the later G100 result above supersedes
+that status. The
 [next-arena launch snapshot](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/G20T05.s100.process.snapshot.json)
 records H20/G20T05 at 100 simulations starting at **06:29:55 UTC**; its outcomes
 were not read for this record. The optimized labeler's

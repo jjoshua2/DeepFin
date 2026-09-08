@@ -1,0 +1,148 @@
+{
+  "schema": 1,
+  "captured_utc": "2026-09-08T06:51:02.408902+00:00",
+  "status": "IMMUTABLE_LAUNCH_EVIDENCE_ONLY",
+  "files": [
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run_common.py",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/run_common.py",
+      "bytes": 28715,
+      "sha256": "196464104f2da3cace69032212098356d497296575e0f0a31dc5c3f8dfe0ee86"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/python_bootstrap/sitecustomize.py",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/python_bootstrap/sitecustomize.py",
+      "bytes": 382,
+      "sha256": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/qualify_wrapper.py",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/qualify_wrapper.py",
+      "bytes": 8026,
+      "sha256": "508e3b25ae7d6888ecb72d4be1e428a9c45e5a0725e3b58a203dd30a126adb20"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/wrapper_author_validation.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/wrapper_author_validation.json",
+      "bytes": 1400,
+      "sha256": "8561b1eefc968d3659d61981cb417aa4785f34c40fe29d12952e98b40d7cb548"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/wrapper_preparation.md",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/wrapper_preparation.md",
+      "bytes": 3616,
+      "sha256": "23bd182ca6516bac690f502ed5a6f386ab813f80b9acbf3047ae5097d6e50c6d"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/wrapper_qualification.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/wrapper_qualification.json",
+      "bytes": 816,
+      "sha256": "2d7b37798d1afa6c0ff3f763291781add094959432d233363cc9259acbc14e56"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/wrapper_qualification_v2.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/wrapper_qualification_v2.json",
+      "bytes": 893,
+      "sha256": "771bc38c7176219f512911dd2beb984fec65367dcb5d3ceedaea833fd5e6560b"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/runtime_qualification.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/runtime_qualification.json",
+      "bytes": 44738,
+      "sha256": "e910fecc0426761428d062ffcfe69771a26df70777cc1c915570d6b0d9a2c05d"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/qualify_runtime.py",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/qualify_runtime.py",
+      "bytes": 6873,
+      "sha256": "e1fadef683b236e740521c1d679d9a4735e6cde7c5215eb7122bc19a87ccb120"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/runtime_qualification.command.txt",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/runtime_qualification.command.txt",
+      "bytes": 551,
+      "sha256": "ab6d546073942cb3cb41694418d924312a54017dfa5bc21bd16a0571c2302acb"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/runtime_qualification.log",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/runtime_qualification.log",
+      "bytes": 204,
+      "sha256": "1237cfcb5c6f6586feed23fe7a7dc63b9c27db3c30b3d242400f3d73b41aaa4b"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/runtime_qualification_execution.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/runtime_qualification_execution.json",
+      "bytes": 1672,
+      "sha256": "0aa7991cc00deccd1df1fa2fcc93565a697ff7e014b58920bb7df51a8302be08"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/runtime_snapshot_preparation.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/runtime_snapshot_preparation.json",
+      "bytes": 7449,
+      "sha256": "bbac1af66468bd783b173d0d1ab0adaa94d48629224014c8a64a77d7b54554e4"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/adapt_raw_bt4_sidecars.py.help.txt",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/adapt_raw_bt4_sidecars.py.help.txt",
+      "bytes": 1021,
+      "sha256": "403f97777ffe7aeb44f56e2f5abddce2c8805c177f7f2e7238d841e0a65faafa"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/derive_corpus_targets.py.help.txt",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/derive_corpus_targets.py.help.txt",
+      "bytes": 8754,
+      "sha256": "a2c18bbf1e0721de9d8be83aa265e3135f7dc56321a9e8bb9dfa37cdf49ffc92"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/sf_d9_rank_sidecar.py.help.txt",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/sf_d9_rank_sidecar.py.help.txt",
+      "bytes": 1936,
+      "sha256": "bbb9d52cde627b2d3d817e9f742ef5d05b9cd2b6cd3e9d2612785a753cb9b7b5"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/independent_wrapper_review.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/independent_wrapper_review.json",
+      "bytes": 2273,
+      "sha256": "1082128adf0d87a9bd1ababbc88b4c744e9ff541928f619b468c00f3a8be7e7b"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/launch.json",
+      "bytes": 41738,
+      "sha256": "87a33a55678ff0c02daa61bfe7aaab0acb82dd019753247a26c8a1323d9aa752"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/operator_launch.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/operator_launch.json",
+      "bytes": 776,
+      "sha256": "800b525fce5d0479d67c44716dc1f83b956271fc54ecc1e5897d43597abcb3b3"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/started.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/started.json",
+      "bytes": 676,
+      "sha256": "d6e4ab0f7b917d16c4efee1fc372164db5167c2df81846acd4f5a99856ba202f"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10.derive.started.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/run06_g10.derive.started.json",
+      "bytes": 1328,
+      "sha256": "fcd463d4d63cd296826a3ca8a5d86d3eefdf3787fa7c6fc80871fcc7da88b6da"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/startup_observation.json",
+      "published_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/launch_publication_v1/artifacts/startup_observation.json",
+      "bytes": 8827,
+      "sha256": "390fcbf42828732b1768050ce1226df8743aa8dcdac944e454c14707a4850f8a"
+    }
+  ],
+  "total_bytes": 172664,
+  "excluded": [
+    "Changing derivation outputs, stage logs and time files; supervisor/worker logs; later stages or outcomes.",
+    "The previously published77-file prospective metadata package is retained unchanged and not duplicated."
+  ],
+  "limits": [
+    "These fixed snapshots establish qualified runtime and launch, not completed common inputs, actual survivor counts, a mixture, training or playing strength.",
+    "Archived scripts retain historical host paths; evidence only, not portable execution instructions. Runtime source/native/library payloads remain external and are identified by pinned qualification."
+  ]
+}
