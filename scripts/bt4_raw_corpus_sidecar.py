@@ -61,6 +61,7 @@ VERIFY_NAME = "bt4_raw_sidecar.verify.json"
 SOURCE_KEY_FIELD = "source_key"
 INPUT_KEY_FIELD = "input_key"
 POLICY_FIELD = "bt4_policy"
+WDL_FIELD = "bt4_wdl_raw"
 GAME_ID_FIELD = "game_id"
 PLY_FIELD = "ply"
 _SOURCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -270,6 +271,75 @@ def expected_existing_attrs(pending: PendingShard) -> dict[str, Any]:
     }
 
 
+def requested_wdl(args: argparse.Namespace) -> dict[str, str] | None:
+    name, kind = getattr(args, "wdl_output", None), getattr(args, "wdl_output_kind", None)
+    if (name is None) != (kind is None) or kind not in (None, "logits", "probabilities"):
+        raise ValueError("--wdl-output and --wdl-output-kind must be supplied together")
+    if name is not None and (not isinstance(name, str) or not name.strip()):
+        raise ValueError("WDL output name must be nonempty")
+    if name is None:
+        return None
+    assert isinstance(kind, str)
+    return {"output": name, "kind": kind}
+
+
+def resolve_wdl_output(sess: Any, requested: Mapping[str, str] | None,
+                       policy_name: str) -> dict[str, str] | None:
+    """Explicit named W/D/L STM contract, never guess a three-wide head."""
+    if requested is None:
+        return None
+    matches = [out for out in sess.get_outputs() if out.name == requested["output"]]
+    if len(matches) != 1 or requested["output"] == policy_name:
+        raise ValueError("WDL output absent, ambiguous or aliases policy")
+    out = matches[0]
+    types = {"tensor(float16)": "float16", "tensor(float)": "float32", "tensor(double)": "float64"}
+    if len(out.shape) != 2 or out.shape[1] != 3 or out.type not in types:
+        raise ValueError("WDL output must be a native floating [batch,3] tensor")
+    return {**requested, "dtype": types[out.type]}
+
+
+def validate_wdl_values(values: np.ndarray, rows: int, contract: Mapping[str, Any]) -> None:
+    if values.shape != (rows, 3) or values.dtype != np.dtype(contract["dtype"]):
+        raise ValueError("WDL shape/native dtype differs")
+    if not np.isfinite(values).all():
+        raise ValueError("WDL values are nonfinite")
+    if contract["kind"] == "probabilities":
+        # Raw values stay untouched; tolerate only native rounding of unit mass.
+        tolerance = 2**-10 if values.dtype == np.dtype("float16") else 2e-6
+        if (np.any(values < 0) or np.any(values > 1)
+                or not np.allclose(values.sum(axis=1, dtype=np.float64), 1,
+                                   rtol=0, atol=tolerance)):
+            raise ValueError("WDL probability range/mass invalid")
+
+
+def validate_wdl_metadata(group: Any, attrs: Mapping[str, Any], rows: int,
+                          expected: Mapping[str, str] | None = None,
+                          required: bool = False) -> Mapping[str, Any] | None:
+    contract = attrs.get("wdl")
+    if "wdl" not in attrs and WDL_FIELD not in group:
+        if required:
+            raise ValueError("required WDL coverage is missing; no automatic backfill")
+        return None
+    if not isinstance(contract, dict) or WDL_FIELD not in group:
+        raise ValueError("WDL array/provenance presence mismatch")
+    fixed = {"schema": 1, "order": ["win", "draw", "loss"], "pov": "side_to_move",
+             "rows": rows, "semantic_basis": "explicit_named_output_contract"}
+    if (set(contract) != set(fixed) | {"output", "kind", "dtype", "sha256"}
+            or any(contract.get(k) != v for k, v in fixed.items())
+            or contract["kind"] not in ("logits", "probabilities")
+            or contract["dtype"] not in ("float16", "float32", "float64")
+            or not isinstance(contract["output"], str) or not contract["output"].strip()
+            or not isinstance(contract["sha256"], str)
+            or re.fullmatch(r"[0-9a-f]{64}", contract["sha256"]) is None):
+        raise ValueError("WDL provenance malformed")
+    if expected is not None and any(contract.get(k) != v for k, v in expected.items()):
+        raise ValueError("WDL output contract differs")
+    array = group[WDL_FIELD]
+    if tuple(array.shape) != (rows, 3) or np.dtype(array.dtype) != np.dtype(contract["dtype"]):
+        raise ValueError("WDL stored layout differs")
+    return contract
+
+
 def validate_existing(
     pending: PendingShard,
     *,
@@ -277,6 +347,8 @@ def validate_existing(
     policy_output: str | None = None,
     providers: Sequence[str] | None = None,
     functional_remap: Mapping[str, Any] | None = None,
+    expected_wdl: Mapping[str, str] | None = None,
+    require_wdl: bool = False,
 ) -> dict[str, Any]:
     if not pending.target.is_dir():
         raise ValueError(f"missing sidecar directory {pending.target}")
@@ -317,6 +389,7 @@ def validate_existing(
                 f"{pending.target}: {name} is {array.shape}/{array.dtype}, "
                 f"expected {shape}/{dtype}",
             )
+    validate_wdl_metadata(group, attrs, rows, expected_wdl, require_wdl)
     return attrs
 
 
@@ -327,6 +400,7 @@ def pending_shards(
     policy_output: str | None = None,
     providers: Sequence[str] | None = None,
     functional_remap: Mapping[str, Any] | None = None,
+    expected_wdl: Mapping[str, str] | None = None,
 ) -> tuple[list[PendingShard], dict[str, int]]:
     todo: list[PendingShard] = []
     complete_by_source: dict[str, int] = {}
@@ -390,6 +464,7 @@ def pending_shards(
                     policy_output=policy_output,
                     providers=providers,
                     functional_remap=functional_remap,
+                    expected_wdl=expected_wdl,
                 )
                 expected_receipt = receipt_from_attrs(attrs, target)
                 bad_receipt = {
@@ -397,6 +472,9 @@ def pending_shards(
                     for key, value in expected_receipt.items()
                     if key != "published_unix" and receipt.get(key) != value
                 }
+                if (("wdl" in receipt) != ("wdl" in attrs)
+                        or receipt.get("wdl") != attrs.get("wdl")):
+                    raise ValueError(f"{target}: WDL progress/sidecar receipt mismatch")
                 if bad_receipt:
                     raise ValueError(
                         f"{target}: progress/sidecar receipt mismatch {bad_receipt}",
@@ -410,6 +488,7 @@ def pending_shards(
                     policy_output=policy_output,
                     providers=providers,
                     functional_remap=functional_remap,
+                    expected_wdl=expected_wdl,
                 )
                 append_receipt(progress_path, receipt_from_attrs(attrs, target))
                 complete += 1
@@ -417,6 +496,15 @@ def pending_shards(
             todo.append(item)
         complete_by_source[source.source_id] = complete
     return todo, complete_by_source
+
+
+def wdl_coverage(source: SourceSpec) -> dict[str, int]:
+    """Coverage from receipts already checked by pending_shards, not inference."""
+    receipts = read_receipts(source.out_dir / PROGRESS_NAME)
+    with_wdl = [r for r in receipts.values() if "wdl" in r]
+    return {"complete_shards": len(with_wdl), "complete_rows": sum(r["positions"] for r in with_wdl),
+            "policy_only_shards": len(receipts) - len(with_wdl),
+            "policy_only_rows": sum(r["positions"] for r in receipts.values() if "wdl" not in r)}
 
 
 def receipt_from_attrs(attrs: Mapping[str, Any], target: Path) -> dict[str, Any]:
@@ -435,6 +523,8 @@ def receipt_from_attrs(attrs: Mapping[str, Any], target: Path) -> dict[str, Any]
         "teacher_evaluations_per_position",
     )
     receipt = {key: attrs[key] for key in keys}
+    if "wdl" in attrs:
+        receipt["wdl"] = attrs["wdl"]
     receipt["sidecar"] = target.name
     receipt["published_unix"] = float(attrs["published_unix"])
     return receipt
@@ -512,6 +602,7 @@ def label_shard(
     onnx_sha256: str,
     remap_stamp: Mapping[str, Any],
     batch_size: int,
+    wdl_output: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Label one closed source shard and atomically publish its sidecar."""
     if pending.target.exists():
@@ -520,8 +611,17 @@ def label_shard(
     if writing.exists():
         raise FileExistsError(f"stale partial sidecar exists: {writing}")
 
+    if wdl_output is not None and (
+        set(wdl_output) != {"output", "kind", "dtype"}
+        or wdl_output["kind"] not in ("logits", "probabilities")
+        or wdl_output["dtype"] not in ("float16", "float32", "float64")
+        or not wdl_output["output"].strip() or wdl_output["output"] == policy_name
+    ):
+        raise ValueError("invalid explicit WDL output contract")
     rows_expected = int(pending.claimed_rows)
     bt4_policy = np.zeros((rows_expected, COMPACT_POLICY_SIZE), dtype=np.float32)
+    wdl_raw = (None if wdl_output is None else
+               np.empty((rows_expected, 3), dtype=np.dtype(wdl_output["dtype"])))
     source_keys = np.empty((rows_expected, FINGERPRINT_BYTES), dtype=np.uint8)
     input_keys = np.empty_like(source_keys)
     game_ids = np.empty((rows_expected,), dtype=np.int64)
@@ -564,10 +664,16 @@ def label_shard(
             planes,
             input_history_encoding=derive.INPUT_HISTORY_ENCODING,
         ).astype(input_dtype, copy=False)
-        output = np.asarray(
-            sess.run([policy_name], {input_name: feats})[0],
-            dtype=np.float32,
-        )
+        names = [policy_name] + ([] if wdl_output is None else [wdl_output["output"]])
+        fetched = sess.run(names, {input_name: feats})
+        if len(fetched) != len(names):
+            raise ValueError("teacher returned the wrong number of requested outputs")
+        output = np.asarray(fetched[0], dtype=np.float32)
+        if wdl_output is not None:
+            values = np.asarray(fetched[1])
+            validate_wdl_values(values, len(rows), wdl_output)
+            assert wdl_raw is not None
+            wdl_raw[cursor:stop] = values
         if output.shape[0] != len(rows):
             raise ValueError(
                 f"{pending.path}: BT4 returned {output.shape[0]} rows for {len(rows)} inputs",
@@ -677,6 +783,12 @@ def label_shard(
         chunks=(row_chunk,),
         compressor=_COMPRESSOR,
     )
+    if wdl_raw is not None:
+        assert wdl_output is not None
+        group.create_dataset(WDL_FIELD, data=wdl_raw, chunks=(row_chunk, 3), compressor=_COMPRESSOR)
+        attrs["wdl"] = {"schema": 1, **wdl_output, "order": ["win", "draw", "loss"],
+                        "pov": "side_to_move", "rows": rows_expected,
+                        "semantic_basis": "explicit_named_output_contract", "sha256": sha_array(wdl_raw)}
     group.attrs.update(attrs)
     os.replace(writing, pending.target)
     return attrs
@@ -691,6 +803,7 @@ def verify_shard(
     expected_remap: Mapping[str, Any],
     batch_size: int,
     identity_records: np.ndarray | None = None,
+    expected_wdl: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Deeply replay one raw shard and compare every stored sidecar row.
 
@@ -709,6 +822,8 @@ def verify_shard(
         onnx_sha256=onnx_sha256,
         policy_output=expected_policy_output,
         providers=expected_providers,
+        expected_wdl=expected_wdl,
+        require_wdl=expected_wdl is not None,
     )
     if file_sha256(pending.path) != attrs.get("source_sha256"):
         raise ValueError(f"{pending.target}: compressed source SHA-256 mismatch")
@@ -716,6 +831,8 @@ def verify_shard(
         raise ValueError(f"{pending.target}: functional policy remap mismatch")
 
     group: Any = zarr.open_group(str(pending.target), mode="r")
+    wdl_contract = attrs.get("wdl")
+    wdl_digest = hashlib.sha256()
     policy_digest = hashlib.sha256()
     source_key_digest = hashlib.sha256()
     input_key_digest = hashlib.sha256()
@@ -744,6 +861,10 @@ def verify_shard(
         stored_game_ids = np.asarray(group[GAME_ID_FIELD][cursor:stop])
         stored_plies = np.asarray(group[PLY_FIELD][cursor:stop])
         policy = np.asarray(group[POLICY_FIELD][cursor:stop], dtype=np.float32)
+        if wdl_contract is not None:
+            values = np.asarray(group[WDL_FIELD][cursor:stop])
+            validate_wdl_values(values, len(rows), wdl_contract)
+            wdl_digest.update(np.ascontiguousarray(values).tobytes(order="C"))
         if not np.array_equal(stored_source_keys, wanted_source_keys):
             raise ValueError(f"{pending.target}:{cursor}: source fingerprint mismatch")
         if not np.array_equal(stored_input_keys, raw_keys):
@@ -807,6 +928,8 @@ def verify_shard(
     }
     if bad:
         raise ValueError(f"{pending.target}: stored array digest mismatch {bad}")
+    if wdl_contract is not None and wdl_digest.hexdigest() != wdl_contract["sha256"]:
+        raise ValueError(f"{pending.target}: WDL stored array digest mismatch")
     return attrs
 
 
@@ -818,6 +941,7 @@ def verify_all(args: argparse.Namespace, *, out_root: Path, onnx_sha: str) -> in
         {"schema": SCHEMA, "verdict": "RUNNING", "started_unix": time.time()},
     )
     try:
+        expected_wdl = requested_wdl(args)
         sources = load_sources(args.source, out_root)
         total_shards = 0
         total_rows = 0
@@ -846,6 +970,7 @@ def verify_all(args: argparse.Namespace, *, out_root: Path, onnx_sha: str) -> in
                     f"writing={[path.name for path in writing]}",
                 )
             rows_verified = 0
+            wdl_rows = wdl_shards = 0
             for number, (path, claimed_rows) in enumerate(
                 zip(source.inventory.shards, source.inventory.shard_rows, strict=True),
                 start=1,
@@ -868,14 +993,21 @@ def verify_all(args: argparse.Namespace, *, out_root: Path, onnx_sha: str) -> in
                 if float(args.gpu_mem_gb) > 0.0 and "CUDAExecutionProvider" not in providers:
                     raise ValueError(f"{target}: GPU labeling requested but CUDA was not used")
                 item = PendingShard(source, path, int(claimed_rows), target)
-                verify_shard(
+                verified = verify_shard(
                     item,
                     onnx_sha256=onnx_sha,
                     expected_policy_output=common_output,
                     expected_providers=common_providers or [],
                     expected_remap=current_remap,
                     batch_size=int(args.batch_size),
+                    expected_wdl=expected_wdl,
                 )
+                if (("wdl" in receipts[path.name]) != ("wdl" in verified)
+                        or receipts[path.name].get("wdl") != verified.get("wdl")):
+                    raise ValueError("WDL progress/verified sidecar mismatch")
+                if "wdl" in verified:
+                    wdl_shards += 1
+                    wdl_rows += int(claimed_rows)
                 rows_verified += int(claimed_rows)
                 total_shards += 1
                 total_rows += int(claimed_rows)
@@ -894,6 +1026,11 @@ def verify_all(args: argparse.Namespace, *, out_root: Path, onnx_sha: str) -> in
                 "manifest_sha256": source.manifest_sha256,
                 "config_sha256": str(source.manifest["config_sha256"]),
             }
+            if wdl_shards or expected_wdl is not None:
+                source_results[source.source_id]["wdl_coverage"] = {
+                    "verified_shards": wdl_shards, "verified_rows": wdl_rows,
+                    "policy_only_shards": len(source.inventory.shards) - wdl_shards,
+                    "policy_only_rows": source.inventory.rows_claimed - wdl_rows}
         snapshot_only = not all(source.corpus_complete for source in sources)
         verdict = "SNAPSHOT_PASS" if snapshot_only else "PASS"
         receipt = {
@@ -980,6 +1117,7 @@ def run_label_group(args: argparse.Namespace) -> int:
         raise RuntimeError("GPU labeling requested but CUDAExecutionProvider is unavailable")
     policy_index = resolve_policy_output(sess, args.policy_output)
     policy_name = sess.get_outputs()[policy_index].name
+    wdl_output = resolve_wdl_output(sess, requested_wdl(args), policy_name)
     remap_stamp = remap_provenance()
     remap_identity = functional_remap_identity(remap_stamp)
     # Existing sidecars must agree with the realized session before this
@@ -991,6 +1129,7 @@ def run_label_group(args: argparse.Namespace) -> int:
         policy_output=policy_name,
         providers=providers,
         functional_remap=remap_identity,
+        expected_wdl=wdl_output,
     )
     todo.sort(
         key=lambda item: (
@@ -1023,6 +1162,7 @@ def run_label_group(args: argparse.Namespace) -> int:
             onnx_sha256=onnx_sha,
             remap_stamp=remap_stamp,
             batch_size=int(args.batch_size),
+            wdl_output=wdl_output,
         )
         append_receipt(
             pending.source.out_dir / PROGRESS_NAME,
@@ -1054,6 +1194,10 @@ def run_label_group(args: argparse.Namespace) -> int:
             "complete_sidecars": complete_after[source.source_id],
             "unlisted_in_flight": list(source.inventory.unlisted_on_disk),
         }
+    if wdl_output is not None:
+        status["wdl_requested"] = wdl_output
+        for source in refreshed:
+            status["sources"][source.source_id]["wdl_coverage"] = wdl_coverage(source)
     atomic_json(out_root / STATUS_NAME, status)
     return 0
 
@@ -1107,7 +1251,16 @@ def run(args: argparse.Namespace) -> int:
         # lease.  The separate writer lease closes the race between two
         # coordinators doing this preflight concurrently.
         sources = load_sources(args.source, out_root)
-        todo, complete = pending_shards(sources, onnx_sha256=onnx_sha)
+        wanted = requested_wdl(args)
+        if wanted is None:
+            todo, complete = pending_shards(sources, onnx_sha256=onnx_sha)
+        else:
+            todo, complete = pending_shards(sources, onnx_sha256=onnx_sha, expected_wdl=wanted)
+        if wanted is not None:
+            print(json.dumps({"wdl_future_request": wanted,
+                              "existing_wdl_coverage": {source.source_id: wdl_coverage(source)
+                                                        for source in sources},
+                              "backfill": False}), flush=True)
         if not todo:
             print(
                 f"[bt4-raw] caught up: {sum(complete.values())} closed shards "
@@ -1134,6 +1287,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--threads", type=int, default=16)
     parser.add_argument("--gpu-mem-gb", type=float, default=24.0)
     parser.add_argument("--policy-output", default=None)
+    parser.add_argument("--wdl-output", default=None,
+                        help="retain this explicit W/D/L side-to-move head on future shards only")
+    parser.add_argument("--wdl-output-kind", choices=("logits", "probabilities"), default=None,
+                        help="declared native head activation; raw values are never normalized or cast")
     parser.add_argument("--max-shards", type=int, default=16)
     parser.add_argument("--gpu-lock", type=Path, required=True)
     parser.add_argument("--lock-poll-seconds", type=float, default=2.0)
@@ -1148,6 +1305,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    requested_wdl(args)
     if int(args.batch_size) <= 0:
         raise SystemExit("--batch-size must be positive")
     if int(args.threads) < 0:
