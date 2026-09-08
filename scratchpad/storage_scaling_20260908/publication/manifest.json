@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "transformation": "Curated JSON projections; originals remain unchanged and external. Home paths/process details and candidate-retirement details omitted; quantitative observations, archive refresh rows and source hashes retained.",
+  "files": [
+    {
+      "path": "archive_refresh.json",
+      "sha256": "99ce7be5c3ed5073d3578976c26a0d38429d8cf14ac238388ebce8598716e057",
+      "bytes": 16436
+    },
+    {
+      "path": "capacity.json",
+      "sha256": "1b6b467078dd1c77ea86cef2ca9dcf73fdce05945cfb8f258c8c7a8b2a2d0b86",
+      "bytes": 2488
+    },
+    {
+      "path": "raw_density.json",
+      "sha256": "684d61955beec8f8665bc9b20903d54e937d15d2c3af807e7d3981ef9837c06a",
+      "bytes": 6777
+    }
+  ],
+  "inputs": [
+    {
+      "path": "scratchpad/storage_scaling_20260908/assessment.json",
+      "sha256": "691a5fe7755cfc28ccd5b845686e063e6edb88cbf3379672f2206758d3aa46f8",
+      "bytes": 6353,
+      "location": "original local evidence; not all original artifacts are included in this publication"
+    },
+    {
+      "path": "scratchpad/storage_scaling_20260908/metadata_inventory.json",
+      "sha256": "645b6a4ca21bc058f7e36cf347cfe56ec81a63da62a5430fa4544ca2d684b3ff",
+      "bytes": 34573,
+      "location": "original local evidence; not all original artifacts are included in this publication"
+    },
+    {
+      "path": "scratchpad/storage_scaling_20260908/receipt.json",
+      "sha256": "7be7f6b4bdc681fd45d52403e91655954337e98e51cc9ae78f608db7887e51d3",
+      "bytes": 1382,
+      "location": "original local evidence; not all original artifacts are included in this publication"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/completed.json",
+      "sha256": "cdce8002e7a082796bd0251d07de16df559ffce80d2294a06aaa118f4d4dbbdc",
+      "bytes": 358,
+      "location": "original local evidence; not all original artifacts are included in this publication"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/independent_completed_review_v1/review.json",
+      "sha256": "1e4c06f0fd500212b4bac2f852936a20af2de21f7543c6e9eef2de6dc6924ecc",
+      "bytes": 111755,
+      "location": "original local evidence; not all original artifacts are included in this publication"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/materialization/status.json",
+      "sha256": "4c5d5550c24f1f240dbb053025db2eacea83bcd995c335a79c8c8294c3fbe7f3",
+      "bytes": 2693,
+      "location": "original local evidence; not all original artifacts are included in this publication"
+    }
+  ]
+}
