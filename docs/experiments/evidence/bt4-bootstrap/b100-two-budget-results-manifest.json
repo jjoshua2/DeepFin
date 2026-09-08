@@ -1,0 +1,227 @@
+{
+  "schema_version": 1,
+  "captured_utc": "2026-09-08T13:37:53.802331+00:00",
+  "purpose": "Completed B100/H20 low sequential decision and protected high fixed-core probe, preserved numeric reader failure and high-only recovery. Same-seed development evidence; no promotion or measured scheduler speedup.",
+  "files": [
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/low/arena.games.jsonl.gz",
+      "original_sha256": "e2fd08f244e35483107beaa5105923975b69160699c9809c04c9f9d0e43aadab",
+      "original_bytes": 351779,
+      "published_sha256": "60302942a4866ecacd59a4b2d98d3b1b41dad16b3e211866b7f83a1f664d1250",
+      "published_bytes": 30929,
+      "encoding": "gzip",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/arena.games.jsonl",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/high/arena.games.jsonl.gz",
+      "original_sha256": "6ecc0e0fd02e9f3a7fce66db0521e82297d61b88d0a55eec43c531506103322e",
+      "original_bytes": 112667,
+      "published_sha256": "82eb9f4489ed8f1adff091b456ff8cc6e04db1d892036f0da08726b07226f6f2",
+      "published_bytes": 9728,
+      "encoding": "gzip",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/arena.results.jsonl",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/low/arena.results.jsonl.gz",
+      "original_sha256": "686394babbe3631dbbfbf9bae73af6eaca7d79dc9c9e137537861eddd308c1cf",
+      "original_bytes": 10516,
+      "published_sha256": "ef1b0bff2997f962232cd8900c77f959eae99ad39c1b51ff4b2d8484caa21724",
+      "published_bytes": 3226,
+      "encoding": "gzip",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/arena.results.jsonl",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/high/arena.results.jsonl.gz",
+      "original_sha256": "c9e759f83c9c5093f450488641e8d93548acf974ca36f34c4c16800ecc6e0ec5",
+      "original_bytes": 3826,
+      "published_sha256": "2635adcf2faf3e6baf9786ee1c965064f5ec086db676ee98e14f76882ce136e3",
+      "published_bytes": 1247,
+      "encoding": "gzip",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/process.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/low/process.json",
+      "original_sha256": "f62315cd57d8981456755fd7262a90001b23a4b9326e7aba1ca3260e4d541acb",
+      "original_bytes": 4421,
+      "published_sha256": "f62315cd57d8981456755fd7262a90001b23a4b9326e7aba1ca3260e4d541acb",
+      "published_bytes": 4421,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/process.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/high/process.json",
+      "original_sha256": "808d684b0dc7d1eca86d57f2e64c91d8d809134bf9c4121670e761b28aa70149",
+      "original_bytes": 4233,
+      "published_sha256": "808d684b0dc7d1eca86d57f2e64c91d8d809134bf9c4121670e761b28aa70149",
+      "published_bytes": 4233,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low.reader_manifest.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/original/low.reader_manifest.json",
+      "original_sha256": "3da398cc2154bcca9112265c39d43865389e4ca5458bcce662f85f6fa4045cc3",
+      "original_bytes": 3719,
+      "published_sha256": "3da398cc2154bcca9112265c39d43865389e4ca5458bcce662f85f6fa4045cc3",
+      "published_bytes": 3719,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low.launch.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/original/low.launch.json",
+      "original_sha256": "6eb4989a7d9f391e032a8583da0f195a96736cf11527b25b1f546f3539901f42",
+      "original_bytes": 5703,
+      "published_sha256": "6eb4989a7d9f391e032a8583da0f195a96736cf11527b25b1f546f3539901f42",
+      "published_bytes": 5703,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/failed.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/original/failed.json",
+      "original_sha256": "127d0cea0dc0d030811526b3b60c219f66da77f91e93791e0472d3682d50d2ff",
+      "original_bytes": 144,
+      "published_sha256": "127d0cea0dc0d030811526b3b60c219f66da77f91e93791e0472d3682d50d2ff",
+      "published_bytes": 144,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/complete.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/recovery/complete.json",
+      "original_sha256": "f59a5e6ec856aad33bd665ad2213e6d534ba87532b546a70b3e407feaf7519d6",
+      "original_bytes": 1194,
+      "published_sha256": "f59a5e6ec856aad33bd665ad2213e6d534ba87532b546a70b3e407feaf7519d6",
+      "published_bytes": 1194,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/manifest.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/recovery/manifest.json",
+      "original_sha256": "ad1a51514206dc7558564356a90e59ce98c8bcab2e5c5c0fc2848bfdfcfa891b",
+      "original_bytes": 2471,
+      "published_sha256": "ad1a51514206dc7558564356a90e59ce98c8bcab2e5c5c0fc2848bfdfcfa891b",
+      "published_bytes": 2471,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high.reader_manifest.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/recovery/high.reader_manifest.json",
+      "original_sha256": "98179e340b327e76e99ca7790a1171679dd9c8b4fd5c9f93161541fecf7a5ef4",
+      "original_bytes": 3995,
+      "published_sha256": "98179e340b327e76e99ca7790a1171679dd9c8b4fd5c9f93161541fecf7a5ef4",
+      "published_bytes": 3995,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high.launch.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/recovery/high.launch.json",
+      "original_sha256": "873e18f1c6ad9ea53f8711969dbce47c42d478096a4e04d3cef2e4a2e9287893",
+      "original_bytes": 5640,
+      "published_sha256": "873e18f1c6ad9ea53f8711969dbce47c42d478096a4e04d3cef2e4a2e9287893",
+      "published_bytes": 5640,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/readout.stdout.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/recovery/high/readout.stdout.json",
+      "original_sha256": "738ea20f8c95c18e67d0168a63b3e6af10a323966c6aa132219136a03c75251e",
+      "original_bytes": 5688,
+      "published_sha256": "738ea20f8c95c18e67d0168a63b3e6af10a323966c6aa132219136a03c75251e",
+      "published_bytes": 5688,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/complete.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/recovery/high/complete.json",
+      "original_sha256": "e373d7a5a78f8367180348366ff5f3adb027772dc5710c7f2bb271d1c09eba63",
+      "original_bytes": 529,
+      "published_sha256": "e373d7a5a78f8367180348366ff5f3adb027772dc5710c7f2bb271d1c09eba63",
+      "published_bytes": 529,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/full_reader_python310/readout.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/low_reader/readout.json",
+      "original_sha256": "a512b433f1b446b3b6b7fe7440807244c7ed600a49ee4bd1f7d55a78e36cea20",
+      "original_bytes": 32676,
+      "published_sha256": "a512b433f1b446b3b6b7fe7440807244c7ed600a49ee4bd1f7d55a78e36cea20",
+      "published_bytes": 32676,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/full_reader_python310/process.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/low_reader/process.json",
+      "original_sha256": "cf87ddd0a0efb94c4fd30a161a185832f3bb4c836994fb9bd648722ec1224dc5",
+      "original_bytes": 915,
+      "published_sha256": "cf87ddd0a0efb94c4fd30a161a185832f3bb4c836994fb9bd648722ec1224dc5",
+      "published_bytes": 915,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/diagnosis.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/numeric/diagnosis.json",
+      "original_sha256": "95f239fcff964d98ea78fdcd050a2243f84ec1dc1f0e13ff57fe051bb1986b22",
+      "original_bytes": 3054,
+      "published_sha256": "95f239fcff964d98ea78fdcd050a2243f84ec1dc1f0e13ff57fe051bb1986b22",
+      "published_bytes": 3054,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/high_recovery_preparation_v1/plan.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/recovery_preparation/plan.json",
+      "original_sha256": "d9155cb0d66fe382c490db2aaac5b6139b015358adb7b5a439dbea4e58b0576b",
+      "original_bytes": 9274,
+      "published_sha256": "d9155cb0d66fe382c490db2aaac5b6139b015358adb7b5a439dbea4e58b0576b",
+      "published_bytes": 9274,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/high_recovery_preparation_v1/run_high_recovery.py",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/recovery_preparation/run_high_recovery.py",
+      "original_sha256": "ddaa74745cf3f9b1cb1c7e7b0d6767a0f178993b6be383adbfd62e625f13c4cf",
+      "original_bytes": 11787,
+      "published_sha256": "ddaa74745cf3f9b1cb1c7e7b0d6767a0f178993b6be383adbfd62e625f13c4cf",
+      "published_bytes": 11787,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/high_recovery_preparation_v1/root_independent_review.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/recovery_preparation/root_independent_review.json",
+      "original_sha256": "0dc98feee7906db62c7a34f3b1a67214504f57e5f97bbffaf20a64d4e6a9043f",
+      "original_bytes": 1234,
+      "published_sha256": "0dc98feee7906db62c7a34f3b1a67214504f57e5f97bbffaf20a64d4e6a9043f",
+      "published_bytes": 1234,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/independent_completed_review.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_results_20260908/independent_completed_review.json",
+      "original_sha256": "953b2e9730feab4cf4f63f2b576a21b65a97f53f7b1cb605e89ed2f8d99b62ec",
+      "original_bytes": 4457,
+      "published_sha256": "953b2e9730feab4cf4f63f2b576a21b65a97f53f7b1cb605e89ed2f8d99b62ec",
+      "published_bytes": 4457,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    }
+  ]
+}

@@ -1,10 +1,9 @@
 # Faster recipe matches with ordered sequential decisions
 
-**Status:** ordered sequential tools are merged, and the six-cell batch-capacity
-component probe is complete. The H20 package retained its original fixed banks;
-its completed strength results are reported in the
-[H20 record](2026-09-07-bt4-hybrid-endpoints.md). No match in this record used the
-new sequential path, and no whole-match rolling speedup has been measured.
+**Status:** the first prospective ordered sequential recipe screen and protected
+400-simulation probe are complete. B100/H20 used 46m35s of charged arena time.
+The six-cell capacity probe is also complete; no controlled whole-match scheduler
+speedup has been measured.
 
 ## What is worth changing
 
@@ -13,7 +12,7 @@ budget. Broad exploration should identify useful differences rather than spend
 1,000 games estimating every large win precisely. Repeated mechanistic matchups
 are useful only while their answer can change the next research choice.
 
-The proposed future allocation is:
+The working allocation, now used for B100/H20, is:
 
 | Purpose | Allocation and deciding evidence |
 | --- | --- |
@@ -65,8 +64,8 @@ between steps. Resume requires the same hypotheses, look schedule and new prefix
 protocol. Legacy or different sequential specifications and fixed-N/sequential
 conversion are rejected; completed observations cannot acquire prospective
 meaning by changing a resume flag. Fixed-N execution and its strict BT4 readers
-remain unchanged. A future sequential experiment launcher/readout still needs to
-bind these outputs to its registration before scientific adoption.
+remain unchanged. The registered B100/H20 launcher and reader bind these outputs to its
+registration; other recipe pairs need their own bound training receipts.
 
 ## Completed batch-capacity component — September 8
 
@@ -157,3 +156,41 @@ suffix, explicit look cadence, persisted suffix accounting, changed-spec refusal
 noncontiguous resume and fixed-N behavior. Synthetic CPU checks qualify the sequential control flow. The separately
 registered GPU component above qualifies provisional capacity choices; it does
 not run a match or alter production.
+
+## Completed B100 match and next efficiency work
+
+The [B100 readout](2026-09-08-bt4-pure-policy-endpoint.md) used the two-budget
+allocation prospectively: ordered 100-simulation GSPRT followed by 256 games at
+400 simulations. The respective charged stage times were 23m07s and 23m28s.
+These measurements include startup; they do not establish a speedup against the
+older matches, which used different checkpoints and game trajectories.
+
+Only 192 pairs determined the sequential result, yet 806 games had finished and
+194 were in flight. Of the finished games, 422 lay outside the deciding prefix.
+At an earlier progress observation, 497 games had finished while only the first
+four canonical pairs were complete. Finishing order therefore deserves attention
+before increasing concurrency further. Counting a 384-game decision as a 62%
+wall-time saving against 1,000 games would be wrong.
+
+The next bounded performance investigation will use this bank's completion
+ordering to assess limiting look-ahead beyond the next declared prefix look.
+Such a limit can reduce speculative work but may lower batch occupancy while a
+long game finishes. Banked traces cannot predict new game trajectories or prove
+elapsed-time savings. Preserve canonical pair order, color pairing, search
+settings and outcome-independent scheduling; do not use whichever pairs finish
+first as the statistical sample.
+
+For the next suitable registered arena, collect bounded existing evaluator batch
+counts and preparation/scoring/glue timings to distinguish CPU overhead from
+insufficient inference batches. The existing host evaluator timer is not an
+isolated CUDA-kernel timer. Prefer this measurement to adding independent GPU
+arena processes blindly. Pool256 at 100 and pool128 at 400, evaluator cap4096,
+remain provisional until a useful whole-workload comparison justifies changing
+them. Background BT4 labeling keeps the shared GPU useful between research jobs.
+
+Keep the two budgets for routine scaling comparisons. A third budget earns time
+when curvature or a specific deployment setting could change the decision; two
+budgets cannot establish an entire scaling curve. Keep fixed small deep probes
+for substantive new families, use sequential shallow screening to allocate work,
+and spend confirmation effort on fresh training seeds rather than repeatedly
+extending the same checkpoints' matches.

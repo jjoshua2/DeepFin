@@ -1,0 +1,188 @@
+{
+  "schema": 1,
+  "profile": "B100_H20_HIGH_ONLY_RECOVERY",
+  "original_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/B100_H20.launch_manifest.json",
+    "sha256": "ad1a51514206dc7558564356a90e59ce98c8bcab2e5c5c0fc2848bfdfcfa891b"
+  },
+  "original_output": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01",
+  "original_failure": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/failed.json",
+    "sha256": "127d0cea0dc0d030811526b3b60c219f66da77f91e93791e0472d3682d50d2ff"
+  },
+  "low_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low.reader_manifest.json",
+    "sha256": "3da398cc2154bcca9112265c39d43865389e4ca5458bcce662f85f6fa4045cc3"
+  },
+  "validated_low_readout": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/full_reader_python310/readout.json",
+    "sha256": "a512b433f1b446b3b6b7fe7440807244c7ed600a49ee4bd1f7d55a78e36cea20"
+  },
+  "low_validation_process": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/full_reader_python310/process.json",
+    "sha256": "cf87ddd0a0efb94c4fd30a161a185832f3bb4c836994fb9bd648722ec1224dc5"
+  },
+  "low_admission_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/high_recovery_preparation_v1/independent_low_admission_review.json",
+    "sha256": "c068306632deb1a9b4674071947e938b8247f1782fee6c2cb484dd6f13242682"
+  },
+  "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1",
+  "preparation_stop": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/high_recovery_preparation_v1/STOP",
+  "training_gpu_seconds": 9258.993950499978,
+  "low_gpu_seconds": 1387.4798684359994,
+  "high_hard_seconds": 5400,
+  "package_cap_seconds": 27000,
+  "high_command": [
+    "/usr/bin/python3",
+    "scripts/arena_standard.py",
+    "--candidate",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+    "--reference",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt",
+    "--games",
+    "256",
+    "--mode",
+    "matched_sims",
+    "--sims",
+    "400",
+    "--seed",
+    "42",
+    "--openings",
+    "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+    "--opening-plies",
+    "16",
+    "--max-plies",
+    "300",
+    "--temperature",
+    "0.1",
+    "--search-shape",
+    "training",
+    "--cand-gumbel",
+    "policy_temp=1.0",
+    "--ref-gumbel",
+    "policy_temp=1.0",
+    "--compile",
+    "on",
+    "--device",
+    "cuda",
+    "--max-concurrent-games",
+    "128",
+    "--eval-max-batch",
+    "4096",
+    "--max-seconds",
+    "5340.0",
+    "--games-out",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/arena.games.jsonl",
+    "--out",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/arena.results.jsonl"
+  ],
+  "python_sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49",
+  "pins": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/high_recovery_preparation_v1/run_high_recovery.py",
+      "sha256": "ddaa74745cf3f9b1cb1c7e7b0d6767a0f178993b6be383adbfd62e625f13c4cf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/high_recovery_preparation_v1/independent_low_admission_review.json",
+      "sha256": "c068306632deb1a9b4674071947e938b8247f1782fee6c2cb484dd6f13242682"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/B100_H20.launch_manifest.json",
+      "sha256": "ad1a51514206dc7558564356a90e59ce98c8bcab2e5c5c0fc2848bfdfcfa891b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low.reader_manifest.json",
+      "sha256": "3da398cc2154bcca9112265c39d43865389e4ca5458bcce662f85f6fa4045cc3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/full_reader_python310/readout.json",
+      "sha256": "a512b433f1b446b3b6b7fe7440807244c7ed600a49ee4bd1f7d55a78e36cea20"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/reader_numeric_diagnosis_v1/full_reader_python310/process.json",
+      "sha256": "cf87ddd0a0efb94c4fd30a161a185832f3bb4c836994fb9bd648722ec1224dc5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/failed.json",
+      "sha256": "127d0cea0dc0d030811526b3b60c219f66da77f91e93791e0472d3682d50d2ff"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/readout.stdout.json",
+      "sha256": "cb491b66febd67e2a18a6de1e28739d9b8ad1a642576105b3dc7c214a9a616d7"
+    },
+    {
+      "path": "/tmp/deepfin-recipe-screen-tools-v3/scripts/bt4_recipe_screen.py",
+      "sha256": "cbf1c26c6a9c74d3d0037f262f28be9c9fd60b2b4f87ba47e681315f1d1185fd"
+    },
+    {
+      "path": "/tmp/deepfin-recipe-screen-tools-v3/scripts/bt4_recipe_readout.py",
+      "sha256": "7f24a5dcb6a99fa11ed1003596c2df09697611ac0eacdeac84515aa889d7faec"
+    },
+    {
+      "path": "/tmp/deepfin-recipe-screen-tools-v3/scripts/bt4_direct_screen.py",
+      "sha256": "41d736832d026f32ec90b36cd75d541c7004540df37d686bd78bae268c36c329"
+    },
+    {
+      "path": "/tmp/deepfin-recipe-screen-tools-v3/scripts/arena_standard.py",
+      "sha256": "fc6f42f5cc566ef1cd1948112d1ae9cde151851750438ba621b4b51327458095"
+    },
+    {
+      "path": "/tmp/deepfin-recipe-screen-tools-v3/chess_anti_engine/eval/sprt.py",
+      "sha256": "8e8937c660783981636eed2e0b4b51bac62e8c5ad2055878ddaf994779d7fec1"
+    },
+    {
+      "path": "/tmp/deepfin-recipe-screen-tools-v3/chess_anti_engine/utils/game_log.py",
+      "sha256": "87de3afe424507c488d879897b7f0cc77a47397bb79fd4b96927f3f57a3fb121"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/qualified_preparation.json",
+      "sha256": "a743d35c365e72349b6e2bbc98180cbf6d52c9df80217ec29eb9ec39b4e635ff"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/arena.games.jsonl",
+      "sha256": "e2fd08f244e35483107beaa5105923975b69160699c9809c04c9f9d0e43aadab"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/arena.results.jsonl",
+      "sha256": "686394babbe3631dbbfbf9bae73af6eaca7d79dc9c9e137537861eddd308c1cf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/process.json",
+      "sha256": "f62315cd57d8981456755fd7262a90001b23a4b9326e7aba1ca3260e4d541acb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low.launch.json",
+      "sha256": "6eb4989a7d9f391e032a8583da0f195a96736cf11527b25b1f546f3539901f42"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/qualified_preparation.panel.json",
+      "sha256": "b4f1d16b488ff9efa0c466706b74595559a807c99a0e4ca75379a4d0745cfb6c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training.complete.json",
+      "sha256": "fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/training.complete.json",
+      "sha256": "821e0886e599d241573f7482b70e24c25887ed28c9255224ea6e29048388a9df"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/arena_runtime_preparation_v1/runtime_identity.json",
+      "sha256": "29aaa72f60c0eeba55923ce51ed18be0440f5a72ce8078ffbd0396995c3ccbf9"
+    },
+    {
+      "path": "/tmp/deepfin-ordered-arena-runtime/configs/pbt2_small.yaml",
+      "sha256": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624"
+    },
+    {
+      "path": "/tmp/deepfin-b100-training-tools/docs/experiments/2026-09-08-bt4-pure-policy-endpoint.md",
+      "sha256": "6fb262dbfe27380bdce11bd2099305ccf6137beecd6824881857cc5d8c24f96c"
+    }
+  ],
+  "limits": [
+    "One high stage only; no low retry, no model/book preparation or requalification.",
+    "Original failed low coordinator/reader artifacts remain unchanged. Original low manifest is reused for high reader nested recertification.",
+    "Runtime/model/book inputs and all old training gates are rechecked by unchanged v3 inputs at execution, including after GPU lease.",
+    "GPU cap includes original training and successful original low stage. Same-seed development only, no promotion."
+  ]
+}

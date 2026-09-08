@@ -1,8 +1,66 @@
 # Pure BT4 policy endpoint versus H20
 
-**B100 completed its registered seed-zero epoch at 11:43:28 UTC on September 8. The separately qualified B100-versus-H20 arena coordinator launched at 12:26:02 UTC; the 100-simulation stage started at 12:26:07 UTC. Arena outcomes remain unread in this publication.**
+**Completed: B100 beat H20 in the registered shallow sequential screen and the protected 400-simulation probe. This is same-seed development evidence; the search-scaling interaction remains unresolved.**
 
-## Completed training and arena launch — September 8
+## Completed two-budget readout — September 8
+
+| Evidence | B100 minus H20 | Sample and interpretation |
+| --- | --- | --- |
+| 100-simulation ordered GSPRT | H1; descriptive +94.55 Elo | First crossing at 192 pairs / 384 deciding games; stopped Elo is descriptive |
+| 100-simulation fixed core | +78.68 Elo [41.97, 117.20] | First 128 opening pairs, fixed before play |
+| 400-simulation protected probe | +46.42 Elo [11.23, 82.58] | Same 128 opening pairs / 256 games; ordinary paired 95% interval |
+| Aligned score advantage, 400 minus 100 | -0.04492 [-0.11914, +0.02930] | Paired opening bootstrap; unresolved interaction |
+
+The low screen crossed at LLR **4.830781**, above its H1 boundary **2.890372**.
+The prior 128-pair look was **2.817244**, below that boundary. H1 favors the
+registered +15 versus 0 hypotheses; it does not establish a +15 Elo confidence
+lower bound. The fixed core uses its prespecified opening prefix, rather than
+all games finished at the stopping time. Neither interval captures training-seed
+variability. SF-derived value targets remain unchanged in B100.
+
+This makes pure sharpened BT4 policy the provisional development leader among
+these completed recipe comparisons. It does not show that BT4 benefits more from
+search, explain the mechanism, or settle the best dose, temperature, training
+horizon or larger-data recipe. G50 and the raw-score SF alternative remain useful
+broad comparisons before fine tuning. Fresh seeds and scale transfer remain
+necessary research, rather than more games to polish this large shallow win.
+
+The low stage cost **1,387.480 seconds** and the high stage **1,407.624 seconds**:
+**2,795.103 seconds (46m35s)** combined, including stage startup. Together with
+training, the charged package was **12,054.097 seconds (3h20m54s)**, below the
+registered 27,000-second ceiling. Recovery/preparation CPU work is separate.
+This is an observed package cost, not a controlled scheduler speedup measurement.
+
+The ordered low decision used 384 games, but **806 games finished**: 377 complete
+pairs plus 52 orphan halves, with 194 further games in flight and none unstarted.
+Canonical ordering prevented fast-finishing outcomes from choosing the sample,
+but long early games delayed the decision while speculative work accumulated.
+See the [efficiency follow-up](2026-09-08-faster-recipe-matches.md#completed-b100-match-and-next-efficiency-work).
+The high probe completed all 256 games without orphans.
+
+### Preserved reader failure and high-only recovery
+
+The original low arena completed successfully. Its Python 3.13 coordinator reader
+then rejected `SPRT llr_first`: Python's changed floating-point sum behavior
+produced a difference of about 2e-19 from the Python 3.10 producer. The unchanged
+original reader replayed the complete bank under Python 3.10 and returned
+`VALID_CELL`; the decision, all counts and final LLR were unchanged. **No low game
+was repeated.** [PR #566](https://github.com/jjoshua2/DeepFin/pull/566) separately
+fixes the reader comparison with a narrow finite absolute tolerance while
+preserving boundary sides and exact protocol/count checks.
+
+The registered high probe then ran once through a separately reviewed high-only
+operator, retaining the original runtime, models, settings, book, opening prefix,
+timeouts and package accounting. Its reader also used the original Python 3.10
+arithmetic; PR #566 was not inserted into the running experiment. The original
+failure and both successful readouts remain available in the
+[completed evidence manifest](evidence/bt4-bootstrap/b100-two-budget-results-manifest.json),
+including losslessly compressed game banks, process records and launch bindings.
+Bulk weights and source corpora retain the external identities in the training
+publication below.
+
+
+## Historical completed-training and arena-launch snapshot — September 8
 
 The pure sharpened-BT4 **policy** endpoint completed all **18,910,484 rows,
 36,935 updates and 420 windows**, with seed zero and batch 512. Every window had
@@ -194,8 +252,8 @@ therefore **7 hours 50 minutes**, not 7.5 hours including the probe. CPU-only me
 and schedule qualification is outside these GPU allowances; each schedule stage
 retains its 30-minute bound and releases the GPU lease.
 
-The registered training is complete, and the separately qualified arena coordinator
-has launched as recorded above. Arena outcomes remain unread in this publication.
+The registered training and both arena stages are complete, with the readout and
+reader recovery recorded above. The older startup snapshots remain historical evidence.
 Preserve shared GPU leasing, surviving timeouts, STOP handling,
 owned-process cleanup, durable failure/completion receipts and at least 150 GiB free.
 No automatic retries or outcome-dependent extensions. Keep labeling available during

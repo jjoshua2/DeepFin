@@ -154,3 +154,11 @@ observations; array-bank parts remain external with published identities.
 [Worker01 failure and larger-data proposal](g10-worker01-failure-and-large-readiness-manifest.json)
 preserves the failed rank admission and incomplete common-input status separately
 from the unregistered metadata-only proposal.
+
+## Completed B100 two-budget screen
+
+The [completed result manifest](b100-two-budget-results-manifest.json) preserves
+both match banks, successful readouts, stage/launch identities and the original
+reader failure. The [dated readout](../../2026-09-08-bt4-pure-policy-endpoint.md)
+reports the shallow sequential decision, protected deep result, aligned search
+contrast and actual charged time, with same-seed and stopped-estimate limits.
