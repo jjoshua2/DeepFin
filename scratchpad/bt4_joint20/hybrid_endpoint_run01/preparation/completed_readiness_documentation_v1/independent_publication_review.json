@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "status": "PASS_PUBLICATION_REVIEW",
+  "reviewer": "independent review_pr517_bootstrap",
+  "reviewed_at_utc": "2026-09-08T03:11:36.964917+00:00",
+  "commit": "5bfe1978994877b3def032d716b528b568db1975",
+  "base": "bb01468",
+  "diff_sha256": "3d2df44f7d033ca812b232f925dcc5f203ed2b6f54d838ee10774e5f322c0a69",
+  "files": {
+    "docs/experiments/2026-09-07-bt4-hybrid-endpoints.md": "0fc4da7c044197791b41d20171754fac89746e3b486da5f65ac6bedcb13f6da0",
+    "docs/experiments/2026-09-07-g10-transfer-readiness.md": "1565184a573bc26591e8df745850259dccd98624578e303cc0073c7a1e2d0736",
+    "docs/experiments/README.md": "d95589a04a1e4455996b91593ddc0973c63fd3f0b2976b0a868b02bba09e018f",
+    "docs/experiments/evidence/bt4-bootstrap/completed-readiness-manifest.json": "8a3f880957703eae553fe3ea40ffc27337589d3f3b9d8769c132e4899b03673a"
+  },
+  "author_validation_sha256": "22317e1a78e46c40384a6c2b77613a31662e871f6cc1dd991a389dc35d6c4ad5",
+  "independent_integrity_check": {
+    "status": "PASS",
+    "commit": "5bfe1978994877b3def032d716b528b568db1975",
+    "entries": 89,
+    "gzip_entries": 2,
+    "source_bytes": 4519953,
+    "published_bytes": 1738791,
+    "local_links": 52,
+    "G10_arithmetic_and_stage_receipts": "PASS",
+    "G10_shutdown_warnings": "Both original logs contain2leakedsemaphores; causality/cleanup notestablished.",
+    "H20_snapshot": "Incomplete actualstart only; no rollingresults read.",
+    "manifest_sha256": "8a3f880957703eae553fe3ea40ffc27337589d3f3b9d8769c132e4899b03673a"
+  },
+  "findings": [
+    "All 89 published evidence members match original source bytes; two gzip members were decompressed and verified. The 73 new evidence files plus manifest and three documents form the 77-file commit.",
+    "G10 counts reconcile: 531412 raw minus 2850 missing-result and 17 bounded policy-support exclusions equals 528545 emitted across 66 derived shards. Source totals, qualifications and all 12 stage resource receipts agree.",
+    "Both original derivation logs preserve two leaked-semaphore warnings. The document correctly leaves their cause and actual cleanup unresolved and does not infer strength or full-corpus readiness.",
+    "H20 recovery reports 2292 prefix shards by qualified process proof and 17 newly processed suffix shards. Full observed descriptive and mass aggregates remain unavailable; the 0.000545 mass bound is explicitly analytic, and suffix statistics establish non-inertness only.",
+    "The original timeout and first qualifier failure remain preserved. The four-native-alias correction is described narrowly, and completed recovery/qualification/prospective schedule claims agree with previously independently accepted receipts.",
+    "H20 training is accurately described as started and incomplete at the published snapshot. No completed training, arena strength, scaling, or next-arm selection is claimed.",
+    "All 52 local document links resolve; whitespace diff check passes. Targeted credential/private-key signature inspection of selected evidence found none."
+  ],
+  "limits": [
+    "Publication review only; no operational launch or configuration change is authorized by this receipt.",
+    "No live corpus metadata/payload scan, checkpoint rehash, training or test rerun, GPU operation, or rolling arena result read was performed.",
+    "Resource values are historical stage observations, not aggregate RSS or a full-scale runtime prediction. Previously accepted process-proof and source-integrity limitations remain applicable."
+  ],
+  "blockers": []
+}
