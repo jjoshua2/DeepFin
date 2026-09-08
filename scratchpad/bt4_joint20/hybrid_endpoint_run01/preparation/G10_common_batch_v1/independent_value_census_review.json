@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "status": "PASS_NO_ADDITIONAL_VALUE_AMBIGUITY_IN_FIXED_POLICY_VALID_SUBSET",
+  "reviewed_utc": "2026-09-08T01:05:37.502307+00:00",
+  "input_files": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/census.py": "009bda300867c154098cfbcfe51131db9641178c1a42f1122fb2eac64a7b44e9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/preregistration.json": "4857d861848b3fffc88fad86318bf8f94a13245a84a5567e34bf3449c8b91bf0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/readout.json": "f2f642059fb9b79a2bfb92cb77b6e7969c2236bd104da5e16b331c15c4d970a4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/interpretation_receipt.json": "eaeb7ffb0861313d619dcd211b76968a2e434d9a9837ffea0b046ddd195c03f0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/fixture_checks.json": "efffc732d13775cb52ed7ce943e94217e44954648e9c1162af06b476826e7828",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/census.log": "242f13f61e4c9efeed92ab511ef6c77ccc5762777640021294234cdf7856d2b8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/time.txt": "de6aa66d4ebf60e5d8d24254bd7bfdbfcfacfe545c9f1def08f6485a1bcd8d0b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/run06_g10.anomalies.jsonl": "a346d5c2c79cfaa09d89f0bb95c486aa877a6794a494bd64fbecddf9b749d331",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/run07_g10_companion4.anomalies.jsonl": "1046441464ef3ef888779263630144c3600bac41300ba3106231272b538f126f"
+  },
+  "independent_checks": {
+    "status": "PASS_RECORDED_VALUE_CENSUS_INTERSECTION",
+    "source_receipt_joins": 64,
+    "counts": {
+      "rows": 531412,
+      "result_and_phase0_policy_valid_rows": 528545,
+      "later_d9_blocks": 678343,
+      "later_d9_complete_false_blocks": 0,
+      "later_d9_not_full_rank_roster_blocks": 0,
+      "later_d9_missing_full_legal_roster_blocks": 598607,
+      "blocks_duplicate_conflicting": 5,
+      "rows_selected_best_conflicting_duplicate": 4,
+      "rows_consumed_duplicate_conflicting": 5,
+      "rows_consumed_value_issue_union": 5,
+      "rows_any_later_duplicate_conflicting": 5
+    },
+    "all_five_refs_in_prior_17": [
+      {
+        "source_id": "run06_g10",
+        "source_shard": "w00-00024.jsonl.zst",
+        "source_row": 4392,
+        "worker_id": 0,
+        "game_id": 12444,
+        "ply": 108
+      },
+      {
+        "source_id": "run06_g10",
+        "source_shard": "w00-00027.jsonl.zst",
+        "source_row": 3527,
+        "worker_id": 0,
+        "game_id": 13896,
+        "ply": 160
+      },
+      {
+        "source_id": "run07_g10_companion4",
+        "source_shard": "w00-00002.jsonl.zst",
+        "source_row": 7854,
+        "worker_id": 0,
+        "game_id": 512,
+        "ply": 185
+      },
+      {
+        "source_id": "run07_g10_companion4",
+        "source_shard": "w00-00020.jsonl.zst",
+        "source_row": 73,
+        "worker_id": 0,
+        "game_id": 3392,
+        "ply": 73
+      },
+      {
+        "source_id": "run07_g10_companion4",
+        "source_shard": "w00-00020.jsonl.zst",
+        "source_row": 75,
+        "worker_id": 0,
+        "game_id": 3392,
+        "ply": 75
+      }
+    ],
+    "new_affected_rows_in_528545": 0,
+    "source_recorded_hashes_and_stats_equal_prior_scan": true,
+    "all_compact_prereg_and_artifact_pins_verified": true
+  },
+  "independent_check_artifacts": {
+    "/tmp/g10-value-census-independent-check.py": "b0a161b38ee5e31743b987e0ff24626ca677538ae270e77d15b7c1f9a846416d",
+    "/tmp/g10-value-census-independent-check.json": "e6fd582d5c849917b298b2b4f0e671b2ecf202821cc85d92d5bfc92d5dabe88f"
+  },
+  "findings": [],
+  "consumer_semantics_review": [
+    "Checker matches RowBank: last same-depth block in each phase, last score for duplicate move in that block, latest phase observing each phase0 move. It separately tracks final consumed observations and shadowed conflicts.",
+    "Rank IDs are validated against declared narrowed width; incomplete or missing whole-legal rosters are descriptive rather than excluded. The actual fixed bank has zero incomplete or nonexact declared-rank blocks.",
+    "Conflicting repeated scores are distinguished from agreeing duplicates; nonfinite, illegal, outside-searchmoves and malformed consumed ranks are separate checks. Every issue is intersected with the previously hash-bound policy-valid/result-present subset.",
+    "All five saved source-qualified anomaly references exactly join prior17 failures, including worker/game/ply/input-key fields. All are consumed conflicting duplicates; four affect the selected best-value observation. None adds an affected row to528545 eligible-under-these-structural-checks positions."
+  ],
+  "operational_evidence": "Complete log and GNU-time exit0 agree with124.477s readout; all64 recorded source hashes/counts and stable metadata match original registration and previous census. All small prereg/artifact pins independently hashed; no original compressed-source payload reread.",
+  "decision": "Keep the proposed bounded phase0 support exclusion focused on the original17 rows; this value finding requires no extra exclusion category, d8 substitution, relabeling, or further census for this fixed batch. Existing2850 no-result exclusions plus17 leave528545 structural candidates for ordinary derive/adapter/rank qualification.",
+  "limits": [
+    "No raw corpus rescan, no diagnostic/test rerun, no engine/model calls or labels changed. Six synthetic controls are author-reported evidence; reviewer inspected checker and saved controls receipt.",
+    "This establishes absence of the checked later-value ambiguities in the fixed source slice; it does not replace full history/input identity, BT4 payload, emitted-corpus or training-schedule qualification.",
+    "Generalizing a narrow exclusion tool to later corpora does not transfer this source-specific census result automatically.",
+    "No playing-strength, calibration or production-adoption conclusion."
+  ]
+}

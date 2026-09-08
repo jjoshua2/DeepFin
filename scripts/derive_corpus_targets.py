@@ -983,6 +983,16 @@ class CorpusIntegrityError(RuntimeError):
     """The corpus is not what its own summary or row schema says it is."""
 
 
+class PolicySupportMiss(CorpusIntegrityError):
+    """An opt-in selected-policy exclusion; other integrity errors remain fatal."""
+
+    def __init__(self, message: str, *, missing: tuple[str, ...] = (),
+                 duplicates: tuple[str, ...] = ()) -> None:
+        super().__init__(message)
+        self.missing = missing
+        self.duplicates = duplicates
+
+
 class EnvelopeMiss(RuntimeError):
     """ONE row's bank cannot answer the scheme's question.
 
@@ -2485,6 +2495,8 @@ class DeriveStats:
     rows_written: int = 0
     rows_dropped_no_result: int = 0
     rows_dropped_envelope: int = 0
+    rows_dropped_policy_support: int = 0
+    policy_support_exclusions: list[dict[str, Any]] = field(default_factory=list)
     envelope_miss_examples: list[str] = field(default_factory=list)
     nodes_floor_hits: int = 0
     support_checks: int = 0
@@ -2939,6 +2951,15 @@ class DeriveOptions:
     #: that lowers it lowers it for the code that actually writes the spill.
     spill_chunk_rows: int = SPILL_CHUNK_ROWS
     row_provenance: bool = False
+    max_policy_support_misses: int = 0
+
+    def __post_init__(self) -> None:
+        if self.max_policy_support_misses < 0:
+            raise ValueError("max-policy-support-misses must be >= 0")
+        if self.max_policy_support_misses and (
+            self.scheme.kind != "uniform" or self.scheme.policy_observation != "phase0"
+        ):
+            raise ValueError("max-policy-support-misses requires uniform depth and phase0 policy")
 
     @property
     def needs_game(self) -> bool:
@@ -3021,6 +3042,8 @@ class TargetDeriver:
         values = apply_scheme(bank, self.options.scheme)
         if values.floor_hit:
             self.stats.nodes_floor_hits += 1
+        if self.options.max_policy_support_misses:
+            self._validate_selected_policy_block(row, board)
         self._check_support(board, values, row)
 
         q = self.q_of(values.effective_cp)
@@ -3307,6 +3330,27 @@ class TargetDeriver:
             )
         return board
 
+    def _validate_selected_policy_block(self, row: Mapping[str, Any], board: chess.Board) -> None:
+        """Support exclusions cannot hide invalid selected-block ranks or scores."""
+        phase = row["phases"][0]
+        width = board.legal_moves.count()
+        if (type(phase.get("index")) is not int or phase["index"] != 0
+                or phase.get("width_requested") != "all" or phase.get("searchmoves") is not None
+                or any(type(phase.get(key)) is not int or phase[key] != width
+                       for key in ("width_realized", "width_streamed"))):
+            raise CorpusIntegrityError(f"{_row_label(row)}: malformed selected phase0 full-width metadata")
+        blocks = [block for block in phase["per_depth"]
+                  if int(block["depth"]) == self.options.scheme.depth]
+        if len(blocks) != 1 or blocks[0]["complete"] is not True:
+            raise CorpusIntegrityError(f"{_row_label(row)}: ambiguous/incomplete selected phase0 policy block")
+        lines = blocks[0]["lines"]
+        if len(lines) != width or any(len(line) != 4 or type(line[0]) is not int or line[0] != index
+               or not isinstance(line[1], str)
+               or isinstance(line[2], bool) or not isinstance(line[2], (int, float))
+               or not math.isfinite(line[2])
+               for index, line in enumerate(lines, start=1)):
+            raise CorpusIntegrityError(f"{_row_label(row)}: malformed selected phase0 policy ranks/scores")
+
     def _check_support(
         self, board: chess.Board, values: MoveValues, row: dict[str, Any],
     ) -> None:
@@ -3320,6 +3364,14 @@ class TargetDeriver:
         """
         legal = {move.uci() for move in board.legal_moves}
         banked = set(values.moves)
+        if self.options.max_policy_support_misses and not (banked - legal):
+            missing = tuple(sorted(legal - banked))
+            duplicates = tuple(sorted(move for move in banked if values.moves.count(move) > 1))
+            if missing or duplicates:
+                raise PolicySupportMiss(
+                    f"{_row_label(row)}: selected phase0 policy support missing {list(missing)}, "
+                    f"duplicate {list(duplicates)}", missing=missing, duplicates=duplicates,
+                )
         if legal != banked:
             raise CorpusIntegrityError(
                 f"row {row.get('game_id')}/{row.get('ply')}: the banked move set "
@@ -3361,7 +3413,8 @@ class TargetDeriver:
             dtype=np.float32,
         )
 
-    def _verify_input_key(self, row: Mapping[str, Any], planes: np.ndarray) -> None:
+    def _verify_input_key(self, row: Mapping[str, Any], planes: np.ndarray,
+                          *, count_emitted: bool = True) -> None:
         """⚑⚑ THE ROW'S OWN PROOF that the reconstruction reached the encoder.
 
         A schema-2 row carries ``input_key``, the hash of the tensor LIVE PLAY
@@ -3391,7 +3444,8 @@ class TargetDeriver:
                 f"not the banked input_key {want}; the planes this row would "
                 "train on are not the planes live play encoded for it",
             )
-        self.stats.input_key_verified += 1
+        if count_emitted:
+            self.stats.input_key_verified += 1
 
     def _note_row_history(self, row: Mapping[str, Any]) -> None:
         """The row's SCHEMA and window reason, counted once per EMITTED row.
@@ -4145,6 +4199,38 @@ def enforce_value_scheme_take_effect(
         )
 
 
+POLICY_SUPPORT_MISSES_FILE = "policy_support_misses.jsonl"
+
+
+def _record_policy_support_miss(
+    deriver: TargetDeriver, exc: PolicySupportMiss, row: dict[str, Any], *,
+    source_path: Path, raw_index: int, corpus_sha: str, evidence_dir: Path,
+) -> None:
+    """Verify the would-be exclusion's history before recording or counting it."""
+    if row_schema_of(row) != ROW_SCHEMA_HISTORY:
+        raise CorpusIntegrityError("policy support exclusions require banked full-history input keys")
+    planes = deriver._encode(deriver._board_for(row))
+    deriver._verify_input_key(row, planes, count_emitted=False)
+    record = {
+        **row_refs.reference(row, source_path, raw_index, corpus_sha, planes),
+        "reason": "selected_phase0_policy_support",
+        "policy_depth": deriver.options.scheme.depth,
+        "missing_moves": list(exc.missing), "duplicate_moves": list(exc.duplicates),
+        "full_history_input_key_verified": True,
+    }
+    # Keep evidence on a refused run too; these are encountered misses, not a
+    # completion claim. Worker-local files survive until successful publication.
+    with (evidence_dir / POLICY_SUPPORT_MISSES_FILE).open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, sort_keys=True) + "\n")
+    deriver.stats.policy_support_exclusions.append(record)
+    deriver.stats.rows_dropped_policy_support += 1
+    if deriver.stats.rows_dropped_policy_support > deriver.options.max_policy_support_misses:
+        raise CorpusIntegrityError(
+            f"{exc}; exceeds --max-policy-support-misses "
+            f"{deriver.options.max_policy_support_misses}",
+        ) from exc
+
+
 def derive(
     *,
     corpus_dir: Path,
@@ -4267,6 +4353,14 @@ def derive(
             tt_carried.add(_check_row_identity(row, corpus_sha))
             try:
                 derived = deriver.derive_row(row)
+            except PolicySupportMiss as exc:
+                _record_policy_support_miss(
+                    deriver, exc, row, source_path=path, raw_index=raw_index,
+                    corpus_sha=corpus_sha, evidence_dir=out_dir,
+                )
+                if grouper is not None:
+                    grouper.note_dropped(row)
+                continue
             except EnvelopeMiss as exc:
                 deriver.stats.rows_dropped_envelope += 1
                 # ⚑⚑ TELL THE GROUPER BEFORE `continue`. Both drop paths used
@@ -5393,7 +5487,16 @@ def build_summary(
         "seed_effect": "permutes rows WITHIN each shard; changes no target value",
         "rows_per_shard": options.rows_per_shard,
         "max_envelope_misses": options.max_envelope_misses,
-        "realized": stats.summary(),
+        **({"max_policy_support_misses": options.max_policy_support_misses,
+            "policy_support_misses_file": POLICY_SUPPORT_MISSES_FILE
+            if stats.rows_dropped_policy_support else None}
+           if options.max_policy_support_misses else {}),
+        "realized": {
+            **stats.summary(),
+            **({"rows_dropped_policy_support": stats.rows_dropped_policy_support,
+                "policy_support_exclusions": stats.policy_support_exclusions}
+               if options.max_policy_support_misses else {}),
+        },
         "shards": list(shards),
         "python": sys.version.split()[0],
     }
@@ -5577,7 +5680,9 @@ def format_summary(out: dict[str, Any]) -> str:
         f"unlisted on disk={len(record['shards_on_disk_not_in_inventory'])}",
         f"rows read={realized['rows_read']} written={realized['rows_written']} "
         f"dropped(no result)={realized['rows_dropped_no_result']} "
-        f"dropped(envelope)={realized['rows_dropped_envelope']}",
+        f"dropped(envelope)={realized['rows_dropped_envelope']}"
+        + (f" dropped(policy support)={realized['rows_dropped_policy_support']}"
+           if "rows_dropped_policy_support" in realized else ""),
         f"nodes_floor_hits={realized['nodes_floor_hits']} "
         f"base depths={realized['realized_base_depth_histogram']} "
         f"values by phase={realized['values_by_phase']}",
@@ -5813,6 +5918,7 @@ _SUM_FIELDS: tuple[str, ...] = (
     "rows_read",
     "rows_dropped_no_result",
     "rows_dropped_envelope",
+    "rows_dropped_policy_support",
     "nodes_floor_hits",
     "support_checks",
     "deep_tier_moves",
@@ -5862,6 +5968,7 @@ _SENTINEL_MIN_FIELDS: tuple[str, ...] = ("policy_support_min",)
 #: Merged from the per-worker examples' GLOBAL row indices; see
 #: :func:`_merge_stats`.
 _ORDERED_EXAMPLE_FIELDS: tuple[str, ...] = ("envelope_miss_examples",)
+_POLICY_SUPPORT_FIELDS: tuple[str, ...] = ("policy_support_exclusions",)
 
 #: ⚑ COUNTED WHERE THE SHARDS ARE WRITTEN, which on this path is the repack and
 #: not the lanes: a lane spills surviving rows and writes no shard, so summing
@@ -5883,6 +5990,7 @@ _MERGE_COVERAGE: frozenset[str] = frozenset(
     + _CONSTANT_FIELDS
     + _SENTINEL_MIN_FIELDS
     + _ORDERED_EXAMPLE_FIELDS
+    + _POLICY_SUPPORT_FIELDS
     + _REPACK_OWNED_FIELDS
     + _GAME_OWNED_FIELDS
     + tuple(name for owned in _STREAM_OWNED_FIELDS.values() for name in owned),
@@ -6408,6 +6516,14 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
             tt_carried.add(_check_row_identity(row, task.corpus_sha))
             try:
                 derived = deriver.derive_row(row)
+            except PolicySupportMiss as exc:
+                _record_policy_support_miss(
+                    deriver, exc, row, source_path=task.shards[shard_index],
+                    raw_index=seen - 1, corpus_sha=task.corpus_sha, evidence_dir=spill_dir,
+                )
+                if grouper is not None:
+                    grouper.note_dropped(row)
+                continue
             except EnvelopeMiss as exc:
                 deriver.stats.rows_dropped_envelope += 1
                 if grouper is not None:
@@ -6685,6 +6801,9 @@ def _merge_stats(
     # makes the game replay order-sensitive too, and two functions that disagree
     # about who owns the ordering is one refactor away from a bug.
     results = sorted(results, key=lambda item: item.index)
+    merged.policy_support_exclusions = [
+        record for item in results for record in item.stats.policy_support_exclusions
+    ]
     for name in _SUM_FIELDS:
         setattr(merged, name, sum(getattr(item.stats, name) for item in results))
     for name in _MAX_FIELDS:
@@ -6937,6 +7056,18 @@ def derive_parallel(
         _check_closed_keys(results)
         _check_rows_read(results, rows_to_read)
         _check_envelope_budget(results, options.max_envelope_misses)
+        support_misses = [
+            row for result in results for row in result.stats.policy_support_exclusions
+        ]
+        if support_misses:
+            with (out_dir / POLICY_SUPPORT_MISSES_FILE).open("x", encoding="utf-8") as stream:
+                for row in support_misses:
+                    stream.write(json.dumps(row, sort_keys=True) + "\n")
+        if len(support_misses) > options.max_policy_support_misses:
+            raise CorpusIntegrityError(
+                f"{len(support_misses)} policy support misses exceed global "
+                f"--max-policy-support-misses {options.max_policy_support_misses} across all workers",
+            )
 
         survivors = [item.survivors for item in results]
         if sum(survivors) == 0:
@@ -7021,6 +7152,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=0,
         help="stop after this many CORPUS ROWS READ (0 = the whole corpus). "
              "Rows dropped by a scheme or a missing result still count as read.",
+    )
+    parser.add_argument(
+        "--max-policy-support-misses", type=int, default=0,
+        help="opt-in global exclusion budget for missing/duplicate legal moves in the selected "
+             "complete phase0 uniform-policy block; validates history and records every exclusion. "
+             "Default 0 is strict. Illegal moves, malformed ranks/scores and identity failures remain fatal.",
     )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--rows-per-shard", type=int, default=DEFAULT_ROWS_PER_SHARD)
@@ -7246,6 +7383,7 @@ def main(argv: list[str] | None = None) -> int:
         seed=int(args.seed),
         rows_per_shard=int(args.rows_per_shard),
         max_envelope_misses=int(args.max_envelope_misses),
+        max_policy_support_misses=int(args.max_policy_support_misses),
         value_scheme=value_scheme,
         spill_chunk_rows=spill_chunk_rows,
         qz=qz,

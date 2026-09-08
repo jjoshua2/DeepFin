@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "registered_utc": "2026-09-08T00:57:45.507205+00:00",
+  "purpose": "Resolve omitted narrowed later-phase d9 value-observation structure on exactly the same64 registered closed raw shards; not a timing repeat",
+  "original_registration": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preregistration.json",
+    "sha256": "86de876067f255a36abd5a0f109ece4e9efdc899e2d1fb091750b7d75bc640bf"
+  },
+  "script_sha256": "009bda300867c154098cfbcfe51131db9641178c1a42f1122fb2eac64a7b44e9",
+  "pins": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preregistration.json",
+      "sha256": "86de876067f255a36abd5a0f109ece4e9efdc899e2d1fb091750b7d75bc640bf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/launch.json",
+      "sha256": "8bd65b7bb18f6032e864d9defa8e7f29cbba4e97c2a613e59eb309964ced277b"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json",
+      "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.closed_receipts.jsonl",
+      "sha256": "8684984ed17e457245f2e54c1e731aa46be7f20ecf2b46a51855eac28c88ab5e"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json",
+      "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.closed_receipts.jsonl",
+      "sha256": "f27dc5c265448ccc1ea38b57cd0dbc30a5db84fdb2f5317fdfc25ba7b84012ed"
+    },
+    {
+      "path": "/tmp/deepfin-g10-pilot-tools/scripts/derive_corpus_targets.py",
+      "sha256": "7886094a27484ba86571819b86f3a1735d2078a3293981917dd983df292590bf"
+    },
+    {
+      "path": "/tmp/deepfin-g10-pilot-tools/scripts/gen_sf_rooted_corpus.py",
+      "sha256": "4bb5e22e81db93c74cfe88d2362136311b001e40e0254f8ff0adc9f3858ea655"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/readout.json",
+      "sha256": "423a29c3a545005c3162b131864fe55c70483fab05710e77acdc73d4c8276ff3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.failures.jsonl",
+      "sha256": "cbb7f56be2986022eafaefc92b422fca5bede6dda554408b359b833ff5da2a85"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.failures.jsonl",
+      "sha256": "656a4d5fb1e0f35c393f0ca0d77f37710809d3c3e681e88024fc64728e0d0008"
+    }
+  ],
+  "consumer_trace": {
+    "source": "/tmp/deepfin-g10-pilot-tools/scripts/derive_corpus_targets.py",
+    "lines": [
+      1300,
+      1353,
+      1413,
+      1435
+    ],
+    "semantics": "Last same-depth block in each phase; last duplicate move score in that block; latest phase carrying each phase0 move. Later complete flag and missing full-width support do not gate value_at."
+  },
+  "measurements": [
+    "All later d9 duplicate move entries split exact agreeing vs conflicting scores, nonfinite emissions, illegal extras, outside explicit searchmoves, malformed rank IDs; retain source-qualified anomaly refs.",
+    "Final consumed per-move observation follows actual last-phase and last-duplicate wins, distinguishing shadowed conflicts.",
+    "Malformed rank IDs means non-integer/out-of-range/duplicate IDs, or claimed complete block with nonexact ranks1..realizedwidth. Partial block omissions alone are descriptive, not invalid.",
+    "Intersect every row-level issue with528545 result-bearing valid phase0-policy rows from hash-bound prior census.",
+    "No encoding, derivation, teacher read or new label. SHA compressed inputs during sole stream, source metadata before/after, manifest/receipt pins before/after."
+  ],
+  "resources": {
+    "workers": 2,
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "numeric_threads": 2,
+    "nice": 19,
+    "ionice_class": 3,
+    "gpu_hidden": true,
+    "timeout_seconds": 885,
+    "kill_after_seconds": 15
+  },
+  "limitations": [
+    "Scalar agreeing duplicates counted separately, never automatically excluded.",
+    "Missing full legal move support and complete=False in narrowed blocks are descriptive only.",
+    "Consumed value issue union is diagnostic, not an automatic exclusion policy. It includes conflicting duplicates, nonfinite consumed emissions, consumed illegal/outside-searchmoves moves and consumed malformed-rank blocks.",
+    "No inference outside the fixed64 shards and no automatic broader qualification or scan."
+  ]
+}

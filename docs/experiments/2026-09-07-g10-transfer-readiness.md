@@ -254,15 +254,15 @@ This is not full training-input qualification. The census checked the existing
 latest-phase value reader's finite availability, but did not validate ambiguity
 within narrowed later-phase move rosters. Its metric named
 `result_and_policy_and_value_structural_ok` must be read with that limitation;
-the interpretation receipt preserves the correction. A separate bounded pass is
-checking duplicate/conflicting observations actually used by that value reader.
+the interpretation receipt preserves the correction. The supplemental pass below resolves the omitted duplicate/conflicting-observation
+question for this fixed slice.
 Incomplete later blocks alone are permitted by the existing value semantics and
 will not be relabeled as failures. No target values or original data were changed.
 
 The policy census supports an explicit bounded exclusion option for unusable
 phase-zero policy support, with strict defaults unchanged, all excluded source
 references recorded, and the same surviving inputs for every recipe. Illegal extra
-moves and source/history identity errors must still fail. This tool work is underway;
+moves and source/history identity errors must still fail. The bounded exclusion and its rank consumer are now implemented and tested;
 there is no operational retry or replacement of the selected source set.
 
 A two-worker synthetic error fixture reproduced the old wrapper's hidden error
@@ -280,6 +280,54 @@ includes the exact runner, startup hook, registration, launch/review pins, origi
 logs and terminal/cleanup receipts, plus the bounded diagnostic, exact failure row
 and losslessly compressed original diagnostic bank. Bulk partial spill arrays remain
 host-local.
+
+## Value follow-up and registered corrected preparation
+
+The supplemental pass completed in **124.48 seconds**, inspecting 678,343 later
+phase d9 blocks over the same 531,412 rows. All 64 compressed source hashes, row
+counts and storage identities matched. Five rows contain conflicting duplicate
+move scores (two run06, three run07); all five already belong to the 17 malformed
+phase-zero policy rows. Four affect the selected best value. There are **zero
+additional affected rows** among the 528,545 result-bearing, policy-valid rows.
+An independent review traced the actual last-block, last-duplicate and latest-phase
+consumer semantics and verified the five-way intersection. No further census is
+needed for this question on this fixed slice. This does not replace the actual
+history, BT4, rank and emitted-output checks during preparation.
+
+The deriver now supports an explicit bounded policy-support exclusion. Default
+behavior stays strict. An excluded row must retain all expected full-width rank
+slots and phase-zero metadata; only duplicated/missing legal move support may
+differ. Malformed rank counts, illegal extra moves, nonfinite scores and identity
+errors remain fatal. Each exclusion gets a source/shard/physical-row reference,
+full-history key proof and reason, with one budget enforced across workers.
+The rank consumer independently validates that evidence, skips only those rows,
+and refuses any emitted reference to an excluded row.
+
+The [corrected preparation registration](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/preregistration.json)
+uses the original 64 raw shards with fresh output parents. Directory v2 preserves
+the earlier unlaunched direct-CLI proposal; v3 is the second operational attempt,
+registered but **not frozen or launched** at this snapshot. It requires exactly
+12 run06 and five run07 policy-support exclusions, plus the known 1,600/1,250
+missing-result exclusions. Expected emitted rows are 263,916 and 264,629. Final
+qualification must prove those exact excluded identities are absent and every
+other registered row survives; unexpected envelope drops or new exclusions fail.
+
+Use the reviewed direct-script invocation and private two-thread startup hook,
+a newly frozen merged implementation and its qualified CPU runtime. The existing
+two-hour aggregate cap, two CPU cores, 8 GiB output/cache allowance, 64 MiB private
+adapter/rank caches and 150 GiB free-space reserve remain. Run derive, adapt, rank
+and qualification once each; no target mixing, teacher inference, training or arena.
+Preserve the failed v1 outputs. Complete common inputs can support whichever recipe
+comparison is selected later from H20 evidence.
+
+[Implementation and follow-up evidence](evidence/bt4-bootstrap/g10-policy-support-manifest.json)
+includes original author/static checks, the supplemental value readout and review,
+and the proposed operational contract with small retained fixtures. Final code
+checks cover serial/spawn identity, combined worker limits, grouped-game drops,
+malformed protocol/history rejection, and rank exclusion-proof tampering. A whole
+static gate passed while the final boundary correction was in progress; a separate
+changed-file gate checked the final bytes. No full-suite or corpus scan was repeated
+for publication.
 
 ## Evidence
 

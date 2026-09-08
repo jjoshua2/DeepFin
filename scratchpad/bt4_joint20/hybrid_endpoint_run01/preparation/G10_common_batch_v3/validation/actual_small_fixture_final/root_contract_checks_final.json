@@ -1,0 +1,14 @@
+{
+  "status": "UNIT_CONTRACT_CHECKS_PASS_NOT_OPERATIONAL_QUALIFICATION",
+  "checks": [
+    "serial_actual_completed_summary_accepted",
+    "spawn_actual_completed_summary_accepted",
+    "different_raw_ref_refused",
+    "unverified_history_refused",
+    "unexpected_envelope_refused",
+    "wrong_no_result_count_refused",
+    "excluded_refs_outside_source_universe_refused"
+  ],
+  "runner_sha256": "adfacfa83b853653e827ff9b235cb7a53b0eec470d4016cfad8db62ac58a8e55",
+  "scope": "Reused real final synthetic serial/spawn outputs; no derivation or corpus qualification rerun."
+}

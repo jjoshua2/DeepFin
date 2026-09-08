@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import shutil
 import sys
@@ -307,10 +308,112 @@ def _storage_identity(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _policy_support_exclusions(
+    summary: Mapping[str, Any], *, source_dir: Path, raw_dir: Path, raw_config: str,
+) -> tuple[dict[tuple[str, int], dict[str, Any]], Path | None, str | None]:
+    """Bind optional drop evidence to the pinned summary, never just a counter."""
+    realized = summary["realized"]
+    count = realized.get("rows_dropped_policy_support", 0)
+    cap = summary.get("max_policy_support_misses", 0)
+    entries = realized.get("policy_support_exclusions", [])
+    if (type(count) is not int or type(cap) is not int or not 0 <= count <= cap
+            or not isinstance(entries, list) or len(entries) != count):
+        raise ValueError("invalid policy support exclusion count or evidence")
+    if not count:
+        if summary.get("policy_support_misses_file") is not None:
+            raise ValueError("policy support evidence file declared without exclusions")
+        return {}, None, None
+    scheme = summary["scheme"]
+    if (summary.get("row_provenance") is None or scheme.get("kind") != "uniform"
+            or scheme.get("depth") != 9 or scheme.get("policy_observation") != "phase0"
+            or summary.get("policy_support_misses_file") != derive.POLICY_SUPPORT_MISSES_FILE):
+        raise ValueError("policy support exclusions require explicit phase0 d9 row provenance")
+    path = source_dir / derive.POLICY_SUPPORT_MISSES_FILE
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("policy support exclusion evidence is not a regular local file")
+    payload = path.read_bytes()
+    actual = [json.loads(line) for line in payload.decode("utf-8").splitlines()]
+    if actual != entries:
+        raise ValueError("policy support exclusion file differs from pinned summary")
+    namespace = hashlib.sha256(json.dumps(
+        [str(raw_dir), raw_config], separators=(",", ":"),
+    ).encode()).hexdigest()
+    exclusions: dict[tuple[str, int], dict[str, Any]] = {}
+    for entry in entries:
+        if (not isinstance(entry, dict) or type(entry.get("schema")) is not int
+                or entry.get("schema") != provenance.SCHEMA
+                or entry.get("source_namespace") != namespace
+                or entry.get("source_dir") != str(raw_dir)
+                or entry.get("source_config_sha256") != raw_config
+                or not isinstance(entry.get("source_shard"), str)
+                or Path(entry["source_shard"]).name != entry["source_shard"]
+                or type(entry.get("source_row")) is not int or entry["source_row"] < 0
+                or any(type(entry.get(field)) is not int for field in ("worker_id", "game_id", "ply"))
+                or entry.get("reason") != "selected_phase0_policy_support"
+                or type(entry.get("policy_depth")) is not int or entry.get("policy_depth") != 9
+                or entry.get("full_history_input_key_verified") is not True):
+            raise ValueError("invalid source-qualified policy support exclusion")
+        key = (entry["source_shard"], entry["source_row"])
+        if key in exclusions:
+            raise ValueError("duplicate policy support exclusion reference")
+        exclusions[key] = entry
+    return exclusions, path, hashlib.sha256(payload).hexdigest()
+
+
+def _verify_policy_support_exclusion(
+    row: dict[str, Any], evidence: Mapping[str, Any], *, raw_path: Path,
+    offset: int, raw_config: str,
+) -> None:
+    """Recompute the exceptional support and history before omitting its ranks."""
+    if row.get("result") is None:
+        raise ValueError("policy support exclusion cannot replace a no-result drop")
+    if derive.row_schema_of(row) != derive.ROW_SCHEMA_HISTORY:
+        raise ValueError("policy support exclusion requires banked full-history input keys")
+    derive.require_row_regime(row)
+    board = derive.board_from_row(row)
+    if (row["stm"] != ("w" if board.turn else "b")
+            or int(row["piece_count"]) != board.occupied.bit_count()):
+        raise ValueError("policy support exclusion has inconsistent board metadata")
+    legal = {move.uci() for move in board.legal_moves}
+    phase = row["phases"][0]
+    if (type(phase.get("index")) is not int or phase["index"] != 0
+            or phase.get("width_requested") != "all" or phase.get("searchmoves") is not None
+            or any(type(phase.get(key)) is not int or phase[key] != len(legal)
+                   for key in ("width_realized", "width_streamed"))):
+        raise ValueError("policy support exclusion has malformed full-width metadata")
+    blocks = [block for block in row["phases"][0]["per_depth"] if int(block["depth"]) == 9]
+    if len(blocks) != 1 or blocks[0]["complete"] is not True:
+        raise ValueError("policy support exclusion has ambiguous or incomplete d9")
+    lines = d9_lines(row)
+    if len(lines) != len(legal) or any(len(line) != 4 or type(line[0]) is not int or line[0] != rank
+           or not isinstance(line[1], str) or isinstance(line[2], bool)
+           or not isinstance(line[2], (int, float)) or not math.isfinite(line[2])
+           for rank, line in enumerate(lines, 1)):
+        raise ValueError("policy support exclusion has malformed ranks or scores")
+    moves = [line[1] for line in lines]
+    missing = sorted(legal - set(moves))
+    duplicates = sorted(move for move in set(moves) if moves.count(move) > 1)
+    if set(moves) - legal or not (missing or duplicates):
+        raise ValueError("policy support exclusion does not describe an eligible support defect")
+    x = np.asarray(encode_position(
+        board, add_features=True, input_history_encoding=derive.INPUT_HISTORY_ENCODING,
+        input_extra_features=derive.INPUT_EXTRA_FEATURES,
+    ), dtype=np.float32)
+    expected = {
+        **provenance.reference(row, raw_path, offset, raw_config, x),
+        "reason": "selected_phase0_policy_support", "policy_depth": 9,
+        "missing_moves": missing, "duplicate_moves": duplicates,
+        "full_history_input_key_verified": True,
+    }
+    if expected != evidence:
+        raise ValueError("policy support exclusion differs from raw support or history identity")
+
+
 def _bank_provenance(
     *, record: derive.CorpusRecord, raw_dir: Path, source_paths: list[Path],
     source_summary: Mapping[str, Any], source_summary_sha: str, writing: Path,
     limit: int, top_k: int, max_cache_bytes: int,
+    exclusions: Mapping[tuple[str, int], dict[str, Any]], exclusion_path: Path | None,
 ) -> tuple[list[dict[str, Any]], int, int, dict[str, Any]]:
     """Read raw rows once; join recorded physical rows even across output revisits."""
     dtype = np.dtype([
@@ -330,6 +433,10 @@ def _bank_provenance(
     raw_rows = dropped = 0
     index: dict[str, tuple[Path, Path, str, int]] = {}
     identities: dict[Path, tuple[int, int, int, int, int]] = {}
+    seen_exclusions: set[tuple[str, int]] = set()
+    if exclusion_path is not None:
+        identities[exclusion_path] = _file_identity(exclusion_path)
+    exclusion_sha = file_sha256(exclusion_path) if exclusion_path is not None else None
     for number, (raw_path, count) in enumerate(zip(record.shards, counts)):
         take = min(int(count), limit - raw_rows)
         if take <= 0:
@@ -345,6 +452,13 @@ def _bank_provenance(
             seen += 1
             raw_rows += 1
             derive._check_row_identity(row, raw_config)
+            key = (raw_path.name, offset)
+            if key in exclusions:
+                _verify_policy_support_exclusion(
+                    row, exclusions[key], raw_path=raw_path, offset=offset, raw_config=raw_config,
+                )
+                seen_exclusions.add(key)
+                continue
             if row.get("result") is None:
                 dropped += 1
                 continue
@@ -380,6 +494,8 @@ def _bank_provenance(
         index[raw_path.name] = (target, used_path, file_sha256(target), take)
     if raw_rows != limit:
         raise ValueError(f"raw prefix has {raw_rows} rows, expected {limit}")
+    if seen_exclusions != set(exclusions):
+        raise ValueError("policy support exclusion is outside the consumed raw prefix")
     written = []
     derived_stable: dict[Path, str] = {}
     shard_manifest = {entry["path"]: entry for entry in source_summary["shards"]}
@@ -420,6 +536,8 @@ def _bank_provenance(
             used = np.load(used_path, mmap_mode="r+", allow_pickle=False)
             for offset, ref in group:
                 raw_index = int(ref["source_row"])
+                if (raw_name, raw_index) in exclusions:
+                    raise ValueError("derived row references an excluded policy support row")
                 if not 0 <= raw_index < count or used[raw_index]:
                     raise ValueError("duplicate or out-of-prefix physical row reference")
                 item = records[raw_index]
@@ -455,6 +573,9 @@ def _bank_provenance(
                                 if path in raw_members},
         "policy_observation": source_summary["scheme"].get("policy_observation", "latest-phase"),
         "value_observation": source_summary["scheme"].get("value_observation", "latest-phase"),
+        **({"rows_dropped_policy_support": len(seen_exclusions),
+            "policy_support_exclusions_sha256": exclusion_sha}
+           if exclusion_path is not None else {}),
     }
     return written, raw_rows, dropped, proof
 
@@ -521,6 +642,12 @@ def bank(args: argparse.Namespace) -> int:
     ) != raw_config_sha:
         raise SystemExit("raw and derived source config identities differ")
 
+    exclusions, exclusion_path, exclusion_sha = _policy_support_exclusions(
+        source_summary, source_dir=source_dir, raw_dir=raw_dir, raw_config=raw_config_sha,
+    )
+    if exclusion_path is not None:
+        raw_record_pins[exclusion_path] = cast(str, exclusion_sha)
+
     writing.mkdir(parents=True)
     rng = np.random.default_rng(seed)
     pending: list[RankObservation] = []
@@ -536,6 +663,7 @@ def bank(args: argparse.Namespace) -> int:
                 source_summary=source_summary, source_summary_sha=source_summary_sha,
                 writing=writing, limit=limit, top_k=top_k,
                 max_cache_bytes=int(getattr(args, "max_provenance_cache_bytes", 8 * 1024 ** 3)),
+                exclusions=exclusions, exclusion_path=exclusion_path,
             )
         else:
             for raw_path in record.shards:
@@ -599,7 +727,9 @@ def bank(args: argparse.Namespace) -> int:
                 f"drops={dropped_no_result}/{expected_dropped}",
             )
         if provenance_proof:
-            if raw_rows - rows - dropped_no_result != int(realized.get("rows_dropped_envelope", 0)):
+            if raw_rows - rows - dropped_no_result - len(exclusions) != int(
+                realized.get("rows_dropped_envelope", 0)
+            ):
                 raise ValueError("provenance-selected row count differs from declared drop counters")
             if (file_sha256(source_summary_path) != source_summary_sha
                     or any(file_sha256(path) != digest for path, digest in raw_record_pins.items())):
@@ -614,6 +744,8 @@ def bank(args: argparse.Namespace) -> int:
             "raw_limit": limit,
             "raw_rows_read": raw_rows,
             "rows_dropped_no_result": dropped_no_result,
+            **({"rows_dropped_policy_support": len(exclusions)}
+               if source_summary.get("max_policy_support_misses", 0) else {}),
             "source_dir": str(source_dir),
             "source_derive_summary_sha256": source_summary_sha,
             "rows": rows,
