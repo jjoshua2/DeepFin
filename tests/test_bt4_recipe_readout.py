@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import random
 
@@ -224,6 +225,7 @@ def make(tmp_path, monkeypatch, panel):
             "--out": str(result_path),
             "--max-concurrent-games": "128",
             "--eval-max-batch": "4096",
+            "--compile-cache-dir": str(tmp_path / "worker-cache"),
             "--max-seconds": "5370",
         }
         for k, v in flags.items():
@@ -411,13 +413,30 @@ def test_fixed_probe_rejects_sequential_terminal_and_recursive_manifest(make, tm
 
 
 @pytest.mark.parametrize("loop", ["rolling", "chunked"])
-def test_expected_command_parses_through_actual_arena_cli(make, monkeypatch, loop):
+def test_expected_command_parses_through_actual_arena_cli(make, monkeypatch, tmp_path, loop):
     m = make(loop=loop)
     command = json.loads(Path(m["launch"]["path"]).read_text())["command"]
     seen = {}
+    cache = tmp_path / "worker-cache" / "compile_cache"
+    # Keep the real CLI/cache setup, but forbid any mkdir outside this fixture.
+    original_mkdir = Path.mkdir
+
+    def fixture_mkdir(path, *args, **kwargs):
+        assert path.is_relative_to(tmp_path), f"unexpected non-fixture write: {path}"
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fixture_mkdir)
+    # Restore these globals after main(), including when the caller had no value.
+    for name in ("TORCHINDUCTOR_CACHE_DIR", "TRITON_CACHE_DIR", "TORCHINDUCTOR_FX_GRAPH_CACHE"):
+        monkeypatch.setenv(name, "fixture-reset")
+        monkeypatch.delenv(name)
     monkeypatch.setattr(arena, "run_arena", lambda **kw: seen.update(kw))
     monkeypatch.setattr("sys.argv", command[1:])
     arena.main()
+    assert (cache / "torchinductor").is_dir()
+    assert (cache / "triton").is_dir()
+    assert os.environ["TORCHINDUCTOR_CACHE_DIR"] == str(cache / "torchinductor")
+    assert os.environ["TRITON_CACHE_DIR"] == str(cache / "triton")
     assert seen["rolling"] is (loop == "rolling")
     assert seen["sims_candidate"] == seen["sims_reference"] == 100
     assert seen["games"] == 1000
