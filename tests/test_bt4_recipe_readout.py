@@ -507,3 +507,58 @@ def test_registered_interaction_resamples_aligned_pairs(make, tmp_path):
     assert contrast["score_advantage_400_minus_100"] == float(delta.mean())
     assert contrast["bootstrap"]["samples"] == 10000
     assert "paired_normal_ci95" not in contrast
+
+
+@pytest.fixture
+def forced_opening():
+    # Registered seed42 panel index55, copied from the retained preparation.
+    return {
+        "root_fen": chess.STARTING_FEN,
+        "moves": [
+            "e2e4", "g8f6", "e4e5", "f6d5", "d2d4", "d7d6", "g1f3", "d6e5",
+            "f3e5", "b8d7", "f1d3", "d7e5", "d4e5", "d5b4", "d3e4", "d8d1",
+        ],
+        "fen": "r1b1kb1r/ppp1pppp/8/4P3/1n2B3/8/PPP2PPP/RNBqK2R w KQkq - 0 9",
+    }
+
+
+def test_registered_forced_move_opening_is_accepted(panel, forced_opening, tmp_path):
+    board = chess.Board(forced_opening["root_fen"])
+    for move in forced_opening["moves"]:
+        board.push_uci(move)
+    assert board.is_valid()
+    assert not board.is_game_over()
+    assert board.legal_moves.count() == 1
+    entries = copy.deepcopy(panel)
+    entries[55] = forced_opening
+    assert tool.opening_panel(put(tmp_path / "panel.json", entries)) == entries
+
+
+@pytest.mark.parametrize("change", ["terminal", "illegal_move", "altered_history", "endpoint", "duplicate"])
+def test_forced_opening_acceptance_preserves_history_guards(panel, forced_opening, tmp_path, change):
+    entries = copy.deepcopy(panel)
+    entries[55] = forced_opening
+    if change == "terminal":
+        moves = ["g1f3", "g8f6", "f3g1", "f6g8"] * 3 + ["f2f3", "e7e5", "g2g4", "d8h4"]
+        board = chess.Board()
+        for move in moves:
+            board.push_uci(move)
+        assert board.is_valid()
+        assert board.is_checkmate()
+        entries[55] = {"root_fen": chess.STARTING_FEN, "moves": moves, "fen": board.fen()}
+    elif change == "illegal_move":
+        entries[55]["moves"][0] = "a1a8"
+    elif change == "altered_history":
+        entries[55]["moves"][-1] = "d8d7"
+        board = chess.Board(entries[55]["root_fen"])
+        for move in entries[55]["moves"]:
+            board.push_uci(move)
+        assert board.is_valid()
+        assert not board.is_game_over()
+        assert board.fen() != entries[55]["fen"]
+    elif change == "endpoint":
+        entries[55]["fen"] = chess.STARTING_FEN
+    else:
+        entries[55] = copy.deepcopy(entries[0])
+    with pytest.raises(ValueError, match=r"unusable|illegal|duplicate"):
+        tool.opening_panel(put(tmp_path / "bad-panel.json", entries))
