@@ -8,6 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
+| [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity; one CPU postprocessing observation took 49.08% less time, with end-to-end and artificial-logit limits |
 | [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 17 malformed policy rows and 2,850 missing results; value follow-up adds no exclusions; bounded fix and corrected preparation registered |
 | [BT4 hybrid and global endpoints](2026-09-07-bt4-hybrid-endpoints.md) | H20 selected next; subsequent target, horizon and search tests chosen adaptively |
 | [External archive and restore record](2026-09-07-storage-archive.md) | 38 verified archives, qualified local cleanup, retained dependencies and restore instructions |

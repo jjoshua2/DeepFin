@@ -1,0 +1,43 @@
+{
+  "entropy_sum": 2476.5665358603,
+  "fixed_logits_sha256": "502725188961247e362efa48cd2f33b411e188d85d8cce680f9abdbefac8bd30",
+  "legal_moves_sum": 27425,
+  "limitations": "Single old-then-new observation, no repetition, fixed artificial logits shared across rows. Exact actual postprocessing loops only; excludes JSON/history, model inference, serialization and end-to-end throughput. Order/cache effects are uncontrolled; no statistical speed claim.",
+  "old_over_new_wall": 1.9639905763689374,
+  "plan_sha256": "2d7ffbd36b4aacd2de39b9a9a0299e6faeaf6a0c633d49a917a7a71ba53c22be",
+  "policy_sha256": "5aa3050aea6923d13abb3f0937ad09c3fb53dd7fc43be001d97e86b2610b6811",
+  "relative_wall_reduction": 0.4908325874715658,
+  "rows": 1024,
+  "runtime": {
+    "affinity": [
+      0
+    ],
+    "blosc_threads": 2,
+    "cuda_initialized": false,
+    "numpy": "1.26.2",
+    "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+    "torch": "2.11.0+cu128",
+    "torch_threads": 2
+  },
+  "source_stat_after": {
+    "st_ctime_ns": 1788379921244293574,
+    "st_dev": 2096,
+    "st_ino": 9783581,
+    "st_mode": 33188,
+    "st_mtime_ns": 1788379921244293574,
+    "st_nlink": 1,
+    "st_size": 21154455
+  },
+  "status": "PASS_EXACT_CPU_POSTPROCESSING_PARITY",
+  "timings": {
+    "new": {
+      "cpu_seconds": 0.3724405070000003,
+      "wall_seconds": 0.37894458300434053
+    },
+    "old": {
+      "cpu_seconds": 0.7367801030000001,
+      "wall_seconds": 0.7442435899865814
+    }
+  },
+  "top1_sum": 209.22563568875194
+}

@@ -1,0 +1,23 @@
+{
+  "current_functional_remap": {
+    "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+    "dirty": false,
+    "blobs": {
+      "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea",
+      "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+      "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402"
+    }
+  },
+  "metadata_only_existing_sidecar_checks": [
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run06_g10/w00-00000.bt4.zarr/.zattrs",
+      "sha256": "1b384ab4f324eef8acbd199cc4e10d3cd56fdb6bd6a367c1adcad59e5b286b34",
+      "functional_identity_matches": true
+    },
+    {
+      "path": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run07_g10_companion4/w00-00000.bt4.zarr/.zattrs",
+      "sha256": "55a10e5af9500edf3df9254e6aecd15a622a07834992f3d25a523102c6357b9e",
+      "functional_identity_matches": true
+    }
+  ]
+}
