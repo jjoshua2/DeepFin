@@ -53,9 +53,10 @@ failure and preregistration files retain their original bytes and dated statuses
 ## B100 readiness while H20 trains — September 8
 
 The distinct pure-BT4 policy endpoint now has its own completed cached audit and
-reviewed bulk-preparation plan. **Bulk materialization has not launched, and B100
-has not been selected for training.** H20's registered comparison package remains
-the next deciding evidence.
+reviewed bulk-preparation plan. At **2026-09-08 04:44:37 UTC**, the first-arena
+handoff was armed and waiting (PID 301740). **Bulk materialization had not launched,
+and B100 had not been selected for training.** H20's complete registered comparison
+package remains the next deciding evidence.
 
 The [B100 audit](../../scratchpad/bt4_joint20/B100_preparation_v1/audit_B100T05.json.gz)
 completed in **8.37 seconds** on the existing **4,000-position FEN-only BT4 cache**,
@@ -86,6 +87,27 @@ not disk quotas; timeout survives coordinator loss but disk/STOP polling does no
 Failures and partial outputs are retained without automatic retry. Bulk copying
 and compression can contend with H20's prefetch, so launch timing is reserved for
 a suitable arena-phase I/O window rather than inferred safe from hidden CUDA.
+
+The [armed receipt](../../scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/armed.json)
+records a maximum four-hour wait for H20's **first `C20T05.s100` arena**. The gate
+requires both original training handles absent, qualified completed training and
+schedule, and a live arena whose PID identity, command, working directory and
+coordinator → timeout → arena ancestry match the fixed owner and manifests.
+Missing/reused owners, STOP, failure or a missed/completed first arena end the
+attempt; it does not fall through to a later match. It reads no game scores and
+signals no other jobs. On acceptance it replaces the waiter with the unchanged
+reviewed B100 materializer, whose separate four-hour allowance and the resource
+guards above then apply. This is a start-time gate, not a guarantee that the arena
+will overlap the entire CPU build.
+
+The [independent pre-arm review](../../scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/independent_review.json)
+passed, including a real-host refusal while the training handles remained present.
+Six disposable fixtures cover acceptance, live training, wrong ancestry/command,
+reused owner and STOP. The [new evidence manifest](evidence/bt4-bootstrap/b100-arena-handoff-manifest.json)
+preserves all eight compact originals, including prepared plans and the later
+arming receipt. It establishes an armed waiter, not a completed handoff or corpus.
+After execution replaces the waiter, the materializer's own/parent STOP paths
+apply; the handoff-only STOP no longer controls it.
 
 The [readiness and handoff manifest](evidence/bt4-bootstrap/b100-readiness-labeler-handoff-manifest.json)
 contains the full losslessly compressed audit, exact command/runtime bindings,

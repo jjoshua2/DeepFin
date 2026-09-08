@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "captured_utc": "2026-09-08T04:47:00.977275+00:00",
+  "status_snapshot_utc": "2026-09-08T04:44:37.840657+00:00",
+  "purpose": "Byte-preserved B100 first-arena handoff preparation, review and arming evidence; no materialization or training selection. Historical scripts and README contain original host paths, not portable launch instructions.",
+  "files": [
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/wait_and_exec.py",
+      "published_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/wait_and_exec.py",
+      "bytes": 6134,
+      "sha256": "26a87704c613231cfbc7152b9cd7061113b7eb82954dcbcddff964a56525e3a2"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/plan.json",
+      "published_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/plan.json",
+      "bytes": 3771,
+      "sha256": "57f9be7bb543a9edd4b3028e1e3ce419a37a2ebb1a9bceaa8a4c18d81752117f"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/README.md",
+      "published_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/README.md",
+      "bytes": 2392,
+      "sha256": "4ecd116b4d5181765e879722c7f4c230cf6e2304c89159d234f0e4a4e974d57e"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/qualify_gate.py",
+      "published_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/qualify_gate.py",
+      "bytes": 4099,
+      "sha256": "ec1fc4c34fa850bf0b49d3e780fbca786881f685f5a211dc48b128d92fca49a6"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/qualification.json",
+      "published_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/qualification.json",
+      "bytes": 483,
+      "sha256": "e515d0ef77641ec357fd2c321f7282b7eb6a220aafc39594d20d429d780544a0"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/independent_review.json",
+      "published_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/independent_review.json",
+      "bytes": 1428,
+      "sha256": "ebca8ed6bdbc341beadf0682a53a49b8d07c4151d1480cc71f094b6419e0fbeb"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/armed.json",
+      "published_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/armed.json",
+      "bytes": 1093,
+      "sha256": "cc87d6d61756ed7657276b7ed951611f8a16ecc6b0fd3372b2aa68434a4d0b3a"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/run/started.json",
+      "published_path": "scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/run/started.json",
+      "bytes": 166,
+      "sha256": "a2f279108e5050d3fda7c85206bc5b4c9dacd28248c094c45aaa49b96d8515fc"
+    }
+  ],
+  "limitations": [
+    "Immutable plans/README retain prepared-not-armed status; later armed receipt supersedes operational snapshot only.",
+    "No actual arena handoff, materialization or strength results in this bundle.",
+    "No payload banks, checkpoints, credentials or unrelated private material included."
+  ]
+}

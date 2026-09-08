@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "status": "PREPARED_NOT_ARMED",
+  "coordinator": {
+    "pid": 288450,
+    "start_ticks": 20859120,
+    "parent": 88,
+    "cwd": "/tmp/deepfin-bt4-hybrid-tools",
+    "cmdline": [
+      "/usr/bin/python3",
+      "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_one_epoch_screen.py",
+      "--manifest",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20.launch_manifest.json",
+      "--execute"
+    ]
+  },
+  "training_pids": [
+    288561,
+    288562
+  ],
+  "state": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20",
+  "h20_manifest": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20.launch_manifest.json",
+  "arena_script": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_direct_screen.py",
+  "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/materialization/command.txt",
+  "b100_cwd": "/tmp/deepfin-h20-recovery-tools",
+  "stop_paths": [
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/failed.json",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/complete.json",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/training/failed.json",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/schedule/failed.json",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/failed.json",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/complete.json",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/materialization/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/STOP"
+  ],
+  "pins": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/arena_handoff_v1/wait_and_exec.py": "26a87704c613231cfbc7152b9cd7061113b7eb82954dcbcddff964a56525e3a2",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20.launch_manifest.json": "20fa6a6be386bee435f0a12c75314d4dd5ba646213124c239a6247dec73f84dc",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/manifest.json": "20fa6a6be386bee435f0a12c75314d4dd5ba646213124c239a6247dec73f84dc",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/materialization/command.txt": "4872929ab1216a3f5c0a7103dc94bcfb92d6b64dcb721172ad72e3965a362da3",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/materialization/launch.json": "5830a332beeb57f50a21495fb318afebdd47ca64a9fc7b4621ded82b7363a37c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/materialization/run_materialization.py": "239b6436055f6c5abca229ac3263640049a218e98bede1900f2bcd70443290b8",
+    "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_direct_screen.py": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48",
+    "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_one_epoch_screen.py": "0e8015dcbf486be6d23fdf957406703450aa8eb8578ced0f560d8bc9169c7ae1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df",
+    "/proc/sys/kernel/random/boot_id": "770bd609f4052b3832103aec1dde259cd428ce1c9723983981f9d142d1808f79"
+  },
+  "poll_seconds": 15,
+  "wait_seconds": 14400
+}
