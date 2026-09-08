@@ -1,6 +1,6 @@
 # G50 versus B100: original-epoch policy-dose comparison
 
-Registered comparison, 2026-09-08. G50 training is complete and the registered arena sequence has launched; no match result is available at this update. B100 is the current development leader after its completed comparison with H20. This next comparison asks whether retaining a 50% Stockfish policy contribution improves on the pure BT4 policy endpoint while preserving the same SF value supervision.
+Registered comparison, 2026-09-08. G50 training and both registered arenas are complete. The shallow stopping rule and fixed higher-search comparison favor retaining B100. B100 is the current development leader after its completed comparison with H20. This next comparison asks whether retaining a 50% Stockfish policy contribution improves on the pure BT4 policy endpoint while preserving the same SF value supervision.
 
 G50 is already materialized: `data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05`, 18,910,484 rows in 2,309 shards. Its policy is the legal-normalized global arithmetic mixture of 50% stored SF policy and 50% BT4 at temperature0.5; B100 uses 100% of that same BT4 component. Both preserve the original value/history/nonpolicy targets. Reuse the [completed materialization evidence](2026-09-07-bt4-hybrid-endpoints.md), rather than repeat the cached teacher audit or rewrite the corpus.
 
@@ -55,3 +55,38 @@ the fixed 128-pair, 400-simulation probe. The frozen launch manifest is
 effective prior temperature is 1, the original 500-opening panel is unchanged,
 and the optional lookahead scheduler is absent. This updates readiness and launch
 status only. Match outcomes remain unread in this record.
+
+
+## Completed paired readout — September 8
+
+Both stages completed and passed independent raw-bank review. The
+[compact readout](evidence/bt4-bootstrap/g50-b100-readout.json) includes both
+128-pair score vectors, stopping parameters and source/review identities. G50 is the candidate
+and B100 the reference; both retain the same SF value supervision.
+
+| Comparison | Deciding pairs | G50 score | Readout |
+| --- | ---: | ---: | --- |
+| 100 simulations, ordered SPRT | 128 | 0.42383 | H0 at the first look; LLR −2.32581 crosses −2.25129 |
+| 400 simulations, fixed panel | 128 | 0.42773 | −50.57 Elo, paired 95% interval [−87.05, −15.17] |
+
+The aligned high-minus-low score difference is **+0.00391**, with paired bootstrap
+95% interval **[−0.07227, +0.07617]** (10,000 PCG64 resamples, seed 20260903).
+No depth interaction is established. The low H0 result favors retaining B100
+under the declared hypotheses; it is not equivalence, and the stopped low Elo
+must not be treated as a nominal confidence bound.
+
+Only the canonical first 256 games entered the low decision, although 599 games
+had finished. Another 343 finished games were speculative work, with 252 still
+in flight and 149 unstarted. The [published shallow verification](https://github.com/jjoshua2/DeepFin/pull/571#issuecomment-5589203886)
+records the exact accounting. The optional lookahead limiter remains worth adopting
+in a future registered comparison; these results do not measure its speed benefit.
+The high-stage log also reports the compiler recompilation limit, so compiled
+participation does not imply every operation stayed compiled or qualify a
+steady-state throughput claim.
+
+Retain B100 as the development anchor. This rejects the tested 50% stored-SF policy
+mixture relative to B100 on this corpus/seed/horizon, not all SF supervision. The
+raw-score SoftSF construction still tests a different hypothesis, and the separate
+[value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) asks a different
+question because these policy arms preserved value targets. Longer training,
+fresh seeds, calibration and larger-data transfer remain unresolved.
