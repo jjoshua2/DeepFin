@@ -1,0 +1,454 @@
+{
+  "status": "complete",
+  "end_unix": 1788835146.6226413,
+  "raw_storage_identities": {
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst": [
+      2096,
+      9783581,
+      21154455,
+      1788379921244293574,
+      1788379921244293574
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00001.jsonl.zst": [
+      2096,
+      10685287,
+      20166593,
+      1788382176471061836,
+      1788382176471061836
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00002.jsonl.zst": [
+      2096,
+      11759586,
+      21067305,
+      1788383924667225581,
+      1788383924667225581
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00003.jsonl.zst": [
+      2096,
+      9753997,
+      20893615,
+      1788385545138790355,
+      1788385545138790355
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00004.jsonl.zst": [
+      2096,
+      9755421,
+      21116397,
+      1788387084726377187,
+      1788387084726377187
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00005.jsonl.zst": [
+      2096,
+      9754182,
+      21188923,
+      1788388663221954585,
+      1788388663221954585
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00006.jsonl.zst": [
+      2096,
+      9754236,
+      21151183,
+      1788390168925549313,
+      1788390168925549313
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00007.jsonl.zst": [
+      2096,
+      9755527,
+      21056116,
+      1788391886605088604,
+      1788391886605088604
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00008.jsonl.zst": [
+      2096,
+      9755545,
+      21070703,
+      1788393362688694282,
+      1788393362688694282
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00009.jsonl.zst": [
+      2096,
+      9758176,
+      21541568,
+      1788394711276330728,
+      1788394711276330728
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00010.jsonl.zst": [
+      2096,
+      9755570,
+      21386458,
+      1788396288207909136,
+      1788396288207909136
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00011.jsonl.zst": [
+      2096,
+      9755587,
+      20975501,
+      1788397881007480484,
+      1788397881007480484
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00012.jsonl.zst": [
+      2096,
+      9755599,
+      21487173,
+      1788399543603034568,
+      1788399543603034568
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00013.jsonl.zst": [
+      2096,
+      9755613,
+      22035065,
+      1788401105126615363,
+      1788401105126615363
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00014.jsonl.zst": [
+      2096,
+      9755626,
+      22101885,
+      1788402564862223227,
+      1788402564862223227
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00015.jsonl.zst": [
+      2096,
+      9755635,
+      21521701,
+      1788404116977808073,
+      1788404116977808073
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00016.jsonl.zst": [
+      2096,
+      9755705,
+      21026965,
+      1788405709081382034,
+      1788405709081382034
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00017.jsonl.zst": [
+      2096,
+      4656484,
+      20539779,
+      1788407443592916194,
+      1788407443592916194
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00018.jsonl.zst": [
+      2096,
+      6440033,
+      21237230,
+      1788409275736426797,
+      1788409275736426797
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00019.jsonl.zst": [
+      2096,
+      9838574,
+      21333651,
+      1788411015735958095,
+      1788411015735958095
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00020.jsonl.zst": [
+      2096,
+      9839084,
+      21323755,
+      1788412554563545745,
+      1788412554563545745
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00021.jsonl.zst": [
+      2096,
+      9838784,
+      20504982,
+      1788413985759163286,
+      1788413985759163286
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00022.jsonl.zst": [
+      2096,
+      9852715,
+      20982182,
+      1788415368942791842,
+      1788415368942791842
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00023.jsonl.zst": [
+      2096,
+      9852760,
+      20960284,
+      1788416912862376393,
+      1788416912862376393
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00024.jsonl.zst": [
+      2096,
+      9852727,
+      22042128,
+      1788418326273997784,
+      1788418326273997784
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00025.jsonl.zst": [
+      2096,
+      9854283,
+      20970362,
+      1788419883517579833,
+      1788419883517579833
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00026.jsonl.zst": [
+      2096,
+      9854940,
+      21962137,
+      1788421298897199786,
+      1788421298897199786
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00027.jsonl.zst": [
+      2096,
+      9682803,
+      21236501,
+      1788422996528745767,
+      1788422996528745767
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00028.jsonl.zst": [
+      2096,
+      9856811,
+      21264838,
+      1788424443644357725,
+      1788424443644357725
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00029.jsonl.zst": [
+      2096,
+      9857151,
+      21431562,
+      1788425900039964843,
+      1788425900039964843
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00030.jsonl.zst": [
+      2096,
+      9853673,
+      20923772,
+      1788427265143598918,
+      1788427265143598918
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00031.jsonl.zst": [
+      2096,
+      9757740,
+      21249754,
+      1788428663319225058,
+      1788428663319225058
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00000.jsonl.zst": [
+      2096,
+      9748927,
+      20692331,
+      1788472621199432022,
+      1788472621199432022
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00001.jsonl.zst": [
+      2096,
+      11059666,
+      21919438,
+      1788474486494931156,
+      1788474486494931156
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00002.jsonl.zst": [
+      2096,
+      11059662,
+      21426334,
+      1788476387883037463,
+      1788476387883037463
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00003.jsonl.zst": [
+      2096,
+      11060680,
+      21366085,
+      1788478452417868929,
+      1788478452417868929
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00004.jsonl.zst": [
+      2096,
+      11060760,
+      20778596,
+      1788480362041355985,
+      1788480362041355985
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00005.jsonl.zst": [
+      2096,
+      11062895,
+      20536391,
+      1788482277800842174,
+      1788482277800842174
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00006.jsonl.zst": [
+      2096,
+      11060813,
+      21344886,
+      1788484285796302396,
+      1788484285796302396
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00007.jsonl.zst": [
+      2096,
+      11061811,
+      21267578,
+      1788486190155790204,
+      1788486190155790204
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00008.jsonl.zst": [
+      2096,
+      11067327,
+      21300507,
+      1788488436071189849,
+      1788488436071189849
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00009.jsonl.zst": [
+      2096,
+      11073318,
+      20963252,
+      1788490466766645077,
+      1788490466766645077
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00010.jsonl.zst": [
+      2096,
+      11075285,
+      21427246,
+      1788492468718112480,
+      1788492468718112480
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00011.jsonl.zst": [
+      2096,
+      11069804,
+      21359947,
+      1788494200813643263,
+      1788494200813643263
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00012.jsonl.zst": [
+      2096,
+      11086848,
+      20890347,
+      1788495983553166073,
+      1788495983553166073
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00013.jsonl.zst": [
+      2096,
+      11090718,
+      21478428,
+      1788497703465645459,
+      1788497703465645459
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00014.jsonl.zst": [
+      2096,
+      11820791,
+      21149399,
+      1788499606100193271,
+      1788499606100193271
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00015.jsonl.zst": [
+      2096,
+      11062932,
+      21568893,
+      1788501478495691118,
+      1788501478495691118
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00016.jsonl.zst": [
+      2096,
+      11088053,
+      21535936,
+      1788503268556674147,
+      1788503268556674147
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00017.jsonl.zst": [
+      2096,
+      11079099,
+      20964647,
+      1788505117622715368,
+      1788505117622715368
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00018.jsonl.zst": [
+      2096,
+      11085574,
+      21162878,
+      1788506925518229069,
+      1788506925518229069
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00019.jsonl.zst": [
+      2096,
+      11085585,
+      21482760,
+      1788508722077749003,
+      1788508722077749003
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00020.jsonl.zst": [
+      2096,
+      11086222,
+      21089108,
+      1788510594881243612,
+      1788510594881243612
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00021.jsonl.zst": [
+      2096,
+      9858328,
+      21746737,
+      1788512386332764664,
+      1788512386332764664
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00022.jsonl.zst": [
+      2096,
+      11086290,
+      20840469,
+      1788514265776261016,
+      1788514265776261016
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00023.jsonl.zst": [
+      2096,
+      11822764,
+      21170258,
+      1788516050235783660,
+      1788516050235783660
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00024.jsonl.zst": [
+      2096,
+      11824436,
+      21362470,
+      1788517954110352604,
+      1788517954110352604
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00025.jsonl.zst": [
+      2096,
+      11824435,
+      21050433,
+      1788519835642768052,
+      1788519835642768052
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00026.jsonl.zst": [
+      2096,
+      11824922,
+      21064118,
+      1788521466418331865,
+      1788521466418331865
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00027.jsonl.zst": [
+      2096,
+      11825032,
+      21124320,
+      1788523215201860893,
+      1788523215201860893
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00028.jsonl.zst": [
+      2096,
+      11825068,
+      21763945,
+      1788524849693425089,
+      1788524849693425089
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00029.jsonl.zst": [
+      2096,
+      11825094,
+      21860980,
+      1788526903268873267,
+      1788526903268873267
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00030.jsonl.zst": [
+      2096,
+      11834791,
+      20647463,
+      1788528788140367546,
+      1788528788140367546
+    ],
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00031.jsonl.zst": [
+      2096,
+      11834838,
+      21088015,
+      1788530355647944898,
+      1788530355647944898
+    ]
+  }
+}

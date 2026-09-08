@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "status": "PASS_NARROW_QUALIFIER_CORRECTION",
+  "created_utc": "2026-09-08T02:35:40.649552+00:00",
+  "reviewer": "independent review_pr517_bootstrap",
+  "files": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/qualify_H20_recovered_dataset.py",
+      "sha256": "3148d28b9263e5988399338b9796c58d61fb3b8d72120f0e5b53dfed98aa4934",
+      "bytes": 16368
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/qualify_H20_recovered_dataset_v2.py",
+      "sha256": "6accd83208e55d02b7b8c94cbfa3a65dd9ffcb7aaf738d30c2c2abc3d453bac6",
+      "bytes": 18203
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/qualification_alias_correction.json",
+      "sha256": "a2f99424e0f9a62d496822a0d929077afab313ef66ac84014772e1023a3fa0f7",
+      "bytes": 2362
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/qualification_execution.json",
+      "sha256": "f95bbc82650be14a9221797b5eec69eab0d427b76f2c9b1570011cf1f9d67427",
+      "bytes": 645
+    }
+  ],
+  "baseline_launch_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/independent_launch_review.json",
+    "sha256": "7deb23df57bf036721a11fa6b54b34e06d37b599d61ca89ce5813c6b6e6c4286",
+    "bytes": 7128
+  },
+  "blockers": [],
+  "findings": [
+    "Actual first qualification exited1 in0.243seconds before either qualification output existed; original script/status/log retained. No successful datasetqualification is claimed by this correction.",
+    "Actual diff admits only the four literal qualified native aliases, only raw reads. Each alias must resolve to the exact named regular-file target; the existing expected SHA is applied to target bytes. Target identity is checked before/after reading and again at finalization; alias lstat identity and exact resolution rechecked at finalization.",
+    "Allfourcurrentaliases independently resolve to expected regular target files with same followed inode; launch expectedhashes match previously qualified nativecontentpins. This clarifies previous same-inode wording: aliases point to existing qualified binaries; they were not four newly copied regular files.",
+    "Every other input retains unchanged identity()regular-file enforcement. Corpus metadata/prefixproof, analyticcertificate, suffixmass, recipe/count, status,budget and all fullstatistics-null checks are unchanged.",
+    "Corrected qualifier6accd832 syntax parsed; no operational qualifier, payloadhash, tests or corpus scan repeated. Both qualification outputs still absent at review."
+  ],
+  "scope": "Permit the one corrected bounded metadata qualifier to execute using the same previously reviewed570s+30s CPUwrapper; full actual recovery/publication result review remains subsequent.",
+  "limits": [
+    "Read original failedexecution receipt and actual source diff; no independent re-execution of the original failure.",
+    "Reused qualified nativecontentSHA evidence rather than hashing binarypayloads again. No corpusmetadata symlink exception was introduced."
+  ]
+}

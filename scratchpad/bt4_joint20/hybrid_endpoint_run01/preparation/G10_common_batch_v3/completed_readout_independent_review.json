@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "status": "PASS_COMPLETED_PREPARATION_READOUT",
+  "created_utc": "2026-09-08T02:57:38.895050+00:00",
+  "reviewer": "root; separate from bank_pr517_quality readout author",
+  "readout": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/completed_readout.json",
+    "sha256": "bfbdccc96f8a3b45ae6efb37efd567388e73940a7ef731ec25477f1aa43e323e"
+  },
+  "checks": [
+    "All53 compact evidence files match byte sizes and SHA256",
+    "Both final qualification, derive, BT4 and rank summaries agree on every emitted row count;66shards",
+    "531412 raw =528545 prepared +2850 no-result +17 support exclusions;0 envelope",
+    "Both original-key counts equal emitted rows; phase0policy/latest-phasevalue semantics verified from produced summaries",
+    "All64 source-qualified raw storage identities match worker final proof; both derived storage identities match pre-adapter snapshots",
+    "All12 actual stage time/exit receipts and retained semaphore-warning lines agree",
+    "Inspected pinned run_common.py exact exclusion disjointness and unique physical-row coverage checks; no repeat payload scan"
+  ],
+  "limits": [
+    "Only registered528545-row shared preparation subset. No training, target-family transfer or playing-strength conclusion.",
+    "Receipt consistency review relies on completed all-row qualification for payload semantics; did not independently rescan arrays.",
+    "Original summaries contain NaN for unmeasured floor recovery n=0; no inference from those empty diagnostics.",
+    "Semaphore shutdown warnings remain unresolved operational observations."
+  ]
+}

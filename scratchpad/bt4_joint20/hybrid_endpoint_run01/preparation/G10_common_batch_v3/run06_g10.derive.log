@@ -1,0 +1,13 @@
+scheme=uniform-d9 temp=0.0005 floor=0.0 value_source=deepest_phase_covering
+corpus_record=manifest+progress (run_finished=False) shards adopted=3029 rows claimed by inventory=25139451 unlisted on disk=12
+rows read=265528 written=263916 dropped(no result)=1600 dropped(envelope)=0 dropped(policy support)=12
+nodes_floor_hits=0 base depths={'9': 263916} values by phase={'0': 6942484}
+value depths={'9': 263916} moved rows=263916 (--value-depth None)
+temp recovered from the emitted policy: n=234932 min=0.000500 max=0.000501 skipped(saturated)=27 estimator=closed_form_two_move
+floor recovered from the emitted policy: n=0 min=nan max=nan skipped(few values)=0 skipped(ill-conditioned)=0
+min stored mass on a legal move: min=0 max=1 mean=0.0212439 n=263916
+value_scheme=search games=0 rows differing from V0=0 L1 vs V0 mean=0 max=0 | stop terminal/self/ahead=0/0/0 w mean=nan u mean=0.01544 regret mean=0.1025 | missing played_move=0 depths=0 nonunit ply gaps=0 dropped tails=0
+x planes=175 policy width=1858 support 1..73 history slots filled<=8 {'8': 263916} row schemas={'3': 263916}
+shards=33
+/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/multiprocessing/resource_tracker.py:479: UserWarning: resource_tracker: There appear to be 2 leaked semaphore objects to clean up at shutdown: {'/mp-sk8_5tlx', '/mp-bz1ec_kg'}
+  warnings.warn(

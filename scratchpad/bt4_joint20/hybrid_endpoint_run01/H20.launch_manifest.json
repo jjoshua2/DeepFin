@@ -1,0 +1,58 @@
+{
+  "arena_launcher_sha256": "325164d7237680c4460e31b91c9e4e61a5f2951fc5928328fa39da507a12de48",
+  "arena_seconds": 5400,
+  "comparisons": [
+    [
+      "C20T05",
+      100,
+      1000
+    ],
+    [
+      "G20T05",
+      100,
+      1000
+    ],
+    [
+      "C20T05",
+      400,
+      500
+    ]
+  ],
+  "data_qualification": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.dataset_qualification.json",
+    "sha256": "acc28fa8eda714326ce171ee2492323408d2d5339b538533dac0c52c80ccef5a"
+  },
+  "input_pins": {
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05/bt4_policy_mix_summary.json": "68cac181db86e6d33bbc77f2cedcd6229e10634e2d1f5111d64d1bf5b7185ecb",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05/derive_targets_summary.json": "bf783af1d998dc80f36b9add6cacc2a829ea34ba6346c8e632b0feb1455c9f90",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18"
+  },
+  "launcher_sha256": "0e8015dcbf486be6d23fdf957406703450aa8eb8578ced0f560d8bc9169c7ae1",
+  "preregistration": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md",
+    "sha256": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6"
+  },
+  "profile": "H20",
+  "prospective_schedule": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.prospective_schedule.json",
+    "sha256": "16785c5b25610f10d876913e24dcea04fe4696dd053b68dea8683efa9664e2c8"
+  },
+  "reader": {
+    "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_joint_readout.py",
+    "sha256": "a17c89537903c56ee7bb0ec084d5133e1139cc6c6cc605dc882b06279276ceeb"
+  },
+  "run": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1",
+  "runtime_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json",
+    "sha256": "d4e15c1735e857065c2741c35a962795b3388afeb4cfedde89fbcf6f21ae16df"
+  },
+  "schema": 2,
+  "state": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20",
+  "total_seconds": 32400,
+  "training_seconds": 16200
+}

@@ -1,0 +1,463 @@
+{
+  "completed_utc": "2026-09-08T02:37:06Z",
+  "depth": 9,
+  "gap_definition": "rank1_effective_cp-minus-ranked_effective_cp",
+  "index_encoding": "lc0_1858",
+  "kind": "sf_d9_rank_gap_sidecar",
+  "outputs": [
+    {
+      "path": "shard_000000.zarr",
+      "payload_sha256": "2b95d9fbd9e2c6d67d92f37adad72b93d3071ec9ebc50e8ef0130351fdff8981",
+      "rows": 8192,
+      "source_row_identity_sha256": "49ed4aa36f0387a3c91113d83d091b8178eddad6d78075596859bbc64279835a"
+    },
+    {
+      "path": "shard_000001.zarr",
+      "payload_sha256": "25d0fd77c939cb91f04b7d2bc9771b2f1691747827874a0b580eeffe17805007",
+      "rows": 8192,
+      "source_row_identity_sha256": "c83ca91a783bba8343aeb761970cf1975fb9cbab1e4660d7641705a72b7a1ac5"
+    },
+    {
+      "path": "shard_000002.zarr",
+      "payload_sha256": "ea09ebf4a5ebf255a8d373a5566cb29631f73f851a86b9cb25a5a37632236806",
+      "rows": 8192,
+      "source_row_identity_sha256": "a5c4ec74ca4b883de02c802fe72ba098e811c897143b45d3547587c77eec5304"
+    },
+    {
+      "path": "shard_000003.zarr",
+      "payload_sha256": "a5144cd29ad5f5818fbe6534a10997ba4f1b1005effc8d2ddea16e304a4e72a3",
+      "rows": 8192,
+      "source_row_identity_sha256": "fdc8738e305ed95c01311ed9f719e49dac7322ae76d6200dd96917de206d1fde"
+    },
+    {
+      "path": "shard_000004.zarr",
+      "payload_sha256": "c71be0727598407a47a75d15d0b991e1bcb5f2e07be6059e609d4f942a03647d",
+      "rows": 8192,
+      "source_row_identity_sha256": "0c7082a780e2bd4b298c5dcb17832413e03276c7055d7106b9361fbdee314bce"
+    },
+    {
+      "path": "shard_000005.zarr",
+      "payload_sha256": "d559bfa1bbf4bd10f6d979b675d7bb7c3186fca88b91ee66b7ca67a88f48e3b8",
+      "rows": 8192,
+      "source_row_identity_sha256": "76d359c218f28d743189815f311f0f714d9a114901f58f42e52e37a621a1aca7"
+    },
+    {
+      "path": "shard_000006.zarr",
+      "payload_sha256": "c3702d357f5d4887a6d996d23091cc75b3d8eb9d711d79f7ba22c54559d8069b",
+      "rows": 8192,
+      "source_row_identity_sha256": "aa385688f66ea33ca2a921d865b6b6fcf9930730f1b579300c551e55346f8ace"
+    },
+    {
+      "path": "shard_000007.zarr",
+      "payload_sha256": "2e6e349a4f02c90c0e9fec69cbeab2e64aa3a67bfb7fc2ddf54e40eda12e3c16",
+      "rows": 8192,
+      "source_row_identity_sha256": "eca0f9eb784276f8d2e9383a3a0d4148205f10e3b369feea35969f2a34da214d"
+    },
+    {
+      "path": "shard_000008.zarr",
+      "payload_sha256": "a596fbe5d86661069b27f4eb769a0cff47a8e0c42d578ec7262d4086116dd486",
+      "rows": 8192,
+      "source_row_identity_sha256": "9361ad4f7e1a2e0f85b34e017ff68698babbb5c9c844c24f562b6d86f8c6d973"
+    },
+    {
+      "path": "shard_000009.zarr",
+      "payload_sha256": "35e0347f264346774d38d5961ebedef8ab1faf7190475f424104d686402e1f73",
+      "rows": 8192,
+      "source_row_identity_sha256": "bb527660a014f41ba6c929ddd281ab7488cd4ae07e1d3aba7bf4f083be4d33f8"
+    },
+    {
+      "path": "shard_000010.zarr",
+      "payload_sha256": "93c1d0987d2315607804c100e6fdcd8b32426e3e2f859cc36d4b06aa77a00760",
+      "rows": 8192,
+      "source_row_identity_sha256": "02b4b445713a9fe2ac3fa8c1eeaf756ae891fc60482e6b3c898aa2e83fa2e0ef"
+    },
+    {
+      "path": "shard_000011.zarr",
+      "payload_sha256": "2f19460e8dd354eb178453fc4344ea33ca428b1f9d67f647bcaea4156743f1de",
+      "rows": 8192,
+      "source_row_identity_sha256": "970dbd408e1c016d89fcbb4b9c0eb1afb1f5258bb9930e431b841a4ec9ba03c4"
+    },
+    {
+      "path": "shard_000012.zarr",
+      "payload_sha256": "be8970b5133a147dceb45e33dca604c0c7becc1c86e3f712c3f44551954f7bc4",
+      "rows": 8192,
+      "source_row_identity_sha256": "08a8ce532dc9a01119f1dfc0e1ad63271737f0f5545d2dfb3ed4a21413775c19"
+    },
+    {
+      "path": "shard_000013.zarr",
+      "payload_sha256": "2d4131420e5e6be308a3fd8c99aa262a9d0fac220b7da569f867f90be89902ba",
+      "rows": 8192,
+      "source_row_identity_sha256": "2edc55732b608774deba81f1e5011b3e1c3807b617bdd82aa0827fc03bbe959d"
+    },
+    {
+      "path": "shard_000014.zarr",
+      "payload_sha256": "d934aa4b0fe0c991e61832f4ab4c12a578dd901159b9948d2369f1f350de588c",
+      "rows": 8192,
+      "source_row_identity_sha256": "c7baf295c0be6fe9a8d690561a026989fd675ed6453b527aadba52c8038f9fd9"
+    },
+    {
+      "path": "shard_000015.zarr",
+      "payload_sha256": "b5e46a206cdd45406460448e9dd891f07ba0914c88a173481243b2362c05b343",
+      "rows": 8192,
+      "source_row_identity_sha256": "663799856ebdf7808f8c08e3c73e0c1c6e6929475db50b3fdd3ee93097e8e9ee"
+    },
+    {
+      "path": "shard_000016.zarr",
+      "payload_sha256": "5830ea33bb768363d37c12eb2a804d9e5fce8a2b51851ca6d59e537c5019a55e",
+      "rows": 8192,
+      "source_row_identity_sha256": "47374aec3f2b3f3277c2688df9b82f357e054b960bad6a84782a1e6fd3c53873"
+    },
+    {
+      "path": "shard_000017.zarr",
+      "payload_sha256": "7834374e6ddedc5501449aaa1e5b11821602d3ebab9af087403b8180b3fa350f",
+      "rows": 8192,
+      "source_row_identity_sha256": "6b84cd972035fd63a7331a22b6ee45fee8d8082c27185bed905d4fcb0c668937"
+    },
+    {
+      "path": "shard_000018.zarr",
+      "payload_sha256": "6dcb79442ed1ef4c1e72781ba5ce1fb3de445ed115314ad46990707f81bc71b7",
+      "rows": 8192,
+      "source_row_identity_sha256": "b7d964739ccae638a9f0e010a7ccad73943903f2a00e0f3da1425a714a85748f"
+    },
+    {
+      "path": "shard_000019.zarr",
+      "payload_sha256": "772c44d716bea0ffb017bf9f4e5d9c49988698c7fbff595eb556c89e70e8df8d",
+      "rows": 8192,
+      "source_row_identity_sha256": "12ebba2f1717df5a1195eff9f006a79087fadb8f1d2a97875888bbae9a5a69f2"
+    },
+    {
+      "path": "shard_000020.zarr",
+      "payload_sha256": "fc06caf78cd7deaf7ac2b15f39b123e73fd938dae65d441e079f53b88d6407f4",
+      "rows": 8192,
+      "source_row_identity_sha256": "49705c507842e5b31daad300d7f35cf01e74c75d43cd0ef5dce5041af8616d8f"
+    },
+    {
+      "path": "shard_000021.zarr",
+      "payload_sha256": "b95bce22e07da368d22756e9c935b0dd422f27f8aa802cf417861537a08ee529",
+      "rows": 8192,
+      "source_row_identity_sha256": "9b835a36d14db42b79d3ca386a9ae084dbda91542db14d8ef88d815a344deaa2"
+    },
+    {
+      "path": "shard_000022.zarr",
+      "payload_sha256": "0583bb63ed7943fe953c933f04d4d24e1d712df79c7abb9a630fbf16cefcf254",
+      "rows": 8192,
+      "source_row_identity_sha256": "2b301c7804f7d862cd48adb433c64d8e5b9cb29e1d23fb2d57992e01e7ebc902"
+    },
+    {
+      "path": "shard_000023.zarr",
+      "payload_sha256": "584196a6b39469459cd123e7ded3777d0e0a73ca90c2693ce3c17bb7201b1c4a",
+      "rows": 8192,
+      "source_row_identity_sha256": "d6dc6d16d435efc5c74e1e860badbb283c4fdbfcf1e8576fe0608e7db3c9ae4e"
+    },
+    {
+      "path": "shard_000024.zarr",
+      "payload_sha256": "603293becc2383dd80b4b010bd75e6017f2d03d16f6acacc96b2fd5b4f527266",
+      "rows": 8192,
+      "source_row_identity_sha256": "e54ebcf7b2d6956ef752869202778a178a277e2632398ba8d6b15f9ba51cfc59"
+    },
+    {
+      "path": "shard_000025.zarr",
+      "payload_sha256": "e542e3b91efaf22f7342f64c1c63c124f348404fbd356e93f8b5ce03e54cfc26",
+      "rows": 8192,
+      "source_row_identity_sha256": "be594fb6965bfb5b72f185049b8f5194dfe864db2fd5ebff6d396b419dcac123"
+    },
+    {
+      "path": "shard_000026.zarr",
+      "payload_sha256": "8528799ae43d8edccc8b928583bfd7b97bb8cf457b9b1ce05e9953a27fd68b5a",
+      "rows": 8192,
+      "source_row_identity_sha256": "7ea0bb74763e503b3b88775adbc0ef98fb730aa7e7f9b7a17bc67387e550deda"
+    },
+    {
+      "path": "shard_000027.zarr",
+      "payload_sha256": "34fd0d6ad8c05fe540f04a71aef2064a1b295171a9193caebf058091cddb7e26",
+      "rows": 8192,
+      "source_row_identity_sha256": "a73b3494baf7d0c49efefc0e0af7b5c6b5b9769f480f0d6ac9e4031e89d1cba4"
+    },
+    {
+      "path": "shard_000028.zarr",
+      "payload_sha256": "6683ad14c85047c19aa120d55696ce573c5e2e8678f288a267162ccf58196614",
+      "rows": 8192,
+      "source_row_identity_sha256": "19df50f62a4e506679aad1c61ac7fd669f6d19259f44d725e7d742fa8acda059"
+    },
+    {
+      "path": "shard_000029.zarr",
+      "payload_sha256": "3d347131b43de3729e538dcf2c30ede72afd3c0c11b1670d6692e1a6d9985735",
+      "rows": 8192,
+      "source_row_identity_sha256": "cb02c2ddbcb406a542b06ebd07bcad3406fd50432cfa751b4736c43880dcc4bf"
+    },
+    {
+      "path": "shard_000030.zarr",
+      "payload_sha256": "38fa4d9856829d7a7d7dc1823eb1f8b09ac862bb457386aa09878eff4b9ec843",
+      "rows": 8192,
+      "source_row_identity_sha256": "4278e1842c28d045fd4a7db3c91d9b26655ab80b6062966b195b52de6b3b3364"
+    },
+    {
+      "path": "shard_000031.zarr",
+      "payload_sha256": "807ad6c8e9506977b6896bb718d9783b823fdb2e22aba22c04194e2a7a78cb71",
+      "rows": 8192,
+      "source_row_identity_sha256": "eeee1ebce181610c04393366d3f6db5b12d1320c718c2807487dd8b025b2e07a"
+    },
+    {
+      "path": "shard_000032.zarr",
+      "payload_sha256": "25d61fb868f7344edc9647bf53284c9ffa38cdefb84b7a7bb54eb7f9b66ea89d",
+      "rows": 2485,
+      "source_row_identity_sha256": "280c3d09abcd17c7c96a084a525a8ce9925aea0273aa5521bf0f09ef94abb962"
+    }
+  ],
+  "raw_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+  "raw_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+  "raw_limit": 265884,
+  "raw_rows_read": 265884,
+  "row_provenance": {
+    "cache_budget_bytes": 67108864,
+    "cache_record_bytes": 68,
+    "cache_seen_bytes_per_row": 1,
+    "join": "source-qualified-physical-row-and-full-history-keys-v1",
+    "observation": "complete-phase0-d9",
+    "policy_observation": "phase0",
+    "policy_support_exclusions_sha256": "be383e7ab7315adc002fd8053664a8cba71b1297db2248b0b5cdfa9005312361",
+    "raw_record_sha256": {
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived/policy_support_misses.jsonl": "be383e7ab7315adc002fd8053664a8cba71b1297db2248b0b5cdfa9005312361"
+    },
+    "raw_shards_read_once": 32,
+    "raw_source_metadata": {
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00000.jsonl.zst": [
+        2096,
+        9748927,
+        20692331,
+        1788472621199432022,
+        1788472621199432022
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00001.jsonl.zst": [
+        2096,
+        11059666,
+        21919438,
+        1788474486494931156,
+        1788474486494931156
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00002.jsonl.zst": [
+        2096,
+        11059662,
+        21426334,
+        1788476387883037463,
+        1788476387883037463
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00003.jsonl.zst": [
+        2096,
+        11060680,
+        21366085,
+        1788478452417868929,
+        1788478452417868929
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00004.jsonl.zst": [
+        2096,
+        11060760,
+        20778596,
+        1788480362041355985,
+        1788480362041355985
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00005.jsonl.zst": [
+        2096,
+        11062895,
+        20536391,
+        1788482277800842174,
+        1788482277800842174
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00006.jsonl.zst": [
+        2096,
+        11060813,
+        21344886,
+        1788484285796302396,
+        1788484285796302396
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00007.jsonl.zst": [
+        2096,
+        11061811,
+        21267578,
+        1788486190155790204,
+        1788486190155790204
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00008.jsonl.zst": [
+        2096,
+        11067327,
+        21300507,
+        1788488436071189849,
+        1788488436071189849
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00009.jsonl.zst": [
+        2096,
+        11073318,
+        20963252,
+        1788490466766645077,
+        1788490466766645077
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00010.jsonl.zst": [
+        2096,
+        11075285,
+        21427246,
+        1788492468718112480,
+        1788492468718112480
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00011.jsonl.zst": [
+        2096,
+        11069804,
+        21359947,
+        1788494200813643263,
+        1788494200813643263
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00012.jsonl.zst": [
+        2096,
+        11086848,
+        20890347,
+        1788495983553166073,
+        1788495983553166073
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00013.jsonl.zst": [
+        2096,
+        11090718,
+        21478428,
+        1788497703465645459,
+        1788497703465645459
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00014.jsonl.zst": [
+        2096,
+        11820791,
+        21149399,
+        1788499606100193271,
+        1788499606100193271
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00015.jsonl.zst": [
+        2096,
+        11062932,
+        21568893,
+        1788501478495691118,
+        1788501478495691118
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00016.jsonl.zst": [
+        2096,
+        11088053,
+        21535936,
+        1788503268556674147,
+        1788503268556674147
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00017.jsonl.zst": [
+        2096,
+        11079099,
+        20964647,
+        1788505117622715368,
+        1788505117622715368
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00018.jsonl.zst": [
+        2096,
+        11085574,
+        21162878,
+        1788506925518229069,
+        1788506925518229069
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00019.jsonl.zst": [
+        2096,
+        11085585,
+        21482760,
+        1788508722077749003,
+        1788508722077749003
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00020.jsonl.zst": [
+        2096,
+        11086222,
+        21089108,
+        1788510594881243612,
+        1788510594881243612
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00021.jsonl.zst": [
+        2096,
+        9858328,
+        21746737,
+        1788512386332764664,
+        1788512386332764664
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00022.jsonl.zst": [
+        2096,
+        11086290,
+        20840469,
+        1788514265776261016,
+        1788514265776261016
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00023.jsonl.zst": [
+        2096,
+        11822764,
+        21170258,
+        1788516050235783660,
+        1788516050235783660
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00024.jsonl.zst": [
+        2096,
+        11824436,
+        21362470,
+        1788517954110352604,
+        1788517954110352604
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00025.jsonl.zst": [
+        2096,
+        11824435,
+        21050433,
+        1788519835642768052,
+        1788519835642768052
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00026.jsonl.zst": [
+        2096,
+        11824922,
+        21064118,
+        1788521466418331865,
+        1788521466418331865
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00027.jsonl.zst": [
+        2096,
+        11825032,
+        21124320,
+        1788523215201860893,
+        1788523215201860893
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00028.jsonl.zst": [
+        2096,
+        11825068,
+        21763945,
+        1788524849693425089,
+        1788524849693425089
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00029.jsonl.zst": [
+        2096,
+        11825094,
+        21860980,
+        1788526903268873267,
+        1788526903268873267
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00030.jsonl.zst": [
+        2096,
+        11834791,
+        20647463,
+        1788528788140367546,
+        1788528788140367546
+      ],
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00031.jsonl.zst": [
+        2096,
+        11834838,
+        21088015,
+        1788530355647944898,
+        1788530355647944898
+      ]
+    },
+    "rows_dropped_policy_support": 5,
+    "value_observation": "latest-phase"
+  },
+  "rows": 264629,
+  "rows_dropped_no_result": 1250,
+  "rows_dropped_policy_support": 5,
+  "rows_per_shard": 8192,
+  "schema": 1,
+  "seed": 0,
+  "shards": 33,
+  "source_derive_summary_sha256": "738ebf6d35b7fc5973a1ceb6656515834ce4e911a87bd2176320a58b68ef7f56",
+  "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived",
+  "top_k": 3
+}
