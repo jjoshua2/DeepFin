@@ -1,7 +1,8 @@
 # Ceres as an additional bootstrap policy teacher
 
-Research direction and compatibility audit, September 8, 2026. No new Ceres
-inference, corpus labeling or training has launched for this investigation.
+Research direction and compatibility audit, September 8, 2026. The selected C3
+graph now passes a bounded CPU execution and byte-adapter check. No Ceres corpus
+labeling, training or playing comparison has launched.
 
 ## Decision and hypothesis
 
@@ -41,14 +42,15 @@ not a completed C3 integration or a new strength result.
 
 The repository already implements [Ceres TPG encoding](../../chess_anti_engine/encoding/ceres_tpg.py):
 64 square records with 137 features, including a raw-byte primitive. The float
-input is those bytes divided by 100. The [ONNX adapter](../../chess_anti_engine/onnx/load.py)
-and [foreign-net audit](../../scripts/foreign_net_audit.py) still use floating-point
-input paths. Casting their normalized input to uint8 would lose the intended byte
-values. Also, the existing BT4 raw-label pipeline uses LC0 planes; changing only the
+input is those bytes divided by 100. The audit found that the [ONNX adapter](../../chess_anti_engine/onnx/load.py)
+and [foreign-net audit](../../scripts/foreign_net_audit.py) used only floating-point
+input paths. They now share explicit byte-input handling, including the startup
+WDL probe. Casting normalized input to uint8 would lose the intended byte values;
+the adapter rejects that misuse. Also, the existing BT4 raw-label pipeline uses LC0 planes; changing only the
 network filename cannot make it a Ceres labeler. Verify the downloaded graph's actual
 inputs, outputs and operators before deciding that byte-input wiring is the only gap.
 
-## Economical next steps
+## Initial investigation plan
 
 1. Inspect the selected release graph and pin its identity. Prefer a narrow extension
    of our existing ONNX/TPG path if it can execute the graph faithfully. Use Ceres's
@@ -88,3 +90,55 @@ comparison plus protected deeper probe, with matched rows, initialization, train
 budget and non-policy targets. Fresh-seed confirmation and larger-data transfer
 remain necessary before choosing the bootstrap. Ceres is an additional substantive
 family, not a reason to postpone those comparisons for a large mixture grid.
+
+
+## Completed CPU graph and adapter checks
+
+The [registered check](https://github.com/jjoshua2/DeepFin/pull/574#issuecomment-5587004050)
+used eight fixed valid positions covering opening history, both sides to move,
+castling, promotions and history-bearing en passant. The selected release has one
+`squares_byte` UINT8 input of shape `[batch,64,137]`, a raw `policy` FLOAT16 head
+with 1,858 entries, standard-domain opset 23, and no external initializers or
+additional state input. The policy output ends in a linear layer, not a softmax.
+Model SHA256: `44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3`.
+
+ONNX Runtime 1.23.2 with extended optimization and CPUExecutionProvider successfully
+executed the graph without the registered disabled-optimization fallback. All
+policy logits were finite. Batch-one versus batch-four maximum logit difference was
+0.001953125 and maximum legal-probability difference was 0.0003513172; all eight
+top moves agreed. An independent reviewer reproduced the saved bank's results using
+a separate direct UCI-table mapping. These are numerical consistency observations,
+not probabilities of a strength improvement.
+
+The [subsequent adapter check](https://github.com/jjoshua2/DeepFin/pull/574#issuecomment-5587118150)
+reused the saved raw logits as its reference. The new original-byte adapter produced
+identical input bytes, correctly classified the primary WDL head as logits, and
+matched all **178 legal policy logits exactly** across the eight positions. This
+checks the actual C3 adapter path as well as the synthetic regression fixtures.
+No direct-session qualification was repeated for that integration check.
+
+The implementation passed 125 distinct affected CPU test cases and whole lint.
+Synthetic tests used ONNX Runtime 1.29.0; the real C3 checks above used 1.23.2.
+Both float Ceres and LC0 regression coverage passed. The implementation validates
+input arity/name/type and refuses normalized floating input for a byte graph.
+
+The [compact readout](evidence/ceres-bootstrap/c3-pre8-cpu-readout.json) includes
+model identity, fixed positions, source hashes, per-position results and the
+[original input/logit bank](evidence/ceres-bootstrap/c3-pre8-cpu-policy-bank.npz).
+The initial download-inspection script failed after extraction because it used
+`hashlib.file_digest` under Python 3.10. Recovery hashed the existing archive/model
+and read the graph; download and extraction were not repeated. That inspection
+failure did not involve inference or change the model.
+
+This establishes CPU compatibility with the selected release and our adapter.
+It does not establish complete native Ceres input parity, CUDA compatibility,
+labeling throughput or move-ranking quality. Source review supports the fixed
+history-eight/fill/default-Q=0.03/zero-ply contract, but repetition-key edge cases
+remain unverified. A separate nondefault Q rounding/saturation discrepancy was
+found; the tested default is unaffected and the encoder was not changed here.
+
+Next, bank a bounded training-only policy sample using the qualified path and source
+history, and measure CUDA labeling cost in a reserved slot. Qualify a distinct Ceres
+sidecar identity before bulk labeling; the BT4 labeler remains LC0-specific. Retain
+SF in the proposed mixture comparison and preserve compute for horizon and scale
+transfer rather than expanding into a large teacher grid.

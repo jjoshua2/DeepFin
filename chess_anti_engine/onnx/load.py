@@ -36,7 +36,8 @@ the INPUT differs, which is what ``input_format`` selects:
     (B, planes, 8, 8); the first ``plane_count`` planes are fed to the net.
 ``ceres_tpg``
     (B, 64, 137) ``TPGSquareRecord`` values from
-    :mod:`chess_anti_engine.encoding.ceres_tpg`. Ceres C1 nets take this and
+    :mod:`chess_anti_engine.encoding.ceres_tpg`: normalized floats for C1 float
+    inputs, original uint8 records for byte-input graphs. Ceres nets take this and
     ONLY this — the 137 per-square features are a different feature set from
     LC0's 112 planes, not a reshape of them.
 """
@@ -44,7 +45,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
+import chess
 import numpy as np
 import torch
 
@@ -52,7 +55,8 @@ from chess_anti_engine.encoding.ceres_tpg import (
     CERES_TPG_NUM_FEATURES,
     CERES_TPG_NUM_SQUARES,
     ceres_tpg_gather_context,
-    encode_ceres_tpg,
+    encode_ceres_tpg_batch,
+    encode_ceres_tpg_bytes,
 )
 from chess_anti_engine.encoding.lc0 import (
     LC0_FULL,
@@ -89,11 +93,44 @@ _DEFAULT_GRAPH_OPTIMIZATION: dict[str, str | None] = {
     INPUT_FORMAT_CERES_TPG: "extended",
 }
 
-_ORT_INPUT_DTYPES: dict[str, type[np.floating]] = {
-    "tensor(float)": np.float32,
-    "tensor(float16)": np.float16,
-    "tensor(double)": np.float64,
+_ORT_INPUT_DTYPES: dict[str, np.dtype] = {
+    "tensor(float)": np.dtype(np.float32),
+    "tensor(float16)": np.dtype(np.float16),
+    "tensor(double)": np.dtype(np.float64),
+    "tensor(uint8)": np.dtype(np.uint8),
 }
+
+
+def onnx_input_contract(
+    inputs: Sequence[Any], *, input_format: str, input_name: str | None = None,
+) -> tuple[str, np.dtype]:
+    """Validate the single-input float-plane/float-or-byte TPG contract."""
+    if input_format not in ONNX_INPUT_FORMATS:
+        raise ValueError(f"unsupported ONNX input format {input_format!r}")
+    if len(inputs) != 1:
+        raise ValueError(f"expected exactly one ONNX input, got {len(inputs)}")
+    node = inputs[0]
+    if input_name is not None and node.name != input_name:
+        raise ValueError(f"ONNX input {input_name!r} not found; graph declares {node.name!r}")
+    dtype = _ORT_INPUT_DTYPES.get(node.type)
+    if dtype is None or (dtype == np.uint8 and input_format != INPUT_FORMAT_CERES_TPG):
+        raise ValueError(f"unsupported ONNX input dtype {node.type!r} for {input_format}")
+    return str(node.name), dtype
+
+
+def encode_ceres_onnx_input(boards: list[chess.Board], dtype: np.dtype) -> np.ndarray:
+    """Encode graph-ready TPG records, retaining original bytes for UINT8.
+
+    Uses existing fixed encoder defaults. Never obtain bytes by casting the
+    normalized float input; that discards values before ORT can decode them.
+    """
+    if dtype == np.uint8:
+        if not boards:
+            return np.empty((0, CERES_TPG_NUM_SQUARES, CERES_TPG_NUM_FEATURES), dtype=np.uint8)
+        return np.stack([encode_ceres_tpg_bytes(board) for board in boards])
+    if dtype not in (np.dtype(np.float16), np.dtype(np.float32), np.dtype(np.float64)):
+        raise ValueError(f"unsupported Ceres input dtype {dtype}")
+    return encode_ceres_tpg_batch(boards).astype(dtype, copy=False)
 
 
 def declared_input_contract(input_format: str) -> tuple[str, str]:
@@ -110,7 +147,7 @@ def declared_input_contract(input_format: str) -> tuple[str, str]:
     RAISE. Declaring ``lc0_root`` here (as this class did before the input-format
     split) would let a helper build 112 LC0 planes for a net that cannot read
     them: accepted, and silently meaningless. Callers of the ceres path build the
-    input with ``encoding.ceres_tpg.encode_ceres_tpg_batch`` instead.
+    input with ``encode_ceres_onnx_input`` in the declared graph dtype instead.
 
     A pure function rather than four lines inside ``__init__`` so the choice is
     observable without opening an ONNX session.
@@ -244,10 +281,11 @@ class OnnxChessNet(torch.nn.Module):
         self._plane_count = plane_count
         self.input_format = input_format
         # Feed the dtype the graph declares. BT4 declares tensor(float) so this
-        # stays a no-op there; the Ceres C1 exports declare tensor(float16) and
-        # ORT rejects a float32 feed outright.
-        declared = {i.name: i.type for i in self._session.get_inputs()}
-        self._input_dtype = _ORT_INPUT_DTYPES.get(declared.get(input_name, ""), np.float32)
+        # stays a no-op there; Ceres C1 float16 and C3 uint8 feeds use their
+        # explicit contracts instead of guessing unsupported types as float32.
+        _, self._input_dtype = onnx_input_contract(
+            self._session.get_inputs(), input_format=input_format, input_name=input_name,
+        )
 
         # Declare the input contract the UCI/match/evaluator helpers read off the
         # model (they default to legacy/v1/az_4672). For lc0_planes that is the
@@ -262,7 +300,7 @@ class OnnxChessNet(torch.nn.Module):
         # this class did before the split) would have let a helper encode 112
         # LC0 planes for a net that cannot read them, which is silent wrongness
         # rather than a crash. Callers of the ceres path build the input with
-        # `encoding.ceres_tpg.encode_ceres_tpg_batch` and pass it to forward().
+        # `encode_ceres_onnx_input` in the graph dtype and pass it to forward().
         self.input_history_encoding, self.input_extra_features = declared_input_contract(
             input_format,
         )
@@ -294,10 +332,8 @@ class OnnxChessNet(torch.nn.Module):
 
     def _canonical_probe_input(self) -> np.ndarray:
         """A single start-position input in this net's format, for the WDL probe."""
-        import chess
-
         if self.input_format == INPUT_FORMAT_CERES_TPG:
-            return encode_ceres_tpg(chess.Board())[None, ...]
+            return encode_ceres_onnx_input([chess.Board()], self._input_dtype)
         planes = encode_lc0_full(
             chess.Board(), input_history_encoding=self.input_history_encoding,
         )
@@ -357,6 +393,10 @@ class OnnxChessNet(torch.nn.Module):
     def _prepare_ceres_tpg(self, x: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
         """(net input, gather map) for the Ceres (B, 64, 137) square-record contract.
 
+        UINT8 graphs require a torch.uint8 tensor of original records (use
+        encode_ceres_onnx_input with np.dtype(np.uint8)); float graphs retain
+        the normalized float input contract.
+
         No history fill happens here: the TPG record already carries all 8
         history slots, and short histories were resolved by the encoder's
         ``fill_in_history`` (Ceres's own converter does the same).
@@ -366,7 +406,14 @@ class OnnxChessNet(torch.nn.Module):
                 f"expected (B, {CERES_TPG_NUM_SQUARES}, {CERES_TPG_NUM_FEATURES}) Ceres "
                 f"square records; got {tuple(x.shape)}",
             )
-        np_in = x.detach().to(dtype=torch.float32, device="cpu").numpy().copy()
+        if self._input_dtype == np.uint8:
+            if x.dtype != torch.uint8:
+                raise ValueError("UINT8 Ceres graph requires original torch.uint8 TPG records, not normalized floats")
+            np_in = x.detach().to(device="cpu").numpy().copy()
+        else:
+            np_in = x.detach().to(dtype=torch.float32, device="cpu").numpy().copy()
+        # Context uses one-hot argmax and positive bits, so reads the original
+        # byte feed directly without changing its scale or policy orientation.
         return np_in, leela_gather_indices(*ceres_tpg_gather_context(np_in))
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:

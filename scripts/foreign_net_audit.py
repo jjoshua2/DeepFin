@@ -73,7 +73,6 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding import encode_position
-from chess_anti_engine.encoding.ceres_tpg import encode_ceres_tpg_batch
 from chess_anti_engine.encoding.lc0 import fill_lc0_history_repeat
 from chess_anti_engine.eval.audit import (
     CRITICALITY_BUCKET_NAMES,
@@ -98,6 +97,8 @@ from chess_anti_engine.onnx.load import (
     INPUT_FORMAT_CERES_TPG,
     INPUT_FORMAT_LC0_PLANES,
     ONNX_INPUT_FORMATS,
+    encode_ceres_onnx_input,
+    onnx_input_contract,
 )
 
 
@@ -149,11 +150,7 @@ def _session(
         if ort_threads > 0:
             options.intra_op_num_threads = int(ort_threads)
     sess = ort.InferenceSession(onnx, options, providers=providers)
-    name = sess.get_inputs()[0].name
-    dtype = np.dtype(
-        np.float16 if next(i.type for i in sess.get_inputs() if i.name == name)
-        == "tensor(float16)" else np.float32,
-    )
+    name, dtype = onnx_input_contract(sess.get_inputs(), input_format=input_format)
     return sess, name, dtype
 
 
@@ -208,7 +205,7 @@ def _score_onnx(
         # `fill_in_history=True` is Ceres's own FEN-only behaviour, and it is the
         # same convention as `--history-fill repeat` on the LC0 side, so the two
         # nets are being asked the same question about a rootless position.
-        feats = encode_ceres_tpg_batch(boards)
+        feats = encode_ceres_onnx_input(boards, in_dtype)
     else:
         feats = np.stack([_enc_lc0(b) for b in boards]).astype(np.float32)
     feats = feats.astype(in_dtype, copy=False)

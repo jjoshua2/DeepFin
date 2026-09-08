@@ -1,0 +1,548 @@
+{
+  "schema": 1,
+  "scope": "Eight-position CPU execution and byte-adapter compatibility; no native encoder parity, GPU throughput, teacher-quality or strength conclusion",
+  "model": {
+    "release": "C3-768-30-pre8-I8",
+    "archive_sha256": "6df92f7548cca696aeb38e0ab0b9d07007a090b4564d13e92adea3d376f49ed6",
+    "model_sha256": "44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3",
+    "model_bytes": 639132168,
+    "inputs": [
+      {
+        "name": "squares_byte",
+        "type": "UINT8",
+        "shape": [
+          "batch",
+          64,
+          137
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "policy",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          1858
+        ]
+      },
+      {
+        "name": "value",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          3
+        ]
+      },
+      {
+        "name": "mlh",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          1
+        ]
+      },
+      {
+        "name": "unc",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          1
+        ]
+      },
+      {
+        "name": "value2",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          3
+        ]
+      },
+      {
+        "name": "q_deviation_lower",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          1
+        ]
+      },
+      {
+        "name": "q_deviation_upper",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          1
+        ]
+      },
+      {
+        "name": "uncertainty_policy",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          1
+        ]
+      },
+      {
+        "name": "state_out",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          64
+        ]
+      },
+      {
+        "name": "piece_move",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          64,
+          8
+        ]
+      },
+      {
+        "name": "piece_capture",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          64,
+          8
+        ]
+      },
+      {
+        "name": "punim_self",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          8
+        ]
+      },
+      {
+        "name": "punim_opponent",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          8
+        ]
+      },
+      {
+        "name": "action",
+        "type": "FLOAT16",
+        "shape": [
+          0,
+          1858,
+          3
+        ]
+      }
+    ],
+    "opsets": [
+      {
+        "domain": "",
+        "version": 23
+      }
+    ],
+    "operator_counts": {
+      ":Cast": 423,
+      ":Div": 31,
+      ":Shape": 2,
+      ":Slice": 4,
+      ":Expand": 6,
+      ":Concat": 6,
+      ":Reshape": 334,
+      ":MatMul": 332,
+      ":Add": 488,
+      ":Mul": 694,
+      ":ReduceMean": 211,
+      ":Sqrt": 211,
+      ":Reciprocal": 211,
+      ":Transpose": 241,
+      ":Gather": 91,
+      ":Mish": 124,
+      ":Gemm": 71,
+      ":Sigmoid": 60,
+      ":Softmax": 30,
+      ":Relu": 1,
+      ":Pow": 1,
+      ":Unsqueeze": 2
+    },
+    "external_initializers": [],
+    "input_consumers": [
+      {
+        "name": "Cast_UInt8_to_Float16",
+        "domain": "",
+        "op_type": "Cast",
+        "inputs": [
+          "squares_byte"
+        ],
+        "outputs": [
+          "squares_cast"
+        ]
+      }
+    ],
+    "output_producers": [
+      {
+        "name": "h_node_linear_3",
+        "domain": "",
+        "op_type": "Gemm",
+        "inputs": [
+          "h_mish",
+          "h_inner.policy_head.fcFinal.weight",
+          "h_inner.policy_head.fcFinal.bias"
+        ],
+        "outputs": [
+          "policy"
+        ]
+      },
+      {
+        "name": "h_node_linear_5",
+        "domain": "",
+        "op_type": "Gemm",
+        "inputs": [
+          "h_mish_1",
+          "h_inner.value_head.fcFinal.weight",
+          "h_inner.value_head.fcFinal.bias"
+        ],
+        "outputs": [
+          "value"
+        ]
+      },
+      {
+        "name": "h_node_add_71",
+        "domain": "",
+        "op_type": "Add",
+        "inputs": [
+          "uncertainty_policy",
+          "h_scalar_tensor_default_1"
+        ],
+        "outputs": [
+          "mlh"
+        ]
+      },
+      {
+        "name": "h_node_linear_7",
+        "domain": "",
+        "op_type": "Gemm",
+        "inputs": [
+          "h_mish_2",
+          "h_inner.unc_head.fcFinal.weight",
+          "h_inner.unc_head.fcFinal.bias"
+        ],
+        "outputs": [
+          "unc"
+        ]
+      },
+      {
+        "name": "h_node_linear_9",
+        "domain": "",
+        "op_type": "Gemm",
+        "inputs": [
+          "h_pow_1",
+          "h_inner.value2_head.fcFinal.weight",
+          "h_inner.value2_head.fcFinal.bias"
+        ],
+        "outputs": [
+          "value2"
+        ]
+      },
+      {
+        "name": "h_node_add_81",
+        "domain": "",
+        "op_type": "Add",
+        "inputs": [
+          "uncertainty_policy",
+          "h_scalar_tensor_default_4"
+        ],
+        "outputs": [
+          "q_deviation_lower"
+        ]
+      },
+      {
+        "name": "h_node_add_88",
+        "domain": "",
+        "op_type": "Add",
+        "inputs": [
+          "uncertainty_policy",
+          "h_scalar_tensor_default_6"
+        ],
+        "outputs": [
+          "q_deviation_upper"
+        ]
+      },
+      {
+        "name": "h_node_mul_47",
+        "domain": "",
+        "op_type": "Mul",
+        "inputs": [
+          "unc",
+          "h_scalar_tensor_default"
+        ],
+        "outputs": [
+          "uncertainty_policy"
+        ]
+      },
+      {
+        "name": "h_node_expand",
+        "domain": "",
+        "op_type": "Expand",
+        "inputs": [
+          "uncertainty_policy",
+          "h_val_44"
+        ],
+        "outputs": [
+          "state_out"
+        ]
+      },
+      {
+        "name": "h_node_expand_1",
+        "domain": "",
+        "op_type": "Expand",
+        "inputs": [
+          "h_unsqueeze",
+          "h_val_50"
+        ],
+        "outputs": [
+          "piece_move"
+        ]
+      },
+      {
+        "name": "h_node_expand_2",
+        "domain": "",
+        "op_type": "Expand",
+        "inputs": [
+          "h_unsqueeze_1",
+          "h_val_50"
+        ],
+        "outputs": [
+          "piece_capture"
+        ]
+      },
+      {
+        "name": "h_node_expand_3",
+        "domain": "",
+        "op_type": "Expand",
+        "inputs": [
+          "h_add_138",
+          "h_val_60"
+        ],
+        "outputs": [
+          "punim_self"
+        ]
+      },
+      {
+        "name": "h_node_expand_4",
+        "domain": "",
+        "op_type": "Expand",
+        "inputs": [
+          "h_add_151",
+          "h_val_60"
+        ],
+        "outputs": [
+          "punim_opponent"
+        ]
+      },
+      {
+        "name": "h_node_view_2",
+        "domain": "",
+        "op_type": "Reshape",
+        "inputs": [
+          "h_linear_11",
+          "h_val_70"
+        ],
+        "outputs": [
+          "action"
+        ]
+      }
+    ]
+  },
+  "raw_cpu_check": {
+    "status": "PASS_CPU_EXECUTION_AND_BATCH_CONSISTENCY",
+    "onnxruntime": "1.23.2",
+    "numpy": "2.2.6",
+    "positions": [
+      {
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": []
+      },
+      {
+        "fen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+        "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": [
+          "e2e4",
+          "e7e5",
+          "g1f3",
+          "b8c6",
+          "f1b5"
+        ]
+      },
+      {
+        "fen": "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+        "root_fen": "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+        "moves": []
+      },
+      {
+        "fen": "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+        "root_fen": "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+        "moves": []
+      },
+      {
+        "fen": "k7/4P3/8/8/8/8/8/7K w - - 0 1",
+        "root_fen": "k7/4P3/8/8/8/8/8/7K w - - 0 1",
+        "moves": []
+      },
+      {
+        "fen": "7k/8/8/8/8/8/4p3/K7 b - - 0 1",
+        "root_fen": "7k/8/8/8/8/8/4p3/K7 b - - 0 1",
+        "moves": []
+      },
+      {
+        "fen": "rnbqkbnr/1pp1pppp/p7/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3",
+        "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": [
+          "e2e4",
+          "a7a6",
+          "e4e5",
+          "d7d5"
+        ]
+      },
+      {
+        "fen": "rnbqkbnr/pppp1ppp/8/8/P2Pp3/8/1PP1PPPP/RNBQKBNR b KQkq d3 0 3",
+        "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "moves": [
+          "a2a3",
+          "e7e5",
+          "a3a4",
+          "e5e4",
+          "d2d4"
+        ]
+      }
+    ],
+    "input_sha256": "f9c0cc9cb68208a766e5bd29308d56cfc9381316dafdee275bf2ac07d0827724",
+    "input_defaults": {
+      "history_len": 8,
+      "fill_in_history": true,
+      "q_negative_blunders": 0.03,
+      "q_positive_blunders": 0.03,
+      "ply_since_last_move": 0
+    },
+    "thresholds": {
+      "logit_atol": 0.05,
+      "logit_rtol": 0.002,
+      "max_legal_probability_difference": 0.002
+    },
+    "session_errors": [],
+    "optimization": "extended",
+    "providers": [
+      "CPUExecutionProvider"
+    ],
+    "max_logit_difference": 0.001953125,
+    "logit_allclose": true,
+    "positions_results": [
+      {
+        "legal_moves": 20,
+        "max_probability_difference": 0.0003513172190766356,
+        "same_top1": true,
+        "single_policy_sum": 1.0000000000000002,
+        "batch4_policy_sum": 1.0000000000000002
+      },
+      {
+        "legal_moves": 30,
+        "max_probability_difference": 7.466193583096498e-05,
+        "same_top1": true,
+        "single_policy_sum": 0.9999999999999999,
+        "batch4_policy_sum": 1.0000000000000002
+      },
+      {
+        "legal_moves": 26,
+        "max_probability_difference": 7.18728799709023e-06,
+        "same_top1": true,
+        "single_policy_sum": 1.0,
+        "batch4_policy_sum": 1.0000000000000002
+      },
+      {
+        "legal_moves": 26,
+        "max_probability_difference": 7.187287997201253e-06,
+        "same_top1": true,
+        "single_policy_sum": 1.0000000000000002,
+        "batch4_policy_sum": 1.0
+      },
+      {
+        "legal_moves": 7,
+        "max_probability_difference": 4.066298002328161e-06,
+        "same_top1": true,
+        "single_policy_sum": 1.0,
+        "batch4_policy_sum": 1.0000000000000002
+      },
+      {
+        "legal_moves": 7,
+        "max_probability_difference": 4.066298002328161e-06,
+        "same_top1": true,
+        "single_policy_sum": 1.0,
+        "batch4_policy_sum": 1.0000000000000002
+      },
+      {
+        "legal_moves": 31,
+        "max_probability_difference": 0.00017620506406279546,
+        "same_top1": true,
+        "single_policy_sum": 1.0,
+        "batch4_policy_sum": 1.0000000000000002
+      },
+      {
+        "legal_moves": 31,
+        "max_probability_difference": 8.408871419569863e-06,
+        "same_top1": true,
+        "single_policy_sum": 1.0,
+        "batch4_policy_sum": 1.0000000000000002
+      }
+    ]
+  },
+  "adapter_check": {
+    "status": "PASS_ACTUAL_C3_ADAPTER",
+    "reference_bank_sha256": "100f4685ff87dd97e3fe2aa617a7c46b2a637521f0a6d342c5de2b4ea41ea358",
+    "source_sha256": {
+      "chess_anti_engine/onnx/load.py": "270aa5aa39d2137e2987287af63e05bd9d26221046d561d50e63035c77ea3bb6",
+      "chess_anti_engine/encoding/ceres_tpg.py": "f302e9cad288a3e9a1860dd3d01a1a9c188a2143bdd0632105b61b40c2d45bea"
+    },
+    "thresholds": {
+      "atol": 0.05,
+      "rtol": 0.002
+    },
+    "positions": 8,
+    "legal_moves": 178,
+    "max_legal_logit_difference": 0.0,
+    "wdl_output_kind": "logits",
+    "providers": [
+      "CPUExecutionProvider"
+    ],
+    "input_bytes_match_saved_bank": true
+  },
+  "implementation_validation": {
+    "files": {
+      "chess_anti_engine/onnx/load.py": "270aa5aa39d2137e2987287af63e05bd9d26221046d561d50e63035c77ea3bb6",
+      "scripts/foreign_net_audit.py": "70d440b91e3fab6177264f437463c151c8f59157d9df105d7534d69402b072eb",
+      "tests/test_ceres_onnx_byte_input.py": "bb34708254ddbabdd3bd8a1a838506f627ba1e960c0798320b2645586ff0d175"
+    },
+    "distinct_cpu_test_cases": 125,
+    "new_test_cases": 8,
+    "whole_lint": "PASS",
+    "synthetic_test_runtime": {
+      "python": "3.13.15",
+      "numpy": "2.2.6",
+      "onnx": "1.22.0",
+      "onnxruntime": "1.29.0",
+      "torch": "2.14.0+cpu"
+    }
+  },
+  "source_readout_sha256": "9e475b50253593c6b402288362a09bf5228c143b1f33ae70cc0c4c92fc3bcc42",
+  "independent_raw_bank_review_sha256": "3801479d91dbc5c742c70f08fd320b555e0c915e89b001fcac5505262ff0773a",
+  "publication_note": "Curated scientific fields; original execution records remain local. Policy bank copied byte-for-byte.",
+  "bank": {
+    "path": "c3-pre8-cpu-policy-bank.npz",
+    "bytes": 42766,
+    "sha256": "100f4685ff87dd97e3fe2aa617a7c46b2a637521f0a6d342c5de2b4ea41ea358",
+    "arrays": [
+      "inputs",
+      "single_policy_logits",
+      "batch4_policy_logits"
+    ]
+  }
+}
