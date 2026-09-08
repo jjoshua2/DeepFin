@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "kind": "h20-completed-prefix-recovery",
+  "partial_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05.writing",
+  "original_mixer": {
+    "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_policy_mix.py",
+    "sha256": "c897fae3c6455e896f078c133e9d3a98b8eb9d86038369ccf8bcf5faf5f3759d"
+  },
+  "original_status": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/mix.status.json",
+    "sha256": "ae847094c421a26cc62205c4aff7016b6b1e13a46e4e240c633eb249b31599e4"
+  },
+  "terminated_process_ids": [
+    247353,
+    247356,
+    247357
+  ],
+  "completed_prefix_metadata": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/completed_prefix_metadata.jsonl",
+    "sha256": "678633f00cb06bc746f629dce490ac891a38ab1c5d5ae3cdca3bb0f35b2773f4"
+  },
+  "metadata_capture": {
+    "shards": 2292,
+    "rows": 18776064,
+    "wall_seconds": 79.74480891227722,
+    "completed_unix": 1788833946.609353,
+    "helper_sha256": "cd8059e408a539e4617e13b576890c353a95bd8b3835142c27a92c7ab5917ce3",
+    "payload_arrays_read": false
+  }
+}

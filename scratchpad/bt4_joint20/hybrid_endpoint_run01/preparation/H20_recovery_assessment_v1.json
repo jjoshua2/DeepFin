@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "status": "READ_ONLY_CONTINGENCY_ASSESSMENT_NOT_A_RECOVERY_LAUNCH",
+  "created_utc": "2026-09-08T01:22:28.707349+00:00",
+  "scope": "Frozen code and first completed shard metadata only; no corpus payload read, process interaction, cap/plan edit, or assumption that timeout will occur. Parent retains normal completion path.",
+  "existing_proof": {
+    "per_shard_success_boundary": "Mixer writes recipe attrs only after every policy chunk has passed parent16-array equality, C reconstruction, H20 arithmetic, policy write/read equality and legal mass checks. It then separately writes all three C-parent pin/digest attrs. A complete recovery candidate needs both attrs updates, not merely the first recipe stamp.",
+    "per_shard_identity_pins": [
+      "source input-key digest",
+      "source SF policy digest",
+      "SF rank payload digest",
+      "BT4 ONNX and sidecar identity",
+      "C derive/mix summary pins",
+      "actual stored C policy digest"
+    ],
+    "missing_durable_state": [
+      "No saved per-shard MixStats; corpus aggregates exist only in process memory until final summary.",
+      "No H20 stored-policy payload digest in per-shard attrs.",
+      "No stored digest manifest for all16 source/C/target non-policy payloads at the time of their comparison.",
+      "No native resume: existing mixer refuses a .writing directory and begins with full source copy."
+    ]
+  },
+  "safe_reuse_assessment": "A genuinely completed prefix can be reused, but attrs alone are not a full restart receipt. A separate explicitly bounded recovery should establish stopped-writer ownership and bind the retained prefix before continuing. Do not weaken current completion/schedule/parent guarantees by treating a recipe stamp as a final publication.",
+  "concrete_conditional_recovery": [
+    "Only if original attempt terminates: preserve its exact exit/status, plan/audit/code pins and remaining partial directory; classify a contiguous completed prefix using the complete recipe plus all C-parent attrs. Treat any half-stamped/current shard as unfinished.",
+    "For candidate prefix, compare exact non-policy compressed relative-file manifests and metadata across original SF, C parent and retained H20. Equal compressed bytes under identical Zarr metadata prove the same arrays without redoing16 decompress-and-compare passes. The inspected first shard has matching encoding/chunks/compressor metadata; this shortcut must be established for every reused shard. Unequal compressed representations require local fallback or refusal, not an equality assumption.",
+    "Read policy-related arrays only to bind H20 bytes, verify source/sidecar/rank/parent digests and H20 arithmetic/legal mass, and recover the exact per-shard sufficient statistics needed for final corpus aggregates. Existing policy/mix helper functions should supply identical arithmetic. Complete remaining shards with original full validation.",
+    "Keep original limit/shard identities and recipes. After every2309shards/18910484rows is established, rerun final parent-summary/admission invariants, write truthful combined treatment/derive summaries with explicit recovery provenance, and use the existing canonical schedule verifier. The current fixed qualifier binds the original normal-completion status; recovery would need a separately reviewed receipt-aware wrapper, not forged original COMPLETE status."
+  ],
+  "limits": [
+    "This recommendation avoids repeated decompression of unchanged non-policy arrays; it still requires bounded metadata/compressed-byte verification, whose file-count and IO cost was not benchmarked here.",
+    "No new recovery script, scan, registration, output adoption, timeout extension, or launch is prepared by this note.",
+    "If normal materialization completes under its current cap, use the existing completed-publication qualification and disregard this contingency."
+  ],
+  "evidence": [
+    {
+      "path": "/tmp/deepfin-bt4-hybrid-tools/scripts/bt4_policy_mix.py",
+      "bytes": 105620,
+      "sha256": "c897fae3c6455e896f078c133e9d3a98b8eb9d86038369ccf8bcf5faf5f3759d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/qualify_H20_dataset.py",
+      "bytes": 12186,
+      "sha256": "5959d6a9680079b4bfaab7f299ffb6fe0871d653c811397ad6125cb056bdf8c6"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json",
+      "bytes": 162597,
+      "sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/derive_targets_summary.json",
+      "bytes": 165516,
+      "sha256": "fc6a33b4f75b154ae2945240d4169b40685618ff0082cc759914a0c4f5b6e8a5"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/bt4_policy_mix_summary.json",
+      "bytes": 2744,
+      "sha256": "5bf8502a12af0b9ce938a39ddfd9d95df4bfb2b1a0f80292d80d04109cce7100"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/shard_000000.zarr/.zattrs",
+      "bytes": 3220,
+      "sha256": "c457ce424b7351fe67044ed5d69763d00d6545667f71449868d24c511cb37af8"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/shard_000000.zarr/x/.zarray",
+      "bytes": 387,
+      "sha256": "66d85ea8c20a6f4950213d49b8d55e32b716ae832e98073868bbddf4be17dc87"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/shard_000000.zarr/game_id/.zarray",
+      "bytes": 315,
+      "sha256": "6cb70fc45fba385c45e82749dad453408f790240ce21b59ba4dd5ec6f8f7f67e"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/shard_000000.zarr/.zattrs",
+      "bytes": 4570,
+      "sha256": "445e8547c978b945731334a3283f9566dc787282973d67bf2d3a1b96d7deebaf"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/shard_000000.zarr/x/.zarray",
+      "bytes": 387,
+      "sha256": "66d85ea8c20a6f4950213d49b8d55e32b716ae832e98073868bbddf4be17dc87"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/shard_000000.zarr/game_id/.zarray",
+      "bytes": 315,
+      "sha256": "6cb70fc45fba385c45e82749dad453408f790240ce21b59ba4dd5ec6f8f7f67e"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05.writing/shard_000000.zarr/.zattrs",
+      "bytes": 4911,
+      "sha256": "16f1df04db15068170bde2d47056bafe02885cac9ff80518e4321773d7d2fc11"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05.writing/shard_000000.zarr/x/.zarray",
+      "bytes": 387,
+      "sha256": "66d85ea8c20a6f4950213d49b8d55e32b716ae832e98073868bbddf4be17dc87"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05.writing/shard_000000.zarr/game_id/.zarray",
+      "bytes": 315,
+      "sha256": "6cb70fc45fba385c45e82749dad453408f790240ce21b59ba4dd5ec6f8f7f67e"
+    }
+  ]
+}
