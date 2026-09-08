@@ -221,6 +221,7 @@ def test_cpu_preparation_settings_match_actual_cli_defaults(tmp_path, monkeypatc
         return SimpleNamespace(use_dynamic_relations=False)
 
     monkeypatch.setattr(model_loader, "load_model_from_checkpoint", load)
+
     def openings(_path, *, n_pairs, max_plies, rng):
         assert max_plies == 16
         assert rng.bit_generator.state == np.random.default_rng(42).bit_generator.state
@@ -249,6 +250,13 @@ def test_cpu_preparation_settings_match_actual_cli_defaults(tmp_path, monkeypatc
     Path(m["book"]["path"]).touch()
 
     def run_probe(cmd, **kwargs):
+        assert cmd[:4] == [
+            "/usr/bin/timeout",
+            "--signal=TERM",
+            "--kill-after=30s",
+            "270s",
+        ]
+        assert kwargs["timeout"] == 305
         assert kwargs["env"]["CUDA_VISIBLE_DEVICES"] == ""
         i = cmd.index("-c")
         monkeypatch.setattr(sys, "argv", ["-c", *cmd[i + 2 :]])

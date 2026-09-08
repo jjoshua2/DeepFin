@@ -239,11 +239,11 @@ print(json.dumps(dict(panel=panels[0],prefix_matches=True,settings=settings,exec
     ]
     result = json.loads(
         subprocess.check_output(
-            owned.timeout_command(cmd, 120),
+            owned.timeout_command(cmd, 300),
             cwd=runtime,
             env=environment(runtime, gpu=False),
             text=True,
-            timeout=125,
+            timeout=305,
         )
     )
     reader.same(

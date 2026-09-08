@@ -72,7 +72,17 @@ KILL30 seconds later, within its5400-second allowance. Its internal deadline is
 internal deadline to5370 would race the supervisor rather than qualify an ordinary
 deadline result. The combined arena charge is at most3 GPU hours; the completed
 candidate training charge must be at most4.5 hours, retaining the7.5-hour package
-bound. CPU preparation and each readout have separate120-second surviving caps.
+bound. CPU preparation has a 300-second surviving cap (TERM at 270 seconds,
+KILL 30 seconds later), with a 305-second outer subprocess wait. Each reader
+retains its separate 120-second surviving cap.
+
+The preparation allowance follows existing banked startup evidence: H20's C100,
+G100 and C400 stages took approximately 100.69, 104.91 and 104.54 seconds from process start to
+the game-log header, before checkpoint loads. The same PGN sampling happens before
+that header; preparation additionally CPU-loads two models and checks both opening
+prefixes. Its former TERM-at-90-seconds allowance was therefore too short. These
+historical timings justify a bounded allowance, not a new benchmark or a promise
+that preparation will finish within it.
 
 Lease waiting is outside GPU stage charges and checks STOP and the150GiB reserve.
 STOP, source changes or child failure halt the package; only owned process groups
