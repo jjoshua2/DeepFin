@@ -8,6 +8,16 @@ postprocessing loop took **0.744244 s before and 0.378945 s after** the change:
 49.08% less wall time for this component. All float32 policy values and aggregate
 statistics matched exactly. This is not a measured end-to-end labeling speedup.
 
+## Runtime adoption snapshot — September 8, 05:46:08 UTC
+
+The qualified optimized runtime has now been adopted after the old group's
+boundary. The [H20 transition record](2026-09-07-bt4-hybrid-endpoints.md#qualified-training-completed--september-8)
+links the host observation: old driver 4251 was absent with its pause marker
+present, and new labeler 305001 under driver 295443 used the qualified runtime
+while waiting for the GPU. This establishes adoption, not the first optimized
+inference or an end-to-end throughput gain. Earlier prepared/armed snapshots
+below retain their original dated status.
+
 ## Why this change
 
 The live labeler serializes JSON decoding, history reconstruction, encoding, GPU

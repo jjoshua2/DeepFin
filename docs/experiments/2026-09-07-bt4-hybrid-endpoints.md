@@ -2,11 +2,76 @@
 
 Registered September 7, 2026, after the [fresh C/E confirmation](2026-09-07-bt4-fresh-confirmation.md)
 completed and before training or playing outcomes for the new arms. **Status:
-H20 recovery, corpus qualification and prospective schedule checks completed. Training started at 2026-09-08 02:53:54 UTC; the 02:56:44 UTC receipt snapshot is incomplete, with no training or playing result.**
+H20 training exited zero at 2026-09-08 05:38:06 UTC; realized-schedule qualification completed at 05:43:10 UTC. The first arena launched at 05:44:12 UTC and B100 CPU materialization started at 05:44:24 UTC. Playing outcomes remain unread.**
 The previous screen is complete. This registration selects H20 as the next bounded
 comparison. Subsequent tests are chosen from completed results, not a mandatory
 three-arm or 168-hour queue. Routine choices within the research goal do not need
 individual user approval. Production adoption remains separate.
+
+## Qualified training completed — September 8
+
+The [completed process receipt](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/training_completion_publication_v1/training.process.json)
+records **9,851.44 seconds / 2.7365 charged GPU hours**, within the registered
+4.5-hour training cap. The trainer started at 02:53:54 UTC and exited zero at
+05:38:06 UTC. Its [complete trainer summary](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/training_completion_publication_v1/training.summary.json.gz)
+records all **18,910,484 rows**, **36,935 steps/loss calls** and **420 windows**
+with finite losses and mean gradient norms, zero nonfinite skips and zero transient
+CUDA retries. Sampling seed zero, batch size 512 and window size 88 are unchanged.
+Planned and realized row/batch counts and the internal sampling hash agree.
+
+The final checkpoint is `checkpoint.pt`, SHA256
+`0a711fcf10ff87fc8360d3fd4b3035b170a7c15172616317c4a9687ae99d7017`.
+This identity is recorded in the trainer summary; this documentation pass did not
+rehash the checkpoint or rescan the corpus. The mid-run checkpoint was not selected.
+
+The separate CPU [schedule stage](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/training_completion_publication_v1/schedule.process.complete.json)
+then exited zero in **303.22 seconds**, within its 30-minute cap. The
+[realized report](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/training_completion_publication_v1/realized_schedule.json.gz)
+verifies actual staging and matching source metadata. Its canonical hash is
+`dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f`, matching
+the registered source/C schedule; physical order hash
+`7349d7287be32b5ec0119c45ace5ef4e3e9762c52675401a942fdf6347983192` matches
+the completed trainer summary. The resulting
+[qualified receipt](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/training_completion_publication_v1/training.complete.json)
+now records `complete:true` and binds the final checkpoint, summary and schedule.
+
+The verifier does not decode feature/target payloads; their preservation relies
+on the separately qualified mixer provenance. Its plan hashes cover game choices
+and shard paths, not within-game row offsets; row-order equivalence remains a
+code-backed inference. The earlier
+[05:41:29 pending snapshot](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/training_completion_publication_v1/schedule.process.snapshot.json)
+is preserved unchanged, as is the training process receipt's pre-qualification
+`complete:false` flag. The later qualified receipt supplies the completed status.
+
+The summary retains `valid_control:false`: no held-out purity receipt, the
+architecture/trainer premise checked against a committed configuration rather
+than the live file, and the game-epoch sampler's intentional departure from the
+historical replacement-sampled control. This is the registered development arm,
+not a newly validated historical control or evidence of strength. The existing
+H20/C100, H20/G100 and H20/C400 comparisons remain the deciding package; no new
+training recipe is selected here.
+
+The [first-arena process snapshot](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/training_completion_publication_v1/C20T05.s100.process.snapshot.json)
+records the registered H20/C20T05 comparison starting at **05:44:12 UTC**:
+1,000 games, 100 simulations per side and prior temperature 1.0 on both sides,
+with arena PID 304943 under timeout 304942 and coordinator 288450. The
+[B100 handoff receipt](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/training_completion_publication_v1/B100.handoff.json)
+records the matching live first-arena identities at **05:44:24 UTC**, when waiter
+PID 301740 transitioned to the unchanged reviewed CPU materialization supervisor.
+The [initial materialization status](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/training_completion_publication_v1/B100.materialization.status.snapshot.json)
+records `RUNNING`. The [05:46:08 host observation](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/training_completion_publication_v1/transition_observation.json)
+confirms mixer PID 304973 on CPUs 0–1 at nice 19 beneath the reviewed materializer.
+This establishes actual startup, not a completed B100 corpus. The separate four-hour
+CPU allowance and existing resource guards apply. The same observation confirms
+the qualified optimized labeler adopted its runtime and was waiting for the GPU;
+it establishes no new optimized inference or throughput result. No game scores
+were read; B100 training remains unselected.
+
+The [completion evidence manifest](evidence/bt4-bootstrap/h20-training-completion-manifest.json)
+binds exact process, summary, qualified completion, schedule and handoff bytes, retaining
+the earlier pending-stage snapshot. The summary and schedule are losslessly
+compressed with both original and compressed hashes retained. Earlier recovery,
+failed receipts, qualification and training-start snapshots below remain unchanged.
 
 ## Recovery completed and training started — September 8
 
@@ -33,15 +98,15 @@ and [prospective schedule](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/pr
 passed before training. H20 and the completed C anchor share canonical schedule
 `dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f`:
 18,910,484 rows, 97,968 games, 36,935 batches, seed zero and batch 512. H20's schedule
-is still prospective; actual realized staging and complete training diagnostics
-must be checked after the run finishes.
+was prospective at launch; the later training-completion snapshot above records
+the completed realized checks.
 
 The coordinator launched at 02:48:37 UTC; its surviving timeout supervisor started
 the actual trainer at **02:53:54 UTC**. The [process snapshot](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/completed_readiness_publication_v1/H20.training.process.snapshot.json),
 captured at **02:56:44 UTC**, records coordinator 288450, timeout 288561 and trainer
 288562, with training incomplete. It binds the original Python 3.10 / Torch 2.11
-CUDA runtime, seed-zero epoch and 4.5-hour training cap. This is an actual start,
-not a completed checkpoint or arena result. The registered H20/C100, H20/G100 and
+CUDA runtime, seed-zero epoch and 4.5-hour training cap. That historical receipt establishes the actual start; the later completion
+snapshot above supersedes its training status, without adding an arena result. The registered H20/C100, H20/G100 and
 H20/C400 package remains unchanged; no follow-up candidate was added.
 
 The [completed-readiness manifest](evidence/bt4-bootstrap/completed-readiness-manifest.json)
