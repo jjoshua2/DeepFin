@@ -1,0 +1,7 @@
+{
+  "status": "complete",
+  "end_unix": 1788857940.804564,
+  "qualification_sha256": "25cde2ebee8fed4fef4dda7ae27d7389f61b43f48beda6c38fe935dbc9c3c937",
+  "peak_sampled_aggregate_output_bytes": 1077532979,
+  "minimum_sampled_free_bytes": 440118771712
+}

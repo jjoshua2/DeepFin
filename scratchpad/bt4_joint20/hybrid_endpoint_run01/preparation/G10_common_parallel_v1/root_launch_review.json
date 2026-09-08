@@ -1,0 +1,21 @@
+{
+  "status": "PASS_INDEPENDENT_ACTUAL_LAUNCH_REVIEW",
+  "utc": "2026-09-08T08:12:31.874813+00:00",
+  "manifest_sha256": "612b22ba93451d309e121c1aae83680728db0308af49ca2d2e0580dd01bd535a",
+  "launch_template_sha256": "bb5f99527d23723207157eaa260bf534c45f9222fce6482d6d7db703902ef4e5",
+  "pins_rehashed": 314,
+  "raw_rows": 1062946,
+  "checks": [
+    "Original source selections and metadata independently reviewed",
+    "Derived policy/rank phase0 and separate latest-phase value preserved",
+    "Two disjoint two-CPU lanes bound to same registered absolute deadline",
+    "Exact outer14370+30timeout covers all preflight; template token must be bound once atlaunch",
+    "Runtime and original native/dependency qualification coherent; tracked frozencheckout clean",
+    "Fresh operationalbootstrap and laneoutputs; no dataset stage launched by review"
+  ],
+  "independent_runner_review": "2af4501a83b856aaa02631360e8082ca1f254ac7c6b18f8d3b99fcf91e20f412",
+  "required_immediately_before_launch": [
+    "Host owner absence and memory/disk admission",
+    "Single fresh absolute deadline bound and actual PID/command banked"
+  ]
+}

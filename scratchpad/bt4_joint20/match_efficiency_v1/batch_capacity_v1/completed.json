@@ -1,0 +1,84 @@
+{
+  "complete": true,
+  "measurement": {
+    "cells": 6,
+    "cells_sha256": "f90a6b0c24147ab5640defa2bc5773c38abb397acb674c33a12a18fa5805be58",
+    "complete": true,
+    "metadata_sha256": "3df8edb9f32844da747cccc33eb453a442d46d3775cfbc7dbd85915e3d6bcf72",
+    "no_strength_claim": true
+  },
+  "no_strength_claim": true,
+  "plan_sha256": "23ca10d872abc19507f21000966b80707bed0c00000857da1f7a36f6df77000f",
+  "process": {
+    "capacity_cmdline": [
+      "/usr/bin/python3",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/probe_batch_capacity.py",
+      "--plan",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/plan.json",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution"
+    ],
+    "capacity_pid": 327523,
+    "command": [
+      "/usr/bin/env",
+      "TORCHINDUCTOR_CACHE_DIR=/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/compile_cache/inductor",
+      "TRITON_CACHE_DIR=/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/compile_cache/triton",
+      "TORCHINDUCTOR_COMPILE_THREADS=1",
+      "MAX_JOBS=1",
+      "/usr/bin/ionice",
+      "-c",
+      "3",
+      "/usr/bin/python3",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/probe_batch_capacity.py",
+      "--plan",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/plan.json",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution"
+    ],
+    "complete": false,
+    "component_only": true,
+    "cwd": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+    "ended_unix": 1788856560.3558578,
+    "exit_code": 0,
+    "gpu_seconds": 820.7403198910179,
+    "hard_seconds": 1200,
+    "owner_pid": 327377,
+    "process_complete": true,
+    "runtime": {
+      "cuda": "12.8",
+      "executable": "/usr/bin/python3",
+      "native_extensions": {
+        "chess_anti_engine.encoding._features_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+        "chess_anti_engine.encoding._lc0_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+        "chess_anti_engine.mcts._mcts_tree": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+        "chess_anti_engine.nnue._nnue_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so"
+      },
+      "numpy": "1.26.2",
+      "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+      "torch": "2.11.0+cu128"
+    },
+    "stage_seconds": 820.7403198910179,
+    "started_unix": 1788855739.6155405,
+    "supervisor_command": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "1170s",
+      "/usr/bin/env",
+      "TORCHINDUCTOR_CACHE_DIR=/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/compile_cache/inductor",
+      "TRITON_CACHE_DIR=/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/compile_cache/triton",
+      "TORCHINDUCTOR_COMPILE_THREADS=1",
+      "MAX_JOBS=1",
+      "/usr/bin/ionice",
+      "-c",
+      "3",
+      "/usr/bin/python3",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/probe_batch_capacity.py",
+      "--plan",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/plan.json",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/match_efficiency_v1/batch_capacity_v1/execution"
+    ],
+    "supervisor_pid": 327522
+  }
+}
