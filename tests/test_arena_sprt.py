@@ -386,10 +386,10 @@ def test_the_trajectory_banks_one_point_per_distinct_pair_count() -> None:
             monitor.update(scores)
         assert monitor.pairs == i + 1
     assert monitor.looks == 51   # 1 at construction + 10 * 5
-    assert [p for p, _ in monitor.trajectory] == list(range(11))
+    assert [p for p, _ in monitor.trajectory] == list(range(1, 11))
     # 51 consultations of the boundary, but only 11 different samples: the
     # repeats carry no extra multiplicity and the record must not imply they do.
-    assert monitor.as_record()["distinct_samples"] == 11
+    assert monitor.as_record()["distinct_samples"] == 10
 
 
 def test_record_carries_the_hypothesis_and_the_bias_caveat() -> None:
@@ -404,8 +404,8 @@ def test_record_carries_the_hypothesis_and_the_bias_caveat() -> None:
     assert record["pairs"] == ALL_DRAW_CROSS_AT_PAIRS
     assert record["games"] == 2 * ALL_DRAW_CROSS_AT_PAIRS
     assert record["pentanomial_ascending"]["DD_WL"] == ALL_DRAW_CROSS_AT_PAIRS
-    assert record["elo_estimate_biased_away_from_zero"] is True
-    assert "BIASED AWAY FROM ZERO" in str(record["caveat"])
+    assert record["elo_estimate_selection_biased"] is True
+    assert "selection bias" in str(record["caveat"])
     trajectory = record["llr_trajectory"]
     assert isinstance(trajectory, list)
     assert trajectory[-1][0] == ALL_DRAW_CROSS_AT_PAIRS
@@ -471,10 +471,8 @@ def test_rolling_loop_stops_on_the_boundary_at_pair_granularity() -> None:
     assert len(scores) == ALL_DRAW_CROSS_AT_PAIRS
     assert monitor.pairs == ALL_DRAW_CROSS_AT_PAIRS
     assert set(scores) == {1.0}
-    assert all(p % 2 == 0 for p, _ in monitor.trajectory), (
-        "a look landed on an odd number of pairs, which at pool_size=4 can "
-        "only mean a half-played pair reached the statistic"
-    )
+    assert [p for p, _ in monitor.trajectory] == list(range(1, monitor.pairs + 1))
+
 
 
 @pytest.mark.usefixtures("scripted_moves")
@@ -557,7 +555,6 @@ _REFERENCE_MODEL = "reference-model"
 # a tighter boundary — but on the schedule this stagger produces. One slot of the
 # pool of 4 is occupied forever by the hung game, so the other three retire pairs
 # at 1, 2, 4, 5, 7, ... and the look that would have landed on 15 lands on 16.
-STAGGERED_CROSS_AT_PAIRS = 16
 
 
 @pytest.fixture
@@ -640,10 +637,12 @@ class RecordingMonitor(SprtMonitor):
         self._finished = finished
         super().__init__(*args, **kwargs)
 
-    def update(self, new_pair_scores: Sequence[float]) -> str | None:
-        self.samples.append([float(s) for s in new_pair_scores])
+    def update(self, new_pair_scores: Sequence[float], *,
+               pair_ids: Sequence[int] | None = None) -> str | None:
+        verdict = super().update(new_pair_scores, pair_ids=pair_ids)
+        self.samples.append(self.pair_scores)
         self.finished_at_look.append(len(self._finished))
-        return super().update(new_pair_scores)
+        return verdict
 
 
 def _pairs_from_finished(
@@ -707,32 +706,19 @@ def test_the_rolling_look_never_sees_a_half_played_pair(
     )
     scores = _play_rolling_staggered(openings, sprt=monitor, finished=finished)
 
-    # (1) THE GUARD, look by look and against the truth AT THAT LOOK: the sample
-    # IS the complete pairs. A lone coloring is absent from it, not folded in at
-    # 0.5 — and this is checked at every look, so it does not depend on where the
-    # loop happened to stop.
-    decisive_lone_looks = 0
+    # While pair0 has only one half, no later complete pair may be scored.
+    saw_gap = False
     for sample, n_finished in zip(monitor.samples, monitor.finished_at_look):
         complete, lone = _pairs_from_finished(finished[:n_finished])
-        assert sample == complete
-        if any(score in (0.0, 1.0) for score in lone.values()):
-            decisive_lone_looks += 1
-
-    # (2) ... and the case that makes (1) non-vacuous actually occurred: a look
-    # landed while a pair had exactly ONE coloring finished and that coloring
-    # was DECISIVE. Imputing its partner as a draw would have entered it as 1.5,
-    # a bin no complete pair in this stream can occupy.
-    assert decisive_lone_looks, (
-        "no look landed on a half-played pair with a DECISIVE lone coloring, so "
-        "imputing that partner as a draw would change nothing and this test "
-        "cannot see the guard"
-    )
-
-    # (3) And the stop point, which is what the imputed sample would move.
+        if 0 in lone:
+            assert sample == []
+            if complete:
+                saw_gap = True
+    assert saw_gap
     assert monitor.verdict == "H0"
-    assert monitor.pairs == STAGGERED_CROSS_AT_PAIRS
-    assert len(scores) == STAGGERED_CROSS_AT_PAIRS
-    assert set(scores) == {1.0}
+    assert monitor.pair_scores == scores[:monitor.pairs]
+    assert monitor.pairs < len(scores)
+    assert monitor.as_record()["speculative_completed_pair_ids"]
 
 
 # ---- matched_time ---------------------------------------------------------
@@ -1053,47 +1039,21 @@ def test_the_sprt_key_sits_between_the_elo_and_the_duration(
     assert keys[keys.index("sprt") + 1] == "duration_s"
 
 
-def test_a_resumed_arena_recomputes_the_llr_over_loaded_and_new_pairs(
+def test_completed_resume_preserves_first_crossing_and_speculative_suffix(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Segment 1 stops at a tight boundary; segment 2 resumes and re-decides.
-
-    Three claims in one run, because they are one mechanism: the resumed pairs
-    reach the statistic (segment 2 starts at 16, not 0), a run that already
-    crossed does not spend GPU time re-proving it (zero chunks played), and the
-    same log resumed WITHOUT --sprt still plays out the remainder (so the skip
-    is the boundary's doing and not a resume bug).
-    """
-    log_path = tmp_path / "resumed.games.jsonl"
-    first: list[int] = []
-    seg1 = _run_chunked_arena(
-        monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60, calls=first,
-        log_path=log_path,
-    )
-    assert seg1["sprt"]["pairs"] == ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
-    assert seg1["sprt"]["resumed_pairs"] == 0
-    assert sum(first) == ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
-
-    second: list[int] = []
-    seg2 = _run_chunked_arena(
-        monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60, calls=second,
-        log_path=log_path, resume=True,
-    )
-    assert second == [], "the boundary was already crossed; play nothing"
-    assert seg2["sprt"]["resumed_pairs"] == ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
-    assert seg2["sprt"]["pairs"] == ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
-    assert seg2["sprt"]["verdict"] == "H0"
-    assert seg2["sprt"]["llr"] == pytest.approx(seg1["sprt"]["llr"], abs=1e-12)
-    assert seg2["resumed_pairs"] == ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
-
-    third: list[int] = []
-    seg3 = _run_chunked_arena(
-        monkeypatch, tmp_path, sprt=None, n_pairs=60, calls=third,
-        log_path=log_path, resume=True,
-    )
-    assert sum(third) == 60 - ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
-    assert seg3["pairs"] == 60
-    assert "sprt" not in seg3
+    path = tmp_path / "resumed.games.jsonl"
+    first = _run_chunked_arena(monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60,
+                               calls=[], log_path=path)
+    assert first["sprt"]["pairs"] == 15
+    assert first["sprt"]["speculative_completed_pair_ids"] == [15]
+    calls: list[int] = []
+    second = _run_chunked_arena(monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60,
+                                calls=calls, log_path=path, resume=True)
+    assert calls == []
+    assert second["sprt"]["scored_pair_ids"] == first["sprt"]["scored_pair_ids"]
+    assert second["sprt"]["llr_trajectory"] == first["sprt"]["llr_trajectory"]
+    assert second["game_log_agrees"] is True
 
 
 def test_a_completed_sprt_resume_appends_no_second_result_row(
@@ -1129,30 +1089,19 @@ def test_a_completed_sprt_resume_appends_no_second_result_row(
     )
 
 
-def test_a_resumed_arena_continues_toward_a_boundary_it_has_not_reached(
+def test_resumed_arena_does_not_reinterpret_a_different_boundary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """The other half of resume: 16 banked pairs are evidence, not a restart.
-
-    Segment 1 crosses the TIGHT boundary at 16 pairs. Segment 2 resumes the same
-    log under the standard boundary, which needs 50 — and must play exactly the
-    34 further pairs, not another 50.
-    """
-    log_path = tmp_path / "carryover.games.jsonl"
-    first: list[int] = []
-    _run_chunked_arena(
-        monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60, calls=first,
-        log_path=log_path,
-    )
-    second: list[int] = []
-    seg2 = _run_chunked_arena(
-        monkeypatch, tmp_path, sprt=SPEC, n_pairs=60, calls=second,
-        log_path=log_path, resume=True,
-    )
-    assert seg2["sprt"]["verdict"] == "H0"
-    assert seg2["sprt"]["pairs"] == ALL_DRAW_CROSS_AT_PAIRS
-    assert seg2["sprt"]["resumed_pairs"] == ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
-    assert sum(second) == ALL_DRAW_CROSS_AT_PAIRS - ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
+    path = tmp_path / "carryover.games.jsonl"
+    _run_chunked_arena(monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60,
+                       calls=[], log_path=path)
+    before = path.read_bytes()
+    calls: list[int] = []
+    with pytest.raises(SystemExit, match="SPRT specification"):
+        _run_chunked_arena(monkeypatch, tmp_path, sprt=SPEC, n_pairs=60,
+                           calls=calls, log_path=path, resume=True)
+    assert calls == []
+    assert path.read_bytes() == before
 
 
 # ---------------------------------------------------------------------------
@@ -1203,102 +1152,33 @@ def test_the_log_header_records_the_spec_beside_the_fingerprinted_settings(
     assert header["fingerprint"] == plain["fingerprint"]
 
 
-def test_a_resume_under_a_different_spec_warns_and_still_carries_the_pairs(
+@pytest.mark.parametrize(("initial", "current"), [(SPEC_TIGHT, SPEC), (SPEC, None), (None, SPEC)])
+def test_resume_rejects_changed_or_added_or_removed_sprt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    initial: SprtSpec | None, current: SprtSpec | None,
 ) -> None:
-    """Warned about, never refused — and the warning names BOTH hypotheses.
-
-    MUTANT, run: make ``sprt_spec_carryover_warning`` return None
-    unconditionally. 6 failed, 96 passed — this test, its present-vs-absent
-    twin, and four of the parametrized cases below.
-    """
-    log_path = tmp_path / "respec.games.jsonl"
-    _run_chunked_arena(
-        monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60, calls=[],
-        log_path=log_path,
-    )
-    capsys.readouterr()
-    seg2 = _run_chunked_arena(
-        monkeypatch, tmp_path, sprt=SPEC, n_pairs=60, calls=[],
-        log_path=log_path, resume=True,
-    )
-    err = capsys.readouterr().err
-    assert "DIFFERENT SPRT hypothesis" in err
-    assert f"alpha={SPEC_TIGHT.alpha}" in err, "the RECORDED spec must be named"
-    assert f"alpha={SPEC.alpha}" in err, "this invocation's spec must be named too"
-    # A warning, not a refusal: the resumed pairs still carry over.
-    assert seg2["sprt"]["resumed_pairs"] == ALL_DRAW_CROSS_TIGHT_TWO_AT_A_TIME
+    path = tmp_path / "mismatch.games.jsonl"
+    _run_chunked_arena(monkeypatch, tmp_path, sprt=initial, n_pairs=60,
+                       calls=[], log_path=path)
+    before = path.read_bytes()
+    with pytest.raises(SystemExit, match="SPRT specification"):
+        _run_chunked_arena(monkeypatch, tmp_path, sprt=current, n_pairs=60,
+                           calls=[], log_path=path, resume=True)
+    assert path.read_bytes() == before
 
 
-def test_a_resume_that_drops_the_flag_is_warned_about_as_present_vs_absent(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The other direction: the log has a spec, this invocation has none."""
-    log_path = tmp_path / "dropped.games.jsonl"
-    _run_chunked_arena(
-        monkeypatch, tmp_path, sprt=SPEC_TIGHT, n_pairs=60, calls=[],
-        log_path=log_path,
-    )
-    capsys.readouterr()
-    seg2 = _run_chunked_arena(
-        monkeypatch, tmp_path, sprt=None, n_pairs=60, calls=[],
-        log_path=log_path, resume=True,
-    )
-    err = capsys.readouterr().err
-    assert "DIFFERENT SPRT hypothesis" in err
-    assert f"alpha={SPEC_TIGHT.alpha}" in err
-    assert "fixed-N" in err
-    assert "sprt" not in seg2
+@pytest.mark.parametrize("change", [
+    {"sampling": "legacy"}, {"alpha": "0.05"}, {"alpha": True},
+    {"first_pairs": 128}, {"step_pairs": 64},
+])
+def test_resume_checks_protocol_and_look_schedule(change: dict[str, Any]) -> None:
+    with pytest.raises(SystemExit, match="SPRT specification"):
+        arena.require_same_sprt_spec({**SPEC.as_record(), **change}, SPEC)
 
 
-def test_resuming_a_log_that_records_no_spec_neither_warns_nor_crashes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The pre-branch log shape, and the fixed-N -> sequential resume.
-
-    A fixed-N run writes a header with no info block — byte-identical to every
-    log written before this feature existed. Resuming one under a boundary is
-    deliberate and there is no earlier hypothesis to contradict, so it must be
-    silent: a warning on every legitimate first sequential resume is a warning
-    nobody reads by the third time they see it.
-    """
-    log_path = tmp_path / "prebranch.games.jsonl"
-    _run_chunked_arena(
-        monkeypatch, tmp_path, sprt=None, n_pairs=60, calls=[], log_path=log_path,
-    )
-    assert "info" not in _log_header(log_path)
-    capsys.readouterr()
-    seg2 = _run_chunked_arena(
-        monkeypatch, tmp_path, sprt=SPEC, n_pairs=60, calls=[],
-        log_path=log_path, resume=True,
-    )
-    err = capsys.readouterr().err
-    assert "SPRT" not in err
-    assert seg2["sprt"]["resumed_pairs"] == 60
-    assert seg2["sprt"]["verdict"] == "H0"
-
-
-@pytest.mark.parametrize(
-    ("recorded", "current", "expected"),
-    [
-        (None, None, False),
-        (None, SPEC, False),                       # fixed-N log resumed as SPRT
-        (SPEC.as_record(), SPEC, False),           # the same hypothesis
-        (SPEC.as_record(), None, True),
-        (SPEC.as_record(), SPEC_TIGHT, True),
-        ({}, SPEC, True),                          # an info block with no numbers
-        ({**SPEC.as_record(), "alpha": "0.05"}, SPEC, True),   # a string, not 0.05
-    ],
-)
-def test_the_carryover_warning_fires_on_exactly_the_differences(
-    recorded: dict[str, Any] | None, current: SprtSpec | None, expected: bool,
-) -> None:
-    """Including the one that is not a number: a header can be hand-edited."""
-    fired = arena.sprt_spec_carryover_warning(recorded, current) is not None
-    assert fired is expected
+def test_unchanged_fixed_and_sequential_specs_resume() -> None:
+    arena.require_same_sprt_spec(None, None)
+    arena.require_same_sprt_spec(SPEC.as_record(), SPEC)
 
 
 # ---------------------------------------------------------------------------

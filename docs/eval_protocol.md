@@ -101,9 +101,10 @@ must be verified on the machine being used.
   (`--temperature 0 --no-gumbel-noise`) makes self-play pairs carry zero
   information — both games of a pair mirror each other exactly — so keep the
   noise on for self-referenced runs like `elo_vs_sims`.
-- 500 pairs (1000 games) gives a CI of roughly ±10-15 Elo at typical draw
-  rates; if a candidate's effect is smaller than that, more games — not a
-  tighter prior — is the only honest fix.
+- Precision depends on observed pair variance. The completed H20 development
+  banks had roughly ±18–19 Elo intervals at 500 pairs; 128 pairs would give about
+  ±35 Elo near the null at the same variance. Small screens identify large
+  differences; more games and independent training seeds answer finer questions.
 
 ## A crashed match is resumable — never replay a finished game
 
@@ -232,39 +233,47 @@ point before launching**; look at partial fits freely for *operational* checks
 (is an arm crashing, are counts advancing, has the missingness flag tripped)
 and never for the sign or size of the effect.
 
-**⚑ `--sprt` is the ONE sanctioned way to stop early, and it is opt-in.**
-"Pre-commit the count and never look" is the right default and stays the
-default. The principled alternative is not to peek more carefully but to
-declare the boundary first: `scripts/arena_standard.py --sprt
-'elo0=E,elo1=E,alpha=A,beta=B'` runs a pentanomial GSPRT (Van den Bergh's
-formulation, i.e. what fishtest computes; implementation in
-`chess_anti_engine/eval/sprt.py`) whose error rates are approximately bounded by
-the alpha and beta you named — conservative Wald bounds (type-I ≤ α/(1−β),
-type-II ≤ β/(1−α)), not exact equalities — no matter how often it looks. All
-four numbers are REQUIRED — there is no default anywhere in that path, because a
-boundary the operator did not state is not a preregistration.
+**Sequential screens use a declared stopping rule.** The opt-in GSPRT tests
+separated logistic-Elo hypotheses; `--games` is a hard cap. For example:
 
-- The unit is the PAIR, so the LLR is only ever recomputed on pairs whose two
-  colorings both finished. Rolling and matched_time look after every pair;
-  `--no-rolling` looks between chunks, which is coarser and is recorded as
-  `check_granularity` in the row.
-- `--games` becomes a HARD CAP. Reaching it without crossing is **INCONCLUSIVE**
-  and is reported as that. It is NOT a fixed-N result: the sample size was
-  chosen by the data, so re-reading it as one is the same optional stopping
-  under a different name.
-- ⚑ **The VERDICT is the deliverable.** The Elo and CI printed alongside it are
-  descriptive: a sequentially stopped point estimate is biased AWAY from zero
-  (the run stopped when the sample looked extreme) and the CI has no nominal
-  coverage. Quote the verdict, the pairs played, and the boundary — never the
-  Elo on its own. The row banks all of it under `sprt`, including the LLR
-  trajectory, so a later re-analysis has the whole path and not just its end.
-- A resumed SPRT arena recomputes the LLR over loaded + new pairs, and a run
-  that had already crossed plays zero further games. The spec is recorded in the
-  game log's header (`info.sprt`) but deliberately NOT in the resume
-  fingerprint, so resuming across specs is allowed rather than refused — it
-  prints a stderr warning naming both, because alpha and beta belong to ONE
-  preregistered boundary.
-- Absent `--sprt` nothing changes, down to the JSONL record, which grows no key.
+```bash
+--sprt 'elo0=0,elo1=15,alpha=.05,beta=.1,first_pairs=128,step_pairs=64'
+```
+
+The four hypothesis/error parameters are required. `first_pairs` and
+`step_pairs` default to 1; both are positive integers. A look also occurs at the
+final pair cap if it falls between regular steps. Alpha/beta set nominal GSPRT
+boundaries: the generalized-MLE guarantees are asymptotic, not exact finite-
+sample Wald bounds. Fishtest's usual normalized-Elo bounds are a different scale
+from this implementation's logistic Elo.
+
+Only canonical opening pairs 0..N−1 enter a decision, with both colors complete.
+Rolling games can finish out of order. The monitor buffers those results and
+checks every newly available declared prefix look in order, preserving the
+first crossing. Chunked execution uses the same declared look schedule once a
+chunk drains. Faster speculative completions cannot bypass a missing early pair.
+
+The result's `sprt.scored_pair_ids` identifies the primary prefix;
+`completed_pair_ids`, `speculative_completed_pair_ids`, `inflight_games`, and
+`not_started_games` distinguish extra work from the deciding sample. Extra
+finished rows remain in the original game log. The result's games/pairs and
+ordinary descriptive Elo refer only to the scored prefix. A deadline between
+looks yields INCONCLUSIVE, with `last_decision_look_pairs` showing the last
+actual decision look. No complete prefix still exits 3 without a strength result.
+
+Crossing H1 favors H1 over H0; it does not prove a lower confidence bound at
+`elo1`. H0 is not equivalence, and an uncrossed cap is INCONCLUSIVE. Stopped Elo
+and ordinary fixed-N intervals are descriptive and do not have nominal
+sequential coverage. For a practical-gain claim above +15, use an appropriate
+null bound or sequentially valid interval, not the H1 label alone.
+
+Resume requires identical hypotheses, look schedule and
+`canonical_pair_prefix_v1` protocol. Different or legacy sequential specs, and
+fixed-N/sequential conversion, are rejected before new games. The original
+header remains unchanged; reanalysis cannot become a prospective experiment
+through resume. Fixed-N behavior and existing strict fixed-bank readers are
+unchanged. A sequential reader must explicitly validate the stopping prefix,
+trajectory and speculative suffix.
 
 **⚑ A bootstrap cannot fix informative missingness.** If pairs complete faster
 in one matchup for a reason correlated with the arms, the pairs you HAVE are
