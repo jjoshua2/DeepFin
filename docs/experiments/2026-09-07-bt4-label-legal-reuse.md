@@ -8,6 +8,23 @@ postprocessing loop took **0.744244 s before and 0.378945 s after** the change:
 49.08% less wall time for this component. All float32 policy values and aggregate
 statistics matched exactly. This is not a measured end-to-end labeling speedup.
 
+## First optimized group completed — September 8
+
+The [completed-group readout](../../scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/readout.json)
+records **132,467 rows across 16 shards**, produced by qualified runtime
+`4e600902e1fd08727e1d83e009d6e241be0c7cba` with CUDA/CPU providers and the same
+teacher identity. All 16 producer stamps, row totals and source size/mtime
+identities were checked; policy payloads were not reread. The driver's reported
+**440.8 positions/second** is descriptive throughput for this group, not a
+controlled end-to-end speedup or a strength result.
+
+The [18-member archive](../../scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/metadata.tar.gz)
+preserves the exact readout, driver-log snapshot and sidecar attributes; hashes
+are in the [evidence manifest](evidence/bt4-bootstrap/h20-c100-g10-increment-manifest.json).
+The [H20 record](2026-09-07-bt4-hybrid-endpoints.md#completed-h20c100-primary-screen--september-8)
+separately records its completed first arena and the next registered arena launch.
+Earlier adoption snapshots below retain their dated pending-inference status.
+
 ## Runtime adoption snapshot — September 8, 05:46:08 UTC
 
 The qualified optimized runtime has now been adopted after the old group's
