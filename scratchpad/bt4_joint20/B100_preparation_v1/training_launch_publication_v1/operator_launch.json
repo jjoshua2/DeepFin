@@ -1,0 +1,23 @@
+{
+  "status": "COORDINATOR_LAUNCHED",
+  "pid": 336548,
+  "started_unix": 1788858546.3045306,
+  "cwd": "/tmp/deepfin-b100-training-tools",
+  "command": [
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/python3",
+    "scripts/bt4_one_epoch_screen.py",
+    "--manifest",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/training_only_launch_preparation_v1/B100.training_manifest.json",
+    "--execute"
+  ],
+  "manifest_sha256": "0e4b9594d25fa241048c3851ab51eb57958fbf0fd3376e88a04399f6499b43ef",
+  "root_review_sha256": "9c730672ac3711e7e4e8938826f54daeb015233fc70d51262f7f99c2ea6d4262",
+  "training_started": false,
+  "note": "Shared GPU lease acquisition and startup must be observed separately."
+}

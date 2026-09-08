@@ -1,0 +1,166 @@
+{
+  "schema": 1,
+  "created_utc": "2026-09-08T09:14:22.201003+00:00",
+  "scope": "B100 actual training startup only; future arenas remain separate and no completed training result",
+  "files": [
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/B100.training_manifest.json",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/training_only_launch_preparation_v1/B100.training_manifest.json",
+      "sha256": "0e4b9594d25fa241048c3851ab51eb57958fbf0fd3376e88a04399f6499b43ef",
+      "bytes": 2807,
+      "original_sha256": "0e4b9594d25fa241048c3851ab51eb57958fbf0fd3376e88a04399f6499b43ef",
+      "original_bytes": 2807,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/runtime_qualification.json",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/training_only_launch_preparation_v1/runtime_qualification.json",
+      "sha256": "d05ba06c8e5ce41bc39b4978474f01f686301317e7cbcf0edd07a50c041c88b0",
+      "bytes": 5583,
+      "original_sha256": "d05ba06c8e5ce41bc39b4978474f01f686301317e7cbcf0edd07a50c041c88b0",
+      "original_bytes": 5583,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/root_launch_review.json",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/training_only_launch_preparation_v1/root_launch_review.json",
+      "sha256": "9c730672ac3711e7e4e8938826f54daeb015233fc70d51262f7f99c2ea6d4262",
+      "bytes": 2556,
+      "original_sha256": "9c730672ac3711e7e4e8938826f54daeb015233fc70d51262f7f99c2ea6d4262",
+      "original_bytes": 2556,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/operator_launch.json",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/training_only_launch_preparation_v1/operator_launch.json",
+      "sha256": "273e79f7156a46a0d8a551703e99d8a724a89a0adf8ab2549e27159719ddc006",
+      "bytes": 772,
+      "original_sha256": "273e79f7156a46a0d8a551703e99d8a724a89a0adf8ab2549e27159719ddc006",
+      "original_bytes": 772,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/cli_plan.json",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/training_only_launch_preparation_v1/cli_plan.json",
+      "sha256": "b77bcc29df766e0d89abd897bdd85558e7765121a219b8de67498daee34cc506",
+      "bytes": 810,
+      "original_sha256": "b77bcc29df766e0d89abd897bdd85558e7765121a219b8de67498daee34cc506",
+      "original_bytes": 810,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/original_preregistration.md",
+      "source_path": "/tmp/deepfin-b100-training-tools/docs/experiments/2026-09-08-bt4-pure-policy-endpoint.md",
+      "sha256": "6fb262dbfe27380bdce11bd2099305ccf6137beecd6824881857cc5d8c24f96c",
+      "bytes": 5951,
+      "original_sha256": "6fb262dbfe27380bdce11bd2099305ccf6137beecd6824881857cc5d8c24f96c",
+      "original_bytes": 5951,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/schedule/B100.prospective_schedule.json.gz",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/prospective_schedule_v1/B100.prospective_schedule.json",
+      "sha256": "28b87ad7553221325a80bf072d0b215ab74c0297722dc3926f0c8aed8d45ccbc",
+      "bytes": 102584,
+      "original_sha256": "fd55938971e05a876891a0ba9a0107f8a370612047ab51d116385f0c9a4c0a0b",
+      "original_bytes": 732724,
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/schedule/completed.json",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/prospective_schedule_v1/completed.json",
+      "sha256": "ec715c2db657570425c4b416175f9a3685388fa6a18d7d3f2aff49cbe5b9e6d9",
+      "bytes": 2708,
+      "original_sha256": "ec715c2db657570425c4b416175f9a3685388fa6a18d7d3f2aff49cbe5b9e6d9",
+      "original_bytes": 2708,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/schedule/plan.json",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/prospective_schedule_v1/plan.json",
+      "sha256": "168750acfae542f68ce96e6e1037b416d14c22644d0ebdd9de3c593103c06c31",
+      "bytes": 4325,
+      "original_sha256": "168750acfae542f68ce96e6e1037b416d14c22644d0ebdd9de3c593103c06c31",
+      "original_bytes": 4325,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/schedule/resources.txt",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/prospective_schedule_v1/resources.txt",
+      "sha256": "ceae2fc1c645c9e2e18d2b6310ec337837db6ecd9a22365e10c9539be59e2a9a",
+      "bytes": 1234,
+      "original_sha256": "ceae2fc1c645c9e2e18d2b6310ec337837db6ecd9a22365e10c9539be59e2a9a",
+      "original_bytes": 1234,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/schedule/author_report_check.json",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/prospective_schedule_v1/author_report_check.json",
+      "sha256": "e08ede3feb90c8f6463df4e139dce420cc7b2fe48fbc416cea4a102766d0d076",
+      "bytes": 4100,
+      "original_sha256": "e08ede3feb90c8f6463df4e139dce420cc7b2fe48fbc416cea4a102766d0d076",
+      "original_bytes": 4100,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/B100.dataset_qualification.json",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/qualification_preparation_v1/B100.dataset_qualification.json",
+      "sha256": "d1872b2e902a439477c4c4fe4486efcdab1e252837b5f3afd8a95c5506d9cdf4",
+      "bytes": 4029,
+      "original_sha256": "d1872b2e902a439477c4c4fe4486efcdab1e252837b5f3afd8a95c5506d9cdf4",
+      "original_bytes": 4029,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/training.process.snapshot.json",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/training.process.snapshot.json",
+      "sha256": "4f97a63e1ddb0d0580c71fd072f347f2adc9f4f37bb7da6ee79cd24c2ff50eaa",
+      "bytes": 4670,
+      "original_sha256": "4f97a63e1ddb0d0580c71fd072f347f2adc9f4f37bb7da6ee79cd24c2ff50eaa",
+      "original_bytes": 4670,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/training.startup.prefix.log",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/training.startup.prefix.log",
+      "sha256": "b0cc951bdbeb2bc49c1cdb4cd8e63e21cb1b1e5a8a30a0b1161b28201330da32",
+      "bytes": 2039,
+      "original_sha256": "b0cc951bdbeb2bc49c1cdb4cd8e63e21cb1b1e5a8a30a0b1161b28201330da32",
+      "original_bytes": 2039,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/launch_consistency_check.json",
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/launch_consistency_check.json",
+      "sha256": "8c092db04821d1dee24482a1d031721640d2f096d15d3874d06c06e653435b08",
+      "bytes": 1990,
+      "original_sha256": "8c092db04821d1dee24482a1d031721640d2f096d15d3874d06c06e653435b08",
+      "original_bytes": 1990,
+      "encoding": "identity"
+    }
+  ],
+  "external_pins": [
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/training_only_launch_preparation_v1/root_launch.py",
+      "sha256": "b3ee163f1059476d66f7f0884bfeda7231e56bcb116dcb350d111a0afa1b909c",
+      "kind": "Operator source retained externally; actual argv and root review published"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/B100_preparation_v1/qualification_preparation_v1/B100.publication_metadata.jsonl",
+      "sha256": "9296c205e6ec4d34c3c58e197d884fcbfd50853a0dc58a144a96eea879e9fb63",
+      "bytes": 7141737,
+      "shards": 2309,
+      "kind": "Full2309-shard publication metadata; external unchanged bytes"
+    },
+    {
+      "path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/derive_targets_summary.json",
+      "sha256": "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+      "kind": "Final derived summary retained with corpus"
+    },
+    {
+      "path": "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/bt4_policy_mix_summary.json",
+      "sha256": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+      "kind": "Final mixer summary retained with corpus"
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "status": "PASS_TRAINING_ONLY_RUNTIME_AND_MANIFEST_ADMISSION_NOT_LAUNCHED",
+  "started_unix": 1788857438.106768,
+  "ended_unix": 1788857441.0278761,
+  "manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/training_only_launch_preparation_v1/B100.training_manifest.json",
+    "sha256": "0e4b9594d25fa241048c3851ab51eb57958fbf0fd3376e88a04399f6499b43ef"
+  },
+  "coordinator": {
+    "path": "/tmp/deepfin-b100-training-tools",
+    "commit": "edf646fdfdcb395c57f9a4fca36865149f031622",
+    "tracked_clean": true,
+    "python": "/usr/bin/python3",
+    "python_realpath": "/usr/bin/python3.10",
+    "python_sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49",
+    "python_version": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]"
+  },
+  "actual_training_runtime": {
+    "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+    "executable": "/usr/bin/python3",
+    "torch": "2.11.0+cu128",
+    "cuda": "12.8",
+    "numpy": "1.26.2",
+    "native_extensions": {
+      "chess_anti_engine.encoding._features_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+      "chess_anti_engine.encoding._lc0_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+      "chess_anti_engine.mcts._mcts_tree": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+      "chess_anti_engine.nnue._nnue_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so"
+    }
+  },
+  "native_extension_sha256": {
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so": "9d8cc4ba5ab20e78cfc0d183c62801765002ca49d56dbf10010f16a95291e01d",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082"
+  },
+  "checks": [
+    "Actual schema3 validate, full training check_pins, GPU-hidden actual runtime imports and prospective verify_schedule passed",
+    "Four native payload SHA pins verified by shared runtime_identity; actual import paths/versions agree",
+    "Runtime wise-cloud HEAD7ec261 clean; no book/checkpoint-control payload or arena reader/search probe needed",
+    "Output state/run remain absent; exact H20 command parity (only corpus/output differ) banked in prepared.json"
+  ],
+  "resource_controls": {
+    "affinity": [
+      6,
+      7
+    ],
+    "CUDA_VISIBLE_DEVICES": "",
+    "numeric_threads": 2,
+    "nice": 19,
+    "ionice": 3
+  },
+  "input_pins": {
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/derive_targets_summary.json": "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/bt4_policy_mix_summary.json": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38"
+  },
+  "evidence": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/training_only_launch_preparation_v1/prepare_manifest.py": "ad17bd24559f1e194d2ea16221302aab94e9791d6f5fbf191b9ec659a6dc36bb",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/training_only_launch_preparation_v1/prepared.json": "280629c3359ec6c67fa874376ac68ed8177c5f7081616441258a8a7cea6fcbb2",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/training_only_launch_preparation_v1/qualify_runtime.py": "3ea07afeb7150f4f6b1ea31b774e4068f705f2fc62934f2d9f734316792feee0"
+  },
+  "limits": [
+    "CPU-only operational admission. No epoch.execute, nvidia-smi, GPU lease, model inference, training, dataset replay or output corpus mutation.",
+    "Schema3 certifies training only. Future arenas use separate qualified runtime/reader and registration; no package completion is implied.",
+    "Root reviews this preparation before authorizing launch."
+  ]
+}
