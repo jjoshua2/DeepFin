@@ -143,12 +143,20 @@ def test_cpu_schedule_supervision_hides_gpu_and_has_no_gpu_charge(tmp_path, monk
     assert receipt['process_complete'] is True
 
 
-def test_parent_stop_prevents_any_owned_stage(tmp_path):
+def test_parent_stop_prevents_any_owned_stage(tmp_path, monkeypatch):
     stop = tmp_path / 'STOP'
     stop.touch()
     out = tmp_path / 'schedule'
+    # Simulate CI without the host runtime while exercising the real STOP gate.
+    monkeypatch.setattr(arena, 'RUNTIME', tmp_path / 'absent-runtime')
+
+    def unexpected_spawn(*_args, **_kwargs):
+        pytest.fail('STOP must prevent starting an owned process')
+
+    monkeypatch.setattr(arena.subprocess, 'Popen', unexpected_spawn)
     with pytest.raises(ValueError, match='stop requested before stage'):
-        arena.run_owned_stage([], out, 35, None, 'schedule', {}, manifest={}, stop_paths=(stop,))
+        arena.run_owned_stage([], out, 35, None, 'schedule', {}, manifest={},
+                              stop_paths=(stop,), cwd=tmp_path, env={})
     assert not out.exists()
 
 
