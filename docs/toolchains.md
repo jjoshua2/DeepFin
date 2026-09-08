@@ -254,9 +254,21 @@ is refused. Complete previously banked suffix pairs remain usable on resume.
 This bounds speculative admission, not elapsed time. Lower occupancy can hurt
 throughput, while fewer speculative games can reduce work. Batching and the shared
 RNG's consumption change, so identical gameplay trajectories or a speedup are not
-promised. The existing two-depth recipe launcher/reader does not yet register this
-flag: adopting it there requires a separately qualified protocol change, not adding
-an unvalidated argument to a frozen command.
+promised. The two-depth recipe launcher accepts optional manifest `sprt_lookahead_pairs`
+(an integer from 0 through 500; the proposed allowance is 64). Explicit nulls,
+booleans and fractional values are rejected. It applies only to the rolling
+100-simulation SPRT; the fixed 400-simulation probe has no flag. The prepared
+settings, command, game-bank fingerprint and terminal result must all agree. The
+reader permits precisely that declared low/high execution difference alongside
+the existing game-count and simulation differences. It retains canonical looks,
+first-crossing decisions and the fixed 128-pair cross-budget comparison.
+
+Omission keeps the historical runtime, settings and command unchanged. An enabled
+option selects a separately frozen two-file overlay on the qualified Python
+3.10/Torch 2.11 arena stack; model, search and native inputs remain unchanged.
+Runtime qualification, preparation and registration must belong to this fresh
+comparison. Existing B100/H20 or G50 banks are not retroactively reclassified.
+The change does not broaden the original-corpus one-epoch training admission.
 
 For a future bounded telemetry observation, `chess_anti_engine.mcts.gumbel_c` already
 emits a DEBUG record with board count, evaluator call/position counts, and coarse

@@ -53,8 +53,10 @@ def test_owned_stage_forwards_runtime_and_environment(tmp_path, monkeypatch, exp
 
 @pytest.fixture
 def package(make, tmp_path, monkeypatch, request):
-    roles = getattr(request, "param", None)
-    low = make(values=[0.0] * 128, roles=roles)
+    option = getattr(request, "param", None)
+    roles = option.get("roles") if isinstance(option, dict) else option
+    allowance = option.get("lookahead") if isinstance(option, dict) else None
+    low = make(values=[0.0] * 128, roles=roles, lookahead=allowance)
     high = make(name="high_template", low=False, roles=roles)
     manifests = {"low": low, "high": high}
     base_launch = json.loads(Path(low["launch"]["path"]).read_text())
@@ -63,6 +65,8 @@ def package(make, tmp_path, monkeypatch, request):
         "profile": "B100_H20",
         "output": str(tmp_path / "screen"),
     }
+    if allowance is not None:
+        m["sprt_lookahead_pairs"] = allowance
     for key in ("candidate", "reference", "book", "runtime", "preregistration"):
         m[key] = dict(base_launch["identities"][key])
         m[key].pop("git_sha", None)
@@ -102,7 +106,7 @@ Path(arg('--out')).write_text(json.dumps(record)+'\\n')
 """.replace("else128", "else 128")
     )
     monkeypatch.setenv("RECIPE_TEST_TEMPLATES", json.dumps(templates))
-    monkeypatch.setenv("RECIPE_TEST_HEAD", tool.OVERLAY_HEAD)
+    monkeypatch.setenv("RECIPE_TEST_HEAD", tool.arena_overlay(m)[0])
     proof = {
         "status": "PASS_RECIPE_SCREEN_PREPARATION",
         "inputs": {
@@ -127,6 +131,8 @@ Path(arg('--out')).write_text(json.dumps(record)+'\\n')
             "execution": {k: v["expected_execution"] for k, v in manifests.items()},
         },
     }
+    if allowance is not None:
+        proof["sprt_lookahead_pairs"] = allowance
     proof.update(
         {k: m[k] for k in ("launcher_sha256", "reader_sha256", "supervisor_sha256")}
     )
@@ -203,7 +209,8 @@ def test_stop_at_stage_boundary_keeps_high_absent(package, monkeypatch):
     assert not (Path(m["output"]) / "high").exists()
 
 
-def test_cpu_preparation_settings_match_actual_cli_defaults(tmp_path, monkeypatch):
+@pytest.mark.parametrize("allowance", [None, 64])
+def test_cpu_preparation_settings_match_actual_cli_defaults(tmp_path, monkeypatch, allowance):
     import io
     from types import SimpleNamespace
 
@@ -248,6 +255,8 @@ def test_cpu_preparation_settings_match_actual_cli_defaults(tmp_path, monkeypatc
         "reference": {"path": str(tmp_path / "h.pt")},
         "book": {"path": str(tmp_path / "book.zip")},
     }
+    if allowance is not None:
+        m["sprt_lookahead_pairs"] = allowance
     Path(m["book"]["path"]).touch()
 
     def run_probe(cmd, **kwargs):
@@ -270,7 +279,6 @@ def test_cpu_preparation_settings_match_actual_cli_defaults(tmp_path, monkeypatc
     proof = tool.cpu_probe(m, tmp_path, rt)
     assert loads == [(m["candidate"]["path"], "cpu"), (m["reference"]["path"], "cpu")]
     assert proof["dynamic_relations"] == [False, False]
-    original_builder = arena.arena_game_log_settings
     original_run = arena.run_arena
 
     class HeaderCaptured(Exception):
@@ -278,15 +286,15 @@ def test_cpu_preparation_settings_match_actual_cli_defaults(tmp_path, monkeypatc
 
     captured = {}
 
-    def header(**kwargs):
-        captured["header"] = original_builder(**kwargs)
+    def header(settings):
+        captured["header"] = settings
         raise HeaderCaptured
 
     def run(**kwargs):
         captured["arguments"] = kwargs
         original_run(**kwargs)
 
-    monkeypatch.setattr(arena, "arena_game_log_settings", header)
+    monkeypatch.setattr(arena, "settings_fingerprint", header)
     monkeypatch.setattr(arena, "run_arena", run)
     for stage in ("low", "high"):
         cmd = tool.command(m, rt, stage, tmp_path / stage)
@@ -297,6 +305,7 @@ def test_cpu_preparation_settings_match_actual_cli_defaults(tmp_path, monkeypatc
         assert captured["arguments"]["tb_max_pieces"] == 6
         assert captured["arguments"]["rolling"] is True
         assert captured["arguments"]["max_seconds"] == 5340.0
+        assert captured["arguments"]["sprt_lookahead_pairs"] == (allowance if stage == "low" else None)
 
 
 def test_stop_during_high_readout_refuses_package_completion(package, monkeypatch):
@@ -317,3 +326,51 @@ def test_stop_during_high_readout_refuses_package_completion(package, monkeypatc
     assert not (out / "high/complete.json").exists()
     assert not (out / "complete.json").exists()
     assert (out / "failed.json").exists()
+
+
+@pytest.mark.parametrize("package", [{"lookahead": 64}], indirect=True)
+def test_enabled_lookahead_owned_stages_and_readouts(package):
+    m, _ = package
+    tool.execute(m)
+    out = Path(m["output"])
+    low = json.loads((out / "low/process.json").read_text())
+    high = json.loads((out / "high/process.json").read_text())
+    cmd = low["command"]
+    assert cmd[cmd.index("--sprt-lookahead-pairs") + 1] == "64"
+    assert "--sprt-lookahead-pairs" not in high["command"]
+    report = json.loads((out / "low/readout.stdout.json").read_text())
+    assert report["status"] == "VALID_CELL"
+    assert report["sprt_lookahead_pairs"] == 64
+    assert json.loads((out / "high/readout.stdout.json").read_text())["status"] == "VALID_CELL"
+
+
+@pytest.mark.parametrize("package", [{"lookahead": 64}], indirect=True)
+def test_lookahead_preparation_change_refused_before_stage(package):
+    m, _ = package
+    m["sprt_lookahead_pairs"] = 0
+    with pytest.raises(reader.InvalidCell, match="prepared lookahead"):
+        tool.execute(m)
+    assert not Path(m["output"]).exists()
+
+
+def test_overlay_selection_preserves_historical_default_and_rejects_wrong_type():
+    assert tool.arena_overlay({}) == (tool.OVERLAY_HEAD, tool.OVERLAY)
+    assert tool.arena_overlay({"sprt_lookahead_pairs": 64}) == (tool.LOOKAHEAD_OVERLAY_HEAD, tool.LOOKAHEAD_OVERLAY)
+    with pytest.raises(reader.InvalidCell, match="lookahead"):
+        tool.arena_overlay({"sprt_lookahead_pairs": True})
+
+
+def test_lookahead_refuses_old_runtime_before_cpu_model_preparation(tmp_path, monkeypatch):
+    monkeypatch.setattr(owned, "pin", lambda *args: None)
+    monkeypatch.setattr(owned, "verify_candidate_training", lambda m: None)
+    monkeypatch.setattr(reader, "pinned", lambda m: tmp_path)
+    frozen = {"status": "CPU_QUALIFIED_INACTIVE_RUNTIME_IDENTITY", "identities": {"heads": {str(tmp_path): tool.OVERLAY_HEAD}}}
+    monkeypatch.setattr(reader, "read_json", lambda m: frozen)
+    m = {"schema": 1, "profile": "B100_H20", "sprt_lookahead_pairs": 64,
+         "launcher_sha256": "", "reader_sha256": "", "supervisor_sha256": "", "preregistration": {},
+         "book": {"path": str(tmp_path), "sha256": owned.BOOK_SHA},
+         "candidate": {"role": "B100", "path": str(tmp_path), "sha256": ""},
+         "reference": {"role": "H20", "path": str(tmp_path), "sha256": tool.H20_SHA},
+         "candidate_training": {}, "reference_training": {}, "runtime": {}}
+    with pytest.raises(reader.InvalidCell, match="wrong CUDA overlay"):
+        tool.inputs(m)

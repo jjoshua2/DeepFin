@@ -80,6 +80,7 @@ def make(tmp_path, monkeypatch, panel):
         reason="max_seconds",
         loop="rolling",
         roles=None,
+        lookahead=None,
     ):
         folder = tmp_path / name
         folder.mkdir()
@@ -118,6 +119,8 @@ def make(tmp_path, monkeypatch, panel):
             syzygy_path=None,
             tb_max_pieces=6,
         )
+        if lookahead is not None:
+            settings["sprt_lookahead_pairs"] = lookahead
         execution = {
             "loop": loop,
             "compile": "on",
@@ -245,6 +248,9 @@ def make(tmp_path, monkeypatch, panel):
                     "elo0=0,elo1=15,alpha=.05,beta=.10,first_pairs=128,step_pairs=64",
                 ]
             )
+        if lookahead is not None:
+            command.extend(["--sprt-lookahead-pairs", str(lookahead)])
+            record["sprt_lookahead_pairs"] = lookahead
         record["argv"] = command[1:]
         launch = {
             "settings": settings,
@@ -474,9 +480,9 @@ def test_fixed_probe_rejects_sequential_terminal_and_recursive_manifest(make, tm
         tool.read_cell(m)
 
 
-@pytest.mark.parametrize("loop", ["rolling", "chunked"])
-def test_expected_command_parses_through_actual_arena_cli(make, monkeypatch, tmp_path, loop):
-    m = make(loop=loop)
+@pytest.mark.parametrize(("loop", "lookahead"), [("rolling", None), ("chunked", None), ("rolling", 64)])
+def test_expected_command_parses_through_actual_arena_cli(make, monkeypatch, tmp_path, loop, lookahead):
+    m = make(loop=loop, lookahead=lookahead)
     command = json.loads(Path(m["launch"]["path"]).read_text())["command"]
     seen = {}
     cache = tmp_path / "worker-cache" / "compile_cache"
@@ -506,6 +512,7 @@ def test_expected_command_parses_through_actual_arena_cli(make, monkeypatch, tmp
     assert seen["search_candidate"].gumbel["policy_temp"] == 1.0
     assert seen["search_reference"].gumbel["policy_temp"] == 1.0
     assert seen["resume"] is False
+    assert seen["sprt_lookahead_pairs"] == lookahead
     assert tool.read_cell(m)["status"] == "VALID_CELL"
 
 
@@ -624,3 +631,46 @@ def test_forced_opening_acceptance_preserves_history_guards(panel, forced_openin
         entries[55] = copy.deepcopy(entries[0])
     with pytest.raises(ValueError, match=r"unusable|illegal|duplicate"):
         tool.opening_panel(put(tmp_path / "bad-panel.json", entries))
+
+
+@pytest.mark.parametrize("value", [True, False, None, -1, 501, 64.0, "64"])
+def test_lookahead_rejects_noninteger_or_unbounded_manifest(value):
+    with pytest.raises(tool.InvalidCell, match="lookahead"):
+        tool.lookahead_pairs({"sprt_lookahead_pairs": value})
+
+
+@pytest.mark.parametrize("value", [0, 64, 500])
+def test_lookahead_low_and_high_bind_only_allowed_protocol_difference(make, value):
+    low = make(lookahead=value, values=[0.0] * 128, reason="boundary")
+    high = make(name="high", low=False)
+    high["low_manifest"] = put(Path(high["bank"]["path"]).parent / "low.json", low)
+    report = tool.read_cell(low)
+    assert report["sprt_lookahead_pairs"] == value
+    assert report["sprt"]["pairs"] == 128
+    assert tool.read_cell(high)["status"] == "VALID_CELL"
+    # The newly allowed difference cannot mask any other search/protocol change.
+    high["expected_settings"]["temperature"] = 0.2
+    with pytest.raises(tool.InvalidCell):
+        tool.read_cell(high)
+
+
+@pytest.mark.parametrize("member", ["result", "command", "setting"])
+def test_lookahead_disagreement_refused(make, member):
+    m = make(lookahead=64, values=[0.0] * 128, reason="boundary")
+    if member == "result":
+        mutate(m, "result", lambda r: r.__setitem__("sprt_lookahead_pairs", 0))
+    elif member == "setting":
+        m["expected_settings"]["sprt_lookahead_pairs"] = 0
+    else:
+        mutate(m, "process", lambda p: p["command"].__setitem__(p["command"].index("--sprt-lookahead-pairs") + 1, "0"))
+        cmd = json.loads(Path(m["process"]["path"]).read_text())["command"]
+        mutate(m, "launch", lambda p: p.__setitem__("command", cmd))
+        mutate(m, "result", lambda p: p.__setitem__("argv", cmd[1:]))
+    with pytest.raises(tool.InvalidCell, match=r"lookahead|settings"):
+        tool.read_cell(m)
+
+
+@pytest.mark.parametrize(("low", "loop"), [(False, "rolling"), (True, "chunked")])
+def test_lookahead_forbidden_outside_rolling_low(make, low, loop):
+    with pytest.raises(tool.InvalidCell, match="rolling low"):
+        tool.read_cell(make(low=low, loop=loop, lookahead=64))
