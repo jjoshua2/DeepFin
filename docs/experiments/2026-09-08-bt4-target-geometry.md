@@ -117,3 +117,24 @@ The once-only process exited zero in 0.723 seconds (0.269 seconds in the analysi
 body), with GPU hidden, two CPUs and low priority. Existing NPZ/raw training banks
 remain external and are identified by hash; historical scripts retain original
 host paths and are evidence, not portable launch instructions.
+
+## Bank reuse check for a larger Soft-SF sample
+
+A subsequent inspection found that the existing 4,000-position audit bank retains
+112,172 raw d9 lines, including 3,072 explicit mate lines, but lacks the original
+training source/shard/row/history join and actual stored C targets. Its normalized
+FEN join cannot establish that it is a training-only sample. It was therefore not
+used to choose a Soft-SF temperature.
+
+The already-reviewed 128-row, 43-game sample above remains the available
+source-qualified comparison. Its C entropy is 0.660261 nats; the stored and
+renormalized raw-cp targets at 10, 20, 40 and 80 cp have mean entropies 0.543010,
+0.877249, 1.386118 and 1.928890 respectively. These values were reused without
+repeating the target calculation. Ten cp is the exploratory nearest value, but
+one selected shard does not establish representative corpus statistics or strength.
+
+The [bank-readiness evidence](evidence/bt4-bootstrap/soft-sf-bank-readiness-manifest.json)
+preserves the inspection plan, original bank pins, source inspection and result.
+The inspection body took 3.149 seconds with GPU hidden and two low-priority CPU
+cores. A representative source-qualified training sample and the full raw-score
+join remain needed before a corpus-wide entropy-matched control is ready.

@@ -13,8 +13,9 @@ measurements support which claims.
 | [BT4 target geometry](2026-09-08-bt4-target-geometry.md) | Fixed 128-row training sample: C support/maxima and raw-cp controls; no temperature or strength selection |
 | [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity; first optimized group completed 132,467 rows, throughput descriptive only |
 | [G10 adapter/rank overlap](2026-09-08-g10-stage-overlap.md) | Opt-in same-lane preparation; historical ideal saving about 25%, no measured speedup or adoption |
-| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 2,112,247 common rows prepared; next 1.062M-row block: early schema failure preserved, corrected launch snapshot recorded |
+| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 3,165,265 common rows prepared; corrected block completed with 1,053,018 rows, original schema failure preserved |
 | [Pure BT4 policy endpoint](2026-09-08-bt4-pure-policy-endpoint.md) | B100 training started 09:09 UTC; exact prospective schedule qualified; no completion or playing result; future arenas separate |
+| [Bootstrap training-horizon readiness](2026-09-08-bootstrap-training-horizon-readiness.md) | Real tiny two-epoch CPU path checked on the older Torch environment; CUDA/full-corpus qualification and finalist selection remain |
 | [BT4 hybrid and global endpoints](2026-09-07-bt4-hybrid-endpoints.md) | H20 package complete: C100 +45.07, G100 +85.78, C400 +34.86 Elo; aligned search interaction unresolved; no promotion |
 | [External archive and restore record](2026-09-07-storage-archive.md) | 38 verified archives, qualified local cleanup, retained dependencies and restore instructions |
 | [Fresh paired BT4 confirmation](2026-09-07-bt4-fresh-confirmation.md) | Completed fresh seed-one comparison: C beats E by 37.67 Elo [18.72, 56.85] at 100 sims |

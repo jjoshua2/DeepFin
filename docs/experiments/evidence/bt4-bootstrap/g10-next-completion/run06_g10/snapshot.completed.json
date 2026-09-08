@@ -1,0 +1,36 @@
+{
+  "pid": 347750,
+  "argv": [
+    "/usr/bin/time",
+    "-o",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/snapshot.time.json",
+    "-f",
+    "{\"wall_seconds\":%e,\"user_seconds\":%U,\"system_seconds\":%S,\"max_rss_kib\":%M,\"filesystem_inputs\":%I,\"filesystem_outputs\":%O,\"exit_code\":%x}",
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/tmp/deepfin-g10-parallel-tools/scripts/common_input_batch.py",
+    "--manifest",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/runner_manifest.json",
+    "--expected-manifest-sha256",
+    "802615056d68a8268a0eb340e3efc3273b883dc12415e0fcbb36ab62d5294733",
+    "--action",
+    "snapshot",
+    "--source",
+    "run06_g10"
+  ],
+  "start_unix": 1788861730.310008,
+  "end_unix": 1788861734.4754286,
+  "exit_code": 0,
+  "resources": {
+    "wall_seconds": 4.11,
+    "user_seconds": 3.49,
+    "system_seconds": 0.68,
+    "max_rss_kib": 255128,
+    "filesystem_inputs": 24,
+    "filesystem_outputs": 40,
+    "exit_code": 0
+  },
+  "observed_owned_descendants": {
+    "347751": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /tmp/deepfin-g10-parallel-tools/scripts/common_input_batch.py --manifest /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/runner_manifest.json --expected-manifest-sha256 802615056d68a8268a0eb340e3efc3273b883dc12415e0fcbb36ab62d5294733 --action snapshot --source run06_g10 "
+  },
+  "descendant_observation": "sampled; short-lived children may exit between observations"
+}

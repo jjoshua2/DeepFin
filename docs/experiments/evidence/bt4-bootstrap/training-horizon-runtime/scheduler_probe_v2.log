@@ -1,0 +1,179 @@
+/home/josh/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+Matplotlib created a temporary cache directory at /tmp/matplotlib-nyhfbgbw because the default path (/home/josh/.config/matplotlib) is not a writable directory; it is highly recommended to set the MPLCONFIGDIR environment variable to a writable directory, in particular to speed up the import of Matplotlib and to better support multiprocessing.
+⚑⚑ --allow-arch-drift: THIS IS NOT A VALID POSITIVE CONTROL — the lc0 control's architecture is NOT production's [lc0 control launch (config)]. Judged against the recorded pin (2026-08-16, ops/live-20260725 3f3ff00e6) — no live config was given, so THE LIVE FILE WAS NOT READ. Drift:
+  embed_dim: control=32 live=512
+  ffn_mult_by_layer: control='<absent>' live=[1.5, 1.5, 1.5, 1.5, 1.5, 1.555556, 1.65, 1.772222, 1.894444, 1.666667, 1.638889, 1.905556, 1.783333, 1.794444, 1.744444, 1.5]
+  num_heads: control=2 live=16
+  num_layers: control=2 live=16
+⚑ The arm's premise is 'our EXACT net and trainer on someone else's data'. A policy-head difference makes the top-1 yardstick a measurement of a network we do not run, and no number from such a run may be quoted as 'our stack'. Fix by re-pointing configs/lc0_positive_control.yaml at the live model: section and regenerating the pin with scripts/lc0_control_arch_pin.py. ⚑ A live model: key this tree's utils/config_yaml.py schema does not know is CLAUDE.md category (a) and is FATAL AT LAUNCH, so such a key must reach the schema BEFORE the control config can carry it — that is what PR #439 did for the bt4heads bundle on 2026-08-16. --allow-arch-drift downgrades this to a banner for PLUMBING SMOKE RUNS ONLY.
+⚑ --allow-leak: IGNORING launch guard — the lc0 control's TRAINER is NOT production's [lc0 control launch (trainer)]. Judged against the recorded trainer pin (2026-08-19, ops/live-20260725 e94862771) — no live config was given, so THE LIVE FILE WAS NOT READ. Problems:
+  warmup_steps: control=2 live=1000
+⚑ The arm's premise is 'our EXACT net and trainer on someone else's data'. A loss weight, an LR schedule or a warmup that is not production's makes the held-out SLOPE — the deciding yardstick — a property of a training recipe we do not run. Deviations belong in `LC0_TRAINER_DEVIATIONS` WITH A REASON, and a new one is a training-affecting decision that needs a ledger entry, not a test edit. If production moved, regenerate the pin with `scripts/lc0_control_arch_pin.py --axis trainer` and decide whether the arm follows.
+[preflight] replay buffer matches the recorded replay pin (2026-08-17, ops/live-20260725 3eb0448a3) — no live config was given, so THE LIVE FILE WAS NOT READ
+[preflight] PID sf_wdl ramp disabled at source (sf_wdl_frac <= 0)
+[preflight] rows: sf_wdl label coverage 0/20
+[preflight] rows: search_wdl label coverage 20/20
+[preflight] sf_wdl coverage over all shards: 0/20 -> treating the corpus as sf_wdl-labelled: False
+[preflight] search_wdl coverage over all shards: 20/20 -> treating the corpus as search_wdl-labelled: True
+[preflight] converter run-config gate: no problems
+⚑ no --purity-receipt: NOTHING ties this corpus to a held-out purity check, and summary.json will record valid_control: false
+[data] staged 1 shard(s) from 1 directory(ies)
+[trainer] policy_target_temp=1.0 reshape_active=False eval_pinned_temp=1.0
+[trainer] sf_policy_floor w=0.8 delta_cp=20.0 tau=0.15 tau_top1=0.15 tau_played=0.0625 gumbel_topk=16 deterministic_rank_tau=0.0625 at_or_above_deterministic_rank_tau=True
+[trainer] sf_shape w=0.0 temp_cp=100.0 active=False in_ruler_shape=False
+[model] 4531097 trainable params on cpu
+⚑⚑ --allow-arch-drift: THIS IS NOT A VALID POSITIVE CONTROL — the lc0 control's architecture is NOT production's [lc0 control launch (built model)]. Judged against the recorded pin (2026-08-16, ops/live-20260725 3f3ff00e6) — no live config was given, so THE LIVE FILE WAS NOT READ. Drift:
+  embed_dim: control=32 live=512
+  ffn_mult_by_layer: control='<absent>' live=[1.5, 1.5, 1.5, 1.5, 1.5, 1.555556, 1.65, 1.772222, 1.894444, 1.666667, 1.638889, 1.905556, 1.783333, 1.794444, 1.744444, 1.5]
+  num_heads: control=2 live=16
+  num_layers: control=2 live=16
+  trainable params (unique storage): control=4531097 live=61444448
+⚑ The arm's premise is 'our EXACT net and trainer on someone else's data'. A policy-head difference makes the top-1 yardstick a measurement of a network we do not run, and no number from such a run may be quoted as 'our stack'. Fix by re-pointing configs/lc0_positive_control.yaml at the live model: section and regenerating the pin with scripts/lc0_control_arch_pin.py. ⚑ A live model: key this tree's utils/config_yaml.py schema does not know is CLAUDE.md category (a) and is FATAL AT LAUNCH, so such a key must reach the schema BEFORE the control config can carry it — that is what PR #439 did for the bt4heads bundle on 2026-08-16. --allow-arch-drift downgrades this to a banner for PLUMBING SMOKE RUNS ONLY.
+[data] --steps 0 resolved to exact epoch: 10 optimizer steps across 2 epoch(s)
+[data] game-aware exact epoch: 20 rows, 20 games, 5 batches (5 full, min 4 rows), 1 shard(s), working-set peak 0.00/8.00 GiB, plan=7f0365974cd32619ba88dbb97e3f0a9ed1d520c6766e57b9f8e0aa2494ddfefb
+[data] replay settings (realized): {"applied": {"batch_size": 4, "collation_working_set_batch_copies": 3, "history_rep_fix": true, "input_history_encoding": "lc0_root_legacy_meta", "input_planes": 175, "load_workers": 2, "max_working_set_bytes": 8589934592, "min_optimizer_batch_fill_ratio": 0.99, "mirror_augmentation": true, "mirror_working_set_batch_copies": 7, "plan_workers": 2, "policy_size": 1858, "seed": 0, "validated_load_payload_copies": 5}, "ignored_disk_replay_kwargs": {"deterministic_refresh": true, "diff_focus_pol_scale": 3.5, "diff_focus_q_weight": 6.0, "draw_cap_frac": 0.9, "fast_low_surprise_priority": 1.0, "refresh_interval": 4, "refresh_shards": 5, "sf_gap_priority_signed": false, "sf_gap_priority_weight": 0.0, "shard_recency_exponent": 0.0, "shard_size": 2000, "shuffle_cap": 100000, "upgrade_v1_planes": false, "wl_max_ratio": 1.5}, "sampling_mode": "game_epoch"}
+[train] 6 window(s) of 2 step(s) (production cadence ~88/iteration; the LR release cycle is derived from each call's step count)
+[train] mid-budget checkpoint at step 5 of 10 (0.5000 of the budget, window boundary 3/6)
+[preflight] production game_frac 0.0000 derived from the recorded trainer pin (2026-08-19, ops/live-20260725 e94862771) — no live config was given, so THE LIVE FILE WAS NOT READ
+⚑⚑ --allow-invalid-control: THIS RUN IS NOT A VALID CONTROL and its artifact cannot be quoted:
+  --allow-leak: the LAUNCH value-blend guards were downgraded to banners
+  --allow-arch-drift: this is NOT production's architecture
+  no --purity-receipt: the trained corpus is not tied to any held-out purity check
+  --device cpu is not the configured cuda: guard 0c certified the trainer recipe with device='cuda' and this run then overwrote it, so the kernels and execution semantics are not the production stack's
+  sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results
+[trainer] window_timing steps=2 train_time_s=0.266 batch_prefetch_wait_s=0.022 fwd_loss_s=0.051 bwd_s=0.069 gradnorm_zclip_s=0.014 opt_step_s=0.103 pipeline_other_s=0.007 gpu_fwd_loss_s=0.000 gpu_bwd_s=0.000 gpu_gradnorm_zclip_s=0.000 gpu_opt_step_s=0.000 gpu_events=off
+[train] epoch 1/2, 2/5 steps; total 2
+[trainer] window_timing steps=2 train_time_s=0.273 batch_prefetch_wait_s=0.003 fwd_loss_s=0.039 bwd_s=0.067 gradnorm_zclip_s=0.051 opt_step_s=0.092 pipeline_other_s=0.020 gpu_fwd_loss_s=0.000 gpu_bwd_s=0.000 gpu_gradnorm_zclip_s=0.000 gpu_opt_step_s=0.000 gpu_events=off
+[train] epoch 1/2, 4/5 steps; total 4
+
+[checkpoint] MID-BUDGET at step 5: /home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/scheduler_fixture_v2/run/checkpoint_mid.pt
+[trainer] window_timing steps=1 train_time_s=0.250 batch_prefetch_wait_s=0.002 fwd_loss_s=0.020 bwd_s=0.048 gradnorm_zclip_s=0.007 opt_step_s=0.043 pipeline_other_s=0.130 gpu_fwd_loss_s=0.000 gpu_bwd_s=0.000 gpu_gradnorm_zclip_s=0.000 gpu_opt_step_s=0.000 gpu_events=off
+[train] epoch 1/2, 5/5 steps; total 5
+[trainer] window_timing steps=2 train_time_s=0.235 batch_prefetch_wait_s=0.035 fwd_loss_s=0.070 bwd_s=0.038 gradnorm_zclip_s=0.013 opt_step_s=0.073 pipeline_other_s=0.005 gpu_fwd_loss_s=0.000 gpu_bwd_s=0.000 gpu_gradnorm_zclip_s=0.000 gpu_opt_step_s=0.000 gpu_events=off
+[train] epoch 2/2, 2/5 steps; total 7
+[trainer] window_timing steps=2 train_time_s=0.189 batch_prefetch_wait_s=0.003 fwd_loss_s=0.047 bwd_s=0.042 gradnorm_zclip_s=0.015 opt_step_s=0.076 pipeline_other_s=0.006 gpu_fwd_loss_s=0.000 gpu_bwd_s=0.000 gpu_gradnorm_zclip_s=0.000 gpu_opt_step_s=0.000 gpu_events=off
+[train] epoch 2/2, 4/5 steps; total 9
+[trainer] window_timing steps=1 train_time_s=0.085 batch_prefetch_wait_s=0.001 fwd_loss_s=0.019 bwd_s=0.020 gradnorm_zclip_s=0.006 opt_step_s=0.037 pipeline_other_s=0.003 gpu_fwd_loss_s=0.000 gpu_bwd_s=0.000 gpu_gradnorm_zclip_s=0.000 gpu_opt_step_s=0.000 gpu_events=off
+torch.compile probe (10 steps): frames_ok=0 recompiles=0 graph_breaks=0 cudagraphify_called=0 cudagraph_skips=0 — no graphs captured; running eager
+[train] epoch 2/2, 5/5 steps; total 10
+
+=== REALIZED VALUE BLEND (read off compute_loss, worst of 10 calls) ===
+  sf_wdl_frac (realized)                 0.000000
+  search_wdl_frac (realized)             1.000000
+  game_frac (intended outcome share)     0.000000
+  sf_effective_frac (labelled sf mass)   0.000000
+  search_effective_frac (labelled search mass) 1.000000
+  leaked_from_sf                         0.000000
+  leaked_from_search                     0.000000
+  leaked_to_outcome                      0.000000
+  outcome_borne_frac (game_frac + leak)  0.000000
+
+=== REALIZED CATEGORICAL TARGET (worst of 10 calls) ===
+  rebuild_categorical_target (realized)  1.000000
+  categorical blend_frac                 0.690000
+  categorical search_blend_frac          0.310000
+  categorical_target column present      0.000000
+  rebuild applies to this batch          0.000000
+  sf_labelled_frac                       0.000000
+  search_labelled_frac                   1.000000
+  categorical outcome_borne_frac         0.000000
+
+=== REALIZED LOSS WEIGHTS (the kwargs compute_loss received) ===
+  policy_target_temp                     1.0
+  search_wdl_frac                        1.0
+  sf_wdl_conf_power                      1.0
+  sf_wdl_draw_scale                      0.55
+  sf_wdl_frac                            0.0
+  sf_wdl_temperature                     1.0
+  w_categorical                          1.0
+  w_future                               0.01
+  w_moves_left                           0.02
+  w_policy                               1.0
+  w_sf_eval                              0.0
+  w_sf_move                              0.05
+  w_sf_own                               0.0
+  w_sf_own_regret                        0.0
+  w_sf_volatility                        0.05
+  w_soft                                 1.0
+  w_volatility                           0.1
+  w_wdl                                  1.0
+
+=== HEAD-BY-HEAD LOSSES ===
+  blended_wdl_loss                       1.097486
+  categorical_loss                       0.000000
+  future_policy_loss                     0.000000
+  fwd_loss_s                             0.018546
+  gpu_fwd_loss_s                         0.000000
+  loss                                   989380352.000000
+  moves_left_loss                        0.010549
+  policy_loss                            989380352.000000
+  policy_loss_curriculum                 0.000000
+  policy_loss_phase_end                  0.000000
+  policy_loss_phase_mid                  0.000000
+  policy_loss_phase_n_end                0.000000
+  policy_loss_phase_n_mid                0.000000
+  policy_loss_phase_n_open               4.000000
+  policy_loss_phase_open                 989380352.000000
+  policy_loss_selfplay                   989380352.000000
+  sf_eval_loss                           0.000000
+  sf_move_acc                            0.000000
+  sf_move_loss                           0.000000
+  sf_volatility_loss                     0.000000
+  soft_policy_loss                       0.000000
+  volatility_loss                        0.000000
+  wdl_loss                               1.097486
+  wdl_loss_curriculum                    0.000000
+  wdl_loss_phase_end                     0.000000
+  wdl_loss_phase_mid                     0.000000
+  wdl_loss_phase_n_end                   0.000000
+  wdl_loss_phase_n_mid                   0.000000
+  wdl_loss_phase_n_open                  4.000000
+  wdl_loss_phase_open                    1.097486
+  wdl_loss_selfplay                      1.097486
+  wdl_onehot_loss                        1.101816
+
+=== HEAD DENOMINATORS (rows that actually trained each head) ===
+  ⚑ A weight on a head whose target the shards do not carry is INERT, not applied.
+     These counts are the proof, summed over the run's microbatches.
+  aurora_uw_floored_frac                 0.0
+  eval_rows                              0
+  has_sf_p0_frac                         0.0
+  has_sf_p0_regret_frac                  0.0
+  policy_future_acc_rows                 0.0
+  policy_own_acc_rows                    4.0
+  search_wdl_effective_frac              1.0
+  sf_eval_pv_checked_frac                0.0
+  sf_eval_pv_orphan_frac                 0.0
+  sf_labelled_no_multipv_frac            0.0
+  sf_multipv_checked_frac                0.0
+  sf_own_regret_gated_frac               0.0
+  sf_policy_floor_binds_frac             0.0
+  sf_policy_floor_truncated_frac         0.0
+  sf_rebuild_masked_frac                 0.0
+  sf_rebuild_masked_p0_frac              0.0
+  sf_rebuild_masked_volatility_frac      0.0
+  sf_rebuild_policy_frac                 0.0
+  sf_rebuild_wdl_frac                    0.0
+  sf_search_agree_frac                   0.0
+  sf_search_disagree_sf_high_frac        0.0
+  sf_search_disagree_sf_low_frac         0.0
+  sf_shape_active_frac                   0.0
+  sf_shape_sharper_frac                  0.0
+  sf_wdl_degenerate_frac                 0.0
+  sf_wdl_effective_frac                  0.0
+  sf_wdl_orphaned_frac                   0.0
+  soft_mask_kept_frac                    1.0
+  wdl_terminal_outcome_frac              0.0
+  wdl_terminal_outcome_rows              0.0
+
+[guard] PASS: no SF-to-outcome leak, no all-outcome value target, and no outcome-borne categorical rebuild on any observed step
+
+[checkpoint] MID  /home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/scheduler_fixture_v2/run/checkpoint_mid.pt (step 5 of 10)
+
+[checkpoint] /home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/scheduler_fixture_v2/run/checkpoint.pt
+[summary]    /home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/scheduler_fixture_v2/run/summary.json
+Traceback (most recent call last):
+  File "/home/josh/projects/chess/scratchpad/offline_game_epochs_runtime_v1/scheduler_probe_v2.py", line 33, in <module>
+    assert any(a['before']['torch_rng']!=a['after']['torch_rng'] for a in records)
+AssertionError

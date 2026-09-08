@@ -1,0 +1,519 @@
+{
+  "schema": 1,
+  "scope": "Original completed next-v2 G10 batch receipts and independent accounting. Original launch and selections are preserved in PR556. Bulk raw/derived/BT4/rank arrays and row-provenance payloads remain host-local.",
+  "files": [
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/completed.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/completed.json",
+      "source_bytes": 359,
+      "source_sha256": "e33894113cf47a1c09df4ba17e0de2d323ebf2845a8d4f77d65e96286a1a1eaf",
+      "published_bytes": 359,
+      "sha256": "e33894113cf47a1c09df4ba17e0de2d323ebf2845a8d4f77d65e96286a1a1eaf",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/independent_completed_review_v1/review.json.gz",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/independent_completed_review_v1/review.json",
+      "source_bytes": 114014,
+      "source_sha256": "56bf9e063b5d22cfd19ed5432b39750eefca2e42ca88759301a12a3b9a02fc71",
+      "published_bytes": 23593,
+      "sha256": "e96c792574a41abf64a76a825b60f4414570956407b2fe5500e1b81b0a6f6325",
+      "encoding": "gzip"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/independent_completed_review_v1/review_accounting.py.gz",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/independent_completed_review_v1/review_accounting.py",
+      "source_bytes": 11425,
+      "source_sha256": "357cc9ee54db02c65c04997c998857d040d8baa52ad29b7d9f9321628f51de7a",
+      "published_bytes": 4329,
+      "sha256": "ac2bb0093b12f5dfa8742622c919e56f589992a7a0ce65f19d9a0293b78c4388",
+      "encoding": "gzip"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/lane_complete.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/lane_complete.json",
+      "source_bytes": 254,
+      "source_sha256": "8773afe10361a0452a5fc9f4e49593b5701a7405347c0cbfe1aed04818061edf",
+      "published_bytes": 254,
+      "sha256": "8773afe10361a0452a5fc9f4e49593b5701a7405347c0cbfe1aed04818061edf",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/common_input_qualification.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/common_input_qualification.json",
+      "source_bytes": 33643,
+      "source_sha256": "af7b9d3c7124221097cda6da4abacd4d2dfecbfdb36fac96fb027c1dcc775af8",
+      "published_bytes": 33643,
+      "sha256": "af7b9d3c7124221097cda6da4abacd4d2dfecbfdb36fac96fb027c1dcc775af8",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/derived_identity.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/derived_identity.json",
+      "source_bytes": 18143,
+      "source_sha256": "94aceff7c046e149a2ac4b209958d20075b5ab3ee1daef059243848e90b3cc41",
+      "published_bytes": 18143,
+      "sha256": "94aceff7c046e149a2ac4b209958d20075b5ab3ee1daef059243848e90b3cc41",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/derived/derive_targets_summary.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/derived/derive_targets_summary.json",
+      "source_bytes": 56478,
+      "source_sha256": "e40ce8c540fcffe85d56517fafa1158cebb0fc704413522df288e30262dd54c3",
+      "published_bytes": 56478,
+      "sha256": "e40ce8c540fcffe85d56517fafa1158cebb0fc704413522df288e30262dd54c3",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/derived/policy_support_misses.jsonl",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/derived/policy_support_misses.jsonl",
+      "source_bytes": 10726,
+      "source_sha256": "e2389fc62765653646380ef6cd81091ec9d89d13449aa46c6c55021c66875083",
+      "published_bytes": 10726,
+      "sha256": "e2389fc62765653646380ef6cd81091ec9d89d13449aa46c6c55021c66875083",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/bt4/bt4_policy_sidecar_summary.json.gz",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/bt4/bt4_policy_sidecar_summary.json",
+      "source_bytes": 139422,
+      "source_sha256": "b9f2f9ce9d8ab60effb48ec077046a6e89afe1876a59cb3adafe0a81074df1e8",
+      "published_bytes": 25181,
+      "sha256": "664dcf36840ede35bac1e31734f9625ef75c8e7e9c759463ba836528f20ce740",
+      "encoding": "gzip"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/rank/sf_d9_rank_sidecar_summary.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/rank/sf_d9_rank_sidecar_summary.json",
+      "source_bytes": 43923,
+      "source_sha256": "cc43eeacc3f952a87bba616efd3d69cb07fa3ae402f9e392a4adef649e750354",
+      "published_bytes": 43923,
+      "sha256": "cc43eeacc3f952a87bba616efd3d69cb07fa3ae402f9e392a4adef649e750354",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/derive.started.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/derive.started.json",
+      "source_bytes": 1339,
+      "source_sha256": "6d734f9c8e4892bf99c9ec36a4342eab0d6f891856ea6aeb0ad33fd4957f48b5",
+      "published_bytes": 1339,
+      "sha256": "6d734f9c8e4892bf99c9ec36a4342eab0d6f891856ea6aeb0ad33fd4957f48b5",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/derive.completed.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/derive.completed.json",
+      "source_bytes": 2964,
+      "source_sha256": "9f696e859b8fc7d2c09f07dedd74e1bccbda815c7f41495cd4975a789d202778",
+      "published_bytes": 2964,
+      "sha256": "9f696e859b8fc7d2c09f07dedd74e1bccbda815c7f41495cd4975a789d202778",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/derive.time.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/derive.time.json",
+      "source_bytes": 163,
+      "source_sha256": "0d85ab5e8ac2cca8c07e2a4873d95d4b5efd5a558a6f8355c18bbef7cd66f4dc",
+      "published_bytes": 163,
+      "sha256": "0d85ab5e8ac2cca8c07e2a4873d95d4b5efd5a558a6f8355c18bbef7cd66f4dc",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/derive.log",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/derive.log",
+      "source_bytes": 1368,
+      "source_sha256": "79770bef52483d212b2ca352ece68162c2d20c4c56c5c4586b77ce954309a59a",
+      "published_bytes": 1368,
+      "sha256": "79770bef52483d212b2ca352ece68162c2d20c4c56c5c4586b77ce954309a59a",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/snapshot.started.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/snapshot.started.json",
+      "source_bytes": 873,
+      "source_sha256": "ab6211fa36ff25dd5b60c67dd22674253119cba94220ebbecbb3e17dbf498dd2",
+      "published_bytes": 873,
+      "sha256": "ab6211fa36ff25dd5b60c67dd22674253119cba94220ebbecbb3e17dbf498dd2",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/snapshot.completed.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/snapshot.completed.json",
+      "source_bytes": 1665,
+      "source_sha256": "166ec6ea26ed2614ab0a3ecf814a7cc93826bae3e5dbe8c3d43bc8229ed0a533",
+      "published_bytes": 1665,
+      "sha256": "166ec6ea26ed2614ab0a3ecf814a7cc93826bae3e5dbe8c3d43bc8229ed0a533",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/snapshot.time.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/snapshot.time.json",
+      "source_bytes": 146,
+      "source_sha256": "d6882adb0273266a9472890f87237243cb045f2272415da6110dfacc509b2a58",
+      "published_bytes": 146,
+      "sha256": "d6882adb0273266a9472890f87237243cb045f2272415da6110dfacc509b2a58",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/snapshot.log",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/snapshot.log",
+      "source_bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/adapt.started.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/adapt.started.json",
+      "source_bytes": 1007,
+      "source_sha256": "1efd67bfe10ed5335d308ddfeca1f08c141a3fc4b779c225875a67615905ad0e",
+      "published_bytes": 1007,
+      "sha256": "1efd67bfe10ed5335d308ddfeca1f08c141a3fc4b779c225875a67615905ad0e",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/adapt.completed.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/adapt.completed.json",
+      "source_bytes": 1951,
+      "source_sha256": "44cdd383379f56ee69f0463738f6bb475bb8a91a2985010bdac40dec05923dc0",
+      "published_bytes": 1951,
+      "sha256": "44cdd383379f56ee69f0463738f6bb475bb8a91a2985010bdac40dec05923dc0",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/adapt.time.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/adapt.time.json",
+      "source_bytes": 162,
+      "source_sha256": "dc42b139a3510037d246fffc81ba7cdb9ab68ef07d6c299a09dc5b5b6e4f0b62",
+      "published_bytes": 162,
+      "sha256": "dc42b139a3510037d246fffc81ba7cdb9ab68ef07d6c299a09dc5b5b6e4f0b62",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/adapt.log",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/adapt.log",
+      "source_bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/rank.started.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/rank.started.json",
+      "source_bytes": 1434,
+      "source_sha256": "6710b08d0829a37dadb023dd5accef25541a650e229a1836029700131a151db5",
+      "published_bytes": 1434,
+      "sha256": "6710b08d0829a37dadb023dd5accef25541a650e229a1836029700131a151db5",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/rank.completed.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/rank.completed.json",
+      "source_bytes": 2691,
+      "source_sha256": "cb93670e8fdace8dda898a0039d138e76f3d83adddc53355170c6b076dce8c67",
+      "published_bytes": 2691,
+      "sha256": "cb93670e8fdace8dda898a0039d138e76f3d83adddc53355170c6b076dce8c67",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/rank.time.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/rank.time.json",
+      "source_bytes": 159,
+      "source_sha256": "1281fe5ac0e65ab03b2e6e0c9081c013f342f390a2ade3571a676ac00ef43ea3",
+      "published_bytes": 159,
+      "sha256": "1281fe5ac0e65ab03b2e6e0c9081c013f342f390a2ade3571a676ac00ef43ea3",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/rank.log",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/rank.log",
+      "source_bytes": 177,
+      "source_sha256": "101fd4c60f29c79d36d21844c912fbbb79e4cf05a36953b266a5c0963609b7d4",
+      "published_bytes": 177,
+      "sha256": "101fd4c60f29c79d36d21844c912fbbb79e4cf05a36953b266a5c0963609b7d4",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/qualify.started.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/qualify.started.json",
+      "source_bytes": 872,
+      "source_sha256": "1a7cea68462d9759851dccd95c57eaf5c756a2eae7783dbb22aeebeedd9dc6c7",
+      "published_bytes": 872,
+      "sha256": "1a7cea68462d9759851dccd95c57eaf5c756a2eae7783dbb22aeebeedd9dc6c7",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/qualify.completed.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/qualify.completed.json",
+      "source_bytes": 1668,
+      "source_sha256": "2bc56b19abb1862382058633ab72cc5bb9f1d13d71244a417d8c6967d94e49b0",
+      "published_bytes": 1668,
+      "sha256": "2bc56b19abb1862382058633ab72cc5bb9f1d13d71244a417d8c6967d94e49b0",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/qualify.time.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/qualify.time.json",
+      "source_bytes": 153,
+      "source_sha256": "4973137a5accbe37e1aca28887b32d5c86951ee1c7db9ccac1310ac40b99c1bf",
+      "published_bytes": 153,
+      "sha256": "4973137a5accbe37e1aca28887b32d5c86951ee1c7db9ccac1310ac40b99c1bf",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run06_g10/qualify.log",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/qualify.log",
+      "source_bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/lane_complete.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/lane_complete.json",
+      "source_bytes": 254,
+      "source_sha256": "32dcea1dd4a9a3913e843e87e3974f2f74af11c5368db28f71890e72e46ccf1a",
+      "published_bytes": 254,
+      "sha256": "32dcea1dd4a9a3913e843e87e3974f2f74af11c5368db28f71890e72e46ccf1a",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/common_input_qualification.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/common_input_qualification.json",
+      "source_bytes": 31316,
+      "source_sha256": "3b3d7717f04d6fcae8ecc9e7dbc1f3e9dbeb9e5027271d03cec772458b160596",
+      "published_bytes": 31316,
+      "sha256": "3b3d7717f04d6fcae8ecc9e7dbc1f3e9dbeb9e5027271d03cec772458b160596",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/derived_identity.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derived_identity.json",
+      "source_bytes": 15761,
+      "source_sha256": "07f45981da09d427a5eaa2408cd4c161ac5c32c43e854169149924bc7c63fffe",
+      "published_bytes": 15761,
+      "sha256": "07f45981da09d427a5eaa2408cd4c161ac5c32c43e854169149924bc7c63fffe",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/derived/derive_targets_summary.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derived/derive_targets_summary.json",
+      "source_bytes": 53682,
+      "source_sha256": "a65d576f386e0b64fda3c85f4f389164a2c444c5f11f7ddab1085806226d518f",
+      "published_bytes": 53682,
+      "sha256": "a65d576f386e0b64fda3c85f4f389164a2c444c5f11f7ddab1085806226d518f",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/derived/policy_support_misses.jsonl",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derived/policy_support_misses.jsonl",
+      "source_bytes": 8923,
+      "source_sha256": "28ef28a290cea90bb58706e9c7ea7d4217151339015a35a01b0e9bb991cd3286",
+      "published_bytes": 8923,
+      "sha256": "28ef28a290cea90bb58706e9c7ea7d4217151339015a35a01b0e9bb991cd3286",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json.gz",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json",
+      "source_bytes": 140863,
+      "source_sha256": "871a500f95c9d82bfd17f6c47995b4033bf166983f3e20adaa3f7200bb858405",
+      "published_bytes": 25363,
+      "sha256": "567283ebcc5025e3a9f1463df92b44baf4bd047a36a739234f5675fda5b3676c",
+      "encoding": "gzip"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json",
+      "source_bytes": 44693,
+      "source_sha256": "bd6a90031495c39e706b6d839d41f97e29330fcf1b7ea38e75ceaa67014f7248",
+      "published_bytes": 44693,
+      "sha256": "bd6a90031495c39e706b6d839d41f97e29330fcf1b7ea38e75ceaa67014f7248",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/derive.started.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derive.started.json",
+      "source_bytes": 1383,
+      "source_sha256": "acecc6c435b17db16a737909716bcc858d672a805071ee44580cfbf0ba3c822e",
+      "published_bytes": 1383,
+      "sha256": "acecc6c435b17db16a737909716bcc858d672a805071ee44580cfbf0ba3c822e",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/derive.completed.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derive.completed.json",
+      "source_bytes": 3042,
+      "source_sha256": "98e648fb2cef4c391c609c68b8f0e382827bbe6a8fa81c96e449748c816c4c8f",
+      "published_bytes": 3042,
+      "sha256": "98e648fb2cef4c391c609c68b8f0e382827bbe6a8fa81c96e449748c816c4c8f",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/derive.time.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derive.time.json",
+      "source_bytes": 163,
+      "source_sha256": "b16be8a97fb1da466fa5e8111294745d7fa37ae96eade12db02d4a522089d556",
+      "published_bytes": 163,
+      "sha256": "b16be8a97fb1da466fa5e8111294745d7fa37ae96eade12db02d4a522089d556",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/derive.log",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derive.log",
+      "source_bytes": 1367,
+      "source_sha256": "18fdf5c30f60adb1172101f43814ce2708a6dfd891e7fef3b301ee8e9c0cab9f",
+      "published_bytes": 1367,
+      "sha256": "18fdf5c30f60adb1172101f43814ce2708a6dfd891e7fef3b301ee8e9c0cab9f",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/snapshot.started.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/snapshot.started.json",
+      "source_bytes": 896,
+      "source_sha256": "7e4b764e634d6ad62706f827ac32f8de64c66f64d1d8fa595e6cdc68369d2c99",
+      "published_bytes": 896,
+      "sha256": "7e4b764e634d6ad62706f827ac32f8de64c66f64d1d8fa595e6cdc68369d2c99",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/snapshot.completed.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/snapshot.completed.json",
+      "source_bytes": 1306,
+      "source_sha256": "c52950612d0eabf3127ae3033f65766aaad44fe470be735b0fd4fb620616d412",
+      "published_bytes": 1306,
+      "sha256": "c52950612d0eabf3127ae3033f65766aaad44fe470be735b0fd4fb620616d412",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/snapshot.time.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/snapshot.time.json",
+      "source_bytes": 150,
+      "source_sha256": "0cb13b997d5750cf293e3f3cbcd1842494d16a5ac89e982012e449afd06f36a6",
+      "published_bytes": 150,
+      "sha256": "0cb13b997d5750cf293e3f3cbcd1842494d16a5ac89e982012e449afd06f36a6",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/snapshot.log",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/snapshot.log",
+      "source_bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/adapt.started.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/adapt.started.json",
+      "source_bytes": 1039,
+      "source_sha256": "b8e409820c66344090e78a25075c0eb488227ee71dfeae0cda42885e59fb0735",
+      "published_bytes": 1039,
+      "sha256": "b8e409820c66344090e78a25075c0eb488227ee71dfeae0cda42885e59fb0735",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/adapt.completed.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/adapt.completed.json",
+      "source_bytes": 2004,
+      "source_sha256": "cf11049be3cb4d3442ed1699603dc01aea75748dc929ef031b76842f497197ff",
+      "published_bytes": 2004,
+      "sha256": "cf11049be3cb4d3442ed1699603dc01aea75748dc929ef031b76842f497197ff",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/adapt.time.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/adapt.time.json",
+      "source_bytes": 161,
+      "source_sha256": "4363fbf07ac844f3335cafafd8132f70415cec6d984fcc4943ae1fcaabe4adf3",
+      "published_bytes": 161,
+      "sha256": "4363fbf07ac844f3335cafafd8132f70415cec6d984fcc4943ae1fcaabe4adf3",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/adapt.log",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/adapt.log",
+      "source_bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/rank.started.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/rank.started.json",
+      "source_bytes": 1488,
+      "source_sha256": "ee83fcf9e83e4314265fb3381872ee69d40c8217431991fecf544218c26e167b",
+      "published_bytes": 1488,
+      "sha256": "ee83fcf9e83e4314265fb3381872ee69d40c8217431991fecf544218c26e167b",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/rank.completed.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/rank.completed.json",
+      "source_bytes": 2787,
+      "source_sha256": "8655bdb482a137070e98c97aac3cc448fef0954efba93541e25bc9ab89de7ff1",
+      "published_bytes": 2787,
+      "sha256": "8655bdb482a137070e98c97aac3cc448fef0954efba93541e25bc9ab89de7ff1",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/rank.time.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/rank.time.json",
+      "source_bytes": 159,
+      "source_sha256": "e9fb7900cdb34a3b3b93bbebd0b3b6574985fd0dc612477fe0669e335793aa32",
+      "published_bytes": 159,
+      "sha256": "e9fb7900cdb34a3b3b93bbebd0b3b6574985fd0dc612477fe0669e335793aa32",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/rank.log",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/rank.log",
+      "source_bytes": 188,
+      "source_sha256": "88bff7ee6b4d7fdc39fb578a734b004331779370c7dc84f7309456aa92fffa55",
+      "published_bytes": 188,
+      "sha256": "88bff7ee6b4d7fdc39fb578a734b004331779370c7dc84f7309456aa92fffa55",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/qualify.started.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/qualify.started.json",
+      "source_bytes": 893,
+      "source_sha256": "498b98d3cd7b760ce4642435d4b2d0d9b0c58634a14c743b383a4d0328cc6754",
+      "published_bytes": 893,
+      "sha256": "498b98d3cd7b760ce4642435d4b2d0d9b0c58634a14c743b383a4d0328cc6754",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/qualify.completed.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/qualify.completed.json",
+      "source_bytes": 1702,
+      "source_sha256": "a743f842a0a971209f310786ca2fcdfba348c75f1422be4e1e0383939d39be69",
+      "published_bytes": 1702,
+      "sha256": "a743f842a0a971209f310786ca2fcdfba348c75f1422be4e1e0383939d39be69",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/qualify.time.json",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/qualify.time.json",
+      "source_bytes": 153,
+      "source_sha256": "64d6d3d1ee17865a27cb0d7c0585bfddf519e692fbe9bb2b35bfecd820945e82",
+      "published_bytes": 153,
+      "sha256": "64d6d3d1ee17865a27cb0d7c0585bfddf519e692fbe9bb2b35bfecd820945e82",
+      "encoding": "identity"
+    },
+    {
+      "path": "docs/experiments/evidence/bt4-bootstrap/g10-next-completion/run07_g10_companion4/qualify.log",
+      "source_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/qualify.log",
+      "source_bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "published_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "encoding": "identity"
+    }
+  ]
+}
