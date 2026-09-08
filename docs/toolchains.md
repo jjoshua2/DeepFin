@@ -81,6 +81,71 @@ checkpoints. Comparing a new two-epoch run with an old frozen-runtime one-epoch
 checkpoint would confound training duration with objective/backend changes.
 This interface does not select an experiment or alter the active H20 protocol.
 
+
+### Qualified two-epoch training coordinator
+
+[`scripts/bt4_two_epoch_train.py`](../scripts/bt4_two_epoch_train.py) is a separate
+training-only coordinator for H20, B100, G50 or genuine SoftSF10 on the qualified
+original 18,910,484-row corpus. It fixes two uninterrupted epochs, sampler seeds
+0/1, batch size 512 and 88-step windows. It consumes preparation evidence; it does
+not create prospective plans, select a family or launch a match. Preview with
+`--manifest FILE`; execution additionally requires `--execute`.
+
+Its manifest has `schema: 1`, `scope: original_corpus_two_epoch_training_only`,
+`profile`, fresh absolute `state` and `run` paths, explicit `training_seconds`
+(at most 32,400 including kill grace), `plan_workers`, `load_workers` and
+`max_working_set_bytes`. It requires `{path, sha256}` pins for
+`runtime_qualification`, `preparation` and `preregistration`, plus
+`launcher_sha256`, `stage_helper_sha256` and `recipe_helper_sha256` for the
+coordinator, `bt4_direct_screen.py` supervision and `bt4_one_epoch_screen.py`
+recipe admission. Extra manifest fields are refused.
+
+The runtime qualification declares `status: PASS_TWO_EPOCH_TRAINING_RUNTIME`,
+`root`, the pinned training `head` (`0ff96f006`), `runtime`, `environment_pins`,
+`cpu_qualification`, `cuda_qualification` and `resources`. `runtime` retains the
+usual Python/executable/Torch/CUDA/NumPy values, with `native_extensions` and
+`native_extension_sha256` covering features, LC0 encoding and NNUE. Environment
+pins must include the actual interpreter binary. `resources` binds the manifest's
+four explicit worker/memory/time allocations; the tiny execution probe does not
+qualify full-corpus memory. CPU evidence must be the actual
+`PASS_CPU_TRAINING_IMPORTS` receipt; CUDA evidence must be the completed
+`PASS_COMPILED_CUDA_TWO_EPOCH_PROBE` receipt, with matching runtime identity,
+observed graph capture and the complete 1,024-row, two-pass model probe. Pending,
+CPU-only or eager-only evidence cannot qualify a training launch.
+
+Preparation declares `schema: 1`, `status: PASS_TWO_EPOCH_PREPARATION`, `profile`,
+`corpus`, the same `runtime_qualification` and `preregistration` pins, and the
+three worker/memory values. It pins `source` (the original derive summary),
+`data_qualification`, `derive_summary`, `recipe_summary` and the qualifying
+`producer` source. Its two `epochs` entries contain `epoch_index`,
+`source_logical_order_sha256`, `corpus_logical_order_sha256`,
+`source_plan_sha256` and the complete candidate `GameEpochPlan.as_dict()` as
+`plan`. The producer must establish source-qualified logical row-order equality
+under each seed, independent of the deliberately different policy/content hashes.
+The coordinator compares those logical witnesses and later checks every candidate
+plan field against the realized receipt; it does not independently reconstruct
+that witness. Old one-epoch `dc687...` evidence is insufficient. Genuine SoftSF
+rewrite metadata uses the existing producer admission, never a renamed BT4 mix.
+
+One child runs the unchanged pinned trainer via its normal imported `main()` and
+argparse, retaining its file identity. The small coordinator bootstrap records
+actual before/after Torch, Blosc and compiler thread counts, sets each to two, and
+uses private compile-cache directories. Inherited compiler-error suppression is
+removed and actual Dynamo `suppress_errors` is set to false; ordinary graph breaks
+remain allowed. The qualified loader uses thread pools.
+The shared GPU lease and owned process-group deadline cover the entire training
+child, including staging and both plans; STOP and failures preserve partial
+artifacts. Checkpoint hashing and completion validation run after lease release.
+
+Only two complete finite passes, matching planned/realized identities and memory
+bounds, exact per-epoch update/sample totals and both published checkpoint hashes
+produce `two_epoch_training.complete.json`. That receipt has
+`two_epoch_training_complete: true` and separate `epoch1`/`last` checkpoints;
+it does not implement the old single-epoch completion interface. Historical
+control limitations remain in the receipt. Future matches need separate
+checkpoint/reader admission and registration; this tool does not require replacing
+a compatible qualified search backend.
+
 ## Playing and measurement
 
 | Question | Entry point |

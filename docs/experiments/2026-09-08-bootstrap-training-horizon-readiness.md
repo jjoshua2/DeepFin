@@ -68,3 +68,47 @@ or **10.95 hours for two families**, before planning and matches. This is a cost
 baseline, not measured throughput for the newer runtime. Freeze the selected
 families, schedule, deciding checkpoint, match protocol and resource limits before
 launch; evaluate each fresh trajectory's own epoch-one and final checkpoints.
+
+## Further preparation and the next scientific question
+
+An isolated runtime at `0ff96f006e7cb1a72278c4ccc533abecce37ce86` passes a
+CPU-only training import check in the same Python 3.10 / Torch 2.11 environment.
+All imported repository Python sources match the earlier CPU qualification;
+20 native source/binary identities also match. The existing tiny two-epoch tests
+were not repeated. This is import compatibility evidence, not CUDA qualification.
+
+A small hardware-check corpus is now prepared from the already qualified training
+bank: 1,024 rows with distinct stored game IDs, selected in sorted bank-part and
+original row order, keeping the first occurrence of each ID. Its original SF
+policy and all 16 non-policy columns survive storage/readback unchanged. No label
+was fabricated, position duplicated or original corpus rescanned. This selection
+is for trainer plumbing, not a new statistical sample or recipe comparison.
+
+The [registered CUDA check](https://github.com/jjoshua2/DeepFin/pull/530#issuecomment-5588657902)
+uses the unchanged 61,444,448-parameter configuration,
+compiled training, batch size 512 and two uninterrupted passes: two updates per
+pass, four total. It has a 15-minute execution ceiling, including cleanup, and
+must wait for the shared GPU lease after the registered G50 matches. It has not
+launched. Finite updates, no skips/retries, complete per-pass sampling receipts,
+and epoch-one/final checkpoint identities are required. Four updates remain
+inside warmup; one small shard and two loaders do not qualify full-corpus memory
+or the full release schedule. The new loader's stricter memory accounting must
+be checked before choosing the worker count for both full training runs.
+
+The scientific priority remains finishing the broad target comparisons. SoftSF10
+still tests a distinct raw-score construction. If B100 remains strongest and
+SoftSF10 loses, a raw-score SoftSF40 follow-up would test a broader SF target
+before concluding that SF supervision is uncompetitive. Its previously measured
+entropy is closer to B100's, but those reported means use different data supports;
+this is not an exact entropy-matching claim. Construct any later temperature from
+raw scores, since the stored float16 SoftSF10 target has already lost tail values.
+Neither this follow-up nor a temperature grid is a mandatory queue.
+
+For the horizon question, compare two competitive families freshly trained in the
+same runtime. A focused option is **128 opening pairs at 400 simulations** for
+A1 versus B1, then the same opening panel for A2 versus B2: 512 games total. The
+paired change estimates their relative response to a second epoch. It does not
+establish either family's absolute improvement; that requires within-family
+comparisons. Another 100-simulation cell needs a specific depth-interaction
+question to justify it. Freeze the actual families, deciding contrast, match
+settings and budgets before launch; these remain conditional design choices.
