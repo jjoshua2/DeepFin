@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "checked_unix": 1788830743.1942945,
+  "status": "PASS_WITH_SCOPE_DISCLOSURE",
+  "files": {
+    "scripts/derive_corpus_targets.py": "c2af7b62644cf5658c1dfc2564b2196c51c8860dd91152f2db05d3d2614311a6",
+    "scripts/sf_d9_rank_sidecar.py": "1c8c6c1c93f9ec8786f7ac14c9be19ec86d3a8b6092c19c80d935a22148961c6",
+    "tests/test_phase0_policy_support_exclusions.py": "a752c1a948c3ed99ed430941439831b5b4cf15def5dd70ad0d742726784cf368",
+    "tests/test_sf_d9_rank_support_exclusions.py": "5aba5ca535452c4835bc3603b48e83899f86f35b9819de3a35a545f57ae3fe45",
+    "tests/test_derive_parallel.py": "458a3ee0077c1d6f104536192e5ae878e659dfebfe18b5c0b3bea6c51d4804bc",
+    "docs/corpus_derivation.md": "627b04fea1716ea695fcb1266e53d04b4bbb41b79a48917fbd1f66f78e90fb6d"
+  },
+  "checks": [
+    {
+      "kind": "whole_repository_lint",
+      "exit_code": 0,
+      "elapsed_seconds": 202.89,
+      "log": "whole_lint.log",
+      "scope_limit": "Launched before final review boundary fix and overlapped its edits; does not independently certify final exact bytes."
+    },
+    {
+      "kind": "final_changed_files_lint",
+      "exit_code": 0,
+      "ruff": "PASS",
+      "basedpyright": "0 errors, 0 warnings, 0 notes",
+      "vulture": "PASS",
+      "files": [
+        "scripts/derive_corpus_targets.py",
+        "scripts/sf_d9_rank_sidecar.py",
+        "tests/test_phase0_policy_support_exclusions.py",
+        "tests/test_sf_d9_rank_support_exclusions.py",
+        "tests/test_derive_parallel.py"
+      ],
+      "log": "final_scoped_lint.log",
+      "scope": "Final boundary changes add no external API change; final changed files checked after code freeze."
+    }
+  ],
+  "no_operational_corpus_or_training_launched": true
+}

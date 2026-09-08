@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "created_utc": "2026-09-08T01:32:38.433138+00:00",
+  "status": "PASS_PUBLICATION_AND_PROSPECTIVE_CONTRACT_NOT_OPERATIONAL_LAUNCH",
+  "files": [
+    {
+      "path": "/tmp/deepfin-phase0-support/docs/experiments/2026-09-07-g10-transfer-readiness.md",
+      "sha256": "2da62176a718b628becb6d2a3478011e9d087c1a14994f496095a7f89e0c7ed2",
+      "bytes": 22121
+    },
+    {
+      "path": "/tmp/deepfin-phase0-support/docs/experiments/README.md",
+      "sha256": "4d4b48452de46146c5f8b75a004da860926e9d170ea2a5dbd46af566506119af",
+      "bytes": 4476
+    },
+    {
+      "path": "/tmp/deepfin-phase0-support/docs/experiments/evidence/bt4-bootstrap/g10-policy-support-manifest.json",
+      "sha256": "d8bd80b8387c3ddb36378c2eee899388dd91823bfd8613c0a4dbdaec94565aff",
+      "bytes": 16947
+    },
+    {
+      "path": "/tmp/deepfin-phase0-support/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/preregistration.json",
+      "sha256": "8fa340beb2cedf0e8fcd3a2773dae28b24d7e2203b5fd2f475623daf67af9a34",
+      "bytes": 23094
+    },
+    {
+      "path": "/tmp/deepfin-phase0-support/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run_common.py",
+      "sha256": "adfacfa83b853653e827ff9b235cb7a53b0eec470d4016cfad8db62ac58a8e55",
+      "bytes": 23544
+    }
+  ],
+  "baseline_reviews": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/phase0_policy_support_v1/independent_implementation_review.json",
+      "sha256": "ff2547dae92ef20ff944a87abc9aa5efe396d451c407b28eb2ebdfad5afca6d0",
+      "bytes": 6056
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/independent_value_census_review.json",
+      "sha256": "4eecc91a3592d030428923e7604dafc7769f9c33528acc6b6926433d220a4fd8",
+      "bytes": 6774
+    }
+  ],
+  "verification": {
+    "publication_manifest": "All39entries192472bytes independently compared byte-for-byte against original sources and checked against listed SHA256/size.",
+    "links": "All local Markdown links in dated record and experiment index resolve.",
+    "exposure": "Targeted credential/private-key signature check of39published artifacts found none; source absolute paths and synthetic fixture provenance are intentionally preserved.",
+    "diff_check": "PASS",
+    "static": "Read final scoped lint original log: Ruff/Basedpyright0errors0warnings0notes/Vulture PASS. Earlier whole gate scope limitation is accurate.",
+    "v3_contract": "Compared actual runner delta against independently reviewed v2 direct-CLI proposal. All64selected source entries unchanged from v1; exact12/5policy and1600/1250noresult exclusions yield263916/264629emitted. Helper binds census SHA, exact source refs/support details/history flag and counts; qualification refuses excluded references, enforces unique in-range refs and exact survivor cardinality, therefore every other registered row survives.",
+    "helper_checks": "Inspected seven-case fixture script and completed receipt against retained actual final serial/spawn summaries; no fixture rerun. Two real summaries accepted; wrong ref/history/envelope/noresult count/source universe refused. This is helper coverage, not full operational qualification."
+  },
+  "scientific_findings": [
+    "Supplemental five conflicting-duplicate rows and four selected-best-value effects match prior independent census review; allfiveoverlapprior17andzeroadditionalaffectedamong528545. No census rerun needed.",
+    "Strict bounded support exclusion remains eligibility handling, no relabel or strength claim.",
+    "Document clearly distinguishes registered/unfrozen/unlaunched v3 from failed v1 and archival direct-CLI v2 proposal; actual frozen merged runtime/manifest still required before launch.",
+    "Twohour/twoCPU/cache/reserve limits are consistent with registration; sampled output/free-space guard limitations remain explicit in original registration."
+  ],
+  "blockers": [],
+  "limits": [
+    "No operational data scan, payload hashing, inference, training, pipeline execution or new test run.",
+    "This publication qualification does not validate a future runtime binding or completed preparation."
+  ],
+  "append_policy": "Parent may append original bytes of this and reusable implementation review receipts to the manifest, preserving all39existing entries and reviewed prose; those additions need only exact-source hash verification, not another full review."
+}

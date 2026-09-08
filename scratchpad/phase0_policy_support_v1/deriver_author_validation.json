@@ -1,0 +1,25 @@
+{
+  "branch": "fix/bounded-phase0-policy-support",
+  "checkout": "/tmp/deepfin-phase0-support",
+  "created_utc": "2026-09-08T01:15:53.025716+00:00",
+  "fixture_setup_corrections": "Initial author fixtures incorrectly sent spill flag to serial worker, omitted direct-CLI PYTHONPATH, assumed old schema2 and used top-level rather than run.config_sha256; fixed fixtures. No production issue was hidden by those corrections.",
+  "schema": 1,
+  "scope": "Synthetic CPU data only. No operational corpus or runtime changes. Strict default and exact survivor identity checked.",
+  "source_hashes": {
+    "docs/corpus_derivation.md": "d0ac2bf5e14cf222a32a86c2ebcc913d5221cedc9848d1bf065f818633b98d09",
+    "scripts/derive_corpus_targets.py": "a5370ccac14517b781c073e81ab9e6d82c70583af616561ec33bd7784a887df9",
+    "tests/test_derive_parallel.py": "458a3ee0077c1d6f104536192e5ae878e659dfebfe18b5c0b3bea6c51d4804bc",
+    "tests/test_phase0_policy_support_exclusions.py": "c4fd57cc812f3e70afac3864c507d6e2be4b5c3e11963c7ade1a31909bdad78b"
+  },
+  "validation": {
+    "cases": 20,
+    "command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 nice -n 19 ionice -c 3 taskset -c 0,1 .venv/bin/python -m pytest -q tests/test_phase0_policy_support_exclusions.py tests/test_derive_observation_provenance.py tests/test_derive_parallel.py::test_the_merge_rules_name_every_derive_stats_field tests/test_derive_parallel.py::test_the_merge_rules_do_not_name_a_field_twice",
+    "diff_check": "PASS",
+    "exit_code": 0,
+    "log": "/tmp/phase0-support-final-tests.log",
+    "log_sha256": "147be309810b44db83fe73415ae19ed40785d588c4d738758233dde7474b7e53",
+    "ruff": "PASS on three owned Python paths (deriver/newtests/parallel tests; docs excluded)",
+    "test_delta_after_run": "Three compound assertions split into separate identical assertions for Ruff; no logic/source changes.",
+    "whole_lint": "pending parent combined run after rank freeze"
+  }
+}

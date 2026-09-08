@@ -1,0 +1,2 @@
+.................                                                        [100%]
+torch threads: capped at 2 (realized 2) to leave CPU for live training — lift with CAE_TEST_THREADS=auto
