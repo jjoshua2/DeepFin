@@ -4,6 +4,43 @@ September 7, 2026. This preparation work supports the larger-data stage of the
 [adaptive bootstrap research](2026-09-07-bt4-hybrid-endpoints.md). It does not choose
 another recipe before H20's completed comparison or establish playing strength.
 
+## Registered common-input increment — September 8
+
+The next bounded preparation selects closed shards **w00-00032 through
+w00-00063 from each original source**: **532,389 physical rows** in 64 shards
+(266,491 run06; 265,898 run07). This is disjoint from the completed prefix below;
+its survivor and exclusion counts are still unknown. Receipt/metadata checks
+bound the original source identities and completed history-aware BT4 sidecars
+without scanning raw payloads or rerunning the teacher.
+
+The [preregistration](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/preregistration.json),
+[qualification contract](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/qualification_contract.md)
+and exact [run06](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/source_shards.json)
+and [run07 selections](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/source_shards.json)
+preserve complete phase-zero d9 policy at temperature 0.0005, floor zero,
+separate latest-phase search value and source-qualified full-history provenance.
+Admission allows at most 64 evidenced policy-support exclusions per source,
+at most 2% missing results and zero envelope drops; other malformed observations
+remain fatal. Actual derivation counts and independent rank eligibility,
+injectivity and cardinality must establish the complete surviving complement.
+No repeated preliminary exclusion census is required.
+
+The limit is **two hours**, two CPUs (2–3), nice 19/idle I/O priority, hidden GPU,
+8 GiB of output/cache and a 150 GiB free-space reserve. The previous 56.62-minute
+batch is a planning reference, not a throughput guarantee. Closed-shard selection
+is implemented and merged in [PR #542](https://github.com/jjoshua2/DeepFin/pull/542);
+the separately reviewed wrapper and exact runtime binding are still pending.
+**This increment has not launched.** It prepares common inputs only: no policy
+mixture, teacher inference, training or new recipe selection is included.
+
+The [77-member frozen metadata archive](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/G10_increment_metadata.tar.gz)
+contains original manifests, selected closed receipts and sidecar attributes.
+Its [per-member manifest](evidence/bt4-bootstrap/h20-c100-g10-increment-manifest.json)
+binds exact bytes; extraction preserves repository-relative historical paths.
+The original prospective documents retain their capture-time implementation
+status. Their hashes are unchanged; the merged-code status above supersedes that
+status only. Wrapper, runtime and launch artifacts are intentionally separate.
+
 ## Completed common-input batch — September 8
 
 The corrected preparation completed at **02:39:06 UTC**, exit 0, in **56.62 minutes**.

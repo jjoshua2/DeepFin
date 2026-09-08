@@ -1,0 +1,89 @@
+{
+  "status": "PASS_COMPLETE_DEVELOPMENT_SCREEN",
+  "computed": {
+    "wins": 448,
+    "draws": 233,
+    "losses": 319,
+    "score": 0.5645,
+    "score_se": 0.01312532087593261,
+    "score_ci95": [
+      0.538774371083172,
+      0.590225628916828
+    ],
+    "elo": 45.07031476692186,
+    "elo_ci95": [
+      26.997398757567264,
+      63.38930847938394
+    ],
+    "pentanomial": {
+      "LL": 48,
+      "DD_WL": 193,
+      "WW": 90,
+      "LD_DL": 62,
+      "WD_DW": 107
+    }
+  },
+  "games": 1000,
+  "pairs": 500,
+  "unique_opening_fens": 500,
+  "terminations": {
+    "rules": 998,
+    "max_plies": 2
+  },
+  "full_qualified_search_match": true,
+  "original_development_opening_pair_mapping_match": true,
+  "checkpoint_identities": {
+    "candidate": {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt",
+      "role": "H20",
+      "sha256": "0a711fcf10ff87fc8360d3fd4b3035b170a7c15172616317c4a9687ae99d7017"
+    },
+    "reference": {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/checkpoint.pt",
+      "role": "C20T05",
+      "sha256": "8a355d29f7d3eee5deec4b3a16a6625d23baebe1302e3a8f2dea9136939e1db3"
+    }
+  },
+  "stage_gpu_seconds": 2410.6167047259805,
+  "hard_seconds": 5400,
+  "training_charge_seconds": 9851.440138022997,
+  "historical_valid_control": false,
+  "historical_validity_problems": [
+    "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+    "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+    "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+  ],
+  "input_hashes": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/complete.json": "62578be405f53144d0eb5e5cf8936489dabed6a8bfcec30af2bc598dc13db664",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/process.json": "3d6e5481dac5db7d2f0cc6766ac104229b733a45a3d4d81638bdd07e1fdd87ff",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/manifest.json": "382449a1d37ddda6aefbddb7437feb80aa4d0025b88b12e6673d76eaf84f03b5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/readout.json": "3d9c971b3415bd45e84ed911fc7716b715bc97706d27774e47cd92c8219dd232",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/arena.games.jsonl": "98064bf64dce7581182403bc2a3c57c7f35e07675fd2a9c7e66c109179755ad1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s100/arena.results.jsonl": "6a184c9837877eda1fa5680e93baeff45bb5cbb50907b481ffd964ada6f303d6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/training.complete.json": "821e0886e599d241573f7482b70e24c25887ed28c9255224ea6e29048388a9df",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/realized_schedule.json": "34948bf862fb937c9c7f57468d3d6a519f2a40b6b14361b6292f09002c2af6bc",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/completed_s100_readout.json": "353d95c0f94cad1c1be1f9b23f6449d8cad50c6a41523c2b9ab5415f5cd6c12e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6"
+  },
+  "schema": 1,
+  "reviewer": "independent review_pr517_bootstrap",
+  "reviewed_utc": "2026-09-08T06:30:06.930032+00:00",
+  "preregistered_decision": "PROMISING for H20 minus C20T05 at100 simulations: estimate45.07>=15 Elo and lower26.997>0. This completes the primary cell, not the full H20 C100/G100/C400 package.",
+  "method": "Independently parsed every raw JSONL game, checked color/result-to-candidate-score consistency and unique pair/half identities, computed pair-average scores and sample variance(ddof1)/500, formed mean\u00b11.96SE then logistic Elo transform. Did not execute the producing reader.",
+  "provenance_checks": [
+    "Single header plus1000 games; one terminal result record. Every half uses seed42/compileon/evaluator4096, paired opening/startFEN and opposite colors. Exact500 development opening mappings match prior qualified bank.",
+    "Entire realized candidate/reference search dictionaries equal qualified C100; all100sim/prior1/book/maxplies/temperature identities match command and readout.",
+    "Complete/result receipts agree on exit0/no truncation/no replay, command/models/runtime and bank/readout hashes. Reader and launcher bytes match pinned original frozen code.",
+    "Candidate checkpoint identity matches qualified training completion; final actual schedule reports verified staging and canonicaldc687... common plan, plus matching summarySHA. Checkpoint payload hashes are reused from qualified launcher evidence, not repeated.",
+    "Two max-plies adjudications are recorded outcomes under the registered300-ply limit; neither is a wall-time-truncated game. Other998 games terminate by rules."
+  ],
+  "limitations": [
+    "One seed0, one epoch, reused development opening bank, matched100-simulation screen. Nominal paired interval covers match sampling, not training-seed variability or adaptive selection/multiple-comparison uncertainty.",
+    "Historical valid_control:false and all recorded purity/config/sampler limitations remain; qualification is for matched recipe comparison, not historical replacement-sampled control or production adoption.",
+    "No G20T05 or400-simulation outcomes read; no search-scaling conclusion or next-arm selection here.",
+    "No match/training/reader rerun, new data scan, source mutation, checkpoint rehash, GPU action or host-process manipulation. Completion is supported by original terminal process receipts; no separate host PID scan performed."
+  ],
+  "readout_sha256": "3d9c971b3415bd45e84ed911fc7716b715bc97706d27774e47cd92c8219dd232",
+  "independent_checker_sha256": "882d3cbcb3233d4462775c8dbcdc0039530203e766b6afaacede7e9d32478fc3",
+  "blockers": []
+}

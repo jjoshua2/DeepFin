@@ -2,11 +2,43 @@
 
 Registered September 7, 2026, after the [fresh C/E confirmation](2026-09-07-bt4-fresh-confirmation.md)
 completed and before training or playing outcomes for the new arms. **Status:
-H20 training exited zero at 2026-09-08 05:38:06 UTC; realized-schedule qualification completed at 05:43:10 UTC. The first arena launched at 05:44:12 UTC and B100 CPU materialization started at 05:44:24 UTC. Playing outcomes remain unread.**
+H20/C100 completed: +45.07 Elo [27.00, 63.39], a promising primary development screen. H20/G100 has launched; H20/C400 remains pending. The full registered package is incomplete.**
 The previous screen is complete. This registration selects H20 as the next bounded
 comparison. Subsequent tests are chosen from completed results, not a mandatory
 three-arm or 168-hour queue. Routine choices within the research goal do not need
 individual user approval. Production adoption remains separate.
+
+## Completed H20/C100 primary screen — September 8
+
+H20 scored **56.45%** against C20T05 at matched 100 simulations: **448 wins,
+233 draws and 319 losses**, giving **+45.07 Elo [27.00, 63.39]**. All 1,000 games
+and 500 color-reversed opening pairs completed, with zero orphan rows. The
+nominal 95% interval uses the standard error of opening-pair mean scores followed
+by the Elo transform. The estimate exceeds the registered +15 Elo threshold and
+its lower bound exceeds zero: **promising for this primary cell**.
+
+The [independent review](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/H20_C100/independent_review.json)
+recomputed the raw bank and checked the complete search dictionaries, checkpoint
+identities, paired openings and qualified training/schedule provenance. Both sides
+used prior temperature 1.0. The arena completed at 06:24:22 UTC in **2,410.62 seconds
+/ 0.6696 charged GPU hours**, within its 90-minute cap. Two games reached the
+registered 300-ply limit; neither was truncated by the wall-time cap.
+The [readout](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/H20_C100/readout.json)
+and [losslessly compressed game bank](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/H20_C100/arena.games.jsonl.gz)
+are published with the original and compressed hashes in the
+[evidence manifest](evidence/bt4-bootstrap/h20-c100-g10-increment-manifest.json).
+
+This is one seed-zero epoch on reused development openings. The interval measures
+match sampling, not training-seed variation or adaptive-selection uncertainty.
+The recorded historical-control purity/config/sampler limitations below remain.
+It does not establish search scaling, a universal recipe winner or production
+promotion, and it selects no new training arm. H20/G100 and H20/C400 are still
+needed to complete the registered package. The
+[next-arena launch snapshot](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c100_increment_publication_v1/G20T05.s100.process.snapshot.json)
+records H20/G20T05 at 100 simulations starting at **06:29:55 UTC**; its outcomes
+were not read for this record. The optimized labeler's
+[first completed group](2026-09-07-bt4-label-legal-reuse.md#first-optimized-group-completed--september-8)
+is a separate preparation milestone.
 
 ## Qualified training completed — September 8
 
@@ -65,7 +97,7 @@ This establishes actual startup, not a completed B100 corpus. The separate four-
 CPU allowance and existing resource guards apply. The same observation confirms
 the qualified optimized labeler adopted its runtime and was waiting for the GPU;
 it establishes no new optimized inference or throughput result. No game scores
-were read; B100 training remains unselected.
+were read in that launch snapshot; B100 training remains unselected.
 
 The [completion evidence manifest](evidence/bt4-bootstrap/h20-training-completion-manifest.json)
 binds exact process, summary, qualified completion, schedule and handoff bytes, retaining

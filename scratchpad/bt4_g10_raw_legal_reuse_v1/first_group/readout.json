@@ -1,0 +1,160 @@
+{
+  "status": "FIRST_OPTIMIZED_GROUP_COMPLETE_METADATA_VERIFIED",
+  "observed_unix": 1788849331.670678,
+  "runtime_commit": "4e600902e1fd08727e1d83e009d6e241be0c7cba",
+  "rows": 132467,
+  "shards": 16,
+  "reported_group_positions_per_second": 440.8,
+  "providers": [
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "driver_log_sha256": "fe9f6a7325bcf46030e1e97a57663176dc68580b6e596bae23430605d675352a",
+  "members": [
+    {
+      "source_id": "run07_g10_companion4",
+      "source_shard": "w00-00191.jsonl.zst",
+      "rows": 8208,
+      "published_unix": 1788848699.6185706,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w00-00191.jsonl.zst.attrs.json",
+      "attrs_sha256": "3b95e53f94d56fb138908ddcde31ced1d2826b80dffc353a9b9fef74762e40ef",
+      "policy_sha256": "b2809673177000b4e8c9b758c5dbeaa0296b3f9808490cef3f8fdd054616a5b1"
+    },
+    {
+      "source_id": "run06_g10",
+      "source_shard": "w04-00250.jsonl.zst",
+      "rows": 8200,
+      "published_unix": 1788848717.5645654,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w04-00250.jsonl.zst.attrs.json",
+      "attrs_sha256": "7399be0d7b123ab87de4997801885e34f521df84c8f24e00db7305d08922a896",
+      "policy_sha256": "ca67b72066c68a2c7689f9d79729479d38b924d1c9f8a4d171e637088526b629"
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "source_shard": "w03-00189.jsonl.zst",
+      "rows": 8326,
+      "published_unix": 1788848734.670773,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w03-00189.jsonl.zst.attrs.json",
+      "attrs_sha256": "6779a3d1c2b26c167a086bfa3ad144ffdb3044c61860e370de0ad0f71e1b60a2",
+      "policy_sha256": "415aba9bd15e21980beea9cd56e4124c3faa6df4527649e237332ed2bdf097ea"
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "source_shard": "w02-00190.jsonl.zst",
+      "rows": 8261,
+      "published_unix": 1788848753.9523292,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w02-00190.jsonl.zst.attrs.json",
+      "attrs_sha256": "3ec635d9ba04bf6e78568b6929cc7eabaade1768823f20f9ef6fd45e0a25a2c3",
+      "policy_sha256": "4d823070cd55a27795d4ecfef9bebedff6a591f36b683fc3d3d205805433504b"
+    },
+    {
+      "source_id": "run06_g10",
+      "source_shard": "w08-00251.jsonl.zst",
+      "rows": 8257,
+      "published_unix": 1788848771.9960105,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w08-00251.jsonl.zst.attrs.json",
+      "attrs_sha256": "51299961c199a0a62dec0a691a6cca99a7d8ce3b7ed85772d5e6b197ede30892",
+      "policy_sha256": "09fe633eb73e9d149aab15f8e4b19890d670e4244aab1f4b9569b48231d99624"
+    },
+    {
+      "source_id": "run06_g10",
+      "source_shard": "w03-00251.jsonl.zst",
+      "rows": 8337,
+      "published_unix": 1788848791.4805603,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w03-00251.jsonl.zst.attrs.json",
+      "attrs_sha256": "6217a7478d9bee3f5a61066d26c04dc1e0574eb3d94ba871f8f4aebc83ed6c5d",
+      "policy_sha256": "9a990b3934f3471451a7cbb3e32faea97c45202d4f982506dfac7eff51ba3a17"
+    },
+    {
+      "source_id": "run06_g10",
+      "source_shard": "w00-00249.jsonl.zst",
+      "rows": 8235,
+      "published_unix": 1788848810.370631,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w00-00249.jsonl.zst.attrs.json",
+      "attrs_sha256": "df740a80e4996a2a30a8219d5e44fe1632aaf2970d19847df2eb430105a921d6",
+      "policy_sha256": "496fe304bd89efa50b5b79299b6f93194310a1d048d17aef6010676f0224e99c"
+    },
+    {
+      "source_id": "run06_g10",
+      "source_shard": "w09-00248.jsonl.zst",
+      "rows": 8206,
+      "published_unix": 1788848830.262313,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w09-00248.jsonl.zst.attrs.json",
+      "attrs_sha256": "e2ab00af7a9f4cd00b2d423b0411f75b6a64f4bf75b46131a2ab681969504dc7",
+      "policy_sha256": "ea278099203a6f551a31fcb85663b75bfdc2e8a1c392e17cbbe430fb28154e88"
+    },
+    {
+      "source_id": "run06_g10",
+      "source_shard": "w01-00251.jsonl.zst",
+      "rows": 8205,
+      "published_unix": 1788848849.5129044,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w01-00251.jsonl.zst.attrs.json",
+      "attrs_sha256": "c49e43a19ab27ccd6e6ae0028a162e93dc137c433e262a7adc32defee2436ab5",
+      "policy_sha256": "a6dd072f71c1008a0ad11cb7e0c301f3891902facadd66c9765a58979375c7a8"
+    },
+    {
+      "source_id": "run06_g10",
+      "source_shard": "w10-00249.jsonl.zst",
+      "rows": 8254,
+      "published_unix": 1788848868.0211568,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w10-00249.jsonl.zst.attrs.json",
+      "attrs_sha256": "cdd999c2ff1b790ec377b2dc4e04412b41907eda741db5564e96354920c95b3f",
+      "policy_sha256": "9ec229e4673bd35f66b98aee074ae84539d87e62a9c3b0a4ab288d7616ef1e44"
+    },
+    {
+      "source_id": "run06_g10",
+      "source_shard": "w05-00249.jsonl.zst",
+      "rows": 8410,
+      "published_unix": 1788848886.6312265,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w05-00249.jsonl.zst.attrs.json",
+      "attrs_sha256": "6bec0b6986b5fd6b3ca9ecff0ce35c13c1033aaa061eb792028db82e8e8362e6",
+      "policy_sha256": "50b7a71be4184ed6b42da9b338db77cf2b9435cd8e0c6b376b92193a0eb9c97f"
+    },
+    {
+      "source_id": "run06_g10",
+      "source_shard": "w07-00251.jsonl.zst",
+      "rows": 8279,
+      "published_unix": 1788848905.1827958,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w07-00251.jsonl.zst.attrs.json",
+      "attrs_sha256": "a90c1c10b0c854a9f1d6fd9679ae881fb7616415635958ae74051278deb2b45f",
+      "policy_sha256": "56c46a100b69f28ff3cbaee0b544caac1d7cf6479c228270996562e0c79245eb"
+    },
+    {
+      "source_id": "run06_g10",
+      "source_shard": "w06-00250.jsonl.zst",
+      "rows": 8362,
+      "published_unix": 1788848924.272285,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w06-00250.jsonl.zst.attrs.json",
+      "attrs_sha256": "c673a9726c8e389e9c8d6d656d1692fdb3bca85a4c859177368cbb8d66179e48",
+      "policy_sha256": "31ea38e99e4e27a6c8b62ae0e9296f126af16360de2e97e76a91cd0637eda861"
+    },
+    {
+      "source_id": "run06_g10",
+      "source_shard": "w11-00250.jsonl.zst",
+      "rows": 8363,
+      "published_unix": 1788848943.1596737,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run06_g10-w11-00250.jsonl.zst.attrs.json",
+      "attrs_sha256": "03cedc75c442f0d81117f62b61207b2bad70eb4a52869877e87fc390924acb50",
+      "policy_sha256": "b2eac466225326d0cf87b9f6ed93131d59430c5b950b18bb631c6738843be26a"
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "source_shard": "w01-00189.jsonl.zst",
+      "rows": 8320,
+      "published_unix": 1788848962.428031,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w01-00189.jsonl.zst.attrs.json",
+      "attrs_sha256": "b36182b8f56096b3a490b175e7ed9d4bcd9e40aaecec11193f753e365e9af920",
+      "policy_sha256": "a0290297ffc1c34163ef654285d589cac8cb2ab205aa8483a94490e6b84144b8"
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "source_shard": "w00-00192.jsonl.zst",
+      "rows": 8244,
+      "published_unix": 1788848980.3556523,
+      "attrs_snapshot": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_legal_reuse_v1/first_group/run07_g10_companion4-w00-00192.jsonl.zst.attrs.json",
+      "attrs_sha256": "fcc296d2c303072c9493b444538d9f66b2bc1f71ced12d5d200799a57b8f28e0",
+      "policy_sha256": "e169d9e5a0e2d085eb848134107aeac31150e7a7dcc2775339027bbf4c141dff"
+    }
+  ],
+  "limits": "Ordinary group on different raw inputs/time from previous baseline; descriptive throughput, not a controlled causal speedup. Payloads not reread; runtime lineage, producer policy hashes and current source metadata verified."
+}
