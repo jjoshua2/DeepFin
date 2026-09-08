@@ -1,0 +1,190 @@
+{
+  "schema": 1,
+  "status": "PASS_REGISTERED_CPU_LAUNCH_BINDING",
+  "created_utc": "2026-09-08T01:41:03.437441+00:00",
+  "reviewer": "independent review_pr517_bootstrap",
+  "checkout": "/tmp/deepfin-g10-common-v3-tools",
+  "commit": "f87325696cbf80511d3203f77c9fb847e0883a20",
+  "inputs": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/launch.json",
+      "sha256": "af92b062be32a2745033e69c97adb5163cd2f35049540e772252fbd02a5955df",
+      "bytes": 17347
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/preregistration.json",
+      "sha256": "8fa340beb2cedf0e8fcd3a2773dae28b24d7e2203b5fd2f475623daf67af9a34",
+      "bytes": 23094
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run_common.py",
+      "sha256": "adfacfa83b853653e827ff9b235cb7a53b0eec470d4016cfad8db62ac58a8e55",
+      "bytes": 23544
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/runtime_qualification.json",
+      "sha256": "585848ed40b71cd7a610814d27eed814456e30eb1112fe99fad1f53d5b255352",
+      "bytes": 3040
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/runtime_import_receipt.json",
+      "sha256": "b8ed0185b60d6f905197b478b829108afecf2dcd3a90073f97bf4b263d023381",
+      "bytes": 571
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/python_bootstrap/sitecustomize.py",
+      "sha256": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad",
+      "bytes": 382
+    }
+  ],
+  "reused_reviews": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/phase0_policy_support_v1/independent_implementation_review.json",
+      "sha256": "ff2547dae92ef20ff944a87abc9aa5efe396d451c407b28eb2ebdfad5afca6d0",
+      "bytes": 6056
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/phase0_policy_support_v1/independent_publication_review.json",
+      "sha256": "605d14cbce432c22c0765abc8b642b27729b58ac6de49d0ee0db0f5b8c2bea33",
+      "bytes": 4483
+    }
+  ],
+  "independent_binding_check": {
+    "status": "PASS_INCREMENTAL_BINDING",
+    "small_pins_checked": 85,
+    "unchanged_native_interpreter_pins_reused": [
+      "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13",
+      "/tmp/deepfin-g10-common-v3-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+      "/tmp/deepfin-g10-common-v3-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+      "/tmp/deepfin-g10-common-v3-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+      "/tmp/deepfin-g10-common-v3-tools/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so"
+    ],
+    "native_source_files_compared": [
+      "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+      "chess_anti_engine/encoding/_cboard_impl.h",
+      "chess_anti_engine/encoding/_features_ext.c",
+      "chess_anti_engine/encoding/_features_impl.h",
+      "chess_anti_engine/encoding/_lc0_ext.c",
+      "chess_anti_engine/encoding/_slider_attacks_impl.h",
+      "chess_anti_engine/mcts/_check_resolver.h",
+      "chess_anti_engine/mcts/_mcts_tree.c",
+      "chess_anti_engine/mcts/_position_dag.h",
+      "chess_anti_engine/mcts/_search_terminal.h",
+      "chess_anti_engine/mcts/_value_provider.h",
+      "chess_anti_engine/nnue/_arm_providers.h",
+      "chess_anti_engine/nnue/_fastq_certificate.h",
+      "chess_anti_engine/nnue/_fastq_search.h",
+      "chess_anti_engine/nnue/_fastq_see.h",
+      "chess_anti_engine/nnue/_nnue_dag_api.h",
+      "chess_anti_engine/nnue/_nnue_dag_store.h",
+      "chess_anti_engine/nnue/_nnue_ext.c",
+      "chess_anti_engine/nnue/_nnue_impl.h",
+      "chess_anti_engine/nnue/_nnue_provider.h",
+      "chess_anti_engine/nnue/_nnue_state.h",
+      "scripts/fuzz/cboard_libfuzzer.c",
+      "setup.py"
+    ],
+    "output_paths_absent": [
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/derived",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/bt4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/rank",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/bt4",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/rank"
+    ],
+    "derived_argv": [
+      [
+        "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+        "/tmp/deepfin-g10-common-v3-tools/scripts/derive_corpus_targets.py",
+        "--corpus",
+        "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+        "--out",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/derived",
+        "--limit",
+        "265528",
+        "--max-policy-support-misses",
+        "12",
+        "--scheme",
+        "uniform-d9",
+        "--policy-observation",
+        "phase0",
+        "--value-observation",
+        "latest-phase",
+        "--value-scheme",
+        "search",
+        "--temp",
+        "0.0005",
+        "--floor",
+        "0",
+        "--seed",
+        "0",
+        "--rows-per-shard",
+        "8192",
+        "--workers",
+        "2",
+        "--row-provenance"
+      ],
+      [
+        "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+        "/tmp/deepfin-g10-common-v3-tools/scripts/derive_corpus_targets.py",
+        "--corpus",
+        "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+        "--out",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived",
+        "--limit",
+        "265884",
+        "--max-policy-support-misses",
+        "5",
+        "--scheme",
+        "uniform-d9",
+        "--policy-observation",
+        "phase0",
+        "--value-observation",
+        "latest-phase",
+        "--value-scheme",
+        "search",
+        "--temp",
+        "0.0005",
+        "--floor",
+        "0",
+        "--seed",
+        "0",
+        "--rows-per-shard",
+        "8192",
+        "--workers",
+        "2",
+        "--row-provenance"
+      ]
+    ],
+    "free_bytes": 467935023104,
+    "state_apparent_bytes": 153965,
+    "runtime_import_receipt_sha256": "b8ed0185b60d6f905197b478b829108afecf2dcd3a90073f97bf4b263d023381"
+  },
+  "check_artifact": {
+    "path": "/tmp/g10-v3-independent-binding-check.json",
+    "sha256": "f90df0c8f38e631f2df36bb1108ecdf1e08b05e88e7a65e70c9a62e1fdff5e77",
+    "bytes": 4402
+  },
+  "findings": [
+    "Exact merged HEAD and clean tracked checkout confirmed; six reviewed implementation/test/guide hashes unchanged.",
+    "85 small pins checked directly; four native binaries are the same device/inode as the qualified prior runtime and their registered SHA values match that prior qualification. Resolved interpreter pin is unchanged. All23trackedC/H/CPP/setup sources byte-identical to qualified ac4 runtime.",
+    "Read actual parent import receipt: exact frozen deriver path, qualified package versions and Torch2/Blosc2; no duplicate import probe needed.",
+    "Command builder produces direct script argv without runpy. Both derive commands use fixed limits265528/265884, explicit support bounds12/5, uniformphase0 policy/latestphase value, workers2 and provenance. Adapt and rank retain reviewed ordinary admission, top3 and64MiB caches; no teacher inference or training.",
+    "Reviewed surviving GNUtimeout supervision, owned process cleanup, explicit frozen config/private thread hook and single-attempt receipts remain byte-unchanged. Runtime limit7200seconds including30second kill grace, CPU0/1 nice19 ionice3 GPUhidden, sampled8GiBstate and150GiBreserve match registration.",
+    "Allsixfinaloutputpaths and corresponding .writing paths absent; STOP,started,workerlog and completion/failure receipts absent at review. Existing v1 paths are distinct and preserved.",
+    "Exact exclusion set and complete survivor accounting were already reviewed prospectively; actual completion must still satisfy528545total emitted rows and all source/teacher/history checks."
+  ],
+  "blockers": [],
+  "launch_command": [
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run_common.py",
+    "--execute",
+    "--expected-plan-sha256",
+    "af92b062be32a2745033e69c97adb5163cd2f35049540e772252fbd02a5955df"
+  ],
+  "limits": [
+    "No operational launch, corpus scan, large payload hash, census, test rerun, GPU or live experiment inspection performed.",
+    "Import/package/thread result is parent-observed evidence read from immutable receipt; independent review verified its binding, not a repeated probe.",
+    "Approval is for the exact single bounded CPU preparation; successful input qualification and playing strength are not yet established."
+  ]
+}

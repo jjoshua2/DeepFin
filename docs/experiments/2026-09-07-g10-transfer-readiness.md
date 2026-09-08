@@ -4,6 +4,56 @@ September 7, 2026. This preparation work supports the larger-data stage of the
 [adaptive bootstrap research](2026-09-07-bt4-hybrid-endpoints.md). It does not choose
 another recipe before H20's completed comparison or establish playing strength.
 
+## Completed common-input batch — September 8
+
+The corrected preparation completed at **02:39:06 UTC**, exit 0, in **56.62 minutes**.
+It produced **528,545 common input rows across 66 derived shards**, with aligned
+history-aware BT4 and phase-zero d9 top-three rank sidecars. This is a completed
+0.53M-row preparation slice; it does not establish 25M/100M coverage, a trained
+recipe, a realized training schedule or playing strength.
+
+| Source | Registered physical rows | Missing result | Policy-support exclusions | Prepared rows |
+| --- | ---: | ---: | ---: | ---: |
+| run06 G10 | 265,528 | 1,600 | 12 | 263,916 |
+| run07 G10 companion4 | 265,884 | 1,250 | 5 | 264,629 |
+| Total | 531,412 | 2,850 | 17 | 528,545 |
+
+There were zero envelope drops. The exact excluded source/shard/physical-row
+identities match the prior census, and every other registered row survived.
+Qualification checked source-qualified original and stored-history keys, legal
+normalized BT4, ordinary rank admission and unchanged derived storage across the
+adapter/rank stages. Policy uses complete phase-zero d9 at temperature 0.0005;
+search value retains the separate latest-phase d9 selector. The raw teacher was
+not rerun on quantized inputs. These are shared inputs for a later selected recipe;
+this batch did not materialize C, H20 or another policy mixture.
+
+| Stage | run06 wall seconds | run07 wall seconds |
+| --- | ---: | ---: |
+| Derive | 511.20 | 592.93 |
+| Adapt existing BT4 | 647.19 | 775.80 |
+| Build d9 ranks | 320.59 | 339.65 |
+| Qualify common inputs | 61.15 | 113.67 |
+
+Both derivations used two spawned workers. The adapter was the largest measured
+stage, but these single low-priority, shared-host timings include startup and I/O;
+they are not a linear forecast for 100M rows. All twelve stages, including source
+checks and snapshots, exited 0. The maximum GNU-time stage RSS was 1,279,244 KiB,
+not an aggregate process-tree memory peak. The two-hour cap, two-core affinity,
+8 GiB output/cache allowance and 150 GiB free-space reserve held under the recorded
+supervisor checks. No extra GPU work was performed.
+
+**Both derivation logs reported two leaked semaphore objects to clean up at
+shutdown.** The warnings remain in the evidence despite successful downstream
+qualification; their cause and actual cleanup were not independently established.
+
+The [completed readout](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/completed_readout.json)
+and [independent receipt review](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/completed_readout_independent_review.json)
+record the exact counts, exclusions, stage costs, source/storage identities and
+limitations. The [completed-readiness manifest](evidence/bt4-bootstrap/completed-readiness-manifest.json)
+includes all 53 compact readout evidence files and their original hashes. Earlier
+failed attempts and prospective records remain unchanged below and in their
+original evidence manifests.
+
 ## Available data
 
 A receipt/metadata inventory observed from 22:07 to 22:10 UTC found the following
@@ -19,9 +69,9 @@ globally deduplicated positions or an atomic snapshot of the still-running gener
 The 3,003 completed BT4 shard receipts matched source metadata, sidecar attributes
 and array layouts. Active labeling advances these intended G10 sources. At that
 inventory snapshot, no G10 matched-recipe preparation pipeline had been qualified.
-The completed pilot below now qualifies 16,429 fixture rows; the larger training
-corpus and its actual training schedule remain unqualified. Complete SF observation
-coverage across the inventory is still unknown. Merely reaching 35M or 100M labeled
+The completed common batch above now qualifies 528,545 rows on its fixed slice;
+the larger training corpus and its actual training schedule remain unqualified.
+Complete SF observation coverage across the inventory is still unknown. Merely reaching 35M or 100M labeled
 rows does not resolve those semantic requirements.
 
 ## Bounded alignment diagnostic
@@ -281,7 +331,7 @@ logs and terminal/cleanup receipts, plus the bounded diagnostic, exact failure r
 and losslessly compressed original diagnostic bank. Bulk partial spill arrays remain
 host-local.
 
-## Value follow-up and registered corrected preparation
+## Value follow-up and corrected preparation registration
 
 The supplemental pass completed in **124.48 seconds**, inspecting 678,343 later
 phase d9 blocks over the same 531,412 rows. All 64 compressed source hashes, row
@@ -306,17 +356,17 @@ and refuses any emitted reference to an excluded row.
 The [corrected preparation registration](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/preregistration.json)
 uses the original 64 raw shards with fresh output parents. Directory v2 preserves
 the earlier unlaunched direct-CLI proposal; v3 is the second operational attempt,
-registered but **not frozen or launched** at this snapshot. It requires exactly
-12 run06 and five run07 policy-support exclusions, plus the known 1,600/1,250
+initially recorded before freeze and launch. Its completed readout is above. The
+registration requires exactly 12 run06 and five run07 policy-support exclusions, plus the known 1,600/1,250
 missing-result exclusions. Expected emitted rows are 263,916 and 264,629. Final
 qualification must prove those exact excluded identities are absent and every
 other registered row survives; unexpected envelope drops or new exclusions fail.
 
-Use the reviewed direct-script invocation and private two-thread startup hook,
-a newly frozen merged implementation and its qualified CPU runtime. The existing
+The completed attempt used the reviewed direct-script invocation and private
+two-thread startup hook, merged implementation and qualified CPU runtime. The
 two-hour aggregate cap, two CPU cores, 8 GiB output/cache allowance, 64 MiB private
-adapter/rank caches and 150 GiB free-space reserve remain. Run derive, adapt, rank
-and qualification once each; no target mixing, teacher inference, training or arena.
+adapter/rank caches and 150 GiB free-space reserve remained. The registered plan
+ran derive, adapt, rank and qualification once each; no target mixing, teacher inference, training or arena.
 Preserve the failed v1 outputs. Complete common inputs can support whichever recipe
 comparison is selected later from H20 evidence.
 

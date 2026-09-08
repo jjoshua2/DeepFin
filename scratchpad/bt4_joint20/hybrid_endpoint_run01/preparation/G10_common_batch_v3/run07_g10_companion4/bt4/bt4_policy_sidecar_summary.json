@@ -1,0 +1,1310 @@
+{
+  "adapter": {
+    "derived_summary": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived/derive_targets_summary.json",
+      "sha256": "738ebf6d35b7fc5973a1ceb6656515834ce4e911a87bd2176320a58b68ef7f56"
+    },
+    "identity_cache_bytes": 14897696,
+    "identity_cache_limit_bytes": 67108864,
+    "manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/adapter_manifest.json",
+      "sha256": "758c7cf5ab271bae595b56e05b76d12854a7dabf01623279a41a22f66feabd2a"
+    },
+    "raw_reconstruction": "one existing verification plus one quantized-key reconstruction per used raw shard",
+    "script_sha256": "36b816a3f7e27ec08a5b2264af455335a1d7c443a233672078d9189af7234778",
+    "teacher_input": "original float32 full history, not reinference of quantized replay",
+    "verified_raw_shards": {
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00000.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "2c6b254c531b253a7aed82f7be19098bfd61d8d8a1f4987db4e15dd4060fe4cb",
+          "input_key_sha256": "bd4fd9b7dc945c1a171b1e90e16eaff89d3d3b5a08b6655f87e982f401eb7eb9",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8243,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788737987.8777592,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00000.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "688949945899e2144b351eeb93931291fa00189a3ce4eaed622da22df9cb1f23",
+          "source_sha256": "a499d2921043065b388778435efa2e2e63d3e206ab1310264b75dafa39d9dea0",
+          "source_shard": "w00-00000.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00001.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "f4f7372b8382bdcb19e3ea21f4edb215a44591a6a212fc644ab1f69823b95638",
+          "input_key_sha256": "11e58d7b539256eb35464e9784f2ffe84e8604d098c95907c3c0f25d48db75c2",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8354,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788738266.1127386,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00001.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "78258b1a8c8e1d545319bc8b5074e78ac9b46e9d2862da12cdd0acb66c6ac435",
+          "source_sha256": "34ccb02762295ed292423123f7730a1f8e7ba70b921f19bb33c625a55b7538f3",
+          "source_shard": "w00-00001.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00002.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "7f55c08642f4932ba445180cd0522e6e8854852ee54a2778938e49eab5d09a42",
+          "input_key_sha256": "82cb48791f76ffb5ae93d8198d2e1f5e86f7d4ec6d9bef00fa618e4ee127f9d4",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8241,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788750787.9846077,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00002.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "a8c55feb408ab4bcb1ff73e5501790a5c88c8ee1e4bfa3c6cb3e80d4f2fac50d",
+          "source_sha256": "2405fbb18ebdc5614cf208773dc9ff225433561c07a78d91b5d53394a483c56c",
+          "source_shard": "w00-00002.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00003.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "78546d9d5fa8273509748f2116eacd67a92108d02ba6f40201f350ea811dca61",
+          "input_key_sha256": "3d445fce5367eea2576a1ef8e76ebe74240c00063adbb4e03b48579cdf4c2ee6",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8405,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788751144.806825,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00003.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "6d023fe646a83eccfdc99ef03e1070dd8be041789aec540ab42826528ff09ebd",
+          "source_sha256": "2666f2886066bf7ca30f11ff07ef4d5bfcc1bc67c9a4e8fabcf936c4b9c2aba3",
+          "source_shard": "w00-00003.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00004.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "f453176e81324b67873c36b47c37461a2ba42e27c9f17bbc959bf101a14ce123",
+          "input_key_sha256": "d96c4be1d4bd6d09c28cfc8e7b69b0b0466fe370e965686846be7022d333f0aa",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8202,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788751483.8217285,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00004.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "4aae53c44161508adcba5df77152729f63e985baa63997aa58498831736cd36f",
+          "source_sha256": "b5423648dbae1c2a49679c2c0a8042a3956cbd4acec33f747c649d5ba967f55d",
+          "source_shard": "w00-00004.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00005.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "77930c3845925f20e174b395ca38111b7a6fff0088d2eeba11bda1a87bbc2fe1",
+          "input_key_sha256": "480dd2b440a5a061db9fb0b9d1f2fc2e8e8d6cab953dc48d8f4427c87de275d0",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8220,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788770885.6258898,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00005.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "e38b0f64dbcc6a1322cea3c39cae3d315f0f1db7729105e815735bc42cfd5a69",
+          "source_sha256": "a89811567b5e03f1eec7ed345f06240044e5cf18e60a980ca43e5153257dc30f",
+          "source_shard": "w00-00005.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00006.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "ab372e8ea62eb8d7cc1c05d44e69dc7ec5c272bac2aae9c50751c64b18c4efcc",
+          "input_key_sha256": "40c24dc99b97a724e5726d95163c1d9422ee30c3812d7f366cbdd92616de83e1",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8211,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788771259.7625685,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00006.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "b5ca02c755578c112b18ee21a694d211ff2b8ef45fdf7338e4fff527f2e35cf1",
+          "source_sha256": "ef47930ee996b724c188e7a1b513a4b145621ab0fd900e3db1609150aa1977da",
+          "source_shard": "w00-00006.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00007.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "11dccec6a7c2a7c8ebf4234ff914b219255d13d3becf2f70151b65ff8f1feb4b",
+          "input_key_sha256": "13d7aa6251854b432fa2004032d743f1d225cebd9312fad7551c0bcb63557349",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8336,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788773751.2438166,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00007.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "20a74873dda13fceab75c5ec3ddeb1fb3c3a322a04bac6475d3f95399e286b08",
+          "source_sha256": "1cbc9662743a994ddcb0fc2420785cf39db78ad44b2e99f6abb1f2f367c0787b",
+          "source_shard": "w00-00007.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00008.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "5a3fe85c375742ce11488a3a2a9b455697bf4100264e6259ea8ef1025c6054a6",
+          "input_key_sha256": "d50e2277f75d135d5f09ea508a939e6aed209f1a27e1d82ff6064fb590af846f",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8259,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788774103.0949056,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00008.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "876bbf203f5d756e745173c04ed8b0e3f4c300c4ef101aa7afe4aefd1373e22f",
+          "source_sha256": "ccd55d180a56d6dd7992670d01fd5aaa82225247a30888ed931a10424cfbf1ac",
+          "source_shard": "w00-00008.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00009.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "36c4400ff8fc378ae0d53df50acb19cea701c12200a32550eb473873c25064d5",
+          "input_key_sha256": "4c8720338fb9fc2d4540475707dacfeddc3dcd4789f43c7ecf5d9421b463337d",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8276,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788774446.6641576,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00009.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "c17ffc3b57a834249189ac86ef73743f891d63ef1855e3beb425e0cc9e8d79f5",
+          "source_sha256": "3f212c77f5de2a6a098495c9eb92eeeb9dd772840c864581de2b0ffb86c9a4e9",
+          "source_shard": "w00-00009.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00010.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "9d472e8af6bfd5810bc949e0cf0ce8eaca382c8f9c48ce4f858bfc1181d4d0da",
+          "input_key_sha256": "95440e90a76a7662e3473e68a70f781a834e19abfcee4c4c8816bac44bbdf13e",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8388,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788774785.583216,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00010.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "955571e866c0528125b5209426ef94efc9f24f008f2993f7f68a1fb02daf0c15",
+          "source_sha256": "afe729d95c33cd6ea5d6fcfe1f768c685b21ee6d64ef2df5a41c4d583660b2c9",
+          "source_shard": "w00-00010.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00011.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "41591496581a010012854240f37f96fabc23a491b7e3b683c9bdbd8a5c52f0fa",
+          "input_key_sha256": "cf37b4d0aa416075700b5e7f8780d6cd49d93d2e7a2539a5a79b822cd517bfe2",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8252,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788775128.717351,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00011.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "320f63ee25bbc1ca08ef48736029a79bfac027f51202f426abb82f6a80689593",
+          "source_sha256": "b8027c3a582ecd9d2132fd74935d5b0b7467cecba7bfd6cab267cf837a7d66f0",
+          "source_shard": "w00-00011.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00012.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "fcfe3fc14038f37959bc3addf6db0d7302eeea59419fa195d098d65c9c84591e",
+          "input_key_sha256": "eb4ead93078858c35b56b246ba36b026490d442eaa93b7c589acbf1b076866d6",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8202,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788775466.0589762,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00012.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "4122e54d10bfffb6d4ce08cae79818f10ea2833b5a2da342cc0e22b56b780bb3",
+          "source_sha256": "f2d8f839fbfb3edc7ae1a65bfd6bcd01cef2bc6bb857df6f9ee9f4212caffd02",
+          "source_shard": "w00-00012.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00013.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "0438c0318a7c5014104ab0b660e88b8e711848e42d97cade61c6a1b83118595c",
+          "input_key_sha256": "6eb6e7c70b4b6376a5a30dcc5aedd0807e64fcd1f3f15aaf91df5bad19c8fa59",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8328,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788775773.8337476,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00013.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "bf002ecbdefdc1463c01c2118eb6a604071ff3c5124a492d3e323e2f73987335",
+          "source_sha256": "50b47fb65ee91f360a91eb1b399a532528acb147104a8b8fa393085748ef4b94",
+          "source_shard": "w00-00013.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00014.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "7583322696d7434ab39b4a536bd9c8f9b4321df3cdb97a17308050a626beb4ce",
+          "input_key_sha256": "d24cc91641fc3edcad4a63c8d8f84bbef2f9618cbfa333d7fe9563ac423f1664",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8404,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788776099.1197827,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00014.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "f6b95729c96ec9c63ca602b6c2eac85153e20b5ecc8bd0270f9b27a53f8f624b",
+          "source_sha256": "bbd22441a26d2ab2ad4d26009b58274147afccc538c8961d53cfc81bff82210a",
+          "source_shard": "w00-00014.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00015.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "e1639afdebd65406b9d9145fd437a2df2b4d71c665359aa081300b8cda39ff88",
+          "input_key_sha256": "d2fc0e85b687fdb164bedae3a998a07f78cb5bbf75cf09bc2452097374ff588a",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8287,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788776404.5666442,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00015.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "df2902786c1207d22de80a085617c945a53e0880fe3a0422d216fd462bc63d69",
+          "source_sha256": "5e9d3ea439037b3423fe72fb60991ff8990aaadc0496477bc364cae0d9cf8191",
+          "source_shard": "w00-00015.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00016.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "8e74c3926e748f3db17474747375fb21e3b2c917e13559d507727f9fcf9cbee9",
+          "input_key_sha256": "11eb8c3bd50fca320a5a9786a20943f439b848ea232a41ab01608d225cf2733d",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8461,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788776684.4021256,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00016.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "0f5f2eef88b7b94a58d38e407d07caf91951b13c97ad99166b9fdaf1ba5448fb",
+          "source_sha256": "e1d13246e65ba363be23cac199bf3f1084a69dd290b88576b3494c01420518f0",
+          "source_shard": "w00-00016.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00017.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "7fa6af61fd03610c0387b41af10c74814ee85a1b3a8fedcdccdaf617356150dd",
+          "input_key_sha256": "171eb6ff25753e3f16e74fdf91d2b96b2726bbf4d2a868442452a81cc0e6df0d",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8404,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788777053.709923,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00017.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "b106dc8f1361ddfc224d0ad8d8ee9620208b935d7d45e71709f6553bb164f5ca",
+          "source_sha256": "7c9db32af6817bfaee1559410567a5534060139735870e1ce44918fc3b3eca39",
+          "source_shard": "w00-00017.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00018.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "7e40ed370e40d0973cb322d3d3489436b18db22ebc5f2ca9753b19b4b06e29f8",
+          "input_key_sha256": "6cff7248c31689d58e4963f57fb10255003ef8ea91fb855fc759b5996594500e",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8263,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788777369.6163788,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00018.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "4668d59facc2ddbba9378de883c50f7ad2f30e15a32df4bd124887b40e601d59",
+          "source_sha256": "79612e0b9a9a9e07ef0a0f11c2e7e39f4357be564e0f354edc8c344673f4de64",
+          "source_shard": "w00-00018.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00019.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "b63b6bba368ad0ca7a3cdcc01cb61e5e12f2531a0f557e98c83950ac634b9514",
+          "input_key_sha256": "5795383ea554f3744b491061c85647c23336108550190c8b2899e27479dba80c",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8405,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788777629.9280393,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00019.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "5f4df6c7b993738b3eb1e7a900c20c77f67d9130a9b21609f845f6eea08d5c78",
+          "source_sha256": "0e2d4e2007d87d3de2a146f3549d39514f28a45a6d32be171c0184bffdac33a2",
+          "source_shard": "w00-00019.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00020.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "7b2eb5ed8e95988e63d78df4f021186bf2d358ec0ccfb3dcfacd3b6257da5764",
+          "input_key_sha256": "90f9b259092f6e7ab919f426acef313af15608dfc01d58110e95e97261472647",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8234,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788777969.2402148,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00020.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "2d5a63f7fef150d727dcdb4216ebc5a4cd558c88ca741f0cc865c2bf0cac0f3f",
+          "source_sha256": "8934ad1187f01259efbfe8a608d625d5c13b55437d280a9ba07fa423d669de2c",
+          "source_shard": "w00-00020.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00021.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "4a2d7f6416d82231f8caf0401a109d14122a34acaa6d8374bffa2d5989f934ed",
+          "input_key_sha256": "4105910fbd3226f06d419ccfe5719273952b233b0927c253e5b863b5c3598e91",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8391,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788778270.3903553,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00021.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "108c72da219a37621ca8f89b3816a455c36ea8b60f50c437c6c3dff5e7d50832",
+          "source_sha256": "b5bae67e34194ba20e85f063647c1f1a9a4e56e0e5c246ac72c464dbaa99f0ff",
+          "source_shard": "w00-00021.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00022.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "b75195dc73315069e8faaf6e58108d6895d142078c7b72fb0c46ace0bdcb025b",
+          "input_key_sha256": "dfc1157f71154549c1a1f4f55c36ca62d6c7da88e384441377f8885f082540b5",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8230,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788778587.3739846,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00022.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "203f310591341e6c185b77d07790837c355f5d42253c88bb9c7761dfc64b8821",
+          "source_sha256": "77f5ea855596f3a7ef91070f922bdfb12c87459df5352693d5ad2fa555026fb3",
+          "source_shard": "w00-00022.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00023.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "38f7ff9a8c50c309f583244dfc2cc224d4ee28ee4ad1ed5c15d663733011a2ac",
+          "input_key_sha256": "67223cc361169f641c3854829951ba3f3a6ea477b04a75e26a4de9866cbb0c3b",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8325,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788778927.5713015,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00023.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "90acfce98d7e7ec6ac0cca113294e3ea309ac751c141ba15178b9710ad6b5cef",
+          "source_sha256": "ae05ec8b4ce9106638b2961bdab6afb6b79c49bb0c463b8ccf39fbfe446df868",
+          "source_shard": "w00-00023.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00024.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "7de6e6b2407f0009ac4adb6a5c07614bc04bd792e972bb2b183023464e2fa723",
+          "input_key_sha256": "e744eaec5af8a2118d81408172255b6af5fafef051d2925f71ce9297b05c7afd",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8312,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788779296.6068006,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00024.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "62b99e51da281ee9c4c519f56d9184ad86b2968d613c4c86d7b4576aba4a543b",
+          "source_sha256": "9ea3dcfc33517c2653f5305ff04977880556c677c5beab9fa42d5567674a91e7",
+          "source_shard": "w00-00024.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00025.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "a06aecdb4c5f4cd6b831964db0f02c077ad41d8be40dc0e90f8385dc3eef4d2b",
+          "input_key_sha256": "b03e93e45483e099d05b8b72f1b12924e2c40c678769a15c1f5a15146185f9e7",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8219,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788779642.9365182,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00025.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "623a07699731f8c9373943aae24f98e2836795811d9f091becfbafe42a40642a",
+          "source_sha256": "45d4b1449a9cce6bf32dfa4495cd0e2dd0575b178e18c6046fafa42b759e6436",
+          "source_shard": "w00-00025.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00026.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "bba3c8ce511b2a4d9ab8955116e5c5a2ed3d1d12b02bed1dd192adf613b115d6",
+          "input_key_sha256": "8072b908b55f17c151089922f3125df96417d3a7acabd3055672fb94072122dd",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8302,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788779910.5366266,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00026.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "20ea62824c42b1874ad1151f574fa956c4cc754ec564f69b589b2f7ffef24dcf",
+          "source_sha256": "aa454717f5c3308ee5c99c602574ecd17e389fce125e95c913ac8a19a6ddf247",
+          "source_shard": "w00-00026.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00027.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "962082396d221b2704089eaa268dfd79b4fa0a2021467b7854327c0ad3f13144",
+          "input_key_sha256": "0113088151715f32e79962f279dd62632ff2dd308bb8b93f18aa63bf4e09f550",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8351,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788780285.670458,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00027.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "250b57b5c470d40a0ac6b0fc625aec6128cd6ac197206ea1906dd406b4cb9ee7",
+          "source_sha256": "b05933bf8190155ad62e180c51109ece19a57168ee85b20e61f55edd3d70c401",
+          "source_shard": "w00-00027.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00028.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "b8b1b1c10ebe41f935ebc5fe0a078cf5d9a56ddc48b15103e4d336a0d6814860",
+          "input_key_sha256": "16135cd1fc8a073c5e6b69d0e5401284b5bd09417313474aed6374f08b8917a5",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8407,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788780532.4400148,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00028.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "1a1b8f0b3e6d95a8738a5dcc368e6293e96b4b50cfaac62ef007e4e05f1db99c",
+          "source_sha256": "850b33bd59df774204e8029c9c4a88ba2c4336532116792f27f3d9a5b94a41aa",
+          "source_shard": "w00-00028.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00029.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "872029068e2e27d022db9fc33702dea5269e965b3bbe85427e06e46607c0a5c3",
+          "input_key_sha256": "0c348db3f77b73efde78c7af8e388327e912f04b565a9d814d8265118d646963",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8423,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788780879.1650574,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00029.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "79b4522a4025211f793bd781e997e6152dc333008c180d2fa13e7cd6430d472f",
+          "source_sha256": "059c05d5167b88db0c0488c963165dd82c90e19a4aac45a6653d014bee577919",
+          "source_shard": "w00-00029.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00030.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "54aa90c3f9601ef8ba7e9b86e6e662830b419f3b8c31f0580ec1ed031f41573d",
+          "input_key_sha256": "5204ec2c3631b07b678bd048ec1c820c8f10aed09c321f91223bf86021b2e85d",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8264,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788781200.022591,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00030.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "82f6be6dcaab0e2d0ddd01ac462732599cf1a2fd688a22e4c45435017272416f",
+          "source_sha256": "06b7dc2a8d3bde303f2a3e06ea053f92ad919abb32133d38e128179f72f5c79d",
+          "source_shard": "w00-00030.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      },
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00031.jsonl.zst": {
+        "receipt": {
+          "bt4_policy_sha256": "10b62082772c37144601c9b2e62ea492ed6b30a19f682b343492953610271cd3",
+          "input_key_sha256": "200ea4bd3c88a3d587bf610d5dbe9df983fd31e8cb9297fafd1dddc42959b46b",
+          "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+          "policy_output": "/output/policy",
+          "positions": 8285,
+          "providers": [
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "published_unix": 1788781504.605718,
+          "remap_provenance": {
+            "blobs": {
+              "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+              "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+              "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+            },
+            "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+            "dirty": false,
+            "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+          },
+          "sidecar": "w00-00031.bt4.zarr",
+          "source_id": "run07_g10_companion4",
+          "source_key_sha256": "ea86e72d8400385cee4f7168b557f2acbc8a9ee472a1d473b822f9805a5a9fe9",
+          "source_sha256": "58c850fa5c15ad904dc2ec1898c0528b356c09b6bd80d39390e117d6ee762c7a",
+          "source_shard": "w00-00031.jsonl.zst",
+          "teacher_evaluations_per_position": 1
+        },
+        "source_manifest_sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+      }
+    },
+    "written_shards": [
+      {
+        "bt4_policy_sha256": "5400384483f8b4a9a7f683869cb000c115b6ad18c5c839231aee3b400682b240",
+        "path": "shard_000000.zarr",
+        "row_provenance_sha256": "37eaa2b72b9bbe297997339d34615f54b04a69e7dbdbe5ba3ac494c02ae5c117",
+        "rows": 8192,
+        "source_key_sha256": "93593ba27bd250612f0b0d4e7c3d9359e775bb40beb7b5267666f384f57a3809",
+        "source_policy_sha256": "a13ecd27267bfba3ee2ae2c5784ee1519e839f728f6331b2163040b5a0f830d7"
+      },
+      {
+        "bt4_policy_sha256": "c9f8ddd66107404147f478f08fbff16ec493e6a33f541fb38a45310bf712455a",
+        "path": "shard_000001.zarr",
+        "row_provenance_sha256": "12a25b1294c5bcea3c5b0f978852e3474512fe046b824d2c38dfde581a412315",
+        "rows": 8192,
+        "source_key_sha256": "4c7fbbe127dcc864188bf5aa4ffc4b8264a21e8c695d7fa20e17b9d1f871ace4",
+        "source_policy_sha256": "e0954c9786ce87eac136602c2e5bf1b0714909a9e683028596e88b5c0e33eda8"
+      },
+      {
+        "bt4_policy_sha256": "7fc934536a0505ecf94963bc295ca95fbafc5e39db66b2e90893a2fc00c8e26c",
+        "path": "shard_000002.zarr",
+        "row_provenance_sha256": "cf6c39c27b8c74254cba6bdcd90ae398190fef71c699ecf923b0095f34a7834c",
+        "rows": 8192,
+        "source_key_sha256": "550da9288191f847cc838c64c6ab47fdcedc8d0030f8ca435f50ea032d934771",
+        "source_policy_sha256": "692cf8d3b5d24e38853e5ff2bfb867a0acdce5601769a100002284e395a283a2"
+      },
+      {
+        "bt4_policy_sha256": "2480924a58237f63853731cb712204042a2544c0a2281431791776f5621e74d9",
+        "path": "shard_000003.zarr",
+        "row_provenance_sha256": "080965e463cc28cf31c2a61e35955a15d2473211f1be402605c96073904d9d5d",
+        "rows": 8192,
+        "source_key_sha256": "9a7fdb7a2a750f93500902ec8ed09a78f56f4dfde80d212c71db0b9f1f877c6a",
+        "source_policy_sha256": "ecec792fc19822fd6ad40273ee64a8ec3d59619e97638f5c8ea7947246b41264"
+      },
+      {
+        "bt4_policy_sha256": "aba313e2bc202a70fde98c2338d39d83968e30c088cb3b5edd6b593c52df1745",
+        "path": "shard_000004.zarr",
+        "row_provenance_sha256": "6bbd4b37c83c60379d3210ea3a160d594f7db30b8ccc93320a9ba653152a4382",
+        "rows": 8192,
+        "source_key_sha256": "57cc52d739a44c6ec64f9e12bf13c13a86a53c8b8d81dac54875daeebdf54ce6",
+        "source_policy_sha256": "7b348c31e2eec1c194c899a7a454757ac99b2b04d720253ee564fafc8119fb2f"
+      },
+      {
+        "bt4_policy_sha256": "632a8a581fa29ace2a2533f2522e068a13accb6531bda563d3774ddaff8c23e7",
+        "path": "shard_000005.zarr",
+        "row_provenance_sha256": "5f39f280a71d305cf04ba2f56bfef67d609c73db5228db36b85db3746761a7cb",
+        "rows": 8192,
+        "source_key_sha256": "4776a494c3b519f3ac555b049cbd2709d70f6f0304b1a87a95e848ac9ac3ad65",
+        "source_policy_sha256": "bc7e51e02266cf49472c32d239cfa94145334f5106160650bc13b62d0f1472d3"
+      },
+      {
+        "bt4_policy_sha256": "2fbe0cf680bc955a3d0b64d909574a580204bb53bd71734bfef554f07f28a714",
+        "path": "shard_000006.zarr",
+        "row_provenance_sha256": "d5c864214898f6f8df1d900bfc8d278069634b7e48a3c96717e700a8a1b1d68b",
+        "rows": 8192,
+        "source_key_sha256": "58f2d287680103481022db40b5d069e2cddea9f823a20342c7dce315249a3177",
+        "source_policy_sha256": "56f474fa46a22ea04c6fcc5056be5631042189943a5173be46d269f3cb49abd4"
+      },
+      {
+        "bt4_policy_sha256": "fa620a67237202bd3842461aec289f64962f44b79822cab56a59cf7852989890",
+        "path": "shard_000007.zarr",
+        "row_provenance_sha256": "978de0ac485451e8f0582e48a412fb25befff6e6ecbd193d9fa81a5dda251d5e",
+        "rows": 8192,
+        "source_key_sha256": "7e8b25f4e0e6670bac7248970d742ee6a5e9451d237f082d1e4523153d8a67c5",
+        "source_policy_sha256": "91e1072435ff1fd2b76decff0eee6af28cd050493a489a75610f91427e3a8996"
+      },
+      {
+        "bt4_policy_sha256": "4c6bd6554006e2a71750c69242148257169e0a859d0151723a263b2c6b407019",
+        "path": "shard_000008.zarr",
+        "row_provenance_sha256": "c475a1b0ec8eb9d6d300a87d3dcf14ebec382739b08cfcb124361cf232a94d7c",
+        "rows": 8192,
+        "source_key_sha256": "18c2982a7c6ae5cd7b64980436c6c300b7d9127c12a89c0f89ceeebfdfd93155",
+        "source_policy_sha256": "299c325e65f002501bcf78f26a8320e769b50a9bac1be286895696f39970deaf"
+      },
+      {
+        "bt4_policy_sha256": "744ed7cc2397f7555a94ceb22cf0ee088d5537486e7a5bf12e9df5dd0e13d9a0",
+        "path": "shard_000009.zarr",
+        "row_provenance_sha256": "6e62b6d5ef1b1880773b5d02fcba1e9d44a36cd9e77eb2dca0235f4f9f2082f3",
+        "rows": 8192,
+        "source_key_sha256": "3393827a220a446c3ab24ee7fd82873490016bc027f77f699aa02d246d9bc821",
+        "source_policy_sha256": "cb15a5f1de732ec7d549c9312e83388ab8e4b78ccae118b7d0307fa6a5b8fd4c"
+      },
+      {
+        "bt4_policy_sha256": "0a1149a1de92c4d180078078ac750b6532d03d966d69911d7d77207240f090d2",
+        "path": "shard_000010.zarr",
+        "row_provenance_sha256": "c48cf01e27b2fff07ac6ae641aab0d510bbd477e4a5d07f33e2cb4ace243d687",
+        "rows": 8192,
+        "source_key_sha256": "1f131588bd4358075c007bfd5c1e6091600591a0f756b0b3f08e0bda5236e3ce",
+        "source_policy_sha256": "4dbd628351e0fee0b7052730dd76487eadb0107b06ac2a38c29d992b1890bcfc"
+      },
+      {
+        "bt4_policy_sha256": "cb52c0c992ab3b9501a83c5c29a9adb736d3b57988e9f3708eb0687a2d580edd",
+        "path": "shard_000011.zarr",
+        "row_provenance_sha256": "b546a96d4479189eacac9254fe0b2fe3b82956424ea7d1dfa77083e5ab45c4d1",
+        "rows": 8192,
+        "source_key_sha256": "45661e012a039467760209f195170fffb59758d1be98b98d3b129af0afed61d7",
+        "source_policy_sha256": "d848ed6961d7221d865d01b5df8037c773eac2781978af36e5d68e4706a32709"
+      },
+      {
+        "bt4_policy_sha256": "e69eed04bb6102720ab2f43e1406b6c120f3a896d53e76ab69b3140e94b7efd5",
+        "path": "shard_000012.zarr",
+        "row_provenance_sha256": "9947d4bbf472e9ecd1ebff080992fa07342111e5d1214b88a6b99332902828f9",
+        "rows": 8192,
+        "source_key_sha256": "b1e78d01cc19acec99f1a7d9835bddeba1603c2ecfd96363fb9732dfde381dc4",
+        "source_policy_sha256": "91b93bc8b183e49bfc0e15f3088599456d806a182bcfd29108ec8229b831f1c2"
+      },
+      {
+        "bt4_policy_sha256": "1fbc1f92af8749a49335d978d9c95c5f1863c417a5f53c5b2c7ce3f57df2b792",
+        "path": "shard_000013.zarr",
+        "row_provenance_sha256": "360c4d8b4c4fea318ec7c1214fc6e509b2539d712e87b1033f7338c82af3a96b",
+        "rows": 8192,
+        "source_key_sha256": "18fda1ac5e2a1e5ed86b98e16014a5377e5c1101cfa619bc38ab8bbdf141c047",
+        "source_policy_sha256": "895e65daf994baaaa5688657185548ee7ab279ee54aa7a6d061d58da66817e06"
+      },
+      {
+        "bt4_policy_sha256": "fbb64331d0bc91ea8f339e1deb9c42249f6b2e8524db143a69644510ada8dee5",
+        "path": "shard_000014.zarr",
+        "row_provenance_sha256": "d921e3befaba396915665372100e52bfb65b9b27036ae927eec3f0eeacada9ab",
+        "rows": 8192,
+        "source_key_sha256": "51cc9662cf11973d79027245ef64958d15b4377d6db76eb99f1eb06f93f9b781",
+        "source_policy_sha256": "c0ee86e8dd72f4d687808ec428d934424c8731ea4480010b991487a4f53c806d"
+      },
+      {
+        "bt4_policy_sha256": "21b1789c46f1a6978274ecd8506b2853a4bdbe128f4a584b60a73bdbb444bb52",
+        "path": "shard_000015.zarr",
+        "row_provenance_sha256": "d0306d9809c6f747cb1fb91a8cbb6f0c89cd5985967387423cbc6207013cec22",
+        "rows": 8192,
+        "source_key_sha256": "a339cd6d4132d9d56b649202c42c9f3f284a4e53105a685aa2a37d99d66ce331",
+        "source_policy_sha256": "d1991a2bc2deb39fa962c571ce4badcd165613146cf29d880d8753685d9a5ec6"
+      },
+      {
+        "bt4_policy_sha256": "e01fb881da59ae6852b36f66461773eead7ba21cfeee54ea5a0b46ef1f39c486",
+        "path": "shard_000016.zarr",
+        "row_provenance_sha256": "9d4530c58793b38d3841e5ca510f60dd3732795bd590fd2332adfb9138feaffb",
+        "rows": 8192,
+        "source_key_sha256": "91412f27420cd53096296830288f64de64a40aa1cadc973b27e724e112f6d06d",
+        "source_policy_sha256": "fc96315d005e5772f7e348f14d37c3af256d49125beb9572821f71b4be40ce2b"
+      },
+      {
+        "bt4_policy_sha256": "925ac755665c0474d2331f4f41e2adf6b8044355886446ce34d77c0647df221f",
+        "path": "shard_000017.zarr",
+        "row_provenance_sha256": "0f3338faa1c1ac61304b30523fd8eff84e8e8fb8cd195db616899b9663ec3722",
+        "rows": 8192,
+        "source_key_sha256": "3ef594b637e4363cec62c1158bc60f3012ab529e3963df8ff4a8dfc01fc3f6b0",
+        "source_policy_sha256": "3dc8d3ff8751d282223fb3b43932b9de278ce06df30863238f5eba0658c7f348"
+      },
+      {
+        "bt4_policy_sha256": "c4c0f13ce2f86c7968b8dbd49c49b013264fc7d8f85e2013bfc1e90f315e1808",
+        "path": "shard_000018.zarr",
+        "row_provenance_sha256": "9638a42c3fe17d92728b7869ba983f8af2d93f138b71c0da4ce8bc1237bef2fd",
+        "rows": 8192,
+        "source_key_sha256": "b60bd6f43a766b625f45ab0a67051b6b4733272b16ae01bd6955df4332afd863",
+        "source_policy_sha256": "78ea6ed978b6daf038f62fbeb810e165d1781e82cfc66ebc4ec6808107303dd9"
+      },
+      {
+        "bt4_policy_sha256": "7e94af8ab66e78310ed2d43a7eed1c601e2c5dd82e6117817c1c3bf4494e97af",
+        "path": "shard_000019.zarr",
+        "row_provenance_sha256": "1eaf08065530f434067b0fe2e0948fb1d173bd5a5a568ed8753dadc74bc911d6",
+        "rows": 8192,
+        "source_key_sha256": "b6044cbfd4851fb2e8fdc0332839bfb759584b1281b67036bd888bb725785363",
+        "source_policy_sha256": "cd23847a0523cd13df5ff7a1430cb3f458ba52b5aa711531e218a00d43db6960"
+      },
+      {
+        "bt4_policy_sha256": "67638c1a7f9df0ac9162b351e2561337b58e31099db5a70748df4a5d655d7f25",
+        "path": "shard_000020.zarr",
+        "row_provenance_sha256": "2058fca1dd0d3c4a99ef56e3ef35fef6564a5fadd0bfa07071016cf93dc425bb",
+        "rows": 8192,
+        "source_key_sha256": "4ac149bf5ff4a2dc93cd05b44ffb332eda987e8656d7ecd81bbbdd6e58ec4841",
+        "source_policy_sha256": "6960a5db03f42d6103cc78ee1d29bf2ec59599ff7626abb35fe72426855f69aa"
+      },
+      {
+        "bt4_policy_sha256": "5377bbdf3c8d10feab87949c034d6f579b8e7003eb997fcf00497912ddf60819",
+        "path": "shard_000021.zarr",
+        "row_provenance_sha256": "c1088b00f57838e250efaece3a9a4f3e8650d0da5b54056ff8fc35da615c20f1",
+        "rows": 8192,
+        "source_key_sha256": "13ffbdb02d417c5d1cecccba2a6e85cbc53adb3e05ae9c391fbbd8ff531803b4",
+        "source_policy_sha256": "84d95d42f855a2d5b7bbb50800888fcd33e2924b27915029407c29c74375fbb0"
+      },
+      {
+        "bt4_policy_sha256": "3ad9e15c33afd4137f336f0ef99d28ce9b5c48ad3dce1dd63dd3ec858c4cca54",
+        "path": "shard_000022.zarr",
+        "row_provenance_sha256": "65a12b0a896a0e8be15c3e23092edccc8c8dccb5966c29664710e8d5ad69a516",
+        "rows": 8192,
+        "source_key_sha256": "50392fa4460b2b42e250a4940dcca1920af902bc25cf86064d7ec47303599929",
+        "source_policy_sha256": "c945e871575b09c48bd3c35817000bb82a2c711ed54add5bda02ac80f59dd856"
+      },
+      {
+        "bt4_policy_sha256": "f19eab989b619c0af86d35a84750d9b1af014cd458d298eab19b2d2d9b62fb65",
+        "path": "shard_000023.zarr",
+        "row_provenance_sha256": "b5ebc62d8f6e604d484e940b8f1d266b49642a11ac43948f5e16c67522ce4eb8",
+        "rows": 8192,
+        "source_key_sha256": "711997d3469d3e2e0c2b802f73a246c7482ea59dcb286c209edf60c5081f9b97",
+        "source_policy_sha256": "a8730c3b6e53b8afa25fb297cd77420b42f326cc35e4fbf4af9fbb9d48ea54fe"
+      },
+      {
+        "bt4_policy_sha256": "74e3b1dcdef3b7f43251967d867c39229b31f9a66e308fb0d4cda5d0c5544ee3",
+        "path": "shard_000024.zarr",
+        "row_provenance_sha256": "1eef5235be87e97e43ff4f1421fefaf90f8a0f9faaae10dbf7fde7666d4d72b4",
+        "rows": 8192,
+        "source_key_sha256": "62b16a05e2b8d582f891561a5ef3e7c3d6e6c6178bd38d852b38dd3cbe0a0876",
+        "source_policy_sha256": "90a527feb175bd93c957665acab760ba2dca20fef69fa819b315cb50c867a554"
+      },
+      {
+        "bt4_policy_sha256": "f727dae4be764c2447d81358354ec6dd0cb14cf6449fc870e7274b28bc6fbe13",
+        "path": "shard_000025.zarr",
+        "row_provenance_sha256": "1a7c581449d21f6710ba06fbe8f628609d5555f77098dba4ed285901e51c9946",
+        "rows": 8192,
+        "source_key_sha256": "67d1cf2c855cd58a1f2fc5dc3c82ae23092b8c73e28c1b8d85dc36c66cb26a82",
+        "source_policy_sha256": "95fac3eefdf8f0ebe52d7fde5757477bffbf6c487a18d3d87b7d13a7786582cc"
+      },
+      {
+        "bt4_policy_sha256": "a79e1354b048ce5dabfc6b013600583edfdf0f8dd9ddf1217266fff851667ed1",
+        "path": "shard_000026.zarr",
+        "row_provenance_sha256": "fdadc2d59cad8b9c6b3053798ebfc9fcd76249ca9486f2076667b348daf26d36",
+        "rows": 8192,
+        "source_key_sha256": "2171358d88c8044020974e6cd02a2f95f6b077dff295aa3288858724a7315250",
+        "source_policy_sha256": "2ecd205bee68ed1c251d2f796fc70d00533153929ded60eb4e235d7fd28e08dd"
+      },
+      {
+        "bt4_policy_sha256": "3656bfe2bcd9acd0598ec0e7b0294d7d95a21aa8bcdcc733fbdfa8085e01b16a",
+        "path": "shard_000027.zarr",
+        "row_provenance_sha256": "c0c0720321c22e2e8f3fdd9df267823efdfcbb38bfaacdd5881bbb84bbf2ea45",
+        "rows": 8192,
+        "source_key_sha256": "0c0ae453ddbf69764958e65b153a871ba4b2ac3dcbec27f050afadf6867cd3cd",
+        "source_policy_sha256": "4694edf2e6af803d2e292d22304e4fb349e2f86ed854002b4fbb89e381369c4b"
+      },
+      {
+        "bt4_policy_sha256": "8aba5b94b8cace9d6edc013817f4e48d17167d5cc877fb738ee91119bf7b9f85",
+        "path": "shard_000028.zarr",
+        "row_provenance_sha256": "b80e186b0ff0b31ae934cdfd45bf9921a4ddb22cfd5f431eb5d5703a4d43fb2d",
+        "rows": 8192,
+        "source_key_sha256": "d57d2ec07929af6c07af5dc83f7fdb0816765a7788a849fc940ba3a4e23c7e75",
+        "source_policy_sha256": "1edfe6a78293442d7d6b0289f7371cd0a994df9e31a130f4ad96f288e0026384"
+      },
+      {
+        "bt4_policy_sha256": "b5243a7a94a0c97a4ee98a839384ec903f5838ff5b72f40f7b28c714bc9bf56f",
+        "path": "shard_000029.zarr",
+        "row_provenance_sha256": "6c4e5c018827f56ca468112b9d5cf7d5dfee9382c6292f11bcde6c8eecc0b14e",
+        "rows": 8192,
+        "source_key_sha256": "cb6f797ed373b5f8be88e788bee2c27565e19d9033e2deaeadb65ded3fae4a83",
+        "source_policy_sha256": "83a3b33aa7d43a40f123e1364def6bc94fa18a8ef1b5d8745d5322a091fca114"
+      },
+      {
+        "bt4_policy_sha256": "7a73ec9626e24dd513a90afd4b179fdce4007c97d95f22cfbbb337f1021065d6",
+        "path": "shard_000030.zarr",
+        "row_provenance_sha256": "ac4230fd965f38dd6cf5225b02103aac66301289c23537f293cc55975516959a",
+        "rows": 8192,
+        "source_key_sha256": "e0fdec971a188934d70817a19e40a8a155786c01475541997a2beac0d007622e",
+        "source_policy_sha256": "b75e07a5da6ec4e0d2fc13c0d19632b2ba7ff95c9e6b672b48af7939249acfbe"
+      },
+      {
+        "bt4_policy_sha256": "2cb44dea311717e7edc44235bd97fb4eb86bff37ceaecb64274e64dda2113332",
+        "path": "shard_000031.zarr",
+        "row_provenance_sha256": "87da501353a1136b29c9bd3ddb018cd5c23a60681fcd598954e727d423247f6f",
+        "rows": 8192,
+        "source_key_sha256": "678b084395d9d5688443a43e3923c2e296a8b0dad01f316fe2737228e465dc5a",
+        "source_policy_sha256": "05b2dd636746255c2bdf82949b3ecd4f0927c7b4a3342b43e76044720fc76513"
+      },
+      {
+        "bt4_policy_sha256": "b29de0327e6e478e5052efdf8a18635f19e1b5a57f87f5f6500a5815b648925e",
+        "path": "shard_000032.zarr",
+        "row_provenance_sha256": "230f4460bb1afe95ce0d4f80c320d2fac74ab49f4f35ab88b784e9828b6677ca",
+        "rows": 2485,
+        "source_key_sha256": "5de4bf14d5b445c9b117612727756dc885b29198b62b747c135796c69bb0cee7",
+        "source_policy_sha256": "e6c3c277dc7c6373a7c986b934f15d4dba0a6a87c24c84db6964d8860ccb7b96"
+      }
+    ]
+  },
+  "completed_utc": "2026-09-08T02:31:23Z",
+  "kind": "bt4_raw_legal_policy_sidecar",
+  "mean_entropy_nats": 2.0502842903605343,
+  "mean_legal_moves": 26.215222065608835,
+  "mean_top1_probability": 0.40420780639882103,
+  "onnx": {
+    "path": "/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx",
+    "sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0"
+  },
+  "policy_encoding": "lc0_1858",
+  "policy_output": "/output/policy",
+  "providers": [
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "remap": {
+    "blobs": {
+      "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+      "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+      "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+    },
+    "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+    "dirty": false,
+    "git_head": "7ec261509fb7345cf1ca0ad73809193fc2749bb1"
+  },
+  "rows": 264629,
+  "schema": 1,
+  "search_nodes": 0,
+  "sidecar_shards": 33,
+  "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived",
+  "source_shards": 33,
+  "stored_dtype": "float32",
+  "teacher_evaluations_per_position": 1
+}

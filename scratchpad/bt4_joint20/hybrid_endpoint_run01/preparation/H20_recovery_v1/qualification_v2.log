@@ -1,0 +1,13 @@
+{
+  "status": "PASS_REGISTERED_CORPUS_QUALIFICATION",
+  "rows": 18910484,
+  "shards": 2309,
+  "derive_summary": {
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05/derive_targets_summary.json",
+    "sha256": "bf783af1d998dc80f36b9add6cacc2a829ea34ba6346c8e632b0feb1455c9f90"
+  },
+  "mix_summary": {
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05/bt4_policy_mix_summary.json",
+    "sha256": "68cac181db86e6d33bbc77f2cedcd6229e10634e2d1f5111d64d1bf5b7185ecb"
+  }
+}

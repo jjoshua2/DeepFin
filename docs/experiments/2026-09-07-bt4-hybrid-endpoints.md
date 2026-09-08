@@ -2,30 +2,73 @@
 
 Registered September 7, 2026, after the [fresh C/E confirmation](2026-09-07-bt4-fresh-confirmation.md)
 completed and before training or playing outcomes for the new arms. **Status:
-Original CPU materialization timed out at 2026-09-08 01:50 UTC after completing 2,292 of 2,309 shard validation stamps. The partial is preserved; reviewed bounded recovery is prepared. No H20 training or arena has launched.**
+H20 recovery, corpus qualification and prospective schedule checks completed. Training started at 2026-09-08 02:53:54 UTC; the 02:56:44 UTC receipt snapshot is incomplete, with no training or playing result.**
 The previous screen is complete. This registration selects H20 as the next bounded
 comparison. Subsequent tests are chosen from completed results, not a mandatory
 three-arm or 168-hour queue. Routine choices within the research goal do not need
 individual user approval. Production adoption remains separate.
 
-## Timeout and bounded recovery — September 8, 2026
+## Recovery completed and training started — September 8
+
+The separate recovery completed in **200.46 seconds**, processing the remaining
+17 shards / 134,420 rows and publishing all **18,910,484 rows / 2,309 shards**.
+The original timeout receipt remains failed; it has not been rewritten as success.
+The validated 2,292-shard prefix was reused through the reviewed process proof,
+without another prefix payload scan. Full empirical aggregates remain unavailable;
+the analytic mass-error bound is 0.000545, below `2^-10`. The suffix's 133,623 changed
+rows and measured mass drift are a non-inertness witness, not population estimates.
+See the [completed recovery readout](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/completed_readout.json).
+
+The first post-recovery qualifier rejected four intentional native-library
+symlinks before producing a qualification receipt. A narrowly reviewed v2 accepts
+only those exact runtime aliases, checking canonical targets, content hashes and
+link/target stability; corpus inputs still require regular files. No binary or
+corpus payload changed. The [correction record](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/qualification_alias_correction.json)
+retains the failed execution and original qualifier bytes. The corrected qualifier
+passed in **8.15 seconds**, binding the final summaries, transitive C/SF/BT4/rank
+lineage, complete validation stamps and stable metadata.
+
+The [dataset qualification](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.dataset_qualification.json)
+and [prospective schedule](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.prospective_schedule.json.gz)
+passed before training. H20 and the completed C anchor share canonical schedule
+`dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f`:
+18,910,484 rows, 97,968 games, 36,935 batches, seed zero and batch 512. H20's schedule
+is still prospective; actual realized staging and complete training diagnostics
+must be checked after the run finishes.
+
+The coordinator launched at 02:48:37 UTC; its surviving timeout supervisor started
+the actual trainer at **02:53:54 UTC**. The [process snapshot](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/completed_readiness_publication_v1/H20.training.process.snapshot.json),
+captured at **02:56:44 UTC**, records coordinator 288450, timeout 288561 and trainer
+288562, with training incomplete. It binds the original Python 3.10 / Torch 2.11
+CUDA runtime, seed-zero epoch and 4.5-hour training cap. This is an actual start,
+not a completed checkpoint or arena result. The registered H20/C100, H20/G100 and
+H20/C400 package remains unchanged; no follow-up candidate was added.
+
+The [completed-readiness manifest](evidence/bt4-bootstrap/completed-readiness-manifest.json)
+publishes completion, correction, qualification, schedule, independent reviews and
+launch evidence alongside the separately completed G10 common-input preparation.
+Large text records use lossless gzip with original and compressed hashes. Earlier
+failure and preregistration files retain their original bytes and dated statuses.
+
+## Original timeout and recovery registration — September 8, 2026
 
 The original mixer reached its registered GNU timeout after 14,370.09 seconds
-(exit 124). Its coordinator and two child PIDs are absent; the failed receipt and
-partial output remain intact. The [timeout readout](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_timeout_v1/readout.json)
+(exit 124). Its coordinator and two child PIDs were confirmed absent; the failed
+receipt was preserved and the partial retained for the separate continuation. The [timeout readout](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_timeout_v1/readout.json)
 and [all-shard metadata inventory](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_timeout_v1/shard_metadata.jsonl)
-record 2,292 contiguous fully stamped shards / 18,776,064 rows. Seventeen shards /
-134,420 rows remain. The final corpus was not published. This is an operational
+record 2,292 contiguous fully stamped shards / 18,776,064 rows. At that timeout
+snapshot, seventeen shards / 134,420 rows remained and the final corpus was not
+published. This was an operational
 preparation failure, with no training or playing-strength result.
 
-The continuation will reuse the completed prefix and process the remaining shards
-from their first chunk with the original checks. It will retain the original
+The registered continuation would reuse the completed prefix and process the
+remaining shards from their first chunk with the original checks. It would retain the original
 failure and attach separate recovery provenance. The original validated prefix is
 accepted as executed-process evidence, the same kind of evidence used by the
 previously prepared normal qualifier. This is not a new independent payload
 checksum or a claim of protection against later external file mutation.
 
-The original process lost its aggregate statistics at timeout. They will be marked
+The original process lost its aggregate statistics at timeout. They would remain
 unavailable, including full-corpus entropy, changed-row counts and measured mass
 mean/max. The remaining shards provide a measured non-inertness witness, without
 being presented as a representative sample. The original final empirical
@@ -35,10 +78,10 @@ derives a conservative uniform float64 → float32 → float16 mass-error bound 
 0.000545 across at most 1,858 coordinates, including subnormal rounding. That is
 below the existing row and mean limit of `2^-10`. It is an analytic guarantee,
 not an observed statistic; the normalization limit is unchanged. Prefix source,
-parent and teacher checks will not be repeated merely to reconstruct descriptive
+parent and teacher checks were not to be repeated merely to reconstruct descriptive
 aggregates.
 
-The proposed continuation is limited to 30 minutes including termination grace,
+The registered continuation was limited to 30 minutes including termination grace,
 with CUDA hidden, two numeric threads, low CPU/I/O priority and the existing
 150 GiB free-disk reserve. It requires the failed writer to be absent and the
 original preparation lock. The recipe, source rows, stored C parent, teacher,
@@ -52,9 +95,8 @@ normal-mixer/H20 regressions, scoped Ruff/type/dead-code checks, and an independ
 correctness review. A regression forbids every prefix payload read and checks the
 completed prefix remains byte-identical while the remaining shard is processed.
 Malformed metadata, an unknown producing version, a live original PID, changed
-recipe and damaged suffix non-policy data refuse publication. Final host launch
-bindings remain a separate recorded check; passing these tests is not a recovery
-completion claim.
+recipe and damaged suffix non-policy data refuse publication. These implementation
+tests preceded the separate host launch review and completed recovery recorded above; passing tests alone did not establish completion.
 
 The [recovery evidence manifest](evidence/bt4-bootstrap/h20-recovery-manifest.json)
 links exact original failure, validation logs, implementation/design reviews, CPU
@@ -144,9 +186,9 @@ reused 128 banked training rows from 43 games. It reconstructed stored C and G20
 exactly, checked all 16 non-policy fields, and found H20/G20 outside differences
 at most 0.0000610352, within the combined normalization/storage tolerance.
 This is a bounded construction check, not a full-corpus or held-out strength check.
-The existing mixer rejects C as a nested source and its ordinary global audit
-reconstructs S, so explicit composition and provenance support must precede H20
-materialization. No target corpus has been generated merely by publishing this plan.
+At initial registration the existing mixer rejected C as a nested source and its
+ordinary global audit reconstructed S. The explicit composition/provenance support
+in PR #527 and subsequently completed recovery resolve that preparation gap.
 
 Train each selected new arm once from scratch at **seed zero**, using the qualified frozen
 wise-cloud runtime `7ec261509fb7345cf1ca0ad73809193fc2749bb1`: Python 3.10.12,

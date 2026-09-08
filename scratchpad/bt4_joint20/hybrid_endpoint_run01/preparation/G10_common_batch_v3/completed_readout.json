@@ -1,0 +1,682 @@
+{
+  "schema": 1,
+  "status": "COMPLETE_PREPARED_COMMON_INPUT_SUBSET",
+  "created_utc": "2026-09-08T02:45:06.911709+00:00",
+  "scope": "Receipt-based factual readout of the registered 64 closed raw-shard preparation. No new payload scan, raw census, derivation, labeling, recipe mixing, training or arena.",
+  "author_independent_review_status": "Pending parent independent review",
+  "completion": {
+    "exit_code": 0,
+    "start_unix": 1788831749.7203012,
+    "end_unix": 1788835146.707813,
+    "start_utc": "2026-09-08T01:42:29.720301+00:00",
+    "end_utc": "2026-09-08T02:39:06.707813+00:00",
+    "wall_seconds": 3396.9875118732452,
+    "wall_minutes": 56.61645853122075,
+    "plan_sha256": "af92b062be32a2745033e69c97adb5163cd2f35049540e772252fbd02a5955df"
+  },
+  "totals": {
+    "raw_rows": 531412,
+    "prepared_rows": 528545,
+    "no_result_exclusions": 2850,
+    "policy_support_exclusions": 17,
+    "envelope_exclusions": 0,
+    "derived_shards": 66
+  },
+  "sources": [
+    {
+      "source_id": "run06_g10",
+      "raw_rows": 265528,
+      "prepared_rows": 263916,
+      "no_result_exclusions": 1600,
+      "policy_support_exclusions": 12,
+      "envelope_exclusions": 0,
+      "derived_shards": 33,
+      "qualification": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/common_input_qualification.json",
+      "source_qualified_input_sequence_sha256": "3d00ae771fefdb2689828b677cc4a1f2cb1d41d243bf619b8769062db834e8de",
+      "unchanged_derived_storage_identity": "b90226b35f3cfc568300d69f6e1d0975a74e2d39ab2da05326e469529c6be1ce",
+      "exact_support_exclusions_match_census": true,
+      "no_result_identity_scope": "Pinned qualification verifies the exact census exclusion set absent and every other registered physical row present; this readout rechecks compact counts and support identities without rereading row arrays.",
+      "policy_support_excluded_refs": [
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00001.jsonl.zst",
+          "source_row": 7423,
+          "worker_id": 0,
+          "game_id": 936,
+          "ply": 214,
+          "input_key": "23f91b118b2c071d26a639702e80e463"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00001.jsonl.zst",
+          "source_row": 7425,
+          "worker_id": 0,
+          "game_id": 936,
+          "ply": 216,
+          "input_key": "8a51ddbee285e7d67090f6b8623520f2"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00001.jsonl.zst",
+          "source_row": 7427,
+          "worker_id": 0,
+          "game_id": 936,
+          "ply": 218,
+          "input_key": "449452b098b7dde84f41ba1420577c36"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00015.jsonl.zst",
+          "source_row": 211,
+          "worker_id": 0,
+          "game_id": 7668,
+          "ply": 32,
+          "input_key": "116fc2cb43f2f8ade0e34869a0563102"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00023.jsonl.zst",
+          "source_row": 1646,
+          "worker_id": 0,
+          "game_id": 11760,
+          "ply": 344,
+          "input_key": "e6dd00e1f15a0560e2369d4635ddc45d"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00024.jsonl.zst",
+          "source_row": 4392,
+          "worker_id": 0,
+          "game_id": 12444,
+          "ply": 108,
+          "input_key": "5eceed0255198e1afcddd64ddb5f339d"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00027.jsonl.zst",
+          "source_row": 666,
+          "worker_id": 0,
+          "game_id": 13740,
+          "ply": 171,
+          "input_key": "db029c2ae7345e16ec6afc5e6a265917"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00027.jsonl.zst",
+          "source_row": 668,
+          "worker_id": 0,
+          "game_id": 13740,
+          "ply": 173,
+          "input_key": "33850c49d8109b251d18b1e1320889ca"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00027.jsonl.zst",
+          "source_row": 670,
+          "worker_id": 0,
+          "game_id": 13740,
+          "ply": 175,
+          "input_key": "26f55eae71c129548b4a7d981b08e4b9"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00027.jsonl.zst",
+          "source_row": 672,
+          "worker_id": 0,
+          "game_id": 13740,
+          "ply": 177,
+          "input_key": "b6c14f89456d362060d28137e762f8e5"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00027.jsonl.zst",
+          "source_row": 694,
+          "worker_id": 0,
+          "game_id": 13740,
+          "ply": 199,
+          "input_key": "0266951b5b5d76b6fc5a794ca2bd3fc2"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+          "source_shard": "w00-00027.jsonl.zst",
+          "source_row": 3527,
+          "worker_id": 0,
+          "game_id": 13896,
+          "ply": 160,
+          "input_key": "67d60ba56fc920aac65cfe1a49a6ed97"
+        }
+      ],
+      "original_input_keys_verified": 263916,
+      "outputs": {
+        "derived_output": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/derived",
+        "adapted_output": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/bt4",
+        "rank_output": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/rank"
+      }
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "raw_rows": 265884,
+      "prepared_rows": 264629,
+      "no_result_exclusions": 1250,
+      "policy_support_exclusions": 5,
+      "envelope_exclusions": 0,
+      "derived_shards": 33,
+      "qualification": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/common_input_qualification.json",
+      "source_qualified_input_sequence_sha256": "8e5fd876be6b7a042947acc0398d3e31184554c6c03155ece274076069eae8bf",
+      "unchanged_derived_storage_identity": "468917cab08d78d312ed80dc8a265a1700123de205310836892b82f8ce3866b3",
+      "exact_support_exclusions_match_census": true,
+      "no_result_identity_scope": "Pinned qualification verifies the exact census exclusion set absent and every other registered physical row present; this readout rechecks compact counts and support identities without rereading row arrays.",
+      "policy_support_excluded_refs": [
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_shard": "w00-00002.jsonl.zst",
+          "source_row": 7852,
+          "worker_id": 0,
+          "game_id": 512,
+          "ply": 183,
+          "input_key": "82a2db4d0d46a62bb7fe71c52de57da6"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_shard": "w00-00002.jsonl.zst",
+          "source_row": 7854,
+          "worker_id": 0,
+          "game_id": 512,
+          "ply": 185,
+          "input_key": "a0028e95f20d427a1c851d0cb0b4f10d"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_shard": "w00-00020.jsonl.zst",
+          "source_row": 73,
+          "worker_id": 0,
+          "game_id": 3392,
+          "ply": 73,
+          "input_key": "0b3011c0caaf8d09bc672ce10617c3ca"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_shard": "w00-00020.jsonl.zst",
+          "source_row": 75,
+          "worker_id": 0,
+          "game_id": 3392,
+          "ply": 75,
+          "input_key": "48ac6c6a40d9288c1dbf9777b7c5a535"
+        },
+        {
+          "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+          "source_shard": "w00-00029.jsonl.zst",
+          "source_row": 4170,
+          "worker_id": 0,
+          "game_id": 5008,
+          "ply": 35,
+          "input_key": "ba5acb442458aba562570b23a8fc11c0"
+        }
+      ],
+      "original_input_keys_verified": 264629,
+      "outputs": {
+        "derived_output": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived",
+        "adapted_output": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/bt4",
+        "rank_output": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/rank"
+      }
+    }
+  ],
+  "semantics": {
+    "policy": "uniform-d9, complete phase0, temperature0.0005, floor0",
+    "value": "search value, latest-phase d9; unchanged default value observation",
+    "history": "source-qualified original full-history key and quantized stored-history key survive filtering and permutation; optional compact row provenance",
+    "bt4": "Existing raw full-history float32 teacher outputs adapted to corresponding float16 stored histories; no new inference on quantized inputs",
+    "rank": "phase0 d9 top3, source-bound sidecars",
+    "qualification": "All emitted rows admitted by ordinary BT4/rank consumers; unique registered source physical row membership, exact exclusion complement, legal normalized BT4, summary/row provenance binding and unchanged derived storage checked by completed qualification."
+  },
+  "resources": {
+    "registered_limits": {
+      "wall_seconds_including_kill": 7200,
+      "new_output_and_cache_bytes": 8589934592,
+      "minimum_free_bytes": 161061273600,
+      "adapter_index_cache_bytes": 67108864,
+      "rank_index_cache_bytes": 67108864,
+      "numeric_threads": 2,
+      "cpu_affinity": "0,1",
+      "nice": 19,
+      "io_class": 3,
+      "gpu_hidden": true
+    },
+    "stage_metrics": [
+      {
+        "source_id": "run06_g10",
+        "stage": "source_check",
+        "start_unix": 1788831750.1320586,
+        "end_unix": 1788831754.1529987,
+        "wall_seconds": 3.37,
+        "user_seconds": 2.78,
+        "system_seconds": 0.62,
+        "max_rss_kib": 260608,
+        "filesystem_inputs": 1326184,
+        "filesystem_outputs": 0,
+        "exit_code": 0,
+        "spawn_worker_count": 0
+      },
+      {
+        "source_id": "run06_g10",
+        "stage": "derive",
+        "start_unix": 1788831758.2054768,
+        "end_unix": 1788832270.3447351,
+        "wall_seconds": 511.2,
+        "user_seconds": 841.21,
+        "system_seconds": 35.27,
+        "max_rss_kib": 867544,
+        "filesystem_inputs": 25896,
+        "filesystem_outputs": 720776,
+        "exit_code": 0,
+        "spawn_worker_count": 2
+      },
+      {
+        "source_id": "run06_g10",
+        "stage": "snapshot",
+        "start_unix": 1788832270.7695193,
+        "end_unix": 1788832275.0797036,
+        "wall_seconds": 3.21,
+        "user_seconds": 2.78,
+        "system_seconds": 0.46,
+        "max_rss_kib": 257948,
+        "filesystem_inputs": 0,
+        "filesystem_outputs": 816,
+        "exit_code": 0,
+        "spawn_worker_count": 0
+      },
+      {
+        "source_id": "run06_g10",
+        "stage": "adapt",
+        "start_unix": 1788832275.4408965,
+        "end_unix": 1788832923.8414953,
+        "wall_seconds": 647.19,
+        "user_seconds": 608.19,
+        "system_seconds": 42.92,
+        "max_rss_kib": 1279244,
+        "filesystem_inputs": 243032,
+        "filesystem_outputs": 234632,
+        "exit_code": 0,
+        "spawn_worker_count": 0
+      },
+      {
+        "source_id": "run06_g10",
+        "stage": "rank",
+        "start_unix": 1788832924.1743178,
+        "end_unix": 1788833245.5465715,
+        "wall_seconds": 320.59,
+        "user_seconds": 309.37,
+        "system_seconds": 12.19,
+        "max_rss_kib": 644872,
+        "filesystem_inputs": 752,
+        "filesystem_outputs": 43488,
+        "exit_code": 0,
+        "spawn_worker_count": 0
+      },
+      {
+        "source_id": "run06_g10",
+        "stage": "qualify",
+        "start_unix": 1788833245.8710322,
+        "end_unix": 1788833307.866143,
+        "wall_seconds": 61.15,
+        "user_seconds": 38.49,
+        "system_seconds": 24.98,
+        "max_rss_kib": 915260,
+        "filesystem_inputs": 248,
+        "filesystem_outputs": 40,
+        "exit_code": 0,
+        "spawn_worker_count": 0
+      },
+      {
+        "source_id": "run07_g10_companion4",
+        "stage": "source_check",
+        "start_unix": 1788831754.164479,
+        "end_unix": 1788831758.1923118,
+        "wall_seconds": 3.2,
+        "user_seconds": 2.64,
+        "system_seconds": 0.57,
+        "max_rss_kib": 255976,
+        "filesystem_inputs": 1327224,
+        "filesystem_outputs": 0,
+        "exit_code": 0,
+        "spawn_worker_count": 0
+      },
+      {
+        "source_id": "run07_g10_companion4",
+        "stage": "derive",
+        "start_unix": 1788833308.2322547,
+        "end_unix": 1788833902.8691754,
+        "wall_seconds": 592.93,
+        "user_seconds": 814.67,
+        "system_seconds": 77.76,
+        "max_rss_kib": 878740,
+        "filesystem_inputs": 8,
+        "filesystem_outputs": 721896,
+        "exit_code": 0,
+        "spawn_worker_count": 2
+      },
+      {
+        "source_id": "run07_g10_companion4",
+        "stage": "snapshot",
+        "start_unix": 1788833903.6713135,
+        "end_unix": 1788833908.3821805,
+        "wall_seconds": 3.64,
+        "user_seconds": 2.82,
+        "system_seconds": 0.5,
+        "max_rss_kib": 256120,
+        "filesystem_inputs": 0,
+        "filesystem_outputs": 24,
+        "exit_code": 0,
+        "spawn_worker_count": 0
+      },
+      {
+        "source_id": "run07_g10_companion4",
+        "stage": "adapt",
+        "start_unix": 1788833909.1695328,
+        "end_unix": 1788834686.9008229,
+        "wall_seconds": 775.8,
+        "user_seconds": 635.07,
+        "system_seconds": 109.05,
+        "max_rss_kib": 1279148,
+        "filesystem_inputs": 235824,
+        "filesystem_outputs": 234280,
+        "exit_code": 0,
+        "spawn_worker_count": 0
+      },
+      {
+        "source_id": "run07_g10_companion4",
+        "stage": "rank",
+        "start_unix": 1788834687.7569244,
+        "end_unix": 1788835028.3728387,
+        "wall_seconds": 339.65,
+        "user_seconds": 317.71,
+        "system_seconds": 19.77,
+        "max_rss_kib": 643644,
+        "filesystem_inputs": 0,
+        "filesystem_outputs": 43512,
+        "exit_code": 0,
+        "spawn_worker_count": 0
+      },
+      {
+        "source_id": "run07_g10_companion4",
+        "stage": "qualify",
+        "start_unix": 1788835029.1164186,
+        "end_unix": 1788835144.7581663,
+        "wall_seconds": 113.67,
+        "user_seconds": 40.6,
+        "system_seconds": 61.33,
+        "max_rss_kib": 915240,
+        "filesystem_inputs": 320,
+        "filesystem_outputs": 24,
+        "exit_code": 0,
+        "spawn_worker_count": 0
+      }
+    ],
+    "sum_stage_wall_seconds": 3375.6,
+    "coordinator_minus_sum_stage_wall_seconds": 21.38751187324533,
+    "sum_user_seconds": 3616.3300000000004,
+    "sum_system_seconds": 385.41999999999996,
+    "maximum_reported_stage_rss_kib": 1279244,
+    "rss_interpretation": "GNU time per-stage maximum resident set, not concurrent process-tree total memory.",
+    "measured_prepared_rows_per_total_wall_second": 155.59227054930724,
+    "output_and_reserve_evidence": "Original supervisor checks output/cache usage below8GiB and free disk at least150GiB during stages and at completion. Successful worker receipt establishes those checks passed; no persisted observed peak output bytes or minimum free bytes supplied, so none inferred.",
+    "gpu_work": false,
+    "timing_limitations": "Single actual low-priority shared-host preparation; timings include startup and I/O contention. No timing repeats or extrapolated25M/100M duration."
+  },
+  "storage_provenance": {
+    "raw_closed_shards": 64,
+    "registered_source_hashes": "The completed source_check stages hashed each selected raw payload against registration; worker final check repeated hashes and required stable device/inode/size/mtime/ctime. This readout reuses those proofs rather than rereading raw payloads.",
+    "compact_raw_identity_crosscheck": "All64 worker-final raw identities equal rank-source recorded identities.",
+    "derived_storage": "Qualification receipt storage hashes equal pre-adapter/rank snapshot identities for both sources; no new derived payload/storage traversal by readout.",
+    "runtime_commit": "f87325696cbf80511d3203f77c9fb847e0883a20",
+    "immutable_registration_status_note": "Prepared/not-launched status strings in frozen prospective files are historical; completed.json plus worker/stage receipts establish actual execution."
+  },
+  "warnings": [
+    {
+      "source_id": "run06_g10",
+      "stage": "derive",
+      "exit_code": 0,
+      "log": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.derive.log",
+      "warnings": [
+        {
+          "line": 12,
+          "text": "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/multiprocessing/resource_tracker.py:479: UserWarning: resource_tracker: There appear to be 2 leaked semaphore objects to clean up at shutdown: {'/mp-sk8_5tlx', '/mp-bz1ec_kg'}"
+        }
+      ],
+      "interpretation": "Operational shutdown warning retained despite successful exit and downstream qualification; no claim that semaphore cleanup was independently verified or fixed."
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "stage": "derive",
+      "exit_code": 0,
+      "log": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.derive.log",
+      "warnings": [
+        {
+          "line": 12,
+          "text": "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/multiprocessing/resource_tracker.py:479: UserWarning: resource_tracker: There appear to be 2 leaked semaphore objects to clean up at shutdown: {'/mp-rl56lokd', '/mp-o033ln0r'}"
+        }
+      ],
+      "interpretation": "Operational shutdown warning retained despite successful exit and downstream qualification; no claim that semaphore cleanup was independently verified or fixed."
+    }
+  ],
+  "limits": [
+    "528545 prepared common rows do not establish25M or100M coverage.",
+    "No C/H20/G/B recipe corpus was materialized by this batch; these are shared SF/history/BT4/rank inputs.",
+    "No training schedule execution, model training, strength measurement, recipe selection or deployment claim.",
+    "Readout checks compact receipt consistency and existing code semantics; it does not independently repeat payload qualification."
+  ],
+  "evidence": {
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/preregistration.json": {
+      "sha256": "8fa340beb2cedf0e8fcd3a2773dae28b24d7e2203b5fd2f475623daf67af9a34",
+      "bytes": 23094
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/launch.json": {
+      "sha256": "af92b062be32a2745033e69c97adb5163cd2f35049540e772252fbd02a5955df",
+      "bytes": 17347
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/completed.json": {
+      "sha256": "5c434a9256233914b868cdf972430a1600454e92cd9a22cf65d15239bbb709e7",
+      "bytes": 199
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/worker_complete.json": {
+      "sha256": "466bebd0926f66c32ad104acf72fa4aba581b24c7c3fb980c51de74482835b9c",
+      "bytes": 12511
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run_common.py": {
+      "sha256": "adfacfa83b853653e827ff9b235cb7a53b0eec470d4016cfad8db62ac58a8e55",
+      "bytes": 23544
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/runtime_qualification.json": {
+      "sha256": "585848ed40b71cd7a610814d27eed814456e30eb1112fe99fad1f53d5b255352",
+      "bytes": 3040
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/runtime_import_receipt.json": {
+      "sha256": "b8ed0185b60d6f905197b478b829108afecf2dcd3a90073f97bf4b263d023381",
+      "bytes": 571
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/started.json": {
+      "sha256": "ca1eae58aa6dfc2d970bf02508469a1645b6a6baaf3dfdbc8409cf0e973f2cd8",
+      "bytes": 672
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/independent_launch_review.json": {
+      "sha256": "f3bb7ce78676585b22189aac3ac17123b730025515ed8493704c55caf55a0655",
+      "bytes": 9577
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/derived/derive_targets_summary.json": {
+      "sha256": "955533df5839951016cffdfb4b7cc9a09b7d4d95bc241215b0d319d2af71db8c",
+      "bytes": 31645
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/bt4/bt4_policy_sidecar_summary.json": {
+      "sha256": "4e696f2140cfb103b749cbc5baa89b36c42a5e614ee1a42807cea6cf6515567c",
+      "bytes": 71095
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/rank/sf_d9_rank_sidecar_summary.json": {
+      "sha256": "74a5d8fc77f55f80a6290c7425f41373e76886066d7a324de4e7c3e240fd2af3",
+      "bytes": 16923
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.failures.jsonl": {
+      "sha256": "cbb7f56be2986022eafaefc92b422fca5bede6dda554408b359b833ff5da2a85",
+      "bytes": 6413
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.no_result.jsonl": {
+      "sha256": "dfa8cfc21f7eb51989689dbe9477dc56e980325d947c1beb43ae0305338e89a9",
+      "bytes": 380640
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/common_input_qualification.json": {
+      "sha256": "925f9e9b358f0b43fb5eeaea9594f89c786ca92d7d309fec02aaaddf6dcfd2ec",
+      "bytes": 16866
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/derived_identity.json": {
+      "sha256": "8898a09a3398b0c2ec937a3acc6989ee85701e19608c0f43e3e3246e77a0ab85",
+      "bytes": 14789
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/adapter_manifest.json": {
+      "sha256": "139a66530d479a312be642b8caabe86646202f38a6d941f12aabe98043e7bec5",
+      "bytes": 1777
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/derived/policy_support_misses.jsonl": {
+      "sha256": "5b118b780487f1d12e2217fe32409e63b25046d31632f72c01d79fbe5946be60",
+      "bytes": 8414
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.source_check.completed.json": {
+      "sha256": "909a9bbc59da9ea3c6a23a325fbd0ab7643ad66d3d00d838d282ecb8e13ccc83",
+      "bytes": 1185
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.source_check.time.json": {
+      "sha256": "625791084e2a61ebf9ffe7c38d6e076417a176b19aedff9485979f079031cc6d",
+      "bytes": 150
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.derive.completed.json": {
+      "sha256": "0ee2aaba934932573ced8f4afe779b2502042996e2103db786b8d3675be08a91",
+      "bytes": 2582
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.derive.time.json": {
+      "sha256": "fd716653c3952a7cc3d749373c5d5218c3c51501b3dcc6718afd3c66767370f1",
+      "bytes": 158
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.snapshot.completed.json": {
+      "sha256": "93fb6e9e52330f6e6f5bc2e54ee155ecd00b981a6cc2ce1d6b762edde7fbecad",
+      "bytes": 1169
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.snapshot.time.json": {
+      "sha256": "c3ee57c89029ddf2b54aa64f1607c2a3c1dce7cdc71c7695a5724735ea49b338",
+      "bytes": 146
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.adapt.completed.json": {
+      "sha256": "e40571ced6457c35e644068bf5f353ec6a53fe65b68fe3a65fc1445964515c26",
+      "bytes": 1856
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.adapt.time.json": {
+      "sha256": "b1788042d26d21cf35d866938598b764371fe1378ae740c829182ace73a8da78",
+      "bytes": 160
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.rank.completed.json": {
+      "sha256": "6a048fd498a0a459d862c936de941b016ba8e4f867b4caadd7000a95f054898b",
+      "bytes": 2268
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.rank.time.json": {
+      "sha256": "22b167252cd426a1f0d327b140d6599b65708d88df9e891bf326fc75be0633b5",
+      "bytes": 155
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.qualify.completed.json": {
+      "sha256": "8b8e8d85ca2b1c8aa68a8e4cd8c4b182f25a20649591c23be798b1703dbae324",
+      "bytes": 1169
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.qualify.time.json": {
+      "sha256": "de19cb3dddeb0f6f4a4f8bd56696b15ef681ed44de3744837010d7c4d29bdf83",
+      "bytes": 150
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.derive.log": {
+      "sha256": "1980319f8f3dedc35466668a479863a5584c746c576ac9852a1c369b25cbb451",
+      "bytes": 1371
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived/derive_targets_summary.json": {
+      "sha256": "738ebf6d35b7fc5973a1ceb6656515834ce4e911a87bd2176320a58b68ef7f56",
+      "bytes": 24747
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json": {
+      "sha256": "7a7e59ecf4b5d074aea58dd2fc032e6ecbb00b450ea7706d9b4d71eeed47cdfd",
+      "bytes": 71835
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json": {
+      "sha256": "0596363104e9fcf3f8e017536389e3b6341785aebde1e16380bb1b3607766c89",
+      "bytes": 17345
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.failures.jsonl": {
+      "sha256": "656a4d5fb1e0f35c393f0ca0d77f37710809d3c3e681e88024fc64728e0d0008",
+      "bytes": 2914
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.no_result.jsonl": {
+      "sha256": "5c80e82c5bd9d174e59928155d1cf9580353568d57ac5062aeed6f0aaf5c8f01",
+      "bytes": 324160
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/common_input_qualification.json": {
+      "sha256": "0ea779f2885956499ba4dc9d85c81ce4d24b01a8cec2aa1819664e67552130c7",
+      "bytes": 10502
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived_identity.json": {
+      "sha256": "8fed31e4a75fe62d073377d00bd8c1d6e955260ec9bc4a736f27831fe90de574",
+      "bytes": 8392
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/adapter_manifest.json": {
+      "sha256": "758c7cf5ab271bae595b56e05b76d12854a7dabf01623279a41a22f66feabd2a",
+      "bytes": 1832
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4/derived/policy_support_misses.jsonl": {
+      "sha256": "be383e7ab7315adc002fd8053664a8cba71b1297db2248b0b5cdfa9005312361",
+      "bytes": 3698
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.source_check.completed.json": {
+      "sha256": "31639ad510c2365464e7e77df07cbc1d5ec680571fa59f6c1f9ac48bd251ccd6",
+      "bytes": 1216
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.source_check.time.json": {
+      "sha256": "d491d3003467602e54e06e2093f86cf2e4dc36838e8e06547b0e91282b3e886e",
+      "bytes": 150
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.derive.completed.json": {
+      "sha256": "bbfc29d0c139e16c0b893bdba17f9c7bbca68a725526abc3d180533ba4fa37f1",
+      "bytes": 2632
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.derive.time.json": {
+      "sha256": "666b3a7c86db15de88c9871b132f9e14ccb2d700301891b54e14b5c426d6207e",
+      "bytes": 154
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.snapshot.completed.json": {
+      "sha256": "426b434fd3898e068b07bea795f670cc62d9f620da6c168330e43fe8742a9115",
+      "bytes": 1200
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.snapshot.time.json": {
+      "sha256": "10bfc0e951254fd3061a342c4de6891d47b3699315ed58357e176ea4ce78c0d9",
+      "bytes": 145
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.adapt.completed.json": {
+      "sha256": "370b6a8890889bd590c7bc57f2a1ed257d7f4a7d7271bbdba77674563559ff3f",
+      "bytes": 1911
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.adapt.time.json": {
+      "sha256": "02dd30b0f4e46e3a0c074e8e22b226ac476f28fcd02c34ab2f7d889df4dc0667",
+      "bytes": 161
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.rank.completed.json": {
+      "sha256": "5d5e8ab1d8ad4650f2d715de8e19d9259c0f9a8744e4b5ab6e370544d050638b",
+      "bytes": 2343
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.rank.time.json": {
+      "sha256": "a6641bc7decacfb00f917ad4f3f9be4aeb43f41e74cfea151d8ebc3a22a7a2c7",
+      "bytes": 153
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.qualify.completed.json": {
+      "sha256": "5db34473887726a380ef46f746b4fa803b8a098a3770cec4aa6f2e76e08ccdcc",
+      "bytes": 1203
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.qualify.time.json": {
+      "sha256": "ce73c350e68606129d705a46d0dd9ca2f4835629627dc2d5bd092d681aadabf3",
+      "bytes": 151
+    },
+    "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run07_g10_companion4.derive.log": {
+      "sha256": "0c338f8c31a3142478e0b70033a8012a55e16f54f73129ec738de6cd9283619c",
+      "bytes": 1367
+    }
+  }
+}
