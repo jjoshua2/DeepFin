@@ -1,0 +1,17 @@
+# G20T1 cold dataset copy preparation
+
+Prepared only. No source traversal for sizing, archive, transfer, deletion, or queue has run.
+
+The candidate is the complete 18,910,484-row / 2,309-shard G20T1 corpus: 80% SF plus 20% raw BT4 at T1. Its one-epoch training and 25/100/400-simulation comparisons are completed. “Cold” means an earlier experimental payload that need not occupy the active-finalist set; it does not mean a failed recipe. The original `valid_control=false` caveats remain in `candidate_role.json` and the original training summary.
+
+The source remains entirely in place. A new archive under `/mnt/e/chess_derived_archive_20260908/G20T1_v1` contains the complete source directory, including top-level summaries and shard provenance. The salvage archive and its helper/state remain untouched. `archive_pools.original.py` is the exact original snapshot; `helper_delta.patch` shows fixed roots, STOP/deadline/resources and owned-child cleanup changes.
+
+Use a later G10-free preparation window. The shared preparation lock is nonblocking, so this is not queued behind G10. CPU 0,1, numeric threads 2, nice 19, ionice 3 and hidden GPU are fixed. The inclusive four-hour bound includes cleanup and any prelude. Each tar/rsync group has an independent absolute-deadline timeout, so it remains bounded after abrupt driver death; normal failures also TERM/KILL owned groups. An actual launched parent must capture the outer exit and preserve all failure state.
+
+`operator_command.json` is the exact outer argv template. At invocation capture one start time and substitute D=start+14400, retaining that same D throughout. Its plan pin is `4677ddb5a3797d1025d498d44190ae869c8ce84e1d076f8652194d4027383c96`. The pinned interpreter is `/usr/bin/python3.10`; all executed tools use absolute pinned paths. A successful helper alone does not replace the outer operator terminal receipt.
+
+The 24 GiB ceiling is **not a size estimate**. It caps tar output directly and samples aggregate local staging files every 10 seconds; transient overshoot remains possible. The helper reserves 150 GiB local free space, adds 26.4 GiB admission headroom and requires 48 GiB free on the verified E: mount. It requires 16 GiB host available RAM and sets a 2 GiB inherited per-process address-space cap, not an aggregate RSS promise. Streaming buffers are 1 MiB; hashing/tar pacing is 32 MiB/s and rsync transfer 16 MiB/s. Metadata and filesystem overhead are unmeasured; four hours is a refusal bound, not a finish prediction.
+
+The useful operation itself writes the progressive JSONL inventory and null-delimited member list, creates a tar, verifies every member/content/selected metadata, verifies external readback digest, and checks source stability again. No source file is removed. The original helper removes only its verified **local staging tar** after success. ACL/xattrs are captured but not independently compared. Existing attempts and archives refuse: partial rsync bytes are preserved, but automatic resume/adoption is not implemented.
+
+Six focused checks passed in 21.48 seconds, including resistant-child/grandchild cleanup and independent timeout cleanup after driver SIGKILL. The subsequent absolute tool/interpreter binding correction has a separate metadata-only supplement; no process test was repeated. No full tests, corpus hashes, inference or payload scans were performed. The original fixture result remains unchanged.

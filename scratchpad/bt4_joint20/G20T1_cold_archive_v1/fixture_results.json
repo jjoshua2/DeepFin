@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "seconds": 21.47874426841736,
+  "checks": [
+    "exact selected command, resources, shared lock and invalid deadlines",
+    "original source inventory, stability, tar member verification and mount algorithms unchanged",
+    "STOP refuses before source/destination access",
+    "TERM-resistant direct child/grandchild group killed, direct wrapper waited, unrelated sentinel survives",
+    "independent child timeout kills resistant descendants after abrupt driver death; no helper cleanup assumed",
+    "actual helper CLI plan-only accepts and creates no run/staging"
+  ],
+  "scope": "Disposable children, small pinned files and CLI parsing only; no actual dataset inventory, archive, transfer or process-wide scan."
+}

@@ -1,0 +1,20 @@
+{
+  "observed_unix": 1788900968.4951055,
+  "command": [
+    "findmnt",
+    "-J",
+    "-T",
+    "/mnt/e",
+    "-o",
+    "TARGET,SOURCE,FSTYPE,OPTIONS"
+  ],
+  "filesystems": [
+    {
+      "target": "/mnt/e",
+      "source": "E:\\",
+      "fstype": "9p",
+      "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+    }
+  ],
+  "scope": "Read-only host mount observation; launch rechecks target/source/fstype and writable status."
+}
