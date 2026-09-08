@@ -1,0 +1,28 @@
+{
+  "exit_code": 0,
+  "started_unix": 1788841340.2750576,
+  "ended_unix": 1788841340.9982586,
+  "command": [
+    "env",
+    "CUDA_VISIBLE_DEVICES=",
+    "OMP_NUM_THREADS=2",
+    "MKL_NUM_THREADS=2",
+    "OPENBLAS_NUM_THREADS=2",
+    "NUMEXPR_NUM_THREADS=2",
+    "BLOSC_NTHREADS=2",
+    "nice",
+    "-n",
+    "19",
+    "ionice",
+    "-c",
+    "3",
+    "taskset",
+    "-c",
+    "0,1",
+    "timeout",
+    "--kill-after=10s",
+    "120s",
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/target_geometry_v1/analyze.py"
+  ]
+}
