@@ -897,6 +897,8 @@ def _run_loop_arena(
     n_pairs: int,
     mode: str = "matched_sims",
     log_name: str = "loop.games.jsonl",
+    lookahead: int | None = None,
+    resume: bool = False,
 ) -> dict:
     """``run_arena`` driving a REAL play loop — rolling or matched_time.
 
@@ -928,7 +930,7 @@ def _run_loop_arena(
         report_every=10_000, rolling=True,
         search_candidate=_search() if matched_sims else None,
         search_reference=_search() if matched_sims else None,
-        sprt=sprt,
+        sprt=sprt, sprt_lookahead_pairs=lookahead, resume=resume,
     )
 
 
@@ -951,6 +953,7 @@ def test_run_arena_rolling_plays_the_schedule_when_the_boundary_moves(
 ) -> None:
     record = _run_loop_arena(monkeypatch, tmp_path, sprt=SPEC_WIDE, n_pairs=20)
     assert record["sprt"]["verdict"] == "INCONCLUSIVE"
+    assert "sprt_lookahead_pairs" not in record
     assert record["pairs"] == 20
     assert record["truncated"] is False
 
@@ -1246,3 +1249,165 @@ def test_the_flag_is_not_offered_on_the_shared_arena_parser() -> None:
     flags = {opt for action in parser._actions for opt in action.option_strings}
     assert "--sprt" not in flags
     assert "--games" in flags  # the helper really was populated
+
+
+@pytest.mark.usefixtures("scripted_moves")
+@pytest.mark.parametrize("allowance", [None, 0, 1, 64])
+@pytest.mark.parametrize("pool", [2, 5, 20])
+def test_lookahead_waits_for_delayed_pair_then_releases_every_look(
+    monkeypatch: pytest.MonkeyPatch, allowance: int | None, pool: int,
+) -> None:
+    """Real rolling refill: pair zero stalls while later games finish quickly."""
+    import scripts.match_vs_uci as uci
+
+    spec = SprtSpec(elo0=0, elo1=20, alpha=1e-9, beta=1e-9,
+                    first_pairs=2, step_pairs=2)
+    monitor = SprtMonitor(spec, pairs_cap=7, granularity="pair")
+    openings = [chess.Board() for _ in range(7)]
+    for i, board in enumerate(openings):
+        board.fullmove_number = i + 1
+    starts: list[tuple[int, int, int]] = []
+    seen: dict[int, chess.Board] = {}
+    original_split = match_mod.split_active_by_side_to_move
+
+    def capture(active: Any, boards: list[chess.Board], awhite: Any) -> Any:
+        for board in boards:
+            if id(board) not in seen:
+                seen[id(board)] = board
+                starts.append((board.root().fullmove_number - 1, monitor.next_look_pairs,
+                               len(monitor.pair_scores)))
+        return original_split(active, boards, awhite)
+
+    monkeypatch.setattr(match_mod, "split_active_by_side_to_move", capture)
+
+    def adjudicate(board: chess.Board, *_args: Any, **_kwargs: Any) -> str | None:
+        pair = board.root().fullmove_number - 1
+        return "1/2-1/2" if len(board.move_stack) >= (6 if pair == 0 else 1) else None
+
+    monkeypatch.setattr(uci, "_tb_adjudicate_result", adjudicate)
+    result = play_paired_games_matched_sims_rolling(
+        None, None, openings, device="cpu", rng=np.random.default_rng(7),
+        sims_candidate=1, sims_reference=1, max_plies=8, temperature=0.1,
+        gumbel_add_noise=False, search_candidate=_search(), search_reference=_search(),
+        pool_size=pool, report_every=10000, syzygy_tablebase=object(),
+        sprt=monitor, sprt_lookahead_pairs=allowance,
+    )
+    assert result == [1.0] * 7
+    assert [pairs for pairs, _ in monitor.trajectory] == [2, 4, 6, 7]
+    assert [pair for pair, _, _ in starts] == [i for i in range(7) for _ in range(2)]
+    if allowance is not None:
+        assert all(pair < min(7, look + allowance) for pair, look, _ in starts)
+        assert all(starts[i] == starts[i + 1] for i in range(0, len(starts), 2))
+    if pool == 20 and allowance is None:
+        assert all(prefix == 0 for _, _, prefix in starts)
+    if pool == 20 and allowance == 0:
+        assert {pair for pair, _, prefix in starts if prefix == 0} == {0, 1}
+
+
+@pytest.mark.usefixtures("scripted_moves")
+def test_lookahead_resume_fills_early_gap_without_readmitting_complete_suffix() -> None:
+    spec = SprtSpec(elo0=0, elo1=20, alpha=1e-9, beta=1e-9,
+                    first_pairs=2, step_pairs=2)
+    monitor = SprtMonitor(spec, pairs_cap=5, granularity="pair",
+                          prior_pair_scores=[1.0, 1.0], prior_pair_ids=[1, 3])
+    scores = play_paired_games_matched_sims_rolling(
+        None, None, [chess.Board() for _ in range(3)], pair_ids=[0, 2, 4],
+        device="cpu", rng=np.random.default_rng(7), sims_candidate=1, sims_reference=1,
+        max_plies=1, temperature=0.1, gumbel_add_noise=False,
+        search_candidate=_search(), search_reference=_search(), pool_size=3,
+        sprt=monitor, sprt_lookahead_pairs=0,
+    )
+    assert scores == [1.0] * 3
+    assert monitor.pair_scores == [1.0] * 5
+    assert [n for n, _ in monitor.trajectory] == [2, 4, 5]
+
+
+@pytest.mark.usefixtures("scripted_moves")
+def test_lookahead_real_dispatch_record_and_resume_binding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # A dropped run_arena -> refill argument gives 16 pairs here (pool four),
+    # while zero look-ahead admits one pair per look and stops at pair 15.
+    bounded = _run_loop_arena(monkeypatch, tmp_path, sprt=SPEC_TIGHT,
+                              n_pairs=40, lookahead=0, log_name="bounded.games.jsonl")
+    assert bounded["pairs"] == ALL_DRAW_CROSS_TIGHT_ONE_AT_A_TIME
+    assert bounded["sprt"]["not_started_games"] == 50
+    record = _run_loop_arena(monkeypatch, tmp_path, sprt=SPEC_WIDE,
+                             n_pairs=7, lookahead=0)
+    assert record["sprt_lookahead_pairs"] == 0
+    assert record["pairs"] == 7
+    assert record["game_log_agrees"]
+    import json
+    header = json.loads((tmp_path / "loop.games.jsonl").read_text().splitlines()[0])
+    assert header["settings"]["sprt_lookahead_pairs"] == 0
+    same = _run_loop_arena(monkeypatch, tmp_path, sprt=SPEC_WIDE,
+                           n_pairs=7, lookahead=0, resume=True)
+    assert same["pairs"] == 7
+    assert same["resumed_pairs"] == 7
+    for changed in (None, 1):
+        with pytest.raises((SystemExit, ValueError), match=r"(?i)settings|fingerprint"):
+            _run_loop_arena(monkeypatch, tmp_path, sprt=SPEC_WIDE,
+                            n_pairs=7, lookahead=changed, resume=True)
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"sprt_lookahead_pairs": -1}, {"sprt_lookahead_pairs": True},
+    {"sprt_lookahead_pairs": 0, "sprt": None},
+    {"sprt_lookahead_pairs": 0, "rolling": False},
+    {"sprt_lookahead_pairs": 0, "mode": "matched_time"},
+    {"sprt_lookahead_pairs": 0, "max_concurrent_games": 1},
+])
+def test_lookahead_invalid_configuration_fails_before_loading(
+    monkeypatch: pytest.MonkeyPatch, kwargs: dict[str, Any],
+) -> None:
+    def forbidden(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("invalid look-ahead must fail before opening/model work")
+    monkeypatch.setattr(arena, "load_paired_openings", forbidden)
+    settings: dict[str, Any] = {
+        "candidate": "candidate", "reference": "reference", "games": 10,
+        "openings_path": None, "opening_plies": 16, "mode": "matched_sims",
+        "sims_candidate": 1, "sims_reference": 1, "ms_per_move": 1,
+        "max_plies": 1, "temperature": 0.1, "gumbel_add_noise": False,
+        "device": "cpu", "seed": 0, "out_path": None, "sprt": SPEC_WIDE,
+    }
+    settings.update(kwargs)
+    with pytest.raises(SystemExit, match="sprt-lookahead"):
+        arena.run_arena(**settings)
+
+
+def test_lookahead_cli_reaches_run_arena(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    assert _drive_main(monkeypatch, tmp_path, ["--sprt-lookahead-pairs", "64"])["sprt_lookahead_pairs"] == 64
+    assert _drive_main(monkeypatch, tmp_path, [])["sprt_lookahead_pairs"] is None
+
+
+@pytest.mark.usefixtures("scripted_moves")
+def test_lookahead_stops_admission_on_first_crossing_and_accounts_unstarted() -> None:
+    spec = SprtSpec(elo0=0, elo1=20, alpha=0.3, beta=0.3,
+                    first_pairs=16, step_pairs=8)
+    monitor = SprtMonitor(spec, pairs_cap=60, granularity="pair")
+    scores = play_paired_games_matched_sims_rolling(
+        None, None, [chess.Board() for _ in range(60)], device="cpu",
+        rng=np.random.default_rng(7), sims_candidate=1, sims_reference=1,
+        max_plies=1, temperature=0.1, gumbel_add_noise=False,
+        search_candidate=_search(), search_reference=_search(), pool_size=128,
+        sprt=monitor, sprt_lookahead_pairs=0,
+    )
+    assert scores == [1.0] * 16
+    assert monitor.verdict == "H0"
+    assert monitor.pairs == 16
+    assert [n for n, _ in monitor.trajectory] == [16]
+    assert monitor.not_started_games == 88
+    assert monitor.inflight_games == []
+
+
+@pytest.mark.parametrize("ids", [[1, 2], [1, 0, 2], [0, 0, 1, 2]])
+def test_lookahead_refuses_missing_or_unordered_remaining_schedule(ids: list[int]) -> None:
+    monitor = SprtMonitor(SPEC_WIDE, pairs_cap=3, granularity="pair")
+    with pytest.raises(ValueError, match="canonical remaining schedule"):
+        play_paired_games_matched_sims_rolling(
+            None, None, [chess.Board() for _ in ids], pair_ids=ids,
+            device="cpu", rng=np.random.default_rng(7), sims_candidate=1,
+            sims_reference=1, max_plies=1, temperature=0.1, gumbel_add_noise=False,
+            search_candidate=_search(), search_reference=_search(),
+            sprt=monitor, sprt_lookahead_pairs=0,
+        )

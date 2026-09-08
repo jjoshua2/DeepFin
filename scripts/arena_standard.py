@@ -2072,6 +2072,7 @@ def play_paired_games_matched_sims_rolling(
     pair_ids: Sequence[int] | None = None,
     prior_pair_scores: Sequence[float] | None = None,
     sprt: SprtMonitor | None = None,
+    sprt_lookahead_pairs: int | None = None,
     evaluator_candidate: Any = None,
     evaluator_reference: Any = None,
     free_cached_vram: bool = True,
@@ -2100,6 +2101,12 @@ def play_paired_games_matched_sims_rolling(
     returns all finished pairs for execution accounting; run_arena scores only
     the monitor's prefix and preserves speculative suffix rows separately.
 
+    ``sprt_lookahead_pairs`` optionally bounds newly admitted pair IDs below
+    the next declared look plus this allowance (and the overall cap). Both
+    colors start together; waiting for an early pair can drain the pool. None
+    preserves the existing refill, including odd-pool behavior. This changes
+    batching/shared RNG consumption, not the statistical look schedule.
+
     ``evaluator_candidate`` / ``evaluator_reference`` are the per-side
     long-lived evaluators (``build_arena_evaluator``). ``None`` on both is
     today's behaviour: each search call then builds its own throwaway
@@ -2125,6 +2132,15 @@ def play_paired_games_matched_sims_rolling(
         raise ValueError(
             f"pair_ids has {len(ids)} entries for {len(openings)} openings"
         )
+    if sprt_lookahead_pairs is not None:
+        if type(sprt_lookahead_pairs) is not int or sprt_lookahead_pairs < 0:
+            raise ValueError("SPRT look-ahead must be a nonnegative integer")
+        if sprt is None or pool_size < 2:
+            raise ValueError("SPRT look-ahead requires a monitor and at least two game slots")
+        completed = set(sprt.complete_pairs)
+        if (ids != sorted(set(ids)) or completed.intersection(ids)
+                or completed.union(ids) != set(range(sprt.pairs_cap))):
+            raise ValueError("SPRT look-ahead requires the complete canonical remaining schedule")
     queue: list[tuple[int, chess.Board, bool]] = []
     for k, opening in enumerate(openings):
         queue.append((2 * k, opening, True))
@@ -2143,6 +2159,16 @@ def play_paired_games_matched_sims_rolling(
 
     def _refill() -> None:
         while len(boards) < pool_size and queue:
+            if sprt_lookahead_pairs is not None:
+                assert sprt is not None
+                horizon = min(sprt.pairs_cap, sprt.next_look_pairs + sprt_lookahead_pairs)
+                next_gid = queue[-1][0]
+                if sprt.crossed() or ids[next_gid // 2] >= horizon:
+                    break
+                # Start both colors together. An odd pool may leave one slot
+                # unused; never admit a new pair on just one available slot.
+                if next_gid % 2 == 0 and pool_size - len(boards) < 2:
+                    break
             gid, opening, aw = queue.pop()
             boards.append(opening.copy())
             gids.append(gid)
@@ -2258,6 +2284,8 @@ def play_paired_games_matched_sims_rolling(
             _free_cached_vram(device)
             drain_freed = True
         if not boards:
+            if queue and sprt_lookahead_pairs is not None:
+                raise RuntimeError("SPRT admission stalled before the next canonical look")
             break
         if done - last_report >= report_every:
             print(
@@ -2717,6 +2745,7 @@ def run_arena(
     game_log_path: Path | None = None,
     eval_max_batch: int = DEFAULT_EVAL_MAX_BATCH,
     sprt: SprtSpec | None = None,
+    sprt_lookahead_pairs: int | None = None,
 ) -> dict:
     """Run one standardized arena and return (and optionally log) the record.
 
@@ -2733,6 +2762,11 @@ def run_arena(
     size, and the deliverable is the H1/H0/INCONCLUSIVE verdict. None leaves
     every byte of the fixed-N path, and of its JSONL record, unchanged.
     """
+    if sprt_lookahead_pairs is not None:
+        if type(sprt_lookahead_pairs) is not int or sprt_lookahead_pairs < 0:
+            raise SystemExit("--sprt-lookahead-pairs must be a nonnegative integer")
+        if sprt is None or mode != "matched_sims" or not rolling or max_concurrent_games < 2:
+            raise SystemExit("--sprt-lookahead-pairs requires rolling matched_sims SPRT and >= 2 game slots")
     if games < 2 or games % 2 != 0:
         raise SystemExit("--games must be even and >= 2 (paired openings)")
     if eval_max_batch < 0:
@@ -2863,6 +2897,10 @@ def run_arena(
         syzygy_path=syzygy_path,
         tb_max_pieces=tb_max_pieces,
     )
+    if sprt_lookahead_pairs is not None:
+        # Enabled admission changes batching/RNG consumption. Bind it on resume;
+        # omission preserves historical settings fingerprints byte for byte.
+        log_settings["sprt_lookahead_pairs"] = sprt_lookahead_pairs
     fingerprint = settings_fingerprint(log_settings)
     log_path = (
         Path(game_log_path) if game_log_path is not None
@@ -3456,6 +3494,7 @@ def run_arena(
                     pair_ids=remaining_ids,
                     prior_pair_scores=loaded_pair_scores,
                     sprt=sprt_monitor,
+                    sprt_lookahead_pairs=sprt_lookahead_pairs,
                     evaluator_candidate=evaluator_candidate,
                     evaluator_reference=evaluator_reference,
                     free_cached_vram=bool(eval_max_batch),
@@ -3688,6 +3727,8 @@ def run_arena(
         arena_pool=int(pool_size),
         sprt=sprt_record,
     )
+    if sprt_lookahead_pairs is not None:
+        record["sprt_lookahead_pairs"] = sprt_lookahead_pairs
     if out_path is not None:
         if resumed is not None and not played_pair_scores:
             # A no-op resume recomputes and prints the same summary the
@@ -4050,6 +4091,10 @@ def main() -> None:
     # the flag on, so sharing it would produce a --sprt that parses, prints and
     # then decides nothing. A knob offered on a path that ignores it is this
     # repo's signature defect; the fix is to not offer it there.
+    p.add_argument("--sprt-lookahead-pairs", type=int, default=None, metavar="N",
+                   help="rolling SPRT only: admit paired openings through the next "
+                        "declared look plus N pairs (e.g. 64), bounded by --games. "
+                        "Default disabled; may reduce occupancy and changes RNG consumption.")
     p.add_argument("--sprt", default=None, metavar="elo0=E,elo1=E,alpha=A,beta=B[,first_pairs=N,step_pairs=N]",
                    help="OPT-IN sequential test (pentanomial GSPRT, fishtest's "
                         "stop rule). Default OFF, and off changes nothing: no "
@@ -4217,6 +4262,7 @@ def main() -> None:
         search_candidate=side_candidate,
         search_reference=side_reference,
         sprt=sprt_spec,
+        sprt_lookahead_pairs=args.sprt_lookahead_pairs,
     )
 
 

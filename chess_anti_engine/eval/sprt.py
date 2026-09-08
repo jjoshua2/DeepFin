@@ -338,6 +338,11 @@ class SprtMonitor:
         self.llr_first = self.llr
 
     @property
+    def next_look_pairs(self) -> int:
+        """Next unconsumed declared sample size, bounded by the pair cap."""
+        return min(self._next_look, self.pairs_cap)
+
+    @property
     def pair_scores(self) -> list[float]:
         return list(self._sample)
 
