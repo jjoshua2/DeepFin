@@ -8,7 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Local reserve limits 100M raw/common/multiple-recipe coexistence; archive capacity ample, staged retention or added working storage remains unqualified |
+| [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Local reserve limits 100M coexistence; archive completed unselected recipe payloads first while retaining checkpoint/lineage evidence; storage actions not executed |
 | [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | 1.05M additional WDL rows complete; compiled CUDA and SF/B100 planners pass; SoftSF10 materialized and qualified |
 | [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row neural WDL diagnostic complete; BT4/Ceres primary values similar, efficient derived-input backfill identified; value training pending |
 | [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 compatibility and 128-row training diagnostic complete: 88.28% top-move agreement with BT4 T=1; retained-SF comparison remains prospective |

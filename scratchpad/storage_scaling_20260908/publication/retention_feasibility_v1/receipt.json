@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "status": "SOURCE_ONLY_RETENTION_FEASIBILITY_COMPLETE_NO_STORAGE_ACTION",
+  "created_unix": 1788900114.748392,
+  "reviewed_revision": "f24ae68485d8472abf39ff4850ecca93f88261bc",
+  "subsequent_revision": "d53c74946e2537f0ae53c6f7ca9f79b74f62f70d",
+  "subsequent_reviewed_source_bytes_identical": true,
+  "sources": {
+    "scripts/bt4_recipe_readout.py": {
+      "sha256": "eaee60b49a633fde040fef02b543cd4a5db20c29cac5d64fed2c11c7f2ca76a5",
+      "line_pointers": {
+        "matched_training_pair": 107
+      }
+    },
+    "scripts/bt4_value_rewrite.py": {
+      "sha256": "eedcee1030211503173bf6936d890ab64cadacf35f1b5b4e557cec85d173c428",
+      "line_pointers": {
+        "full_source_and_sidecar_reads": 184,
+        "ordinary_copytree": 247
+      }
+    },
+    "scripts/bt4_direct_screen.py": {
+      "sha256": "41d736832d026f32ec90b36cd75d541c7004540df37d686bd78bae268c36c329",
+      "line_pointers": {
+        "check_pins": 156,
+        "verify_candidate_training": 172
+      }
+    },
+    "scripts/bt4_policy_mix.py": {
+      "sha256": "cd8059e408a539e4617e13b576890c353a95bd8b3835142c27a92c7ab5917ce3"
+    },
+    "scripts/bt4_derived_wdl_sidecar.py": {
+      "sha256": "6fdaf63038f58e71d6ee6ab8fc6bbc04cca422b1469ecd0f65eabf890085a370"
+    },
+    "scripts/bt4_two_epoch_train.py": {
+      "sha256": "d792338167bcf2b535f643c0820cddad641cb3f74f65ed9232e5854497d0ee8e",
+      "line_pointers": {
+        "verify_recipe": 106
+      }
+    },
+    "scripts/sf_policy_rewrite.py": {
+      "sha256": "85152a4e70e85f2f9ddf8d799ff726f3b4e6ccbc385c1693079cb97edb606a3b"
+    },
+    "chess_anti_engine/replay/game_epoch.py": {
+      "sha256": "382677700752fe7e977c9df70cddda2470fdb1c363191c1434b43623edc85b5e",
+      "line_pointers": {
+        "shard_content_hash": 264,
+        "resolved_path_corpus_hash": 303
+      }
+    },
+    "scripts/bt4_one_epoch_screen.py": {
+      "sha256": "021b7069e4768f2b94d31f20498273e5c52e528b3d0a22059849b83f58167332",
+      "line_pointers": {
+        "COMMON_PINS": 57,
+        "verify_value_recipe": 125,
+        "check_pins": 288,
+        "realized_schedule_before_completion": 450
+      }
+    },
+    "scripts/bt4_recipe_screen.py": {
+      "sha256": "c307520e2aba16a93e5a63b12cd221803b6edbd875ea224b7c95bc27d20d95f0",
+      "line_pointers": {
+        "inputs": 75,
+        "storage": 172
+      }
+    }
+  },
+  "decision": "Completed unselected recipe shard payloads need not remain on fast storage for checkpoint evaluation; retain checkpoint/evidence dependencies. No cleanup is authorized by this receipt.",
+  "local_dataset_files": {
+    "G20T1_G20T05_G50T05_top_tie_C20_H20_B100": [
+      "derive_targets_summary.json",
+      "bt4_policy_mix_summary.json"
+    ],
+    "SoftSF10": [
+      "derive_targets_summary.json",
+      "sf_policy_rewrite_summary.json"
+    ],
+    "B100V10": [
+      "derive_targets_summary.json",
+      "bt4_policy_mix_summary.json",
+      "bt4_value_rewrite_summary.json"
+    ],
+    "clarification": "For match/checkpoint-only consumers none of these dataset-local files is opened. Keeping the two historical policy summaries at their original paths is a small compatibility choice for training lineage gates. C20 two-summary dependency is concrete for H20; B100 two-summary dependency is concrete for B100V10. No row-provenance or per-shard shape metadata is required by reviewed checkpoint-only paths."
+  },
+  "keep_outside_dataset": [
+    "Exact checkpoint files selected for future evaluation; role and path bindings",
+    "training.complete.json (where produced), run summary.json, realized schedule JSON, original training and arena manifests, preregistrations, qualification and producer receipts",
+    "Saved arena banks/results/readouts and exact reader/runtime/book/config/qualification artifacts required by chosen launcher",
+    "Existing source/provenance/storage snapshots unchanged as evidence, even after live storage moves"
+  ],
+  "full_payload_dependencies_now": [
+    "Original SF for remaining WDL collection, value rewrite and selected horizon work",
+    "B100 for B100V10 rewrite and selected horizon training",
+    "Active SoftSF10 through training plus realized schedule verification; subsequent selected horizon work if chosen"
+  ],
+  "cold_candidates": [
+    "Completed unselected G20T1/G20T05/G50T05/top-tie policy shard directories",
+    "C20 payloads if no producer remains dependent; retain both summaries for H20 metadata admission",
+    "H20 payloads if no further H20 training or materialization is selected"
+  ],
+  "source_metadata_consequences": "A saved hash of source_metadata.json binds the saved record, not perpetual presence of every path within it. Live metadata/storage verifiers may reopen .zattrs/.zarray/chunks or compare inode/ctime; archiving or restoring changes those operational identities. Retaining shapes alone does not keep a corpus qualified or usable. Preserve the complete archive and original metadata; issue fresh restoration/admission evidence when arrays are needed.",
+  "restoration": "Byte-exact restore at original resolved paths can preserve current content/path based horizon identity. Recompression or relocation can change identity even with numerically equal arrays. New inode/ctime is not part of the horizon content digest but can invalidate separately pinned storage snapshots; do not edit old receipts. Reconstruct exact physical/schedule/qualification evidence only when a new consuming job needs it.",
+  "capacity": "Measured B100 copy is14593728512bytes (13.591 GiB); other copies and current free space not inventoried. No aggregate savings or100M-fit claim.",
+  "limits": [
+    "No process or dataset inventory, deletion, archival, copy, runtime change, payload reads or tests.",
+    "Already completed training remains historical evidence even if its corpus is cold; rerunning the old training coordinator is a different operation and still needs full source/training data.",
+    "Current role/protocol restrictions still apply: preservation of a checkpoint does not automatically admit older experiments into the new matched-original recipe profile."
+  ]
+}
