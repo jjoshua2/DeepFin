@@ -138,8 +138,9 @@ quantization with derived stored history. It retains the original teacher output
 it does not claim BT4 was evaluated again on quantized input. Grouped policy
 gathers avoid repeated decompression per row. A private disk index uses 56 bytes
 per raw row plus NPY headers, with an 8 GiB default cap and two cached shards in
-memory; full raw verification and the extra history-key reconstruction pass happen
-once per used raw shard, including when later output shards revisit it.
+memory. Original and quantized history keys are collected during the same full
+raw verification pass, once per used shard even when later output shards revisit
+it. Cache entries are accepted only after verification and receipt checks succeed.
 
 The output is the ordinary derived-source-bound BT4 sidecar: legal finite unit
 mass, derived source fingerprints and SF policy hashes are validated, and the

@@ -139,26 +139,13 @@ class RawInputs:
                 'raw identity disk-cache budget exhausted')
         pending = raw.PendingShard(spec, spec.corpus_dir / key[1], rows, spec.out_dir / raw.sidecar_name(key[1]))
         before = {path: storage_identity(path) for path in (pending.path, pending.target)}
+        records = np.zeros(rows, dtype=provenance.RECORD_DTYPE)
         attrs = raw.verify_shard(
             pending, onnx_sha256=self.teacher['onnx']['sha256'],
             expected_policy_output=self.teacher['policy_output'], expected_providers=self.teacher['providers'],
-            expected_remap=self.remap, batch_size=512,
+            expected_remap=self.remap, batch_size=512, identity_records=records,
         )
         require(raw.receipt_from_attrs(attrs, pending.target) == receipt, 'raw receipt differs from verified sidecar')
-        # The existing verifier checks original keys, fingerprints, policy digests,
-        # legal support and mass. This additional streaming reconstruction banks
-        # quantized history keys and worker identity, which raw sidecars omit.
-        records = np.zeros(rows, dtype=provenance.RECORD_DTYPE)
-        count = 0
-        for count, row in enumerate(derive.iter_corpus_rows(pending.path), 1):
-            require(count <= rows, 'raw source grew during reconstruction')
-            planes, _boards, keys, gids, plies = raw.encode_rows([row], source=spec)
-            record = records[count - 1]
-            record['input_key'] = keys[0]
-            record['stored_input_key'] = np.frombuffer(bytes.fromhex(corpus.input_tensor_key(
-                np.asarray(planes[0], dtype=np.float16))), dtype=np.uint8)
-            record['game_id'], record['ply'], record['worker_id'] = gids[0], plies[0], int(row['worker_id'])
-        require(count == rows, 'raw row count changed during reconstruction')
         require(all(storage_identity(path) == stamp for path, stamp in before.items()), 'raw storage changed during verification')
         self.stable.update(before)
         assert self.cache_dir is not None
@@ -309,7 +296,7 @@ def adapt(manifest_path: Path, *, expected_manifest_sha256: str, out: Path,
                  'teacher_input': 'original float32 full history, not reinference of quantized replay',
                  'verified_raw_shards': inputs.verified, 'written_shards': payloads,
                  'identity_cache_bytes': inputs.index_bytes, 'identity_cache_limit_bytes': max_index_bytes,
-                 'raw_reconstruction': 'one existing verification plus one quantized-key reconstruction per used raw shard'},
+                 'raw_reconstruction': 'one verification pass collecting original and quantized keys per used raw shard'},
              'completed_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
     inputs.cache.clear()
     shutil.rmtree(inputs.cache_dir)

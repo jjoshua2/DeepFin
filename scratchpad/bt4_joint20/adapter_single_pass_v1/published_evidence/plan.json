@@ -1,0 +1,76 @@
+{
+  "status": "PREREGISTERED_NOT_EXECUTED",
+  "baseline_commit": "f77101a59fb2b38fd8e68c4cf44111e869a54115",
+  "manifest": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/adapter_manifest.json",
+  "source_shard": "w00-00000.jsonl.zst",
+  "rows": 8236,
+  "source_config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+  "closed_receipt": {
+    "bt4_policy_sha256": "6e12a05239763c182e8446eda5676bd4221b0a3c6bb72930adb9a20776bad58f",
+    "input_key_sha256": "1489e90f864d574139eb16ab043944e7793088e9573a9b551cf42d326c2a3e43",
+    "onnx_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+    "policy_output": "/output/policy",
+    "positions": 8236,
+    "providers": [
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "published_unix": 1788545245.5265806,
+    "remap_provenance": {
+      "blobs": {
+        "chess_anti_engine/encoding/lc0.py": "32629914f0bf8a2519045bdcfa33e3788c896402",
+        "chess_anti_engine/moves/lc0_1858_movestrs.py": "3d5a770b7934b10bc4f4095d015d879ba66bb652",
+        "chess_anti_engine/moves/leela_index.py": "f2d3e08b8dc18a0f16b4eadf0fd304f6bdf64dea"
+      },
+      "commit": "ee89cad6731d873bd44fd3209d5ffdacb08f16f5",
+      "dirty": false,
+      "git_head": "021124eeaff67a465e000a06a4a2e3b977afc801"
+    },
+    "sidecar": "w00-00000.bt4.zarr",
+    "source_id": "run06_g10",
+    "source_key_sha256": "116cf5b6b3c351f8df7958774895ae830d22a26e2378380d2d68053d59d873d7",
+    "source_sha256": "3c93d2d127bc6d11db9eb31425e0c795c96b417106d737632ef4b689569ae17d",
+    "source_shard": "w00-00000.jsonl.zst",
+    "teacher_evaluations_per_position": 1
+  },
+  "pins": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/measure_once.py": "f7b770d2d809f25a22adbc01435b1b2461ad7262f23e9bc1f00bb49209d826d9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/baseline_adapt_raw_bt4_sidecars.py": "36b816a3f7e27ec08a5b2264af455335a1d7c443a233672078d9189af7234778",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/baseline_bt4_raw_corpus_sidecar.py": "6a58dab2deddc8cae3d801ec988d25b4e80c16f530fb3fc3df756440f2748c23",
+    "/tmp/deepfin-bt4-adapter-single-pass/scripts/adapt_raw_bt4_sidecars.py": "e8952e031d93db83a589d9a23ae9eba7c1530e1df1901a00991cfe611272c2f7",
+    "/tmp/deepfin-bt4-adapter-single-pass/scripts/bt4_raw_corpus_sidecar.py": "eea20f9d114cc56fec62b2779e14ba2f58147bebc195f1b2db7b018c63f1920c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/adapter_manifest.json": "139a66530d479a312be642b8caabe86646202f38a6d941f12aabe98043e7bec5",
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.closed_receipts.jsonl": "8684984ed17e457245f2e54c1e731aa46be7f20ecf2b46a51855eac28c88ab5e",
+    "/tmp/deepfin-bt4-adapter-single-pass/scripts/derive_corpus_targets.py": "d2fbde7291d6662032431f71f8551e6b580ffd37b671a2b77422987708dcfff2",
+    "/tmp/deepfin-bt4-adapter-single-pass/scripts/corpus_row_provenance.py": "af81340e33e6832cd20b0369d230b9b4b3dea90f6ba42b2ef5d846ad336ba4f3",
+    "/tmp/deepfin-bt4-adapter-single-pass/scripts/gen_sf_rooted_corpus.py": "4bb5e22e81db93c74cfe88d2362136311b001e40e0254f8ff0adc9f3858ea655",
+    "/tmp/deepfin-bt4-adapter-single-pass/scripts/bt4_policy_dump.py": "d6b62559952aee3b0baeeadfdb584aeb9a6fd88b0d2285ab162ee39776be2cf8",
+    "/tmp/deepfin-bt4-adapter-single-pass/chess_anti_engine/encoding/lc0.py": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+    "/tmp/deepfin-bt4-adapter-single-pass/chess_anti_engine/moves/leela_index.py": "ac8f6f07dc1ce8e382de1d94ce4053f92b9cf3bc0eefe730d7fd0763ca11e1cd",
+    "/tmp/deepfin-bt4-adapter-single-pass/chess_anti_engine/moves/lc0_1858_movestrs.py": "05e21217bb25690fd49e5eb43d39049ecd137a36fd0e1af2170f73ab771e5fc2",
+    "/tmp/deepfin-bt4-adapter-single-pass/uv.lock": "4add8d8c91906df42eb15fe28bda3eb613192fdd257059e3ec7d097f917e66ef",
+    "/tmp/deepfin-bt4-adapter-single-pass/pyproject.toml": "6cf79d98f28a2258fa4a64247d20b8faf251dba549bd8771851eb5787934d082",
+    "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13": "93a93f4c8af5ae6f127fb0310f923d5fab89eb7257a0b801eec2e44b3f199840",
+    "/tmp/deepfin-bt4-adapter-single-pass/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so": "6f4bb0ec267a4ebd73ffe0a0d699a427f4e1a29d261b3a21658033056567722d",
+    "/tmp/deepfin-bt4-adapter-single-pass/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so": "73798b545d5351ca3cde0f1221bf3008675ef459d6765c62ba8193120299ab84",
+    "/tmp/deepfin-bt4-adapter-single-pass/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so": "b9cb9a26ff7c017f995a6ce6d7852ff90ec3e43cf2772bc14dafff8c1836f8fc",
+    "/tmp/deepfin-bt4-adapter-single-pass/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so": "7dad156c2793b60f685582ebacdbaa51eb5ecc22fd462865da203955c28fd49a"
+  },
+  "design": "Exactly one baseline-then-candidate RawInputs.get pair; same fixed banked source/raw BT4 receipt, empty private cache each. Imports and RawInputs construction outside timers. One coarse nested verifier timer in each arm. No retries/repetitions.",
+  "parity": "Full structured identity arrays byte-identical; verified raw receipt dictionaries identical; full verifier including legal support, source/input fingerprints, raw/policy digests remains active; source storage identity and compact pins unchanged before/after. Failure invalidates measurement.",
+  "limits": {
+    "hard_seconds_including_grace": 895,
+    "temporary_file_bytes": 1073741824,
+    "cache_bytes_per_arm": 1048576,
+    "cpu_affinity": [
+      4,
+      5
+    ],
+    "threads": 2,
+    "nice": 19,
+    "ionice": 3,
+    "gpu": "hidden; no model/session/inference"
+  },
+  "interpretation": "Measures raw verification plus identity-cache preparation, not full adapter/derive/rank pipeline. Old-first order/cache/host contention and one sample limit conclusions. Benefit expected from removing one decode/replay/encode pass; no minimum speedup gate or hardware scaling claim."
+}

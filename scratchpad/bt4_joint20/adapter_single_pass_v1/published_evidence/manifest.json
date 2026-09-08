@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "copies": [
+    {
+      "path": "plan.json",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/plan.json",
+      "sha256": "ddcf39367b1c4d2cb4266a6a5d3d7ac616cacbef0cedf75c5725048f30da5221",
+      "bytes": 6425
+    },
+    {
+      "path": "measure_once.py",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/measure_once.py",
+      "sha256": "f7b770d2d809f25a22adbc01435b1b2461ad7262f23e9bc1f00bb49209d826d9",
+      "bytes": 5458
+    },
+    {
+      "path": "command.txt",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/command.txt",
+      "sha256": "ea9f70dad0630b29dde78a288afc7a1dc7f2928124a8c150df2bb632ff33b1e2",
+      "bytes": 600
+    },
+    {
+      "path": "completed.json",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/run/completed.json",
+      "sha256": "2cc7fb0c832568b5cc7f0dfd3046533ee7c691b440dca2cb547ada7d7d3b9a54",
+      "bytes": 1977
+    },
+    {
+      "path": "resources.txt",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/resources.txt",
+      "sha256": "61a3ad775184b3bd88ac17fe0b6355aa8191448ac3497b5cf10aa54f5aa6672f",
+      "bytes": 934
+    },
+    {
+      "path": "author_validation.json",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/author_validation.json",
+      "sha256": "fc0a2834a0b4528a04a743838e8a2f90b1e48313541cc8634beb1e3ea07713ab",
+      "bytes": 2325
+    },
+    {
+      "path": "author_tests.txt",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/author_tests.txt",
+      "sha256": "ef5687ef91b7525d4cfc6f9416f3b5e68e061238d164d4c8d819390827350d99",
+      "bytes": 664
+    },
+    {
+      "path": "author_lint.txt",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/author_lint.txt",
+      "sha256": "c30693bd67fb96f44f0d47f57e7ccff7fed0f83dcce753ef4826848455a7b46e",
+      "bytes": 519
+    },
+    {
+      "path": "independent_review.json",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/independent_review_v1/receipt.json",
+      "sha256": "e7f7702a6554df1791d3d27ab3e84ae2309af77359928fb4ce43b13e24495ea8",
+      "bytes": 3882
+    },
+    {
+      "path": "performance_review.json",
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/performance_review.json",
+      "sha256": "bc9e9937ac05368f582aefa2cedd68877867ca28c52eae66fe8dc7a12eeb1be1",
+      "bytes": 1517
+    }
+  ],
+  "external": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/baseline_bt4_raw_corpus_sidecar.py": {
+      "sha256": "6a58dab2deddc8cae3d801ec988d25b4e80c16f530fb3fc3df756440f2748c23",
+      "bytes": 45381
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/baseline_adapt_raw_bt4_sidecars.py": {
+      "sha256": "36b816a3f7e27ec08a5b2264af455335a1d7c443a233672078d9189af7234778",
+      "bytes": 21257
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/run/baseline_cache/a67f7ee5532417ac23aa40f0a9d4590113d3f1e26efdde59456f1000bcc7755e.npy": {
+      "sha256": "99949fe9f2c77d28ec0fd3f484b7ad8bce504a1c3bfa17b69b1b4eaf1193b6f2",
+      "bytes": 461472
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/adapter_single_pass_v1/run/candidate_cache/a67f7ee5532417ac23aa40f0a9d4590113d3f1e26efdde59456f1000bcc7755e.npy": {
+      "sha256": "99949fe9f2c77d28ec0fd3f484b7ad8bce504a1c3bfa17b69b1b4eaf1193b6f2",
+      "bytes": 461472
+    }
+  },
+  "baseline_reconstruction": {
+    "commit": "f77101a59fb2b38fd8e68c4cf44111e869a54115",
+    "baseline_bt4_raw_corpus_sidecar.py": "scripts/bt4_raw_corpus_sidecar.py",
+    "baseline_adapt_raw_bt4_sidecars.py": "scripts/adapt_raw_bt4_sidecars.py"
+  }
+}

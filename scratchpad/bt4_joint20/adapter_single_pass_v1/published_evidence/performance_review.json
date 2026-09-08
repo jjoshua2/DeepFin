@@ -1,0 +1,23 @@
+{
+  "status": "PASS_COMPONENT_MEASUREMENT_REVIEW",
+  "reviewer": "root independent of implementation/measurement author",
+  "reviewed_utc": "2026-09-08T07:01:38.781962+00:00",
+  "plan_sha256": "ddcf39367b1c4d2cb4266a6a5d3d7ac616cacbef0cedf75c5725048f30da5221",
+  "completed_sha256": "2cc7fb0c832568b5cc7f0dfd3046533ee7c691b440dca2cb547ada7d7d3b9a54",
+  "runner_sha256": "f7b770d2d809f25a22adbc01435b1b2461ad7262f23e9bc1f00bb49209d826d9",
+  "verified": [
+    "Baseline adapter and verifier files exactly equal declared merged git revision.",
+    "Candidate source and measurement code pins match actual files.",
+    "Measurement invokes actual RawInputs.get for each arm with separate original verifier modules and empty bounded caches.",
+    "Full structured index and verified receipt equality asserted; identical retained index SHA; all verification remains active.",
+    "Reported timing reduction recomputed; wall and CPU costs track closely.",
+    "Source metadata stability and pinned inputs checked before/after execution; source payload integrity validated by each original verifier."
+  ],
+  "findings": [],
+  "limits": [
+    "Single old-first paired observation on one8236-row shard, shared host/cache order uncontrolled.",
+    "Measures verifier plus identity index preparation, excluding full adapter gathering/writing and pipeline.",
+    "Aggregate temporary size checked at end;1GiB per-file rlimit is not an aggregate quota.",
+    "No repeat benchmark or full dataset scan performed by reviewer."
+  ]
+}
