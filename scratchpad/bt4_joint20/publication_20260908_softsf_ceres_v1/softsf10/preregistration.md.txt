@@ -1,0 +1,30 @@
+# SoftSF10 versus B100: original-epoch policy-family comparison
+
+Prospective registration, 2026-09-08. SoftSF10 is selected for fresh seed-zero training and a two-budget development comparison against completed B100. No training or arena has launched under this registration. Compact dataset qualification and the single prospective original-runtime schedule remain pending their recorded CPU preparation.
+
+The question is whether an all-legal soft Stockfish d9 policy at effective-cp temperature 10 improves on the pure BT4 policy endpoint at temperature 0.5, with the original SF value supervision held constant. This compares policy-target families, not an isolated teacher-strength or temperature effect.
+
+SoftSF10 is the completed `qtemp_0.0005_hist_20m_softsf_cp10` corpus: 18,910,484 rows, 97,968 games and 2,309 shards from the original selected 20 million raw rows. The reviewed rewrite uses original float64 scores, float32 target conversion and float16 storage. Its completed proof changes only `policy_target` and preserves all 16 non-policy arrays, source exclusions, shard row order, history and SF value targets. Existing materialization and metadata proofs are reused; no new teacher inference, raw-history replay or corpus rewrite is registered here. The pending compact qualification must be genuine SoftSF provenance, not a fabricated BT4 mix receipt.
+
+## Matched original training
+
+Train SoftSF10 from fresh initialization, seed 0, with the same frozen original trainer, config, sampler and Python 3.10/Torch 2.11/NumPy 1.26.2 environment as B100 and G50. Use schema 3 `training_only`, profile `SoftSF10`, batch 512, game-aware sampling without replacement, 16 planner and 16 loader workers, 88-update windows, 36,935 updates and 420 finite windows. Require the original canonical source schedule `dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f`, full realized row coverage and zero skipped/retried batches. Preserve `--allow-invalid-control` and the original historical limitations. This does not adopt the newer two-epoch objective/runtime.
+
+Candidate output is `runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1/checkpoint.pt`; its hash and completed training receipt remain pending. The fixed reference is B100 checkpoint SHA256 `b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62`, completed receipt `fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799`. Neither warm-start from the reference nor an extra epoch is allowed.
+
+## Prespecified arenas
+
+Direction is candidate SoftSF10 minus reference B100. Use the qualified historical CUDA arena with only the merged PR573 lookahead overlay, through the merged PR585 recipe launcher/reader. Preserve full matched training-shape search, prior temperature 1, seed 42, temperature 0.1, maximum 300 plies and the same frozen PGN book/500-opening development panel with full 16-ply histories.
+
+- Low: 100 simulations per side, ordered SPRT Elo 0/+15, alpha 0.05/beta 0.10, first 128 pairs then 64-pair looks, cap 500 pairs. Rolling pool 256 and evaluator batch 4096. Explicit `sprt_lookahead_pairs: 64` admits pair IDs below the next declared look plus 64, capped at 500. It changes admission, occupancy and shared RNG consumption; canonical statistical looks and first-crossing decisions remain unchanged. No identical-gameplay or wall-time speedup claim follows.
+- Protected high: 400 simulations per side on the fixed first 128 paired openings, rolling pool 128 and evaluator batch 4096. No lookahead flag. Run after any valid low result, including H0 or inconclusive. Operationally invalid low halts the package and preserves evidence.
+
+Low H1 supports further consideration of SoftSF10 under this rule; H0 favors retaining B100, while an uncrossed cap/deadline is inconclusive. Stopped low Elo and intervals are descriptive. Report the ordinary paired interval for the fixed high panel, plus the aligned first-128-pair high-minus-low score interaction using 10,000 paired percentile bootstrap replicates, PCG64 seed 20260903. Retain conflicting or uncertain high results. This same-seed development comparison does not promote a model, establish an optimal policy family, provide independent confirmation, or settle broader training/data/search scaling.
+
+## Resources and completion
+
+Training is capped at 16,200 seconds (4.5 hours). Each arena has a 5,400-second hard stage cap and 5,340-second arena deadline, with TERM at 5,370 and 30-second kill grace. The new training plus two arena GPU-stage allocations total at most 27,000 seconds (7.5 hours). The completed B100 control is reused. These established original-runtime ceilings are supported by completed B100/G50 operation, not a promised SoftSF duration.
+
+Record every actual stage cost, including load/compile time within GPU stages. CPU-only qualification, prospective/realized schedule verification, checkpoint/book preparation, lease waiting and already-completed materialization are reported separately rather than hidden inside a claimed 7.5-hour end-to-end duration. Reuse the bank agent's one 600-second compact qualification publication and one 1,800-second prospective schedule allocation; realized schedule has its existing 1,800-second cap and arena CPU preparation its existing 300-second cap. Numeric threads remain two. The original training's 16/16 workers use the ordinary host affinity, requiring a resource check alongside other work; the CPU verifier is separately limited to two cores.
+
+Only completed training plus verified realized schedule supplies the candidate checkpoint identity. Then qualify that actual checkpoint and the unchanged opening panel under the new arena overlay, freeze the final arena manifest, and account for both stages. Pending hashes in the draft manifests deliberately fail admission. Existing STOP markers, exclusive outputs, shared GPU lease and owned stage timeouts apply. No retry, budget extension or automatic promotion is registered.

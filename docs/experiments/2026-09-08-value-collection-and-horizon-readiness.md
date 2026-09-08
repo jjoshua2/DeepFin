@@ -148,8 +148,10 @@ completed full-row and compressed-copy proof, then refreshed all shard attrs and
 array layouts without another payload scan. It preserves the original history
 lineage and historical-control limitations; a genuine SF rewrite receipt is used.
 
-One prospective schedule is now running under the **original one-epoch runtime**
-used for B100/G50, with a 1,800-second inclusive bound, two CPUs/threads and no GPU.
-Its completion and the final training manifest remain pending in this snapshot.
-This is not adoption of the newer two-epoch runtime or a training/strength result.
+At the earlier materialization snapshot, the prospective schedule was running.
+The September 8 follow-up now records [completed original-epoch SoftSF10 training](2026-09-08-soft-sf-qualified-training-sample.md#september-8-update-original-epoch-training-complete):
+18,910,484 rows, 36,935 updates and 420 windows, followed by matched realized-schedule
+verification. Arena preparation passed and its coordinator started; no GPU stage
+or playing outcome is established by the saved launch snapshot.
+This retains the original B100/G50 training runtime and historical-control caveats.
 [SoftSF training preregistration](https://github.com/jjoshua2/DeepFin/pull/569#issuecomment-5590602401).

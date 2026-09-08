@@ -12,6 +12,45 @@ training run or establish playing strength.
 · [original completion](../../scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/complete.json)
 · [evidence and source hashes](evidence/bt4-bootstrap/soft-sf-qualified-sample-manifest.json).
 
+## September 8 update: original-epoch training complete
+
+SoftSF10 completed the same original one-epoch protocol used for B100/G50:
+**18,910,484 rows, 36,935 updates and 420 finite windows**, seed 0 and batch 512,
+with no skipped updates or retries. The GPU stage charged **9,519.0066 seconds
+(2.64 hours)**; the subsequent CPU realized-schedule stage took **319.2711 seconds**.
+The canonical schedule identity remains
+`dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f`.
+The final checkpoint is
+`3cf979d0a2f2b4d0f8fd5a9398c36d6d7c4f39158144b475e08f68a2ac44b1bd`.
+
+This follows [completed full-corpus materialization](2026-09-08-value-collection-and-horizon-readiness.md#softsf10-materialization-complete):
+raw-effective-cp softmax at 10 cp changes policy only, preserving all 16 non-policy
+columns, including SF search value and the inherited history inputs. This did not
+adopt the newer two-epoch runtime. The original `historical_valid_control=false`
+remains: no held-out purity receipt, architecture/trainer judged against committed
+pins rather than a live config, and game-epoch sampling differs from the historical
+replacement-sampled control. Schedule agreement is a code-backed ordering proof,
+not an independently emitted row stream or a retroactive purity qualification.
+
+CPU preparation for **SoftSF10 versus B100** completed in **139.5785 seconds** and
+passed independent launch review. The prepared low-depth cell uses 100 simulations,
+ordered SPRT 0/+15 Elo (alpha .05, beta .10), first 128 pairs then 64-pair looks,
+a 500-pair cap and low-only 64-pair lookahead. The protected high-depth cell uses
+400 simulations and a fixed 128-pair opening prefix. Both retain prior temperature
+1 and the original qualified arena runtime. Any valid low verdict, including a
+negative or inconclusive one, proceeds to the high cell; an invalid low cell stops.
+The arena coordinator started at **22:38:27 UTC on September 8** using that
+reviewed manifest. Its GPU stage had not yet been observed in the frozen launch
+receipt; this records coordinator startup, not games running or a match outcome.
+The lease wait is separate from GPU charges; each arena stage has a 5,400-second
+cap, within the 27,000-second package GPU cap including training.
+
+[Training completion](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/softsf10/training.complete.json)
+· [realized schedule, lossless](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/softsf10/realized_schedule.json.gz)
+· [independent training and arena-readiness review](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/softsf10/independent_arena_launch_review.json)
+· [coordinator start snapshot](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/softsf10/arena_operator.actual_start.json)
+· [exact snapshots and hashes](evidence/bt4-bootstrap/softsf-training-ceres-gpu-manifest.json).
+
 ## Sampling and observed identity
 
 The [preregistration](../../scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/preregistration.md)
@@ -90,6 +129,6 @@ the original completion lists their exact sizes and hashes. Historical paths in
 archived originals describe provenance, not portable executable defaults.
 
 The sample establishes a distinct, source-aligned raw-cp control and its declared
-entropy match. Full-corpus preparation, matched training and gameplay evaluation
-remain separate decisions. Temperature matching is neither evidence of better
+entropy match. The later full-corpus and training completion is recorded above;
+gameplay evaluation remains a separate measurement. Temperature matching is neither evidence of better
 labels nor evidence of a stronger or more search-scalable model.

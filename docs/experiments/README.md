@@ -9,16 +9,16 @@ measurements support which claims.
 | Record | Scope |
 | --- | --- |
 | [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Local reserve limits 100M coexistence; retain checkpoint/lineage evidence and archive cold recipes first; G20T1 copy/verify prepared, not launched |
-| [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | 1.05M additional WDL rows complete; compiled CUDA and SF/B100 planners pass; SoftSF10 materialized and qualified |
+| [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | 1.05M additional WDL rows complete; compiled CUDA and SF/B100 planners pass; SoftSF10 original-epoch training complete |
 | [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row neural WDL diagnostic complete; BT4/Ceres primary values similar, efficient derived-input backfill identified; value training pending |
-| [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 compatibility and 128-row training diagnostic complete: 88.28% top-move agreement with BT4 T=1; retained-SF comparison remains prospective |
+| [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 compatibility and 128-row training diagnostic complete: 88.28% top-move agreement with BT4 T=1; bounded CUDA probe reviewed, not launched |
 | [Faster recipe matches](2026-09-08-faster-recipe-matches.md) | First prospective SPRT plus fixed deep probe completed in46m35s; speculative scheduling bottleneck identified; no controlled speedup claim |
 | [BT4 adapter identity collection](2026-09-08-bt4-adapter-single-pass.md) | Exact identity parity and 34.1% CPU component reduction in one closed-shard pair; full-pipeline benefit unmeasured |
-| [Qualified Soft-SF training sample](2026-09-08-soft-sf-qualified-training-sample.md) | 4,096 rows across 64 shards; 10cp matches C entropy most closely among four registered candidates, no training/strength selection |
+| [Qualified Soft-SF training sample](2026-09-08-soft-sf-qualified-training-sample.md) | 4,096-row entropy-selected control; SoftSF10 original epoch complete, B100 arena coordinator started; no playing outcome |
 | [BT4 target geometry](2026-09-08-bt4-target-geometry.md) | Fixed 128-row training sample: C support/maxima and raw-cp controls; no temperature or strength selection |
 | [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity; first optimized group completed 132,467 rows, throughput descriptive only |
 | [G10 adapter/rank overlap](2026-09-08-g10-stage-overlap.md) | Adopted in Worker01 attempt; cache failure, no measured speedup |
-| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 5,276,543 common rows prepared after completed Worker01 recovery; original failure preserved; combined training qualification and strength remain unestablished |
+| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 9,298,514 common rows after completed 4.02M increment; outer exit uncaptured, transfer training and strength remain unestablished |
 | [G50 versus B100 policy dose](2026-09-08-bt4-g50-b100-dose-comparison.md) | Complete: G50 loses shallow SPRT and fixed deep comparison (−50.57 Elo); B100 retained, depth interaction unresolved |
 | [Pure BT4 policy endpoint](2026-09-08-bt4-pure-policy-endpoint.md) | B100 beats H20: shallow H1, deep +46.42 Elo [11.23,82.58]; search interaction unresolved, same-seed development |
 | [Bootstrap training-horizon readiness](2026-09-08-bootstrap-training-horizon-readiness.md) | CPU and bounded compiled-CUDA checks passed; full SF/B100 planner passed; training comparison not launched |

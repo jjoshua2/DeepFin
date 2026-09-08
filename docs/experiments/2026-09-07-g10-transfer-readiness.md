@@ -1,12 +1,53 @@
 # G10 transfer readiness and target alignment
 
 September 7, 2026. This preparation work supports the larger-data stage of the
-[adaptive bootstrap research](2026-09-07-bt4-hybrid-endpoints.md). It does not choose
-another recipe before H20's completed comparison or establish playing strength.
+[adaptive bootstrap research](2026-09-07-bt4-hybrid-endpoints.md). Preparation alone does not select another recipe or establish playing strength.
+
+## Larger common-input increment complete — September 8
+
+The qualified inventory is now **9,298,514 common-input rows**. The registered
+4,047,239-row slice completed with **4,021,971 survivors across 492 output shards**:
+
+| Source | Selected raw rows | Qualified common rows | Missing result | Support exclusions |
+| --- | ---: | ---: | ---: | ---: |
+| run06_g10 | 2,025,055 | 2,013,019 | 11,999 | 37 |
+| run07_g10_companion4 | 2,022,184 | 2,008,952 | 13,199 | 33 |
+| Total added | 4,047,239 | 4,021,971 | 25,198 | 70 |
+
+Both sources pass the registered omission bounds with zero envelope omissions.
+Derivation, BT4 adaptation, independent SF ranking and final survivor qualification
+completed; all ten stage exit codes are zero. The runner completed in
+**8,447.86 seconds (2.35 hours)**. Sampled aggregate logical output peaked at
+**4,101,351,445 bytes**, below the 12 GiB all-state cap; minimum sampled free space
+was **389,509,169,152 bytes**, above the 150 GiB reserve. Two source lanes used two
+cores each. Adapt/rank overlap was observed, but there was no matched serial timing
+control and no measured speedup claim.
+
+The final runner receipt and both qualifications are complete. The outer process's
+wait status and exact terminal time were not captured: **outer exit code remains
+unknown**. A later host observation found the original owned processes absent and
+the shared preparation lock free. This limitation is retained rather than assigning
+a zero exit to the outer operator.
+
+Policy and rank use complete **phase-zero d9** observations. SF search value uses
+the **latest-phase observation at requested d9**, with actual value depth 9 on every
+surviving row; these are not uniformly d12 values. Outcome remains separate, and
+this preparation adds no neural value mixture. The source-qualified survivor and
+history joins, unchanged stored inputs, BT4 legal-policy admission and independent
+rank complement checks passed. Source runs remain live, so complete run summaries
+and worker-realized cp-map cross-checks remain unavailable. This is aligned input
+inventory, not a finalized transfer recipe, qualified combined training schedule,
+unique-position count or playing-strength result.
+
+[Independent completed review](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/g10_large/independent_completed_review.json)
+· [detailed accounting](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/g10_large/independent_completed_accounting_checks.json)
+· [runner completion](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/g10_large/completed.json)
+· [terminal-observation limits](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/g10_large/operator_terminal_observation.json)
+· [snapshot hashes](evidence/bt4-bootstrap/softsf-training-ceres-gpu-manifest.json).
 
 ## Worker01 recovery completed — September 8
 
-**The prepared common-input inventory is now 5,276,543 rows.** The completed
+**At this earlier recovery snapshot, the inventory reached 5,276,543 rows.** The completed
 Worker01 recovery adds **2,111,278 qualified rows** to the previously reviewed
 3,165,265. Both source lanes completed BT4 adaptation, SF ranking and common-input
 qualification.

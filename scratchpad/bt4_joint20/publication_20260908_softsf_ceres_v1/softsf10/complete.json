@@ -1,0 +1,8 @@
+{
+  "gpu_seconds": 9519.006634206977,
+  "profile": "SoftSF10",
+  "promotion": "NONE; no arena executed",
+  "scope": "training_only",
+  "training_only_complete": true,
+  "training_receipt_sha256": "63137f6b48defdd1a181a168cb0b532ca64acf88c90516f0898ea99d73ada3cf"
+}
