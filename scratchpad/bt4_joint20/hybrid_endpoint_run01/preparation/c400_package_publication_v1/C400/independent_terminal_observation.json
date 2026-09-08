@@ -1,0 +1,9 @@
+{
+  "observed_unix": 1788855223.2477717,
+  "pids": {
+    "316336": false,
+    "316335": false,
+    "288450": false
+  },
+  "scope": "Host read-only terminal observation; no signals."
+}

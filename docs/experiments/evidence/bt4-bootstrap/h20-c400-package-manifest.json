@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "created_utc": "2026-09-08T08:20:14.758659+00:00",
+  "scope": "Completed original fixed-bank H20 package and preregistered exploratory aligned250-pair interaction; no new matches or prospective B100 execution",
+  "files": [
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/complete.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/complete.json",
+      "sha256": "62311b6c483bf1da2f56d8601e9c6f2e3d655d4f117bada268e648b65611ce6f",
+      "bytes": 6498,
+      "original_sha256": "62311b6c483bf1da2f56d8601e9c6f2e3d655d4f117bada268e648b65611ce6f",
+      "original_bytes": 6498,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/process.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/process.json",
+      "sha256": "416b44b2c21e1a1fc9f4c43204cc9508870991ffd59a2c8abb5fd9f46a093fc9",
+      "bytes": 6238,
+      "original_sha256": "416b44b2c21e1a1fc9f4c43204cc9508870991ffd59a2c8abb5fd9f46a093fc9",
+      "original_bytes": 6238,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/manifest.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/manifest.json",
+      "sha256": "d97277a454f20fafd1ddb01e63c3df8498685c689b5e03657cae213b7cf1f8c5",
+      "bytes": 2286,
+      "original_sha256": "d97277a454f20fafd1ddb01e63c3df8498685c689b5e03657cae213b7cf1f8c5",
+      "original_bytes": 2286,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/readout.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/readout.json",
+      "sha256": "ffa44522c2a64ce86d5b9675ba47952940a60d92e4aa923505ff1698dba8864d",
+      "bytes": 3148,
+      "original_sha256": "ffa44522c2a64ce86d5b9675ba47952940a60d92e4aa923505ff1698dba8864d",
+      "original_bytes": 3148,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/arena.games.jsonl.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/arena.games.jsonl",
+      "sha256": "827ac30ca1c7057467ddd6053b01ff7bc6a3a0a8622fa97d180c205e017d8825",
+      "bytes": 17202,
+      "original_sha256": "61183238c272ceac962d2de80110d5f6a94144c308080852eb051e4c460a2e23",
+      "original_bytes": 217388,
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/arena.results.jsonl",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/arena.results.jsonl",
+      "sha256": "6ecaf8c131b45b6c7d37b37daf55fc905398ecbe08487382b232f9817d6d2b17",
+      "bytes": 3833,
+      "original_sha256": "6ecaf8c131b45b6c7d37b37daf55fc905398ecbe08487382b232f9817d6d2b17",
+      "original_bytes": 3833,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/independent_review.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/independent_review.json",
+      "sha256": "f2ecd9b251c7292e47afba5130c2f58303f6932471729d667339d2c8591051b6",
+      "bytes": 11136,
+      "original_sha256": "f2ecd9b251c7292e47afba5130c2f58303f6932471729d667339d2c8591051b6",
+      "original_bytes": 11136,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/independent_terminal_observation.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/independent_terminal_observation.json",
+      "sha256": "73783024c8ec03430d2d1ee18e11449dcf82bc9733f47030c0efdf6cb0dc8afe",
+      "bytes": 184,
+      "original_sha256": "73783024c8ec03430d2d1ee18e11449dcf82bc9733f47030c0efdf6cb0dc8afe",
+      "original_bytes": 184,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/independent_calculation/review.py",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/independent_calculation/review.py",
+      "sha256": "6869d17112ab56711ef7921c10d6e41e5b9923c8254aee5a11d17cbfd71cc697",
+      "bytes": 12697,
+      "original_sha256": "6869d17112ab56711ef7921c10d6e41e5b9923c8254aee5a11d17cbfd71cc697",
+      "original_bytes": 12697,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/independent_calculation/review.log",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/independent_calculation/review.log",
+      "sha256": "dbcb53f5f448dfc89c52ec5108e911a31892d53583b4a68960bcfe054cf58216",
+      "bytes": 1406,
+      "original_sha256": "dbcb53f5f448dfc89c52ec5108e911a31892d53583b4a68960bcfe054cf58216",
+      "original_bytes": 1406,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/independent_calculation/aligned_pairs.csv.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/independent_calculation/aligned_pairs.csv",
+      "sha256": "768020a1d66008ccff808037b2eebeec65d18b2c4bf3b77683204b439fb815e3",
+      "bytes": 5772,
+      "original_sha256": "288542f76e1478ff4b82506f3cccd864b1c3b733a38f7bd9d4c4d62a7612dcf2",
+      "original_bytes": 21330,
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/C400/independent_calculation/bootstrap_replicates.npy.gz",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/C20T05.s400/independent_calculation/bootstrap_replicates.npy",
+      "sha256": "dcadfc072ef1ca49f35be62372ad187955d990fed6086af8ca109f2d0b089c25",
+      "bytes": 15614,
+      "original_sha256": "dd41d1623b9887a67832da42089deb6e818dc4ee8f5d0de9d714da57a8342347",
+      "original_bytes": 80128,
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/package.complete.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/complete.json",
+      "sha256": "ad305885b6b13819fd9ebaea6d82ff109c96c01e653b3ab58cc7f504d4510850",
+      "bytes": 894,
+      "original_sha256": "ad305885b6b13819fd9ebaea6d82ff109c96c01e653b3ab58cc7f504d4510850",
+      "original_bytes": 894,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/training.complete.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20/training.complete.json",
+      "sha256": "821e0886e599d241573f7482b70e24c25887ed28c9255224ea6e29048388a9df",
+      "bytes": 3004,
+      "original_sha256": "821e0886e599d241573f7482b70e24c25887ed28c9255224ea6e29048388a9df",
+      "original_bytes": 3004,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/H20.launch_manifest.json",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/H20.launch_manifest.json",
+      "sha256": "20fa6a6be386bee435f0a12c75314d4dd5ba646213124c239a6247dec73f84dc",
+      "bytes": 3135,
+      "original_sha256": "20fa6a6be386bee435f0a12c75314d4dd5ba646213124c239a6247dec73f84dc",
+      "original_bytes": 3135,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/c400_package_publication_v1/original_prereg.md",
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md",
+      "sha256": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6",
+      "bytes": 12266,
+      "original_sha256": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6",
+      "original_bytes": 12266,
+      "encoding": "identity"
+    }
+  ]
+}
