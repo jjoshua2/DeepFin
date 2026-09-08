@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "status": "DIAGNOSED_PROPOSAL_ONLY",
+  "frozen_runtime_commit": "ac4a246ba025ca54329d6e4dc380473f1ea4b728",
+  "negative_fixture": "Two synthetic raw shards/rows with only complete d5 observations; uniform-d9 phase0 must raise CorpusIntegrityError.",
+  "runpy_result": {
+    "exit_code": 124,
+    "hard_timeout_seconds": 20,
+    "error": "Pool result-thread cannot unpickle CorpusIntegrityError from temporary __main__, original error lost; no completion summary."
+  },
+  "direct_result": {
+    "exit_code": 1,
+    "error": "Original game0 ply8 phase0 has no complete depth9 block; no completion summary."
+  },
+  "positive_direct_result": {
+    "exit_code": 0,
+    "raw_shards": 2,
+    "raw_rows": 4,
+    "emitted_rows": 4,
+    "spawn_workers": [
+      {
+        "pid": 18,
+        "ppid": 15,
+        "torch": 2,
+        "blosc": 2,
+        "cmdline": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=6, pipe_handle=12) --multiprocessing-fork ",
+        "actual_hook": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/python_bootstrap/sitecustomize.py"
+      },
+      {
+        "pid": 19,
+        "ppid": 15,
+        "torch": 2,
+        "blosc": 2,
+        "cmdline": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python -c from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=6, pipe_handle=14) --multiprocessing-fork ",
+        "actual_hook": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/python_bootstrap/sitecustomize.py"
+      }
+    ],
+    "thread_observation": "Test-only sitecustomize observer imports and executes the exact unchanged qualified private hook, then records actual Torch/Blosc counts before stage imports in parent and fresh spawn interpreters.",
+    "stderr_limit": "CPython resource_tracker reported one leaked semaphore cleanup warning at shutdown; exit0 and completed all-row summary verified. Warning preserved, not hidden."
+  },
+  "actual_common_batch_original_error": {
+    "source": "run06_g10/w00-00001.jsonl.zst",
+    "physical_row": 7423,
+    "worker_id": 0,
+    "game_id": 936,
+    "ply": 214,
+    "finding": "Separate bank-agent recovery found13legal moves absent from phase0d9. This diagnosis does not loosen support checks or establish eligibility.",
+    "evidence": "G10_common_batch_v1/diagnostics/bad_row_probe_v1/failed_raw_row.json"
+  },
+  "change_scope": "New v2 proposal runner command() uses direct script argv under unchanged private startup hook; no repository change, no daemon-thread parser, no relaxation or blind retry.",
+  "proposal_runner_sha256": "500f5a85494109f57e8b40d5689ee2105d3f2a72449c7c676d523cc09482062a",
+  "proposal_hook_sha256": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad",
+  "evidence": {
+    "direct_original_error.log": "e7ec0a5d023210cde67a020c1d15f57329b8a4ed581996dc992e091d3776588c",
+    "direct_positive.log": "0d08ffc38a9ec1d7e9c00458cbf147b6419da828799a8b3ed9e0034291536898",
+    "direct_positive_caps.jsonl": "c047a25da7d3d642ffb19ac7a37c94171c1e70a975177126906c76aa8069dd70",
+    "direct_positive_derive_summary.json": "d9731879e1de09a942a749bd361b8e7f14c9f9d83face9df5ce619677626951a",
+    "runpy_error_timeout.log": "3108e2b065577462ba5d7e78ee8a0da0ee6890482f01193130442e37c4267cbf",
+    "test_only_hook_observer.py": "c9d50263c4bfa65ebaa9321ad6d0198a44c7752c19d30ffe00c162bbe893365a"
+  },
+  "operational_status": "No v2 registration or launch manifest exists; source eligibility/revised registration pending parent decision."
+}

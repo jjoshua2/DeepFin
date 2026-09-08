@@ -1,0 +1,14 @@
+Exception in thread Thread-3 (_handle_results):
+Traceback (most recent call last):
+  File "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/threading.py", line 1044, in _bootstrap_inner
+    self.run()
+    ~~~~~~~~^^
+  File "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/threading.py", line 995, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/multiprocessing/pool.py", line 579, in _handle_results
+    task = get()
+  File "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/multiprocessing/connection.py", line 256, in recv
+    return _ForkingPickler.loads(buf.getbuffer())
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AttributeError: Can't get attribute 'CorpusIntegrityError' on <module '__main__' (<class '_frozen_importlib.BuiltinImporter'>)>

@@ -213,8 +213,73 @@ implementation is necessary. H20 and useful GPU labeling retain priority.
 
 The [read-only assessment](../../scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/post_pilot_preparation_assessment_v1.json)
 records the exact prefix counts and distinguishes the labeler's ONNX thread setting
-from Python encoding parallelism. This batch is selected but has not launched at
-this publication snapshot.
+from Python encoding parallelism. At the preparation snapshot, this batch was selected but had not launched.
+
+## Common-data readout: stopped during derivation
+
+The registered common batch launched at 00:25:45 UTC on September 8 and was
+stopped through its existing STOP mechanism at 00:39:34 UTC, after 828.64 seconds.
+Both source checks completed, but the first source's derivation failed. No common
+corpus or adapter/rank output was qualified. The interrupted derivation left an
+empty GNU-time file, so its elapsed batch time is not a usable throughput or
+stage-resource measurement. All eight recorded batch processes were confirmed
+absent after coordinator cleanup; original inputs and partial spill outputs remain
+preserved. H20 preparation and production generation/labeling continued.
+
+Two distinct problems were found. A worker raised `CorpusIntegrityError`, then the
+operational `runpy.run_path(..., run_name="__main__")` wrapper failed to deserialize
+that exception in the multiprocessing result-handler thread. The process remained
+alive despite losing its result handler. A bounded diagnostic using the frozen
+module directly recovered the original error after examining 1,324 rows following
+the last completed spill boundary, in 4.94 seconds.
+
+The failing position is run06 `w00-00001.jsonl.zst`, physical row 7,423, worker 0,
+game 936, ply 214. Its phase-zero d9 block claims completeness and has all 37 rank
+slots, but contains only 24 distinct legal moves: 13 legal moves are absent, with
+other moves repeated across ranks. The parser's completeness flag checks rank
+coverage; it does not establish a unique legal-move roster. The deriver's support
+check correctly refused this row. Its d7/d8 blocks have 37 distinct moves, but
+substituting another depth would change the registered target and is not an
+automatic repair. This is a source-label eligibility issue, not evidence against
+a target recipe.
+
+A single structural census of all 64 registered raw shards completed in 129.54
+seconds, with every compressed source hash and row count matching the frozen
+receipts. It found 17 result-bearing rows with duplicated/missing phase-zero d9
+support: 12 in run06 and five in run07. There were no illegal extra moves. Separate
+missing-result exclusions total 2,850 rows (1,600 run06; 1,250 run07), leaving
+**528,545 result-bearing rows with valid phase-zero policy support**.
+
+This is not full training-input qualification. The census checked the existing
+latest-phase value reader's finite availability, but did not validate ambiguity
+within narrowed later-phase move rosters. Its metric named
+`result_and_policy_and_value_structural_ok` must be read with that limitation;
+the interpretation receipt preserves the correction. A separate bounded pass is
+checking duplicate/conflicting observations actually used by that value reader.
+Incomplete later blocks alone are permitted by the existing value semantics and
+will not be relabeled as failures. No target values or original data were changed.
+
+The policy census supports an explicit bounded exclusion option for unusable
+phase-zero policy support, with strict defaults unchanged, all excluded source
+references recorded, and the same surviving inputs for every recipe. Illegal extra
+moves and source/history identity errors must still fail. This tool work is underway;
+there is no operational retry or replacement of the selected source set.
+
+A two-worker synthetic error fixture reproduced the old wrapper's hidden error
+and timeout. Direct script execution returned the original error promptly with
+exit 1. A valid two-worker fixture emitted all four rows; observations in both
+spawned workers confirmed Torch/Blosc thread counts of two. The positive fixture reported a shutdown semaphore warning, retained in the logs;
+its cause is unestablished. The test-only observer also imported Torch in the
+resource tracker, so this does not establish an operational resource leak. The minimal correction removes the `runpy` wrapper
+and retains the private startup hook. The v2 runner is a proposal only: no new
+registration, frozen launch or operational retry exists. The original attempt
+remains failed.
+
+[Original common-batch evidence](evidence/bt4-bootstrap/g10-common-batch-manifest.json)
+includes the exact runner, startup hook, registration, launch/review pins, original
+logs and terminal/cleanup receipts, plus the bounded diagnostic, exact failure row
+and losslessly compressed original diagnostic bank. Bulk partial spill arrays remain
+host-local.
 
 ## Evidence
 

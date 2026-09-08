@@ -1,0 +1,14 @@
+{
+  "status": "PROPOSAL_NOT_REGISTERED_NOT_FROZEN_NOT_LAUNCHED",
+  "prior_registration": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preregistration.json",
+    "sha256": "86de876067f255a36abd5a0f109ece4e9efdc899e2d1fb091750b7d75bc640bf"
+  },
+  "prior_run": "Failed original source-support check obscured by runpy exception transport. Not resumable and no automatic retry.",
+  "source_selection": "Prior64closed shards unchanged as proposed input set only; eligibility handling unresolved, no new registration issued.",
+  "delta": "Use direct Python script argv, retaining private startup hook for2thread spawn interpreters. Remove runpy wrapper; no repo changes.",
+  "defaults": "No support/tolerance relaxation: phase0policy/latestvalue, uniformd9, max-envelope-misses remains0. All resource and failure caps retained.",
+  "pending": "Original raw phase0 support discrepancy diagnosis, explicit revised registration and independent review before any freeze or launch.",
+  "runner_sha256": "500f5a85494109f57e8b40d5689ee2105d3f2a72449c7c676d523cc09482062a",
+  "private_hook_sha256": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad"
+}

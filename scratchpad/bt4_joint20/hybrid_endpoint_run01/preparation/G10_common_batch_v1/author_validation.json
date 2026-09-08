@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "status": "PREPARED_NOT_LAUNCHED",
+  "files": {
+    "preregistration.json": "86de876067f255a36abd5a0f109ece4e9efdc899e2d1fb091750b7d75bc640bf",
+    "run_common.py": "f43b3814d91e23442d28c33d5b8c7f79bf25261b05482fcf9a43acd6e90eba4d",
+    "preparation.md": "062cd68658ae4892505cdb062d74c2a41a7da2d544b7d1a0f4d3b0acd84e52ec",
+    "launch.json": "8bd65b7bb18f6032e864d9defa8e7f29cbba4e97c2a613e59eb309964ced277b",
+    "python_bootstrap/sitecustomize.py": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad",
+    "run06_g10.closed_receipts.jsonl": "8684984ed17e457245f2e54c1e731aa46be7f20ecf2b46a51855eac28c88ab5e",
+    "run07_g10_companion4.closed_receipts.jsonl": "f27dc5c265448ccc1ea38b57cd0dbc30a5db84fdb2f5317fdfc25ba7b84012ed"
+  },
+  "syntax": "run_common.py and private sitecustomize.py compilation passed",
+  "measurement_fixture": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/author_fixture/fixture.derive.completed.json",
+    "sha256": "2430388c5341c9d936f173d4ceb63a2c339cda0da0b5c9d02cfdc9002cee8457"
+  },
+  "fresh_spawn_before": {
+    "torch": 2,
+    "blosc": 8
+  },
+  "fresh_spawn_after": {
+    "torch": 2,
+    "blosc": 2
+  },
+  "input_observations": "Exactly64 selected closed receipt records copied; names/counts/sourceSHA matched frozen assessment and selected raw-sidecar attrs. No raw or sidecar chunk payload scans; raw hashes checked only during eventual timed execution.",
+  "runtime": "Same qualified ac4 checkout/interpreter/native objects as completed pilot, plus privately scoped pinned Blosc startup hook.",
+  "pending": "Independent operational review and parent launch. No actual common-data stage executed."
+}

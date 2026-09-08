@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "registered_utc": "2026-09-08T00:50:26.339897+00:00",
+  "scope": "Exactly first 32 registered closed raw shards of each registered run; 64 shards / 531412 physical rows; no automatic expansion",
+  "original_registration": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preregistration.json",
+    "sha256": "86de876067f255a36abd5a0f109ece4e9efdc899e2d1fb091750b7d75bc640bf"
+  },
+  "pins": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preregistration.json",
+      "sha256": "86de876067f255a36abd5a0f109ece4e9efdc899e2d1fb091750b7d75bc640bf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/launch.json",
+      "sha256": "8bd65b7bb18f6032e864d9defa8e7f29cbba4e97c2a613e59eb309964ced277b"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json",
+      "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.closed_receipts.jsonl",
+      "sha256": "8684984ed17e457245f2e54c1e731aa46be7f20ecf2b46a51855eac28c88ab5e"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json",
+      "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.closed_receipts.jsonl",
+      "sha256": "f27dc5c265448ccc1ea38b57cd0dbc30a5db84fdb2f5317fdfc25ba7b84012ed"
+    },
+    {
+      "path": "/tmp/deepfin-g10-pilot-tools/scripts/derive_corpus_targets.py",
+      "sha256": "7886094a27484ba86571819b86f3a1735d2078a3293981917dd983df292590bf"
+    },
+    {
+      "path": "/tmp/deepfin-g10-pilot-tools/scripts/gen_sf_rooted_corpus.py",
+      "sha256": "4bb5e22e81db93c74cfe88d2362136311b001e40e0254f8ff0adc9f3858ea655"
+    }
+  ],
+  "script_sha256": "ccfb63a100825ebd6aa01b8ddb36c7860278fec1a9eb7ead4eba662bdb6a00b3",
+  "resources": {
+    "workers": 2,
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "numeric_threads": 2,
+    "nice": 19,
+    "ionice_class": 3,
+    "gpu_hidden": true,
+    "timeout_seconds": 885,
+    "kill_after_seconds": 15
+  },
+  "measurements": [
+    "phase0 d9 complete flag, ranks1..legalwidth, duplicate UCI moves, missing/extra legal support, finite scores and full-width protocol",
+    "missing result counted independently with source-qualified references",
+    "latest-phase d9 per-move value observability and best value, separate from phase0 policy",
+    "compressed source SHA computed during the sole streamed decode, stable source stats before/after; receipt/manifest pins before/after",
+    "all structural failure references; five examples per source; wall/user/system/RSS"
+  ],
+  "limitations": [
+    "Structural label census only: no full-history input encoding, no BT4 sidecar payload verification, no derived corpus, no labels changed.",
+    "Result-and-policy-and-value structural count is a preparation eligibility candidate, not full derivation qualification or a selected exclusion policy.",
+    "Later-phase d9 value semantics intentionally follow existing RowBank.value_at: last phase observation per phase0 move, regardless of later block complete flag.",
+    "No prevalence inference beyond the fixed registered 64 shards."
+  ]
+}

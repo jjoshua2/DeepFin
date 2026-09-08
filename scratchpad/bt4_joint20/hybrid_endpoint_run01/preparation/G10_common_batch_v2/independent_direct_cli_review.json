@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "status": "PASS_DIRECT_CLI_CORRECTION_PROPOSAL_ONLY",
+  "reviewed_utc": "2026-09-08T00:52:42.368623+00:00",
+  "files": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/run_common.py": "500f5a85494109f57e8b40d5689ee2105d3f2a72449c7c676d523cc09482062a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/python_bootstrap/sitecustomize.py": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/proposal.json": "4b72140d4d3f31509fc0f508dfda9bab8567b29ae763e2b49037bcc49be1c9e7",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/exception_transport_readout.json": "77b48f691e32881f4c0ae0ac368300c4cc45098a6a76ad643b2e26da20e99801",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/commands.json": "c9e20e930f804226242b814eac5d62e480051bd303d70c76e0d280d9247a9802",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_manifest.json": "22b81cf782c039bb14da2f6cbb7bf63a49388934f20a988cc9c6d52f9467b3c5"
+  },
+  "independently_verified_evidence_pins": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_original_error.log": "e7ec0a5d023210cde67a020c1d15f57329b8a4ed581996dc992e091d3776588c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_positive.log": "0d08ffc38a9ec1d7e9c00458cbf147b6419da828799a8b3ed9e0034291536898",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_positive_caps.jsonl": "c047a25da7d3d642ffb19ac7a37c94171c1e70a975177126906c76aa8069dd70",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/direct_positive_derive_summary.json": "d9731879e1de09a942a749bd361b8e7f14c9f9d83face9df5ce619677626951a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/runpy_error_timeout.log": "3108e2b065577462ba5d7e78ee8a0da0ee6890482f01193130442e37c4267cbf",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/test_only_hook_observer.py": "c9d50263c4bfa65ebaa9321ad6d0198a44c7752c19d30ffe00c162bbe893365a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/manifest.json": "cb88b2a82871b05edc517078a858277bae547e41e300bc55e2d443c3a1a748a4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/w00-00000.jsonl.zst": "049328485eb7bcb014eaba521c1ab6adbd525f76b1c1e2b04434cdd1ccd1f356",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/w00-00001.jsonl.zst": "d96e2161c14d11f82d720122af08dd750541328a5e87431e70d5387621c2ea65",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/negative/corpus/w00.progress.jsonl": "a063b35485ce605b0c315ceeb5727bc15cfba86b526aea666b67577b7806023a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/manifest.json": "cb88b2a82871b05edc517078a858277bae547e41e300bc55e2d443c3a1a748a4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/w00-00000.jsonl.zst": "f0dab8f5c19f9fe72332f97f2d5b4b192f9c0bf48bc9731ae4d9ad607d324fe8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/w00-00001.jsonl.zst": "2f4dc35fc4ebf18f091ba66444158249a7e6a663bcf68328195d9e3d7b1e26ff",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/positive/corpus/w00.progress.jsonl": "21616f07b21aba4a26910fc394c1b80192a03f833284d688d1aff65fe6021777",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/make_negative_fixture.py": "607c3d51f22103c2adb5230d082128ac3b589f87fe7bc83235756e32ed165e10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v2/diagnosis/reproduction_fixtures/make_positive_fixture.py": "87147161f85e260ac9cee359999281f567addd881c3b2e719d5bf3c60ee56873"
+  },
+  "actual_delta": "Only remove BOOT runpy string and replace python -c/runpy argv with python SCRIPT argv; all supervision, resource, guard, qualification and strict source behavior bytes otherwise identical.",
+  "findings": [],
+  "evidence_interpretation": [
+    "Actual old wrapper fixture loses a custom worker CorpusIntegrityError in Pool result unpickling: temporary __main__ lacks its class. The result thread stops and pool.map remains pending until the external timeout.",
+    "Actual direct script fixture instead propagates original CorpusIntegrityError and exits1. It tests the same exception class used for the recovered malformed-support failure without replaying operational data.",
+    "Actual direct two-worker positive fixture emits4/4 source rows; both observed spawn workers report Torch2/Blosc2 through a test observer invoking the unchanged private hook. Direct script execution fixes normal multiprocessing main-module reconstruction while the existing startup hook retains compression caps.",
+    "Positive shutdown records a resource_tracker warning for one semaphore. It does not invalidate the complete4-row summary or error propagation result; this warning remains in original evidence."
+  ],
+  "limitations": [
+    "Tests were executed by author; reviewer read the raw logs, fixture source/bytes, exact command records, summaries and all compact evidence hashes, without repeating them.",
+    "Synthetic negative lacks depth9; it is not a second operational malformed-row test. No production corpus read or census repeated.",
+    "This qualifies the minimal invocation correction only. No v2 registration/launch exists; revised source eligibility and complete frozen runtime/manifest binding remain necessary before a new bounded batch.",
+    "Original failed batch and executed runner remain untouched."
+  ]
+}
