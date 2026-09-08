@@ -1,0 +1,34 @@
+{
+  "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+  "checkpoint": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1/checkpoint.pt",
+    "role": "SoftSF10",
+    "sha256": "3cf979d0a2f2b4d0f8fd5a9398c36d6d7c4f39158144b475e08f68a2ac44b1bd"
+  },
+  "complete": true,
+  "historical_valid_control": false,
+  "historical_validity_problems": [
+    "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+    "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+    "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+  ],
+  "input_pins": {
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+    "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10/derive_targets_summary.json": "be4bc2b477574d0a1e0d72ef52d45273170964669253bec5d9f08a0f7fcaabc3",
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10/sf_policy_rewrite_summary.json": "cead18347ff448e6f18caefd6cbfe26a5366f868a4f23c696a15958e8bf52276",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18"
+  },
+  "physical_plan_sha256": "7be88a3293b48464410e64ee1f0bad6e7ed16f9e9962ebbdef192e4f23149be1",
+  "role": "SoftSF10",
+  "run": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1",
+  "schedule": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/SoftSF10_training/realized_schedule.json",
+    "sha256": "ae4c33cdd30c7a147ae29fd059caca8b0d7c4fbd12a1f15d3ed6fe1ca05ccfc2"
+  },
+  "summary_sha256": "19f2190ffa93e46146e04a67d89e7fc50b59d76041f051734537d45873495a18",
+  "training_charge_seconds": 9519.006634206977
+}

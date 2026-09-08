@@ -1,0 +1,91 @@
+"""Assemble saved references and CPU-only runtime metadata; never creates an ORT session."""
+import hashlib, json, os, subprocess, sys, time
+from pathlib import Path
+import numpy as np
+import onnxruntime as ort
+
+STATE = Path(__file__).resolve().parent
+ROOT = Path('/home/josh/projects/chess')
+POLICY = STATE.parent/'training_sample_v1/run'
+VALUE = ROOT/'scratchpad/bt4_joint20/value_bootstrap_readiness_v1/sample_v1/run'
+
+def sha(path):
+    h=hashlib.sha256()
+    with Path(path).open('rb') as f:
+        for b in iter(lambda:f.read(1<<20),b''):h.update(b)
+    return h.hexdigest()
+
+def stamp(path):
+    s=Path(path).stat()
+    return [s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns]
+
+def pin(path):
+    path=Path(path).resolve(); before=stamp(path); digest=sha(path)
+    assert before==stamp(path)
+    return {'path':str(path),'sha256':digest,'bytes':before[2],'stat':before}
+
+def write(name, data):
+    with (STATE/name).open('x') as f:json.dump(data,f,indent=2,allow_nan=False);f.write('\n')
+
+def main():
+    assert os.environ['CUDA_VISIBLE_DEVICES']==''
+    assert np.__version__=='1.26.2' and ort.__version__=='1.23.2'
+    consumed={}
+    def consume(path, expected=None):
+        item=pin(path)
+        if expected:
+            assert item['sha256']==expected['sha256'] and item['bytes']==expected['bytes']
+        consumed[str(path)]=item
+        return path
+    pc=json.loads(consume(POLICY/'complete.json').read_text())
+    vc=json.loads(consume(VALUE/'complete.json').read_text())
+    assert pc['status']=='COMPLETE_DESCRIPTIVE_TRAINING_SAMPLE'
+    assert vc['status']=='COMPLETE_MATCHED_VALUE_BANK'
+    rows=[]; feeds=[]; policies=[]; values=[]
+    def bank(base,name,proof):return consume(base/name,proof['outputs'][name])
+    ids=json.loads(bank(VALUE,'identities.json',vc).read_text())
+    with np.load(bank(VALUE,'source_inputs.npz',vc),allow_pickle=False) as z:
+        value_feeds=z['ceres_byte_inputs'].copy()
+    for b in range(32):
+        meta=json.loads(bank(POLICY,f'batch_{b:03d}.json',pc).read_text())
+        assert meta['first_row']==4*b and len(meta['rows'])==4
+        with np.load(bank(POLICY,f'batch_{b:03d}.npz',pc),allow_pickle=False) as z:
+            x=z['inputs'].copy(); p=z['policy_logits'].copy()
+        with np.load(bank(VALUE,f'Ceres.{b:03d}.npz',vc),allow_pickle=False) as z:v=z['value'].copy()
+        assert x.dtype==np.uint8 and x.shape==(4,64,137)
+        assert p.dtype==v.dtype==np.float16 and p.shape==(4,1858) and v.shape==(4,3)
+        assert np.isfinite(p).all() and np.isfinite(v).all()
+        for j,r in enumerate(meta['rows']):
+            i=4*b+j; identity=ids[i]
+            for k in ['source_dir','raw_shard','physical_row','derived_shard','derived_row','worker_id','game_id','ply','input_key','weight','fen']:
+                assert r[k]==identity[k],(i,k)
+            assert sha_bytes(x[j])==r['tpg_sha256']==identity['ceres_input_sha256']
+            idx=r['leela_indices'];assert len(idx)==len(set(idx))==len(r['legal_uci'])>0
+            assert all(type(k) is int and 0<=k<1858 for k in idx)
+            rows.append({**identity,'leela_indices':idx,'legal_uci':r['legal_uci']})
+        feeds.append(x);policies.append(p);values.append(v)
+    x=np.concatenate(feeds);assert np.array_equal(x,value_feeds)
+    with (STATE/'references.npz').open('xb') as f:
+        np.savez_compressed(f,inputs=x,cpu_policy=np.concatenate(policies),cpu_value=np.concatenate(values))
+    write('reference_rows.json',rows)
+    for path,item in consumed.items():assert stamp(path)==item['stat']
+    write('reference_assembly.json',{'status':'PASS_SAVED_INPUT_AND_CPU_OUTPUT_JOIN_NO_INFERENCE','created_unix':time.time(),'rows':128,'cpu_reference':{'ort':'1.29.0','batch':4,'optimization':'extended','policy_output':'policy','value_output':'value','value_kind':'raw float16 logits WDL current side to move, T1 interpretation'},'consumed':list(consumed.values()),'outputs':[pin(STATE/'references.npz'),pin(STATE/'reference_rows.json')],'scope':'Only the saved 128 selected rows; no source corpus, history replay or CPU inference.'})
+    cudnn=Path('/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib')
+    capi=Path(ort.__file__).parent/'capi'
+    libs=[*cudnn.glob('*.so*'),*capi.glob('*.so*')]
+    paths=[Path(sys.executable),Path(ort.__file__),capi/'onnxruntime_inference_collection.py',Path(np.__file__),*libs]
+    from numpy.core import _multiarray_umath
+    paths.append(Path(_multiarray_umath.__file__))
+    env={**os.environ,'LD_LIBRARY_PATH':str(cudnn)+':/usr/local/cuda/targets/x86_64-linux/lib'}
+    ldd=subprocess.check_output(['/usr/bin/ldd',str(capi/'libonnxruntime_providers_cuda.so')],env=env,text=True)
+    assert 'not found' not in ldd,ldd
+    # Record all resolved CUDA-EP dependencies; no dlopen, CUDA context or inference.
+    for line in ldd.splitlines():
+        if '=> /' in line:paths.append(Path(line.split('=>',1)[1].strip().split()[0]))
+    pins=[pin(p) for p in sorted(set(p.resolve() for p in paths))]
+    write('runtime_inspection.json',{'status':'PASS_CPU_IMPORT_AND_LIBRARY_RESOLUTION_NO_SESSION','python':sys.version,'executable':str(Path(sys.executable).resolve()),'numpy':np.__version__,'onnxruntime':ort.__version__,'available_providers':ort.get_available_providers(),'LD_LIBRARY_PATH':env['LD_LIBRARY_PATH'],'ldd':ldd,'pins':pins,'limitation':'Provider availability and library resolution do not establish a working CUDA session; that is the proposed probe.'})
+    print('Prepared saved references and runtime import/library identities; no ORT session created.')
+
+def sha_bytes(x):return hashlib.sha256(x.tobytes()).hexdigest()
+
+if __name__=='__main__':main()

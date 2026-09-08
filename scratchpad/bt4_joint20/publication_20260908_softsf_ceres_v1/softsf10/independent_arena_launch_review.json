@@ -1,0 +1,278 @@
+{
+  "schema": 1,
+  "status": "PASS_FINAL_SOFTSF10_B100_LAUNCH_READINESS_NO_LAUNCH",
+  "reviewed_unix": 1788906825.5134168,
+  "bindings": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/SoftSF10_B100.preparation_manifest.json",
+      "sha256": "2eab10b20d9fb1b782f812d9f8f7da8eccb02c8428a1f55bf2e553e23d9468de",
+      "bytes": 2301
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/SoftSF10_B100.launch_manifest.json",
+      "sha256": "a23cbf3aceac07bb352d450bfc77f6ff08324395f82e78af6f9319f4a3acd6ca",
+      "bytes": 2552
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/qualified_preparation.json",
+      "sha256": "5c251839ef71d43a95c44f1015d7de84fcdc92591e4c138158a67f40bc44b1fb",
+      "bytes": 9577
+    },
+    {
+      "path": "/tmp/deepfin-softsf10-screen-tools/scripts/bt4_recipe_screen.py",
+      "sha256": "c307520e2aba16a93e5a63b12cd221803b6edbd875ea224b7c95bc27d20d95f0",
+      "bytes": 23605
+    },
+    {
+      "path": "/tmp/deepfin-softsf10-screen-tools/scripts/bt4_recipe_readout.py",
+      "sha256": "eaee60b49a633fde040fef02b543cd4a5db20c29cac5d64fed2c11c7f2ca76a5",
+      "bytes": 33407
+    },
+    {
+      "path": "/tmp/deepfin-softsf10-screen-tools/scripts/bt4_direct_screen.py",
+      "sha256": "41d736832d026f32ec90b36cd75d541c7004540df37d686bd78bae268c36c329",
+      "bytes": 22348
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/SoftSF10_training/training.complete.json",
+      "sha256": "63137f6b48defdd1a181a168cb0b532ca64acf88c90516f0898ea99d73ada3cf",
+      "bytes": 3009
+    },
+    {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1/summary.json",
+      "sha256": "19f2190ffa93e46146e04a67d89e7fc50b59d76041f051734537d45873495a18",
+      "bytes": 2454126
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/SoftSF10_training/realized_schedule.json",
+      "sha256": "ae4c33cdd30c7a147ae29fd059caca8b0d7c4fbd12a1f15d3ed6fe1ca05ccfc2",
+      "bytes": 732277
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training.complete.json",
+      "sha256": "fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799",
+      "bytes": 3018
+    },
+    {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/summary.json",
+      "sha256": "d43427b3c8ddde5e6d661bd48b43a843938fb0d65bfbf5484ee88fe2f11f71e5",
+      "bytes": 2455632
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/realized_schedule.json",
+      "sha256": "371fdb551d9cc4286482a0075a07a46317de02661dfa726427dfd8427837609f",
+      "bytes": 732279
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_identity.json",
+      "sha256": "3197e5b8c54db34def8071f275b3a926160b86adae1b716240c17ba75df1ca1e",
+      "bytes": 2758
+    },
+    {
+      "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/eval/sprt.py",
+      "sha256": "5f778573d4a702e625b3b6d3220536076dd41fd866c749bda9c9fb8aff749056",
+      "bytes": 20854
+    },
+    {
+      "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/scripts/arena_standard.py",
+      "sha256": "c7df9061d119f0f53de90b529a38a641b4fabce88f3eab9afb37a80f11cd6a96",
+      "bytes": 211752
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_qualification.json",
+      "sha256": "8db2ca4cc98f50db23b0675a2c63e44d6a19407f43ac871b359228f117808f1a",
+      "bytes": 6285
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/qualified_preparation.panel.json",
+      "sha256": "b4f1d16b488ff9efa0c466706b74595559a807c99a0e4ca75379a4d0745cfb6c",
+      "bytes": 204955
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/arena_cpu_preparation.actual_complete.json",
+      "sha256": "65f24ad62f6c87a28fe4603434b73f1c5e17fab9b56b6fe7326b305a7b5874fa",
+      "bytes": 1048
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/SoftSF10.dataset_qualification.json",
+      "sha256": "fe54f267dfb008cea9a5b7d875d7aedb9cba98f1b563e4eae253bb20859fc35b",
+      "bytes": 2176
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10/sf_policy_rewrite_summary.json",
+      "sha256": "cead18347ff448e6f18caefd6cbfe26a5366f868a4f23c696a15958e8bf52276",
+      "bytes": 61150943
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10/derive_targets_summary.json",
+      "sha256": "be4bc2b477574d0a1e0d72ef52d45273170964669253bec5d9f08a0f7fcaabc3",
+      "bytes": 1032207
+    }
+  ],
+  "training": {
+    "candidate": {
+      "role": "SoftSF10",
+      "checkpoint": {
+        "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1/checkpoint.pt",
+        "role": "SoftSF10",
+        "sha256": "3cf979d0a2f2b4d0f8fd5a9398c36d6d7c4f39158144b475e08f68a2ac44b1bd"
+      },
+      "rows": 18910484,
+      "updates": 36935,
+      "finite_windows": 420,
+      "games": 97968,
+      "last_window_steps": 63,
+      "last_window_samples": 32193,
+      "training_charge_seconds": 9519.006634206977,
+      "canonical": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+      "physical": "7be88a3293b48464410e64ee1f0bad6e7ed16f9e9962ebbdef192e4f23149be1",
+      "historical_valid_control": false,
+      "historical_validity_problems": [
+        "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+        "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+        "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+      ]
+    },
+    "reference": {
+      "role": "B100",
+      "checkpoint": {
+        "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+        "role": "B100",
+        "sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62"
+      },
+      "rows": 18910484,
+      "updates": 36935,
+      "finite_windows": 420,
+      "games": 97968,
+      "last_window_steps": 63,
+      "last_window_samples": 32193,
+      "training_charge_seconds": 9258.993950499978,
+      "canonical": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+      "physical": "a48c86e454f51a63297d8b5731c8c60d7c831827a46f2bf0dc142b336364a342",
+      "historical_valid_control": false,
+      "historical_validity_problems": [
+        "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+        "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+        "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+      ]
+    }
+  },
+  "commands": {
+    "low": [
+      "/usr/bin/python3",
+      "scripts/arena_standard.py",
+      "--candidate",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1/checkpoint.pt",
+      "--reference",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+      "--games",
+      "1000",
+      "--mode",
+      "matched_sims",
+      "--sims",
+      "100",
+      "--seed",
+      "42",
+      "--openings",
+      "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+      "--opening-plies",
+      "16",
+      "--max-plies",
+      "300",
+      "--temperature",
+      "0.1",
+      "--search-shape",
+      "training",
+      "--cand-gumbel",
+      "policy_temp=1.0",
+      "--ref-gumbel",
+      "policy_temp=1.0",
+      "--compile",
+      "on",
+      "--device",
+      "cuda",
+      "--max-concurrent-games",
+      "256",
+      "--eval-max-batch",
+      "4096",
+      "--max-seconds",
+      "5340.0",
+      "--games-out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/arena.games.jsonl",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/arena.results.jsonl",
+      "--sprt",
+      "elo0=0,elo1=15,alpha=.05,beta=.10,first_pairs=128,step_pairs=64",
+      "--sprt-lookahead-pairs",
+      "64"
+    ],
+    "high": [
+      "/usr/bin/python3",
+      "scripts/arena_standard.py",
+      "--candidate",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1/checkpoint.pt",
+      "--reference",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+      "--games",
+      "256",
+      "--mode",
+      "matched_sims",
+      "--sims",
+      "400",
+      "--seed",
+      "42",
+      "--openings",
+      "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+      "--opening-plies",
+      "16",
+      "--max-plies",
+      "300",
+      "--temperature",
+      "0.1",
+      "--search-shape",
+      "training",
+      "--cand-gumbel",
+      "policy_temp=1.0",
+      "--ref-gumbel",
+      "policy_temp=1.0",
+      "--compile",
+      "on",
+      "--device",
+      "cuda",
+      "--max-concurrent-games",
+      "128",
+      "--eval-max-batch",
+      "4096",
+      "--max-seconds",
+      "5340.0",
+      "--games-out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/arena.games.jsonl",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/arena.results.jsonl"
+    ]
+  },
+  "CPU_preparation_seconds": 139.57848572731018,
+  "opening_panel": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/qualified_preparation.panel.json",
+    "sha256": "b4f1d16b488ff9efa0c466706b74595559a807c99a0e4ca75379a4d0745cfb6c"
+  },
+  "runtime_head": "82298a5d4010e7097f473712e3720de229522427",
+  "checks": [
+    "Final launch differs from prepared manifest only by the exact completed preparation pin.",
+    "Both actual completed producer receipts/summaries/schedules pass the existing metadata-only matched-training admission; independently summed420 windows/36935 updates/18910484 rows, finite values and zero skips/retries.",
+    "Saved source-column/order witnesses match across candidate and B100; canonical dc687 and historical caveats retained. Physical corpus hashes remain distinct.",
+    "Actual generated low/high command passes reader command/settings admission, with exact prescribed direction, prior1, depth/pair limits, low-only lookahead64 and original82298 runtime.",
+    "Source execute loop runs protected high after any VALID_CELL low, with no H1-only branch; invalid low halts.5400s stage caps and package GPU cost accounting unchanged.",
+    "Actual CPU preparation completed with CUDA uninitialized, original runtime/native import paths, actual candidate/reference models and full500-opening history/prefix proof; no model/book operation repeated by reviewer.",
+    "Genuine SoftSF policy rewrite changes only policy_target and preserves16 nonpolicy arrays; historical qualifications reused without payload checks."
+  ],
+  "output_absent_at_review": true,
+  "findings": [],
+  "limits": [
+    "No arena launch, new games, model loading/hashing, original book resampling, corpus decoding, inference, native rebuild or fullsuite.",
+    "Checkpoint bytes and native imports are supported by the just-completed pinned CPU producer and its source/stability checks; this reviewer did not repeat them.",
+    "Schedule proof retains its code-backed row-order, history/purity and original-runtime limitations. This is same-seed development evidence, no promotion or independent strength confirmation.",
+    "Metadata source input proofs are reused; no training-process runtime attestation beyond the existing producer/schedule receipts.",
+    "Root owns actual detached operator command/start/terminal capture and GPU lease wait. This receipt is readiness only."
+  ]
+}

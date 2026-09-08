@@ -1,0 +1,144 @@
+"""One CUDA session over already-banked bytes; no encoders, raw corpus or retry."""
+import argparse, collections, hashlib, json, os, resource, signal, sys, time
+from pathlib import Path
+import numpy as np
+
+STATE = Path(__file__).resolve().parent
+
+def require(ok, message):
+    if not ok: raise ValueError(message)
+
+def write(path, value):
+    with Path(path).open('x') as f:json.dump(value,f,indent=2,allow_nan=False);f.write('\n')
+
+def digest(path):
+    h=hashlib.sha256()
+    with Path(path).open('rb') as f:
+        for b in iter(lambda:f.read(1<<20),b''):h.update(b)
+    return h.hexdigest()
+
+def stamp(path):
+    s=Path(path).stat();return [s.st_dev,s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns]
+
+def softmax(row):
+    x=np.asarray(row,dtype=np.float64);x=np.exp(x-np.max(x));return x/x.sum()
+
+def compare(policy,value,ref_policy,ref_value,rows,tol):
+    require(policy.dtype==value.dtype==np.float16,'native output dtype')
+    require(policy.shape==ref_policy.shape and value.shape==ref_value.shape,'output shapes')
+    require(np.isfinite(policy).all() and np.isfinite(value).all(),'nonfinite output')
+    logit_diff=max(float(np.max(np.abs(policy.astype(np.float64)-ref_policy))),float(np.max(np.abs(value.astype(np.float64)-ref_value))))
+    raw_ok=bool(np.allclose(policy,ref_policy,atol=tol['logit_atol'],rtol=tol['logit_rtol']) and np.allclose(value,ref_value,atol=tol['logit_atol'],rtol=tol['logit_rtol']))
+    pmax=vmax=0.;ties=0;top_same=0
+    for i,r in enumerate(rows):
+        idx=r['leela_indices'];require(len(idx)==len(set(idx))==len(r['legal_uci'])>0,'legal roster')
+        require(all(type(k) is int and 0<=k<1858 for k in idx),'legal index range')
+        p=softmax(policy[i,idx]);q=softmax(ref_policy[i,idx]);v=softmax(value[i]);w=softmax(ref_value[i])
+        require(np.isfinite(p).all() and np.isfinite(v).all() and abs(p.sum()-1)<1e-12 and abs(v.sum()-1)<1e-12,'legal/WDL normalization')
+        pmax=max(pmax,float(np.max(np.abs(p-q))));vmax=max(vmax,float(np.max(np.abs(v-w))))
+        if int(np.argmax(p))==int(np.argmax(q)):top_same+=1
+        else:
+            ties+=1
+            require(float(q.max()-q[int(np.argmax(p))])<=2*tol['probability_atol'],'material policy top-move change')
+    result={'max_raw_logit_abs_difference':logit_diff,'raw_logits_within_tolerance':raw_ok,'max_legal_probability_abs_difference':pmax,'max_primary_WDL_probability_abs_difference':vmax,'policy_top_move_same':top_same,'near_tie_top_move_changes':ties}
+    result['pass']=raw_ok and pmax<=tol['probability_atol'] and vmax<=tol['probability_atol']
+    return result
+
+def provider_proof(events,allowed):
+    counts=collections.Counter();cpu=[];neural=0
+    for e in events:
+        a=e.get('args',{});provider=a.get('provider')
+        if not provider:continue
+        op=a.get('op_name','');counts[(provider,op)]+=1
+        if provider=='CUDAExecutionProvider':
+            neural+=int(op in ('Gemm','MatMul','FusedMatMul','FusedGemm'))
+        elif provider=='CPUExecutionProvider':
+            outputs=a.get('output_type_shape',[])
+            require(op in allowed and outputs,'unapproved CPU kernel: '+str((op,e.get('name'))))
+            elements=0
+            for tensor in outputs:
+                require(isinstance(tensor,dict) and tensor,'missing CPU output type')
+                for dtype,shape in tensor.items():
+                    require(dtype in ('int64','int32','bool'),'CPU floating neural compute')
+                    require(all(type(n) is int and n>=0 for n in shape),'CPU dynamic shape')
+                    elements+=int(np.prod(shape,dtype=np.int64))
+            require(elements<=4096,'large CPU shape output')
+            cpu.append({'name':e.get('name'),'op':op,'outputs':outputs,'duration_us':e.get('dur')})
+        else:raise ValueError('unexpected profiled provider '+provider)
+    require(neural>0,'no profiled CUDA neural compute')
+    return {'CUDA_neural_kernel_events':neural,'kernel_counts':[{'provider':p,'op':o,'events':n} for (p,o),n in sorted(counts.items())],'CPU_shape_events':cpu,'scope':'First B1 call in the sole session; remaining calls share its graph partition and Python fallback remains disabled. CPU shape outputs must be small integer/bool tensors; no CPU floating compute accepted.'}
+
+def main():
+    ap=argparse.ArgumentParser();ap.add_argument('--plan',required=True);ap.add_argument('--plan-sha256',required=True);ap.add_argument('--deadline',type=float,required=True);a=ap.parse_args()
+    plan_path=Path(a.plan);require(digest(plan_path)==a.plan_sha256,'plan hash');p=json.loads(plan_path.read_text());out=Path(p['output'])
+    def guard():
+        require(time.time()<a.deadline-40,'child work deadline')
+        require(not any(Path(s).exists() for s in p['stop_paths']),'STOP')
+        for x in p['pins']:require(stamp(x['path'])==x['stat'],'input/runtime storage mutation: '+x['path'])
+    def stopped(sig,frame):raise RuntimeError('signal '+str(sig))
+    for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,stopped)
+    phase='admission';session=None
+    try:
+        resource.setrlimit(resource.RLIMIT_FSIZE,(p['output_limit_bytes'],)*2)
+        guard();require(os.environ.get('CUDA_VISIBLE_DEVICES')=='0','GPU selection');require(os.sched_getaffinity(0)==set(p['cpu_affinity']),'CPU affinity')
+        require(os.getpriority(os.PRIO_PROCESS,0)==19,'priority')
+        for k in ('OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS'):require(os.environ[k]=='2','numeric threads')
+        require(os.environ['LD_LIBRARY_PATH']==p['environment']['LD_LIBRARY_PATH'],'library environment')
+        import onnxruntime as ort
+        require(ort.__version__==p['versions']['onnxruntime'] and np.__version__==p['versions']['numpy'],'runtime versions')
+        require('CUDAExecutionProvider' in ort.get_available_providers(),'CUDA EP unavailable')
+        with np.load(p['references'],allow_pickle=False) as z:x=z['inputs'];rp=z['cpu_policy'];rv=z['cpu_value']
+        rows=json.loads(Path(p['rows']).read_text());require(x.dtype==np.uint8 and x.shape==(128,64,137) and rp.shape==(128,1858) and rv.shape==(128,3),'bank layout')
+        for i,r in enumerate(rows):require(hashlib.sha256(x[i].tobytes()).hexdigest()==r['ceres_input_sha256'],'row input identity')
+        so=ort.SessionOptions();so.intra_op_num_threads=2;so.inter_op_num_threads=1;so.execution_mode=ort.ExecutionMode.ORT_SEQUENTIAL
+        so.graph_optimization_level=ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED;so.enable_profiling=True;so.profile_file_prefix=str(out/'ort_profile');so.log_severity_level=2
+        phase='session';t=time.monotonic()
+        session=ort.InferenceSession(p['model']['path'],sess_options=so,providers=[('CUDAExecutionProvider',p['provider_options']),'CPUExecutionProvider'],enable_fallback=False)
+        session.disable_fallback();providers=session.get_providers();opts=session.get_provider_options()
+        require(providers==['CUDAExecutionProvider','CPUExecutionProvider'],'session provider fallback')
+        require(int(opts['CUDAExecutionProvider']['gpu_mem_limit'])==p['provider_options']['gpu_mem_limit'],'CUDA arena cap')
+        ins=session.get_inputs();outs={v.name:v for v in session.get_outputs()}
+        require(len(ins)==1 and ins[0].name=='squares_byte' and ins[0].type=='tensor(uint8)' and ins[0].shape[1:]==[64,137],'input contract')
+        for name,width in [('policy',1858),('value',3)]:require(outs[name].type=='tensor(float16)' and outs[name].shape[-1]==width,'output contract')
+        write(out/'session.json',{'status':'CUDA_SESSION_CREATED_NOT_YET_QUALIFIED','seconds':time.monotonic()-t,'providers':providers,'provider_options':opts,'python':sys.version,'executable':sys.executable,'numpy':np.__version__,'onnxruntime':ort.__version__,'build':ort.get_build_info(),'session_threads':[2,1],'optimization':'extended','fallback':False})
+        runs=[];baseline=None;profile_done=False
+        for batch in p['batch_sizes']:
+            pp=[];vv=[];latencies=[]
+            for first in range(0,128,batch):
+                guard();phase=f'B{batch}.row{first}';t=time.perf_counter()
+                policy,value=session.run(['policy','value'],{'squares_byte':x[first:first+batch]})
+                elapsed=time.perf_counter()-t
+                with (out/f'B{batch}.{first:03d}.npz').open('xb') as f:np.savez_compressed(f,policy=policy,value=value)
+                profiled=not profile_done
+                if profiled:
+                    profile=Path(session.end_profiling());proof=provider_proof(json.loads(profile.read_text()),p['allowed_CPU_shape_ops'])
+                    proof.update(profile={'path':str(profile),'sha256':digest(profile),'bytes':profile.stat().st_size});write(out/'provider_proof.json',proof);profile_done=True
+                result=compare(policy,value,rp[first:first+batch],rv[first:first+batch],rows[first:first+batch],p['tolerances'])
+                record={'batch':batch,'first_row':first,'rows':len(policy),'session_run_seconds':elapsed,'profiled_call':profiled,'CPU_reference':result}
+                if baseline is not None:record['GPU_B1_reference']=compare(policy,value,baseline[0][first:first+batch],baseline[1][first:first+batch],rows[first:first+batch],p['tolerances'])
+                write(out/f'B{batch}.{first:03d}.json',record)
+                require(result['pass'] and record.get('GPU_B1_reference',{'pass':True})['pass'],'numerical acceptance failed')
+                pp.append(policy);vv.append(value);latencies.append(elapsed);guard()
+            if baseline is None:baseline=(np.concatenate(pp),np.concatenate(vv))
+            warm=latencies[1:];warm_rows=128-batch
+            runs.append({'batch':batch,'rows':128,'calls':len(latencies),'session_run_seconds':sum(latencies),'first_call_seconds':latencies[0],'remaining_calls_seconds':sum(warm),'remaining_rows':warm_rows,'remaining_rows_per_second':warm_rows/sum(warm),'limitation':'One fixed ascending batch sweep, first call separately reported; same selected rows reused across batch shapes. Host session.run includes input/output transfer and synchronization; normalization/storage/guards excluded. No production-labeler throughput claim.'})
+            write(out/f'B{batch}.complete.json',runs[-1])
+        guard();require(session.get_providers()==providers,'providers changed');del session;session=None
+        loaded=[]
+        for line in Path('/proc/self/maps').read_text().splitlines():
+            path=line.split()[-1]
+            if path.startswith('/') and any(k in path for k in ('onnxruntime','libcud','libcublas','libcurand','libcufft')):loaded.append(path)
+        loaded_proof=[]
+        expected_libraries={str(Path(v['path']).resolve()):v for v in p['pins']}
+        for path in sorted(set(loaded)):
+            guard();before=stamp(path);h=digest(path);require(before==stamp(path),'loaded library changed')
+            expected=expected_libraries.get(str(Path(path).resolve()))
+            require(expected is not None and expected['sha256']==h and expected['stat']==before,'loaded CUDA/ORT library is not the pinned binary: '+path)
+            loaded_proof.append({'path':path,'stat':before,'sha256':h})
+        guard()
+        write(out/'child_completed.json',{'status':'PASS_CERES_CUDA_SAVED_SAMPLE_PROBE','ended_unix':time.time(),'plan_sha256':a.plan_sha256,'rows':128,'runs':runs,'loaded_libraries':loaded_proof, 'resource_usage':{'maxrss_KiB':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'user_seconds':resource.getrusage(resource.RUSAGE_SELF).ru_utime,'system_seconds':resource.getrusage(resource.RUSAGE_SELF).ru_stime},'limitations':p['limitations']})
+    except BaseException as error:
+        write(out/'child_failed.json',{'status':'FAILED_NO_RETRY','phase':phase,'ended_unix':time.time(),'error':repr(error)})
+        raise
+
+if __name__=='__main__':main()

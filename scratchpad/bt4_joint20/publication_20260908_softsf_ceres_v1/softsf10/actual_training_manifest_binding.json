@@ -1,0 +1,25 @@
+{
+  "status": "ACTUAL_COMPLETED_TRAINING_BOUND_FOR_CPU_ARENA_PREPARATION",
+  "observed_unix": 1788906409.4765358,
+  "manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/SoftSF10_B100.preparation_manifest.json",
+    "sha256": "2eab10b20d9fb1b782f812d9f8f7da8eccb02c8428a1f55bf2e553e23d9468de"
+  },
+  "training": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/SoftSF10_training/training.complete.json",
+    "sha256": "63137f6b48defdd1a181a168cb0b532ca64acf88c90516f0898ea99d73ada3cf"
+  },
+  "candidate": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1/checkpoint.pt",
+    "role": "SoftSF10",
+    "sha256": "3cf979d0a2f2b4d0f8fd5a9398c36d6d7c4f39158144b475e08f68a2ac44b1bd"
+  },
+  "schedule": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/SoftSF10_training/realized_schedule.json",
+    "sha256": "ae4c33cdd30c7a147ae29fd059caca8b0d7c4fbd12a1f15d3ed6fe1ca05ccfc2"
+  },
+  "summary_sha256": "19f2190ffa93e46146e04a67d89e7fc50b59d76041f051734537d45873495a18",
+  "training_gpu_seconds": 9519.006634206977,
+  "schedule_stage_seconds": 319.27107518800767,
+  "limit": "Completed saved schedule and summary checked; actual checkpoint content and frozen runtime/book/model preparation checked by existing --prepare consumer next. Historical validity limitations retained."
+}

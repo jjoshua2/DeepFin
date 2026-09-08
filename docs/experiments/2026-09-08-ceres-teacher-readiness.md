@@ -12,8 +12,8 @@ ideas beyond reproducing LC0. Keep SF-derived value targets in these policy
 comparisons, and prioritize a retained-SF policy candidate when exploring Ceres.
 This preference does not erase the [B100 result](2026-09-08-bt4-pure-policy-endpoint.md):
 pure sharpened BT4 policy is a useful diagnostic endpoint and development baseline.
-The [running G50 comparison](2026-09-08-bt4-g50-b100-dose-comparison.md) directly tests
-retaining half of the stored SF policy. Soft-SF preparation continues separately.
+The [completed G50 comparison](2026-09-08-bt4-g50-b100-dose-comparison.md) tested
+retaining half of the stored SF policy and favored B100. [SoftSF10 training](2026-09-08-soft-sf-qualified-training-sample.md#september-8-update-original-epoch-training-complete) has completed separately.
 
 Hypothesis: Ceres supplies useful differences in move ranking beyond BT4, so replacing
 some of BT4's contribution can improve a retained-SF bootstrap. Different architecture
@@ -245,3 +245,45 @@ committing to bulk Ceres labeling. A bounded CUDA compatibility/cost check and a
 source-qualified Ceres sidecar path remain useful preparation for a later matched
 training comparison. Temperature and mixture choices remain prospective; no fit or
 winner was selected from these 128 positions.
+
+## September 8 update: reviewed CUDA probe prepared
+
+One bounded C3 CUDA probe is **prepared and independently reviewed, not launched
+or queued**. It reuses the saved 128 training positions and their exact original
+byte inputs, legal rosters, raw policy logits and primary value logits. It adds no
+new position selection, history replay or CPU reference inference. Existing
+[policy evidence](evidence/ceres-bootstrap/c3-training-sample-readout.json) and the
+[matched value diagnostic](2026-09-08-sf-anchored-value-bootstrap.md) remain the
+reference banks; the assembled input bank is external and pinned in the manifest.
+
+The plan requests policy and primary WDL together in one ORT CUDA session, sweeping
+batch sizes **1, 4, 16 and 32** once across all 128 positions: **172 calls and 512
+row evaluations**. It retains native float16 logits, legal-policy normalization
+and primary WDL normalization separately, with no secondary-head blend. Prespecified
+engineering tolerances are raw-logit absolute .02 plus relative .002, probability
+absolute .002, and top-move changes only within a .004 reference probability gap.
+These are numerical acceptance limits, not strength or teacher-selection criteria.
+
+The CPU reference used ORT 1.29.0; the planned GPU execution uses installed ORT
+1.23.2. Consequently this compares combined backend/version/batch variation, not
+isolated device error. Only the first batch-one call is profiled: it must show
+CUDA matrix compute and only permitted small integer/bool CPU shape operations.
+Later calls retain the same session partition and disabled Python fallback; they
+are not independently profiled. The first-call cost is reported separately, and
+one ascending sweep still includes cache and batch-shape effects. Session timing
+includes transfers and synchronous outputs but excludes normalization, storage
+and resource checks; it cannot establish full-labeler throughput.
+
+The **900-second inclusive cap** covers preflight, session startup, all calls,
+readout and cleanup. A busy shared GPU lease or competing compute owner refuses
+rather than queues; no fallback or automatic retry is registered. The ORT CUDA
+arena is capped at 8 GiB. Device/RSS 12 GiB, host availability 16 GiB, local reserve
+150 GiB and aggregate logical output 128 MiB are sampled every five seconds,
+so transient overshoot remains possible. The per-file limit is not an aggregate
+quota. The model identity and default byte-input semantics stay pinned; native
+repetition-edge and nondefault-Q parity remain unresolved.
+
+[Exact plan snapshot](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/ceres_gpu/plan.json)
+· [independent preparation review](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/ceres_gpu/independent_preparation_review.json)
+· [collector source as data](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/ceres_gpu/collect.py.txt)
+· [snapshot manifest](evidence/bt4-bootstrap/softsf-training-ceres-gpu-manifest.json).

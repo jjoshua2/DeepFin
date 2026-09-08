@@ -1,0 +1,132 @@
+{
+  "schema": 1,
+  "status": "PREPARED_FOR_REVIEW_NOT_LAUNCHED_OR_QUEUED",
+  "created_unix": 1788906341.5680869,
+  "plan_sha256": "b43878b598ffe6fea94370d1a7e98ff98f668adf71905d5ba87d1bd6822e9809",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "98ceb0dbcfd23a276dd4b989e82e56e8ebf7cacfec7a5db7791628a9f783098d",
+      "bytes": 5143
+    },
+    {
+      "path": "prepare.py",
+      "sha256": "02124e76d6e624075c2ba41145a7c0893993dc5e06c4d7bab93eeece85c9391a",
+      "bytes": 5659
+    },
+    {
+      "path": "freeze_plan.py",
+      "sha256": "afa04c669c4a1291f85c9e39954707bba30e12c50f99cb3f70a4e1b236cb2d61",
+      "bytes": 7293
+    },
+    {
+      "path": "collect.py",
+      "sha256": "14161c5da30d310cce4a7f442739f64582fd6bfe1e5abe1779cd130b991f6cf1",
+      "bytes": 11815
+    },
+    {
+      "path": "run_probe.py",
+      "sha256": "4c5d081896738b125489e75e64630e24b72c55b5de80a5e261f7dba534160031",
+      "bytes": 6846
+    },
+    {
+      "path": "plan.json",
+      "sha256": "b43878b598ffe6fea94370d1a7e98ff98f668adf71905d5ba87d1bd6822e9809",
+      "bytes": 23457
+    },
+    {
+      "path": "operator_command.json",
+      "sha256": "bd98fa360fa930a0dec5f52f44c5ff7e920c807631a8a3c951ac3e8908fa4718",
+      "bytes": 954
+    },
+    {
+      "path": "references.npz",
+      "sha256": "c9b726994d74d433558fc98f1decb3673d41dab2a0bc8183b6cdaab99a81713b",
+      "bytes": 460552
+    },
+    {
+      "path": "reference_rows.json",
+      "sha256": "4f09017553806c1868c8566a03ee4e047a4d277f9ecbe64cff51a351954f3cf3",
+      "bytes": 192874
+    },
+    {
+      "path": "reference_assembly.json",
+      "sha256": "247767f3de68dce7f97c4fec2560db5144b5225db2a761931de4a3b8e044b17f",
+      "bytes": 38607
+    },
+    {
+      "path": "runtime_inspection.json",
+      "sha256": "30a104d2708070c8044723eecd79bcdd05c399603806249f6da9830fbc8565ac",
+      "bytes": 12047
+    },
+    {
+      "path": "check_preparation.py",
+      "sha256": "f1611d3284d0ecc0e1fafacdc86ab8384b97b74a746d6860244d2d068842699b",
+      "bytes": 3000
+    },
+    {
+      "path": "preparation_checks.json",
+      "sha256": "a8d7baaf99240eeaed4799b03071695c00a7993642c7beb6085dee62f8206931",
+      "bytes": 910
+    }
+  ],
+  "source_input_join": "All128 saved policy/value rows, identities, weights and uint8 bytes match exactly. Reference assembly made no ORT session or source corpus access.",
+  "runtime_preparation": "Actual Python3.10/ORT1.23.2/NumPy1.26.2 imports and CUDA-EP ldd under explicit child-only cuDNN search path passed.30 executable/library/module identities originally hashed, final storage states rechecked; no CUDA context/model session.",
+  "hardware_metadata": {
+    "result": "NVIDIA GeForce RTX 5090, GPU-74f4e66d-9989-28ea-b243-6afea9e766b2, 610.74, 32607",
+    "command": [
+      "/usr/lib/wsl/lib/nvidia-smi",
+      "--query-gpu=name,uuid,driver_version,memory.total",
+      "--format=csv,noheader,nounits"
+    ],
+    "scope": "Read-only host metadata; initial sandbox invocation failed NVML access and host-authorized metadata read succeeded. No inference or GPU process attachment."
+  },
+  "final_checks": {
+    "status": "PASS_CPU_ONLY_PREPARATION_CHECKS_NO_SESSION",
+    "seconds": 0.16478685796028003,
+    "checks": [
+      "actual saved128 CPU references exactly self-match",
+      "material raw/policy perturbation refuses",
+      "nonfinite value refuses",
+      "CUDA compute plus integer shape accepts; CPU-only or CPU floating compute refuses",
+      "actual nonexecuting operator CLI has no output/lease/session side effects"
+    ],
+    "plan_sha256": "b43878b598ffe6fea94370d1a7e98ff98f668adf71905d5ba87d1bd6822e9809",
+    "source_sha256": "f1611d3284d0ecc0e1fafacdc86ab8384b97b74a746d6860244d2d068842699b",
+    "command": [
+      "/usr/bin/python3.10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/check_preparation.py"
+    ],
+    "scope": "Compiled own sources, pure numerical/provider event fixtures and actual --describe route. No ORT session, CUDA work or live process changes."
+  },
+  "actual_final_check_argv": [
+    "/usr/bin/timeout",
+    "--kill-after=5s",
+    "55s",
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/taskset",
+    "-c",
+    "0,1",
+    "/usr/bin/python3.10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/check_preparation.py"
+  ],
+  "environment": {
+    "CUDA_VISIBLE_DEVICES": "",
+    "OMP_NUM_THREADS": "2",
+    "OPENBLAS_NUM_THREADS": "2",
+    "MKL_NUM_THREADS": "2"
+  },
+  "source_revision_note": "Initial plan/source/check bytes retained in before_loaded_library_binding. Final child additionally requires loaded CUDA/ORT binaries to match plan hashes/stamps; final plan and operator hash binding refreshed, five tiny checks repeated in0.165s. No reference assembly or runtime library hash sweep repeated.",
+  "fresh_output_absent": true,
+  "limits": [
+    "This is author preparation evidence, not independent approval or CUDA compatibility PASS.",
+    "Existing owned-stage supervision reused as pinned source; no new process failure benchmark or actual session run.",
+    "Backend/version/batch variability, single ascending sweep cache effects and native repetition-edge limitations remain as registered.",
+    "No SoftSF job, lease, source bank, model, environment installation or active runtime modified."
+  ]
+}
