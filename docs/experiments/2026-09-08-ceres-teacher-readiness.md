@@ -1,8 +1,9 @@
 # Ceres as an additional bootstrap policy teacher
 
-Research direction and compatibility audit, September 8, 2026. The selected C3
-graph now passes a bounded CPU execution and byte-adapter check. No Ceres corpus
-labeling, training or playing comparison has launched.
+Research direction and results, September 8, 2026. C3 passes CPU execution and
+byte-adapter checks. A completed 128-position training sample finds fairly similar
+Ceres/BT4 policies at temperature 1, with 88.28% weighted top-move agreement.
+No bulk Ceres labeling, training or playing comparison has launched.
 
 ## Decision and hypothesis
 
@@ -142,3 +143,105 @@ history, and measure CUDA labeling cost in a reserved slot. Qualify a distinct C
 sidecar identity before bulk labeling; the BT4 labeler remains LC0-specific. Retain
 SF in the proposed mixture comparison and preserve compute for horizon and scale
 transfer rather than expanding into a large teacher grid.
+
+## Training-only policy sample protocol
+
+The registered diagnostic adds Ceres outputs to **128 positions** from the existing
+[qualified 4,096-row training sample](2026-09-08-soft-sf-qualified-training-sample.md).
+Within each of its 64 sampled shard groups, take the two lowest salted SHA256 ranks
+of the source/shard/row identifiers. The selection is fixed before inspecting Ceres
+outputs; no position is replaced because of its policy or result. Selection SHA256:
+`2e24425b7ef5e9a84520b45a51c2dac81cc84bdc47a9c2eee2f52e74eac79d4f`.
+An independent recomputation confirmed the 128 identities and conditional weight
+factor 32. Actual source/shard/game clusters must be counted after joining the raw
+records; a derived-shard/game tuple alone does not establish independent games.
+
+Reuse the existing bank's raw history records and SF/C/BT4 targets. Reconstruct the
+original available move history, check legal replay and source identity, and require
+the reconstructed LC0 input key and float16 input tensor to match the bank. Feed
+Ceres the corresponding original TPG bytes at the fixed defaults. This uses banked
+data only: no original training-corpus scan or repeated BT4 inference.
+
+Run one C3 CPU session with the same model identity as above, extended optimization,
+primary `policy` output only, and batches of four. The collector uses the frozen
+Python 3.13 / ONNX Runtime 1.29 environment: importing shared data helpers under the
+older Python environment failed before payload access because its native extension
+ABI differed. That preparation failure is not a Ceres model result. Actual graph
+execution in the chosen environment is part of this diagnostic, not assumed from
+the previous ONNX Runtime 1.23.2 check.
+
+The complete attempt has a ten-minute hard ceiling and two CPU threads. Stop on an
+identity, legality, finiteness, resource or runtime failure; preserve completed
+batches and the failure, with no replacement rows or automatic retry. Save all 1,858
+raw graph-output logits per selected position, along with legal-move mapping and
+reference targets. Full distribution here means the graph's float16 output precision,
+not unquantized training weights. No GPU, training or playing games are included.
+
+Report descriptive weighted entropy/support, pairwise Jensen-Shannon divergence,
+total variation, top-move agreement and mass assigned to the other teacher's leading
+moves. Ceres and BT4 at temperature 1 are the primary distribution comparison;
+BT4 at the historical temperature 0.5 is separately named recipe context. SF score
+agreement and disagreement strata are diagnostics, not a teacher acceptance gate.
+Use the parent sampling weights with the conditional subsampling factor; do not
+attach ordinary iid confidence intervals to this stratified training subset.
+
+No Ceres temperature, mixing weight or training winner is selected from this sample.
+Its purpose is to reveal distribution differences and implementation problems before
+bulk labeling and matched training. Favor a retained-SF comparison with SF's weight
+held fixed when introducing Ceres; pure BT4 remains a useful diagnostic baseline.
+
+## Completed training-sample readout
+
+The [registered attempt](https://github.com/jjoshua2/DeepFin/pull/575#issuecomment-5587623614)
+completed all **128 rows in 32 batches** under its original budget. History replay,
+input keys, stored float16 tensors, all-legal support and final input/model checks
+passed. The rows cover 64 derived shard groups and 90 raw shards; both recorded
+source/worker/game and source/raw-shard/game groupings contain 128 distinct tuples.
+This remains a stratified training sample, not independent confirmation.
+
+Independent review recomputed the fixed selection and weights, reconstructed
+histories, checked the original SF/C/BT4 bank, used an independent move-table mapping,
+and reproduced the saved Ceres probabilities and aggregate metrics.
+
+| Distribution | Weighted mean entropy (nats) | Weighted mean maximum probability |
+| --- | ---: | ---: |
+| Stored SF | 0.5407 | 79.51% |
+| C20T05 | 0.4288 | 85.14% |
+| BT4, T=1 | 2.0743 | 40.73% |
+| BT4, historical T=0.5 | 1.1967 | 63.60% |
+| Ceres C3, T=1 | 2.1627 | 37.88% |
+
+Ceres and BT4 at the common temperature 1 have weighted mean **Jensen-Shannon
+divergence 0.00946 nats**, **total variation 0.09220**, and **top-move agreement
+88.28%**. They disagree on 15 of the 128 unweighted positions. Ceres is slightly
+softer on this sample, and the two raw policies are fairly similar. Their Jensen-Shannon divergence
+and total variation are smaller than those produced by sharpening BT4 to
+temperature 0.5. Sharpening preserves BT4's top-move ordering; Ceres changes the
+top move on the 15 observed disagreements. This does not establish equivalent rankings, a shared
+training source, independent errors, or which teacher makes a stronger bootstrap.
+
+The [readout and manifest](evidence/ceres-bootstrap/c3-training-sample-readout.json),
+[per-position distributions and histories](evidence/ceres-bootstrap/c3-training-sample-rows.json),
+[raw byte/logit bank](evidence/ceres-bootstrap/c3-training-sample-bank.npz), and
+[frozen collector source](evidence/ceres-bootstrap/c3-training-sample-collector-source.txt)
+are published. The bank concatenates the original batch arrays losslessly; the
+manifest preserves each original batch hash. Source paths are logical repository
+paths. The original source-bank qualification and host execution records remain
+external, with their identities retained. The exported histories and policy arrays
+support recomputing the main distribution comparisons without another model run.
+
+Preparation encountered two corrected issues before the sample ran: the older
+Python environment lacked a compatible native decoder import, and the first source
+binding loop included virtualenv packages. The actual run used the recorded 3.13 /
+ORT 1.29 environment and restricted source binding to repository modules. No sample
+inference was repeated, no position was replaced, and no failed batch was converted
+into successful evidence.
+
+**Next decision:** keep Ceres as a candidate for partial BT4 replacement with a
+retained SF contribution. The observed differences justify that option, but this
+sample does not demonstrate better rankings or reduced shared bias. Finish the G50
+and softened-SF comparisons and preserve the training-horizon/scale work before
+committing to bulk Ceres labeling. A bounded CUDA compatibility/cost check and a
+source-qualified Ceres sidecar path remain useful preparation for a later matched
+training comparison. Temperature and mixture choices remain prospective; no fit or
+winner was selected from these 128 positions.
