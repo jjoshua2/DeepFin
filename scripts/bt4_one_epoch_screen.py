@@ -2,6 +2,7 @@
 """One registered seed-zero epoch and its fixed comparison sequence; plan by default.
 
 E0T05 retains schema1; schema2 explicitly selects H20, B100 or G50, never a grid.
+Schema3 trains one of those profiles only; arenas require a separate registration.
 
 Existing published targets only. No mixing, resume, retries or automatic promotion.
 The prospective and realized schedule checks use the frozen seed-zero verifier.
@@ -68,7 +69,13 @@ def input_pins(m):
     return m['input_pins'] if 'profile' in m else INPUT_PINS
 
 
+def training_only(m):
+    return m.get('schema') == 3
+
+
 def comparisons(m):
+    if training_only(m):
+        return ()
     return arena.REGISTERED_COMPARISONS[role_for(m)] if 'profile' in m else (('C20T05', 100, 1000),)
 
 
@@ -77,11 +84,18 @@ def validate(m):
             'runtime_manifest', 'preregistration', 'prospective_schedule',
             'launcher_sha256', 'arena_launcher_sha256', 'input_pins'}
     registered = 'profile' in m
+    only = training_only(m)
+    if only:
+        keys -= {'arena_seconds', 'total_seconds', 'arena_launcher_sha256'}
+        keys |= {'mode', 'stage_helper_sha256'}
+        arena.require(m.get('mode') == 'training_only' and registered, 'schema3 requires training_only mode and profile')
     if registered:
-        keys |= {'profile', 'reader', 'data_qualification', 'comparisons'}
-        arena.require(m['schema'] == 2 and role_for(m) in CORPORA, 'unsupported registered profile')
-        arena.require(m['comparisons'] == [list(cell) for cell in comparisons(m)], 'registered comparison order differs')
-        arena.require(m['reader']['path'] == str(arena.EXTENDED_READER) and set(m['reader']) == {'path', 'sha256'}, 'wrong registered reader')
+        keys |= {'profile', 'data_qualification'}
+        arena.require(m['schema'] in (2, 3) and role_for(m) in CORPORA, 'unsupported registered profile')
+        if not only:
+            keys |= {'reader', 'comparisons'}
+            arena.require(m['comparisons'] == [list(cell) for cell in comparisons(m)], 'registered comparison order differs')
+            arena.require(m['reader']['path'] == str(arena.EXTENDED_READER) and set(m['reader']) == {'path', 'sha256'}, 'wrong registered reader')
         corpus = corpus_for(m)
         expected_keys = set(COMMON_PINS) | {str(corpus / 'bt4_policy_mix_summary.json'), str(corpus / 'derive_targets_summary.json')}
         arena.require(set(m['input_pins']) == expected_keys and all(m['input_pins'][k] == v for k, v in COMMON_PINS.items()),
@@ -91,14 +105,19 @@ def validate(m):
     else:
         arena.require(m['schema'] == 1 and m['input_pins'] == INPUT_PINS, 'published corpus/source/config identity differs')
     arena.require(set(m) == keys, 'one-epoch manifest keys differ')
-    for key in ('training_seconds', 'arena_seconds', 'total_seconds'):
+    for key in (('training_seconds',) if only else ('training_seconds', 'arena_seconds', 'total_seconds')):
         arena.require(type(m[key]) in (int, float) and math.isfinite(m[key]) and m[key] > 30, f'invalid {key}')
-    expected_total = TOTAL_CAPS[role_for(m)] if registered else 21600
-    arena.require(m['training_seconds'] == 16200 and m['arena_seconds'] == 5400
-                  and m['total_seconds'] == expected_total, 'registered training/arena/total budget differs')
+    if only:
+        arena.require(m['training_seconds'] == 16200, 'registered training budget differs')
+    else:
+        expected_total = TOTAL_CAPS[role_for(m)] if registered else 21600
+        arena.require(m['training_seconds'] == 16200 and m['arena_seconds'] == 5400
+                      and m['total_seconds'] == expected_total, 'registered training/arena/total budget differs')
     outputs = [Path(m[k]) for k in ('state', 'run')]
     inputs = [corpus_for(m), SOURCE, arena.RUNTIME, C_CHECKPOINT, Path(__file__).resolve(), Path(arena.__file__).resolve()]
-    evidence = ('runtime_manifest', 'preregistration', 'prospective_schedule') + (('reader', 'data_qualification') if registered else ())
+    evidence = ('runtime_manifest', 'preregistration', 'prospective_schedule')
+    if registered:
+        evidence += ('data_qualification',) if only else ('reader', 'data_qualification')
     for key in evidence:
         arena.require(set(m[key]) == {'path', 'sha256'} and Path(m[key]['path']).is_absolute(), f'invalid {key}')
         inputs.append(Path(m[key]['path']).resolve())
@@ -140,13 +159,15 @@ def verify_window_cadence(summary):
 
 def check_pins(m):
     arena.pin(__file__, m['launcher_sha256'])
-    arena.pin(arena.__file__, m['arena_launcher_sha256'])
+    arena.pin(arena.__file__, m['stage_helper_sha256' if training_only(m) else 'arena_launcher_sha256'])
     for path, digest in input_pins(m).items():
         arena.pin(path, digest)
-    arena.pin(C_CHECKPOINT, C_SHA)
-    arena.pin(arena.BOOK, arena.BOOK_SHA)
+    if not training_only(m):
+        arena.pin(C_CHECKPOINT, C_SHA)
+        arena.pin(arena.BOOK, arena.BOOK_SHA)
     if 'profile' in m:
-        arena.pin(m['reader']['path'], m['reader']['sha256'])
+        if not training_only(m):
+            arena.pin(m['reader']['path'], m['reader']['sha256'])
         arena.pin(m['data_qualification']['path'], m['data_qualification']['sha256'])
         verify_data_qualification(m)
         for reference in {cell[0] for cell in comparisons(m)} - {'C20T05'}:
@@ -180,6 +201,23 @@ def check_pins(m):
                           and parent['policy_target_postprocess'] == arena.read(C_CORPUS / 'bt4_policy_mix_summary.json'),
                           'H20 parent is not the qualified stored C corpus')
     return arena.runtime_identity(m['runtime_manifest'])
+
+
+def training_runtime_probe(rt):
+    """Verify the same training environment without loading arena-only evidence."""
+    code = f"""import contextlib,json,sys
+with contextlib.redirect_stdout(sys.stderr):
+    import importlib,torch,numpy
+    modules={list(rt['native_extensions'])!r}
+    actual=dict(python=sys.version,executable=sys.executable,torch=torch.__version__,
+        cuda=torch.version.cuda,numpy=numpy.__version__,
+        native_extensions={{m:importlib.import_module(m).__file__ for m in modules}})
+print(json.dumps(actual))
+"""
+    actual = json.loads(subprocess.check_output([rt['executable'], '-c', code], cwd=arena.RUNTIME,
+                                               env=arena.environment(), text=True, timeout=60))
+    arena.require(actual == {k: v for k, v in rt.items() if k != 'native_extension_sha256'}, 'actual training runtime differs')
+    return actual
 
 
 def verify_schedule(report, *, prospective, m=None):
@@ -251,7 +289,7 @@ def completed_training(m, schedule_path):
 def execute(m):
     validate(m)
     rt = check_pins(m)
-    actual = arena.runtime_probe(rt)
+    actual = training_runtime_probe(rt) if training_only(m) else arena.runtime_probe(rt)
     verify_schedule(arena.read(m['prospective_schedule']['path']), prospective=True, m=m)
     state, run = Path(m['state']), Path(m['run'])
     arena.disk_guard(state)
@@ -283,6 +321,14 @@ def execute(m):
         completion.update(training_charge_seconds=charge['gpu_seconds'], input_pins=input_pins(m))
         arena.write(state / 'training.complete.json', completion)
         total = charge['gpu_seconds']
+        if training_only(m):
+            arena.write(state / 'complete.json', {
+                'scope': 'training_only', 'training_only_complete': True,
+                'profile': role_for(m), 'gpu_seconds': total,
+                'training_receipt_sha256': arena.sha(state / 'training.complete.json'),
+                'promotion': 'NONE; no arena executed',
+            })
+            return
         arena_receipts = []
         opening_anchor = None
         controls = {item[0]: item for item in arena.CHECKPOINTS.values()}
@@ -333,8 +379,13 @@ def main():
     m = arena.read(args.manifest)
     validate(m)
     if not args.execute:
-        print(json.dumps({'execute': False, 'training_command': train_command(m),
-                          'comparisons': comparisons(m), 'profile': role_for(m), 'total_seconds': m['total_seconds']}, indent=2))
+        plan = {'execute': False, 'training_command': train_command(m),
+                'comparisons': comparisons(m), 'profile': role_for(m)}
+        if training_only(m):
+            plan.update(scope='training_only', training_seconds=m['training_seconds'], schedule_seconds=1800)
+        else:
+            plan['total_seconds'] = m['total_seconds']
+        print(json.dumps(plan, indent=2))
         return
     def interrupted(signum, _frame):
         raise InterruptedError(f'signal {signum}')
