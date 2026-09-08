@@ -1,0 +1,56 @@
+{
+  "completed_utc": "2026-09-07T23:44:16Z",
+  "depth": 9,
+  "gap_definition": "rank1_effective_cp-minus-ranked_effective_cp",
+  "index_encoding": "lc0_1858",
+  "kind": "sf_d9_rank_gap_sidecar",
+  "outputs": [
+    {
+      "path": "shard_000000.zarr",
+      "payload_sha256": "c985ecc846aa94ed5804ab4aebb08f4e8d6be2ded3dc8532c15dad7403b82136",
+      "rows": 8192,
+      "source_row_identity_sha256": "c09b68d689fba3339da61ca3556b6276b6f295fb84258a84ff352f224211c4e1"
+    },
+    {
+      "path": "shard_000001.zarr",
+      "payload_sha256": "c47d44c2a59b505998250620eaba1c997ff58e21cc4b012fd51336665ebebe9f",
+      "rows": 44,
+      "source_row_identity_sha256": "1332af2bd238d5821ac06d0ebca1f237f2664528f30bbfc7fb24ccc33c966220"
+    }
+  ],
+  "raw_config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+  "raw_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+  "raw_limit": 8236,
+  "raw_rows_read": 8236,
+  "row_provenance": {
+    "cache_budget_bytes": 16777216,
+    "cache_record_bytes": 68,
+    "cache_seen_bytes_per_row": 1,
+    "join": "source-qualified-physical-row-and-full-history-keys-v1",
+    "observation": "complete-phase0-d9",
+    "policy_observation": "phase0",
+    "raw_record_sha256": {
+      "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+    },
+    "raw_shards_read_once": 1,
+    "raw_source_metadata": {
+      "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst": [
+        2096,
+        9783581,
+        21154455,
+        1788379921244293574,
+        1788379921244293574
+      ]
+    },
+    "value_observation": "latest-phase"
+  },
+  "rows": 8236,
+  "rows_dropped_no_result": 0,
+  "rows_per_shard": 8192,
+  "schema": 1,
+  "seed": 0,
+  "shards": 2,
+  "source_derive_summary_sha256": "1f99839119ea4ca7d5a97b14ef8c1cf739dfa07c983ebb56df245afbde79c2d5",
+  "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/derived",
+  "top_k": 3
+}

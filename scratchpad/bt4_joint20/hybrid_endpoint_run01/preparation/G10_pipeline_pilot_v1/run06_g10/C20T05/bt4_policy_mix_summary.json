@@ -1,0 +1,75 @@
+{
+  "admission": {
+    "experiment_record": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/preregistration.json",
+      "sha256": "a8b0d58b0ce3873c776dc9941efe2e6d90058eb516e26e9faea77c8c53f22e85"
+    },
+    "mode": "descriptive"
+  },
+  "algorithm": "stored-top-ties-union-sf-d9-cp-window-v1",
+  "alpha": 1.0,
+  "audit_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.json",
+    "sha256": "ea44e62d8c818d61346ef523df4729740f48212957249654f6fb1fc52642abe5"
+  },
+  "bt4_temperature": 0.5,
+  "candidate_set_wider_fraction": 0.2225594949004371,
+  "candidate_set_wider_rows": 1833,
+  "changed_fraction": 0.4045653229723167,
+  "changed_rows": 3332,
+  "changed_unique_max_rows": 1753,
+  "completed_utc": "2026-09-07T23:44:23Z",
+  "expected_rows": 8236,
+  "expected_shards": 2,
+  "formula": "redistribute alpha of stored top-tie union d9 cp-window mass by temperature-scaled BT4 prior",
+  "kind": "sf-cp-window",
+  "mean_entropy_nats": {
+    "bt4": 2.0314915442179338,
+    "mixed": 0.48875354776079993,
+    "source": 0.5682514702483585
+  },
+  "mean_l1_from_source": 0.3493968299809835,
+  "mixed_bt4_top1_agreement": 0.7087178241864983,
+  "mixed_source_top1_agreement": 0.7461146187469645,
+  "mutated_arrays": [
+    "policy_target"
+  ],
+  "near_max_ratio": null,
+  "rows": 8236,
+  "schema": 1,
+  "selected_mass_abs_drift": {
+    "max": 0.0003662109375,
+    "mean": 4.392742908018315e-05,
+    "mean_bound": 0.0002,
+    "reference": "stored_selected_mass",
+    "row_bound": 0.005
+  },
+  "sf_cp_window": 20.0,
+  "sf_rank_cap": 3,
+  "sf_rank_sidecar_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/rank",
+  "sf_rank_sidecar_summary": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/rank/sf_d9_rank_sidecar_summary.json",
+    "sha256": "e7bd2a9b80e4373a942f1700d18dcd802bbbb192982d9157270d99b0267a10bb"
+  },
+  "shards": 2,
+  "sidecar_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/bt4",
+  "sidecar_summary": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/bt4/bt4_policy_sidecar_summary.json",
+    "sha256": "9d7725e29bd7b2be38834ed7379339ac793ada9737a277d95b317ad6080ed62e"
+  },
+  "source_bt4_top1_agreement": 0.5012141816415736,
+  "source_candidate_multi_fraction": 0.40480815930063135,
+  "source_candidate_multi_rows": 3334,
+  "source_derive_summary_sha256": "1f99839119ea4ca7d5a97b14ef8c1cf739dfa07c983ebb56df245afbde79c2d5",
+  "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/derived",
+  "source_top_tied_fraction": 0.19184069936862555,
+  "source_top_tied_rows": 1580,
+  "top1_ge_0_99_fraction": {
+    "mixed": 0.5093491986401165,
+    "source": 0.584142787761049
+  },
+  "value_columns_unchanged": [
+    "wdl_target",
+    "search_wdl"
+  ]
+}

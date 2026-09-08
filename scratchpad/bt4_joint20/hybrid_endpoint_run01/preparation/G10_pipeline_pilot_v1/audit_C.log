@@ -1,0 +1,1 @@
+[bt4-audit] SF comparison=graduate_win, mode=descriptive, training_permitted=True: n=4000, expected delta=-6.2902 cp [-7.7871, -4.9177], top1 delta=-8.0862 cp [-10.1174, -6.2365] -> /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.json

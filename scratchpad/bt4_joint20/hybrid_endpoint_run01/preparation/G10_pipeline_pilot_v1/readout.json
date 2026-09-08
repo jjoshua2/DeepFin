@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "status": "PASS_REGISTERED_BOUNDED_PIPELINE_WITH_REPORTED_EXCLUSIONS",
+  "completed_unix": 1788824770.0656297,
+  "wall_seconds": 204.07728171348572,
+  "source_rows_read": 16479,
+  "derived_rows_emitted": 16429,
+  "rows_excluded": 50,
+  "sources": {
+    "run06_g10": {
+      "physical_rows": 8236,
+      "emitted_rows": 8236,
+      "excluded_rows": 0,
+      "source_qualified_input_schedule_sha256": "0fabaf794a3b5d4361fd7f6dbae51dd571a565ee0671c2e26d95c5d2fea3b4a1",
+      "qualification_sha256": "a701004426198a9396ecf9699830281ccb3235c120d0eb5f558ef92d34f1e99f",
+      "exclusions": {
+        "envelope_miss_examples": [],
+        "rows_dropped_envelope": 0,
+        "rows_dropped_no_result": 0
+      }
+    },
+    "run07_g10_companion4": {
+      "physical_rows": 8243,
+      "emitted_rows": 8193,
+      "excluded_rows": 50,
+      "source_qualified_input_schedule_sha256": "b64d4ab79ce18aefa918e29875c2c5b09de798aca4cc0f7c998ebbe4c628cea8",
+      "qualification_sha256": "831d4aa0d277a18461dbbe3644ec6f60bd8c05bce58ce32fdfe9323ed352049a",
+      "exclusions": {
+        "envelope_miss_examples": [],
+        "rows_dropped_envelope": 0,
+        "rows_dropped_no_result": 50
+      }
+    }
+  },
+  "stage_seconds": {
+    "audit_C": 11.031121730804443,
+    "audit_H": 11.030107021331787,
+    "run06_g10.C": 7.2577223777771,
+    "run06_g10.H": 9.34028697013855,
+    "run06_g10.adapt": 23.44257879257202,
+    "run06_g10.compare": 7.399195671081543,
+    "run06_g10.derive": 24.098991632461548,
+    "run06_g10.rank": 14.301642179489136,
+    "run06_g10.source_check": 4.017707109451294,
+    "run07_g10_companion4.C": 7.6073527336120605,
+    "run07_g10_companion4.H": 9.873641967773438,
+    "run07_g10_companion4.adapt": 23.328811168670654,
+    "run07_g10_companion4.compare": 7.710309982299805,
+    "run07_g10_companion4.derive": 25.280576705932617,
+    "run07_g10_companion4.rank": 13.977270603179932,
+    "run07_g10_companion4.source_check": 3.0131852626800537
+  },
+  "scope": "Pipeline qualification on fixed first closed shards only; no playing-strength/all-G10/full-scale throughput claim",
+  "launch_sha256": "7a25dcd9f2a6dff5d2420078fee51dd032ad227316d3ca727e83c97801015c1f",
+  "merge_sha": "ac4a246ba025ca54329d6e4dc380473f1ea4b728",
+  "counts_correction": "Initial parent commentary incorrectly assumed all read rows survived from successful terminal status; actual per-source readouts show50missing-result exclusions, corrected immediately without rerun."
+}

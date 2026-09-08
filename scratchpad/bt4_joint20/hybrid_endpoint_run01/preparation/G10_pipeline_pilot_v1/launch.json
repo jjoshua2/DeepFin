@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "status": "PREPARED_NOT_LAUNCHED",
+  "checkout": "/tmp/deepfin-g10-pilot-tools",
+  "commit": "ac4a246ba025ca54329d6e4dc380473f1ea4b728",
+  "python": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+  "pins": {
+    "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13": "93a93f4c8af5ae6f127fb0310f923d5fab89eb7257a0b801eec2e44b3f199840",
+    "/tmp/deepfin-g10-pilot-tools/uv.lock": "4add8d8c91906df42eb15fe28bda3eb613192fdd257059e3ec7d097f917e66ef",
+    "/tmp/deepfin-g10-pilot-tools/pyproject.toml": "6cf79d98f28a2258fa4a64247d20b8faf251dba549bd8771851eb5787934d082",
+    "/tmp/deepfin-g10-pilot-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so": "6f4bb0ec267a4ebd73ffe0a0d699a427f4e1a29d261b3a21658033056567722d",
+    "/tmp/deepfin-g10-pilot-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so": "73798b545d5351ca3cde0f1221bf3008675ef459d6765c62ba8193120299ab84",
+    "/tmp/deepfin-g10-pilot-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so": "7dad156c2793b60f685582ebacdbaa51eb5ecc22fd462865da203955c28fd49a",
+    "/tmp/deepfin-g10-pilot-tools/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so": "b9cb9a26ff7c017f995a6ce6d7852ff90ec3e43cf2772bc14dafff8c1836f8fc",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/preregistration.json": "a8b0d58b0ce3873c776dc9941efe2e6d90058eb516e26e9faea77c8c53f22e85",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run_pilot.py": "3f3309653d4d4d00c8107e459696c321b57fd3400ed91779062d5d36539b152a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/runtime_qualification.json": "45085357cd4c6382d65c6c6a5f0dc2d9d71747022666054bc958dd48b311cc7f",
+    "/usr/bin/timeout": "8d21b4cf1b204cc2387377a63c542ecdd0ae0895613db67ceb7da1e253110741",
+    "/home/josh/projects/chess/data/audit_set_v1.jsonl": "d8e26efa0b010450abf9374693afc45027db6d146571785ab897af5061144df2",
+    "/home/josh/projects/chess/scratchpad/audit_d9_labels/audit_d9_labels.jsonl": "0f56bdc0aa453b6dbfdad5cf1744e4937b3eeae274f6b1051d683dd4e8aa4f64",
+    "/home/josh/projects/chess/data/lc0/bt4_audit_cache_topk256_20260817.jsonl": "622cdfeda7d71c211e57719ba4d0807252934e6c46d0acfadcc098c251168294",
+    "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.closed_receipt.jsonl": "4248301efc9798b8f276cabdeaa16a7df72f411ba1978891fc6a93351d60a984",
+    "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run06_g10/w00-00000.bt4.zarr/.zattrs": "1b384ab4f324eef8acbd199cc4e10d3cd56fdb6bd6a367c1adcad59e5b286b34",
+    "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.closed_receipt.jsonl": "f16bbbc8d38731dc7d18efdce93b8c4b4711b0bfdce7abba72002f23517c6056",
+    "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run07_g10_companion4/w00-00000.bt4.zarr/.zattrs": "55a10e5af9500edf3df9254e6aecd15a622a07834992f3d25a523102c6357b9e"
+  },
+  "registration": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/preregistration.json",
+  "command_builder_sha256": "3f3309653d4d4d00c8107e459696c321b57fd3400ed91779062d5d36539b152a",
+  "audit": "same bank reanalysis, descriptive, pilot record binding",
+  "limits": {
+    "wall_seconds_including_kill": 1800,
+    "new_output_and_cache_bytes": 8589934592,
+    "minimum_free_bytes": 161061273600,
+    "adapter_index_cache_bytes": 16777216,
+    "numeric_threads": 2,
+    "cpu_affinity": "0,1",
+    "nice": 19,
+    "io_class": 3,
+    "gpu_hidden": true
+  }
+}

@@ -1,0 +1,565 @@
+{
+  "schema": 1,
+  "captured_unix": 1788825194.7558663,
+  "scope": "Original bounded G10 pilot operational code/registration/receipts/logs/readout and compact summaries; original raw-source row references for16429emitted rows. C/H audits are reanalyses of existing saved observations, not new teacher evidence. Bulk derived/BT4/rank/C/H Zarr arrays remain host-local and are bound by completed source/payload summaries. Native binaries and environment remain external, with runtime pins; host launch paths are archival rather than portable commands. Includes the unlaunched common-batch registration and its64 original closed receipt lines.",
+  "entries": [
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.completed.json",
+      "bytes": 1248,
+      "sha256": "e23eaea7d07151a0e9ab44eaa76936b9c6271bc516ee4cd71665e46c3f063aff"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.json",
+      "bytes": 3537375,
+      "sha256": "ea44e62d8c818d61346ef523df4729740f48212957249654f6fb1fc52642abe5"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.log",
+      "bytes": 300,
+      "sha256": "7623bb0adb8c6950536cdb83a84f9b7daf942f6f99424c84bde3df4b98c615b4"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_C.started.json",
+      "bytes": 1197,
+      "sha256": "3c0018426d98786d9be3c43de9105abaf3e2e739d2837da64ec7341307adbd06"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.completed.json",
+      "bytes": 1249,
+      "sha256": "130cf0eafb6cfd478010dba3eafc154825d9a1faaeaf71ff81c01ff511482201"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.json",
+      "bytes": 3657571,
+      "sha256": "ff90681c56e83f7f2fe6a49187378d8d0a09473513e5032df975bd0623db4d67"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.log",
+      "bytes": 300,
+      "sha256": "f0fc1d0a485c80d01d93d66e2ebd1222798d91ed56dbccb0b4f4aee1ac042fc4"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/audit_H.started.json",
+      "bytes": 1197,
+      "sha256": "e01a8fe966a1fa7e33da3795fd775e65b3cba6798216040ba283445b75007647"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/completed.json",
+      "bytes": 199,
+      "sha256": "2f17deaf5425fe22ace64b801f35160346085c410f46025aafd1b09e9c3fc8b0"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/coordinator.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/coordinator.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/coordinator_launch.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/coordinator_launch.json",
+      "bytes": 641,
+      "sha256": "0020eedbc5d966a7888f708886e0c381dc8e0913bdd4118d1d68922e236ea861"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/independent_runner_launch_review.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/independent_runner_launch_review.json",
+      "bytes": 9982,
+      "sha256": "609d8074e6edaeefbc160ef8a3145ac40cddcd4d317e0f7b8758ce5a3f4ef7db"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/launch.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/launch.json",
+      "bytes": 4141,
+      "sha256": "7a25dcd9f2a6dff5d2420078fee51dd032ad227316d3ca727e83c97801015c1f"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/preregistration.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/preregistration.json",
+      "bytes": 5033,
+      "sha256": "a8b0d58b0ce3873c776dc9941efe2e6d90058eb516e26e9faea77c8c53f22e85"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/readout.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/readout.json",
+      "bytes": 2477,
+      "sha256": "ece9555a995b65fd7f66647e39f6e58215482f5d8a571708c534309d8f7b1467"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/C20T05/bt4_policy_mix_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/C20T05/bt4_policy_mix_summary.json",
+      "bytes": 3189,
+      "sha256": "052012471e4b68e90189491617328d2547bbc7ec2a64f102b52734dd99f7792b"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/C20T05/derive_targets_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/C20T05/derive_targets_summary.json",
+      "bytes": 14007,
+      "sha256": "0f44c133b9dad4691cc7a46a7d6266ce57c96bdfd6b0b84b88d45b44a2831108"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/H20T05/bt4_policy_mix_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/H20T05/bt4_policy_mix_summary.json",
+      "bytes": 7763,
+      "sha256": "c7c244af98b3604627373ec48c0c4b845da26b5930fde41d214773903366b8d5"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/H20T05/derive_targets_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/H20T05/derive_targets_summary.json",
+      "bytes": 18773,
+      "sha256": "65f5def7b4bdb5176f396093c3e1457aa9ad79fceab85ea3ab4cea712ec801a7"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/adapter_manifest.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/adapter_manifest.json",
+      "bytes": 1780,
+      "sha256": "45b8481ca3cdacd8477813916c0887ed73ede04991ac66f00f0128089408709e"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/all_row_qualification.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/all_row_qualification.json",
+      "bytes": 3230,
+      "sha256": "a701004426198a9396ecf9699830281ccb3235c120d0eb5f558ef92d34f1e99f"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/bt4/bt4_policy_sidecar_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/bt4/bt4_policy_sidecar_summary.json",
+      "bytes": 4917,
+      "sha256": "9d7725e29bd7b2be38834ed7379339ac793ada9737a277d95b317ad6080ed62e"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/derived/derive_targets_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/derived/derive_targets_summary.json",
+      "bytes": 10637,
+      "sha256": "1f99839119ea4ca7d5a97b14ef8c1cf739dfa07c983ebb56df245afbde79c2d5"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/derived/shard_000000.zarr/row_provenance.npz",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/derived/shard_000000.zarr/row_provenance.npz",
+      "bytes": 459704,
+      "sha256": "b1b65846d5d10fa665fa2e0be8c2bdc212b0da67ba1d0e271f6318f3797df4ec"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/derived/shard_000001.zarr/row_provenance.npz",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/derived/shard_000001.zarr/row_provenance.npz",
+      "bytes": 3416,
+      "sha256": "e0c20116dcdba4b65345ae365a1b5d75eca269fe72698427a9361ba3a2bc587a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/rank/sf_d9_rank_sidecar_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10/rank/sf_d9_rank_sidecar_summary.json",
+      "bytes": 2085,
+      "sha256": "e7bd2a9b80e4373a942f1700d18dcd802bbbb192982d9157270d99b0267a10bb"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.C.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.C.completed.json",
+      "bytes": 1686,
+      "sha256": "af70ebf5801bf58aabfe59c2b1ed2380b951423d25a1ae497244a2a10eb1cd8e"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.C.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.C.log",
+      "bytes": 297,
+      "sha256": "5646e8d6d92b399b0dbc28a6e13b6f5796a5424cb77e660e84a0d2e12efa83ca"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.C.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.C.started.json",
+      "bytes": 1634,
+      "sha256": "566dcab6b86f7faaf533d1b4ef5f951f80b7e7e6498cf5e3f972bafa9c309e0e"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.H.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.H.completed.json",
+      "bytes": 2049,
+      "sha256": "214324e85c290759e9d040518ccbc241cee09051aa288642a46d37a98cc9056c"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.H.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.H.log",
+      "bytes": 295,
+      "sha256": "beb98ceff0e3f82d692fe41a0f7f26fed25eeb5e730b2a8fdbb176cc44f541aa"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.H.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.H.started.json",
+      "bytes": 1997,
+      "sha256": "20db3fa13924144ca7bd3225601633be62ad465347cf0962fffeee8e7b89d42b"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.adapt.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.adapt.completed.json",
+      "bytes": 860,
+      "sha256": "1a42f9adfecc27d3f944df7c373170eb058479802a9f00c5e3c22b743fb445e6"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.adapt.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.adapt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.adapt.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.adapt.started.json",
+      "bytes": 808,
+      "sha256": "ec719a920951b84cb0e2e07b2c993da19cf57bdc9196df49800dd80c9daaafd6"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.closed_receipt.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.closed_receipt.jsonl",
+      "bytes": 1146,
+      "sha256": "4248301efc9798b8f276cabdeaa16a7df72f411ba1978891fc6a93351d60a984"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.compare.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.compare.completed.json",
+      "bytes": 341,
+      "sha256": "cfd91cf67cd4a6806b5f454319dfc734cc389b006754a3a66e5f8e9110bda5c9"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.compare.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.compare.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.compare.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.compare.started.json",
+      "bytes": 289,
+      "sha256": "09f71ebab0bfa2f5babe69476221a2df8ed5d481e7199f04478ff87a3294f30d"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.derive.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.derive.completed.json",
+      "bytes": 979,
+      "sha256": "d002ff3afa87639236f1f329a35d20f587eedfa8aed5c4b86e0d1ba7e563534a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.derive.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.derive.log",
+      "bytes": 1045,
+      "sha256": "59a52aadd1876f5387e2cb96be2a60ad6a17c26e17e71a45f4e7149b7b1582cf"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.derive.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.derive.started.json",
+      "bytes": 927,
+      "sha256": "be1b4fe36f0ed8f19b173b5e47dc3c925666a17c83cfad80945cfe3b12e4d92f"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.rank.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.rank.completed.json",
+      "bytes": 1113,
+      "sha256": "8a382a6849aa9bcf493a83aa2001445a33568ad52aa2f39f3f6d88d672908bc4"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.rank.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.rank.log",
+      "bytes": 168,
+      "sha256": "3ae3081e3e5c7bb132d25b818b35ed212fd062d0b7ec25bde60f73d28b09c040"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.rank.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.rank.started.json",
+      "bytes": 1061,
+      "sha256": "52a4d64467394afdddcb6832ccd21ee2dfd7e925440f158659dc58773f81a495"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.source_check.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.source_check.completed.json",
+      "bytes": 347,
+      "sha256": "0e2aae115797ff3d8de80e9d3f5b176131439895b04bca1a34b9e749658ed3a0"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.source_check.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.source_check.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.source_check.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run06_g10.source_check.started.json",
+      "bytes": 295,
+      "sha256": "03ca7322a5abc9de73079dc07fde8bb18439ff3542cb128de7bc179a959911a5"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/C20T05/bt4_policy_mix_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/C20T05/bt4_policy_mix_summary.json",
+      "bytes": 3244,
+      "sha256": "f063a53c200e3c226729316432379e648932dfed0a6cd358e0f75d7a8a8ce532"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/C20T05/derive_targets_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/C20T05/derive_targets_summary.json",
+      "bytes": 13622,
+      "sha256": "0f00e4c0d7c3f58aeb6445b5cabe5b487cbed887a3c74a82d33f40b65bda82d0"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/H20T05/bt4_policy_mix_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/H20T05/bt4_policy_mix_summary.json",
+      "bytes": 7907,
+      "sha256": "6e9916d9bb3b1b80e5e27f1547365c9d2b8720a6c1eb44aaada310d29f439026"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/H20T05/derive_targets_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/H20T05/derive_targets_summary.json",
+      "bytes": 18477,
+      "sha256": "04e07f3fe6b13815f540c0d8f62f0164c39078a22c0bcda0013334ee571bc319"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/adapter_manifest.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/adapter_manifest.json",
+      "bytes": 1835,
+      "sha256": "dfaf04c0fed4d9f4223023563acdde6b6db62771f6a53e46c2a88488d64a729a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/all_row_qualification.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/all_row_qualification.json",
+      "bytes": 3231,
+      "sha256": "831d4aa0d277a18461dbbe3644ec6f60bd8c05bce58ce32fdfe9323ed352049a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/bt4/bt4_policy_sidecar_summary.json",
+      "bytes": 4969,
+      "sha256": "902707d4f95ca13de534dacfc526bffc84c3ffc75446598a90ebe52fec0cab5c"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/derived/derive_targets_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/derived/derive_targets_summary.json",
+      "bytes": 10197,
+      "sha256": "e55a86c0be0c7a800fad7636f4684e7dbb2c0c6bd694603fbac7256eccaa1b67"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/derived/shard_000000.zarr/row_provenance.npz",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/derived/shard_000000.zarr/row_provenance.npz",
+      "bytes": 459715,
+      "sha256": "37eaa2b72b9bbe297997339d34615f54b04a69e7dbdbe5ba3ac494c02ae5c117"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/derived/shard_000001.zarr/row_provenance.npz",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/derived/shard_000001.zarr/row_provenance.npz",
+      "bytes": 1019,
+      "sha256": "fb8774a4833191052505bbed53ac50ca159cd44c017f648d6969fddc73828107"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/rank/sf_d9_rank_sidecar_summary.json",
+      "bytes": 2129,
+      "sha256": "75b24dff25ac0185f64abb5e39e56a735b14ec42005c9c4d413d615989785734"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.C.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.C.completed.json",
+      "bytes": 1730,
+      "sha256": "e226e542739293041f254ee1e74e048320e4941f7f3c94a9d7db8f82681bca7d"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.C.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.C.log",
+      "bytes": 308,
+      "sha256": "b335e81e85805731eb1cbf9d40b65cdb1dafbe0b289869bfa10340a847fb6fec"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.C.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.C.started.json",
+      "bytes": 1678,
+      "sha256": "e97f6fd863a884977e8e84091b0c29a9cd6a59e58cd6e9f242870b446d52fc08"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.H.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.H.completed.json",
+      "bytes": 2104,
+      "sha256": "f5fd18befe5f218c38408aec52387e1b324fa6f8cfe242817d18ffe580ef9e24"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.H.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.H.log",
+      "bytes": 306,
+      "sha256": "f32bb83f0c113b34f09804a1293d3d2811cb1e2416e3e6a8854bbf0af6157ec0"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.H.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.H.started.json",
+      "bytes": 2052,
+      "sha256": "07d9e817f6e3a6002ae51b81cad24d03145bdac3d4f209a5d51852a7783606fe"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.adapt.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.adapt.completed.json",
+      "bytes": 882,
+      "sha256": "d05428b9f2c73a49a84ae9e7fb5210e96dd994fed5115096299bd31d7930e220"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.adapt.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.adapt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.adapt.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.adapt.started.json",
+      "bytes": 830,
+      "sha256": "fafe4f6f23264c8e83914f0d401ba34c9d45a7b012fd665c155ac73c12fa6120"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.closed_receipt.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.closed_receipt.jsonl",
+      "bytes": 1157,
+      "sha256": "f16bbbc8d38731dc7d18efdce93b8c4b4711b0bfdce7abba72002f23517c6056"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.compare.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.compare.completed.json",
+      "bytes": 353,
+      "sha256": "f7b16e275535c867283d74ee8bd69bd0c9b0bdf1e02fdef21760b0c7184157f2"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.compare.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.compare.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.compare.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.compare.started.json",
+      "bytes": 301,
+      "sha256": "c6324a7b3cb97bba8612fce0cd250e5607276b86130a545b7283aa24ef9ca67e"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.derive.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.derive.completed.json",
+      "bytes": 1001,
+      "sha256": "d6026cb18786fc6658de4b848b55c2c16f9f57530d18e000616562d5fb2f0642"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.derive.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.derive.log",
+      "bytes": 1044,
+      "sha256": "262c8ab4438d2f730892d0c1104353e89bb3345e8493d49532d46fb19c333f5e"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.derive.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.derive.started.json",
+      "bytes": 949,
+      "sha256": "707222b27321945544d75605f48dee3ad08fe6026ff0e19757e83c7f80ee2fe5"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.rank.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.rank.completed.json",
+      "bytes": 1146,
+      "sha256": "3ed5318e1e97e0dde1b602e6797c3c07d4e871d38230e96a5d6fde36e013a090"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.rank.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.rank.log",
+      "bytes": 179,
+      "sha256": "3ecf9e67f0641508a1395f62452a3b06002bc062de7358088bb92437e9b2d464"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.rank.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.rank.started.json",
+      "bytes": 1094,
+      "sha256": "79378278ab18b104ae29060a26198900cc08d6e31de4149e31325582aa8cd8f3"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.source_check.completed.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.source_check.completed.json",
+      "bytes": 357,
+      "sha256": "b875c83922801d5f7c0740e849737f4f3ee58819befbeafa3d440ce385d4c03f"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.source_check.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.source_check.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.source_check.started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4.source_check.started.json",
+      "bytes": 305,
+      "sha256": "10a80c7301165954735b3845a7a6b6edb53c34521b5521cc0fb73dc9f89cd2b1"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run_pilot.py",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run_pilot.py",
+      "bytes": 16837,
+      "sha256": "3f3309653d4d4d00c8107e459696c321b57fd3400ed91779062d5d36539b152a"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/runner_preparation.md",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/runner_preparation.md",
+      "bytes": 6009,
+      "sha256": "b234a9e2647e28181758524d78c882044c5dfe2add20d99280315493d791d7e9"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/runtime_qualification.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/runtime_qualification.json",
+      "bytes": 2184,
+      "sha256": "45085357cd4c6382d65c6c6a5f0dc2d9d71747022666054bc958dd48b311cc7f"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/started.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/started.json",
+      "bytes": 672,
+      "sha256": "45c2afd79f919fc2594f2bc025d45347d037178671156623995fcd295770cbc0"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/worker.log",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/worker.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/worker_complete.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/worker_complete.json",
+      "bytes": 482,
+      "sha256": "734eb65ea87deb5d31fc70b1864a5ffadf645c77fa0a5f2c2179da98b8407e8e"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/independent_completed_review.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/independent_completed_review.json",
+      "bytes": 24937,
+      "sha256": "226ac6b77c588708bc45eebed7954d21effa2ab48ec7c65f8d1959554483e119"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/post_pilot_preparation_assessment_v1.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/post_pilot_preparation_assessment_v1.json",
+      "bytes": 29876,
+      "sha256": "d1d9b4d9f22b4c196d591c5f99afcfb654ff1232f741274034e853ab6546f5ca"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/next_common_preparation_publication_review.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_readiness_v1/next_common_preparation_publication_review.json",
+      "bytes": 2989,
+      "sha256": "3e3e83ab97f0d1258a914b395f2169cda61be0a45ad4cc81113e373ac1692a88"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preregistration.json",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preregistration.json",
+      "bytes": 19456,
+      "sha256": "86de876067f255a36abd5a0f109ece4e9efdc899e2d1fb091750b7d75bc640bf"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.closed_receipts.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.closed_receipts.jsonl",
+      "bytes": 36663,
+      "sha256": "8684984ed17e457245f2e54c1e731aa46be7f20ecf2b46a51855eac28c88ab5e"
+    },
+    {
+      "source": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.closed_receipts.jsonl",
+      "published": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.closed_receipts.jsonl",
+      "bytes": 37017,
+      "sha256": "f27dc5c265448ccc1ea38b57cd0dbc30a5db84fdb2f5317fdfc25ba7b84012ed"
+    }
+  ]
+}

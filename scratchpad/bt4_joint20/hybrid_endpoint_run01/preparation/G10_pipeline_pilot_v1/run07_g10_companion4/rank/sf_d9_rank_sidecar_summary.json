@@ -1,0 +1,56 @@
+{
+  "completed_utc": "2026-09-07T23:45:43Z",
+  "depth": 9,
+  "gap_definition": "rank1_effective_cp-minus-ranked_effective_cp",
+  "index_encoding": "lc0_1858",
+  "kind": "sf_d9_rank_gap_sidecar",
+  "outputs": [
+    {
+      "path": "shard_000000.zarr",
+      "payload_sha256": "2b95d9fbd9e2c6d67d92f37adad72b93d3071ec9ebc50e8ef0130351fdff8981",
+      "rows": 8192,
+      "source_row_identity_sha256": "49ed4aa36f0387a3c91113d83d091b8178eddad6d78075596859bbc64279835a"
+    },
+    {
+      "path": "shard_000001.zarr",
+      "payload_sha256": "8f2a4d9d466f00b6f163629bb1d84426c2d9e38db16261dcf6079ab33d69bc77",
+      "rows": 1,
+      "source_row_identity_sha256": "4c202a35153b91e4e1f2cb99ee425beac2468a88abc597e3bcdb2793c89b4294"
+    }
+  ],
+  "raw_config_sha256": "79d4bb2e9f4302ee858e73cf2f4c4bdcce3ebb7c421dc2fbff310b194f87b29e",
+  "raw_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4",
+  "raw_limit": 8243,
+  "raw_rows_read": 8243,
+  "row_provenance": {
+    "cache_budget_bytes": 16777216,
+    "cache_record_bytes": 68,
+    "cache_seen_bytes_per_row": 1,
+    "join": "source-qualified-physical-row-and-full-history-keys-v1",
+    "observation": "complete-phase0-d9",
+    "policy_observation": "phase0",
+    "raw_record_sha256": {
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+    },
+    "raw_shards_read_once": 1,
+    "raw_source_metadata": {
+      "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00000.jsonl.zst": [
+        2096,
+        9748927,
+        20692331,
+        1788472621199432022,
+        1788472621199432022
+      ]
+    },
+    "value_observation": "latest-phase"
+  },
+  "rows": 8193,
+  "rows_dropped_no_result": 50,
+  "rows_per_shard": 8192,
+  "schema": 1,
+  "seed": 0,
+  "shards": 2,
+  "source_derive_summary_sha256": "e55a86c0be0c7a800fad7636f4684e7dbb2c0c6bd694603fbac7256eccaa1b67",
+  "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/run07_g10_companion4/derived",
+  "top_k": 3
+}

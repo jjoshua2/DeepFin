@@ -8,7 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 24.9M receipt-backed BT4 rows; explicit SF observation selection and quantization-aware row joins needed before larger-data transfer |
+| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | Pilot passed: 16,429 aligned fixture rows, 50 missing-result exclusions; larger-corpus preparation remains to be qualified |
 | [BT4 hybrid and global endpoints](2026-09-07-bt4-hybrid-endpoints.md) | H20 selected next; subsequent target, horizon and search tests chosen adaptively |
 | [External archive and restore record](2026-09-07-storage-archive.md) | 38 verified archives, qualified local cleanup, retained dependencies and restore instructions |
 | [Fresh paired BT4 confirmation](2026-09-07-bt4-fresh-confirmation.md) | Completed fresh seed-one comparison: C beats E by 37.67 Elo [18.72, 56.85] at 100 sims |

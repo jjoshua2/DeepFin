@@ -1,0 +1,119 @@
+{
+  "status": "complete",
+  "rows": 8193,
+  "physical_rows": 8243,
+  "excluded_rows": 50,
+  "derive_realized": {
+    "base_tier_moves": 208068,
+    "deep_tier_moves": 0,
+    "envelope_miss_examples": [],
+    "floor_recovered_from_emitted_policy": {
+      "max": NaN,
+      "mean": NaN,
+      "min": NaN,
+      "n": 0
+    },
+    "floor_recovery_floor_tol": 1e-06,
+    "floor_recovery_min_distinct_values": 3,
+    "floor_recovery_min_rel_gap": 1e-09,
+    "floor_recovery_min_spread_per_tau": 0.0001,
+    "floor_recovery_skipped_few_values": 0,
+    "floor_recovery_skipped_ill_conditioned": 0,
+    "history_root_reason_counts": {
+      "irreversible": 8193
+    },
+    "history_slots_filled_histogram": {
+      "8": 8193
+    },
+    "history_slots_nonzero_max": 8,
+    "history_window_empty_rows": 0,
+    "input_key_verified": 8193,
+    "nodes_floor_hits": 0,
+    "phases_per_row": {
+      "2": 5916,
+      "3": 2277
+    },
+    "policy_min_legal_prob_stored": {
+      "max": 1.0,
+      "mean": 0.019019747215444666,
+      "min": 0.0,
+      "n": 8193
+    },
+    "policy_support_lost_to_float16": 117449,
+    "policy_support_max": 67,
+    "policy_support_min": 1,
+    "policy_width": 1858,
+    "realized_base_depth_histogram": {
+      "9": 8193
+    },
+    "realized_value_depth_histogram": {
+      "9": 8193
+    },
+    "repetition_planes_nonzero_rows": 157,
+    "row_schema_counts": {
+      "3": 8193
+    },
+    "rows_dropped_envelope": 0,
+    "rows_dropped_no_result": 50,
+    "rows_read": 8243,
+    "rows_written": 8193,
+    "support_checks": 8193,
+    "temp_recovered_from_emitted_policy": {
+      "max": 0.0005004396017000326,
+      "mean": 0.0005000002124801777,
+      "min": 0.0004997850311693164,
+      "n": 7393
+    },
+    "temp_recovery_saturation_q_spread_epsilon": 1e-09,
+    "temp_recovery_skipped_saturated": 3,
+    "value_depth_moved_rows": 8193,
+    "value_scheme_realized": {
+      "blend_weight_w": {
+        "max": NaN,
+        "mean": NaN,
+        "min": NaN,
+        "n": 0
+      },
+      "boundary_suppressed_by_flag": 0,
+      "game_rows_max": 0,
+      "game_rows_min": 0,
+      "games": 0,
+      "games_cut_by_limit": 0,
+      "games_with_dropped_tail": 0,
+      "instability_u": {
+        "max": 1.0247240327298641,
+        "mean": 0.014760490733978079,
+        "min": 0.0,
+        "n": 8193
+      },
+      "l1_delta_vs_search_value": {
+        "max": 0.0,
+        "mean": 0.0,
+        "min": 0.0,
+        "n": 8193
+      },
+      "played_regret": {
+        "max": 1.916899333242327,
+        "mean": 0.095651516255382,
+        "min": 0.0,
+        "n": 8193
+      },
+      "ply_gaps_nonunit": 0,
+      "rows_differing_from_c_full": 0,
+      "rows_differing_from_search_value": 0,
+      "rows_missing_depths": 0,
+      "rows_missing_played_move": 0,
+      "single_row_games": 0,
+      "stop_boundary_ahead": 0,
+      "stop_boundary_self": 0,
+      "stop_terminal": 0,
+      "w_const_differs_from_map": 0
+    },
+    "values_by_phase": {
+      "0": 208068
+    },
+    "x_planes": 175
+  },
+  "source_qualified_input_schedule_sha256": "b64d4ab79ce18aefa918e29875c2c5b09de798aca4cc0f7c998ebbe4c628cea8",
+  "scope": "All non-policy payloads and original-source row sequence; not training schedule execution or strength."
+}
