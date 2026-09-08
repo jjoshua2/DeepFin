@@ -1,0 +1,29 @@
+{
+  "argv": [
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=10s",
+    "110s",
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/taskset",
+    "-c",
+    "6,7",
+    "/usr/bin/python3",
+    "/tmp/deepfin-recipe-screen-tools-v3/scripts/bt4_recipe_readout.py",
+    "--manifest",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low.reader_manifest.json",
+    "--expected-manifest-sha256",
+    "3da398cc2154bcca9112265c39d43865389e4ca5458bcce662f85f6fa4045cc3"
+  ],
+  "exit_code": 0,
+  "started_unix": 1788872068.4423857,
+  "ended_unix": 1788872072.5201695,
+  "manifest_sha256": "3da398cc2154bcca9112265c39d43865389e4ca5458bcce662f85f6fa4045cc3",
+  "readout_sha256": "a512b433f1b446b3b6b7fe7440807244c7ed600a49ee4bd1f7d55a78e36cea20",
+  "stderr_sha256": "331f5af16208568f08794a01010978e5c21280b5ced0fc10922fee24c4c2ab0d"
+}

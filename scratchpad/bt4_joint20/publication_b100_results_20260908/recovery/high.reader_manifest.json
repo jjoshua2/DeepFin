@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "mode": "high_fixed128",
+  "bank": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/arena.games.jsonl",
+    "sha256": "6ecc0e0fd02e9f3a7fce66db0521e82297d61b88d0a55eec43c531506103322e"
+  },
+  "result": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/arena.results.jsonl",
+    "sha256": "c9e759f83c9c5093f450488641e8d93548acf974ca36f34c4c16800ecc6e0ec5"
+  },
+  "process": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/process.json",
+    "sha256": "808d684b0dc7d1eca86d57f2e64c91d8d809134bf9c4121670e761b28aa70149"
+  },
+  "launch": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high.launch.json",
+    "sha256": "873e18f1c6ad9ea53f8711969dbce47c42d478096a4e04d3cef2e4a2e9287893"
+  },
+  "opening_panel": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/qualified_preparation.panel.json",
+    "sha256": "b4f1d16b488ff9efa0c466706b74595559a807c99a0e4ca75379a4d0745cfb6c"
+  },
+  "expected_settings": {
+    "mode": "matched_sims",
+    "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+    "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05_epoch_v1/checkpoint.pt",
+    "games": 256,
+    "seed": 42,
+    "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+    "openings_kind": "book",
+    "opening_plies": 16,
+    "sims_candidate": 400,
+    "sims_reference": 400,
+    "ms_per_move": null,
+    "max_plies": 300,
+    "temperature": 0.1,
+    "gumbel_add_noise": true,
+    "search_candidate": {
+      "shape": "training",
+      "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+      "gumbel": {
+        "c_scale": 0.1,
+        "c_scale_root": -1.0,
+        "c_visit": 50.0,
+        "c_visit_root": -1.0,
+        "full_tree": true,
+        "halving_div": 2,
+        "policy_temp": 1.0,
+        "q_visit_exp_root": 99.0,
+        "target_max_visit_cap": 5,
+        "target_q_rescale": true,
+        "target_untempered_prior": true,
+        "topk": 16,
+        "volatility_anchor": 0.05,
+        "volatility_factor_clip": 4.0,
+        "volatility_fpu": 0.0,
+        "volatility_q_scale": 0.0
+      },
+      "vloss_weight": 1,
+      "target_batch": 0,
+      "tree_reuse": "cold"
+    },
+    "search_reference": {
+      "shape": "training",
+      "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+      "gumbel": {
+        "c_scale": 0.1,
+        "c_scale_root": -1.0,
+        "c_visit": 50.0,
+        "c_visit_root": -1.0,
+        "full_tree": true,
+        "halving_div": 2,
+        "policy_temp": 1.0,
+        "q_visit_exp_root": 99.0,
+        "target_max_visit_cap": 5,
+        "target_q_rescale": true,
+        "target_untempered_prior": true,
+        "topk": 16,
+        "volatility_anchor": 0.05,
+        "volatility_factor_clip": 4.0,
+        "volatility_fpu": 0.0,
+        "volatility_q_scale": 0.0
+      },
+      "vloss_weight": 1,
+      "target_batch": 0,
+      "tree_reuse": "cold"
+    },
+    "volatility_candidate": null,
+    "uci_args": "",
+    "syzygy": "",
+    "syzygy_max_pieces": 6
+  },
+  "expected_execution": {
+    "loop": "rolling",
+    "compile": "on",
+    "eval_hoist": "4096",
+    "eval_max_batch": 4096,
+    "eval_leaf_cap_uncapped": 2048,
+    "max_concurrent_games": 128,
+    "arena_pool_size": 128,
+    "max_seconds": 5340.0,
+    "hard_seconds": 5400
+  },
+  "low_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low.reader_manifest.json",
+    "sha256": "3da398cc2154bcca9112265c39d43865389e4ca5458bcce662f85f6fa4045cc3"
+  }
+}

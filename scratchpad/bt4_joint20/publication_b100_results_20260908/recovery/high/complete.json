@@ -1,0 +1,12 @@
+{
+  "complete": true,
+  "readout": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high/readout.stdout.json",
+    "sha256": "738ea20f8c95c18e67d0168a63b3e6af10a323966c6aa132219136a03c75251e"
+  },
+  "reader_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_H20_recipe_screen_high_recovery_v1/high.reader_manifest.json",
+    "sha256": "98179e340b327e76e99ca7790a1171679dd9c8b4fd5c9f93161541fecf7a5ef4"
+  },
+  "gpu_seconds": 1407.6235731700144
+}
