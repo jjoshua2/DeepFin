@@ -1,0 +1,30 @@
+{
+  "status": "PASS_METADATA_ONLY_NOT_LAUNCHED",
+  "manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/runner_manifest.json",
+    "sha256": "802615056d68a8268a0eb340e3efc3273b883dc12415e0fcbb36ab62d5294733"
+  },
+  "actual_consumer_source": {
+    "path": "/tmp/deepfin-g10-parallel-tools/scripts/derive_corpus_targets.py",
+    "sha256": "d2fbde7291d6662032431f71f8551e6b580ffd37b671a2b77422987708dcfff2"
+  },
+  "shared_extracted_header_validator": {
+    "path": "/tmp/deepfin-selection-admission/scripts/corpus_selection_schema.py",
+    "sha256": "e186d25b0908fb79769e2c38306a20fcf70ead6bd626731ad19f3d6e79c064d3"
+  },
+  "old_runner": {
+    "path": "/tmp/deepfin-g10-parallel-tools/scripts/common_input_batch.py",
+    "sha256": "7bf575fd3adce492404ba6e03fff30c0ee72d0a7b4a25a3e7bf246ba40d07613"
+  },
+  "checks": [
+    "Both corrected selections pass exact extracted header and original source/config/manifest binding",
+    "Both failed v1 selections rejected by same helper",
+    "Existing frozen runner validate_manifest and fresh_outputs pass",
+    "All original selected shard entries unchanged from v1"
+  ],
+  "limitations": [
+    "Full select_corpus_record not called: it hashes raw payloads.",
+    "Draft main shared-helper code is not adopted by the frozen old runtime; ordinary old deriver validates full schema and source content during actual execution.",
+    "Reused native/library pins are not rehashed here; root and bounded execution verify them."
+  ]
+}

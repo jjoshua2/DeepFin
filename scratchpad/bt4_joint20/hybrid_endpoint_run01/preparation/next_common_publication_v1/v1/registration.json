@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "status": "REGISTERED_NOT_LAUNCHED",
+  "registered_utc": "2026-09-08T09:27:00.250032+00:00",
+  "metadata_snapshot_sha256": "82ddc7ff9c93e0c166a2f50860ffd94e8e798440ba3cbe4dd3f0426a6f4678a8",
+  "preregistration_sha256": "65fa600d228f777219248b7c88c86770d435b74c13792d744f3c409456944954",
+  "raw_rows": 1061905,
+  "shards": 128,
+  "max_concurrent_sources": 2,
+  "expected_survivors": null,
+  "derive_options": {
+    "scheme": "uniform-d9",
+    "policy_observation": "phase0",
+    "value_observation": "latest-phase",
+    "value_scheme": "search",
+    "temp": 0.0005,
+    "floor": 0,
+    "seed": 0,
+    "rows_per_shard": 8192,
+    "workers": 2,
+    "row_provenance": true
+  },
+  "limits": {
+    "wall_seconds_including_kill": 14400,
+    "numeric_threads": 2,
+    "nice": 19,
+    "ionice_class": 3,
+    "CUDA_VISIBLE_DEVICES": "",
+    "new_output_cache_bytes": 8589934592,
+    "minimum_free_bytes": 161061273600,
+    "adapter_index_cache_bytes": 67108864,
+    "rank_index_cache_bytes": 67108864
+  },
+  "intended_cpu_affinities": {
+    "run06_g10": [
+      0,
+      1
+    ],
+    "run07_g10_companion4": [
+      2,
+      3
+    ]
+  },
+  "preceding_jobs_must_be_preserved": {
+    "B100_training_coordinator_pid_at_start": 336548,
+    "B100_training_supervisor_pid_at_start": 336570,
+    "B100_training_pid_at_start": 336571,
+    "raw_BT4_labeler": "preserve active driver and all groups; resolve actual host ownership before launch"
+  },
+  "runtime_and_runner_binding": {
+    "runtime_qualification": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/runtime_qualification_v2.json",
+      "sha256": "cd09fb34e12116c23582ac55d0916fed3e71ba5600212e55126ec2e4595f51f7"
+    },
+    "runner": "/tmp/deepfin-g10-parallel-tools/scripts/common_input_batch.py",
+    "commit": "56d650e06ca208a8b134155c5a7fad4dd19b105d",
+    "launch_status": "not launched; exact operator argv/deadline/PIDs pending parent review"
+  },
+  "selected_window": "w00-00128..w00-00191 per source",
+  "metadata_snapshot": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v1/metadata_snapshot.json",
+    "sha256": "82ddc7ff9c93e0c166a2f50860ffd94e8e798440ba3cbe4dd3f0426a6f4678a8"
+  }
+}

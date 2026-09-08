@@ -1,0 +1,10 @@
+{
+  "status": "failed",
+  "error": "ValueError('lane run07_g10_companion4 exit 1')",
+  "start_unix": 1788860034.9950979,
+  "end_unix": 1788860039.7272866,
+  "manifest_sha256": "18e2f33dfdbdef5677d4e5773e039e6d73aa896cd39899ac7e16891f6178a461",
+  "completed_sources": [],
+  "peak_sampled_aggregate_output_bytes": 1335625,
+  "minimum_sampled_free_bytes": 439323267072
+}

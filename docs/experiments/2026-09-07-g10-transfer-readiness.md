@@ -4,6 +4,45 @@ September 7, 2026. This preparation work supports the larger-data stage of the
 [adaptive bootstrap research](2026-09-07-bt4-hybrid-endpoints.md). It does not choose
 another recipe before H20's completed comparison or establish playing strength.
 
+## Next disjoint block: corrected launch after early failure — September 8
+
+A fresh block selects **1,061,905 raw rows in 128 closed, BT4-labelled shards**:
+`w00-00128..00191` from each source (531,281 run06; 530,624 run07). Its
+source-qualified games are disjoint from earlier blocks and between selected
+shards. The proposed larger block lacked complete run07 teacher receipts, so the
+registration fixed this smaller selection without automatic expansion.
+
+The first attempt launched at **09:33:54 UTC**, then failed after **4.73 seconds**:
+the preparation collector omitted `source_config_sha256`, and the runner's preliminary
+checks missed the consumer's exact schema. Both derivers rejected their selection
+before processing; no completed inputs were produced. The original failure,
+logs, review and terminal-process observation remain preserved. This was a
+preparation error, not a teacher or data-quality result.
+
+The corrected attempt launched at **09:46:37 UTC**, outer PID 344344, after an
+independent check against the actual consumer's header and entry contract, original
+source identities and all 319 manifest pins. Its two lane-start receipts bind
+PIDs 344358/344360, CPU pairs 0–1/2–3 and one four-hour deadline. Only the missing
+static config binding, dependent pins and fresh output paths changed; all selected
+raw rows and target semantics remained fixed. This is a **frozen startup snapshot**,
+not a completion or survivor-count claim. The earlier **2,112,247 completed common
+rows across 261 shards** remain the prepared total reported here.
+
+Both attempts use the same qualified runtime and phase-zero d9 policy/latest-phase
+value semantics. The corrected attempt retains two numeric threads per lane,
+low CPU/idle I/O priority, hidden GPU, an 8 GiB sampled output/cache bound and
+150 GiB free-space reserve; the output bound is not a quota. B100 training and
+raw BT4 generation were preserved. Missing-result omissions are bounded at 2%
+per source and evidenced support defects at 64, with zero envelope drops.
+
+The [attempt evidence manifest](evidence/bt4-bootstrap/g10-next-attempts-manifest.json)
+binds the original registrations, exact manifests and commands, independent/root
+reviews, startup receipts and terminal failure. Compact metadata archives include
+per-member SHA indexes and the frozen collector/header-check sources. No raw
+payload scan was repeated for this publication. The [merged shared-validator fix](https://github.com/jjoshua2/DeepFin/pull/555)
+adds the consumer's exact structural checks to future runner preflight; this
+corrected attempt intentionally retains its already qualified runtime.
+
 ## Completed two-lane common-input batch — September 8
 
 The next disjoint batch completed at **08:59:02 UTC**, with both lanes and all ten

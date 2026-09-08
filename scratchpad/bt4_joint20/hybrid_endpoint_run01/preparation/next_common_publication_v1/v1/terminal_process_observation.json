@@ -1,0 +1,13 @@
+{
+  "checked_unix": 1788860419.5238779,
+  "recorded_pids": [
+    341535,
+    341550,
+    341552,
+    341566,
+    341568
+  ],
+  "still_present": [],
+  "failure_sha256": "5082c23d0ae0b813f46945ec0a28a38c46023fe922279c42c8264765ac14830a",
+  "status": "ALL_RECORDED_TASK_PIDS_ABSENT"
+}
