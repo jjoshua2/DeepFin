@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "status": "PASS_COMPLETED_RECOVERED_H20_PUBLICATION",
+  "created_utc": "2026-09-08T02:39:24.301711+00:00",
+  "reviewer": "independent review_pr517_bootstrap",
+  "inputs": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/status.json",
+      "sha256": "7ad26e328ea67a3bf4123ba7f054d9947ae322ca1b78f9328023c7c9f1198d63",
+      "bytes": 3141
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/resources.json",
+      "sha256": "867006a20e107e506b4eb6bd136fd5361120acc4676f0e5a849e0a09c6a2b73e",
+      "bytes": 159
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/qualification_execution_v2.json",
+      "sha256": "163fcff1ce6d7efbac6865f4a98030f9b6e5cb8b19b9c9ce21b02eaa577d0801",
+      "bytes": 648
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/launch.json",
+      "sha256": "77c2c3c60ec0f5e482030f417043dc0ba89cc88fa33d12d193959a68a7ed8b2e",
+      "bytes": 34713
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/preregistration.json",
+      "sha256": "f61dfaf995c0dae7b6f55e47a0208a06c78be566a5e8b48372671453f23e30c3",
+      "bytes": 3261
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.dataset_qualification.json",
+      "sha256": "acc28fa8eda714326ce171ee2492323408d2d5339b538533dac0c52c80ccef5a",
+      "bytes": 10551
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05/derive_targets_summary.json",
+      "sha256": "bf783af1d998dc80f36b9add6cacc2a829ea34ba6346c8e632b0feb1455c9f90",
+      "bytes": 172441
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05/bt4_policy_mix_summary.json",
+      "sha256": "68cac181db86e6d33bbc77f2cedcd6229e10634e2d1f5111d64d1bf5b7185ecb",
+      "bytes": 9359
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20.publication_metadata.jsonl",
+      "sha256": "10cc790b9a72c5a81450fddb8eb1855d5e5c0c035a6012e699610eb07d478ab1",
+      "bytes": 2295146
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/mix.status.json",
+      "sha256": "ae847094c421a26cc62205c4aff7016b6b1e13a46e4e240c633eb249b31599e4",
+      "bytes": 2533
+    }
+  ],
+  "baseline_reviews": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/independent_launch_review.json",
+      "sha256": "7deb23df57bf036721a11fa6b54b34e06d37b599d61ca89ce5813c6b6e6c4286",
+      "bytes": 7128
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/H20_recovery_v1/independent_qualification_correction_review.json",
+      "sha256": "97fc7d96ba54196a9492183f871d06b327a3574457f3c4ea1fb8be8921c67b3b",
+      "bytes": 3285
+    }
+  ],
+  "blockers": [],
+  "result": {
+    "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_hybrid_H20T05",
+    "rows": 18910484,
+    "shards": 2309,
+    "original_prefix_rows": 18776064,
+    "original_prefix_shards": 2292,
+    "new_suffix_rows": 134420,
+    "new_suffix_shards": 17,
+    "suffix_changed_rows": 133623,
+    "suffix_mean_L1_from_original_SF": 0.48820363637217573,
+    "suffix_mass_drift": {
+      "max": 0.0003853440284729004,
+      "mean": 0.00011383499254553894,
+      "mean_bound": 0.0009765625,
+      "reference": "normalized_total_legal_mass",
+      "row_bound": 0.0009765625
+    },
+    "certified_full_row_and_mean_mass_bound": 0.000545,
+    "full_observed_aggregates": "unavailable/null",
+    "recovery_elapsed_seconds": 200.4567584991455,
+    "qualifier_elapsed_seconds": 8.15142011642456,
+    "GNU_time_resources": {
+      "wall_seconds": 200.41,
+      "user_seconds": 121.28,
+      "system_seconds": 40.76,
+      "max_rss_kib": 1056372,
+      "filesystem_inputs": 476984,
+      "filesystem_outputs": 47240,
+      "exit_code": 0
+    }
+  },
+  "independent_checks": [
+    "Actual completionstatus matches frozenargv/plan/supervisor; exit0 and200.4567585seconds within1800budget. GNUtime200.41wall/121.28user/40.76system/1056372KiBmaxprocessRSS independently read; filesystem counters are not bytes and maxRSS is not aggregate tree memory.",
+    "Corrected qualifierexit0 in8.151420seconds binds exact6accd832implementation. Firstfailed qualifier remainspreserved; no failedfirstattempt was relabeled.",
+    "FinalderiveSHA bf783af1 andmixSHA68cac181verified; exact transitive originalsource equality after removing H20postprocess, matching parent/recoveryobjects, literal H20recipe and onlypolicy_targetmutation.",
+    "Compact publishedmetadata receipt hash verified;2309uniqueorderedshardrecords sum18910484rows. All2292prefixpublishedattrhashes equal pinnedpre-recoverypartialattrhashes. No fresh source/corpus metadata capture or payloadread.",
+    "Prefix+suffixcounts match registration; suffix133623changedrows andpositiveL1 supply noninertwitness. Measuredsuffixmassmean/maxpass, analyticfullboundpass, all15fullaggregatefieldsnull.",
+    "Original failedmix124receipt remains exactae847094; actualfinalcorpus exists and.writinggone. Completionproofhashes and registration/runtime chain match independentbaseline."
+  ],
+  "qualification_scope": "Published H20 inputs qualify for the registered recipe. Separate prospective canonical schedule and final trainingmanifest/runtime pins remain mandatory and are not judged here. No playing-strength,trainingconvergence,full-aggregate or100M-readinessclaim.",
+  "limits": [
+    "No new corpuspayloadscan,all-shardlive-metadatarescan,qualificationexecution,tests,GPU,inference ortrainlaunch.",
+    "Parent owns terminalhostprocessobservation; review independently checked completedproducer/status proof rather than probingprocesses again.",
+    "Processproof and analyticrounding qualification retain the documented after-write-mutation limitation."
+  ]
+}

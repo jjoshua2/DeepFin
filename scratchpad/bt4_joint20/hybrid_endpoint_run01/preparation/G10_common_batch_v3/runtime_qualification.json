@@ -1,0 +1,45 @@
+{
+  "status": "qualified",
+  "checkout": "/tmp/deepfin-g10-common-v3-tools",
+  "commit": "f87325696cbf80511d3203f77c9fb847e0883a20",
+  "python": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+  "pins": {
+    "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13": "93a93f4c8af5ae6f127fb0310f923d5fab89eb7257a0b801eec2e44b3f199840",
+    "/tmp/deepfin-g10-common-v3-tools/uv.lock": "4add8d8c91906df42eb15fe28bda3eb613192fdd257059e3ec7d097f917e66ef",
+    "/tmp/deepfin-g10-common-v3-tools/pyproject.toml": "6cf79d98f28a2258fa4a64247d20b8faf251dba549bd8771851eb5787934d082",
+    "/tmp/deepfin-g10-common-v3-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so": "6f4bb0ec267a4ebd73ffe0a0d699a427f4e1a29d261b3a21658033056567722d",
+    "/tmp/deepfin-g10-common-v3-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so": "73798b545d5351ca3cde0f1221bf3008675ef459d6765c62ba8193120299ab84",
+    "/tmp/deepfin-g10-common-v3-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so": "7dad156c2793b60f685582ebacdbaa51eb5ecc22fd462865da203955c28fd49a",
+    "/tmp/deepfin-g10-common-v3-tools/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so": "b9cb9a26ff7c017f995a6ce6d7852ff90ec3e43cf2772bc14dafff8c1836f8fc"
+  },
+  "qualification": {
+    "method": "Reuse unchanged tested CPU environment/native binaries; compare all tracked C/H/CPP/setup sources and final reviewed six-file bytes. No build/environment mutation.",
+    "native_source_files_verified": 23,
+    "native_binaries": 4,
+    "tested_candidate": "42c7724ab189ee0b0e9c1d7c365f6ca9590cbcae",
+    "prior_runtime_receipt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_pipeline_pilot_v1/runtime_qualification.json",
+      "sha256": "45085357cd4c6382d65c6c6a5f0dc2d9d71747022666054bc958dd48b311cc7f"
+    },
+    "runtime_metadata": {
+      "python": "3.13.15 (main, Sep  1 2026, 14:18:08) [Clang 22.1.3 ]",
+      "packages": {
+        "torch": "2.14.0+cpu",
+        "numpy": "2.2.6",
+        "zarr": "2.18.7",
+        "numcodecs": "0.15.1",
+        "python-chess": "1.999"
+      }
+    },
+    "final_source_sha256": {
+      "scripts/derive_corpus_targets.py": "c2af7b62644cf5658c1dfc2564b2196c51c8860dd91152f2db05d3d2614311a6",
+      "scripts/sf_d9_rank_sidecar.py": "1c8c6c1c93f9ec8786f7ac14c9be19ec86d3a8b6092c19c80d935a22148961c6",
+      "tests/test_phase0_policy_support_exclusions.py": "a752c1a948c3ed99ed430941439831b5b4cf15def5dd70ad0d742726784cf368",
+      "tests/test_sf_d9_rank_support_exclusions.py": "5aba5ca535452c4835bc3603b48e83899f86f35b9819de3a35a545f57ae3fe45",
+      "tests/test_derive_parallel.py": "458a3ee0077c1d6f104536192e5ae878e659dfebfe18b5c0b3bea6c51d4804bc",
+      "docs/corpus_derivation.md": "627b04fea1716ea695fcb1266e53d04b4bbb41b79a48917fbd1f66f78e90fb6d"
+    },
+    "scope": "CPU preparation only; existing frozen H20 training runtime unchanged.",
+    "created_unix": 1788831485.0129259
+  }
+}

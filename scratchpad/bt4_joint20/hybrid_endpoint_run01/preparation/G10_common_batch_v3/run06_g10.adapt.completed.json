@@ -1,0 +1,36 @@
+{
+  "pid": 281914,
+  "argv": [
+    "/usr/bin/time",
+    "-o",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10.adapt.time.json",
+    "-f",
+    "{\"wall_seconds\":%e,\"user_seconds\":%U,\"system_seconds\":%S,\"max_rss_kib\":%M,\"filesystem_inputs\":%I,\"filesystem_outputs\":%O,\"exit_code\":%x}",
+    "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+    "/tmp/deepfin-g10-common-v3-tools/scripts/adapt_raw_bt4_sidecars.py",
+    "--manifest",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/adapter_manifest.json",
+    "--expected-manifest-sha256",
+    "139a66530d479a312be642b8caabe86646202f38a6d941f12aabe98043e7bec5",
+    "--out",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/bt4",
+    "--max-index-bytes",
+    "67108864"
+  ],
+  "start_unix": 1788832275.4408965,
+  "end_unix": 1788832923.8414953,
+  "exit_code": 0,
+  "resources": {
+    "wall_seconds": 647.19,
+    "user_seconds": 608.19,
+    "system_seconds": 42.92,
+    "max_rss_kib": 1279244,
+    "filesystem_inputs": 243032,
+    "filesystem_outputs": 234632,
+    "exit_code": 0
+  },
+  "observed_owned_descendants": {
+    "281915": "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /tmp/deepfin-g10-common-v3-tools/scripts/adapt_raw_bt4_sidecars.py --manifest /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/adapter_manifest.json --expected-manifest-sha256 139a66530d479a312be642b8caabe86646202f38a6d941f12aabe98043e7bec5 --out /home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v3/run06_g10/bt4 --max-index-bytes 67108864 "
+  },
+  "observed_spawn_worker_pids": []
+}
