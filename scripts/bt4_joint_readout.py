@@ -26,8 +26,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -38,6 +39,7 @@ from chess_anti_engine.utils.game_log import (
     settings_fingerprint,
 )
 from scripts.arena_standard import load_fen_openings, pentanomial_counts, summarize_pentanomial
+from scripts.bt4_recipe_readout import pinned, read_json, same
 
 ARMS = ("G20T1", "G20T05", "E0")
 PROFILE_ARMS = {"global": ARMS, "sf-close": ("C20T05",), "calibration": ("S0", "E0")}
@@ -89,16 +91,32 @@ def read_arm(
     path: Path, *, reference: Path, seed: int, sims: int = 100,
     prior_temperature: float = 1.0, calibration: bool = False,
     confirmation: dict[str, Any] | None = None, expected_pairs: int = PAIRS,
+    calibration_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Refuse incomplete, conflicting or off-protocol banks before scoring."""
-    if type(expected_pairs) is not int or expected_pairs not in (250, PAIRS):
+    if calibration_contract is not None:
+        validate_calibration_contract(calibration_contract)
+        if not calibration or confirmation is not None:
+            raise ValueError("explicit calibration contract requires calibration only")
+        for actual, expected, name in (
+            (sims, calibration_contract["sims"], "simulations"),
+            (seed, calibration_contract["seed"], "seed"),
+            (expected_pairs, calibration_contract["expected_pairs"], "pairs"),
+            (prior_temperature, calibration_contract["candidate_prior_temperature"], "candidate prior"),
+        ):
+            same(actual, expected, "calibration " + name)
+    elif type(expected_pairs) is not int or expected_pairs not in (250, PAIRS):
         raise ValueError("expected_pairs must be 250 or 500")
-    if expected_pairs == 250 and (sims != 400 or calibration or confirmation is not None):
+    if calibration_contract is None and expected_pairs == 250 and (sims != 400 or calibration or confirmation is not None):
         raise ValueError("250 pairs are restricted to the registered 400-simulation book probe")
     if confirmation is not None and calibration:
         raise ValueError("confirmation input is not part of the fixed calibration protocol")
     log = read_game_log(path)
     settings = log.settings
+    if calibration_contract is not None:
+        same(settings, calibration_contract["expected_settings"], "calibration expected settings")
+        if reference.resolve() != Path(calibration_contract["checkpoint"]["path"]).resolve():
+            raise ValueError("calibration selected checkpoint differs")
     if log.truncated_tail:
         raise ValueError(f"{path}: require a complete game bank without a torn tail")
     if log.header.get("driver") != "arena_standard" or log.header.get("version") != 1:
@@ -117,6 +135,10 @@ def read_arm(
             raise ValueError("confirmation header lacks explicit FEN opening protocol")
         if Path(settings.get("openings", "")).resolve() != Path(confirmation["path"]):
             raise ValueError("arena opening path differs from expected confirmation file")
+    if calibration_contract is not None:
+        required["volatility_candidate"] = None
+        for key, value in required.items():
+            same(settings.get(key), value, "calibration setting " + key)
     wrong = {k: settings.get(k) for k, v in required.items() if settings.get(k) != v}
     if wrong:
         raise ValueError(f"{path}: off-protocol settings {wrong}")
@@ -133,19 +155,33 @@ def read_arm(
         raise ValueError(f"{path}: candidate lacks realized training search settings")
     reference_search = settings.get("search_reference")
     if calibration:
-        if sims != 100 or prior_temperature != 1.0:
+        if calibration_contract is None and (sims != 100 or prior_temperature != 1.0):
             raise ValueError("calibration requires 100 simulations and candidate prior 1.0")
         if not isinstance(reference_search, dict):
             raise ValueError("calibration reference search missing")
-        adjusted = {**reference_search, "gumbel": {**reference_search.get("gumbel", {}), "policy_temp": 1.0}}
-        if (reference_search.get("gumbel", {}).get("policy_temp") != 1.5
+        if calibration_contract is not None:
+            non_prior = [
+                {**{k: v for k, v in side.items() if k not in ("source", "gumbel")},
+                 "gumbel": {k: v for k, v in side.get("gumbel", {}).items() if k != "policy_temp"}}
+                for side in (search, reference_search)
+            ]
+            same(non_prior[0], non_prior[1], "calibration must differ only in the requested prior")
+        reference_prior = 1.5 if calibration_contract is None else calibration_contract["reference_prior_temperature"]
+        adjusted = {**reference_search, "gumbel": {**reference_search.get("gumbel", {}), "policy_temp": prior_temperature}}
+        if (reference_search.get("gumbel", {}).get("policy_temp") != reference_prior
                 or {k: v for k, v in search.items() if k != "source"}
                 != {k: v for k, v in adjusted.items() if k != "source"}):
-            raise ValueError("calibration must differ only in candidate 1.0 versus reference 1.5 prior")
+            raise ValueError("calibration must differ only in the requested candidate versus reference prior")
     elif search != reference_search:
         raise ValueError(f"{path}: candidate and reference search settings differ")
-    if prior_temperature not in PRIOR_TEMPERATURES:
+    if calibration_contract is None and prior_temperature not in PRIOR_TEMPERATURES:
         raise ValueError(f"unsupported registered prior temperature {prior_temperature!r}")
+    if calibration_contract is not None:
+        # Contract admission requires calibration; reference search was checked above.
+        for side in (search, cast(dict[str, Any], reference_search)):
+            value = side.get("gumbel", {}).get("policy_temp")
+            if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+                raise ValueError("realized calibration prior must be finite and positive")
     if search.get("gumbel", {}).get("policy_temp") != prior_temperature:
         raise ValueError(f"{path}: realized prior temperature differs from requested {prior_temperature}")
     if log.info.get("sprt") is not None:
@@ -157,6 +193,9 @@ def read_arm(
         if type(pair) is not int or not 0 <= pair < expected_pairs or type(half) is not int or half not in (0, 1):
             raise ValueError(f"{path}: invalid pair/half identity {(pair, half)}")
         key = (pair, half)
+        if calibration_contract is not None:
+            same(row.get("opening_index"), pair, "calibration opening index")
+            same(row.get("seed"), seed, "calibration row seed")
         if row.get("a_is_white") is not (half == 0) or row.get("opening_index") != pair:
             raise ValueError(f"{path}: inconsistent color/opening identity at {key}")
         if not row.get("opening_fen") or row.get("start_fen") != row["opening_fen"]:
@@ -170,10 +209,13 @@ def read_arm(
         score = white_score if half == 0 else 1.0 - white_score
         if type(row.get("score_candidate")) not in (float, int) or row["score_candidate"] != score:
             raise ValueError(f"{path}: result and candidate score disagree at {key}")
-        if row.get("seed") != seed or row.get("loop") != "chunked":
+        loop = "chunked" if calibration_contract is None else calibration_contract["loop"]
+        if row.get("seed") != seed or row.get("loop") != loop:
             raise ValueError(f"{path}: seed/loop differs from preregistration at {key}")
         history.setdefault(pair, []).append(row)
 
+    if calibration_contract is not None and len(log.games) != 2 * expected_pairs:
+        raise ValueError("explicit calibration requires exactly the fixed game count; no replay/orphan rows")
     for pair, games in history.items():
         # Resume replays BOTH halves of an orphan pair, in either finish order.
         # Earlier attempts can therefore have repeated one half, but cannot
@@ -198,6 +240,8 @@ def read_arm(
     modes = {(r.get("compile"), r.get("eval_hoist")) for r in rows.values()}
     if len(modes) != 1 or any(v in (None, "", "unknown") for v in next(iter(modes))):
         raise ValueError(f"{path}: mixed or unknown compile/evaluator modes")
+    if calibration_contract is not None:
+        same(list(next(iter(modes))), calibration_contract["expected_execution"], "calibration execution")
     summary = summarize_pentanomial(pentanomial_counts([2 * s for s in scores]))
     lo = summary.score - 1.96 * summary.score_se
     hi = summary.score + 1.96 * summary.score_se
@@ -216,6 +260,114 @@ def read_arm(
             "elo_ci95": list(summary.elo_ci95), "verdict": verdict,
             "pentanomial": dict(zip(("WW", "WD_DW", "DD_WL", "LD_DL", "LL"), summary.counts)),
         },
+    }
+
+
+def validate_calibration_contract(contract: dict[str, Any]) -> None:
+    """Explicit fixed-N bank contract; launch-time content proof stays external."""
+    fields = {"schema", "checkpoint", "candidate_prior_temperature", "reference_prior_temperature",
+              "sims", "expected_pairs", "seed", "loop", "expected_settings", "expected_execution",
+              "opening_panel", "bank"}
+    if set(contract) != fields:
+        raise ValueError("unexpected calibration contract fields")
+    if type(contract.get("schema")) is not int or contract["schema"] != 1:
+        raise ValueError("unsupported calibration contract schema")
+    for name in ("candidate_prior_temperature", "reference_prior_temperature"):
+        value = contract[name]
+        if type(value) not in (float, int) or not math.isfinite(value) or value <= 0:
+            raise ValueError("calibration priors must be finite and positive")
+    if (type(contract["sims"]) is not int or contract["sims"] <= 0
+            or type(contract["expected_pairs"]) is not int or contract["expected_pairs"] < 2
+            or type(contract["seed"]) is not int):
+        raise ValueError("calibration requires positive integer simulations and at least two fixed pairs")
+    if contract["loop"] not in ("chunked", "rolling"):
+        raise ValueError("unsupported calibration loop")
+    execution = contract["expected_execution"]
+    if (not isinstance(execution, list) or len(execution) != 2 or execution[0] != "on"
+            or not isinstance(execution[1], str) or not execution[1].isdigit() or int(execution[1]) <= 0):
+        raise ValueError("calibration requires compile on and an explicit evaluator tag")
+    checkpoint = contract["checkpoint"]
+    digest = checkpoint["sha256"]
+    if (not Path(checkpoint["path"]).is_absolute() or not isinstance(digest, str)
+            or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)):
+        raise ValueError("calibration requires an explicit checkpoint path/content identity")
+    settings = contract["expected_settings"]
+    fields = {"mode", "candidate", "reference", "games", "seed", "openings", "openings_kind",
+              "opening_plies", "sims_candidate", "sims_reference", "ms_per_move", "max_plies",
+              "temperature", "gumbel_add_noise", "search_candidate", "search_reference",
+              "volatility_candidate", "uci_args", "syzygy", "syzygy_max_pieces"}
+    if not isinstance(settings, dict) or not fields <= set(settings):
+        raise ValueError("calibration requires the complete expected arena settings")
+    # Also reject non-finite settings and preserve bool versus integer identity.
+    json.dumps(settings, allow_nan=False)
+
+
+def read_calibration_contract(path: Path) -> dict[str, Any]:
+    """Read one selected checkpoint/prior contrast using existing bank validation.
+
+    The panel uses the existing recipe-reader root_fen/moves/fen format. It
+    proves legal history and endpoint order now, not launch-time consumption.
+    """
+    raw = path.read_bytes()
+    contract = json.loads(raw)
+    validate_calibration_contract(contract)
+    checkpoint = Path(contract["checkpoint"]["path"])
+    checkpoint_before = checkpoint.stat()
+    digest = hashlib.sha256()
+    with checkpoint.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    same(digest.hexdigest(), contract["checkpoint"]["sha256"], "calibration checkpoint content")
+    bank = pinned(contract["bank"])
+    panel = read_json(contract["opening_panel"])
+    pairs = contract["expected_pairs"]
+    if not isinstance(panel, list) or len(panel) != pairs:
+        raise ValueError("calibration opening panel differs from the fixed pair count")
+    fens = []
+    for entry in panel:
+        if (not isinstance(entry, dict) or set(entry) != {"root_fen", "moves", "fen"}
+                or not isinstance(entry["moves"], list) or len(entry["moves"]) != 16):
+            raise ValueError("calibration requires the canonical full-history opening panel")
+        board = chess.Board(entry["root_fen"])
+        if not board.is_valid():
+            raise ValueError("invalid calibration opening root")
+        for move in entry["moves"]:
+            board.push_uci(move)
+        if board.fen() != entry["fen"] or not board.is_valid() or board.is_game_over():
+            raise ValueError("calibration opening history/endpoint mismatch")
+        fens.append(entry["fen"])
+    if len(set(fens)) != pairs:
+        raise ValueError("duplicate calibration opening endpoints")
+    cell = read_arm(bank, reference=Path(contract["checkpoint"]["path"]),
+                    seed=contract["seed"], sims=contract["sims"], expected_pairs=pairs,
+                    prior_temperature=contract["candidate_prior_temperature"],
+                    calibration=True, calibration_contract=contract)
+    same(cell["openings"], fens, "calibration canonical opening sequence")
+    same(cell["sha256"], contract["bank"]["sha256"], "calibration bank content")
+    pinned(contract["opening_panel"])
+    checkpoint_after = checkpoint.stat()
+    if any(getattr(checkpoint_before, key) != getattr(checkpoint_after, key)
+           for key in ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")):
+        raise ValueError("calibration checkpoint changed during reading")
+    if path.read_bytes() != raw:
+        raise ValueError("calibration contract changed during reading")
+    return {
+        "profile": "explicit_calibration", "bank_complete": True,
+        "contract": {"path": str(path.resolve()), "sha256": hashlib.sha256(raw).hexdigest()},
+        "checkpoint": contract["checkpoint"], "checkpoint_content_verified_now": True,
+        "candidate_prior_temperature": contract["candidate_prior_temperature"],
+        "reference_prior_temperature": contract["reference_prior_temperature"],
+        "sims": contract["sims"], "expected_pairs": pairs, "loop": contract["loop"],
+        "opening_panel": contract["opening_panel"],
+        "cell": {k: v for k, v in cell.items() if k not in ("scores", "openings")},
+        "launch_qualification_verified": False,
+        "limitations": [
+            "Complete fixed-N bank only; terminal process, effective command, checkpoint/book bytes "
+            "at launch and runtime provenance require external launch qualification.",
+            "Panel history is legal and endpoints match now; game rows do not prove full history consumed at launch.",
+            "Nominal paired interval for this checkpoint and prior contrast; no pooling, grid selection, "
+            "training improvement, optimal prior or automatic promotion is established.",
+        ],
     }
 
 
@@ -437,6 +589,8 @@ def confirmation_report(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=(*PROFILE_ARMS, "confirmation"), default="global")
+    parser.add_argument("--calibration-contract", type=Path,
+                        help="one explicit fixed-N calibration contract; no legacy profile options")
     parser.add_argument("--prior-temperature", type=float, choices=PRIOR_TEMPERATURES,
                         default=1.0, help="realized search prior; use 1.5 only for superseded banks")
     parser.add_argument("--cell", action="append", default=[], metavar="G20T1:25=GAMES.jsonl")
@@ -460,6 +614,14 @@ def main() -> None:
         parser.error("--bootstrap-samples must be at least 1000")
     cells = {}
     try:
+        if args.calibration_contract is not None:
+            explicit = argparse.ArgumentParser(description="Read one explicit calibration contract", allow_abbrev=False)
+            explicit.add_argument("--calibration-contract", type=Path, action="append", required=True)
+            selected = explicit.parse_args().calibration_contract
+            if len(selected) != 1:
+                raise ValueError("exactly one --calibration-contract is required")
+            print(json.dumps(read_calibration_contract(selected[0]), indent=2, allow_nan=False))
+            return
         is_confirmation = args.profile == "confirmation"
         confirmation_options = (args.candidate, args.candidate_role, args.reference_role, args.confirmation_sims)
         if is_confirmation:

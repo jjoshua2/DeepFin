@@ -168,6 +168,40 @@ that executed protocol; the linked registration records its identities. Set
 `CHESS_EXPERIMENT_ROOT` to the data-owning repository when it differs from
 `~/projects/chess`; the launcher checkout can remain separate.
 
+For one separately registered within-checkpoint prior comparison, use
+`python scripts/bt4_joint_readout.py --calibration-contract FILE.json`.
+This reads completed banks; it does not launch a match or choose a temperature.
+The original `--profile calibration` remains the fixed S0/E0, 1.0-versus-1.5,
+100-simulation, 500-pair chunked protocol.
+
+The explicit contract has `schema: 1` and these fields:
+
+- `checkpoint`, `bank`, `opening_panel`: objects with absolute `path` and `sha256`.
+  The checkpoint must identify both arena sides. Its bytes are hashed in a stream;
+  no model is loaded. The panel uses the existing recipe format: one
+  `{root_fen, moves, fen}` record per pair, with 16 legal history moves and unique,
+  nonterminal endpoints in canonical pair order.
+- `candidate_prior_temperature`, `reference_prior_temperature`: finite positive
+  numbers; `sims`: a positive integer; `expected_pairs`: an integer of at least two;
+  `seed`: an integer; `loop`: `rolling` or `chunked`.
+- `expected_settings`: the complete dictionary produced by
+  `arena_game_log_settings`, including each `SideSearch.as_record()` result.
+  Both sides must use the same checkpoint and training search, differing only in
+  prior temperature and its recorded source string. The candidate-only volatility
+  override must be absent (`volatility_candidate: null`). Other inherited book/search
+  protocol requirements remain enforced.
+- `expected_execution`: the compile/evaluator tags, for example `["on", "4096"]`.
+  Every game must match; compile remains on.
+
+The reader requires exactly all registered color-swapped pairs, with no missing,
+replayed, duplicate, orphan or torn records and no SPRT. An exit-zero arena that
+stopped early at its time limit cannot produce `bank_complete: true`. Bank hashes,
+full settings, current checkpoint bytes, legal panel history and logged endpoints
+are checked. `launch_qualification_verified` remains false: effective launch argv,
+runtime, original checkpoint/book bytes and actual history consumed still require
+the existing external launch evidence. The output is one nominal paired contrast,
+not a grid selection, training improvement or optimal-prior claim.
+
 The [adaptive H20 investigation](experiments/2026-09-07-bt4-hybrid-endpoints.md)
 adds explicit H20, B100 and G50 profiles to the same launchers. A manifest selects
 one profile; available profiles are not a queue. These profiles pin the adjacent
