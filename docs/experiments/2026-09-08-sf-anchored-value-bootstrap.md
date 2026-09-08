@@ -83,3 +83,68 @@ labeling cost, training/match budget and stopping/readout rule before launch.
 These are remaining experiment details within the ongoing research scope, not
 additional per-test permission gates. No value labels, rewrite, training or match
 were produced for this record.
+
+
+## First matched value readout
+
+The [registered CPU collection](https://github.com/jjoshua2/DeepFin/pull/579#issuecomment-5589203654)
+completed all 128 rows for both teachers. Raw BT4 winner probabilities and Ceres
+primary/secondary logits are retained. Independent review recomputed every
+reported statistic from native arrays and checked the row identities, inherited
+selection weights and SF/outcome bindings. Neither teacher was run again for the
+review. The [evidence manifest](evidence/value-bootstrap/manifest.json) binds the
+[per-row outputs](evidence/value-bootstrap/matched-value-rows.json),
+[full descriptive readout](evidence/value-bootstrap/matched-value-readout.json),
+[matched input arrays](evidence/value-bootstrap/matched-inputs.npz) and both
+[collection](evidence/value-bootstrap/collector-source.txt) and
+[analysis](evidence/value-bootstrap/readout-source.txt) sources.
+
+Use centered value `q = W − L`; expected score is `(1 + q) / 2`. These are weighted
+descriptions of the existing training sample, not accuracy against a truth label.
+
+| Target/head | Mean absolute q | Mean draw probability | Mean WDL entropy (nats) |
+| --- | ---: | ---: | ---: |
+| Stored SF | 0.87286 | 0.05854 | 0.24434 |
+| BT4 winner | 0.93224 | 0.04914 | 0.08850 |
+| Ceres primary, T1 | 0.93066 | 0.05180 | 0.09336 |
+| Ceres secondary, T1 | 0.94795 | 0.04388 | 0.05384 |
+
+BT4 and Ceres primary differ by only **0.00950 mean absolute q** and **0.00792
+mean WDL total variation**. Their q residuals relative to SF have weighted
+correlation **0.978**. Both are more decisive than the stored SF target. That
+supports starting with one operationally convenient BT4 value candidate, rather
+than paying for two similar teacher arms immediately. It does not establish
+which teacher is better or whether either corrects SF bias. Only six sampled
+positions have `|q_SF| ≤ 0.1`, while 111 have `|q_SF| ≥ 0.8`; the sample is weak
+evidence about subtle equal-position or fortress disagreements. Ceres's native
+head/temperature blend remains a different package, recoverable from the saved
+raw logits without repeating inference.
+
+A value-mixture win could partly reflect changed confidence. Keep that possible
+mechanism explicit, and consider a suitable SF-only confidence control if the
+first value candidate is promising. Do not reinterpret this diagnostic as
+calibration, tune temperatures against its outcome labels, or discard the
+complementary-teacher hypothesis because of SF disagreement.
+
+## Lower-cost value backfill and future capture
+
+An additional [input check](evidence/value-bootstrap/derived-input-equivalence.json)
+found bitwise-identical BT4 feeds for all 128 stored float16 tensors versus the
+original float32 inputs. The existing converter already does the necessary work:
+consumed history/castling/color planes are binary; rounding the rule50 plane
+recovers every clipped integer counter from 0 through 100; remaining consumed
+metadata is overwritten and extra features are discarded. The full 175-plane
+input still differs after float16 storage, so this does **not** recover the
+original full-tensor input key or establish history authenticity.
+
+This provides a route to label existing derived rows directly, without replaying
+millions of raw histories. A producer must retain source-qualified shard/row
+identity and enforce the encoding/domain contract while consuming the actual
+corpus. Full-corpus coverage and throughput have not been measured. A bounded
+reusable prefix can establish cost before allocating the complete value pass.
+
+[PR #580](https://github.com/jjoshua2/DeepFin/pull/580) separately adds optional
+WDL retention to future raw BT4 labeling. It preserves old policy-only groups and
+reports their missing value coverage. It has passed focused tests, static checks
+and independent review, but the running labeler has not adopted it at this update.
+No value-mixed training has launched.

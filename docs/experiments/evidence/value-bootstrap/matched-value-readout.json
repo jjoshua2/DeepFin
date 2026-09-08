@@ -1,0 +1,412 @@
+{
+  "status": "DESCRIPTIVE_MATCHED_VALUE_SAMPLE",
+  "rows": 128,
+  "complete_sha256": "eb2a4ed18b936832516f48aa82204dee01bb414d2d4b9e82b2a45f2575a538a3",
+  "analysis_sha256": "318a545d750bb26cbb4d2d485b061607344412a8a8af628eef8d3a41828838cd",
+  "outputs_verified": {
+    "BT4.000.npz": {
+      "bytes": 268,
+      "sha256": "655a1add3303aeb63dd09198d748b43f543305db552d9acdefe075e2bf0ff443"
+    },
+    "BT4.001.npz": {
+      "bytes": 268,
+      "sha256": "6c2ae6e30abf0b8b31ec1c8b71ee1ede87a142cc41dc4f671d7217292df179d7"
+    },
+    "BT4.002.npz": {
+      "bytes": 268,
+      "sha256": "e1539d091f6c3dec7b3dcce2f4d14c6a409485435ab44744dcec0de7ceba7c64"
+    },
+    "BT4.003.npz": {
+      "bytes": 268,
+      "sha256": "43b1bf8e411364cfc5ac633849510c69a76a51495a969ff26ad85eba105f9701"
+    },
+    "BT4.004.npz": {
+      "bytes": 268,
+      "sha256": "960e7cd570b52c24abae90d408fdf6a163c3d2099e7e0e90e47831da981c0e8e"
+    },
+    "BT4.005.npz": {
+      "bytes": 268,
+      "sha256": "0df93c8307d9bf4d086bd8142232a400ed9e5d5cc44a7b0bf859c7ff472de702"
+    },
+    "BT4.006.npz": {
+      "bytes": 268,
+      "sha256": "e16f451fa803d022909f18c8d76aa26142f43561cb5b44d918d444cc7b5ee956"
+    },
+    "BT4.007.npz": {
+      "bytes": 268,
+      "sha256": "f50f88d0c770678ae029329cfbeb41cc9264569d7a0faf96a821079edd4d6d3c"
+    },
+    "BT4.008.npz": {
+      "bytes": 268,
+      "sha256": "5356b6b4b754ee8c50cc4bf5af789ee98b966e692a08c4b8fa36fbec9acbdba9"
+    },
+    "BT4.009.npz": {
+      "bytes": 268,
+      "sha256": "81fb9635fdf2d3a1293469ce8d249aea53b6f2cc0e5fc4f4709bb909c41972f4"
+    },
+    "BT4.010.npz": {
+      "bytes": 268,
+      "sha256": "9be526878508edfefac956f1b5a9b844443c4f4be57cfd700132dd4e7c105554"
+    },
+    "BT4.011.npz": {
+      "bytes": 268,
+      "sha256": "542ae394697927752b1a9f32e5c279f0101c3ac16971645c05502ff0260d08a6"
+    },
+    "BT4.012.npz": {
+      "bytes": 269,
+      "sha256": "7325d3c4525aaa688578e219e86bf752adfa778a42f9e962476a272ab4fbef4f"
+    },
+    "BT4.013.npz": {
+      "bytes": 268,
+      "sha256": "509e6583b45c94638810d373951cae1e27baae15a86688eb4a9a8624db3ada26"
+    },
+    "BT4.014.npz": {
+      "bytes": 268,
+      "sha256": "20351c5d6741e7719e66912a1c4ff700ac74e67f3230255d3f97a0bad5d382ad"
+    },
+    "BT4.015.npz": {
+      "bytes": 265,
+      "sha256": "f73b0a2addbeb4f2229a9088002ecca380f16b1a0ee16841f1945fcb9af75645"
+    },
+    "BT4.016.npz": {
+      "bytes": 268,
+      "sha256": "e4b46f6a1e5c8be567c905e70c03a8a64806057c9f24443bd1f29f643be0f4af"
+    },
+    "BT4.017.npz": {
+      "bytes": 268,
+      "sha256": "4895a9b2b373cdba18a88a38fa3279125553aaeffdbb2cdfac127b28cd9795fa"
+    },
+    "BT4.018.npz": {
+      "bytes": 268,
+      "sha256": "9cd50330570af98f1d7c8dc665ca56674d35acf065ea16252ff5868800da538b"
+    },
+    "BT4.019.npz": {
+      "bytes": 269,
+      "sha256": "d1b4505dbc86fd2a7214472ab3883368cc6f27a59e32be31d982f9b4ad22e5fd"
+    },
+    "BT4.020.npz": {
+      "bytes": 268,
+      "sha256": "5910e81c4f443aee5be0e2b8fcc47c47943570a5d535902e47b807b2d4a641f3"
+    },
+    "BT4.021.npz": {
+      "bytes": 267,
+      "sha256": "07e4dc13762f8479c2aa3b3605d084070dbd2f0ef281c0e875bcf14e9d698950"
+    },
+    "BT4.022.npz": {
+      "bytes": 268,
+      "sha256": "b2520588b18e32e6a8ea6e5b2a30584798da777fe32700f62a7aa8ccbfee72da"
+    },
+    "BT4.023.npz": {
+      "bytes": 267,
+      "sha256": "a41a0d66ca7d3e4bc0b036cb9f867e4d410fca48dba425ae86402742cd2ec2c8"
+    },
+    "BT4.024.npz": {
+      "bytes": 268,
+      "sha256": "44247bfe6a36c5250b4f0b00d04e3f0e3e694ce989d020b23938719d7535a2e1"
+    },
+    "BT4.025.npz": {
+      "bytes": 268,
+      "sha256": "ba619e8ab3417606e98c0dce1a102d2c221eec023092f8377b96112e444443ac"
+    },
+    "BT4.026.npz": {
+      "bytes": 268,
+      "sha256": "ec0ada56aaffe15407cbbb201a22c7dda12c21411fce408f65fcabfcdfd69e60"
+    },
+    "BT4.027.npz": {
+      "bytes": 268,
+      "sha256": "482484b21c3b736937f38787006755a839cbdc58a799644832882f4705394118"
+    },
+    "BT4.028.npz": {
+      "bytes": 268,
+      "sha256": "0b6d793c17ee088ffa8c93d6582fec1ee351fc8633672ec155249fbaaa1572cf"
+    },
+    "BT4.029.npz": {
+      "bytes": 266,
+      "sha256": "a74ec63ae091459c2b1b11c5a33cf0c3709a9b604f0bc038ce4178b1fa3f3b5e"
+    },
+    "BT4.030.npz": {
+      "bytes": 268,
+      "sha256": "5b706861f32e94dde2ec8850665fe7180f5c078f8924d98289b663757ad13dc7"
+    },
+    "BT4.031.npz": {
+      "bytes": 268,
+      "sha256": "000290572a14cad41f7973be6ed8c5db29d8e03e3413043bbb59563cf56225a5"
+    },
+    "Ceres.000.npz": {
+      "bytes": 443,
+      "sha256": "c02f825d4dc5b45e9f6e6159c073e3914615f9fd4552d450f25af5ce32d52eb1"
+    },
+    "Ceres.001.npz": {
+      "bytes": 444,
+      "sha256": "a623f3947ece41c118210b064782883e872591ef99d13dc93c5ccdfcced6177b"
+    },
+    "Ceres.002.npz": {
+      "bytes": 444,
+      "sha256": "0170829e067478eefdf2d24366efbde2b07c02f6ba88a736802951b4f4d962df"
+    },
+    "Ceres.003.npz": {
+      "bytes": 444,
+      "sha256": "70c65036be3a8e7547b412ccc90942059b1ea8e57ead9e5ade4cd4fab8907cb0"
+    },
+    "Ceres.004.npz": {
+      "bytes": 444,
+      "sha256": "ef02ba542fa2a6a1a8d3a7948bd18b51b389a482495e79147fa7891cc0ef687d"
+    },
+    "Ceres.005.npz": {
+      "bytes": 443,
+      "sha256": "a693f24c2b3f624dc7b17896b24d40949f7d9e5a82571e251101a99c72224677"
+    },
+    "Ceres.006.npz": {
+      "bytes": 444,
+      "sha256": "8cf61f23cecf205029f723bca35e8877bc137491ab93ffa1bc880cb7414e00b7"
+    },
+    "Ceres.007.npz": {
+      "bytes": 444,
+      "sha256": "41f0d929998a1c9e303ebf66cb708fe8f8dcb0358828d7089c6136ebaf079d3c"
+    },
+    "Ceres.008.npz": {
+      "bytes": 444,
+      "sha256": "931453adb708b5f81a271c84bfe3872f1f8fd7f9703b48af5daab2eefcbbd630"
+    },
+    "Ceres.009.npz": {
+      "bytes": 444,
+      "sha256": "8f08b5aac2a77a719ed00eff4172ef43df5dc9d4761e91e0a7ef7f4859b01ebf"
+    },
+    "Ceres.010.npz": {
+      "bytes": 444,
+      "sha256": "164bf0023795aa44a7d272fbf69d32d1dee645261b297ff1f339033973745c82"
+    },
+    "Ceres.011.npz": {
+      "bytes": 444,
+      "sha256": "30becee81bbb7f939ce2e5d0898c88669f1f210136cac84463b49fc7b0697614"
+    },
+    "Ceres.012.npz": {
+      "bytes": 444,
+      "sha256": "7ed1ef570964d4898eaa9daf125a77ee8d4996186edd215d5ed1075862ef91e1"
+    },
+    "Ceres.013.npz": {
+      "bytes": 444,
+      "sha256": "21c778dcb58bf70036ca4b7de1e0639053b4b4813513875a23b829f4c793c2fb"
+    },
+    "Ceres.014.npz": {
+      "bytes": 444,
+      "sha256": "b71c267820de13b71cbbe287b8e2dd12fb16d701bac4efa174ff4d8abaafb7b7"
+    },
+    "Ceres.015.npz": {
+      "bytes": 444,
+      "sha256": "8ce002cf4f38cad0b5ce29f02738b32e38a0701cb261bea2bee28353dc2f8c35"
+    },
+    "Ceres.016.npz": {
+      "bytes": 443,
+      "sha256": "de551c169667d8952f7e3e15c8b5ec63ac6f690861199803af3a1774ed572796"
+    },
+    "Ceres.017.npz": {
+      "bytes": 443,
+      "sha256": "6f577ea3bb7d93cc91000c86c33793fae902cb25a9638e4b93c18ed0a40f6231"
+    },
+    "Ceres.018.npz": {
+      "bytes": 444,
+      "sha256": "323187e91cf9e6df42d36005ef0921915b1843928e2b72addeda1df162ba37a1"
+    },
+    "Ceres.019.npz": {
+      "bytes": 442,
+      "sha256": "115925e349429be3417e4820ce407110ba05fa945ec634df8a1c974e082ee27d"
+    },
+    "Ceres.020.npz": {
+      "bytes": 444,
+      "sha256": "c7fbcae3623e2aa76703b4080e1676a9d062abab0d2cc18be84d57b3bbe07584"
+    },
+    "Ceres.021.npz": {
+      "bytes": 444,
+      "sha256": "aee276e38e3222645e3009d7e7f6d46e148c7a2677f814270a8f34008921140b"
+    },
+    "Ceres.022.npz": {
+      "bytes": 444,
+      "sha256": "71ccd73266e61cf54da9dd24ba7fbde69dcb44902d5ea95d715734cf58129f68"
+    },
+    "Ceres.023.npz": {
+      "bytes": 442,
+      "sha256": "5af73dab101157431e11a88a576a77186f5e6c5fbf3093dad13817555a4b2c61"
+    },
+    "Ceres.024.npz": {
+      "bytes": 442,
+      "sha256": "3fdf7e55e5de13d5cdbc48ba6c04c3edbb9129d9a43248b00f40504c5fe977b7"
+    },
+    "Ceres.025.npz": {
+      "bytes": 444,
+      "sha256": "f86d00c0be507adfb6f36738c92a96b0c07cba2640dccc4b0997f8846875e567"
+    },
+    "Ceres.026.npz": {
+      "bytes": 444,
+      "sha256": "d86cefc21f75c896c9277e727ce21ba9d406bb448b107f7252157e63efdcafee"
+    },
+    "Ceres.027.npz": {
+      "bytes": 443,
+      "sha256": "6512da9f0a655654495b38a4636a6d08a25511ac655ac6bf288087fda2368b86"
+    },
+    "Ceres.028.npz": {
+      "bytes": 444,
+      "sha256": "47ea9dcf318ac1429be6c251ce6767e01f37b4a15ac760cc4cdc27dc261714b7"
+    },
+    "Ceres.029.npz": {
+      "bytes": 444,
+      "sha256": "c3fdda3757a9cfca94a8360d6055be4d6a717c92f7fd41d45208ae2f3c1745dc"
+    },
+    "Ceres.030.npz": {
+      "bytes": 444,
+      "sha256": "e8140ce4021596acb80d7d6bacfe346f0b269334523fe514c0de22c33a14dc82"
+    },
+    "Ceres.031.npz": {
+      "bytes": 444,
+      "sha256": "f648f983244c65adad03b3b6e024444112f18e26b5fbf72b114f21d063807659"
+    },
+    "identities.json": {
+      "bytes": 98744,
+      "sha256": "5003ca006b8fae9b40e0567206552cb8ad2cd855f2a27683b19d31fc87defffa"
+    },
+    "source_inputs.npz": {
+      "bytes": 154226,
+      "sha256": "57abe2fb02a5b8530c08d89dc72b70b93437238cfedf565646fd033920ad629f"
+    }
+  },
+  "weighting": "Existing two-stage inverse-selection weights, normalized over the fixed sample; not a new independent sample.",
+  "centered_q": "W-L; expected score is (1+q)/2.",
+  "heads": {
+    "SF": {
+      "weighted_mean_wdl": [
+        0.48653669608072164,
+        0.0585442830339391,
+        0.4549190208853391
+      ],
+      "weighted_entropy_nats": 0.2443428761273718,
+      "weighted_mean_centered_q": 0.03161767519538259,
+      "weighted_mean_abs_centered_q": 0.8728639425140847
+    },
+    "BT4": {
+      "weighted_mean_wdl": [
+        0.49699388135221595,
+        0.049141872795569246,
+        0.45386424585221474
+      ],
+      "weighted_entropy_nats": 0.08850033029023602,
+      "weighted_mean_centered_q": 0.04312963550000118,
+      "weighted_mean_abs_centered_q": 0.9322409213374726
+    },
+    "Ceres_primary": {
+      "weighted_mean_wdl": [
+        0.49562878687180434,
+        0.05179789118128919,
+        0.4525733219469064
+      ],
+      "weighted_entropy_nats": 0.09336353552433896,
+      "weighted_mean_centered_q": 0.04305546492489791,
+      "weighted_mean_abs_centered_q": 0.9306569645796803
+    },
+    "Ceres_secondary": {
+      "weighted_mean_wdl": [
+        0.5029195783881601,
+        0.04387895146011828,
+        0.45320147015172146
+      ],
+      "weighted_entropy_nats": 0.053836985995018266,
+      "weighted_mean_centered_q": 0.04971810823643893,
+      "weighted_mean_abs_centered_q": 0.9479482812637635
+    }
+  },
+  "pairwise": {
+    "SF__BT4": {
+      "weighted_abs_q_difference": 0.06790452531510724,
+      "weighted_abs_draw_difference": 0.047588303592675164,
+      "weighted_total_variation": 0.06452906361058486,
+      "weighted_jsd_nats": 0.01797339700074042,
+      "weighted_q_correlation": 0.9911662645975855
+    },
+    "SF__Ceres_primary": {
+      "weighted_abs_q_difference": 0.06345051263635088,
+      "weighted_abs_draw_difference": 0.04482069670191805,
+      "weighted_total_variation": 0.06124309203855949,
+      "weighted_jsd_nats": 0.017016598327884304,
+      "weighted_q_correlation": 0.9926070053105298
+    },
+    "SF__Ceres_secondary": {
+      "weighted_abs_q_difference": 0.07773505324496179,
+      "weighted_abs_draw_difference": 0.05788506158084374,
+      "weighted_total_variation": 0.07654829636953926,
+      "weighted_jsd_nats": 0.024612310768629696,
+      "weighted_q_correlation": 0.987325412930378
+    },
+    "BT4__Ceres_primary": {
+      "weighted_abs_q_difference": 0.009498479653142095,
+      "weighted_abs_draw_difference": 0.005873064998297631,
+      "weighted_total_variation": 0.007919677236776942,
+      "weighted_jsd_nats": 0.0006940957705956367,
+      "weighted_q_correlation": 0.999547793094807
+    },
+    "BT4__Ceres_secondary": {
+      "weighted_abs_q_difference": 0.018572224651111482,
+      "weighted_abs_draw_difference": 0.014876115715510724,
+      "weighted_total_variation": 0.018063098923638884,
+      "weighted_jsd_nats": 0.0028407575733698635,
+      "weighted_q_correlation": 0.9980458360801236
+    },
+    "Ceres_primary__Ceres_secondary": {
+      "weighted_abs_q_difference": 0.01756811479691725,
+      "weighted_abs_draw_difference": 0.01645114341848586,
+      "weighted_total_variation": 0.018576960236147712,
+      "weighted_jsd_nats": 0.002962344021715381,
+      "weighted_q_correlation": 0.9984241193040475
+    }
+  },
+  "residual_alignment": {
+    "weighted_BT4_Ceres_primary_q_residual_correlation_relative_to_SF": 0.9779588947422047
+  },
+  "groups": {
+    "white_to_move": {
+      "rows": 59,
+      "sample_weight_fraction": 0.46145517540060627,
+      "weighted_mean_centered_q": {
+        "SF": 0.17473094211867538,
+        "BT4": 0.21129275826720612,
+        "Ceres_primary": 0.20587378146097096,
+        "Ceres_secondary": 0.21884473407222402
+      }
+    },
+    "black_to_move": {
+      "rows": 69,
+      "sample_weight_fraction": 0.5385448245993938,
+      "weighted_mean_centered_q": {
+        "SF": -0.0910097360686049,
+        "BT4": -0.10096188625991583,
+        "Ceres_primary": -0.0964563294210496,
+        "Ceres_secondary": -0.09519899657098281
+      }
+    },
+    "SF_abs_q_le_0.1": {
+      "rows": 6,
+      "sample_weight_fraction": 0.04677349501948896,
+      "weighted_mean_centered_q": {
+        "SF": 0.020222981770833332,
+        "BT4": 0.053638523758950896,
+        "Ceres_primary": 0.058026700538927396,
+        "Ceres_secondary": 0.0822015095609155
+      }
+    },
+    "SF_abs_q_ge_0.8": {
+      "rows": 111,
+      "sample_weight_fraction": 0.8672585534863578,
+      "weighted_mean_centered_q": {
+        "SF": 0.025289387610517473,
+        "BT4": 0.01026089991623805,
+        "Ceres_primary": 0.01171122714835582,
+        "Ceres_secondary": 0.009736265717209659
+      }
+    }
+  },
+  "limits": [
+    "Descriptive sample only; no uncertainty or population-optimality claim.",
+    "SF is cp-derived parametric WDL; neural disagreement is not automatically error correction.",
+    "Ceres heads separately use temperature1; not the native blended package.",
+    "No dose or temperature fitting, teacher selection, or game-outcome accuracy ruler.",
+    "Current-side-to-move WDL follows declared adapter contracts, without a new native oracle."
+  ]
+}

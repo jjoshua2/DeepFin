@@ -8,7 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Conditional modest neural WDL contribution with policy supervision fixed; historical Z limits and missing teacher-value bank made explicit |
+| [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row neural WDL diagnostic complete; BT4/Ceres primary values similar, efficient derived-input backfill identified; value training pending |
 | [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 compatibility and 128-row training diagnostic complete: 88.28% top-move agreement with BT4 T=1; retained-SF comparison remains prospective |
 | [Faster recipe matches](2026-09-08-faster-recipe-matches.md) | First prospective SPRT plus fixed deep probe completed in46m35s; speculative scheduling bottleneck identified; no controlled speedup claim |
 | [BT4 adapter identity collection](2026-09-08-bt4-adapter-single-pass.md) | Exact identity parity and 34.1% CPU component reduction in one closed-shard pair; full-pipeline benefit unmeasured |
@@ -17,7 +17,7 @@ measurements support which claims.
 | [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity; first optimized group completed 132,467 rows, throughput descriptive only |
 | [G10 adapter/rank overlap](2026-09-08-g10-stage-overlap.md) | Adopted in Worker01 attempt; cache failure, no measured speedup |
 | [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 5,276,543 common rows prepared after completed Worker01 recovery; original failure preserved; combined training qualification and strength remain unestablished |
-| [G50 versus B100 policy dose](2026-09-08-bt4-g50-b100-dose-comparison.md) | Training complete and registered low/deep arenas launched; 50% versus 100% global BT4, no match result |
+| [G50 versus B100 policy dose](2026-09-08-bt4-g50-b100-dose-comparison.md) | Complete: G50 loses shallow SPRT and fixed deep comparison (−50.57 Elo); B100 retained, depth interaction unresolved |
 | [Pure BT4 policy endpoint](2026-09-08-bt4-pure-policy-endpoint.md) | B100 beats H20: shallow H1, deep +46.42 Elo [11.23,82.58]; search interaction unresolved, same-seed development |
 | [Bootstrap training-horizon readiness](2026-09-08-bootstrap-training-horizon-readiness.md) | Real tiny two-epoch CPU path checked on the older Torch environment; CUDA/full-corpus qualification and finalist selection remain |
 | [BT4 hybrid and global endpoints](2026-09-07-bt4-hybrid-endpoints.md) | H20 package complete: C100 +45.07, G100 +85.78, C400 +34.86 Elo; aligned search interaction unresolved; no promotion |
