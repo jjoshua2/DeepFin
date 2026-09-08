@@ -154,6 +154,40 @@ opponent changes under PID control. Resume only with matching schedule/settings 
 preserve per-game records; an interrupted pair is not an observed draw. SPRT is an
 optional precommitted stopping rule, not permission to keep extending any weak result.
 
+### Bounded speculative paired play
+
+For a separately registered rolling matched-simulation SPRT, the arena CLI accepts
+`--sprt-lookahead-pairs 64`. New opening pair IDs must be below the next declared
+SPRT sample size plus 64, capped by the total registered pairs. For example,
+`first_pairs=128,step_pairs=64` initially admits pairs 0 through 191. Once the first
+look is reached without a decision, the window advances to pairs 0 through 255.
+Every declared statistical look is still consumed in canonical order; the first
+crossing still decides. Zero allowance is supported. Omitting the flag preserves
+existing admission and fixed-N behavior; chunked and fixed-N runs reject the flag.
+
+Both colors are admitted together. This requires at least two pool slots and may
+leave one slot unused in an odd-sized pool. A delayed early game can shrink the
+active pool while later admission waits. The allowance is recorded in the result
+and game-log settings fingerprint; resuming with a changed or removed allowance
+is refused. Complete previously banked suffix pairs remain usable on resume.
+
+This bounds speculative admission, not elapsed time. Lower occupancy can hurt
+throughput, while fewer speculative games can reduce work. Batching and the shared
+RNG's consumption change, so identical gameplay trajectories or a speedup are not
+promised. The existing two-depth recipe launcher/reader does not yet register this
+flag: adopting it there requires a separately qualified protocol change, not adding
+an unvalidated argument to a frozen command.
+
+For a future bounded telemetry observation, `chess_anti_engine.mcts.gumbel_c` already
+emits a DEBUG record with board count, evaluator call/position counts, and coarse
+stage times. A small dedicated logging handler can aggregate those records in memory
+and emit one summary per minute and at shutdown, with propagation disabled for that
+logger. Enable only that logger, and aggregate counts to compute weighted occupancy;
+do not print every call or enable global DEBUG. This is a proposed observation hook,
+not enabled here. Its host-side evaluator time includes transport/wait and is not
+isolated CUDA kernel time. Startup, steady play and admission-window drain should
+be reported separately before attributing a whole-match bottleneck.
+
 ## Agent tooling
 
 `scripts/grok_review.sh` provides independently authored reviews from a disposable
