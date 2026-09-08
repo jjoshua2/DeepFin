@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "status": "RUNNING_NO_COMPLETED_COMMON_LANE",
+  "observed_unix": 1788870461.719972,
+  "observation_sha256": "fa151788967f2a37f0b14d07e6f997c6e70c8d92827767e4f3a82122d9b60ba3",
+  "completed_common_input_rows": 0,
+  "completed_common_lanes": [],
+  "run06": {
+    "copied_derived_rows": 1054312,
+    "copy_files": 37602,
+    "copy_bytes": 586668112,
+    "new_snapshot_exit_code": 0,
+    "adapter_pid": 367610,
+    "rank_pid": 367625,
+    "both_actual_children_running": true,
+    "cpu_pair": [
+      2,
+      3
+    ],
+    "current_stage": "adapt and rank concurrently; neither completed receipt yet; full qualifier not started"
+  },
+  "run07": {
+    "recovery_lane_created": false,
+    "original_derived_rows_available": 1056966,
+    "remaining": "independent verified copy, snapshot, adapt/rank, full qualifier"
+  },
+  "remaining_target_rows": 2111278,
+  "remaining_hard_deadline_seconds": 8926.135425806046,
+  "elapsed_recovery_seconds": 1545.7679834365845,
+  "assessment": [
+    "No failed receipt, traceback or terminated owner observed. Coordinator366681, timeout366682 and worker366683 alive. Both producers in timeout group366682 on CPUs2,3, each with approximately1140 accumulated CPU seconds after approximately1175 seconds of stage wall time; this is consistent with active two-core work, not idle waiting.",
+    "Approximately2h29 remains to original hard deadline. No imminent deadline failure is indicated by current activity, but completed stage timings and remaining-row throughput are unavailable, so this is not a guarantee or completion-time forecast.",
+    "Run06 copied-tree proof and successful new snapshot are complete. They certify copied derivation provenance, not completed BT4/rank/common qualification. No lane-qualified rows should be added to the common-input inventory yet.",
+    "Final copied target remains2,111,278 rows across both sources, subject to unchanged full qualifier. Existing completed original derivations are not rerun."
+  ],
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/plan.json",
+      "sha256": "8dbfca30771b1937f5385b9a5791e7fc57efd9da784cd7907269c38e88a35b92"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/run_recovery.py",
+      "sha256": "d5547297e15635fa633f1ee90c5f69fb7a9b77b16b2a969efa9665a7709f7ae5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/started.json",
+      "sha256": "e2400aa600038b9222842af1faed05fa85e9707c91d0c132bf11feef436e0b3a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/worker_started.json",
+      "sha256": "217fb793fc03b8cf295853ebe74709e022401e5a8f481b04803ec9eb70e021d8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/derive_reuse.json",
+      "sha256": "dc9dedcac21ebaedff54d83e7cb0f1a3f47edf48da12154355f38bd7557a4c23"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/derived_identity.json",
+      "sha256": "c03c3d1ce12220bbfb7401a78859a27b4ddd50bde7693c2e6216c2460c40f442"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/snapshot.completed.json",
+      "sha256": "3d9102d525c72ff4a81a9908f41947850a7eb6aa41761b2da2a7a5d62317b6f7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/adapt.started.json",
+      "sha256": "5ec44c7ba9476ff5f69962737b4c39dcb7bdacfc66b2c2e9bd6cbc020d9684a0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/rank.started.json",
+      "sha256": "29c77a14a2910fe9cb30c5d3f91b04660fd1360b1d56c4bb776372dcaace3f15"
+    }
+  ],
+  "limits": [
+    "Single bounded status observation; no monitor or repeated full metadata/source scan. No derivation, data payload hash, process change or replacement launch.",
+    "Live logs were empty at inspection and are not immutable completion evidence. Process counters were read once; no rolling arena outcomes were accessed.",
+    "B100/H20 arena and recovery operator bytes remained untouched."
+  ]
+}

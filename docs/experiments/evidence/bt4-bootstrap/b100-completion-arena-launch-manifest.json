@@ -1,0 +1,315 @@
+{
+  "schema_version": 1,
+  "captured_utc": "2026-09-08T12:33:06.654730+00:00",
+  "purpose": "Completed B100 training, successfully qualified and launched B100/H20 recipe match, and separate Worker01 recovery progress snapshot. No arena outcome or measured throughput result. Original metadata retains historical host paths; not portable execution instructions.",
+  "files": [
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/B100_training/complete.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/training/complete.json",
+      "original_sha256": "199c04c8d11cfa61d7c3c3fff71c5814e77975eacd7564f9e16d2a59ed676102",
+      "original_bytes": 261,
+      "published_sha256": "199c04c8d11cfa61d7c3c3fff71c5814e77975eacd7564f9e16d2a59ed676102",
+      "published_bytes": 261,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training.complete.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/training/training.complete.json",
+      "original_sha256": "fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799",
+      "original_bytes": 3018,
+      "published_sha256": "fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799",
+      "published_bytes": 3018,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/B100_training/realized_schedule.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/training/realized_schedule.json.gz",
+      "original_sha256": "371fdb551d9cc4286482a0075a07a46317de02661dfa726427dfd8427837609f",
+      "original_bytes": 732279,
+      "published_sha256": "53776c05ac7603f17ff31d50194b60c580d89397ad53e070531b9f9c1f1d1588",
+      "published_bytes": 102485,
+      "encoding": "gzip",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/B100_training/manifest.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/training/manifest.json",
+      "original_sha256": "9d6d126c6fbcc91e0734c5b3e85700b5737329807287fbfbb87ccdf969ca1b58",
+      "original_bytes": 2807,
+      "published_sha256": "9d6d126c6fbcc91e0734c5b3e85700b5737329807287fbfbb87ccdf969ca1b58",
+      "published_bytes": 2807,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training/process.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/training/training/process.json",
+      "original_sha256": "1799debf256e503126588210b4c6f863c2cef7c37de3f56210b8f0ae6338ea3f",
+      "original_bytes": 4824,
+      "published_sha256": "1799debf256e503126588210b4c6f863c2cef7c37de3f56210b8f0ae6338ea3f",
+      "published_bytes": 4824,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_preparation_v1/B100_training/schedule/process.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/training/schedule/process.json",
+      "original_sha256": "1967e1b0f4902eb14889c74492345090d2cdaedc3c1ae856fc219e6cdd017d26",
+      "original_bytes": 1884,
+      "published_sha256": "1967e1b0f4902eb14889c74492345090d2cdaedc3c1ae856fc219e6cdd017d26",
+      "published_bytes": 1884,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/B100_H20.launch_manifest.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/B100_H20.launch_manifest.json",
+      "original_sha256": "ad1a51514206dc7558564356a90e59ce98c8bcab2e5c5c0fc2848bfdfcfa891b",
+      "original_bytes": 2471,
+      "published_sha256": "ad1a51514206dc7558564356a90e59ce98c8bcab2e5c5c0fc2848bfdfcfa891b",
+      "published_bytes": 2471,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/B100_H20.preparation_manifest.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/B100_H20.preparation_manifest.json",
+      "original_sha256": "da9386548eefe9aeb6483d110c6c42044f9ffd190df62ab1df0f7fdbe8a68dc4",
+      "original_bytes": 2444,
+      "published_sha256": "da9386548eefe9aeb6483d110c6c42044f9ffd190df62ab1df0f7fdbe8a68dc4",
+      "published_bytes": 2444,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/qualified_preparation.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/qualified_preparation.json",
+      "original_sha256": "a743d35c365e72349b6e2bbc98180cbf6d52c9df80217ec29eb9ec39b4e635ff",
+      "original_bytes": 9412,
+      "published_sha256": "a743d35c365e72349b6e2bbc98180cbf6d52c9df80217ec29eb9ec39b4e635ff",
+      "published_bytes": 9412,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/qualified_preparation.panel.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/qualified_preparation.panel.json.gz",
+      "original_sha256": "b4f1d16b488ff9efa0c466706b74595559a807c99a0e4ca75379a4d0745cfb6c",
+      "original_bytes": 204955,
+      "published_sha256": "db42c413ea7ae71ddcc3a01765892e709a4ce853044021f958f246ea3eaf1a23",
+      "published_bytes": 23349,
+      "encoding": "gzip",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/inactive_qualification.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/inactive_qualification.json",
+      "original_sha256": "a4d2716c5ef5a3980072ba1a66e4eb2d67cb9ad4ebb338698a51799c7b1d0bbe",
+      "original_bytes": 4362,
+      "published_sha256": "a4d2716c5ef5a3980072ba1a66e4eb2d67cb9ad4ebb338698a51799c7b1d0bbe",
+      "published_bytes": 4362,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/qualification_execution.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/qualification_execution.json",
+      "original_sha256": "cae2f0634627a047c52a40907b04fbbfae206c6a7e03b995f2f4df2c1efa40ac",
+      "original_bytes": 1307,
+      "published_sha256": "cae2f0634627a047c52a40907b04fbbfae206c6a7e03b995f2f4df2c1efa40ac",
+      "published_bytes": 1307,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/setup.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/setup.json",
+      "original_sha256": "0f77f4dba560f6768c9dd4b2f4fbb633c50779ed18ac58a211c93b540235ac89",
+      "original_bytes": 331,
+      "published_sha256": "0f77f4dba560f6768c9dd4b2f4fbb633c50779ed18ac58a211c93b540235ac89",
+      "published_bytes": 331,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/actual_cpu_preparation.log",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/actual_cpu_preparation.log",
+      "original_sha256": "7556ddc378c332f6fe8f52672d58d6e73eeb8e1850b65e6f513cca0926125b5c",
+      "original_bytes": 1972,
+      "published_sha256": "7556ddc378c332f6fe8f52672d58d6e73eeb8e1850b65e6f513cca0926125b5c",
+      "published_bytes": 1972,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/independent_launch_review.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/independent_launch_review.json",
+      "original_sha256": "9cf1d556be919bc6bcc8ab259b09c51a402ad2b210211f988e2c2c60f8317a67",
+      "original_bytes": 9181,
+      "published_sha256": "9cf1d556be919bc6bcc8ab259b09c51a402ad2b210211f988e2c2c60f8317a67",
+      "published_bytes": 9181,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/faster_arena_design_v1/recipe_screen_launch_preparation_v3/root_arena_operator_launch.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/root_arena_operator_launch.json",
+      "original_sha256": "9dae24d103a6b658ec700e54f141ec77ef487a1777bcb25a168633a872113b25",
+      "original_bytes": 1153,
+      "published_sha256": "9dae24d103a6b658ec700e54f141ec77ef487a1777bcb25a168633a872113b25",
+      "published_bytes": 1153,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/manifest.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/startup/manifest.json",
+      "original_sha256": "ad1a51514206dc7558564356a90e59ce98c8bcab2e5c5c0fc2848bfdfcfa891b",
+      "original_bytes": 2471,
+      "published_sha256": "ad1a51514206dc7558564356a90e59ce98c8bcab2e5c5c0fc2848bfdfcfa891b",
+      "published_bytes": 2471,
+      "encoding": "identity",
+      "capture_kind": "startup_snapshot"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low.launch.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/startup/low.launch.json",
+      "original_sha256": "6eb4989a7d9f391e032a8583da0f195a96736cf11527b25b1f546f3539901f42",
+      "original_bytes": 5703,
+      "published_sha256": "6eb4989a7d9f391e032a8583da0f195a96736cf11527b25b1f546f3539901f42",
+      "published_bytes": 5703,
+      "encoding": "identity",
+      "capture_kind": "startup_snapshot"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100_H20_recipe_screen_run01/low/process.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/startup/low/process.json",
+      "original_sha256": "8f4d383d2c4803ee95496d6be5a82c014146870345a15f361e639c02cbafe283",
+      "original_bytes": 4263,
+      "published_sha256": "8f4d383d2c4803ee95496d6be5a82c014146870345a15f361e639c02cbafe283",
+      "published_bytes": 4263,
+      "encoding": "identity",
+      "capture_kind": "startup_snapshot"
+    },
+    {
+      "source_path": "scratchpad/bt4_forced_openings_v1/actual_cpu_preparation.log",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/forced_opening/actual_cpu_preparation.log",
+      "original_sha256": "c51ce7a8641b1713ab62d5bef5d957e2d2a2b5a3b0db770e06a2a902cbfb279b",
+      "original_bytes": 3014,
+      "published_sha256": "c51ce7a8641b1713ab62d5bef5d957e2d2a2b5a3b0db770e06a2a902cbfb279b",
+      "published_bytes": 3014,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_forced_openings_v1/registered_forced_opening.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/forced_opening/registered_forced_opening.json",
+      "original_sha256": "a053f8cc6abf6f81ef77e1c2aa741e54cc755da73ca32e91b286b08c86cd52a8",
+      "original_bytes": 688,
+      "published_sha256": "a053f8cc6abf6f81ef77e1c2aa741e54cc755da73ca32e91b286b08c86cd52a8",
+      "published_bytes": 688,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_forced_openings_v1/independent_review.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/forced_opening/independent_review.json",
+      "original_sha256": "db3ea3c64fc6c1853d1a8d412dbf3ec22f5868b4001cd7d749689ad2a42ab76f",
+      "original_bytes": 3365,
+      "published_sha256": "db3ea3c64fc6c1853d1a8d412dbf3ec22f5868b4001cd7d749689ad2a42ab76f",
+      "published_bytes": 3365,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_forced_openings_v1/author_validation.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/forced_opening/author_validation.json",
+      "original_sha256": "a87139a71e0bbfe699039f4aeed4dd221004f69fd42d191aa511bac483e3072c",
+      "original_bytes": 1480,
+      "published_sha256": "a87139a71e0bbfe699039f4aeed4dd221004f69fd42d191aa511bac483e3072c",
+      "published_bytes": 1480,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_forced_openings_v1/focused_validation.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/forced_opening/focused_validation.json",
+      "original_sha256": "8176f7cd729fb0f5ac66c4e08f4afe58f2949e689ba86ad2d5108c05f3ae3b3e",
+      "original_bytes": 1955,
+      "published_sha256": "8176f7cd729fb0f5ac66c4e08f4afe58f2949e689ba86ad2d5108c05f3ae3b3e",
+      "published_bytes": 1955,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_forced_openings_v1/whole_lint.log",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/forced_opening/whole_lint.log",
+      "original_sha256": "fbf7327df795dc398adb0ae51a6b05a5ce3fee5ad84c820e1fd25e5ec42ad631",
+      "original_bytes": 515,
+      "published_sha256": "fbf7327df795dc398adb0ae51a6b05a5ce3fee5ad84c820e1fd25e5ec42ad631",
+      "published_bytes": 515,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_forced_openings_v1/arena-forced-openings-final-delta-tests.log",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/forced_opening/arena-forced-openings-final-delta-tests.log",
+      "original_sha256": "95a54fec84b35ae511a6e57201758badaabc904adf5c7a80ce8785bd9f1a3e3e",
+      "original_bytes": 187,
+      "published_sha256": "95a54fec84b35ae511a6e57201758badaabc904adf5c7a80ce8785bd9f1a3e3e",
+      "published_bytes": 187,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_forced_openings_v1/arena-forced-openings-final.patch",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/forced_opening/arena-forced-openings-final.patch.gz",
+      "original_sha256": "f0d30eacebe8974c1cfe7b1c116152888ab8c93c9bacb39cf434f3f4cecd8e55",
+      "original_bytes": 3339,
+      "published_sha256": "d74be3b2821e0b6ed2b5a0f0198c3f25bdac39f549a3a636b632446b4c8aeb95",
+      "published_bytes": 1212,
+      "encoding": "gzip",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/independent_progress_observation.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/worker01_snapshot/independent_progress_observation.json",
+      "original_sha256": "fa151788967f2a37f0b14d07e6f997c6e70c8d92827767e4f3a82122d9b60ba3",
+      "original_bytes": 7664,
+      "published_sha256": "fa151788967f2a37f0b14d07e6f997c6e70c8d92827767e4f3a82122d9b60ba3",
+      "published_bytes": 7664,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/independent_progress_review.json",
+      "published_path": "scratchpad/bt4_joint20/publication_b100_completion_20260908/worker01_snapshot/independent_progress_review.json",
+      "original_sha256": "e58d7c4d619e94289fa70a47e9f8cfbc1ee60ee3669025cff4fd19a305691d22",
+      "original_bytes": 4789,
+      "published_sha256": "e58d7c4d619e94289fa70a47e9f8cfbc1ee60ee3669025cff4fd19a305691d22",
+      "published_bytes": 4789,
+      "encoding": "identity",
+      "capture_kind": "completed_or_frozen_record"
+    }
+  ],
+  "external_artifacts": [
+    {
+      "path": "runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/summary.json",
+      "sha256": "d43427b3c8ddde5e6d661bd48b43a843938fb0d65bfbf5484ee88fe2f11f71e5",
+      "bytes": 2455632,
+      "reason": "Full training-window summary remains external; compact completion and independent review preserve qualification."
+    },
+    {
+      "path": "runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+      "sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62",
+      "reason": "Bulk final checkpoint is external; no new payload hash/read during documentation publication."
+    }
+  ],
+  "limits": [
+    "Startup process receipt is an immutable copy captured before completion; its source path may later contain a completed process receipt.",
+    "Historical v2 preparation failure and v3 successful preparation are preserved separately. No original record is overwritten.",
+    "No checkpoint/corpus/native payloads, book payload or rolling arena logs/results included."
+  ]
+}

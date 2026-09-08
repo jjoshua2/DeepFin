@@ -1,0 +1,25 @@
+{
+  "status": "AUTHOR_VALIDATION_PASS",
+  "focused": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/focused_validation.json",
+    "sha256": "8176f7cd729fb0f5ac66c4e08f4afe58f2949e689ba86ad2d5108c05f3ae3b3e"
+  },
+  "whole_lint": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/whole_lint.log",
+    "sha256": "fbf7327df795dc398adb0ae51a6b05a5ce3fee5ad84c820e1fd25e5ec42ad631"
+  },
+  "whole_lint_seconds": 158.17,
+  "whole_lint_exit_code": 0,
+  "types": {
+    "errors": 0,
+    "warnings": 0,
+    "notes": 0
+  },
+  "test_summary": "37 distinct readout cases passed:36 full before one added legal-history refusal; final six forced cases all pass. Final changed test bytes also Ruff pass.",
+  "commands": {
+    "focused": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 PYTHONPATH=. nice -n 19 ionice -c 3 taskset -c 6,7 .venv/bin/python -m pytest tests/test_bt4_recipe_readout.py -q",
+    "final_delta": "same environment; .venv/bin/python -m pytest tests/test_bt4_recipe_readout.py -q -k forced",
+    "lint": "PATH=\"$PWD/.venv/bin:$PATH\" CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 nice -n 19 ionice -c 3 taskset -c 6,7 .venv/bin/python scripts/validate.py lint"
+  },
+  "runtime": "Existing Python3.13.15/Torch2.14CPU; existing CPython313 native links only after22 source/setup files matched qualified checkout. No rebuild, GPU, book or model read."
+}

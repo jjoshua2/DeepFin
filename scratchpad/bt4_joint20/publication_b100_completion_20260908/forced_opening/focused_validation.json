@@ -1,0 +1,44 @@
+{
+  "status": "FOCUSED_PASS_WHOLE_LINT_PENDING",
+  "patch": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/arena-forced-openings-final.patch",
+    "sha256": "f0d30eacebe8974c1cfe7b1c116152888ab8c93c9bacb39cf434f3f4cecd8e55"
+  },
+  "original_failure": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/actual_cpu_preparation.log",
+    "sha256": "c51ce7a8641b1713ab62d5bef5d957e2d2a2b5a3b0db770e06a2a902cbfb279b"
+  },
+  "registered_case": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/registered_forced_opening.json",
+    "sha256": "a053f8cc6abf6f81ef77e1c2aa741e54cc755da73ca32e91b286b08c86cd52a8"
+  },
+  "tests": {
+    "distinct_cases_passed": 37,
+    "full_readout_before_final_extra_case": 36,
+    "final_forced_subset": 6,
+    "logs": [
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/arena-forced-openings-tests.log",
+        "sha256": "edd187f670c884b0c19c287ec2c2e77e00110586f19c07c413cb2f6a6292460c"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/arena-forced-openings-delta-tests.log",
+        "sha256": "fcc72d1f5f8a80c764cbfcbb72ac6d61cff483d65fca01dc0e0d570786f63212"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_forced_openings_v1/arena-forced-openings-final-delta-tests.log",
+        "sha256": "95a54fec84b35ae511a6e57201758badaabc904adf5c7a80ce8785bd9f1a3e3e"
+      }
+    ]
+  },
+  "scope": [
+    "Allow a valid nonterminal forced-move opening by deleting only the >=2 restriction",
+    "Exact 16-ply history, root validity, endpoint identity, nonterminal status and 500 unique endpoints unchanged",
+    "Capacityprobe behavior and registered book selection unchanged",
+    "No GPU, book reader, model read, arena launch or active runtime change"
+  ],
+  "code": [
+    "scripts/bt4_recipe_readout.py",
+    "tests/test_bt4_recipe_readout.py"
+  ]
+}

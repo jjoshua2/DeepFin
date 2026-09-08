@@ -1,8 +1,68 @@
 # Pure BT4 policy endpoint versus H20
 
-**Selected September 8, 2026, after the [completed H20 package](2026-09-07-bt4-hybrid-endpoints.md#completed-c400-probe-and-package--september-8). Training started September 8 at 09:09:09 UTC under the qualified training-only manifest. No completed training result is available; future arenas require separate launch qualification.**
+**B100 completed its registered seed-zero epoch at 11:43:28 UTC on September 8. The separately qualified B100-versus-H20 arena coordinator launched at 12:26:02 UTC; the 100-simulation stage started at 12:26:07 UTC. Arena outcomes remain unread in this publication.**
 
-## Training started — September 8
+## Completed training and arena launch — September 8
+
+The pure sharpened-BT4 **policy** endpoint completed all **18,910,484 rows,
+36,935 updates and 420 windows**, with seed zero and batch 512. Every window had
+finite loss and mean gradient norm, with **zero nonfinite skips and CUDA retries**.
+The [training completion](../../scratchpad/bt4_joint20/publication_b100_completion_20260908/training/training.complete.json)
+binds the final checkpoint `b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62`.
+The training charge was **9,258.994 seconds (2h34m19s)**, within its 4.5-hour cap.
+This establishes completed training, not improved playing strength. SF-derived
+value targets and all non-policy fields remained unchanged.
+
+The [realized schedule](../../scratchpad/bt4_joint20/publication_b100_completion_20260908/training/realized_schedule.json.gz)
+completed its CPU verification in **274.70 seconds** and matches H20's canonical
+schedule `dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f`.
+The [independent launch review](../../scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/independent_launch_review.json)
+checked the compact training summary, full window accounting, final checkpoint
+receipt, schedule and arena binding. Historical purity, committed-config and
+sampler limitations remain; this is a seed-zero development comparison.
+The full training summary and checkpoint remain external, with locations and hashes
+in the [evidence catalog](evidence/bt4-bootstrap/b100-completion-arena-launch-manifest.json).
+
+The [arena operator receipt](../../scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/root_arena_operator_launch.json)
+records coordinator **368555** starting at **12:26:02 UTC**. The
+[100-simulation process snapshot](../../scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/startup/low/process.json)
+records timeout supervisor **368593** and arena **368594** starting at **12:26:07 UTC**.
+The [frozen launch manifest](../../scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/B100_H20.launch_manifest.json)
+compares B100 with H20's registered final checkpoint using the allocation below:
+100-simulation ordered-prefix GSPRT, first 128 pairs then 64-pair steps, capped at
+500 pairs; followed by the fixed 128-pair 400-simulation probe on the same opening
+prefix, regardless of a valid shallow result's sign. Each arena retains its
+1.5-hour hard cap, shared GPU lease and failure/STOP handling. No arena result or
+measured end-to-end speedup is claimed.
+
+Actual preparation confirmed prior temperature **1.0** for both players, the full
+16-ply histories and identical qualified search settings. Rolling pools are
+**256 games at 100 simulations** and **128 at 400**, with evaluator cap **4096**;
+actual model flags imply uncapped leaf batches of 4096 and 2048 respectively.
+The CUDA arena remains on Python 3.10/Torch 2.11/NumPy 1.26; the separate coordinator's
+Python 3.13 CPU environment does not replace that model/search runtime.
+
+### Preserved preparation failure and correction
+
+The [v2 CPU preparation failure](../../scratchpad/bt4_joint20/publication_b100_completion_20260908/forced_opening/actual_cpu_preparation.log)
+was a reader eligibility error: registered opening **55** has a legal, valid,
+nonterminal 16-ply history with exactly one legal move. The reader incorrectly
+required at least two, a condition appropriate to the capacity diagnostic rather
+than this match. [PR #564](https://github.com/jjoshua2/DeepFin/pull/564) removed only
+that restriction; history, legality, terminal and uniqueness checks remain.
+Its [independent review](../../scratchpad/bt4_joint20/publication_b100_completion_20260908/forced_opening/independent_review.json)
+and passing local tests/static checks are retained; all PR checks passed.
+
+The [successful v3 preparation](../../scratchpad/bt4_joint20/publication_b100_completion_20260908/arena/qualified_preparation.json)
+uses the **byte-identical 500-opening panel**, SHA256
+`b4f1d16b488ff9efa0c466706b74595559a807c99a0e4ca75379a4d0745cfb6c`,
+including opening 55 and the exact first-128 prefix. No replacement opening,
+checkpoint change or new scientific comparison was introduced. Both the failure
+and subsequent successful qualification remain archived; this is not a negative
+playing-strength observation.
+
+
+## Historical startup snapshot — September 8, 09:09 UTC
 
 B100 training started at **09:09:09 UTC** (05:09:09 local), after the completed
 H20 package and the selected endpoint registration. The
@@ -10,7 +70,7 @@ H20 package and the selected endpoint registration. The
 records trainer **336571**, timeout supervisor **336570** and coordinator **336548**.
 The [startup log prefix](../../scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/training.startup.prefix.log)
 confirms all **2,309 shards** were staged and the model was created on CUDA.
-This establishes startup; it is not a completed epoch, checkpoint or strength result.
+That snapshot established startup only; the completed-epoch evidence is recorded above.
 
 The [frozen training manifest](../../scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/B100.training_manifest.json)
 uses the merged schema-3 training-only coordinator, commit
@@ -26,9 +86,8 @@ The [prospective schedule](../../scratchpad/bt4_joint20/B100_preparation_v1/trai
 verified **18,910,484 rows, 36,935 batches and 97,968 games** against the original
 source/C witnesses. Its canonical hash remains `dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f`.
 The CPU-only verification took **483.57 seconds**, with peak RSS **699 MiB**, on
-CPUs 6–7 with CUDA hidden. This proves the prospective input schedule; actual
-post-training staging, complete finite windows and realized counters still need
-qualification before a trained checkpoint is accepted.
+CPUs 6–7 with CUDA hidden. This proves the prospective input schedule; at that startup snapshot, post-training staging, finite windows and realized counters
+were still pending. The completed qualification is recorded above.
 
 The [launch consistency check](../../scratchpad/bt4_joint20/B100_preparation_v1/training_launch_publication_v1/launch_consistency_check.json)
 compared recorded child argv/runtime and source pins with the root prelaunch
@@ -44,7 +103,7 @@ is **4.5 hours**, followed by a separately bounded 30-minute CPU schedule check.
 The two future arena allowances remain 1.5 hours each, making the selected B100
 package cap **7.5 GPU hours**. Their manifests/runtime/readout still require separate
 qualification. The separately registered capacity probe is outside that package
-cap. No training completion, production promotion or playing result is claimed.
+cap. That startup record claimed no training completion, promotion or playing result.
 
 The [launch evidence manifest](evidence/bt4-bootstrap/b100-training-launch-manifest.json)
 binds these 15 compact artifacts and lossless schedule compression. The full
@@ -135,9 +194,9 @@ therefore **7 hours 50 minutes**, not 7.5 hours including the probe. CPU-only me
 and schedule qualification is outside these GPU allowances; each schedule stage
 retains its 30-minute bound and releases the GPU lease.
 
-The training-only manifest and actual training runtime are qualified and launched
-as recorded above. Future arena manifests and their runtime/readout qualification
-remain separate. Preserve shared GPU leasing, surviving timeouts, STOP handling,
+The registered training is complete, and the separately qualified arena coordinator
+has launched as recorded above. Arena outcomes remain unread in this publication.
+Preserve shared GPU leasing, surviving timeouts, STOP handling,
 owned-process cleanup, durable failure/completion receipts and at least 150 GiB free.
 No automatic retries or outcome-dependent extensions. Keep labeling available during
 preparation and gaps. Unused allowance does not justify another arm. No production
