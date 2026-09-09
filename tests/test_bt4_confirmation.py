@@ -361,6 +361,22 @@ def test_stop_while_another_owner_holds_lease_never_launches(isolated, monkeypat
     assert not list(isolated.state.glob("*.gpu-charge.json"))
 
 
+
+def test_real_reader_pin_accepts_current_sibling_and_rejects_tampered_copy(
+    manifest, tmp_path, monkeypatch,
+):
+    # Exercise the qualified constant, not a fixture-computed replacement SHA.
+    runner.pin(runner.READER, runner.READER_SHA)
+    assert runner.commands(manifest)['readout'][1] == str(runner.READER)
+    changed = tmp_path / 'changed_reader.py'
+    changed.write_bytes(runner.READER.read_bytes() + b'\n# changed reader bytes\n')
+    monkeypatch.setattr(runner, 'READER', changed)
+    monkeypatch.setattr(runner.subprocess, 'check_output',
+                        lambda *_args, **_kwargs: pytest.fail('must fail before runtime probe'))
+    with pytest.raises(ValueError, match=r'identity changed.*changed_reader'):
+        runner.Runner(manifest).check_pins()
+
+
 def test_real_pin_check_rejects_changed_opening_before_runtime_probe(manifest, monkeypatch):
     Path(manifest["openings"]).write_bytes(b"immutable fixture history")
     monkeypatch.setattr(runner, "OPENINGS_SHA", runner.sha(manifest["openings"]))
