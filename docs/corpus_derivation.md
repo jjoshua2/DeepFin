@@ -420,6 +420,34 @@ before compression and small shard metadata. No dense policy or 112-plane feed
 copy is stored. This producer is preparation tooling; it supplies no teacher
 quality verdict or trained-value result.
 
+#### Frozen G10 common-input batches
+
+An explicitly qualified G10 derived batch can use the same WDL-only path even
+though its original generator's `corpus_complete` remains false. Add
+`--g10-common-qualification /exact/batch/source/common_input_qualification.json`
+and `--expected-g10-common-qualification-sha256 QUALIFICATION_SHA` to the command
+above, with `--source` pointing to that receipt's exact `derived` directory.
+Without both flags, the original complete-corpus requirement remains unchanged.
+
+Admission consumes the completed common-input receipt and its pinned derive,
+adapted-policy and rank summaries. It checks source/config and closed raw
+selection bindings, survivor/exclusion accounting, recorded row provenance and
+the unchanged derived storage stamp. It inherits the completed qualifier's raw
+history and complement work; it does not replay raw payloads or repeat policy
+verification. The original prefix receipt predates explicit selection/complement
+fields and retains its recorded adapter/rank inventory and historical proof scope.
+Recovered batches must name their qualified recovery copy, not an earlier failed
+attempt with matching summary bytes. Unrelated growth in the live raw inventory
+is not a reason to invalidate a frozen derived batch.
+
+Each output root is bound to one qualified derived source/batch by
+`g10_common_source.json`; every shard and completion receipt carries that binding.
+Use a separate output root per source/batch. Existing policy bytes are untouched,
+and old raw sidecars do not gain WDL coverage. The existing contiguous derived
+`--start-shard`/`--max-shards` selection still applies after full batch admission.
+This opt-in is only exposed by the WDL collector: value rewrite and training
+admission for G10 remain separate work and retain their existing restrictions.
+
 ### B100 policy with 90% SF / 10% native BT4 value
 
 `scripts/bt4_value_rewrite.py` consumes a complete original-derived WDL bank from
