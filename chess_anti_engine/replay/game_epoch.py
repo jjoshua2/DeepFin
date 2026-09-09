@@ -77,6 +77,12 @@ MIRROR_AUGMENTATION_BATCH_COPIES = 7
 # arrays. Charge this on CPU too: exact plans are device-agnostic and
 # conservative refusal is preferable to a device-dependent hard-cap claim.
 COLLATION_BATCH_COPIES = 3
+# One retained generation: prepared arrays plus converted CPU aliases OR CUDA
+# pinned source storage. Collation emits each field at most once and its widest
+# dtype is int64 (8 bytes). Sixteen persisted payloads leave room for derived
+# fields; the iterator also checks the exact prepared element-count bound before
+# collation or scheduling another batch. This is a reservation, not an RSS cap.
+HOST_OVERLAP_BATCH_COPIES = 16
 # ``load_shard_arrays(..., validate=True)`` owns the decoded payload while its
 # content checks create a full boolean comparison/finite temporary, an active-
 # row copy for optional distributions, and row-sized reduction/index scratch.
@@ -144,6 +150,7 @@ class GameEpochPlan:
     load_counts: np.ndarray = field(repr=False)
     batch_rows: np.ndarray = field(repr=False)
     resident_bytes_after_batch: np.ndarray = field(repr=False)
+    host_overlap_reserve_bytes: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -185,6 +192,9 @@ class GameEpochPlan:
                 name: float(weight) for name, weight in self.objective_mask_weights
             },
             "plan_sha256": self.plan_sha256,
+            **({"host_batch_overlap": True,
+                "host_overlap_reserve_bytes": self.host_overlap_reserve_bytes}
+               if self.host_overlap_reserve_bytes else {}),
         }
 
 
@@ -843,6 +853,7 @@ def _plan_epoch(
     load_workers: int,
     max_working_set_bytes: int,
     mirror_augmentation: bool,
+    host_batch_overlap: bool = False,
 ) -> tuple[GameEpochPlan, list[_ShardGames]]:
     if batch_size <= 0:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
@@ -907,12 +918,22 @@ def _plan_epoch(
         digest.update(encoded)
         digest.update(struct.pack("<d", float(weight)))
 
+    # Reserve a complete conservative host-preparation generation, including
+    # widened CPU tensor aliases or pending pinned transfers from its consumer.
+    # Use the field union, not an average row or x-only estimate. The trainer
+    # permits only one pending host batch and retires H2D before the next copy.
+    overlap_reserve = (
+        HOST_OVERLAP_BATCH_COPIES
+        * _batch_bytes_for_records(take=int(batch_size), records=records)
+        if host_batch_overlap else 0
+    )
     consumed = 0
     resident_bytes = 0
     peak_working_set_bytes = 0
 
     def observe(needed: int, phase: str) -> None:
         nonlocal peak_working_set_bytes
+        needed += overlap_reserve
         peak_working_set_bytes = max(peak_working_set_bytes, int(needed))
         if int(needed) > int(max_working_set_bytes):
             raise _budget_error(
@@ -1043,7 +1064,7 @@ def _plan_epoch(
             compact_peak = (
                 resident_bytes + batch_bytes + keep_bytes + compacted_bytes
             )
-            if compact_peak > int(max_working_set_bytes):
+            if compact_peak + overlap_reserve > int(max_working_set_bytes):
                 continue
             observe(compact_peak, f"batch {batch_index} compaction")
             resident_bytes -= chunk.resident_bytes - compacted_bytes
@@ -1085,6 +1106,7 @@ def _plan_epoch(
         input_history_encoding=shuffled[0].input_history_encoding,
         history_rep_fix=bool(shuffled[0].history_rep_fix),
         seed=int(seed),
+        host_overlap_reserve_bytes=overlap_reserve,
         load_workers=int(load_workers),
         max_working_set_bytes=int(max_working_set_bytes),
         peak_working_set_bytes=int(peak_working_set_bytes),
@@ -1125,6 +1147,7 @@ class GameAwareEpochBuffer:
         load_workers: int = DEFAULT_LOAD_WORKERS,
         max_working_set_bytes: int = DEFAULT_MAX_WORKING_SET_BYTES,
         objective_mask_counter: ObjectiveMaskCounter | None = None,
+        host_batch_overlap: bool = False,
     ) -> None:
         paths = iter_shard_paths(shard_dir)
         records = _scan_shards(paths, int(plan_workers))
@@ -1175,7 +1198,9 @@ class GameAwareEpochBuffer:
             load_workers=effective_load_workers,
             max_working_set_bytes=int(max_working_set_bytes),
             mirror_augmentation=bool(mirror_augmentation),
+            host_batch_overlap=bool(host_batch_overlap),
         )
+        self.host_batch_overlap = bool(host_batch_overlap)
         self._batch_size = int(batch_size)
         self._input_planes = required_input_planes
         self._input_history_encoding = required_history_encoding
@@ -1245,6 +1270,7 @@ class GameAwareEpochBuffer:
         return int(sum(np.asarray(value).nbytes for value in arrs.values()))
 
     def _observe_working_set(self, needed: int, *, phase: str) -> None:
+        needed += self.plan.host_overlap_reserve_bytes
         self._peak_working_set_bytes = max(
             self._peak_working_set_bytes, int(needed),
         )
@@ -1419,7 +1445,7 @@ class GameAwareEpochBuffer:
             + keep_bytes
             + compacted_bytes
         )
-        if compact_peak > self._max_working_set_bytes:
+        if compact_peak + self.plan.host_overlap_reserve_bytes > self._max_working_set_bytes:
             return
         self._observe_working_set(compact_peak, phase=f"chunk {chunk_id} compaction")
         keep = np.concatenate([
