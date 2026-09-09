@@ -29,7 +29,7 @@ from numcodecs.blosc import set_nthreads, get_nthreads
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from chess_anti_engine.encoding import lc0
-from scripts import bt4_raw_corpus_sidecar as raw
+from scripts import bt4_raw_corpus_sidecar as raw, g10_wdl_admission as g10
 from scripts.adapt_raw_bt4_sidecars import storage_identity
 from scripts.bt4_policy_dump import file_sha256, open_session
 from scripts.sf_policy_rewrite import require, shard_contract
@@ -91,8 +91,19 @@ def source_inventory(
     )
     summary = json.loads(path.read_text())
     rows = summary["realized"]["rows_written"]
+    qualification = getattr(args, "g10_common_qualification", None)
+    qualification_sha = getattr(args, "expected_g10_common_qualification_sha256", None)
+    require(bool(qualification) == bool(qualification_sha),
+            "G10 qualification requires both path and SHA256")
+    if qualification:
+        if not isinstance(qualification_sha, str):
+            raise ValueError("G10 qualification SHA256 must be a string")
+        args.g10_admission = g10.admit(Path(qualification), qualification_sha, source, summary)
+    else:
+        args.g10_admission = None
     require(
-        type(rows) is int and rows > 0 and summary["corpus"]["corpus_complete"] is True,
+        type(rows) is int and rows > 0 and (args.g10_admission is not None
+            or summary["corpus"]["corpus_complete"] is True),
         "source is incomplete",
     )
     require(
@@ -162,11 +173,26 @@ def row_digests(feed: np.ndarray) -> np.ndarray:
     )
 
 
+def g10_binding(args: argparse.Namespace) -> dict[str, Any]:
+    admitted = getattr(args, "g10_admission", None)
+    return ({"g10_common_admission": admitted,
+             "g10_admission_script_sha256": file_sha256(Path(g10.__file__))}
+            if admitted is not None else {})
+
+
+def check_g10_pin(args: argparse.Namespace) -> None:
+    admitted = getattr(args, "g10_admission", None)
+    if admitted is not None:
+        pin = admitted["qualification"]
+        require(file_sha256(pin["path"]) == pin["sha256"], "G10 qualification changed")
+
+
 def binding(
     args: argparse.Namespace, spec: dict[str, Any], state: str
 ) -> dict[str, Any]:
     return {
         "schema": 1,
+        **g10_binding(args),
         "source_dir": str(Path(args.source).resolve()),
         "source_shard": spec["path"],
         "source_summary_sha256": args.expected_source_summary_sha256,
@@ -381,6 +407,7 @@ def label_shard(
     }
     out.attrs.update(attrs)
     guard()
+    check_g10_pin(args)
     writing.rename(destination)
     return attrs
 
@@ -420,6 +447,19 @@ def produce(args: argparse.Namespace) -> None:
         Path(args.out) / ".writer.lock", poll_seconds=1, description="WDL writer"
     ):
         summary, specs = source_inventory(args)
+        namespace = Path(args.out) / "g10_common_source.json"
+        if getattr(args, "g10_admission", None) is not None:
+            expected_namespace = g10_binding(args)
+            if namespace.exists():
+                require(g10.same(json.loads(namespace.read_text()), expected_namespace),
+                        "G10 output namespace differs")
+            else:
+                require(not list(Path(args.out).glob("shard_*.zarr*")),
+                        "G10 output has shards without a namespace receipt")
+                raw.atomic_json(namespace, expected_namespace)
+        else:
+            require(not os.path.lexists(namespace),
+                    "G10 output namespace requires matching qualification")
         guard_resources(args)
         model_state = storage_identity(Path(args.onnx))
         require(
@@ -515,6 +555,12 @@ def produce(args: argparse.Namespace) -> None:
                 == target.attrs["binding"]["source_storage_identity"],
                 "source changed before completion",
             )
+        if getattr(args, "g10_admission", None) is not None:
+            check_g10_pin(args)
+            current = g10.admit(Path(args.g10_common_qualification),
+                                args.expected_g10_common_qualification_sha256,
+                                Path(args.source).resolve(), summary)
+            require(g10.same(current, args.g10_admission), "G10 admission changed")
         guard_resources(args)
         raw.atomic_json(
             Path(args.invocation) / "child_completed.json",
@@ -524,6 +570,7 @@ def produce(args: argparse.Namespace) -> None:
                 "rows": sum(s["rows"] for s in specs),
                 "shards": len(specs),
                 "new_shards": len(todo),
+                **g10_binding(args),
                 "source_summary_sha256": args.expected_source_summary_sha256,
                 "selection": specs,
                 "history_lineage": LINEAGE,
@@ -653,6 +700,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--wdl-output-kind", required=True, choices=["logits", "probabilities"]
     )
+    parser.add_argument("--g10-common-qualification",
+                        help="Pinned completed G10 common-input receipt for this derived batch")
+    parser.add_argument("--expected-g10-common-qualification-sha256")
     parser.add_argument("--start-shard", type=int, default=0)
     parser.add_argument("--max-shards", type=int, required=True)
     parser.add_argument("--batch-size", type=int, default=256)
