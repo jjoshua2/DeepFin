@@ -1,0 +1,12 @@
+{
+  "complete": true,
+  "readout": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/readout.stdout.json",
+    "sha256": "2c21ddaf92bd068ca80f651832c04fe485fab854c9fab7c428a5ac8126a07085"
+  },
+  "reader_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high.reader_manifest.json",
+    "sha256": "c8f143053a68024c5413d37de73ca4db0fe855a7a0ee5678f7372efb0d00c25a"
+  },
+  "gpu_seconds": 1340.4740589219728
+}

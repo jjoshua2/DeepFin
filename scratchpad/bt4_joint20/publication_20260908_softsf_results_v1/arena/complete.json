@@ -1,0 +1,18 @@
+{
+  "complete": true,
+  "profile": "matched_original_epoch",
+  "candidate_role": "SoftSF10",
+  "reference_role": "B100",
+  "gpu_seconds": 2066.7298020829912,
+  "training_gpu_seconds": 9519.006634206977,
+  "package_gpu_seconds": 11585.736436289968,
+  "low": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/complete.json",
+    "sha256": "f44b27ec938f87b75c069fe3f6c72f4890dd39a644d6733eac1027301895921c"
+  },
+  "high": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/complete.json",
+    "sha256": "be2a0ce804d32590e7b606e3b6f35f4bc7caf97ab6a6e594dea4acba91fe906c"
+  },
+  "promotion": "NONE; same-seed development screen"
+}

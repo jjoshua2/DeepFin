@@ -1,0 +1,51 @@
+{
+  "status": "COMPLETED_DESCRIPTIVE_READINESS",
+  "utc": "2026-09-09T01:28:21.829174+00:00",
+  "recommendation": "Prospective B100V50 versus unchanged B100 SF-value control; preserve frozenV10 as optional dose follow-up. Reverse policy is a separate proposed rank-only mass/entropy-preserving permutation within one fixed BT4-close top3 set.",
+  "files": {
+    "value_rows.json.gz": {
+      "sha256": "91e466d1a4fc7b1476a807d2022b5bca03cf9963f1d27e6990c08692483cf66f",
+      "bytes": 50553
+    },
+    "reverse_policy_rows.json.gz": {
+      "sha256": "8b7dc58ccaeaeb41d409df4a81f22219aa80fe672938265221a41a568c216c75",
+      "bytes": 554296
+    },
+    "row_accounting_supplement.json": {
+      "sha256": "1ade045a22c1b072dc8f193ff8bdaad9f95e230d6400b938576013fe22d5ffe3",
+      "bytes": 1359
+    },
+    "readout.json": {
+      "sha256": "bc2f481cfd24f3df2b3522f3a7dbc85bf9eeaa0e6076bfad0fa28fc09d2da989",
+      "bytes": 27368
+    },
+    "README.md": {
+      "sha256": "1efcbaa192b936e4cfa1b3a100ae681b6fdab8c2a15732b22fb730151227c14d",
+      "bytes": 6895
+    },
+    "reverse_policy_rows.json": {
+      "sha256": "8cc2a656e4bca247b5b7970fa4aa43a58c05a201517bf342c6b0bf8cab4cb637",
+      "bytes": 14295751
+    },
+    "analysis_plan.json": {
+      "sha256": "0496cecf9cfc13546efc5367f813aaa932340ea7642d1b7e1e761abde057e8c6",
+      "bytes": 2437
+    },
+    "analyze.py": {
+      "sha256": "a14d76d9b5e245cd8d486fae0c1749605049f480cc6229f014bbf99424df7d4b",
+      "bytes": 8675
+    },
+    "value_rows.json": {
+      "sha256": "5fe334130127a27866fcb461ea0303d68bfbe7bc4c24f9dfb7bb97676f052f55",
+      "bytes": 250033
+    },
+    "analysis.log": {
+      "sha256": "c017b89ab43952d0452bd8d55f0aae8be9440eacab07754462a2ea272142dd23",
+      "bytes": 4380
+    }
+  },
+  "actual_command": "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 /usr/bin/nice -n 19 /usr/bin/taskset -c 6,7 /tmp/deepfin-bt4-derived-wdl/.venv/bin/python scratchpad/bt4_joint20/value_dose_reverse_policy_v1/analyze.py > /tmp/value-dose-reverse-policy.log 2>&1",
+  "exit_code": 0,
+  "frozen_V10_modified": false,
+  "no_new_inference_or_original_corpus_reads": true
+}

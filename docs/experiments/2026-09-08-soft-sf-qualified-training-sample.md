@@ -12,7 +12,7 @@ training run or establish playing strength.
 · [original completion](../../scratchpad/bt4_joint20/soft_sf_qualified_sample_v1/bank/complete.json)
 · [evidence and source hashes](evidence/bt4-bootstrap/soft-sf-qualified-sample-manifest.json).
 
-## September 8 update: original-epoch training complete
+## September 8 update: training and both arena cells complete
 
 SoftSF10 completed the same original one-epoch protocol used for B100/G50:
 **18,910,484 rows, 36,935 updates and 420 finite windows**, seed 0 and batch 512,
@@ -39,9 +39,9 @@ a 500-pair cap and low-only 64-pair lookahead. The protected high-depth cell use
 400 simulations and a fixed 128-pair opening prefix. Both retain prior temperature
 1 and the original qualified arena runtime. Any valid low verdict, including a
 negative or inconclusive one, proceeds to the high cell; an invalid low cell stops.
-The arena coordinator started at **22:38:27 UTC on September 8** using that
-reviewed manifest. Its GPU stage had not yet been observed in the frozen launch
-receipt; this records coordinator startup, not games running or a match outcome.
+The earlier frozen launch snapshot records coordinator startup at **22:38:27 UTC
+on September 8**. Both arena cells have now completed successfully; their final
+results follow below. That earlier snapshot remains unchanged.
 The lease wait is separate from GPU charges; each arena stage has a 5,400-second
 cap, within the 27,000-second package GPU cap including training.
 
@@ -50,6 +50,55 @@ cap, within the 27,000-second package GPU cap including training.
 · [independent training and arena-readiness review](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/softsf10/independent_arena_launch_review.json)
 · [coordinator start snapshot](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/softsf10/arena_operator.actual_start.json)
 · [exact snapshots and hashes](evidence/bt4-bootstrap/softsf-training-ceres-gpu-manifest.json).
+
+## Completed SoftSF10 versus B100 result
+
+SoftSF10 loses this matched, original-corpus one-epoch comparison at both search
+budgets. All scores below are **SoftSF10 minus B100**, using the same seed-zero
+training schedule and the registered opening pairs.
+
+| Search | Deciding sample | SoftSF10 W / D / L | Score | Result |
+| --- | ---: | ---: | ---: | --- |
+| 100 simulations | First 128 pairs / 256 games | 56 / 39 / 161 | 0.294922 | Ordered SPRT reaches H0 at the first look; LLR −4.43405 |
+| 400 simulations | Fixed 128 pairs / 256 games | 50 / 44 / 162 | 0.281250 | −162.99 Elo, paired 95% interval [−205.52, −124.59] |
+
+The low rule was H0=0 versus H1=+15, alpha=.05 and beta=.10, with looks at 128
+then every 64 pairs up to 500. Its stopped Elo is −151.41, with an ordinary
+interval [−197.17, −110.13]; these are **descriptive after stopping**, not a
+sequentially calibrated confidence interval. H0 is not equivalence. The protected
+400-simulation probe ran despite the unfavorable low result.
+
+On the same first 128 opening pairs, the score interaction
+`SoftSF10 advantage at 400 − advantage at 100` is **−0.013672**, with paired
+bootstrap interval **[−0.082031, +0.058594]** (10,000 PCG64 draws, seed 20260903).
+There is no clear relative recovery with more search. This aligned score contrast
+retains covariance across budgets; subtracting two Elo estimates would not do so.
+Two budgets do not establish an entire scaling curve.
+
+The 64-pair lookahead admitted 384 games: 371 finished, 13 remained in flight and
+616 never started. Only the 256 games belonging to the first 128 canonical opening pairs enter
+the decision; 115 finished games lie outside it. Independent arrival-order replay
+finds that the first declared prefix becomes complete at finished record 371.
+The limit reduced speculative admission as designed, but comparison with older
+matches does not isolate a speedup: checkpoints, trajectories, stopping samples
+and compilation state differ.
+
+Charged arena time was **726.26 seconds low + 1,340.47 seconds high = 34m26.73s**.
+Including training, the package charged **3h13m05.74s**, below its 7.5-hour cap;
+CPU preparation and lease waits are separate. Both stages exited zero and their
+banks, commands, settings, checkpoint identities and runtime commit agree.
+
+[Independent result review](../../scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/review/receipt.json)
+· [low bank, lossless](../../scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/low/arena.games.jsonl.gz)
+· [high bank, lossless](../../scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/high/arena.games.jsonl.gz)
+· [exact terminal evidence](evidence/bt4-bootstrap/softsf-results-value-priorities-manifest.json).
+
+B100 remains the control for the next value contrast. This rejects the tested
+entropy-selected cp10 policy recipe at this checkpoint and horizon, not every SF
+softening temperature, SF tactical signal or teacher-specific head. No promotion
+or fresh-seed confirmation follows. The [next research priorities](2026-09-08-bootstrap-next-value-and-policy-contrasts.md)
+keep the fixed-policy value contrast separate from policy filtering and joint
+policy/value correction.
 
 ## Sampling and observed identity
 
@@ -130,5 +179,5 @@ archived originals describe provenance, not portable executable defaults.
 
 The sample establishes a distinct, source-aligned raw-cp control and its declared
 entropy match. The later full-corpus and training completion is recorded above;
-gameplay evaluation remains a separate measurement. Temperature matching is neither evidence of better
-labels nor evidence of a stronger or more search-scalable model.
+the completed gameplay comparison is reported above. Temperature matching alone
+was not evidence of better labels or a stronger, more search-scalable model.

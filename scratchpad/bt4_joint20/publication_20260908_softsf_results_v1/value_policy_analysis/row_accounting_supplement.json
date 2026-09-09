@@ -1,0 +1,35 @@
+{
+  "status": "PASS_ROW_ACCOUNTING_AND_INTERPRETIVE_TAIL_SUPPLEMENT",
+  "source_readout_sha256": "bc2f481cfd24f3df2b3522f3a7dbc85bf9eeaa0e6076bfad0fa28fc09d2da989",
+  "note": "Post-readout median/p90 context calculated from already saved row projections; no threshold or dose changed. SF cp gains are scoring changes, not accuracy gains.",
+  "nonmate_changed_rows": {
+    "top3_only": {
+      "changed_nonmate_rows": 1080,
+      "weighted_median_cp_gain": 40.0,
+      "weighted_p90_cp_gain": 191.0,
+      "max_cp_gain": 19617.0
+    },
+    "top3_ratio50": {
+      "changed_nonmate_rows": 485,
+      "weighted_median_cp_gain": 44.0,
+      "weighted_p90_cp_gain": 233.0,
+      "max_cp_gain": 19617.0
+    },
+    "top3_ratio80": {
+      "changed_nonmate_rows": 200,
+      "weighted_median_cp_gain": 44.0,
+      "weighted_p90_cp_gain": 204.0,
+      "max_cp_gain": 19615.0
+    },
+    "top3_ratio90": {
+      "changed_nonmate_rows": 103,
+      "weighted_median_cp_gain": 42.0,
+      "weighted_p90_cp_gain": 199.0,
+      "max_cp_gain": 19615.0
+    }
+  },
+  "checks": [
+    "All16384 policy row projections present; per-row candidate sets nest at declared thresholds; SF score never decreases within its chosen candidate set.",
+    "All-row mixture linearity before storage was checked during the original analysis; quantized consumption is reported separately."
+  ]
+}
