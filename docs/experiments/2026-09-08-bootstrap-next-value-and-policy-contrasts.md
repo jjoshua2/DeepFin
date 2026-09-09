@@ -14,9 +14,11 @@ research so the approximately 100M-position bootstrap has room. The
 [capacity record](2026-09-08-bootstrap-storage-capacity.md#continuing-storage-objective--september-8-update)
 tracks working data, labels, rewrite/transfer temporaries and space actually
 recovered. The 150 GiB reserve is an operating floor, not full-scale capacity
-proof. G20T1's copy is complete with its source retained; that success has not
-reclaimed the original dataset's space. Preserve live sources and selected
-controls while continuing through eligible cold recipes.
+proof. G20T1's verified archive now supports completed reclamation of its 2,309
+local shards, with both summaries retained; G20T05's copy operator has started.
+Preserve live sources and selected controls while continuing through eligible
+cold policy recipes. Assess only eligible payload components of already-verified
+archived pools, preserving checkpoint and holdout exclusions.
 
 ## First: B100V50 with policy supervision fixed
 
@@ -63,6 +65,42 @@ against B100. The **27,000-second combined GPU-stage ceiling** covers training
 and both arenas; CPU qualification, schedule checks, arena preparation and the
 value rewrite have separate allocations. It is not a 7.5-hour end-to-end budget.
 Actual corpus qualification and executable training/match manifests remain pending.
+
+## V50 training and arena draft — September 8 evening update
+
+The [complete draft bundle](../../scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/v50-training-arena-draft.tar.gz)
+now contains the original comparison registration, training and matched-arena
+proposals, exact prospective command allocation, finalizer and validation evidence.
+The [per-member manifest](evidence/bt4-bootstrap/v50-training-storage-progress-manifest.json)
+pins the original bytes. **These are unlaunched drafts, not qualified executable
+training or match manifests.** The alpha coordinator is pinned to reviewed
+`5afc1e2f0923704b2bb8f1aa7ffe45cc15141757`; the original trainer and historical
+invalid-control limitations remain unchanged.
+
+Draft envelopes are rejected by the launcher. Final binding needs the genuine
+completed V50 derive/value-rewrite summaries and dataset qualification, then one
+completed prospective schedule. It never manufactures a BT4 policy-mix receipt.
+The proposed schedule uses the existing completed SoftSF runner with only its
+profile binding changed: CPUs 0,1, two verifier workers, 1,800 seconds including
+cleanup, a 150 GiB reserve and 32 MiB sampled output cap. The original training
+command still uses 16 planning and 16 loading workers. The later single CPU arena
+preparation checks the actual completed checkpoint and full-history opening panel;
+its 300-second stage allocation is separate from the GPU-stage ceiling above.
+
+Parent review found that the first finalizer called launch freshness validation
+at the completed-training transition. Successful training creates the state/run
+directories, so that call would always refuse arena preparation. The corrected
+[finalizer snapshot](../../scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/v50/finalize.py.data)
+compares the immutable draft and saved training manifest, preserves completion,
+input and checkpoint identity checks, and invokes the existing completed-training
+metadata admission. It does not claim to verify checkpoint contents before the
+later CPU preparation. Seven synthetic cases passed: existing completed outputs
+are accepted; altered profile, input pins, checkpoint path, summary hash, budget
+or saved manifest are refused. The [independent parent review](../../scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/v50/completed_transition.parent_review.json)
+closed the finding. Original author evidence and the prior finalizer remain in
+the bundle, with the [correction receipt](../../scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/v50/completed_transition.author_validation.json)
+identifying the superseded hash. No operational corpus, schedule, model, training
+or arena was processed for this preparation.
 
 ## Next policy question: attenuate large SF deficits
 

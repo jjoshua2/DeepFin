@@ -14,7 +14,7 @@ at the end of the experiments. Cold reproducible derived recipes come first;
 preserve live generators, original bootstrap sources, selected controls,
 checkpoints and required sidecars.
 
-The latest recorded observation is **359 GiB free on SSD and 7.5 TiB free on the
+The earlier continuing-objective observation was **359 GiB free on SSD and 7.5 TiB free on the
 external drive**, rounded figures from the continuing-objective note. Refresh
 these observations before substantial allocations. The **150 GiB operating
 reserve remains a floor, not proof that the full workflow fits**. Maintain a
@@ -32,13 +32,14 @@ and restore location in the experiment record. Restored data must be admitted
 for its next consumer because inode/ctime identities can change. No broad new
 scan, transfer or deletion was performed for this publication.
 
-### G20T1 copy completed; source retained
+### Historical copy-completion snapshot — G20T1 source retained
 
 The first cold-recipe copy completed in **2,977.57 seconds (49.63 minutes)**,
 with outer exit code zero. Its external archive contains **713,331 verified
 members** and occupies **13,529,845,760 bytes**. The local and external readback
 SHA-256 agree: `c742245979a3878ba8c8d212703f7a95ebae4e7df740a7a8f7ca2de4f607aa2d`.
-The original dataset remains local: **source bytes reclaimed = 0**. Removal of
+At that copy-completion snapshot the original dataset remained local: **source
+bytes reclaimed = 0**. Removal of
 the verified staging tar is distinct from recovering space occupied by the
 original dataset. The complete archive retains the source and recipe evidence.
 
@@ -56,6 +57,42 @@ The [byte-exact full review](../../scratchpad/bt4_joint20/publication_20260908_s
 [outer completion](../../scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/g20t1/operator.actual_complete.json)
 and [snapshot manifest](evidence/bt4-bootstrap/storage-objective-v50-manifest.json)
 retain exact source hashes. The earlier preparation below remains historical.
+
+### Completed G20T1 reclamation and next copy — September 8, 22:21 snapshot
+
+After the archive content review, current source stamps/membership and consumer
+checks, G20T1 reclamation completed with **2,309 shard directories removed** and
+both original top-level summaries retained. Its [completion receipt](../../scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t1/reclamation.completed.json)
+and [outer completion](../../scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t1/operator.actual_complete.json)
+record exit zero and **86.49 seconds**. The exact removal list, metadata/consumer
+checks, removal journal and operator source are preserved in the [compact evidence bundle](../../scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t1-reclamation.tar.gz).
+The parent counted 2,309 unique journal removals and checked retained summaries;
+the separate independent terminal review is pending at this draft snapshot.
+
+The prior allocated size of those shards was **14,730,653,696 bytes (13.719 GiB)**.
+Whole-filesystem free space changed from **384,425,050,112** to
+**399,113,687,040 bytes**, a **14,688,636,928-byte** increase. Concurrent filesystem
+activity prevents assigning that entire difference to this operation. Allocation,
+logical archive size and observed free-space change are distinct measurements.
+The verified external archive and checkpoint/training/schedule/arena evidence
+remain; restoring shards later requires admission for the next consumer.
+
+G20T05's [copy operator started](../../scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t05/operator.actual_start.json)
+at 22:21 local time after [preparation review](../../scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t05/parent_preparation_review.json).
+This snapshot claims **launch only**, with source retained and no completed
+transfer or reclamation result. The [frozen launch bundle](../../scratchpad/bt4_joint20/publication_20260908_v50_storage_v1/g20t05-copy-launch.tar.gz)
+retains the exact helper, wrapper, plan and start records: four hours inclusive,
+CPUs 0,1, low priority, GPU hidden, a 24 GiB sampled staging ceiling and 150 GiB
+reserve. It reuses the reviewed copy/verification path without changing loaders.
+
+Continue eligible cold policy-corpus copies while assessing removable payload
+components within already-verified archived pools, avoiding redundant transfers.
+The earlier inventory's 26 still-local pools are mostly checkpoint/restart/rollback
+pools, including anchor material; they are not a wholesale deletion list. Preserve
+checkpoint, holdout and live dependency exclusions. Its **85.32 GB total tar size
+is not a measure of recoverable allocated source space**.
+This publication adds no inventory, transfer, removal or payload recheck. Exact
+snapshot and member hashes are in the [publication manifest](evidence/bt4-bootstrap/v50-training-storage-progress-manifest.json).
 
 ### Account for the next value rewrite
 
@@ -108,7 +145,7 @@ Keep each policy recipe's `derive_targets_summary.json` and `bt4_policy_mix_summ
 
 The complete archive must retain shard metadata and payloads for reconstruction. A later byte-exact restore at original paths can preserve the current horizon content/path digest, but changed inode/ctime can invalidate separate storage snapshots. Re-admit restored data for its next consuming job without rewriting historical receipts or repeating completed matches.
 
-At this earlier retention-review snapshot, archive copy, content verification and local removal had **not** been executed; the completed G20T1 copy is recorded above. A [six-directory metadata-size attempt](../../scratchpad/storage_scaling_20260908/publication/retention_feasibility_v1/candidate_size_inventory_attempt.json) reached its 55-second cap without totals, so aggregate savings remain unmeasured. The existing 13.59-GiB B100 measurement is not a measured size for every recipe and does not establish that the 100M pipeline fits.
+At this earlier retention-review snapshot, archive copy, content verification and local removal had **not** been executed; the later G20T1 copy and reclamation are recorded above. A [six-directory metadata-size attempt](../../scratchpad/storage_scaling_20260908/publication/retention_feasibility_v1/candidate_size_inventory_attempt.json) reached its 55-second cap without totals, so aggregate savings remain unmeasured. The existing 13.59-GiB B100 measurement is not a measured size for every recipe and does not establish that the 100M pipeline fits.
 
 The separate [sharing review](../../scratchpad/storage_scaling_20260908/publication/retention_feasibility_v1/sharing_limit.json) rules out ordinary hardlinks as a drop-in change to pinned data: creating or removing a link changes the shared inode's ctime, which existing storage receipts bind. A new family linked before qualification could be investigated, but is unqualified. Its 74.2% common-array observation is from **one B100 shard**, not a corpus-wide savings estimate; archival remains the first measure.
 
