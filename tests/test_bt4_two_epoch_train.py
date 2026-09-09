@@ -218,6 +218,70 @@ def test_no_flag_old_coordinator_admission_still_rejects_two_epoch_manifest(fixt
         train.recipes.validate(fixture[0])
 
 
+@pytest.mark.parametrize(('profile', 'temperature'), [('B100T1', 1.), ('B100', .5)])
+@pytest.mark.parametrize('defect', [
+    'none', 'other_temperature', 'mixed_sf', 'top_set_only', 'changed_value',
+    'wrong_source', 'wrong_qualification', 'wrong_lineage',
+])
+def test_pure_temperature_recipe_pins_and_training_corpus(
+    fixture: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    profile: str, temperature: float, defect: str,
+) -> None:
+    m, prep, _ = fixture
+    source = tmp_path/'original'
+    source.mkdir()
+    source_ref = write(source/'derive_targets_summary.json', {'rows': train.ROWS})
+    monkeypatch.setattr(train.recipes, 'SOURCE', source)
+    monkeypatch.setattr(train.recipes, 'COMMON_PINS', {source_ref['path']: source_ref['sha256']})
+    suffix = 'B100T1' if profile == 'B100T1' else 'B100T05'
+    corpus = source.with_name(source.name + '_bt4_global_' + suffix)
+    corpus.mkdir()
+    monkeypatch.setitem(train.recipes.CORPORA, 'B100', source.with_name(source.name + '_bt4_global_B100T05'))
+    recipe: dict[str, Any] = {
+        'kind': 'global', 'algorithm': 'legal-normalized-global-arithmetic-v1', 'alpha': 1.,
+        'bt4_temperature': temperature, 'rows': train.ROWS, 'expected_shards': train.SHARDS,
+        'source_dir': str(source), 'source_derive_summary_sha256': source_ref['sha256'],
+        'mutated_arrays': ['policy_target'],
+    }
+    if defect == 'other_temperature':
+        recipe['bt4_temperature'] = .5 if temperature == 1. else 1.
+    elif defect == 'mixed_sf':
+        recipe['alpha'] = .2
+    elif defect == 'top_set_only':
+        recipe.update(kind='top-max-ties', algorithm='stored-top-set-only-v1')
+    elif defect == 'changed_value':
+        recipe['mutated_arrays'] = ['policy_target', 'search_wdl']
+    elif defect == 'wrong_source':
+        recipe['source_derive_summary_sha256'] = 'a'*64
+    recipe_ref = write(corpus/'bt4_policy_mix_summary.json', recipe)
+    lineage = {**recipe, 'bt4_temperature': 2.} if defect == 'wrong_lineage' else recipe
+    derive_ref = write(corpus/'derive_targets_summary.json', {'policy_target_postprocess': lineage})
+    qualification = {'schema': 1, 'status': 'PASS_REGISTERED_CORPUS_QUALIFICATION',
+        'profile': ('B100' if profile == 'B100T1' else 'B100T1') if defect == 'wrong_qualification' else profile,
+        'corpus': str(corpus), 'rows': train.ROWS, 'shards': train.SHARDS,
+        'source': {'path': str(source), 'derive_sha256': source_ref['sha256']},
+        'derive_summary': derive_ref, 'mix_summary': recipe_ref}
+    prep.update(profile=profile, corpus=str(corpus), source=source_ref, recipe_summary=recipe_ref,
+                derive_summary=derive_ref, data_qualification=write(tmp_path/'qualification.json', qualification))
+    m['profile'] = profile
+    train.validate(m)
+    train.verify_plans(m, prep)
+    if defect != 'none':
+        with pytest.raises(ValueError, match=r'BT4 recipe|BT4 lineage|dataset qualification'):
+            train.verify_recipe(prep, profile)
+        return
+    admitted = train.verify_recipe(prep, profile)
+    assert admitted == corpus
+    command = train.train_command(m, {'runtime': {'executable': '/qualified/python'}}, admitted)
+    assert command[command.index('--shards')+1] == str(corpus)
+    assert command[command.index('--epochs')+1] == '2'
+    assert 'B100T1' not in train.recipes.CORPORA
+    # A pinned summary changing after preparation still refuses admission.
+    (corpus/'bt4_policy_mix_summary.json').write_text('{}')
+    with pytest.raises(ValueError, match='changed identity'):
+        train.verify_recipe(prep, profile)
+
+
 def test_missing_qualification_is_refused_before_probe_or_stage(fixture: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     m, _, _ = fixture
     for path, key in ((train.__file__, 'launcher_sha256'), (train.owned.__file__, 'stage_helper_sha256'), (train.recipes.__file__, 'recipe_helper_sha256')):

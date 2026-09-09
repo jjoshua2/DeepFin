@@ -94,7 +94,7 @@ def validate(m: dict[str, Any]) -> None:
          'load_workers', 'max_working_set_bytes', 'runtime_qualification', 'preparation', 'preregistration',
          'launcher_sha256', 'stage_helper_sha256', 'recipe_helper_sha256')), 'manifest keys')
     owned.require(m['schema'] == 1 and m['scope'] == SCOPE and
-                  m['profile'] in ('H20', 'B100', 'G50', 'SoftSF10'), 'unsupported two-epoch scope/profile')
+                  m['profile'] in ('H20', 'B100', 'B100T1', 'G50', 'SoftSF10'), 'unsupported two-epoch scope/profile')
     for key in ('plan_workers', 'load_workers', 'max_working_set_bytes'):
         owned.require(type(m[key]) is int and m[key] > 0, 'explicit positive resource allocation required')
     owned.require(type(m['training_seconds']) is int and 30 < m['training_seconds'] <= 32400,
@@ -105,7 +105,9 @@ def validate(m: dict[str, Any]) -> None:
 
 def verify_recipe(prep: dict[str, Any], profile: str) -> Path:
     """Reuse the genuine SoftSF producer gate; BT4 lineage retains old admission."""
-    corpus = recipes.CORPORA[profile]
+    # T1 is a separate two-epoch recipe; it must not widen old B100 admission.
+    corpus = (recipes.SOURCE.with_name(recipes.SOURCE.name + '_bt4_global_B100T1')
+              if profile == 'B100T1' else recipes.CORPORA[profile])
     owned.require(corpus.is_dir() and not corpus.is_symlink() and
                   not corpus.with_name(corpus.name + '.writing').exists(), 'corpus not finally published')
     source_ref = {'path': str(recipes.SOURCE / 'derive_targets_summary.json'),
@@ -131,8 +133,9 @@ def verify_recipe(prep: dict[str, Any], profile: str) -> Path:
     else:
         same(derived['policy_target_postprocess'], recipe, 'BT4 lineage')
         kind, algorithm, alpha = ('c20-global', 'stored-c20t05-then-global-bt4-v1', .2) if profile == 'H20' else (
-            'global', 'legal-normalized-global-arithmetic-v1', 1. if profile == 'B100' else .5)
-        for key, value in {'kind': kind, 'algorithm': algorithm, 'alpha': alpha, 'bt4_temperature': .5, 'rows': ROWS,
+            'global', 'legal-normalized-global-arithmetic-v1', 1. if profile in ('B100', 'B100T1') else .5)
+        temperature = 1. if profile == 'B100T1' else .5
+        for key, value in {'kind': kind, 'algorithm': algorithm, 'alpha': alpha, 'bt4_temperature': temperature, 'rows': ROWS,
                                'expected_shards': SHARDS, 'source_dir': str(recipes.SOURCE),
                                'source_derive_summary_sha256': source_ref['sha256'], 'mutated_arrays': ['policy_target']}.items():
             same(recipe.get(key), value, 'BT4 recipe ' + key)
