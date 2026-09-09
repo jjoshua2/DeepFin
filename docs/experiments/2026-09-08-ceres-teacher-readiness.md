@@ -3,7 +3,9 @@
 Research direction and results, September 8, 2026. C3 passes CPU execution and
 byte-adapter checks. A completed 128-position training sample finds fairly similar
 Ceres/BT4 policies at temperature 1, with 88.28% weighted top-move agreement.
-No bulk Ceres labeling, training or playing comparison has launched.
+No bulk Ceres labeling, training or playing comparison has launched. The latest
+[8,192-row integrated collector pilot](#september-9-preregistration-integrated-8192-row-pilot)
+is prepared; it has not launched or entered a queue.
 
 ## Decision and hypothesis
 
@@ -287,3 +289,52 @@ repetition-edge and nondefault-Q parity remain unresolved.
 · [independent preparation review](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/ceres_gpu/independent_preparation_review.json)
 · [collector source as data](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/ceres_gpu/collect.py.txt)
 · [snapshot manifest](evidence/bt4-bootstrap/softsf-training-ceres-gpu-manifest.json).
+
+## September 9 preregistration: integrated 8,192-row pilot
+
+**Prepared, not launched or queued.** The [merged compact collector](https://github.com/jjoshua2/DeepFin/pull/611)
+will label the first complete canonical shard of the original SF corpus: exactly
+**8,192 rows in 256 calls of batch 32**. This measures the actual conversion,
+inference, legal-move gathering and verified storage path while retaining useful
+labels. Selection is fixed before Ceres outputs and is not a representative
+training sample. No Ceres training recipe or playing comparison is selected.
+
+The C3-768-30-pre8-I8 model and default stored-history byte conversion stay pinned.
+Each call requests raw `policy` and primary `value` together. Save native float16
+logits for every legal move and primary W/D/L logits, with source/shard/row,
+game/ply and input identities. There is no `value2` fetch, native value-head blend,
+padding, dropped remainder or automatic source expansion. These labels can support
+later teacher comparisons without discarding the full legal distribution.
+
+This uses an **explicitly approximate fixed32 research backend**, not a claim that
+the original strict CUDA/CPU qualification passed. On 128 saved inputs, two
+fixed32 runs produced identical policy/value arrays, while legal-policy TV from
+the CPU reference had median .002432, p99 .012858 and maximum .014969. Original
+failed attempts remain failed; subsequent saved-data analysis supports only the
+bounded research choice. Native repetition-edge parity and calibrated or blended
+Ceres value remain unproved. The new environment pins ORT GPU 1.29.0, NumPy 2.2.6,
+extended optimization, sequential execution, threads 2/1 and disabled TF32.
+Copied-library and input evidence avoid an unnecessary repeat of the 128-row
+reference inference; actual first/final process-library checks and first-call
+CUDA partition proof remain part of this pilot.
+
+The **1,200-second inclusive ceiling** covers preflight, startup, any bounded lease
+waiting, all calls, readback and cleanup: TERM at 1,170 seconds, then 30 seconds
+for KILL. Use two CPU cores and numeric threads, an 8 GiB ORT arena, sampled
+12 GiB device/process-RSS limits, 16 GiB host-memory availability, 150 GiB free-disk
+reserve and 64 MiB aggregate output. The arena is not a total-device limit, and
+sampled ceilings may transiently overshoot. Launch remains for a selected free
+GPU window after V50's stages; no active job is paused by this registration.
+
+Stop on a source/identity, mapping, provider, nonfinite-output, resource or deadline
+failure and retain the evidence, with no automatic retry. Success requires all
+8,192 rows, eight verified arrays, actual CUDA neural execution with only permitted
+small CPU shape work, and successful parent/outer terminal receipts followed by
+independent bank review. Report whole elapsed time and storage separately from
+synchronous session-call time; component speed cannot establish full-labeler
+throughput. This one-shard pilot does not establish full-corpus coverage, teacher
+strength or a preferred mixture.
+
+The [compact preregistration](evidence/ceres-bootstrap/c3-compact-pilot8192-preregistration.json)
+binds the exact plan, collector, author checks and independent preparation review
+by SHA256. Operational paths and logs remain external.

@@ -15,7 +15,7 @@ measurements support which claims.
 | [B100 tactical policy readiness](2026-09-08-b100-tactical-policy-readiness.md) | Producer/admission merged; corrected bounded preparation independently reviewed; V50-first schedule, no tactical rewrite/training |
 | [Next value and policy contrasts](2026-09-08-bootstrap-next-value-and-policy-contrasts.md) | B100V50 rewrite, qualification and prospective schedule complete; original one-epoch training started, no result |
 | [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row WDL diagnostic complete; B100V50 is the first value contrast |
-| [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 compatibility and 128-row training diagnostic complete: 88.28% top-move agreement with BT4 T=1; bounded CUDA probe reviewed, not launched |
+| [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 CPU/sample evidence retained; approximate fixed32 policy + primary-value collector implemented, 8,192-row integrated cost pilot prepared, not launched |
 | [Faster recipe matches](2026-09-08-faster-recipe-matches.md) | First prospective SPRT plus fixed deep probe completed in46m35s; speculative scheduling bottleneck identified; no controlled speedup claim |
 | [BT4 adapter identity collection](2026-09-08-bt4-adapter-single-pass.md) | Exact identity parity and 34.1% CPU component reduction in one closed-shard pair; full-pipeline benefit unmeasured |
 | [Qualified Soft-SF training sample](2026-09-08-soft-sf-qualified-training-sample.md) | Complete: SoftSF10 loses first-look low SPRT and fixed400 probe (−162.99 Elo); no clear depth recovery |

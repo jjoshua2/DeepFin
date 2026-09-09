@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "status": "PREPARED_NOT_LAUNCHED",
+  "date": "2026-09-09",
+  "purpose": "Measure actual source-to-compact-bank integration and whole-pilot cost while retaining useful Ceres labels. No training or strength comparison.",
+  "model": {
+    "name": "C3-768-30-pre8-I8",
+    "sha256": "44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3"
+  },
+  "selection": {
+    "source": "original SF corpus",
+    "source_summary_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "corpus_rows": 18910484,
+    "canonical_shard_ordinal": 0,
+    "rows": 8192,
+    "selection_rule": "First complete canonical shard, selected before teacher outputs; not representative sampling"
+  },
+  "execution": {
+    "batch_rows": 32,
+    "calls": 256,
+    "output_names": [
+      "policy",
+      "value"
+    ],
+    "output_dtype": "float16",
+    "policy": "Full legal support, compact indices and raw gathered logits",
+    "value": "Primary W/D/L logits, side to move; no value2 or native head blend",
+    "runtime": {
+      "python": "3.13.15",
+      "onnxruntime_gpu": "1.29.0",
+      "numpy": "2.2.6",
+      "packages": 29,
+      "source_merge": "02c0f5dbb5d24cc75c3f052687cad57cdb3a99b7",
+      "optimization": "extended",
+      "execution": "sequential",
+      "ORT_threads": [
+        2,
+        1
+      ],
+      "use_tf32": false
+    },
+    "stored_identity": [
+      "source/shard/row",
+      "game/ply",
+      "TPG input digest",
+      "source-array digests"
+    ]
+  },
+  "resources": {
+    "whole_attempt_seconds": 1200,
+    "TERM_seconds": 1170,
+    "KILL_grace_seconds": 30,
+    "CPU_cores": 2,
+    "numeric_Torch_Blosc_threads": 2,
+    "ORT_arena_GiB": 8,
+    "sampled_device_GiB": 12,
+    "sampled_process_RSS_GiB": 12,
+    "minimum_host_available_GiB": 16,
+    "minimum_disk_reserve_GiB": 150,
+    "sampled_aggregate_output_MiB": 64,
+    "scope": "Includes startup, preflight, bounded lease waiting, calls, readback and cleanup; sampled resource ceilings can transiently overshoot."
+  },
+  "acceptance": [
+    "All 8192 rows and 256 fixed32 calls, with no padding/drop/replacement",
+    "Complete eight-array bank and unchanged source/row/feed bindings",
+    "Finite native logits, actual CUDA neural proof and only allowed small integer/bool CPU shape kernels",
+    "Actual first/final library and source identities pass; imports or one shard alone are insufficient",
+    "Successful parent and outer terminal receipts plus independent bank review"
+  ],
+  "stopping": "STOP, deadline, resource, source, mapping, dtype/finiteness or provider failure ends attempt; preserve evidence and partial output. No automatic retry or expansion.",
+  "prior_evidence": {
+    "profile": "Accepted approximate fixed32 research backend; original strict parity/provenance failures remain failed",
+    "saved_rows": 128,
+    "same_batch_repeat": "Policy and primary value outputs byte-identical across two saved fixed32 runs",
+    "legal_TV_vs_CPU": {
+      "median": 0.002432,
+      "p99": 0.012858,
+      "max": 0.014969
+    },
+    "limitations": "128 saved inputs do not prove arbitrary batch contexts, final padding, native repetition edges, value calibration or strength; first shard does not establish full-corpus cost."
+  },
+  "analysis": "Report end-to-end elapsed, row coverage and storage, with synchronous session-call time separately. No repeated 128 reference inference just for bookkeeping; copied-library/input proof reuse is not new GPU integration proof.",
+  "identities": {
+    "plan_sha256": "d4a11b348b2c88e7fd28c86cd83eac28042b2ad2b2b632fdb035db2d044f838a",
+    "author_validation_sha256": "4a79454959faa6c7e85c0d9d4239a3031d9d9234c1e8be21767ce1b89af1e2b0",
+    "independent_review_sha256": "bcb9b2b4948eb113e87567241497acee191683c92d7ed2a18b293daa94015ca0",
+    "accepted_backend_decision_sha256": "bfc294ea3709d36d531432f6f6f724053edff1db98ec7cb3e318e46eabe225d6",
+    "collector_source_sha256": "7461a062bcdcd88337c47210c529c665dee30d3200135a05e8425a37ac9c76dc",
+    "mapped_library_helper_sha256": "4c0f901280534212bdf5c16e4c8bb0760328dd78cad68ccc6fd87d88dd312528",
+    "operator_wrapper_sha256": "491d9ef044efcb19b7b30a8373e8b3254fecb040c7e9df1e3aaaa8199aaa5298",
+    "operator_command_sha256": "9c354610e970c3984fee8c18f46d5a084a921a436f1aab212c4f507174add53f"
+  },
+  "evidence_scope": "Curated scientific/settings/hash projection; original operational plans, commands and logs remain external."
+}
