@@ -8,6 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
+| [BT4 target temperature and horizon](2026-09-09-bt4-target-temperature-horizon.md) | Preregistered preparation: T1 versus T0.5, two uninterrupted epochs and three fixed deep comparisons; V50 first, no launch |
 | [B100 search-prior calibration](2026-09-09-b100-prior-calibration.md) | Complete: 0.7 versus 1.0 gives +16.30 Elo [−20.83, +53.80]; no follow-up selected, common prior 1.0 retained |
 | [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1/G20T05/G50T05 reclamation complete; current space snapshot; V50-first resource sequencing |
 | [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | Full 18.91M original-source WDL bank complete; V50 rewrite launched; compiled CUDA and planners pass |
