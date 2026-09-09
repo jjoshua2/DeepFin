@@ -535,3 +535,43 @@ automatically selected. The matched scientific control is B100 with its original
 SF value, using the same historical trainer; changing trainer or objective would
 require a new matched control. Tiny CPU loader/loss and old-runtime checks
 establish the target path, not full-corpus or GPU training readiness.
+
+## Fixed32 Ceres compact teacher pilot
+
+`scripts/ceres_derived_sidecar.py` banks compact legal raw policy logits and the
+primary raw W/D/L logits from C3-768-30-pre8-I8. It uses the strict stored-x byte-TPG
+converter, inherited complete original-SF or explicitly qualified G10 source
+admission, and source-qualified physical row/game/ply identities. No original raw
+history replay, `value2` fetch, Ceres-native value blend, normalization or training
+recipe is introduced. This is an approximate research teacher backend, not a
+strength or native repetition-oracle qualification.
+
+The initial collector deliberately requires fixed batch 32 and selected shards of
+at most 8192 rows whose row counts divide 32. It refuses partial batches before
+opening the model; there is no silent padding, drop or cross-shard carry. These
+are this pilot's limits, not a new corpus admission rule. CLI arguments reuse the
+WDL collector's source, selection, resource and G10 qualification options; use
+`--wdl-output value --wdl-output-kind logits --batch-size 32 --threads 2
+--gpu-mem-gb 8 --gpu-lock SHARED_LOCK` and the exact accepted model SHA256.
+
+The backend contract fixes ORT 1.29.0 / NumPy 2.2.6, CUDA device 0 with an 8 GiB arena,
+`use_tf32=0`, extended optimization and sequential 2/1 session threads. Python
+fallback is disabled. The first actual 32-row call must prove CUDA neural kernels
+in its profile; only explicitly allowed small integer/bool CPU shape outputs are
+accepted. Remaining calls share that session. A separately pinned collector
+wheel/library environment and bounded real 8192-row pilot remain required before
+any full collection claim; fake-session tests do not qualify that environment.
+
+Each fresh shard stores CSR legal offsets (`uint32`), compact indices (`uint16`),
+native legal logits and primary value logits (`float16`), row/game/ply identities,
+TPG feed hashes and source-array digests. The source legal mask selects values
+through the TPG pawn/castling-aware Leela mapping. Native bits remain unchanged;
+full 1858-logit and 8768-byte input rows are transient. Per-shard readback and source
+stability precede atomic publication. A distinct source/model/backend namespace
+rejects mixed BT4/Ceres roots; completed matching caches skip inference. Partial
+outputs refuse automatic adoption.
+
+The shared parent supervisor retains STOP, reserve, sampled output and inclusive
+wall bounds and owns termination of its disposable child. The child holds the
+shared GPU lease through process exit and context teardown. No collector launch,
+full-corpus coverage, mixture selection or active-runtime adoption is implied.

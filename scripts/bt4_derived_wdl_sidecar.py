@@ -21,6 +21,7 @@ import signal
 import sys
 import time
 from typing import Any
+from collections.abc import Callable
 
 import numpy as np
 import zarr
@@ -446,6 +447,8 @@ def produce(args: argparse.Namespace) -> None:
     with raw.advisory_lease(
         Path(args.out) / ".writer.lock", poll_seconds=1, description="WDL writer"
     ):
+        require(not os.path.lexists(Path(args.out) / "ceres_source.json"),
+                "Ceres output namespace cannot contain BT4 values")
         summary, specs = source_inventory(args)
         namespace = Path(args.out) / "g10_common_source.json"
         if getattr(args, "g10_admission", None) is not None:
@@ -595,7 +598,9 @@ def child(args: argparse.Namespace) -> None:
     produce(args)
 
 
-def run(args: argparse.Namespace) -> int:
+def run(
+    args: argparse.Namespace, *, child_target: Callable[[argparse.Namespace], None] | None = None
+) -> int:
     require(
         args.batch_size > 0
         and args.threads > 0
@@ -646,7 +651,7 @@ def run(args: argparse.Namespace) -> int:
         raise InterruptedError("termination requested")
 
     previous = signal.signal(signal.SIGTERM, interrupted)
-    process = multiprocessing.get_context("fork").Process(target=child, args=(args,))
+    process = multiprocessing.get_context("fork").Process(target=child if child_target is None else child_target, args=(args,))
     try:
         guard_resources(args)
         process.start()
