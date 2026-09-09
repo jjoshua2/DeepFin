@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import math
 import os
@@ -25,11 +26,15 @@ import zarr
 
 from chess_anti_engine.moves.encode import COMPACT_POLICY_SIZE
 from chess_anti_engine.moves.leela_index import compact_index_for_move
+from chess_anti_engine.stockfish.wdl import SF_CP_CLAMP_CP, mate_to_effective_cp
 from scripts import derive_corpus_targets as derive
 from scripts import sf_d9_rank_sidecar as rank
 from scripts.bt4_policy_dump import file_sha256
 
 SUMMARY = "sf_policy_rewrite_summary.json"
+TACTICAL_SUMMARY = "bt4_sf_tactical_policy_summary.json"
+TACTICAL_ALGORITHM = "stored-b100-sf-gap100-decay100-floor0.1-categorical-mates-v1"
+MATE_SCORE_VALUES = np.array([abs(mate_to_effective_cp(i)) for i in range(501)])
 ARRAYS = frozenset(
     {
         "x",
@@ -160,6 +165,172 @@ def target(obs: Observation, score_space: str, temperature: float) -> np.ndarray
         "stored policy mass error",
     )
     return result
+
+
+def tactical_target(
+    obs: Observation, stored: np.ndarray
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Attenuate actual stored B100 mass; never turn mate distances into cp gaps."""
+    require(
+        stored.shape == (COMPACT_POLICY_SIZE,) and stored.dtype == np.float16,
+        "B100 policy schema differs",
+    )
+    require(
+        bool(np.isfinite(stored).all() and (stored >= 0).all()), "invalid B100 policy"
+    )
+    require(
+        obs.indices.ndim == 1
+        and np.issubdtype(obs.indices.dtype, np.integer)
+        and len(set(obs.indices.tolist())) == len(obs.indices)
+        and bool(((obs.indices >= 0) & (obs.indices < COMPACT_POLICY_SIZE)).all()),
+        "invalid tactical compact indices",
+    )
+    legal = np.zeros(COMPACT_POLICY_SIZE, dtype=bool)
+    legal[obs.indices] = True
+    require(not bool(np.any(stored[~legal] != 0)), "B100 illegal policy mass")
+    require(
+        abs(float(stored.astype(np.float64).sum()) - 1) <= 2**-10,
+        "B100 policy mass differs",
+    )
+    scores = obs.scores
+    require(
+        scores.shape == obs.indices.shape
+        and len(scores) > 0
+        and bool(np.isfinite(scores).all()),
+        "invalid tactical scores",
+    )
+    magnitude = np.abs(scores)
+    mates = magnitude > SF_CP_CLAMP_CP
+    # The generator preserves raw cp; accept only the disjoint documented cp
+    # domain or exact values of the shared mate map, not an invented gray band.
+    require(
+        bool(np.isin(magnitude[mates], MATE_SCORE_VALUES).all()),
+        "effective score outside cp or shared mate domain",
+    )
+    wins, losses = scores > SF_CP_CLAMP_CP, scores < -SF_CP_CLAMP_CP
+    weights = np.ones(len(scores), dtype=np.float64)
+    if bool(wins.any()):
+        category = "winning_mate_available"
+        weights[~wins] = 0.1
+    elif bool(losses.all()):
+        category = "all_forced_losses"
+    else:
+        category = "losing_mate_alternatives" if bool(losses.any()) else "no_mate"
+        nonmate = ~losses
+        deficits = scores[nonmate].max() - scores[nonmate]
+        weights[nonmate] = np.maximum(
+            0.1, np.exp(-np.maximum(0, deficits - 100.0) / 100.0)
+        )
+        weights[losses] = 0.1
+    base = stored[obs.indices].astype(np.float64)
+    base /= base.sum()
+    ideal = base * weights
+    ideal /= ideal.sum()
+    result = stored.copy() if bool((weights == 1).all()) else np.zeros_like(stored)
+    if not bool((weights == 1).all()):
+        result[obs.indices] = ideal.astype(np.float32).astype(np.float16)
+    require(
+        bool(np.isfinite(result).all())
+        and abs(float(result.astype(np.float64).sum()) - 1) <= 2**-10,
+        "tactical stored policy mass differs",
+    )
+    normalized = result[obs.indices].astype(np.float64)
+    normalized /= normalized.sum()
+    positive = base > 0
+    relative = np.zeros_like(base)
+    relative[positive] = np.abs(normalized[positive] / ideal[positive] - 1)
+    return result, {
+        "category": category,
+        "winning_mate_zero_base_mass": int(
+            bool(wins.any()) and not bool((base[wins] > 0).any())
+        ),
+        "support_losses": int(np.count_nonzero(positive & (result[obs.indices] == 0))),
+        "ideal_to_stored_relative_error_max": float(relative.max()),
+        "ideal_to_stored_TV": float(np.abs(normalized - ideal).sum() / 2),
+    }
+
+
+def recipe_for_summary() -> dict[str, Any]:
+    return {
+        "gap_cp": 100.0,
+        "decay_cp": 100.0,
+        "relative_floor": 0.1,
+        "mate_handling": "categorical-v1",
+        "cp_domain": [-SF_CP_CLAMP_CP, SF_CP_CLAMP_CP],
+        "base": "normalized stored B100 float16 policy",
+        "storage": "float64 attenuation -> float32 -> float16; all-one weights preserve bytes",
+    }
+
+
+def tactical_source(
+    args: argparse.Namespace,
+    original: dict[str, Any],
+    sf_root: Path,
+) -> tuple[Path, dict[Path, str]] | None:
+    """Admit the pinned B100 parent, retaining original SF/history lineage."""
+    root_arg = getattr(args, "tactical_bt4_source", None)
+    pins_args = [
+        getattr(args, key, None)
+        for key in ("expected_bt4_summary_sha256", "expected_bt4_mix_sha256")
+    ]
+    require(
+        bool(root_arg) == all(bool(v) for v in pins_args)
+        and (bool(root_arg) or not any(pins_args)),
+        "tactical B100 source requires both pins",
+    )
+    if not root_arg:
+        return None
+    require(
+        args.score_space == "q" and args.temperature == 0.0005,
+        "tactical recipe cannot override score-space/temperature",
+    )
+    root = Path(root_arg).resolve()
+    require(
+        root != sf_root
+        and not root.with_name(root.name + ".writing").exists()
+        and not (root / "failed.json").exists(),
+        "invalid B100 source",
+    )
+    pins = {
+        root / derive.SUMMARY_NAME: str(pins_args[0]),
+        root / "bt4_policy_mix_summary.json": str(pins_args[1]),
+    }
+    for path, digest in pins.items():
+        require(file_sha256(path) == digest, "B100 summary pin differs")
+    base = json.loads((root / derive.SUMMARY_NAME).read_text())
+    mix = json.loads((root / "bt4_policy_mix_summary.json").read_text())
+    # Historical summaries contain NaN diagnostics, so compare their JSON form.
+    require(
+        json.dumps(
+            {k: v for k, v in base.items() if k != "policy_target_postprocess"},
+            sort_keys=True,
+        )
+        == json.dumps(original, sort_keys=True)
+        and json.dumps(base.get("policy_target_postprocess"), sort_keys=True)
+        == json.dumps(mix, sort_keys=True),
+        "B100 original source lineage differs",
+    )
+    expected = {
+        "kind": "global",
+        "algorithm": "legal-normalized-global-arithmetic-v1",
+        "alpha": 1.0,
+        "bt4_temperature": 0.5,
+        "rows": original["realized"]["rows_written"],
+        "expected_shards": len(original["shards"]),
+        "source_dir": str(sf_root),
+        "source_derive_summary_sha256": args.expected_source_summary_sha256,
+        "mutated_arrays": ["policy_target"],
+    }
+    require(
+        all(mix.get(k) == v for k, v in expected.items()),
+        "requires B100 global T.5 recipe",
+    )
+    require(
+        [p.name for p in sorted(root.glob("shard_*.zarr"))]
+        == [x["path"] for x in original["shards"]],
+        "B100 shard inventory differs",
+    )
+    return root, pins
 
 
 def source_contract(summary: dict[str, Any], record: derive.CorpusRecord) -> None:
@@ -347,6 +518,14 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             ),
             "raw manifest/summary identity differs",
         )
+    tactical = tactical_source(args, summary, source)
+    parent = tactical[0] if tactical else source
+    if tactical:
+        metadata.update(tactical[1])
+        require(
+            out != parent and parent not in out.parents and out not in parent.parents,
+            "output overlaps B100 source",
+        )
     specs = summary["shards"]
     require(
         [p.name for p in sorted(source.glob("shard_*.zarr"))]
@@ -356,20 +535,41 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
     source_states = {
         source / s["path"]: rank._storage_identity(source / s["path"]) for s in specs
     }
+    if tactical:
+        source_states.update(
+            {
+                parent / x["path"]: rank._storage_identity(parent / x["path"])
+                for x in specs
+            }
+        )
     producer_hashes = {
         str(p): file_sha256(p)
         for p in (Path(__file__), Path(derive.__file__), Path(rank.__file__))
     }
+    if tactical:
+        from chess_anti_engine.stockfish import wdl
+
+        for module in (wdl,):
+            assert module.__file__ is not None
+            producer_hashes[str(Path(module.__file__))] = file_sha256(
+                Path(module.__file__)
+            )
     writing.mkdir(parents=True)
     start = time.monotonic()
     raw_rows = dropped = rows_written = 0
     rng = np.random.Generator(np.random.PCG64(int(summary["seed"])))
     pending: list[Observation] = []
     outputs: list[dict[str, Any]] = []
+    output_states: dict[Path, str] = {}
     raw_proofs = {}
     last_by_worker: dict[int, tuple[int, int]] = {}
     changed = 0
     max_mass_error = 0.0
+    tactical_counts: dict[str, int] = {}
+    support_losses = 0
+    winning_mate_zero_base_mass = 0
+    storage_relative_error = 0.0
+    storage_tv = 0.0
     keys = hashlib.sha256()
 
     def guard() -> None:
@@ -383,7 +583,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     def flush() -> None:
-        nonlocal rows_written, changed, max_mass_error
+        nonlocal rows_written, changed, max_mass_error, support_losses
+        nonlocal storage_relative_error, storage_tv, winning_mate_zero_base_mass
         guard()
         index = len(outputs)
         require(index < len(specs), "too many source rows")
@@ -407,6 +608,50 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             old_policy.dtype == np.float16 and legal.shape == old_policy.shape,
             "stored source policy schema differs",
         )
+        base_policy = old_policy
+        copy_source = src
+        if tactical:
+            copy_source = parent / spec["path"]
+            bg: Any = zarr.open_group(str(copy_source), mode="r")
+            require(
+                frozenset(bg.array_keys()) == ARRAYS, "B100 array inventory differs"
+            )
+            attrs = dict(bg.attrs)
+            require(
+                {
+                    k: v
+                    for k, v in attrs.items()
+                    if not k.startswith("policy_target_mix_")
+                }
+                == dict(g.attrs),
+                "B100 source attrs differ",
+            )
+            require(
+                attrs.get("policy_target_mix_kind") == "global"
+                and attrs.get("policy_target_mix_alpha") == 1.0
+                and attrs.get("policy_target_mix_bt4_temperature") == 0.5,
+                "B100 source recipe attrs differ",
+            )
+            for column in ARRAYS:
+                for array in (g[column], bg[column]):
+                    # A Zarr read silently fills absent chunks; verify every
+                    # expected stored chunk before accepting either parent.
+                    for coordinates in itertools.product(
+                        *(
+                            range(math.ceil(n / c))
+                            for n, c in zip(array.shape, array.chunks, strict=True)
+                        )
+                    ):
+                        require(
+                            array._chunk_key(coordinates) in array.chunk_store,
+                            "missing stored chunk",
+                        )
+                require(
+                    bg[column].shape == g[column].shape
+                    and bg[column].dtype == g[column].dtype,
+                    "B100 array schema differs",
+                )
+            base_policy = np.asarray(bg["policy_target"][:])
         new_policy = np.empty_like(old_policy)
         for i, obs in enumerate(aligned):
             mask = np.zeros(COMPACT_POLICY_SIZE, dtype=np.uint8)
@@ -416,13 +661,47 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 np.array_equal(target(obs, "q", 0.0005), old_policy[i]),
                 "original q-policy reconstruction differs",
             )
-            new_policy[i] = target(obs, args.score_space, temperature)
+            if tactical:
+                new_policy[i], diagnostic = tactical_target(obs, base_policy[i])
+                category = diagnostic["category"]
+                tactical_counts[category] = tactical_counts.get(category, 0) + 1
+                support_losses += diagnostic["support_losses"]
+                winning_mate_zero_base_mass += diagnostic["winning_mate_zero_base_mass"]
+                storage_relative_error = max(
+                    storage_relative_error,
+                    diagnostic["ideal_to_stored_relative_error_max"],
+                )
+                storage_tv = max(storage_tv, diagnostic["ideal_to_stored_TV"])
+            else:
+                new_policy[i] = target(obs, args.score_space, temperature)
             keys.update(bytes.fromhex(obs.input_key))
         require(
             rank._storage_identity(src) == source_states[src],
             "source changed before copy",
         )
-        copied = copy_shard(src, dst)
+        require(
+            rank._storage_identity(copy_source) == source_states[copy_source],
+            "B100 source changed before copy",
+        )
+        copied = copy_shard(copy_source, dst)
+        if tactical:
+            # Ordinary B100 copies, independently bound to the original SF
+            # nonpolicy compressed files. No x/history payload decoding.
+            sf_files = {
+                str(p.relative_to(src)): p
+                for p in src.rglob("*")
+                if p.is_file()
+                and p.relative_to(src).parts[0] != "policy_target"
+                and str(p.relative_to(src)) != ".zattrs"
+            }
+            require(
+                set(sf_files) == set(copied) - {".zattrs"},
+                "B100 nonpolicy file inventory differs",
+            )
+            require(
+                all(file_sha256(path) == copied[rel] for rel, path in sf_files.items()),
+                "B100 changed nonpolicy bytes",
+            )
         dest: Any = zarr.open_group(str(dst), mode="a")
         dest["policy_target"][:] = new_policy
         require(
@@ -439,11 +718,27 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             "storage": "float64 softmax -> float32 -> float16",
             "mutated_arrays": ["policy_target"],
         }
+        if tactical:
+            for name in list(dest.attrs):
+                if name.startswith("policy_target_mix_"):
+                    del dest.attrs[name]
+            recipe = {
+                "algorithm": TACTICAL_ALGORITHM,
+                "gap_cp": 100.0,
+                "decay_cp": 100.0,
+                "relative_floor": 0.1,
+                "mate_handling": "categorical-v1",
+                "base": "normalized stored B100 float16 policy",
+                "source_summary_sha256": args.expected_bt4_summary_sha256,
+                "sf_summary_sha256": args.expected_source_summary_sha256,
+                "storage": "float64 attenuation -> float32 -> float16; all-one weights preserve bytes",
+                "mutated_arrays": ["policy_target"],
+            }
         dest.attrs["policy_target_rewrite"] = recipe
         for rel, digest in copied.items():
             if rel != ".zattrs":
                 require(file_sha256(dst / rel) == digest, "nonpolicy copy changed")
-        changed += int(np.count_nonzero(np.any(new_policy != old_policy, axis=1)))
+        changed += int(np.count_nonzero(np.any(new_policy != base_policy, axis=1)))
         max_mass_error = max(
             max_mass_error,
             float(np.max(np.abs(new_policy.astype(np.float64).sum(axis=1) - 1))),
@@ -453,11 +748,21 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "path": spec["path"],
                 "rows": len(aligned),
-                "source_storage_identity": source_states[src],
+                "source_storage_identity": source_states[copy_source],
+                **(
+                    {
+                        "original_sf_storage_identity": source_states[src],
+                        "source_policy_sha256": rank._sha_arrays(base_policy),
+                    }
+                    if tactical
+                    else {}
+                ),
                 "copied_file_hashes": copied,
                 "policy_sha256": rank._sha_arrays(new_policy),
             }
         )
+        if tactical:
+            output_states[dst] = rank._storage_identity(dst)
         pending.clear()
 
     try:
@@ -491,6 +796,21 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 if raw.get("result") is None:
                     dropped += 1
                     continue
+                if tactical:
+                    anomalies = raw["phases"][0].get("anomalies", {})
+                    require(
+                        type(anomalies.get("bound_lines")) is int
+                        and anomalies["bound_lines"] >= 0,
+                        "missing original bound-line accounting",
+                    )
+                    require(
+                        all(
+                            line[3] is None or (type(line[3]) is int and line[3] >= 0)
+                            for line in rank.d9_lines(raw)
+                            if len(line) == 4
+                        ),
+                        "invalid d9 nodes field",
+                    )
                 pending.append(observation(raw, str(record.facts["config_sha256"])))
                 if len(pending) == summary["rows_per_shard"]:
                     flush()
@@ -510,6 +830,13 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             "final source complement differs",
         )
         guard()
+        if tactical:
+            for root in (source, parent):
+                require(
+                    [p.name for p in sorted(root.glob("shard_*.zarr"))]
+                    == [s["path"] for s in specs],
+                    "final shard inventory differs",
+                )
         for path, state in source_states.items():
             require(
                 rank._storage_identity(path) == state,
@@ -553,13 +880,37 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             "history_lineage": "Inherited original input_key_verified/source x; no fresh history re-encoding.",
             "limitations": "Original historical control/provenance limitations unchanged; no valid-control promotion, inference, training or strength claim.",
         }
-        rank._atomic_json(writing / SUMMARY, result)
+        if tactical:
+            result.update(
+                kind="bt4_sf_tactical_policy_attenuation",
+                algorithm=TACTICAL_ALGORITHM,
+                source_dir=str(parent),
+                sf_source_dir=str(source),
+                source_derive_summary_sha256=args.expected_bt4_summary_sha256,
+                source_policy_summary_sha256=args.expected_bt4_mix_sha256,
+                sf_derive_summary_sha256=args.expected_source_summary_sha256,
+                recipe=recipe_for_summary(),
+                categories=tactical_counts,
+                stored_support_losses=support_losses,
+                winning_mate_zero_base_mass_rows=winning_mate_zero_base_mass,
+                stored_relative_error_max=storage_relative_error,
+                stored_TV_error_max=storage_tv,
+                score_bounds="Original producer discards UCI upper/lower bounds; rows retain aggregate counts, not per-line flags.",
+            )
+            result.pop("score_space")
+            result.pop("temperature")
+        rank._atomic_json(writing / (TACTICAL_SUMMARY if tactical else SUMMARY), result)
         derived = dict(summary)
         derived["policy_target_postprocess"] = {
             k: v for k, v in result.items() if k != "outputs"
         }
         rank._atomic_json(writing / derive.SUMMARY_NAME, derived)
         guard()
+        for path, state in output_states.items():
+            require(
+                rank._storage_identity(path) == state,
+                "tactical output changed before publication",
+            )
         os.replace(writing, out)
         return result
     except BaseException as exc:
@@ -582,6 +933,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--score-space", choices=["q", "effective-cp"], default="q")
     p.add_argument("--temperature", type=float, default=0.0005)
     p.add_argument("--minimum-free-gib", type=float, default=150.0)
+    p.add_argument(
+        "--tactical-bt4-source",
+        help="fixed gap100/decay100/floor.1 categorical-mate recipe on B100",
+    )
+    p.add_argument("--expected-bt4-summary-sha256")
+    p.add_argument("--expected-bt4-mix-sha256")
     return p
 
 
