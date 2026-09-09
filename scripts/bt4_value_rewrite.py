@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy B100 policy corpus and replace only search_wdl with 90% SF + 10% BT4.
+"""Copy B100 policy corpus and mix SF/BT4 search_wdl (default 90% SF + 10% BT4).
 
 Consumes completed derived-row WDL sidecars; performs no inference. All other
 compressed arrays are copied and verified byte for byte. No resume or overwrite.
@@ -33,9 +33,32 @@ VALUE_SOURCE = "stored-sf-search-and-derived-bt4-wdl"
 ALGORITHM = "normalized-wdl-arithmetic-90-10-float16-v1"
 
 
-def value_source(model_sha256: str, output: str) -> str:
+def checked_alpha(alpha: float) -> float:
+    require(
+        type(alpha) in (float, int) and math.isfinite(alpha) and 0 <= alpha <= 1,
+        "alpha must be finite and in [0, 1]",
+    )
+    return float(alpha)
+
+
+def value_scheme(alpha: float = 0.1) -> str:
+    alpha = checked_alpha(alpha)
+    return VALUE_SCHEME if alpha == 0.1 else f"sf-bt4-native-alpha={alpha!r}"
+
+
+def algorithm(alpha: float = 0.1) -> str:
+    return (
+        ALGORITHM
+        if checked_alpha(alpha) == 0.1
+        else "normalized-wdl-arithmetic-float16-v1"
+    )
+
+
+def value_source(model_sha256: str, output: str, alpha: float = 0.1) -> str:
     """Identity consumed by the historical trainer, including the named teacher."""
-    return f"{VALUE_SOURCE};onnx={model_sha256};output={output}"
+    alpha = checked_alpha(alpha)
+    original = f"{VALUE_SOURCE};onnx={model_sha256};output={output}"
+    return original if alpha == 0.1 else f"{original};bt4_weight={alpha!r}"
 
 
 def equal_json(a: Any, b: Any) -> bool:
@@ -54,9 +77,10 @@ def normalized(values: np.ndarray) -> np.ndarray:
     return values / mass
 
 
-def target(sf: np.ndarray, bt4: np.ndarray) -> np.ndarray:
+def target(sf: np.ndarray, bt4: np.ndarray, alpha: float = 0.1) -> np.ndarray:
     require(sf.shape == bt4.shape, "WDL row counts differ")
-    return (0.9 * normalized(sf) + 0.1 * normalized(bt4)).astype(np.float16)
+    alpha = checked_alpha(alpha)
+    return ((1 - alpha) * normalized(sf) + alpha * normalized(bt4)).astype(np.float16)
 
 
 def file_map(path: Path) -> dict[str, str]:
@@ -81,6 +105,7 @@ def inventory(root: Path, specs: list[dict[str, Any]]) -> None:
 
 
 def rewrite(args: argparse.Namespace) -> dict[str, Any]:
+    alpha = checked_alpha(args.alpha)
     wdl.set_nthreads(2)
     require(
         type(args.batch_size) is int and 0 < args.batch_size <= 4096,
@@ -284,7 +309,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                     "missing SF value coverage",
                 )
                 old = np.asarray(group["search_wdl"][start:end])
-                stored = target(old, np.asarray(side_group["bt4_wdl_raw"][start:end]))
+                stored = target(
+                    old, np.asarray(side_group["bt4_wdl_raw"][start:end]), alpha
+                )
                 dest["search_wdl"][start:end] = stored
                 readback = np.asarray(dest["search_wdl"][start:end])
                 require(np.array_equal(readback, stored), "value readback differs")
@@ -300,18 +327,18 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             )
             stamp = {
                 "schema": 1,
-                "algorithm": ALGORITHM,
-                "sf_weight": 0.9,
-                "bt4_weight": 0.1,
+                "algorithm": algorithm(alpha),
+                "sf_weight": 1 - alpha,
+                "bt4_weight": alpha,
                 "sidecar_attrs_sha256": wdl.file_sha256(side / ".zattrs"),
                 "source_derive_summary_sha256": args.expected_source_summary_sha256,
                 "search_wdl_sha256": value_hash.hexdigest(),
             }
             dest.attrs.update(
                 derive_schema=2,
-                derive_value_scheme=VALUE_SCHEME,
+                derive_value_scheme=value_scheme(alpha),
                 derive_value_source=value_source(
-                    args.expected_onnx_sha256, args.wdl_output
+                    args.expected_onnx_sha256, args.wdl_output, alpha
                 ),
                 value_target_postprocess=stamp,
             )
@@ -355,9 +382,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             "schema": 1,
             "status": "COMPLETE",
             "kind": "bt4_value_rewrite",
-            "algorithm": ALGORITHM,
-            "sf_weight": 0.9,
-            "bt4_weight": 0.1,
+            "algorithm": algorithm(alpha),
+            "sf_weight": 1 - alpha,
+            "bt4_weight": alpha,
             "wdl_order": "WDL",
             "wdl_pov": "side_to_move",
             "wdl_kind": "probabilities",
@@ -373,8 +400,10 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             "sf_derive_summary_sha256": args.expected_sf_summary_sha256,
             "mutated_arrays": ["search_wdl"],
             "unchanged_arrays": sorted(ARRAYS - {"search_wdl"}),
-            "value_scheme": VALUE_SCHEME,
-            "value_source": value_source(args.expected_onnx_sha256, args.wdl_output),
+            "value_scheme": value_scheme(alpha),
+            "value_source": value_source(
+                args.expected_onnx_sha256, args.wdl_output, alpha
+            ),
             "changed_rows": changed,
             "stored_mass_error_max": max_error,
             "producer_sha256": producer,
@@ -386,8 +415,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         }
         # Top-level original scheme remains source history; actual value metadata is explicit.
         derived["value_scheme"] = {
-            "name": VALUE_SCHEME,
-            "source": value_source(args.expected_onnx_sha256, args.wdl_output),
+            "name": value_scheme(alpha),
+            "source": value_source(args.expected_onnx_sha256, args.wdl_output, alpha),
         }
         (writing / POLICY_SUMMARY).write_bytes((source / POLICY_SUMMARY).read_bytes())
         (writing / SUMMARY).write_text(
@@ -427,6 +456,12 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("source-summary", "policy-summary", "sf-summary", "onnx"):
         parser.add_argument("--expected-" + name + "-sha256", required=True)
     parser.add_argument("--wdl-output", default="/output/wdl")
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.1,
+        help="BT4 value weight in [0, 1]; SF weight is 1-alpha",
+    )
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--minimum-free-gib", type=float, default=150)
     return parser

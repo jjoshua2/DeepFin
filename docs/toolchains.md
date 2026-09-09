@@ -234,6 +234,27 @@ SoftSF10 has no schema2 comparison schedule. After its qualified epoch, the
 separate `matched_original_epoch` arena profile can bind it to a completed
 reference such as B100 under a new match registration.
 
+`bt4_value_rewrite.py --alpha 0.5` produces the B100V50 value challenger:
+50% normalized stored SF WDL plus 50% normalized native BT4 WDL, computed in
+float64 and stored in float16. The reusable `--alpha` accepts finite weights in
+[0, 1] and defaults to 0.1. The default retains the exact historical V10
+algorithm, value-scheme and teacher/head source stamps; other doses carry an
+explicit alpha in their scheme and source identity. Shard and recipe receipts
+record both weights. Only `search_wdl` changes; B100 policy and the other 16
+compressed arrays remain byte-identical, under the existing source/sidecar join
+and final stability checks. This preserves inherited source history and its
+historical control-validity limitations; it is not a new history reconstruction.
+
+The one-epoch launcher admits `B100V10` and `B100V50` only under schema3
+`training_only`, with the genuine `bt4_value_rewrite_summary.json` and a
+`rewrite_summary` qualification pin. Each profile fixes its dose, corpus path,
+algorithm, teacher/head, ancestry and producing-code identities; relabeling a
+V10 receipt as V50 fails admission. Historical V10 producer receipts remain
+accepted, while V50 requires the alpha-capable producer. Other alpha values are
+producer capabilities, not additional registered training profiles. Both reuse
+the original training command and separate matched-recipe arena workflow. No
+corpus rewrite, training run or scientific result is implied by this tooling.
+
 Training-only preserves the qualified old training runtime, exact 18,910,484-row
 seed-zero epoch, 512-row batches, complete finite-window checks and prospective /
 realized canonical schedule checks. The GPU stage keeps its 4.5-hour cap; the

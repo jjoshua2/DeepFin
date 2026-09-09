@@ -47,6 +47,7 @@ CORPORA = {
     'G50': SOURCE.with_name(SOURCE.name + '_bt4_global_G50T05'),
     'SoftSF10': SOURCE.with_name(SOURCE.name + '_softsf_cp10'),
     'B100V10': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_value10'),
+    'B100V50': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_value50'),
 }
 TOTAL_CAPS = {'H20': 32400, 'B100': 27000, 'G50': 21600}
 C_CORPUS = SOURCE.with_name(SOURCE.name + '_bt4_sfclose_C20T05')
@@ -72,10 +73,13 @@ SOFTSF_RAW_SUMMARY_SHA = '55a9cf043b9b90a005bd1adf1dc6d810cb282341bcc11a4eccf127
 
 
 VALUE_PRODUCER_PINS = {'scripts/bt4_value_rewrite.py': 'eedcee1030211503173bf6936d890ab64cadacf35f1b5b4e557cec85d173c428', 'scripts/bt4_derived_wdl_sidecar.py': '6fdaf63038f58e71d6ee6ab8fc6bbc04cca422b1469ecd0f65eabf890085a370', 'scripts/bt4_raw_corpus_sidecar.py': '1c63aa4147ef8717855d226f30094cbc03431e556cd7106d0619adee7945363a', 'chess_anti_engine/encoding/lc0.py': 'a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee', 'scripts/sf_policy_rewrite.py': '85152a4e70e85f2f9ddf8d799ff726f3b4e6ccbc385c1693079cb97edb606a3b'}
+VALUE_ALPHAS = {'B100V10': .1, 'B100V50': .5}
+# Updated after the producer's final source freeze; historical V10 stays admissible.
+VALUE_ALPHA_PRODUCER_SHA = 'b041bd27a7bbf7dd02663436b141c1b7ae054c229e691dbc71ad1d72a615a432'
 B100_PARENT_PINS = {'derive_targets_summary.json': '47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43', 'bt4_policy_mix_summary.json': '221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38'}
 
 def recipe_summary_name(m):
-    if role_for(m) == 'B100V10':
+    if role_for(m) in VALUE_ALPHAS:
         return 'bt4_value_rewrite_summary.json'
     return 'sf_policy_rewrite_summary.json' if role_for(m) == 'SoftSF10' else 'bt4_policy_mix_summary.json'
 
@@ -124,6 +128,7 @@ def verify_softsf_recipe(m, rewritten, derived):
 
 def verify_value_recipe(m, rewritten, derived):
     """B100 policy is retained; only the baked search_wdl target may change."""
+    alpha = VALUE_ALPHAS[role_for(m)]
     corpus = corpus_for(m)
     arena.require(corpus.is_dir() and not corpus.is_symlink()
                   and not corpus.with_name(corpus.name + '.writing').exists()
@@ -153,15 +158,18 @@ def verify_value_recipe(m, rewritten, derived):
     arena.require(arena.sha(corpus / 'bt4_policy_mix_summary.json') == rewritten['source_policy_summary_sha256'],
                   'copied B100 recipe differs')
     expected = {'schema': 1, 'status': 'COMPLETE', 'kind': 'bt4_value_rewrite',
-                'algorithm': 'normalized-wdl-arithmetic-90-10-float16-v1',
-                'sf_weight': .9, 'bt4_weight': .1, 'wdl_order': 'WDL', 'wdl_pov': 'side_to_move',
+                'algorithm': ('normalized-wdl-arithmetic-90-10-float16-v1' if alpha == .1
+                              else 'normalized-wdl-arithmetic-float16-v1'),
+                'sf_weight': 1 - alpha, 'bt4_weight': alpha, 'wdl_order': 'WDL', 'wdl_pov': 'side_to_move',
                 'wdl_kind': 'probabilities', 'wdl_output': '/output/wdl',
                 'onnx_sha256': '1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0',
                 'rows': 18910484, 'shards': 2309, 'source_dir': str(parent), 'sf_source_dir': str(SOURCE),
                 'sf_derive_summary_sha256': COMMON_PINS[str(SOURCE / 'derive_targets_summary.json')],
-                'mutated_arrays': ['search_wdl'], 'value_scheme': 'sf90-bt4-native10',
+                'mutated_arrays': ['search_wdl'], 'value_scheme': ('sf90-bt4-native10' if alpha == .1
+                                                                 else f'sf-bt4-native-alpha={alpha!r}'),
                 'value_source': 'stored-sf-search-and-derived-bt4-wdl;onnx='
-                    '1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0;output=/output/wdl',
+                    '1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0;output=/output/wdl'
+                    + ('' if alpha == .1 else f';bt4_weight={alpha!r}'),
                 'unchanged_arrays': sorted(['x', 'policy_target', 'legal_mask', 'game_id', 'ply_index',
                     'wdl_target', 'priority', 'is_selfplay', 'is_network_turn', 'has_game_id', 'has_ply_index',
                     'has_policy', 'has_legal_mask', 'has_search_wdl', 'has_is_selfplay', 'has_is_network_turn'])}
@@ -177,7 +185,10 @@ def verify_value_recipe(m, rewritten, derived):
     arena.require(len(producers) == len(VALUE_PRODUCER_PINS), 'value producer identities differ')
     for suffix, digest in VALUE_PRODUCER_PINS.items():
         matches = [v for k, v in producers.items() if Path(k).is_absolute() and k.endswith('/' + suffix)]
-        arena.require(matches == [digest], 'value producer identities differ')
+        accepted = {digest}
+        if suffix == 'scripts/bt4_value_rewrite.py':
+            accepted = {VALUE_ALPHA_PRODUCER_SHA} | ({digest} if alpha == .1 else set())
+        arena.require(len(matches) == 1 and matches[0] in accepted, 'value producer identities differ')
     outputs = rewritten.get('outputs', [])
     arena.require(len(outputs) == 2309 and [(o['path'], o['rows']) for o in outputs]
                   == [(o['path'], o['rows']) for o in sf['shards']], 'value coverage differs')
@@ -218,7 +229,7 @@ def validate(m):
     if registered:
         keys |= {'profile', 'data_qualification'}
         arena.require(m['schema'] in (2, 3) and role_for(m) in CORPORA, 'unsupported registered profile')
-        arena.require(role_for(m) not in {'SoftSF10', 'B100V10'} or only, f'{role_for(m)} requires schema3 training_only')
+        arena.require(role_for(m) not in {'SoftSF10', *VALUE_ALPHAS} or only, f'{role_for(m)} requires schema3 training_only')
         if not only:
             keys |= {'reader', 'comparisons'}
             arena.require(m['comparisons'] == [list(cell) for cell in comparisons(m)], 'registered comparison order differs')
@@ -264,7 +275,7 @@ def verify_data_qualification(m):
         'source': {'path': str(SOURCE), 'derive_sha256': COMMON_PINS[str(SOURCE / 'derive_targets_summary.json')]},
         'derive_summary': {'path': str(corpus / 'derive_targets_summary.json'),
                            'sha256': input_pins(m)[str(corpus / 'derive_targets_summary.json')]},
-        ('rewrite_summary' if role_for(m) in {'SoftSF10', 'B100V10'} else 'mix_summary'): {
+        ('rewrite_summary' if role_for(m) in {'SoftSF10', *VALUE_ALPHAS} else 'mix_summary'): {
             'path': str(corpus / recipe_summary_name(m)),
             'sha256': input_pins(m)[str(corpus / recipe_summary_name(m))]},
     }
@@ -309,11 +320,11 @@ def check_pins(m):
     mix = arena.read(corpus / recipe_summary_name(m))
     derived = arena.read(corpus / 'derive_targets_summary.json')
     expected_postprocess = {k: v for k, v in mix.items() if k != 'outputs'} if role_for(m) == 'SoftSF10' else mix
-    if role_for(m) == 'B100V10':
+    if role_for(m) in VALUE_ALPHAS:
         verify_value_recipe(m, mix, derived)
     else:
         arena.require(derived['policy_target_postprocess'] == expected_postprocess, 'published recipe lineage differs')
-    if role_for(m) == 'B100V10':
+    if role_for(m) in VALUE_ALPHAS:
         pass
     elif role_for(m) == 'SoftSF10':
         verify_softsf_recipe(m, mix, derived)
