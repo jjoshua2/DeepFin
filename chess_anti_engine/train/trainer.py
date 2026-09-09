@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import logging
+import sys
 import math
 import threading
 import time
@@ -4682,6 +4683,13 @@ class Trainer:
                 )
             return
 
+        if bool(getattr(buf, "host_batch_overlap", False)):
+            yield from self._iter_exact_overlapped_batches(
+                buf, batch_size=batch_size, mirror_prob=mirror_prob,
+                count=count, coverage=coverage,
+            )
+            return
+
         # The exact planner prices one materialized host batch at a time.  The
         # ordinary prefetch path retains batch N while assembling N+1, so exact
         # training deliberately gives up that overlap to keep the cap hard.
@@ -4699,6 +4707,92 @@ class Trainer:
             # mapping before constructing the next host batch; on CPU its
             # tensors may alias the NumPy storage directly.
             del device_batch
+
+    def _iter_exact_overlapped_batches(
+        self, buf: ReplayBuffer, *, batch_size: int, mirror_prob: float,
+        count: int, coverage: _SfRebuildCoverageAccumulator | None = None,
+    ) -> Iterator[dict[str, torch.Tensor]]:
+        """One host future; CUDA and transfer lifetime stay on the caller."""
+        n = max(0, int(count))
+        if not n:
+            return
+        reserve = int(getattr(getattr(buf, "plan", None), "host_overlap_reserve_bytes", 0))
+        if reserve <= 0:
+            raise RuntimeError("exact host overlap lacks a planned reservation")
+        transfer: torch.cuda.Event | None = None
+
+        def prepare() -> dict[str, np.ndarray] | list:
+            batch = self._sample_batch_host(
+                buf, batch_size=batch_size, mirror_prob=mirror_prob,
+                coverage=coverage,
+            )
+            # Every collated source appears at most once and the widest
+            # output dtype is int64. Bound prepared storage plus either CPU
+            # aliases/conversions or the pinned CUDA generation by 8 bytes per
+            # prepared element, including derived fields. Ignored metadata is
+            # deliberately overcharged. Check before conversion or overlap.
+            if not isinstance(batch, dict):
+                raise RuntimeError("exact host overlap requires array replay")
+            retained_bound = sum(
+                np.asarray(v).nbytes + 8 * np.asarray(v).size
+                for v in batch.values()
+            )
+            if retained_bound > reserve:
+                raise RuntimeError("prepared host batch exceeds overlap reservation")
+            return batch
+
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="exact-host") as pool:
+            future = pool.submit(prepare)
+            try:
+                for index in range(n):
+                    host_batch = future.result()
+                    # Nonblocking copies can outlive collate's local pinned
+                    # tensors. Retire that generation before pinning another;
+                    # this waits for H2D, not all subsequent model computation.
+                    if transfer is not None:
+                        transfer.synchronize()
+                        transfer = None
+                    if str(self.device).startswith("cuda"):
+                        transfer = torch.cuda.Event()
+                    try:
+                        device_batch = self._host_batch_to_tensors(host_batch)
+                    finally:
+                        # Collation may enqueue only some fields before raising.
+                        # Record their lifetime too, without replacing the
+                        # primary failure if the CUDA context is unusable.
+                        primary_error = sys.exc_info()[1]
+                        if transfer is not None:
+                            try:
+                                transfer.record(torch.cuda.current_stream(self.device))
+                            except Exception:
+                                transfer = None
+                                if primary_error is None or isinstance(primary_error, GeneratorExit):
+                                    raise
+                                logging.getLogger(__name__).warning(
+                                    "failed to record partial H2D lifetime during collation failure",
+                                    exc_info=True,
+                                )
+                    del host_batch
+                    if index + 1 < n:
+                        future = pool.submit(prepare)
+                    yield device_batch
+                    del device_batch
+            finally:
+                future.cancel()
+                # Executor exit joins an already-running producer before any
+                # window census, checkpoint or buffer close. No daemon/queue
+                # survives close; failed exact training never retries rows.
+                if transfer is not None:
+                    primary_error = sys.exc_info()[1]
+                    try:
+                        transfer.synchronize()
+                    except Exception:
+                        if primary_error is None or isinstance(primary_error, GeneratorExit):
+                            raise
+                        logging.getLogger(__name__).warning(
+                            "failed to retire H2D lifetime while preserving primary failure",
+                            exc_info=True,
+                        )
 
     def _full_pass_host_batch(
         self, buf: ReplayBuffer, *, start: int, stop: int,

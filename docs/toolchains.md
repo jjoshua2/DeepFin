@@ -424,3 +424,35 @@ These are collection capabilities, not operational or numerical qualification of
 a full corpus. The earlier fixed32 approximation and native-order/history limits
 remain. A future launch needs its own exact source selection, call budget and
 runtime evidence; an old fixed-count pilot wrapper is not a full-collection plan.
+
+### Optional exact-epoch host overlap
+
+`lc0_control_train.py --sampling-mode game_epoch --epoch-host-batch-overlap`
+opts a future run into one host-preparation worker with at most one pending batch.
+Omitting the flag preserves synchronous exact replay. The option is rejected for
+replacement sampling and is recorded in each epoch's physical plan and receipt.
+It does not change targets, sampling seeds, game/row order or optimizer settings.
+
+The same `--epoch-max-working-set-gib` limit includes an explicit reservation of
+16 maximum-schema persisted batch payloads for the retained generation. This is a
+conservative allowance, not a claim that 16 copies are allocated. Each prepared
+batch must also fit its exact retained bound: its array bytes plus eight bytes per
+element, covering either converted CPU tensors or CUDA pinned sources, including
+derived fields. Current collation uses each source at most once and no output
+dtype wider than eight bytes. The planner and runtime include the reservation in
+validated loads, materialization and optional-compaction decisions. New physical
+plans are required; this is a payload working-set bound, not an RSS or GPU cap.
+
+CUDA collation remains on the caller. An event retires the preceding H2D transfer
+before another pinned generation can accumulate. The iterator joins its sole
+producer at window/epoch boundaries and on close or failure; running I/O remains
+subject to the existing outer process deadline. Prepared-ahead rows do not become
+successful optimizer updates, and exact-mode errors remain terminal. The default
+historical plan identity is unchanged; an enabled plan carries the reservation
+alongside its source/order digest.
+
+CPU tests cover actual emitted tensors and two-epoch final weights, RNG/order,
+reservation refusal, ragged batches, one-future cleanup, and transfer-event order
+with a fake CUDA boundary. They do not establish CUDA allocator behavior or speed.
+This opt-in requires separately budgeted CUDA qualification and a matched timing
+comparison before adoption; no existing training runtime is changed by adding it.

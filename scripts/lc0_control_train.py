@@ -1924,6 +1924,11 @@ def main(argv: list[str] | None = None) -> int:
              f"bounded active pool (default {GAME_EPOCH_LOAD_WORKERS}).",
     )
     parser.add_argument(
+        "--epoch-host-batch-overlap", action="store_true",
+        help="opt-in one host-batch lookahead under the same game_epoch memory cap; "
+             "requires newly priced physical plans, default synchronous.",
+    )
+    parser.add_argument(
         "--epoch-max-working-set-gib",
         type=float,
         default=GAME_EPOCH_MAX_WORKING_SET_BYTES / float(1024**3),
@@ -2021,6 +2026,8 @@ def main(argv: list[str] | None = None) -> int:
              "corpus to the held-out purity check.",
     )
     args = parser.parse_args(argv)
+    if args.epoch_host_batch_overlap and args.sampling_mode != "game_epoch":
+        raise SystemExit("--epoch-host-batch-overlap requires --sampling-mode game_epoch")
     if args.epochs < 1 or (args.epochs > 1 and (
         args.sampling_mode != "game_epoch" or args.steps != 0
     )):
@@ -2207,6 +2214,7 @@ def main(argv: list[str] | None = None) -> int:
             "load_workers": int(args.epoch_load_workers),
             "max_working_set_bytes": epoch_max_working_set_bytes,
             "objective_mask_counter": trainer.exact_objective_mask_counter,
+            "host_batch_overlap": bool(args.epoch_host_batch_overlap),
         }
         buf: Any = GameAwareEpochBuffer(**epoch_buffer_kwargs, seed=int(args.seed))
         epoch_steps = buf.num_batches * args.epochs
@@ -2243,6 +2251,9 @@ def main(argv: list[str] | None = None) -> int:
                 "seed": int(args.seed),
                 "plan_workers": int(args.epoch_plan_workers),
                 "load_workers": int(args.epoch_load_workers),
+                **({"host_batch_overlap": True,
+                    "host_overlap_reserve_bytes": buf.plan.host_overlap_reserve_bytes}
+                   if args.epoch_host_batch_overlap else {}),
                 "max_working_set_bytes": epoch_max_working_set_bytes,
                 "min_optimizer_batch_fill_ratio": (
                     GAME_EPOCH_MIN_BATCH_FILL_RATIO
