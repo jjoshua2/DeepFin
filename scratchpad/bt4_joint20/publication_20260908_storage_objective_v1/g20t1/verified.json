@@ -1,0 +1,69 @@
+{
+  "pool": "qtemp_0.0005_hist_20m_bt4_global_G20T1",
+  "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T1",
+  "source_deleted": false,
+  "plan_sha256": "4677ddb5a3797d1025d498d44190ae869c8ce84e1d076f8652194d4027383c96",
+  "started_unix": 1788907461.5451858,
+  "mount": {
+    "target": "/mnt/e",
+    "source": "E:\\",
+    "fstype": "9p",
+    "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+  },
+  "resources": {
+    "local_free_bytes": 389345423360,
+    "available_RAM_bytes": 56670330880
+  },
+  "references": {
+    "observed_source_references": [],
+    "other_user_processes_not_inspected": [
+      1,
+      9,
+      12,
+      13,
+      71,
+      72,
+      87,
+      88,
+      103,
+      104,
+      391174,
+      391175
+    ],
+    "same_user_processes_not_inspected": [
+      68
+    ],
+    "complete_process_visibility": false,
+    "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+  },
+  "inventory": {
+    "entries": 713331,
+    "logical_file_bytes": 12171591409
+  },
+  "tar_bytes": 13529845760,
+  "verified_members": 713331,
+  "tar_sha256": "c742245979a3878ba8c8d212703f7a95ebae4e7df740a7a8f7ca2de4f607aa2d",
+  "source_manifest_sha256": "bab02f0a00202b821695c512d6610de18849905abe385d671dec04e49948c65d",
+  "rsync_command": [
+    "/usr/bin/rsync",
+    "--no-whole-file",
+    "--partial-dir=.qtemp_0.0005_hist_20m_bt4_global_G20T1.partial",
+    "--bwlimit=16384",
+    "--fsync",
+    "--",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_global_G20T1/qtemp_0.0005_hist_20m_bt4_global_G20T1.tar",
+    "/mnt/e/chess_derived_archive_20260908/G20T1_v1/qtemp_0.0005_hist_20m_bt4_global_G20T1.tar"
+  ],
+  "rsync_exit_code": 0,
+  "external_tar_sha256": "c742245979a3878ba8c8d212703f7a95ebae4e7df740a7a8f7ca2de4f607aa2d",
+  "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+  "finished_unix": 1788910437.8713799,
+  "external_archive": "/mnt/e/chess_derived_archive_20260908/G20T1_v1/qtemp_0.0005_hist_20m_bt4_global_G20T1.tar",
+  "external_size": 13529845760,
+  "external_mtime_ns": 1788910014118988800,
+  "limitations": [
+    "Source retained; removal requires separate parent verification.",
+    "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+    "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+  ]
+}

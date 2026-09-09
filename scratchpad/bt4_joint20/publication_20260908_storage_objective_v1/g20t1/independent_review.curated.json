@@ -1,0 +1,58 @@
+{
+  "status": "PASS_COPY_AND_CONTENT_VERIFICATION_COMPLETE_SOURCE_RETAINED",
+  "reviewed_unix": 1788919345.2769904,
+  "verified_operation": {
+    "members": 713331,
+    "archive_bytes": 13529845760,
+    "local_and_external_sha256": "c742245979a3878ba8c8d212703f7a95ebae4e7df740a7a8f7ca2de4f607aa2d",
+    "outer_exit_code": 0,
+    "outer_wall_seconds": 2977.5667877197266,
+    "inclusive_limit_seconds": 14400,
+    "cpu_seconds": 526.65,
+    "maximum_rss_kib": 89388,
+    "source_deleted": false
+  },
+  "chain": [
+    "Per-file no-follow regular-source inventory hashes and stable identity stamps.",
+    "Exact ordered tar member names/types/permissions/owners/mtime/sizes and all regular contents verified against inventory.",
+    "Local archive SHA equals full external readback SHA; external identity stable during readback.",
+    "All source manifest stamps rechecked before completion; final plan identity unchanged.",
+    "Only verified temporary local tar removed; original corpus retained."
+  ],
+  "reclamation": {
+    "content_preservation_evidence_sufficient": true,
+    "source_removal_executed": false,
+    "source_bytes_reclaimed": 0,
+    "remaining_concrete_checks": [
+      "Compare all current source entry stamps and exact deletion directory membership against saved manifest immediately before reclamation; this review checked only root and two summaries.",
+      "Confirm current scoped active consumers/dependencies do not use these shard payloads. Original copy-time process observation had incomplete visibility and is not a present consumer proof.",
+      "Recheck external identity against this observation and retain original verified receipts/source manifest; no fresh 13GB hash is required solely by this review if archive identity remains stable."
+    ],
+    "retain_locally": [
+      "bt4_policy_mix_summary.json",
+      "derive_targets_summary.json",
+      "Frozen checkpoint, training completion, run summary, realized schedule and arena receipts outside corpus."
+    ],
+    "proposed_removal_scope": "Only exact archived shard directories after the above checks; preserve top-level summaries at original paths.",
+    "restoration": "Training/row consumers require restoring full arrays, not summaries alone. Refresh identity-based qualification after restoration where inode/ctime is bound.",
+    "space_note": "Logical source bytes and tar bytes are not allocated-byte reclamation measurements; measure actual free/allocated delta only after an authorized successful removal."
+  },
+  "limits": [
+    "No new source payload or external tar payload hash, transfer, deletion, inference or repeated process fixture.",
+    "Saved source manifest streamed once independently; current complete source-tree stability has not been rechecked.",
+    "ACL/xattrs were captured by tar but not independently compared.",
+    "No measured physical reserve/staging peak is inferred from success; existing enforced guards and recorded process resources are distinguished."
+  ],
+  "independent_checks": {
+    "saved_source_manifest_sha256": "bab02f0a00202b821695c512d6610de18849905abe385d671dec04e49948c65d",
+    "manifest_entries": 713331,
+    "logical_regular_source_bytes": 12171591409,
+    "all_manifest_names_within_single_pool": true,
+    "manifest_hash_and_count_match_verified_receipt": true,
+    "source_root_stamp_and_two_top_level_summary_hashes_currently_unchanged": true,
+    "external_size_mtime_match_completed_readback": true,
+    "observation_unix": 1788919073.9605522
+  },
+  "source_receipt_sha256": "d2c14ef8358f969cd03b7c2b318eab3e40591ba32af37584542934c0a45ff3bf",
+  "projection_scope": "Exact selected review fields; local evidence paths and external inode/stat tuple omitted. Original receipt remains externally hash-bound."
+}

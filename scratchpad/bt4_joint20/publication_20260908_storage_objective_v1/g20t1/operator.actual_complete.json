@@ -1,0 +1,26 @@
+{
+  "status": "OUTER_EXIT_ZERO",
+  "started_unix": 1788907461.3744602,
+  "deadline_unix": 1788921861.3744602,
+  "outer_pid": 466971,
+  "capture_parent_pid": 466969,
+  "command": [
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=30s",
+    "14370s",
+    "/usr/bin/python3.10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/run_registered.py",
+    "--plan-sha256",
+    "4677ddb5a3797d1025d498d44190ae869c8ce84e1d076f8652194d4027383c96",
+    "--deadline",
+    "1788921861.3744602"
+  ],
+  "cwd": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1",
+  "plan_sha256": "4677ddb5a3797d1025d498d44190ae869c8ce84e1d076f8652194d4027383c96",
+  "source_retained": true,
+  "preflight_sha256": "3588594b25f4fc68468828e0054ab00c195c4284cd9d79a7835c590d84de3160",
+  "exit_code": 0,
+  "ended_unix": 1788910438.941248,
+  "outer_wall_seconds": 2977.5667877197266
+}
