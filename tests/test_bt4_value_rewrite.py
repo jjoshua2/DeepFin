@@ -88,8 +88,10 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
 
 
-def test_real_rewrite_loader_and_value_gradient(tmp_path, monkeypatch):
+@pytest.mark.parametrize("alpha", [0.1, 0.5])
+def test_real_rewrite_loader_and_value_gradient(tmp_path, monkeypatch, alpha):
     args = fixture(tmp_path, monkeypatch)
+    args.alpha = alpha
     before = tool.wdl.storage_identity(Path(args.source))
     result = tool.rewrite(args)
     assert result["rows"] == result["changed_rows"] == 6
@@ -100,16 +102,22 @@ def test_real_rewrite_loader_and_value_gradient(tmp_path, monkeypatch):
         old, _ = load_shard_arrays(Path(args.source) / name)
         new, metadata = load_shard_arrays(Path(args.out) / name)
         assert metadata["derive_schema"] == 2
-        assert metadata["derive_value_scheme"] == tool.VALUE_SCHEME
+        assert metadata["derive_value_scheme"] == tool.value_scheme(alpha)
+        assert metadata["derive_value_source"] == tool.value_source(
+            args.expected_onnx_sha256, args.wdl_output, alpha
+        )
+        assert metadata["value_target_postprocess"]["bt4_weight"] == alpha
+        assert result["bt4_weight"] == alpha
+        assert result["sf_weight"] == 1 - alpha
         assert "categorical_target" not in new
         for key in tool.ARRAYS - {"search_wdl"}:
             np.testing.assert_array_equal(old[key], new[key])
         bt4: Any = zarr.open_group(str(Path(args.wdl) / name), mode="r")
         expected = (
-            0.9
+            (1 - alpha)
             * old["search_wdl"].astype("float64")
             / old["search_wdl"].astype("float64").sum(1, keepdims=True)
-            + 0.1 * bt4["bt4_wdl_raw"][:].astype("float64")
+            + alpha * bt4["bt4_wdl_raw"][:].astype("float64")
         ).astype("float16")
         np.testing.assert_array_equal(new["search_wdl"], expected)
         n = len(expected)
@@ -196,8 +204,8 @@ def test_late_failure_preserves_partial_and_never_retries(
     args = fixture(tmp_path, monkeypatch)
     original = tool.target
 
-    def changed(sf, bt4):
-        result = original(sf, bt4)
+    def changed(sf, bt4, alpha=0.1):
+        result = original(sf, bt4, alpha)
         if defect == "stop":
             (tmp_path / "STOP").touch()
         else:
@@ -235,12 +243,14 @@ def test_semantic_join_refuses_even_with_self_consistent_sidecar_hashes(
     assert not Path(args.out).exists()
 
 
-def test_actual_direct_cli_publishes_same_value_recipe(tmp_path, monkeypatch):
+@pytest.mark.parametrize("alpha", [0.1, 0.5])
+def test_actual_direct_cli_publishes_same_value_recipe(tmp_path, monkeypatch, alpha):
     import os
     import subprocess
     import sys
 
     args = fixture(tmp_path, monkeypatch)
+    args.alpha = alpha
     argv = [sys.executable, str(Path(tool.__file__).resolve())]
     for key, value in vars(args).items():
         argv += ["--" + key.replace("_", "-"), str(value)]
@@ -256,7 +266,10 @@ def test_actual_direct_cli_publishes_same_value_recipe(tmp_path, monkeypatch):
     assert result.returncode == 0, result.stdout + result.stderr
     recipe = json.loads((Path(args.out) / tool.SUMMARY).read_text())
     assert recipe["rows"] == recipe["changed_rows"] == 6
-    assert recipe["algorithm"] == tool.ALGORITHM
+    assert recipe["algorithm"] == tool.algorithm(alpha)
+    assert recipe["bt4_weight"] == alpha
+    group = zarr.open_group(str(Path(args.out) / "shard_000000.zarr"), mode="r")
+    assert group.attrs["derive_value_scheme"] == tool.value_scheme(alpha)
     assert recipe["mutated_arrays"] == ["search_wdl"]
 
 
@@ -264,18 +277,49 @@ def test_trainer_identity_refuses_different_model_or_named_head(tmp_path):
     from scripts.lc0_control_train import value_scheme_identity_problems
 
     paths = []
-    for i, (model, head) in enumerate(
-        [("a" * 64, "value"), ("b" * 64, "value"), ("a" * 64, "value2")]
+    for i, (model, head, alpha) in enumerate(
+        [
+            ("a" * 64, "value", 0.1),
+            ("b" * 64, "value", 0.1),
+            ("a" * 64, "value2", 0.1),
+            ("a" * 64, "value", 0.5),
+        ]
     ):
         path = tmp_path / str(i)
         shard = path / "shard_000000.zarr"
         group = zarr.open_group(str(shard), mode="w")
         group.attrs.update(
             derive_schema=2,
-            derive_value_scheme=tool.VALUE_SCHEME,
-            derive_value_source=tool.value_source(model, head),
+            derive_value_scheme=tool.value_scheme(alpha),
+            derive_value_source=tool.value_source(model, head, alpha),
         )
         paths.append(path)
         assert value_scheme_identity_problems([path]) == []
     assert value_scheme_identity_problems(paths[:2])
     assert value_scheme_identity_problems([paths[0], paths[2]])
+
+    assert value_scheme_identity_problems([paths[0], paths[3]])
+
+
+def test_default_value_identity_and_arithmetic_are_historical():
+    assert tool.value_scheme() == "sf90-bt4-native10"
+    assert tool.algorithm() == "normalized-wdl-arithmetic-90-10-float16-v1"
+    assert tool.value_source("teacher", "head") == (
+        "stored-sf-search-and-derived-bt4-wdl;onnx=teacher;output=head"
+    )
+    sf = np.array([[0.3333, 0.1666, 0.5], [1, 0, 0]], dtype=np.float16)
+    bt4 = np.array([[0.25, 0.25, 0.5], [0, 1, 0]], dtype=np.float32)
+    old = (0.9 * tool.normalized(sf) + 0.1 * tool.normalized(bt4)).astype(np.float16)
+    np.testing.assert_array_equal(tool.target(sf, bt4), old)
+    np.testing.assert_array_equal(tool.target(sf, bt4, 0.1), old)
+    np.testing.assert_array_equal(tool.target(sf, bt4, 0.5)[1], [0.5, 0.5, 0])
+
+
+@pytest.mark.parametrize(
+    "alpha", [True, False, -0.01, 1.01, float("nan"), float("inf"), "0.5"]
+)
+def test_invalid_alpha_refuses_before_output(alpha):
+    from argparse import Namespace
+
+    with pytest.raises(ValueError, match="alpha"):
+        tool.rewrite(Namespace(alpha=alpha))
