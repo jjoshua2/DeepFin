@@ -149,6 +149,13 @@ agreement would qualify a diagnostic fit, not establish playing strength. Keep
 this joint policy/value mechanism separate from the fixed-policy V50 contrast,
 and require the eventual paired arena to decide whether it helps.
 
+The [tactical producer/admission and operational preparation](2026-09-08-b100-tactical-policy-readiness.md)
+are now implemented, merged and independently reviewed. The fixed gap100 recipe
+uses actual stored B100 policy, categorical mates and unchanged SF value; stored
+zero support remains unrecoverable. No tactical rewrite or training has launched.
+The bounded preparation follows V50's priority and shares the same CPU lock;
+the linked record preserves the corrected entry timeout and exact evidence.
+
 ## Near-tie reranking remains optional
 
 Reverse near-tie reranking is a lower-priority alternative. On the saved 4,096-row
