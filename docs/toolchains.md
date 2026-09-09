@@ -456,3 +456,66 @@ reservation refusal, ragged batches, one-future cleanup, and transfer-event orde
 with a fake CUDA boundary. They do not establish CUDA allocator behavior or speed.
 This opt-in requires separately budgeted CUDA qualification and a matched timing
 comparison before adoption; no existing training runtime is changed by adding it.
+
+### Immutable policy overlays (explicit exact-epoch opt-in)
+
+`bt4_policy_mix.py mix --output-storage immutable-overlay` writes a fresh global
+policy recipe directly as replacement `policy_target` chunks and local metadata.
+It inherits every other array from one ordinary, sealed base. It does **not**
+create a full intermediate recipe copy. The existing copy mode remains the
+default and retains its original audit, target arithmetic and output behavior.
+
+This path requires three separate steps:
+
+```bash
+python scripts/target_overlay_storage.py seal-base \
+  --shards BASE --output BASE_STORAGE_SEAL.json
+# Add these options to the existing, fully specified global mix command:
+# --output-storage immutable-overlay --base-storage-seal BASE_STORAGE_SEAL.json
+# --expected-base-storage-seal-sha256 SHA256
+python scripts/target_overlay_storage.py qualify-overlay \
+  --shards OVERLAY --output OVERLAY_STORAGE_QUALIFICATION.json
+# Add these options to an exact-epoch lc0_control_train.py command:
+# --sampling-mode game_epoch --overlay-storage-qualification OVERLAY_STORAGE_QUALIFICATION.json
+# --expected-overlay-storage-qualification-sha256 SHA256
+```
+
+The base seal validates actual ordinary shard content and row/history declarations,
+streams the existing exact-epoch byte digest, and anchors it to every file's
+membership, device, inode, size, modification time and change time. It is a new
+storage proof, **not** a scientific recipe or held-out qualification. The overlay
+manifest binds that seal, exact source shard/rows/history, replacement layout and
+target bytes. The storage qualifier validates the actual composed arrays and
+completed global-producer summaries. Training verifies the pinned qualification
+before coverage checks and records its identity. Each epoch also rechecks the
+actual qualification and exact ordered resolved staging paths; exact planning and eager reads
+include both inherited and replacement bytes in their content identities and
+reject changed dependencies. Each producer, qualifier, preflight and epoch owns
+one validated seal index: repeated shard access checks its anchored receipt identity
+instead of reparsing the complete corpus seal. This is operation-scoped metadata,
+not a permanent unchecked cache. Ordinary shard digests remain unchanged.
+
+The base and seal must remain at their recorded locations for the lifetime of
+**every** dependent overlay. No base files are linked or modified by this producer.
+Changing files, creating hard links, moving/restoring the base, or replacing an
+identical file changes admission identities; a newly qualified lineage is needed.
+Treat the base as retained training input when planning archival or reclamation.
+Existing archival operators and frozen experiment coordinators have no new overlay
+admission in this change: do not use their old receipts to authorize it.
+
+Only fresh **global-policy** output and a single overlay corpus in exact-epoch
+`lc0_control_train.py` are supported here. C20/ranked/recovery producer modes,
+value-only overlays, overlay chains and mutable/replacement replay are unsupported;
+the relevant opt-in paths refuse them. Generic readers retain their default refusal.
+No existing runtime or registered experiment adopts this storage mode automatically.
+The explicit exact-host-overlap option remains separate and defaults off.
+
+Creation needs the retained base, original policy sidecars, new policy chunks and
+small manifests, plus the mixer's existing bounded chunk buffers. Sealing and
+qualification read real bytes; this is not a metadata-only shortcut. The composed
+training arrays occupy the same decoded RAM as an ordinary corpus, so the existing
+working-set limit still counts inherited arrays in full. CPU/file-system costs and
+large-corpus throughput have not been measured for this path. The earlier estimate
+of roughly 42 GiB avoided per additional 100M-row policy recipe remains conditional
+on that sampled storage mix; it is neither measured exclusive allocation nor proof
+that a complete 100M experiment fits on the SSD.
