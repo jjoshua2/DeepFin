@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "created_utc": "2026-09-09T01:20:56.481948+00:00",
+  "status": "ANALYSIS_SPECIFICATION_BEFORE_NEW_AGGREGATES",
+  "known_data": "Existing published value and policy readouts were already inspected; this is not blinded validation or a pre-inference registration.",
+  "value_doses": [
+    0.1,
+    0.3,
+    0.5
+  ],
+  "value_formula": "(1-alpha)*normalized stored SF WDL +alpha*normalized BT4 native probability WDL; float16 storage then normalization for descriptive consumption metrics.",
+  "value_metrics": [
+    "TV from normalized SF",
+    "signed and absolute q=W-L shifts",
+    "draw-mass shift",
+    "fractions abs_delta_q>=.01,.05,.1",
+    "float16 row change frequency"
+  ],
+  "value_strata": [
+    "overall",
+    "SF abs_q<=.1",
+    "SF .1<abs_q<.8",
+    "SF abs_q>=.8",
+    "white_to_move",
+    "black_to_move"
+  ],
+  "reverse_policy": {
+    "temperature": 0.5,
+    "reference": "B100 policy from normalized legal BT4 probabilities exponent1/T, original SF search value unchanged.",
+    "candidate_rules": [
+      {
+        "name": "top3_only",
+        "ratio_to_max": 0.0
+      },
+      {
+        "name": "top3_ratio50",
+        "ratio_to_max": 0.5
+      },
+      {
+        "name": "top3_ratio80",
+        "ratio_to_max": 0.8
+      },
+      {
+        "name": "top3_ratio90",
+        "ratio_to_max": 0.9
+      }
+    ],
+    "candidate_definition": "Top3 legal moves by B100 T.5 probability, intersect probability>=ratio*pmax. Stable compact-index tiebreak for exact BT4 ties. All sets include the BT4 best.",
+    "SF_rerank": "Maximum original float64 raw d9 effective_cp within the set; ties prefer higher BT4 probability then compact index. No target array constructed or temperature fitted.",
+    "metrics": [
+      "set size",
+      "fraction size>=2",
+      "B100 candidate mass",
+      "contains any global raw-SF-cp maximizer",
+      "SF rerank differs from BT4 top",
+      "SF disagreement conditional on multi-choice",
+      "SF cp improvement on nonmate rows only"
+    ],
+    "strata": [
+      "overall",
+      "no mate score present",
+      "mate score present"
+    ]
+  },
+  "weights": "Reuse each qualified sample inverse-inclusion weights, normalized per group; no iid intervals/population-optimality claims.",
+  "preserve": "Frozen B100V10 plan untouched; this readout suggests prospective dose/recipe questions only. No engine/model/corpus reads or inference; existing saved bank parts only."
+}

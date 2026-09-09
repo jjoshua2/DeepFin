@@ -1,9 +1,10 @@
 # SF-anchored value bootstrap
 
-Research direction, September 8, 2026. Consider a modest BT4 or Ceres WDL
-contribution while retaining the Stockfish value anchor and holding policy
-supervision fixed. This is a conditional value experiment, not a new teacher grid,
-a trained result or a replacement for the current policy and horizon comparisons.
+Research direction, September 8, 2026. The initial modest-dose proposal below
+led to matched teacher diagnostics. The [updated next contrast](2026-09-08-bootstrap-next-value-and-policy-contrasts.md)
+is **B100V50: equal SF and BT4 value supervision with B100 policy targets fixed**.
+V10 remains optional; no value-mixed training or match has launched. The later
+dose choice does not change the historical proposal or establish a best dose.
 
 ## What the existing evidence supports
 

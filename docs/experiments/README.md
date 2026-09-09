@@ -10,11 +10,12 @@ measurements support which claims.
 | --- | --- |
 | [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Local reserve limits 100M coexistence; retain checkpoint/lineage evidence and archive cold recipes first; G20T1 copy/verify prepared, not launched |
 | [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | 1.05M additional WDL rows complete; compiled CUDA and SF/B100 planners pass; SoftSF10 original-epoch training complete |
-| [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row neural WDL diagnostic complete; BT4/Ceres primary values similar, efficient derived-input backfill identified; value training pending |
+| [Next value and policy contrasts](2026-09-08-bootstrap-next-value-and-policy-contrasts.md) | B100V50 selected first; banked dose and SF attenuation diagnostics, joint policy/value correction and optional reverse reranking; no new training |
+| [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row WDL diagnostic complete; B100V50 now selected as first value contrast, training pending |
 | [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 compatibility and 128-row training diagnostic complete: 88.28% top-move agreement with BT4 T=1; bounded CUDA probe reviewed, not launched |
 | [Faster recipe matches](2026-09-08-faster-recipe-matches.md) | First prospective SPRT plus fixed deep probe completed in46m35s; speculative scheduling bottleneck identified; no controlled speedup claim |
 | [BT4 adapter identity collection](2026-09-08-bt4-adapter-single-pass.md) | Exact identity parity and 34.1% CPU component reduction in one closed-shard pair; full-pipeline benefit unmeasured |
-| [Qualified Soft-SF training sample](2026-09-08-soft-sf-qualified-training-sample.md) | 4,096-row entropy-selected control; SoftSF10 original epoch complete, B100 arena coordinator started; no playing outcome |
+| [Qualified Soft-SF training sample](2026-09-08-soft-sf-qualified-training-sample.md) | Complete: SoftSF10 loses first-look low SPRT and fixed400 probe (−162.99 Elo); no clear depth recovery |
 | [BT4 target geometry](2026-09-08-bt4-target-geometry.md) | Fixed 128-row training sample: C support/maxima and raw-cp controls; no temperature or strength selection |
 | [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity; first optimized group completed 132,467 rows, throughput descriptive only |
 | [G10 adapter/rank overlap](2026-09-08-g10-stage-overlap.md) | Adopted in Worker01 attempt; cache failure, no measured speedup |

@@ -1,0 +1,189 @@
+{
+  "settings": {
+    "mode": "matched_sims",
+    "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1/checkpoint.pt",
+    "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+    "games": 256,
+    "seed": 42,
+    "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+    "openings_kind": "book",
+    "opening_plies": 16,
+    "sims_candidate": 400,
+    "sims_reference": 400,
+    "ms_per_move": null,
+    "max_plies": 300,
+    "temperature": 0.1,
+    "gumbel_add_noise": true,
+    "search_candidate": {
+      "shape": "training",
+      "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+      "gumbel": {
+        "c_scale": 0.1,
+        "c_scale_root": -1.0,
+        "c_visit": 50.0,
+        "c_visit_root": -1.0,
+        "full_tree": true,
+        "halving_div": 2,
+        "policy_temp": 1.0,
+        "q_visit_exp_root": 99.0,
+        "target_max_visit_cap": 5,
+        "target_q_rescale": true,
+        "target_untempered_prior": true,
+        "topk": 16,
+        "volatility_anchor": 0.05,
+        "volatility_factor_clip": 4.0,
+        "volatility_fpu": 0.0,
+        "volatility_q_scale": 0.0
+      },
+      "vloss_weight": 1,
+      "target_batch": 0,
+      "tree_reuse": "cold"
+    },
+    "search_reference": {
+      "shape": "training",
+      "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+      "gumbel": {
+        "c_scale": 0.1,
+        "c_scale_root": -1.0,
+        "c_visit": 50.0,
+        "c_visit_root": -1.0,
+        "full_tree": true,
+        "halving_div": 2,
+        "policy_temp": 1.0,
+        "q_visit_exp_root": 99.0,
+        "target_max_visit_cap": 5,
+        "target_q_rescale": true,
+        "target_untempered_prior": true,
+        "topk": 16,
+        "volatility_anchor": 0.05,
+        "volatility_factor_clip": 4.0,
+        "volatility_fpu": 0.0,
+        "volatility_q_scale": 0.0
+      },
+      "vloss_weight": 1,
+      "target_batch": 0,
+      "tree_reuse": "cold"
+    },
+    "volatility_candidate": null,
+    "uci_args": "",
+    "syzygy": "",
+    "syzygy_max_pieces": 6
+  },
+  "execution": {
+    "loop": "rolling",
+    "compile": "on",
+    "eval_hoist": "4096",
+    "eval_max_batch": 4096,
+    "eval_leaf_cap_uncapped": 2048,
+    "max_concurrent_games": 128,
+    "arena_pool_size": 128,
+    "max_seconds": 5340.0,
+    "hard_seconds": 5400
+  },
+  "opening_panel": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/qualified_preparation.panel.json",
+    "sha256": "b4f1d16b488ff9efa0c466706b74595559a807c99a0e4ca75379a4d0745cfb6c"
+  },
+  "candidate_role": "SoftSF10",
+  "reference_role": "B100",
+  "command": [
+    "/usr/bin/python3",
+    "scripts/arena_standard.py",
+    "--candidate",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1/checkpoint.pt",
+    "--reference",
+    "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+    "--games",
+    "256",
+    "--mode",
+    "matched_sims",
+    "--sims",
+    "400",
+    "--seed",
+    "42",
+    "--openings",
+    "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+    "--opening-plies",
+    "16",
+    "--max-plies",
+    "300",
+    "--temperature",
+    "0.1",
+    "--search-shape",
+    "training",
+    "--cand-gumbel",
+    "policy_temp=1.0",
+    "--ref-gumbel",
+    "policy_temp=1.0",
+    "--compile",
+    "on",
+    "--device",
+    "cuda",
+    "--max-concurrent-games",
+    "128",
+    "--eval-max-batch",
+    "4096",
+    "--max-seconds",
+    "5340.0",
+    "--games-out",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/arena.games.jsonl",
+    "--out",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/arena.results.jsonl"
+  ],
+  "identities": {
+    "candidate": {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1/checkpoint.pt",
+      "sha256": "3cf979d0a2f2b4d0f8fd5a9398c36d6d7c4f39158144b475e08f68a2ac44b1bd"
+    },
+    "reference": {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+      "sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62"
+    },
+    "book": {
+      "path": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+      "sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c"
+    },
+    "runtime": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_identity.json",
+      "sha256": "3197e5b8c54db34def8071f275b3a926160b86adae1b716240c17ba75df1ca1e",
+      "git_sha": "82298a5d4010e7097f473712e3720de229522427"
+    },
+    "preregistration": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/preregistration.md",
+      "sha256": "addeee39860610a201d888b0b8c05fa05bb7e4eada11651eb567627ccd256b92"
+    },
+    "candidate_training": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/SoftSF10_training/training.complete.json",
+      "sha256": "63137f6b48defdd1a181a168cb0b532ca64acf88c90516f0898ea99d73ada3cf"
+    },
+    "reference_training": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training.complete.json",
+      "sha256": "fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799"
+    }
+  },
+  "preparation": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/training_arena_registration_v1/qualified_preparation.json",
+    "sha256": "5c251839ef71d43a95c44f1015d7de84fcdc92591e4c138158a67f40bc44b1fb"
+  },
+  "profile": "matched_original_epoch",
+  "training": {
+    "candidate": {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_softsf_cp10_epoch_v1/checkpoint.pt",
+      "role": "SoftSF10",
+      "sha256": "3cf979d0a2f2b4d0f8fd5a9398c36d6d7c4f39158144b475e08f68a2ac44b1bd"
+    },
+    "reference": {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+      "role": "B100",
+      "sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62"
+    },
+    "candidate_training": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/SoftSF10_preparation_v1/SoftSF10_training/training.complete.json",
+      "sha256": "63137f6b48defdd1a181a168cb0b532ca64acf88c90516f0898ea99d73ada3cf"
+    },
+    "reference_training": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training.complete.json",
+      "sha256": "fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799"
+    }
+  }
+}

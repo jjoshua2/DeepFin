@@ -1,0 +1,307 @@
+{
+  "schema": 1,
+  "scope": "Completed SoftSF10/B100 two-budget result and descriptive value-dose/reverse-policy analysis; proposed B100V50 and policy/value follow-ups are not launched.",
+  "archive_note": "Original records preserve historical producer paths, not portable execution defaults. Gzip members restore exact original bytes. Source banks/checkpoints and raw histories remain externally pinned or in prior publications.",
+  "result_review_sha256": "8acefec8385256383be2a556f5cb38f3ad58f9bf6689f439cfe51a017d829ddd",
+  "independence": "Result reviewer did not author training or arena execution. The same agent authored this publication; parent independently reviews publication prose/evidence. The dose analysis is descriptive author evidence, not a playing-strength result.",
+  "prior_launch_evidence": "docs/experiments/evidence/bt4-bootstrap/softsf-training-ceres-gpu-manifest.json",
+  "files": [
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/complete.json",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/complete.json",
+      "sha256": "b026b0f138d0d8627e7333d038fbacd72743ffe1661259719c28291ea3439990",
+      "bytes": 730,
+      "original_sha256": "b026b0f138d0d8627e7333d038fbacd72743ffe1661259719c28291ea3439990",
+      "original_bytes": 730,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/manifest.json",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/manifest.json",
+      "sha256": "a23cbf3aceac07bb352d450bfc77f6ff08324395f82e78af6f9319f4a3acd6ca",
+      "bytes": 2552,
+      "original_sha256": "a23cbf3aceac07bb352d450bfc77f6ff08324395f82e78af6f9319f4a3acd6ca",
+      "original_bytes": 2552,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/low.launch.json",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low.launch.json",
+      "sha256": "46141afb9893e697fb58ab62d0ccd5c217a3ee693c57c3c48edc04d596d0c174",
+      "bytes": 7307,
+      "original_sha256": "46141afb9893e697fb58ab62d0ccd5c217a3ee693c57c3c48edc04d596d0c174",
+      "original_bytes": 7307,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/high.launch.json",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high.launch.json",
+      "sha256": "c2292c9a18854314ece6fbe340d080e0c78e890aeb68b4f9f52ebf3dc49f40ba",
+      "bytes": 7150,
+      "original_sha256": "c2292c9a18854314ece6fbe340d080e0c78e890aeb68b4f9f52ebf3dc49f40ba",
+      "original_bytes": 7150,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/low.reader_manifest.json",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low.reader_manifest.json",
+      "sha256": "55852d6598ac1efe622473745b86b82c60d37951f53f7aa4091fe1fdbcf0ec7e",
+      "bytes": 3800,
+      "original_sha256": "55852d6598ac1efe622473745b86b82c60d37951f53f7aa4091fe1fdbcf0ec7e",
+      "original_bytes": 3800,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/high.reader_manifest.json",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high.reader_manifest.json",
+      "sha256": "c8f143053a68024c5413d37de73ca4db0fe855a7a0ee5678f7372efb0d00c25a",
+      "bytes": 4005,
+      "original_sha256": "c8f143053a68024c5413d37de73ca4db0fe855a7a0ee5678f7372efb0d00c25a",
+      "original_bytes": 4005,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/low/arena.games.jsonl.gz",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/arena.games.jsonl",
+      "sha256": "ccfe883fc5657e59f06c9360e432e6285dda934913c87592e84c2d67e7577582",
+      "bytes": 14427,
+      "original_sha256": "b9d5d080646a6a234d6a1c9766a8de7c387ccbb6e1ceffbfb5daa1980852a6fb",
+      "original_bytes": 162696,
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/low/readout.stdout.json.gz",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/readout.stdout.json",
+      "sha256": "cbb8bbfb14e33c3ee1cd582463d3384a690b0971d3ee3cb664d645f819052959",
+      "bytes": 4845,
+      "original_sha256": "26ffa3d10ac4aac3d06a162ca5354f5e2dd7daef333237d27e56dcc19599a717",
+      "original_bytes": 32171,
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/low/arena.results.jsonl",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/arena.results.jsonl",
+      "sha256": "d0cf783fd6f95dfcb0ba5ea496d5eed63d172565f2166bd23f95e562baf2a502",
+      "bytes": 6766,
+      "original_sha256": "d0cf783fd6f95dfcb0ba5ea496d5eed63d172565f2166bd23f95e562baf2a502",
+      "original_bytes": 6766,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/low/process.json",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/process.json",
+      "sha256": "ee66424da30f1a61ebe579d1ed9b7207c2f5164bb91f88f83f1bc3b36219823f",
+      "bytes": 4561,
+      "original_sha256": "ee66424da30f1a61ebe579d1ed9b7207c2f5164bb91f88f83f1bc3b36219823f",
+      "original_bytes": 4561,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/low/complete.json",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/low/complete.json",
+      "sha256": "f44b27ec938f87b75c069fe3f6c72f4890dd39a644d6733eac1027301895921c",
+      "bytes": 514,
+      "original_sha256": "f44b27ec938f87b75c069fe3f6c72f4890dd39a644d6733eac1027301895921c",
+      "original_bytes": 514,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/high/arena.games.jsonl.gz",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/arena.games.jsonl",
+      "sha256": "fa0ab26d6f261fdf9d0498f0d3d84d5bf9535cfbbcb82a088080d27ebbba3486",
+      "bytes": 9791,
+      "original_sha256": "16b2dc63dcd99cf9a14ab68f2d63bb73778ab0c1d69c80288c98ec0f1475954a",
+      "original_bytes": 112542,
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/high/readout.stdout.json.gz",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/readout.stdout.json",
+      "sha256": "711055b41c1521773467cb7c0ae22c51e23ece78fd25c38f35dd9345dc7c9e2c",
+      "bytes": 1820,
+      "original_sha256": "2c21ddaf92bd068ca80f651832c04fe485fab854c9fab7c428a5ac8126a07085",
+      "original_bytes": 5712,
+      "encoding": "gzip"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/high/arena.results.jsonl",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/arena.results.jsonl",
+      "sha256": "dd7bb30d2e2d5ccf9fa0570403e66e58bb1106273d317fc9652c3c9d584f5011",
+      "bytes": 3801,
+      "original_sha256": "dd7bb30d2e2d5ccf9fa0570403e66e58bb1106273d317fc9652c3c9d584f5011",
+      "original_bytes": 3801,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/high/process.json",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/process.json",
+      "sha256": "53f7efcf1615ffc25d2a270d8910498ff93626f296b17afea22bb1d52106fdac",
+      "bytes": 4191,
+      "original_sha256": "53f7efcf1615ffc25d2a270d8910498ff93626f296b17afea22bb1d52106fdac",
+      "original_bytes": 4191,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/arena/high/complete.json",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/high/complete.json",
+      "sha256": "be2a0ce804d32590e7b606e3b6f35f4bc7caf97ab6a6e594dea4acba91fe906c",
+      "bytes": 517,
+      "original_sha256": "be2a0ce804d32590e7b606e3b6f35f4bc7caf97ab6a6e594dea4acba91fe906c",
+      "original_bytes": 517,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/review/receipt.json",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/independent_result_review_v1/receipt.json",
+      "sha256": "8acefec8385256383be2a556f5cb38f3ad58f9bf6689f439cfe51a017d829ddd",
+      "bytes": 7071,
+      "original_sha256": "8acefec8385256383be2a556f5cb38f3ad58f9bf6689f439cfe51a017d829ddd",
+      "original_bytes": 7071,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/review/review.py",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/independent_result_review_v1/review.py",
+      "sha256": "da86b8076c667b7030a18386f5007313b4597b99ed6da596008f2a86edfb38b1",
+      "bytes": 8559,
+      "original_sha256": "da86b8076c667b7030a18386f5007313b4597b99ed6da596008f2a86edfb38b1",
+      "original_bytes": 8559,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/review/review.log",
+      "source_path": "scratchpad/bt4_joint20/SoftSF10_B100_recipe_screen_run01/independent_result_review_v1/review.log",
+      "sha256": "23283e65db7d4fc9557da49033291006d6bfadfc50e5d1c7378297e994ea7d1f",
+      "bytes": 1426,
+      "original_sha256": "23283e65db7d4fc9557da49033291006d6bfadfc50e5d1c7378297e994ea7d1f",
+      "original_bytes": 1426,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/value_policy_analysis/completed.json",
+      "source_path": "scratchpad/bt4_joint20/value_dose_reverse_policy_v1/completed.json",
+      "sha256": "2b848590d61ea52fcffd8c71691742b177f2c55438462c0173934ff84ffaa801",
+      "bytes": 2162,
+      "original_sha256": "2b848590d61ea52fcffd8c71691742b177f2c55438462c0173934ff84ffaa801",
+      "original_bytes": 2162,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/value_policy_analysis/analysis_plan.json",
+      "source_path": "scratchpad/bt4_joint20/value_dose_reverse_policy_v1/analysis_plan.json",
+      "sha256": "0496cecf9cfc13546efc5367f813aaa932340ea7642d1b7e1e761abde057e8c6",
+      "bytes": 2437,
+      "original_sha256": "0496cecf9cfc13546efc5367f813aaa932340ea7642d1b7e1e761abde057e8c6",
+      "original_bytes": 2437,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/value_policy_analysis/readout.json",
+      "source_path": "scratchpad/bt4_joint20/value_dose_reverse_policy_v1/readout.json",
+      "sha256": "bc2f481cfd24f3df2b3522f3a7dbc85bf9eeaa0e6076bfad0fa28fc09d2da989",
+      "bytes": 27368,
+      "original_sha256": "bc2f481cfd24f3df2b3522f3a7dbc85bf9eeaa0e6076bfad0fa28fc09d2da989",
+      "original_bytes": 27368,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/value_policy_analysis/row_accounting_supplement.json",
+      "source_path": "scratchpad/bt4_joint20/value_dose_reverse_policy_v1/row_accounting_supplement.json",
+      "sha256": "1ade045a22c1b072dc8f193ff8bdaad9f95e230d6400b938576013fe22d5ffe3",
+      "bytes": 1359,
+      "original_sha256": "1ade045a22c1b072dc8f193ff8bdaad9f95e230d6400b938576013fe22d5ffe3",
+      "original_bytes": 1359,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/value_policy_analysis/analyze.py",
+      "source_path": "scratchpad/bt4_joint20/value_dose_reverse_policy_v1/analyze.py",
+      "sha256": "a14d76d9b5e245cd8d486fae0c1749605049f480cc6229f014bbf99424df7d4b",
+      "bytes": 8675,
+      "original_sha256": "a14d76d9b5e245cd8d486fae0c1749605049f480cc6229f014bbf99424df7d4b",
+      "original_bytes": 8675,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/value_policy_analysis/value_rows.json.gz",
+      "source_path": "scratchpad/bt4_joint20/value_dose_reverse_policy_v1/value_rows.json.gz",
+      "sha256": "91e466d1a4fc7b1476a807d2022b5bca03cf9963f1d27e6990c08692483cf66f",
+      "bytes": 50553,
+      "original_sha256": "91e466d1a4fc7b1476a807d2022b5bca03cf9963f1d27e6990c08692483cf66f",
+      "original_bytes": 50553,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/value_policy_analysis/reverse_policy_rows.json.gz",
+      "source_path": "scratchpad/bt4_joint20/value_dose_reverse_policy_v1/reverse_policy_rows.json.gz",
+      "sha256": "8b7dc58ccaeaeb41d409df4a81f22219aa80fe672938265221a41a568c216c75",
+      "bytes": 554296,
+      "original_sha256": "8b7dc58ccaeaeb41d409df4a81f22219aa80fe672938265221a41a568c216c75",
+      "original_bytes": 554296,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/tactical_attenuation/PLAN.md",
+      "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/PLAN.md",
+      "sha256": "b6da2e2e812b0fab5af1aa41bf84f80d88b802cff4a747ca631f34c8964367d9",
+      "original_sha256": "b6da2e2e812b0fab5af1aa41bf84f80d88b802cff4a747ca631f34c8964367d9",
+      "bytes": 1517,
+      "original_bytes": 1517,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/tactical_attenuation/MATE_FOLLOWUP.md",
+      "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/MATE_FOLLOWUP.md",
+      "sha256": "7de6a034696d1a108a64161d304f5511d3ed265286052b55815664d1d8af71a3",
+      "original_sha256": "7de6a034696d1a108a64161d304f5511d3ed265286052b55815664d1d8af71a3",
+      "bytes": 2712,
+      "original_bytes": 2712,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/tactical_attenuation/analyze.py",
+      "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/analyze.py",
+      "sha256": "658dd7d8be30c3b241771801bb7b545ea6d9409d9f8187b5e305c1ba5995b026",
+      "original_sha256": "658dd7d8be30c3b241771801bb7b545ea6d9409d9f8187b5e305c1ba5995b026",
+      "bytes": 3974,
+      "original_bytes": 3974,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/tactical_attenuation/independent_review.json",
+      "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/independent_review.json",
+      "sha256": "2def445e871944556edbd684ef9d3c19d0e1ee0daeecc6d2d9e7c9240c2b43a4",
+      "original_sha256": "2def445e871944556edbd684ef9d3c19d0e1ee0daeecc6d2d9e7c9240c2b43a4",
+      "bytes": 8038,
+      "original_bytes": 8038,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/tactical_attenuation/readout.compact.json",
+      "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/readout.json",
+      "sha256": "db73792f1299d7d55d2b4449f17f533825dee5454305efd406392e4d55a1b5c8",
+      "bytes": 7281,
+      "original_sha256": "75ad5d160372cb337b0372c5f47690dcbc84ce7b011310a8025fdf27ad17cdb0",
+      "original_bytes": 3275992,
+      "encoding": "projection_without_rows"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/tactical_attenuation/independent_review_source.py",
+      "source_path": "/tmp/review-tactical-attenuation.py",
+      "sha256": "2899052bf2a252fd06089885a76fc4075bdb48ee63fb542f06e53f2f05bfb056",
+      "bytes": 3741,
+      "original_sha256": "2899052bf2a252fd06089885a76fc4075bdb48ee63fb542f06e53f2f05bfb056",
+      "original_bytes": 3741,
+      "encoding": "original"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_softsf_results_v1/tactical_attenuation/FIRST_CANDIDATE.md",
+      "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/FIRST_CANDIDATE.md",
+      "sha256": "43dfb8bc9a9c4c2cc329fc738e078fa995510bf63f55d60eda9a74eb6af14b32",
+      "original_sha256": "43dfb8bc9a9c4c2cc329fc738e078fa995510bf63f55d60eda9a74eb6af14b32",
+      "bytes": 2856,
+      "original_bytes": 2856,
+      "encoding": "original"
+    }
+  ]
+}
