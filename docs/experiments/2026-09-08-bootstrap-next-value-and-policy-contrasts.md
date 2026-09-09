@@ -14,11 +14,51 @@ research so the approximately 100M-position bootstrap has room. The
 [capacity record](2026-09-08-bootstrap-storage-capacity.md#continuing-storage-objective--september-8-update)
 tracks working data, labels, rewrite/transfer temporaries and space actually
 recovered. The 150 GiB reserve is an operating floor, not full-scale capacity
-proof. G20T1 and G20T05 each completed verified reclamation of 2,309 local
-shards with original summaries retained; G50T05's copy operator has started.
+proof. G20T1, G20T05 and G50T05 each completed verified reclamation of 2,309 local
+shards with original summaries retained; the September 9 storage update records
+the latest completed copy and removal evidence.
 Preserve live sources and selected controls while continuing through eligible
 cold policy recipes. Assess only eligible payload components of already-verified
 archived pools, preserving checkpoint and holdout exclusions.
+
+## Actual V50 rewrite launch — September 9 update
+
+The [actual start receipt](../../scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/v50/operator.actual_start.json)
+records the CPU rewrite launch at **00:26 local time**, with finalized launch SHA
+`a87711f699bff5e5e7be54618619c352a6f82da2bcb656186b8222dc7cb80268`.
+Its [frozen launch/capture bundle](../../scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/v50-rewrite-launch.tar.gz)
+binds the actual completed full WDL bank and the reviewed alpha producer. This is
+**rewrite launch evidence only**: no completed V50 dataset qualification, training,
+or arena result is claimed. Earlier preparation-only passages and V10 plans remain
+historical; V10 remains an optional follow-up.
+
+The producer changes only `search_wdl` to equal weights of normalized stored SF
+and native BT4 WDL, leaving B100 policy and the other 16 arrays unchanged. It uses
+CPUs 2,3, two numeric threads, low priority and GPU hidden. The six-hour timeout
+bounds the **producer**, with TERM at 21,570 seconds and KILL 30 seconds later;
+supervisor metadata preparation and finalization are outside that timeout. The
+32 GiB sampled allocated-output cap is not a filesystem quota or expected size.
+The 150 GiB free reserve remains required while raw labeling continues.
+
+The missing post-rewrite metadata step is now implemented and
+[independently reviewed](../../scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/v50/independent_qualifier_review.json).
+The [exact qualifier/capture preparation](../../scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/v50-post-rewrite-qualification-preparation.tar.gz)
+requires genuine supervisor COMPLETE/exit zero, the finalized full WDL chain and
+actual typed V50 recipe admission before producing the exact receipt consumed by
+the frozen training finalizer. It refreshes all 2,309 attributes, 17 B100 layouts,
+16 original-SF nonpolicy layouts and sidecar source/model/head/row bindings, with
+metadata stability checks. It reuses the completed producer's all-row checks and
+16 unchanged-array compressed-byte equality assertions. Saved file-manifest
+digests are retained, not freshly recomputed; metadata-only inspection cannot
+detect arbitrary payload corruption that leaves metadata untouched.
+
+Eight tiny metadata tests passed, including the actual frozen training receipt
+consumer with synthetic paths. Independent review found no remaining issue in the
+qualifier or root capture. The qualification command has a **600-second inclusive
+bound** (570 seconds to TERM plus 30 to KILL), CPUs 2,3, GPU hidden and the same
+150 GiB reserve. **The qualifier has not run.** Prospective original-runtime
+schedule, finalized training manifest and two-budget arena remain subsequent
+steps; this preparation does not fabricate a BT4 mix receipt for a value rewrite.
 
 ## First: B100V50 with policy supervision fixed
 
@@ -49,13 +89,12 @@ The frozen V10 preparation is preserved. [PR592](https://github.com/jjoshua2/Dee
 merged reusable alpha arithmetic and strict B100V50 admission, retaining exact
 historical V10 defaults and producer compatibility. The new V50 rewrite plan is
 [frozen and independently reviewed](2026-09-08-bootstrap-storage-capacity.md#account-for-the-next-value-rewrite),
-with no rewrite or training launch. Complete native-WDL
-coverage, exact policy/non-value preservation and the actual corpus/schedule pins
-remain required evidence. The full label pass is ongoing; partial coverage is not
-a qualified full-corpus recipe. The planned comparison uses unchanged B100 only
+and **actually launched on September 9**, as recorded above. Full native-WDL
+coverage is complete; actual rewritten-corpus qualification, exact policy/non-value
+preservation and original schedule pins remain pending. The planned comparison uses unchanged B100 only
 if the original trainer, objective and canonical one-epoch schedule still match.
 A new runtime or objective needs a matched control. Freeze the actual training and
-two-budget match manifests and costs before execution; no new run is claimed here.
+two-budget match manifests and costs before execution; no training or arena launch is claimed here.
 
 The [prospective comparison registration](../../scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/v50/TRAINING_COMPARISON.md)
 retains fresh seed-zero initialization and the original B100 trainer, 18,910,484-row

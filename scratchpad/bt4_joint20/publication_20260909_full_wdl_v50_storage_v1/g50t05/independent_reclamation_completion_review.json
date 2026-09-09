@@ -1,0 +1,119 @@
+{
+  "status": "PASS_COMPLETED_EXACT_RECLAMATION",
+  "reviewed_unix": 1788928000.2064419,
+  "findings": [],
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_preparation_v1/operator.actual_complete.json",
+      "sha256": "a7632b3cc0f6455b89c930055c61a5082c9e90a656735a0858b4396c91d8ffc1",
+      "bytes": 963
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_execution_v1/completed.json",
+      "sha256": "3bb712108400a25d9b622e77852b1e57161f9cfda0c722cf4fa489d1cc595d80",
+      "bytes": 1975
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_execution_v1/started.json",
+      "sha256": "2344d5b86edaf9d071a97e46edc7f9721bed3ea1c1e5142598b8896342a1b2a0",
+      "bytes": 1792
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_execution_v1/shards.jsonl",
+      "sha256": "b52cd7a4a267b914d009f40e5c9965b906b167abc8f700399e5f8302d357e934",
+      "bytes": 490709
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_preparation_v1/proposed_shard_removal_list.json",
+      "sha256": "22c8c7a3117d6a9b6537d5cb6a6f66bc0f1aa3e77d8d3d3d7528dd793f0a500e",
+      "bytes": 1117240
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_preparation_v1/readiness_receipt.json",
+      "sha256": "3a8c415cd194da7cb107b7323cec084dfb2dee9d31bcc18e786450a17f28a7e8",
+      "bytes": 4498
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_preparation_v1/reclaim_shards.py",
+      "sha256": "fa18da87ed8ead6c1c813e92710705aa5291b241ebc7f286a953098dc121edd9",
+      "bytes": 9792
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_preparation_v1/reclamation_command.json",
+      "sha256": "80186444447b7e43b814bec266245006549001e76b44c6230b14039b6e58560f",
+      "bytes": 2519
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/independent_completion_review.json",
+      "sha256": "7f857dd24d3e2bf532f22609e42cfdf4670b8c59a57008fed9461ca47d311518",
+      "bytes": 3432
+    }
+  ],
+  "checks": {
+    "captured_outer_exit_code": 0,
+    "outer_wall_seconds": 79.89735651016235,
+    "actual_argv_matches_bound_command": true,
+    "within_registered1800seconds": true,
+    "exact_unique_removed_shards": 2309,
+    "ordered_intent_removed_journal_records": 4618,
+    "all_names_counts_and_timestamps_match_exact_list": true,
+    "current_source_membership": [
+      "bt4_policy_mix_summary.json",
+      "derive_targets_summary.json"
+    ],
+    "original_source_root_device_inode_mode_owner_preserved": true,
+    "retained_summaries": [
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05/bt4_policy_mix_summary.json",
+        "sha256": "e78cc9eaeba0029faf2f036cdb54c35dba02575939c9633915d3606229e1b574",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 15865315,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 2626,
+          "st_mtime_ns": 1788721759813520905,
+          "st_ctime_ns": 1788721759813520905
+        }
+      },
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G50T05/derive_targets_summary.json",
+        "sha256": "d2e1f2ad328d691bcd38c32342486728eb3e8a0f77e56e52f2eb958494b6edad",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 15830343,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 165398,
+          "st_mtime_ns": 1788721759806668181,
+          "st_ctime_ns": 1788721759810668180
+        }
+      }
+    ],
+    "external_current_stat": {
+      "st_dev": 75,
+      "st_ino": 281474978208049,
+      "st_mode": 33279,
+      "st_size": 13294694400,
+      "st_mtime_ns": 1788926806821223800,
+      "st_ctime_ns": 1788926808260192300
+    },
+    "external_identity_matches_completed_copy": true,
+    "failed_receipt_absent": true
+  },
+  "space": {
+    "observed_whole_filesystem_free_delta_bytes": 14464651264,
+    "observed_whole_filesystem_free_delta_GiB": 13.471256256103516,
+    "prior_allocated_removed_shard_bytes": 14495428608,
+    "prior_allocated_removed_shard_GiB": 13.499919891357422,
+    "interpretation": "Source shard removal actually completed. Net free-space delta is a concurrent whole-filesystem observation, not isolated attribution; prior allocated sum remains separate."
+  },
+  "limits": [
+    "No full source or external archive rehash repeated. Prior completed member/content/readback verification is reused with unchanged current external stat identity.",
+    "Current checks read only receipt/journal/list/code, one source-root listing, the two retained summaries and archive stat.",
+    "No deletion, process action, lock acquisition or transfer during this review. Other datasets/checkpoint payloads were not rescanned.",
+    "Cold shard arrays must be restored and applicable source identity admission refreshed before future training; retained summaries and checkpoints preserve the previously reviewed evaluation path."
+  ]
+}
