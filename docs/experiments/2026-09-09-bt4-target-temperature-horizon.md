@@ -1,11 +1,23 @@
 # BT4 target temperature, training horizon and search placement
 
-**Preregistered preparation; no training or matches launched or queued.** Compare
+**T1 materialization started; no completed T1 corpus, training or matches claimed.** Compare
 pure BT4 policy targets at T=1 and T=0.5 on the original corpus, with unchanged SF
 value supervision. [B100V50 remains first](2026-09-08-bootstrap-next-value-and-policy-contrasts.md).
 This experiment asks whether the relative benefit of target sharpening changes
 with training exposure, and whether sharpening at search time can substitute for
 sharpening during training.
+
+## Materialization started — September 9
+
+The reviewed pure-T1 materialization has launched after the E0T05 archive copy
+finished, during V50 GPU training. The actual mixer command uses the original SF
+corpus and unsharpened float32 BT4 sidecars with **global alpha 1, teacher T=1**;
+its target inventory is **18,910,484 rows / 2,309 shards**, with SF values and all
+other non-policy arrays preserved. These are requested output counts, not completed
+or qualified rows. The four-hour inclusive preparation bound remains unchanged.
+[Compact launch identities](artifacts/storage-t1-wdl-update-20260909/status.json)
+bind the reviewed plan and actual operator/mixer starts. No teacher inference,
+two-epoch training or match launch is claimed by this preparation snapshot.
 
 ## Treatments and uninterrupted training
 
@@ -83,11 +95,12 @@ The [existing horizon evidence](2026-09-08-value-collection-and-horizon-readines
 covers the 61,444,448-parameter runtime, a compiled CUDA fixture with four updates,
 and full SF/B100 CPU plans. It does not measure full-corpus two-epoch throughput,
 loader memory or the first 511-row CUDA batch. Genuine T1 admission is implemented
-and merged in [PR #604](https://github.com/jjoshua2/DeepFin/pull/604). Materialization,
-full physical plans/objective census and logical-order comparison remain required
-preparation. Checkpoint admission for both epochs and an explicit
-asymmetric-prior placement reader also remain; the existing calibration reader
-requires identical checkpoints, while recipe comparison requires equal settings.
+and merged in [PR #604](https://github.com/jjoshua2/DeepFin/pull/604). Materialization
+has started; completed output qualification, full physical plans/objective census
+and logical-order comparison remain required preparation. The separate explicit
+checkpoint/prior package reader is merged in [PR #606](https://github.com/jjoshua2/DeepFin/pull/606);
+actual checkpoint admission and match preparation remain pending. Existing
+same-checkpoint calibration and equal-search recipe contracts remain unchanged.
 
 Materialization has a **four-hour inclusive ceiling, 32 GiB sampled output cap and
 150 GiB free-space reserve**, with two CPU threads and no teacher inference.
@@ -107,9 +120,27 @@ preserve partials and do not automatically retry or extend it.
 
 One seed and reused development openings limit generalization. Two passes over
 18.91M rows are repeated exposure, not 100M distinct data or asymptotic training.
-Separately, native BT4 WDL coverage now totals **526,376 rows** in two selected G10
-common-increment sources: 509,992 newly completed plus 16,384 preserved pilot rows,
-independently reviewed. This is value-data readiness, not a new trained control or
-full G10 coverage. [Compact scientific identities](artifacts/bt4-target-temperature-horizon-20260909/registration.json)
-bind source summaries, runtime/configuration and review evidence; operational
-paths and raw logs remain retained separately.
+Separately, independently reviewed native BT4 WDL coverage totals **1,574,952
+selected G10 rows**: 526,376 from two common-increment sources plus two disjoint
+524,288-row common-large slices. This is value-data readiness, not a new trained
+control or full G10 coverage. [Current coverage identities](artifacts/storage-t1-wdl-update-20260909/status.json)
+bind the completed review; the [original registration](artifacts/bt4-target-temperature-horizon-20260909/registration.json)
+retains its earlier coverage snapshot. Operational paths and raw logs remain
+retained separately.
+
+## Future raw-WDL reuse
+
+[PR #609](https://github.com/jjoshua2/DeepFin/pull/609) adds an explicit CPU-only
+path to reuse already retained native WDL through the existing verified raw-to-derived
+row/history join. It checks canonical feed equality, preserves native values and
+publishes explicit adapter provenance; policy-only defaults and direct-inference
+admission remain intact. The value consumer requires a pinned adapter manifest.
+No collection or frozen-runtime adoption follows from this merge.
+
+The [metadata coverage review](artifacts/storage-t1-wdl-update-20260909/status.json)
+found **zero raw-WDL overlap with the current 9,298,514 frozen common-derived
+rows**. Their raw labels remain policy-only. A separate observed **3,137,424 newer
+raw rows** have native WDL; these are not yet qualified common-derived survivors.
+Reuse can avoid another teacher evaluation for future selected covered rows, but
+adds **zero rows** to the current G10 value bank. It neither supplies the missing
+historical values nor establishes a measured speedup or full 100M capacity.
