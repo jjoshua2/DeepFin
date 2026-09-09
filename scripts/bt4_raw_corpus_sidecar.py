@@ -803,6 +803,7 @@ def verify_shard(
     expected_remap: Mapping[str, Any],
     batch_size: int,
     identity_records: np.ndarray | None = None,
+    canonical_feed_records: np.ndarray | None = None,
     expected_wdl: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Deeply replay one raw shard and compare every stored sidecar row.
@@ -817,6 +818,12 @@ def verify_shard(
                 or not identity_records.flags.writeable):
             raise ValueError("identity cache must be writable, row-aligned provenance records")
         identity_records.fill(0)
+    if canonical_feed_records is not None:
+        if (canonical_feed_records.dtype != np.dtype("uint8")
+                or canonical_feed_records.shape != (pending.claimed_rows, 32)
+                or not canonical_feed_records.flags.writeable):
+            raise ValueError("canonical feed cache must be writable uint8 [rows,32]")
+        canonical_feed_records.fill(0)
     attrs = validate_existing(
         pending,
         onnx_sha256=onnx_sha256,
@@ -849,6 +856,11 @@ def verify_shard(
         if stop > pending.claimed_rows:
             raise ValueError(f"{pending.path}: more decoded rows than claimed")
         planes, boards, raw_keys, gids, plies = encode_rows(rows, source=pending.source)
+        if canonical_feed_records is not None:
+            canonical = x_to_lc0_planes(planes, input_history_encoding=derive.INPUT_HISTORY_ENCODING)
+            canonical_feed_records[cursor:stop] = np.asarray([
+                list(hashlib.sha256(row.tobytes(order="C")).digest()) for row in canonical
+            ], dtype=np.uint8)
         fingerprints = position_fingerprints(
             planes,
             input_history_encoding=derive.INPUT_HISTORY_ENCODING,

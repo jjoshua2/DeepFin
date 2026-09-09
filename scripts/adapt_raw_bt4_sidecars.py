@@ -70,6 +70,8 @@ class RawInputs:
     """Small bounded cache of verified row identities; policies remain on disk."""
 
     def __init__(self, manifest: dict[str, Any], max_rows: int, max_index_bytes: int):
+        self.wdl = manifest.get('wdl')
+        self.feed_cache: dict[tuple[str, str], tuple[Path, str]] = {}
         self.teacher = manifest['teacher']
         require(set(self.teacher) == {'onnx', 'policy_output', 'providers', 'remap'}, 'teacher fields differ')
         onnx = self.teacher['onnx']
@@ -136,15 +138,18 @@ class RawInputs:
         receipt = receipts[key[1]]
         rows = int(receipt['positions'])
         require(0 < rows <= self.max_rows, 'raw shard exceeds bounded identity-cache row limit')
-        require(self.index_bytes + raw_identity_cache_bytes(rows, 1) <= self.max_index_bytes,
+        feed_bytes = rows * 32 + 4096 if self.wdl is not None else 0
+        require(self.index_bytes + raw_identity_cache_bytes(rows, 1) + feed_bytes <= self.max_index_bytes,
                 'raw identity disk-cache budget exhausted')
         pending = raw.PendingShard(spec, spec.corpus_dir / key[1], rows, spec.out_dir / raw.sidecar_name(key[1]))
         before = {path: storage_identity(path) for path in (pending.path, pending.target)}
         records = np.zeros(rows, dtype=provenance.RECORD_DTYPE)
+        feeds = np.zeros((rows, 32), dtype=np.uint8) if self.wdl is not None else None
         attrs = raw.verify_shard(
             pending, onnx_sha256=self.teacher['onnx']['sha256'],
             expected_policy_output=self.teacher['policy_output'], expected_providers=self.teacher['providers'],
             expected_remap=self.remap, batch_size=512, identity_records=records,
+            expected_wdl=self.wdl, canonical_feed_records=feeds,
         )
         require(raw.receipt_from_attrs(attrs, pending.target) == receipt, 'raw receipt differs from verified sidecar')
         require(all(storage_identity(path) == stamp for path, stamp in before.items()), 'raw storage changed during verification')
@@ -155,6 +160,12 @@ class RawInputs:
             np.save(stream, records, allow_pickle=False)
         self.index_bytes += index_path.stat().st_size
         self.disk_cache[key] = index_path, file_sha256(index_path)
+        if feeds is not None:
+            feed_path = index_path.with_suffix('.feeds.npy')
+            with feed_path.open('xb') as stream:
+                np.save(stream, feeds, allow_pickle=False)
+            self.index_bytes += feed_path.stat().st_size
+            self.feed_cache[key] = feed_path, file_sha256(feed_path)
         group: Any = zarr.open_group(str(pending.target), mode='r')
         self.verified[f'{key[0]}/{key[1]}'] = {'receipt': receipt, 'source_manifest_sha256': spec.manifest_sha256}
         self.cache[key] = group, records
@@ -167,8 +178,11 @@ def adapt(manifest_path: Path, *, expected_manifest_sha256: str, out: Path,
           max_raw_rows: int = 100000, max_index_bytes: int = 8 * 1024**3) -> dict[str, Any]:
     manifest_pin = {'path': str(manifest_path.resolve()), 'sha256': expected_manifest_sha256}
     manifest = json.loads(pin(manifest_pin).read_text())
-    require(set(manifest) == {'schema', 'derived_summary', 'teacher', 'sources'} and manifest['schema'] == 1,
+    require(set(manifest) in ({'schema', 'derived_summary', 'teacher', 'sources'},
+                              {'schema', 'derived_summary', 'teacher', 'sources', 'wdl'}) and manifest['schema'] == 1,
             'adapter manifest fields/schema differ')
+    from scripts import raw_wdl_adaptation as reused
+    contract = reused.contract(manifest) if 'wdl' in manifest else None
     require(max_raw_rows > 0 and max_index_bytes > 0, 'raw row/cache limits must be positive')
     summary_path = pin(manifest['derived_summary'])
     require(summary_path.name == derive.SUMMARY_NAME, 'expected derived corpus summary')
@@ -215,6 +229,8 @@ def adapt(manifest_path: Path, *, expected_manifest_sha256: str, out: Path,
         ply_indices = np.asarray(group['ply_index'][:])
         legal = np.asarray(group['legal_mask'][:]) != 0
         policy = np.empty((rows, mix.COMPACT_POLICY_SIZE), dtype=np.float32)
+        values = np.empty((rows, 3), dtype=contract['dtype']) if contract else None
+        feed_hashes = reused.canonical_hashes(x) if contract else None
         seen: set[tuple[str, str, int]] = set()
         grouped: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
         for index, ref in enumerate(refs):
@@ -244,6 +260,15 @@ def adapt(manifest_path: Path, *, expected_manifest_sha256: str, out: Path,
                 raw_rows.append(offset)
             # Zarr groups requested rows by chunk, avoiding one decompression per row.
             policy[output_rows] = raw_group[raw.POLICY_FIELD].oindex[np.asarray(raw_rows), :]
+            if contract is not None:
+                assert values is not None
+                assert feed_hashes is not None
+                feed_path, feed_sha = inputs.feed_cache[(str(first_ref['source_dir']), str(first_ref['source_shard']))]
+                require(file_sha256(feed_path) == feed_sha, 'raw canonical feed cache changed')
+                raw_feeds = np.load(feed_path, mmap_mode='r', allow_pickle=False)
+                require(np.array_equal(feed_hashes[output_rows], raw_feeds[raw_rows]),
+                        'raw/derived canonical LC0 feed mismatch')
+                values[output_rows] = raw_group[raw.WDL_FIELD].oindex[np.asarray(raw_rows), :]
         require(np.isfinite(policy).all() and np.all(policy >= 0) and np.all(policy[~legal] == 0)
                 and np.allclose(policy.sum(axis=1, dtype=np.float64), 1, atol=2e-6, rtol=0),
                 'adapted policy has invalid mass or legal support')
@@ -279,6 +304,13 @@ def adapt(manifest_path: Path, *, expected_manifest_sha256: str, out: Path,
         payloads.append({'path': path.name, 'rows': rows, 'bt4_policy_sha256': attrs['bt4_policy_sha256'],
                          'source_key_sha256': key_sha, 'source_policy_sha256': policy_sha,
                          'row_provenance_sha256': stamp['sha256']})
+        if contract is not None:
+            assert values is not None
+            assert feed_hashes is not None
+            reused.write_shard(writing / 'wdl' / path.name, source=path, group=group,
+                               manifest=manifest, manifest_pin=manifest_pin,
+                               state=derived_stable[path], values=values, feeds=feed_hashes,
+                               row_provenance_sha256=stamp['sha256'])
         total += rows
     require(total == summary['realized']['rows_written'], 'derived total differs from summary')
     require(all(storage_identity(path) == stamp for path, stamp in (inputs.stable | derived_stable).items()),
@@ -299,6 +331,10 @@ def adapt(manifest_path: Path, *, expected_manifest_sha256: str, out: Path,
                  'identity_cache_bytes': inputs.index_bytes, 'identity_cache_limit_bytes': max_index_bytes,
                  'raw_reconstruction': 'one verification pass collecting original and quantized keys per used raw shard'},
              'completed_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+    if contract is not None:
+        final['adapted_wdl'] = {'profile': reused.PROFILE, 'path': 'wdl', 'rows': total,
+                                'shards': len(paths), 'contract': contract,
+                                'new_teacher_evaluations': 0}
     inputs.cache.clear()
     shutil.rmtree(inputs.cache_dir)
     mix._atomic_json(writing / mix.SIDECAR_SUMMARY, final)

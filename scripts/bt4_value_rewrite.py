@@ -23,6 +23,7 @@ import zarr
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import bt4_derived_wdl_sidecar as wdl
 from scripts import sf_policy_rewrite as sf_rewrite
+from scripts import raw_wdl_adaptation as reused
 from scripts.sf_policy_rewrite import ARRAYS, require
 
 SUMMARY = "bt4_value_rewrite_summary.json"
@@ -106,6 +107,15 @@ def inventory(root: Path, specs: list[dict[str, Any]]) -> None:
 
 def rewrite(args: argparse.Namespace) -> dict[str, Any]:
     alpha = checked_alpha(args.alpha)
+    adapter_path = getattr(args, 'wdl_adapter_manifest', None)
+    adapter_sha = getattr(args, 'expected_wdl_adapter_manifest_sha256', None)
+    require(bool(adapter_path) == bool(adapter_sha), 'adapted WDL requires manifest and SHA256')
+    adapted_pin: dict[str, str] | None = None
+    if adapter_path:
+        if not isinstance(adapter_sha, str):
+            raise ValueError('adapter manifest SHA256 must be a string')
+        adapted_pin = {'path': str(Path(adapter_path).resolve()), 'sha256': adapter_sha}
+        reused.pin(adapted_pin)
     wdl.set_nthreads(2)
     require(
         type(args.batch_size) is int and 0 < args.batch_size <= 4096,
@@ -186,6 +196,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             sf_rewrite.__file__,
         )
     }
+    if adapted_pin is not None:
+        producer[str(Path(reused.__file__).resolve())] = wdl.file_sha256(reused.__file__)
+        pins[Path(adapted_pin['path'])] = adapted_pin['sha256']
     writing.mkdir(parents=True)
 
     def guard() -> None:
@@ -253,6 +266,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 spec,
                 states[original],
             )
+            if adapted_pin is not None:
+                expected = reused.expected_binding(side, expected, adapted_pin)
             side_attrs = wdl.verify_cached(side, expected, args.batch_size)
             # Verify original SF to B100 nonpolicy compressed bytes, then immutable copy.
             src_files, sf_files = file_map(src), file_map(original)
@@ -409,6 +424,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             "producer_sha256": producer,
             "outputs": outputs,
         }
+        if adapted_pin is not None:
+            recipe['wdl_adaptation'] = {'profile': reused.PROFILE, 'manifest': adapted_pin,
+                                        'new_teacher_evaluations': 0}
         derived = dict(base)
         derived["value_target_postprocess"] = {
             k: v for k, v in recipe.items() if k != "outputs"
@@ -456,6 +474,8 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("source-summary", "policy-summary", "sf-summary", "onnx"):
         parser.add_argument("--expected-" + name + "-sha256", required=True)
     parser.add_argument("--wdl-output", default="/output/wdl")
+    parser.add_argument("--wdl-adapter-manifest", type=Path, default=argparse.SUPPRESS)
+    parser.add_argument("--expected-wdl-adapter-manifest-sha256", default=argparse.SUPPRESS)
     parser.add_argument(
         "--alpha",
         type=float,

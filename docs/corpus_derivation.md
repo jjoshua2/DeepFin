@@ -181,9 +181,37 @@ must match the requested contract. `--verify-all` with both WDL flags explicitly
 requires that value contract for every closed row and fails on missing coverage;
 without those flags it validates any optional values that are present.
 
-The current raw-to-derived adapter still transfers policy only. Retaining WDL is
-banking evidence for a future explicitly qualified value join/blend; it does not
-change training values, choose a mixture, or adopt a new runtime in a live driver.
+The raw-to-derived adapter defaults to policy only. To require and reuse native
+values, add `"wdl": {"output": "/output/wdl", "kind": "probabilities", "dtype": "float32"}`
+to its pinned manifest. The existing CLI then publishes policy and a `wdl/` bank
+atomically under its fresh output root. Every used raw shard must have the exact
+model, named head, native dtype and W/D/L side-to-move contract; missing historical
+coverage is refused. No model session or new teacher evaluation is performed.
+
+The adapter uses its existing verified raw-source namespace, physical offset,
+worker/game/ply and original/quantized history-key join. During that same raw replay
+it hashes canonical float32 LC0 feeds and requires equality with the derived feeds.
+These are canonical reconstructed tensors, not retrospectively recorded ORT feed
+dtypes. Valid binary history and integer rule50 values survive the existing
+float16 replay conversion; the raw/derived comparison still runs for every row.
+A bounded additional cache reserves 32 bytes per raw row plus a header allowance.
+Native WDL values retain their dtype and bits; ordered row identities, feed hashes,
+source hashes and the explicit `verified-raw-wdl-derived-adaptation-v1` lineage
+accompany them. Original policy-only outputs and direct-inference cache admission
+are unchanged.
+
+`bt4_value_rewrite.py` can explicitly consume this bank with `--wdl ADAPTED/wdl`,
+`--wdl-adapter-manifest MAPPING.json` and
+`--expected-wdl-adapter-manifest-sha256 SHA256`, alongside its usual source/model
+pins. It verifies the separate adapter lineage and complete publication, then uses
+the existing source-array/feed checks and value-only rewrite. Without both new
+arguments it keeps requiring direct-inference provenance. Its complete original-SF
+and B100 policy requirements remain: this does not add G10 training admission or
+qualify a raw selection as a training corpus.
+
+Reuse applies only to source-qualified rows with existing native WDL coverage.
+Older policy-only raw shards cannot be recovered through this path, and retained
+values do not choose a mixture or adopt a runtime in a live driver.
 
 ## Phase0 d9 ranks
 
