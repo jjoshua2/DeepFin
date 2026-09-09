@@ -5,6 +5,10 @@ before a nearly redundant Ceres arm. It does not establish better calibration,
 reduced bias or playing strength. This record tracks the collection and runtime
 work needed to run that test and the separate training-horizon comparison.
 
+**September 9:** the [V50 rewrite, qualification and prospective schedule completed;
+training has started](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#v50-preparation-complete-training-started--september-9).
+This is startup evidence, not a training or playing result.
+
 Related science: [value-head readout](2026-09-08-sf-anchored-value-bootstrap.md)
 and [completed G50/B100 comparison](2026-09-08-bt4-g50-b100-dose-comparison.md).
 [Historical launch evidence](evidence/value-bootstrap/collection-readiness.json) and
@@ -37,7 +41,7 @@ reconstruct the original raw float32 input key or retroactively qualify historic
 controls. Complete labels are neither evidence of more accurate value estimates
 nor a training or playing-strength result.
 
-The [selected B100V50 CPU rewrite](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#actual-v50-rewrite-launch--september-9-update)
+The [selected B100V50 CPU rewrite](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#v50-preparation-complete-training-started--september-9)
 has now started. Its actual dataset qualification and original-epoch training
 remain pending. The separate raw policy/WDL labeling queue continues; completion
 of this derived-source bank does not mean all historical raw policy rows have WDL,
@@ -179,7 +183,7 @@ array layouts without another payload scan. It preserves the original history
 lineage and historical-control limitations; a genuine SF rewrite receipt is used.
 
 At the earlier materialization snapshot, the prospective schedule was running.
-The September 8 follow-up now records [completed original-epoch SoftSF10 training](2026-09-08-soft-sf-qualified-training-sample.md#september-8-update-original-epoch-training-complete):
+The September 8 follow-up now records [completed original-epoch SoftSF10 training](2026-09-08-soft-sf-qualified-training-sample.md#september-8-update-training-and-both-arena-cells-complete):
 18,910,484 rows, 36,935 updates and 420 windows, followed by matched realized-schedule
 verification. Arena preparation passed and its coordinator started; no GPU stage
 or playing outcome is established by the saved launch snapshot.
