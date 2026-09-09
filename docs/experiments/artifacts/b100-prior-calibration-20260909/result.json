@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "experiment": "B100 prior 0.7 versus 1.0 development calibration",
+  "checkpoint_sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62",
+  "candidate_prior_temperature": 0.7,
+  "reference_prior_temperature": 1.0,
+  "sims": 100,
+  "training_seed": 0,
+  "opening_seed": 20260909,
+  "opening_plies": 16,
+  "fixed_pairs": 128,
+  "arena_runtime_commit": "82298a5d4010e7097f473712e3720de229522427",
+  "result": {
+    "games": 256,
+    "pairs": 128,
+    "score": 0.5234375,
+    "score_ci95": [
+      0.47006381302441147,
+      0.5768111869755885
+    ],
+    "elo": 16.297987076023766,
+    "elo_ci95": [
+      -20.826702969452278,
+      53.7997984400854
+    ],
+    "verdict": "INCONCLUSIVE",
+    "pentanomial": {
+      "WW": 22,
+      "WD_DW": 20,
+      "DD_WL": 51,
+      "LD_DL": 18,
+      "LL": 17
+    }
+  },
+  "outer_exit_code": 0,
+  "whole_invocation_seconds": 783.0735688209534,
+  "whole_invocation_limit_seconds": 1800,
+  "bank_sha256": "20bb7ca1401cab22e1b20f7a56ccfd705d4c4bff92dc1128ea70db44411c778a",
+  "panel_sha256": "3c955d68a6c010e373b44418f3bbbf1500cf9192d04ca17ffdd3dcd191d7cbb1",
+  "contract_sha256": "ffe686c81e2c936499b5c43404df38cac129342e8bc2e8581f917279aada2553",
+  "completed_readout_sha256": "43413f2666a71aa49ed8e30004a9ab3f70d2b4a6ac766193b9c85bd1b6182115",
+  "independent_review_sha256": "a5363d7ac271b8a82d666ddddc76c28b0cb4d77c14af3ed5415189e720427b9e",
+  "followup_rule": "Elo >=15 AND nominal lower 95 >0",
+  "followup_condition_met": false,
+  "decision": "Retain common prior 1.0; no followup temperature cell selected."
+}

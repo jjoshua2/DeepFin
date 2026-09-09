@@ -8,6 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
+| [B100 search-prior calibration](2026-09-09-b100-prior-calibration.md) | Complete: 0.7 versus 1.0 gives +16.30 Elo [−20.83, +53.80]; no follow-up selected, common prior 1.0 retained |
 | [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1/G20T05/G50T05 reclamation complete; current space snapshot; V50-first resource sequencing |
 | [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | Full 18.91M original-source WDL bank complete; V50 rewrite launched; compiled CUDA and planners pass |
 | [B100 tactical policy readiness](2026-09-08-b100-tactical-policy-readiness.md) | Producer/admission merged; corrected bounded preparation independently reviewed; V50-first schedule, no tactical rewrite/training |
