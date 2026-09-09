@@ -8,7 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1 reclamation complete; G20T05 copy launched; V50 draft training preparation |
+| [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1/G20T05 reclamation complete; G50T05 copy launched; V50-first resource sequencing |
 | [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | 1.05M additional WDL rows complete; compiled CUDA and SF/B100 planners pass; SoftSF10 original-epoch training complete |
 | [B100 tactical policy readiness](2026-09-08-b100-tactical-policy-readiness.md) | Producer/admission merged; corrected bounded preparation independently reviewed; V50-first schedule, no tactical rewrite/training |
 | [Next value and policy contrasts](2026-09-08-bootstrap-next-value-and-policy-contrasts.md) | B100V50 selected first; training/arena drafts and completed-state fix reviewed; value/policy diagnostics, no new training |

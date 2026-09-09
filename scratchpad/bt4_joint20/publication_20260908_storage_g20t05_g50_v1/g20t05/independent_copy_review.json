@@ -1,0 +1,73 @@
+{
+  "status": "PASS_COPY_AND_CONTENT_VERIFICATION_COMPLETE_SOURCE_RETAINED",
+  "reviewed_unix": 1788923621.787696,
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/plan.json",
+      "sha256": "b0d5fc88267e0b8502767ce06602b2fbec857e09d8667f598fa08af5d92ec131",
+      "bytes": 10653
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/archive_G20T05.py",
+      "sha256": "0b34bb4178fe7fa58edb364e3f473f8497039061c35bff5d8f2082035401c208",
+      "bytes": 20623
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/run_registered.py",
+      "sha256": "c8ced597f4acbad2e59aabd54f6a7328621673f281557c8df011f0654f7bec2b",
+      "bytes": 2571
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/operator.actual_complete.json",
+      "sha256": "6bc30ba94859fffced286638caa3c522fdd5cb51dfbd769b72da141eb629308a",
+      "bytes": 737
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/run/started.json",
+      "sha256": "028453afb3558aaa8856527ab48f6e73580a50049c659c54905ae2e1de5b379d",
+      "bytes": 1117
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_global_G20T05/verified.json",
+      "sha256": "7e6c5bee0ab1213cc8005e526c9517b573014db4568e08bde5f1b7d96838ccb5",
+      "bytes": 2599
+    }
+  ],
+  "independent_checks": {
+    "external_current_stat": {
+      "st_dev": 75,
+      "st_ino": 281474978208047,
+      "st_mode": 33279,
+      "st_size": 13155164160,
+      "st_mtime_ns": 1788922973579643000,
+      "st_ctime_ns": 1788922974914928500
+    },
+    "current_external_size_mtime_match_completed_readback": true,
+    "current_source_root_stamp_and_two_summary_hashes_unchanged": true,
+    "qualified_helper_wrapper_only_literal_profile_binding_changes": true,
+    "saved_manifest_hash_to_be_independently_streamed_once_in_next_metadata_check": "08c3985c05cae02aa7977eb27ecdd13ee7232e291fe9de85855fe30089273967"
+  },
+  "completed_operation": {
+    "outer_exit_code": 0,
+    "outer_wall_seconds": 2917.964193344116,
+    "inventory_entries": 713331,
+    "verified_members": 713331,
+    "logical_source_file_bytes": 11796945040,
+    "archive_bytes": 13155164160,
+    "archive_local_and_external_sha256": "bec3436aea9b7da55e4f3832a080bd9dca929658f2a3e8c02c1c8e732df07e28",
+    "source_manifest_sha256": "08c3985c05cae02aa7977eb27ecdd13ee7232e291fe9de85855fe30089273967",
+    "source_retained": true
+  },
+  "chain": [
+    "Qualified helper streams stable no-follow regular source inventory, ordered exact archive member identity/content checks, local archive digest and equal external full-readback digest.",
+    "All source stamps rechecked before completed receipt. Current original root/two summaries and external archive size/mtime match; current full external lstat banked.",
+    "Captured outer exit0 and recorded completion before original inclusive deadline; only temporary verified local tar removed."
+  ],
+  "limits": [
+    "No source payload or external archive full hash repeated.",
+    "Saved manifest hash/count and current full membership/stamps are verified by next authorized bounded metadata operation.",
+    "Copy completion alone does not authorize a specific deletion: current source/consumer checks and exact shard list still pending.",
+    "ACL/xattrs captured, not independently compared; copy-time process visibility limits preserved."
+  ],
+  "reviewer_execution_note": "An initial exact floating equality for outer wall charge rejected a0.715microsecond discrepancy versus end-minus-start; corrected to1millisecond tolerance. No source scan or binding had begun. A subsequent shell invocation of the not-yet-created metadata script failed without execution; its log retained."
+}

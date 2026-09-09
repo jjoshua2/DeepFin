@@ -32,6 +32,60 @@ and restore location in the experiment record. Restored data must be admitted
 for its next consumer because inode/ctime identities can change. No broad new
 scan, transfer or deletion was performed for this publication.
 
+### G20T05 reclaimed; G50T05 copy launched — September 8, 23:24 snapshot
+
+G20T05's complete copy and external readback finished in **2,917.96 seconds
+(48.63 minutes)** with outer exit zero. The archive contains **713,331 verified
+members**, occupies **13,155,164,160 bytes**, and has matching local/external
+SHA-256 `bec3436aea9b7da55e4f3832a080bd9dca929658f2a3e8c02c1c8e732df07e28`.
+The [copy review](../../scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g20t05/independent_copy_review.json)
+records **11,796,945,040 logical source-file bytes**. Its source-retained status
+belongs to the copy-completion stage, before the separate reclamation below.
+
+After fresh exact source-membership/stamp and consumer checks, reclamation
+removed **2,309 shard directories in 86.35 seconds**, outer exit zero. The
+[independent terminal review](../../scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g20t05/independent_reclamation_completion_review.json)
+verified all **4,618 ordered intent/removal journal records**, the exact shard
+list, both retained original summary hashes/stamps and unchanged external archive
+identity. The [completion receipt](../../scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g20t05/reclamation.completed.json)
+and [lossless copy/removal bundle](../../scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g20t05-copy-reclamation.tar.gz)
+preserve the command, source checks, journal and earlier binding evidence. The
+[operator result](https://github.com/jjoshua2/DeepFin/pull/597#issuecomment-5595278607)
+was recorded before this publication; no removal or payload rehash was repeated here.
+
+The removed shards' prior allocation was **14,356,144,128 bytes (13.370 GiB)**.
+Observed whole-filesystem free space rose from **396,554,809,344** to
+**410,869,010,432 bytes**, a **14,314,201,088-byte (13.331 GiB)** change. Concurrent
+activity prevents attributing that entire difference to this removal. These are
+terminal observations, not currently reserved capacity. Do not add the earlier
+G20T1 recovery again to a post-reclamation free-space baseline.
+
+G50T05's [reviewed copy preparation](../../scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g50t05/independent_preparation_review.json)
+then [launched at 23:24 local time](../../scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g50t05/operator.actual_start.json).
+This is **launch evidence only: its source is retained, with no completed copy
+or reclamation claim**. The [frozen launch bundle](../../scratchpad/bt4_joint20/publication_20260908_storage_g20t05_g50_v1/g50t05-copy-launch.tar.gz)
+reuses the verified copy path with a four-hour inclusive deadline, CPUs 0,1,
+two numeric threads, low priority, GPU hidden, a 24 GiB sampled staging cap and
+150 GiB reserve. The cap is not an expected output size or an allocation already
+reserved. Earlier G20 copy durations are references, not a G50 completion promise.
+
+Continue these transfers **and verified reclamation** throughout the 100M work.
+Keep original raw/SF/B100 inputs and required sidecars, live jobs, checkpoint and
+holdout exclusions, both corpus summaries, and all training/schedule/arena/archive
+proof. G20T05 is now a cold, summary-only local corpus: later row consumers need
+restored shards and relevant identity admission; retained checkpoints can still
+use the reviewed arena path. Current checks reuse the complete archive-content
+proof and external stat chain; they are not a new full rehash, restore test or
+independent ACL/xattr comparison.
+
+The G50 copy uses the shared CPU preparation lock. [V50 remains first](2026-09-08-b100-tactical-policy-readiness.md#compute-order-and-storage-headroom)
+after full WDL completion and archive release; disjoint affinities do not allow
+simultaneous lock-owning recipe rewrites. Continued archive staging and label
+growth require current headroom at the next allocation. The 150 GiB floor is
+not proof that all raw/common/recipe/temporary data for 100M fit. Exact original
+snapshot/member hashes are in the [publication manifest](evidence/bt4-bootstrap/storage-g20t05-g50-manifest.json).
+This storage update changes no scientific verdict or training selection.
+
 ### Historical copy-completion snapshot — G20T1 source retained
 
 The first cold-recipe copy completed in **2,977.57 seconds (49.63 minutes)**,

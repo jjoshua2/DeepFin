@@ -1,0 +1,53 @@
+{
+  "status": "COMPLETE_EXACT_SHARD_RECLAMATION_SUMMARIES_RETAINED",
+  "started_unix": 1788923980.9066,
+  "ended_unix": 1788924067.172647,
+  "deadline_unix": 1788925780.8420658,
+  "removed_shards": 2309,
+  "list_sha256": "29d700034298709d9114fdbfa03fa65113380ba8e7238b383bc8c886252b50c9",
+  "script_sha256": "6864bed695c9cc793fe5c92f885935a627143bb89be4af692f636d4270464be5",
+  "archive_current_stat": {
+    "st_dev": 75,
+    "st_ino": 281474978208047,
+    "st_mode": 33279,
+    "st_size": 13155164160,
+    "st_mtime_ns": 1788922973579643000,
+    "st_ctime_ns": 1788922974914928500
+  },
+  "retained_summaries": [
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05/bt4_policy_mix_summary.json",
+      "sha256": "ff50d6b3f4c8ab38233de723c68924980d745335a374a71d6cfc3eac71c248ab",
+      "stat": {
+        "st_dev": 2096,
+        "st_ino": 15575875,
+        "st_mode": 33188,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 2624,
+        "st_mtime_ns": 1788659516545523989,
+        "st_ctime_ns": 1788659516545523989
+      }
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_G20T05/derive_targets_summary.json",
+      "sha256": "8d43a70708fc64c867eee19d9b2ce8a9240c0b422d6af5fda5cade7ceab54b9e",
+      "stat": {
+        "st_dev": 2096,
+        "st_ino": 15624725,
+        "st_mode": 33188,
+        "st_uid": 1000,
+        "st_gid": 1000,
+        "st_size": 165396,
+        "st_mtime_ns": 1788659516539364238,
+        "st_ctime_ns": 1788659516539364238
+      }
+    }
+  ],
+  "filesystem_free_before_bytes": 396554809344,
+  "filesystem_free_after_bytes": 410869010432,
+  "filesystem_free_delta_bytes": 14314201088,
+  "prior_allocated_shard_bytes": 14356144128,
+  "space_limit": "Free-space delta is a concurrent whole-filesystem observation, not isolated attribution to this removal. Prior allocated sum is separate.",
+  "no_resume": true
+}
