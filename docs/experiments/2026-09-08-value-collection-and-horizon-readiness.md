@@ -1,6 +1,6 @@
 # Value collection and two-epoch runtime readiness
 
-The matched value-head sample supports trying one modest SF/BT4 value mixture
+The matched value-head sample supports testing an SF/BT4 value mixture
 before a nearly redundant Ceres arm. It does not establish better calibration,
 reduced bias or playing strength. This record tracks the collection and runtime
 work needed to run that test and the separate training-horizon comparison.
@@ -12,6 +12,36 @@ and [completed G50/B100 comparison](2026-09-08-bt4-g50-b100-dose-comparison.md).
 the receipt identities. Bulk labels and runtime logs remain external.
 
 Snapshot: 2026-09-08, 19:36 UTC. Later completions are recorded separately.
+
+## Full original-source WDL bank complete — September 9 update
+
+The **18,910,484-row original SF corpus now has completed native BT4 WDL
+coverage across all 2,309 shards**. The final contiguous 2,180-shard remainder
+contributed **17,853,716 rows**; the unchanged pilot and larger prefix contribute
+8,192 and 1,048,576 rows. The [independent full-bank review](../../scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/wdl/independent_full_bank_review.json)
+verified the three ordered selections, shared source/model/config bindings and
+parent/child closure; saved selections exactly reconstruct the original source
+summary. Five boundary attribute checks reuse native float32 `/output/wdl`
+probabilities in W/D/L side-to-move order, without a bulk replay. The remainder's captured outer exit was zero after
+**10,612.76 seconds (2.95 hours)**, within its registered four-hour invocation.
+This is whole-invocation wall time, including admission/startup and metadata work;
+it is not a separately measured GPU inference duration or a speedup estimate.
+
+The [exact completion bundle](../../scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/full-wdl-completion.tar.gz)
+and [compact accounting manifest](evidence/bt4-bootstrap/full-wdl-v50-storage-manifest.json)
+preserve the three completion receipts, final selection, outer result and registered
+limits. This publication reconciles saved receipts without another feature read,
+inference or native-array rehash. The producer's source-qualified row/game/ply and
+actual LC0-feed checks preserve inherited stored-input history; they do not
+reconstruct the original raw float32 input key or retroactively qualify historical
+controls. Complete labels are neither evidence of more accurate value estimates
+nor a training or playing-strength result.
+
+The [selected B100V50 CPU rewrite](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#actual-v50-rewrite-launch--september-9-update)
+has now started. Its actual dataset qualification and original-epoch training
+remain pending. The separate raw policy/WDL labeling queue continues; completion
+of this derived-source bank does not mean all historical raw policy rows have WDL,
+and it does not establish an immediately free GPU slot for Ceres.
 
 ## Completed value collection checks
 

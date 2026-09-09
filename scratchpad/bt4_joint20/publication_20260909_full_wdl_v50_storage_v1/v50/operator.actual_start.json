@@ -1,0 +1,22 @@
+{
+  "status": "STARTED",
+  "started_unix": 1788928002.8887794,
+  "supervisor_pid": 503287,
+  "capture_pid": 503285,
+  "argv": [
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/taskset",
+    "-c",
+    "2,3",
+    "/tmp/deepfin-b100v50-rewrite-tools/.venv/bin/python",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/run_materialization.py",
+    "a87711f699bff5e5e7be54618619c352a6f82da2bcb656186b8222dc7cb80268"
+  ],
+  "launch_sha256": "a87711f699bff5e5e7be54618619c352a6f82da2bcb656186b8222dc7cb80268",
+  "budget_scope": "Six-hour producer timeout; supervisor prelude/finalization measured separately."
+}

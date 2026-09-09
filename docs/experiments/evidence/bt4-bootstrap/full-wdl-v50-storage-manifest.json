@@ -1,0 +1,336 @@
+{
+  "schema": 1,
+  "snapshot": "2026-09-09, at V50 CPU rewrite launch1788928002.8887794; no later rewrite result read",
+  "scope": "Completed full original-source WDL receipt chain, actual V50 rewrite launch, independently reviewed future metadata qualification, completed G50T05 archival/reclamation. No training or playing result.",
+  "source_path_convention": "Original-checkout-relative provenance. Original bytes preserved in inert scratchpad snapshots; Python scripts are archive .data members, not deployed code.",
+  "value_bank": {
+    "rows": 18910484,
+    "shards": 2309,
+    "pilot_rows": 8192,
+    "prefix_rows": 1048576,
+    "remainder_rows": 17853716,
+    "remainder_shards": 2180,
+    "remainder_outer_exit": 0,
+    "remainder_outer_wall_seconds": 10612.761518239975,
+    "remainder_completed_sha256": "ecc2ba1fa4c5a897d9ce2705dcfd91575126564f1623dd0add358ff43811dd33",
+    "source_summary_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+    "selection_equals_original_summary": true,
+    "scope": "Reconciled saved complete receipt selections, not repeated native-array hashing or inference. Stored-x/LC0 feed lineage is inherited; no raw-history replay or retroactive control qualification."
+  },
+  "v50": {
+    "status": "CPU_REWRITE_STARTED",
+    "started_unix": 1788928002.8887794,
+    "launch_sha256": "a87711f699bff5e5e7be54618619c352a6f82da2bcb656186b8222dc7cb80268",
+    "bt4_value_weight": 0.5,
+    "sf_value_weight": 0.5,
+    "policy": "B100 unchanged",
+    "mutated_arrays": [
+      "search_wdl"
+    ],
+    "producer_timeout_seconds": 21600,
+    "supervisor_prelude_finalization_in_timeout": false,
+    "sampled_allocated_output_cap_bytes": 34359738368,
+    "minimum_free_bytes": 161061273600,
+    "cpus": [
+      2,
+      3
+    ],
+    "qualification_status": "PREPARATION_INDEPENDENT_PASS_NOT_EXECUTED",
+    "qualification_inclusive_seconds": 600,
+    "actual_dataset_qualification": false,
+    "training_started": false
+  },
+  "g50t05": {
+    "copy": {
+      "outer_exit_code": 0,
+      "outer_wall_seconds": 2944.1122212409973,
+      "verified_members": 713331,
+      "logical_source_bytes": 11936466856,
+      "tar_bytes": 13294694400,
+      "local_external_sha256": "a50bebaac1b58074787ff9d1e9e4ce1db230ef94ca016722bb3a5b4788a9b208",
+      "source_manifest_sha256": "c7221f91e2dc70ff938d39baf0b9ee405fba1c6031ef1c9cea56cbe5d804ec62"
+    },
+    "reclamation": {
+      "captured_outer_exit_code": 0,
+      "outer_wall_seconds": 79.89735651016235,
+      "exact_unique_removed_shards": 2309,
+      "ordered_intent_removed_journal_records": 4618,
+      "external_identity_matches_completed_copy": true,
+      "failed_receipt_absent": true
+    },
+    "space": {
+      "observed_whole_filesystem_free_delta_bytes": 14464651264,
+      "observed_whole_filesystem_free_delta_GiB": 13.471256256103516,
+      "prior_allocated_removed_shard_bytes": 14495428608,
+      "prior_allocated_removed_shard_GiB": 13.499919891357422,
+      "interpretation": "Source shard removal actually completed. Net free-space delta is a concurrent whole-filesystem observation, not isolated attribution; prior allocated sum remains separate."
+    },
+    "retained_summaries": [
+      {
+        "name": "bt4_policy_mix_summary.json",
+        "sha256": "e78cc9eaeba0029faf2f036cdb54c35dba02575939c9633915d3606229e1b574"
+      },
+      {
+        "name": "derive_targets_summary.json",
+        "sha256": "d2e1f2ad328d691bcd38c32342486728eb3e8a0f77e56e52f2eb958494b6edad"
+      }
+    ]
+  },
+  "latest_parent_space_observation": {
+    "ssd_free_bytes": 422991724544,
+    "external_free_bytes": 8145479417856,
+    "scope": "Concurrent observation after G50 reclamation, not isolated attribution, reserved allocation or full100M capacity proof."
+  },
+  "artifacts": [
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/full-wdl-completion.tar.gz",
+      "sha256": "9c17ef9ef7c0c0d5d3b84ff67e71eac097eb1ec00b59b95703cc71ed27469daa",
+      "bytes": 20713,
+      "members": [
+        {
+          "member": "1788892198151725070.completed.json",
+          "source_path": "data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788892198151725070/completed.json",
+          "bytes": 578,
+          "sha256": "4a9e1deeeddb744a410b82ebee528386bc03b3c5bf87f332411f8c091002db17"
+        },
+        {
+          "member": "1788893217183288997.completed.json",
+          "source_path": "data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788893217183288997/completed.json",
+          "bytes": 9095,
+          "sha256": "8b19958537435c7f99a6eb8e845f0b3ef65edaa2a43be51c1c5e50de14ed1f37"
+        },
+        {
+          "member": "1788916886162766345.completed.json",
+          "source_path": "data/lc0/bt4_wdl_sidecars/original20m_stored_v1/invocations/1788916886162766345/completed.json",
+          "bytes": 146582,
+          "sha256": "ecc2ba1fa4c5a897d9ce2705dcfd91575126564f1623dd0add358ff43811dd33"
+        },
+        {
+          "member": "actual_start.json",
+          "source_path": "scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/actual_start.json",
+          "bytes": 1699,
+          "sha256": "2a9ea2192378d3e4451fbbcee8ac953df26b0f191e1f560de80ddf0eb6085524"
+        },
+        {
+          "member": "actual_complete.json",
+          "source_path": "scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/actual_complete.json",
+          "bytes": 1799,
+          "sha256": "6119d025a3c68560622ed90b98dd90dfc20b8cd24291b9fda8e7aae0d37b36fd"
+        },
+        {
+          "member": "plan.json",
+          "source_path": "scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/plan.json",
+          "bytes": 24460,
+          "sha256": "2b7cfb8a10f4e2231b23c62f4c378a1b91b8858807d165ce46929fce72b87a53"
+        },
+        {
+          "member": "independent_review.json",
+          "source_path": "scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/independent_review.json",
+          "bytes": 3637,
+          "sha256": "efb6e414f10ddeea71fbce58061a71689f2390e0b116f7760fff151080c2371b"
+        },
+        {
+          "member": "independent_full_bank_review.json",
+          "source_path": "scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/independent_full_bank_review.json",
+          "bytes": 11692,
+          "sha256": "3c6c659c873bd7a9ee3dfff2efd3a2f3db8ad58a94a25e40711919270681854a"
+        }
+      ]
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/wdl/independent_full_bank_review.json",
+      "source_path": "scratchpad/bt4_joint20/bt4_derived_wdl_v1/remainder_preparation_v1/independent_full_bank_review.json",
+      "sha256": "3c6c659c873bd7a9ee3dfff2efd3a2f3db8ad58a94a25e40711919270681854a",
+      "bytes": 11692
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/v50-rewrite-launch.tar.gz",
+      "sha256": "9abeb8e108da768c43f6fdbea552527ba03fc7fc083226109a4c413ac14ede95",
+      "bytes": 55940,
+      "members": [
+        {
+          "member": "launch.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/launch.json",
+          "bytes": 188257,
+          "sha256": "a87711f699bff5e5e7be54618619c352a6f82da2bcb656186b8222dc7cb80268"
+        },
+        {
+          "member": "launch_and_capture.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/launch_and_capture.py",
+          "bytes": 2740,
+          "sha256": "d1f3ba64f4b030ee263c3ca0d4de4185d21d570718058493a66803cf0dbb8f2c"
+        },
+        {
+          "member": "operator.actual_start.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/operator.actual_start.json",
+          "bytes": 704,
+          "sha256": "91e61269772a9d2f608d13b26a2e790913665105b44f6bff20d94e795e7f8064"
+        },
+        {
+          "member": "parent_preparation_review.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/parent_preparation_review.json",
+          "bytes": 1736,
+          "sha256": "5d0b5eb12bc3e66e2d9eff0f2411809b48a9488c760c987d8ed99f86db4db57c"
+        }
+      ]
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/v50-post-rewrite-qualification-preparation.tar.gz",
+      "sha256": "706cc11e1685783bcd3f718bb324b62bbbf7743e8767da644d2cffb982034623",
+      "bytes": 10547,
+      "members": [
+        {
+          "member": "README.md",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/qualification_preparation_v1/README.md",
+          "bytes": 2588,
+          "sha256": "300456b678c9a61cda65898013cfc9dabf0fa6f7c5d2760257afc066b8cb9ee7"
+        },
+        {
+          "member": "author_validation.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/qualification_preparation_v1/author_validation.json",
+          "bytes": 1138,
+          "sha256": "d81a2fd44e6fb412941fb8266514dfaf6ff4c50bb6cd83f9a035e61690d1e11d"
+        },
+        {
+          "member": "command.txt",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/qualification_preparation_v1/command.txt",
+          "bytes": 722,
+          "sha256": "b79d890e25a5f2cac5757f4b76f2e26f0222937f14cc4717f263758270f4462b"
+        },
+        {
+          "member": "independent_review.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/qualification_preparation_v1/independent_review.json",
+          "bytes": 6322,
+          "sha256": "062ec663e3f0c02717dedafe553b230a00df92e7d22276a67b83cdd6e56abff9"
+        },
+        {
+          "member": "plan.json",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/qualification_preparation_v1/plan.json",
+          "bytes": 2741,
+          "sha256": "0a56d4980ed9cfd42566b6d56ed1a4c4799aba711e63e076262d8f9a8e284e85"
+        },
+        {
+          "member": "qualify_completed.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/qualification_preparation_v1/qualify_completed.py",
+          "bytes": 12487,
+          "sha256": "25e4f76c536c38ad544a4b0d498d8800d4e1672777e353b36471b38d6d5be21c"
+        },
+        {
+          "member": "run_registered.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/qualification_preparation_v1/run_registered.py",
+          "bytes": 829,
+          "sha256": "6323eddac23b3a2d4f49b01bd1ac42f1b3738c0aa6a55505bd89b336f19af229"
+        },
+        {
+          "member": "test_metadata.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/qualification_preparation_v1/test_metadata.py",
+          "bytes": 5227,
+          "sha256": "916189b6844fd08ebfd5a079f678e4c4dad82a5c760d3a659f106e2f8272c7b9"
+        },
+        {
+          "member": "tests.log",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/qualification_preparation_v1/tests.log",
+          "bytes": 541,
+          "sha256": "6047d6877318645aad8eff55e4432cd6cbb12e0419f7a9d0f016f88608bf4e1a"
+        },
+        {
+          "member": "tests_final.log",
+          "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/qualification_preparation_v1/tests_final.log",
+          "bytes": 611,
+          "sha256": "d13f5e96cf2890794cca396521ce2c0e6227f815261600b318066df119249c2a"
+        }
+      ]
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/v50/independent_qualifier_review.json",
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/qualification_preparation_v1/independent_review.json",
+      "sha256": "062ec663e3f0c02717dedafe553b230a00df92e7d22276a67b83cdd6e56abff9",
+      "bytes": 6322
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/v50/operator.actual_start.json",
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/operator.actual_start.json",
+      "sha256": "91e61269772a9d2f608d13b26a2e790913665105b44f6bff20d94e795e7f8064",
+      "bytes": 704
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/g50t05/independent_completion_review.json",
+      "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/independent_completion_review.json",
+      "sha256": "7f857dd24d3e2bf532f22609e42cfdf4670b8c59a57008fed9461ca47d311518",
+      "bytes": 3432
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/g50t05/independent_reclamation_completion_review.json",
+      "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/independent_reclamation_completion_review.json",
+      "sha256": "115f1f225adf38fd7d07b0d39601a6e7bd245349612c1a8b0b54c8f63bd4d307",
+      "bytes": 5441
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/g50t05-copy-reclamation.tar.gz",
+      "sha256": "c8ea223f2b5370192565a274db99519041326c5eb4a25d7169eb9817f7d8bf40",
+      "bytes": 108755,
+      "members": [
+        {
+          "member": "operator.actual_complete.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/operator.actual_complete.json",
+          "bytes": 738,
+          "sha256": "5539b3fa980281427dc1a91c6aa5087063c2962a359925043c1b704c7a30f355"
+        },
+        {
+          "member": "staging/qtemp_0.0005_hist_20m_bt4_global_G50T05/verified.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_global_G50T05/verified.json",
+          "bytes": 2599,
+          "sha256": "6b8143c442777ad9076723566e2f41456bf8413b527e2be84ed8a48bb8d87463"
+        },
+        {
+          "member": "reclamation_execution_v1/completed.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_execution_v1/completed.json",
+          "bytes": 1975,
+          "sha256": "3bb712108400a25d9b622e77852b1e57161f9cfda0c722cf4fa489d1cc595d80"
+        },
+        {
+          "member": "reclamation_execution_v1/started.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_execution_v1/started.json",
+          "bytes": 1792,
+          "sha256": "2344d5b86edaf9d071a97e46edc7f9721bed3ea1c1e5142598b8896342a1b2a0"
+        },
+        {
+          "member": "reclamation_execution_v1/shards.jsonl",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_execution_v1/shards.jsonl",
+          "bytes": 490709,
+          "sha256": "b52cd7a4a267b914d009f40e5c9965b906b167abc8f700399e5f8302d357e934"
+        },
+        {
+          "member": "reclamation_preparation_v1/operator.actual_complete.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_preparation_v1/operator.actual_complete.json",
+          "bytes": 963,
+          "sha256": "a7632b3cc0f6455b89c930055c61a5082c9e90a656735a0858b4396c91d8ffc1"
+        },
+        {
+          "member": "reclamation_preparation_v1/readiness_receipt.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_preparation_v1/readiness_receipt.json",
+          "bytes": 4498,
+          "sha256": "3a8c415cd194da7cb107b7323cec084dfb2dee9d31bcc18e786450a17f28a7e8"
+        },
+        {
+          "member": "reclamation_preparation_v1/reclamation_command.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_preparation_v1/reclamation_command.json",
+          "bytes": 2519,
+          "sha256": "80186444447b7e43b814bec266245006549001e76b44c6230b14039b6e58560f"
+        },
+        {
+          "member": "reclamation_preparation_v1/proposed_shard_removal_list.json",
+          "source_path": "scratchpad/bt4_joint20/G50T05_cold_archive_v1/reclamation_preparation_v1/proposed_shard_removal_list.json",
+          "bytes": 1117240,
+          "sha256": "22c8c7a3117d6a9b6537d5cb6a6f66bc0f1aa3e77d8d3d3d7528dd793f0a500e"
+        }
+      ]
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/STORAGE_OBJECTIVE.md",
+      "source_path": "scratchpad/bt4_joint20/STORAGE_OBJECTIVE.md",
+      "sha256": "9e72198df68c2ae79b9e2e054d33f814f95974cef90b531198f43f927b252ad0",
+      "bytes": 2639
+    }
+  ]
+}

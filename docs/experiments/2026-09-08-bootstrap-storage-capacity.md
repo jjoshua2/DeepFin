@@ -32,6 +32,51 @@ and restore location in the experiment record. Restored data must be admitted
 for its next consumer because inode/ctime identities can change. No broad new
 scan, transfer or deletion was performed for this publication.
 
+### G50T05 copy and reclamation complete — September 9 update
+
+G50T05's external copy completed with outer exit zero in **2,944.11 seconds**.
+The [copy review](../../scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/g50t05/independent_completion_review.json)
+records **713,331 verified members**, **11,936,466,856 logical source-file bytes**
+and a **13,294,694,400-byte archive** with matching local/external SHA-256
+`a50bebaac1b58074787ff9d1e9e4ce1db230ef94ca016722bb3a5b4788a9b208`.
+Its source-retained status describes that completed-copy stage, before reclamation.
+
+The separate removal completed in **79.90 seconds**, outer exit zero. The
+[independent terminal review](../../scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/g50t05/independent_reclamation_completion_review.json)
+verified **2,309 unique removed shard directories and 4,618 ordered journal
+records**, the exact bound list, unchanged hashes/stamps of both original local
+summaries, and the external archive identity. The [lossless evidence bundle](../../scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/g50t05-copy-reclamation.tar.gz)
+retains the completion, source checks, command and removal journal/list. No transfer,
+delete, payload hash replay or restore test was performed for this publication.
+
+The removed shards had **14,495,428,608 allocated bytes (13.500 GiB)**. Concurrent
+whole-filesystem free space rose by **14,464,651,264 bytes (13.471 GiB)**; this is
+not isolated attribution. G20T1, G20T05 and G50T05 are now cold local corpora with
+original summaries retained; checkpoints and archive restore evidence remain.
+Later row consumers must restore the shards and satisfy their identity admission.
+Do not delete original SF/B100 data, live inputs, needed labels, selected controls,
+checkpoints or holdout material as part of this cold-recipe workflow.
+
+At the parent observation after this reclamation and at V50 rewrite launch, free
+space was **422,991,724,544 bytes on SSD (393.942 GiB)** and
+**8,145,479,417,856 bytes externally (7.408 TiB)**. These are current-snapshot
+observations, not reserved allocations; the earlier 359/372/383 GiB figures below
+are historical. Do not add any of the three reclamations again to this baseline.
+The active V50 rewrite and raw label queue can consume space afterward.
+
+[The updated storage objective and exact manifest](evidence/bt4-bootstrap/full-wdl-v50-storage-manifest.json)
+keep continual transfers **and verified reclamation** part of bootstrap completion.
+A 150 GiB reserve is still only an operating floor. Account for continued raw/common
+data, policy/value labels, selected recipes, rewrite/transfer temporaries and
+training artifacts before claiming capacity for 100M. The [V50-first sequence](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#actual-v50-rewrite-launch--september-9-update)
+now has an actual CPU rewrite launch; tactical work remains prepared, not launched.
+The archive lock release did not make a GPU window: useful raw-WDL labeling remains
+active and must be preserved. Existing archived restart/checkpoint pools retain
+their exclusions; their tar totals are not a wholesale reclamation plan.
+The next candidate is the cold E0T05 `qtemp_0.0005_hist_20m_bt4_toptie_t050`
+corpus, pending fresh archive/consumer checks; no copy has started. Retain its two
+summaries and both seed runs, checkpoints, schedules and arena evidence.
+
 ### G20T05 reclaimed; G50T05 copy launched — September 8, 23:24 snapshot
 
 G20T05's complete copy and external readback finished in **2,917.96 seconds
