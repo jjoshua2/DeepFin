@@ -1961,6 +1961,22 @@ def mix_corpus(args: argparse.Namespace) -> int:
         raise ValueError("recovery requires both receipt and expected SHA256")
     if recovery_path is not None and (args.scope != "c20-global" or not _is_sha256(recovery_sha)):
         raise ValueError("completed-prefix recovery supports only qualified H20 c20-global")
+    output_storage = str(getattr(args, "output_storage", "copy"))
+    base_seal_path = getattr(args, "base_storage_seal", None)
+    base_seal_sha = getattr(args, "expected_base_storage_seal_sha256", None)
+    overlay_ref = None
+    overlay_seal = None
+    if output_storage == "immutable-overlay":
+        if args.scope != "global" or recovery_path is not None:
+            raise ValueError("immutable overlay output supports only fresh global policy mixes")
+        if base_seal_path is None or not _is_sha256(base_seal_sha):
+            raise ValueError("immutable overlay requires a pinned base storage seal")
+        overlay_ref = {"path": str(Path(base_seal_path).resolve()), "sha256": str(base_seal_sha)}
+        from chess_anti_engine.replay.target_overlay import BaseSeal, require_base_corpus
+        overlay_seal = BaseSeal(overlay_ref)
+        require_base_corpus(overlay_ref, Path(args.shards).resolve(), context=overlay_seal)
+    elif output_storage != "copy" or base_seal_path is not None or base_seal_sha is not None:
+        raise ValueError("base storage seal options require immutable-overlay output")
     sf_audit_mode = str(getattr(args, "sf_audit_mode", "gate"))
     experiment_record = getattr(args, "experiment_record", None)
     admission = _audit_admission(sf_audit_mode, experiment_record)
@@ -2174,7 +2190,10 @@ def mix_corpus(args: argparse.Namespace) -> int:
     recovery = None
     recovered_prefix: list[dict[str, Any]] = []
     recovery_pins: dict[Path, str] = {}
-    if recovery_path is None:
+    if overlay_ref is not None:
+        writing.mkdir()
+        shutil.copyfile(source_dir / DERIVE_SUMMARY, writing / DERIVE_SUMMARY)
+    elif recovery_path is None:
         shutil.copytree(source_dir, writing)
     else:
         assert c20_dir is not None
@@ -2239,6 +2258,9 @@ def mix_corpus(args: argparse.Namespace) -> int:
                 _validate_c20_layout(source, c20_group, source_path)
             parent_policy_digest = hashlib.sha256()
             destination_path = writing / source_path.name
+            if overlay_ref is not None:
+                from chess_anti_engine.replay.target_overlay import begin_policy_shard
+                begin_policy_shard(source_path, destination_path, overlay_ref, seal=overlay_seal)
             destination: Any = zarr.open_group(str(destination_path), mode="a")
             rows = int(source["x"].shape[0])
             chunk_rows = int(source[POLICY_FIELD].chunks[0])
@@ -2406,6 +2428,9 @@ def mix_corpus(args: argparse.Namespace) -> int:
                     "policy_target_mix_c20_parent_mix_sha256": c20_mix_sha,
                     "policy_target_mix_c20_parent_policy_sha256": parent_policy_digest.hexdigest(),
                 })
+            if overlay_ref is not None:
+                from chess_anti_engine.replay.target_overlay import finish_policy_shard
+                finish_policy_shard(source_path, destination_path, overlay_ref, seal=overlay_seal)
             stats.shards += 1
 
         denom = max(stats.rows, 1)
@@ -2575,6 +2600,12 @@ def mix_corpus(args: argparse.Namespace) -> int:
             if treatment["rows"] != expected_rows:
                 raise ValueError("recovered H20 row total differs from original source")
             treatment["recovery"] = recovery
+        if overlay_ref is not None:
+            from chess_anti_engine.replay.target_overlay import require_base_corpus
+            require_base_corpus(overlay_ref, source_dir, context=overlay_seal)
+            treatment["storage"] = {"kind": "immutable-policy-overlay", "base": str(source_dir),
+                                    "base_seal": overlay_ref, "replacement": POLICY_FIELD,
+                                    "inheritance": "Exact sealed base arrays; no feature-array copies."}
         derive_summary_path = writing / DERIVE_SUMMARY
         if _audit_admission(sf_audit_mode, experiment_record) != admission:
             raise ValueError("experiment record changed during materialization")
@@ -2629,6 +2660,9 @@ def build_parser() -> argparse.ArgumentParser:
     mix.add_argument("--sf-rank-sidecar", type=Path, default=None)
     mix.add_argument("--sf-rank-cap", type=int, default=3)
     mix.add_argument("--sf-cp-window", type=float, default=10.0)
+    mix.add_argument("--output-storage", choices=("copy", "immutable-overlay"), default="copy")
+    mix.add_argument("--base-storage-seal", type=Path)
+    mix.add_argument("--expected-base-storage-seal-sha256")
     mix.add_argument("--expected-rows", type=int, required=True)
     mix.add_argument("--expected-shards", type=int, required=True)
     mix.add_argument("--expected-source-summary-sha256", required=True)

@@ -1104,6 +1104,9 @@ class DiskReplayBuffer:
     def _scan_existing_shards(self) -> None:
         """Discover shards already on disk (e.g. after trial restart)."""
         existing = iter_shard_paths(self._shard_dir)
+        from .target_overlay import has_overlay
+        if any(has_overlay(path) for path in existing):
+            raise ValueError("mutable/replacement replay does not support immutable target overlays")
         if not existing:
             return
         sizes: list[int] = []
@@ -1554,6 +1557,9 @@ class DiskReplayBuffer:
   # Always RESOLVED, so the staging symlink farm (`stage_shards` points N
   # names at one converted shard) shares one entry per real shard rather than
   # re-validating the same bytes under every alias.
+        from .target_overlay import has_overlay
+        if has_overlay(sp):
+            raise ValueError("mutable/replacement replay does not support immutable target overlays")
         key = str(sp.resolve())
         before = self._shard_validation_fingerprint(sp)
         already_validated = False

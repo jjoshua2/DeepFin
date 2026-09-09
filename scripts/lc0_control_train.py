@@ -169,6 +169,7 @@ import numpy as np
 import torch
 import zarr
 
+from chess_anti_engine.replay.target_overlay import BaseSeal
 from chess_anti_engine.eval.lc0_control_arch import (
     LIVE_FILE_UNREAD as _LIVE_FILE_UNREAD,
     ControlArchitectureDrift,
@@ -767,6 +768,7 @@ def purity_receipt_problems(
 def preflight(
     cfg: dict[str, Any], shard_dirs: list[Path], *, allow_leak: bool,
     allow_mixed_history: bool = False, allow_partial_corpus: bool = False,
+    allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None,
 ) -> dict[str, dict[str, int]]:
     """The two LAUNCH-level value-blend guards. Returns the measured coverage.
 
@@ -814,7 +816,10 @@ def preflight(
     ):
         labelled = rows = 0
         for shard_dir in shard_dirs:
-            dir_labelled, dir_rows = measure(Path(shard_dir))
+            dir_labelled, dir_rows = (
+                measure(Path(shard_dir), allow_target_overlay=True, overlay_seal=overlay_seal)
+                if allow_target_overlay else measure(Path(shard_dir))
+            )
             labelled += dir_labelled
             rows += dir_rows
             print(f"[preflight] {Path(shard_dir).name}: {flag} label coverage "
@@ -2025,9 +2030,23 @@ def main(argv: list[str] | None = None) -> int:
              "recorded as not a valid control: nothing then ties the trained "
              "corpus to the held-out purity check.",
     )
+    parser.add_argument("--overlay-storage-qualification", type=Path)
+    parser.add_argument("--expected-overlay-storage-qualification-sha256")
     args = parser.parse_args(argv)
     if args.epoch_host_batch_overlap and args.sampling_mode != "game_epoch":
         raise SystemExit("--epoch-host-batch-overlap requires --sampling-mode game_epoch")
+    overlay_ref = None
+    overlay_seal = None
+    if args.overlay_storage_qualification is not None or args.expected_overlay_storage_qualification_sha256 is not None:
+        if (args.overlay_storage_qualification is None
+                or args.expected_overlay_storage_qualification_sha256 is None
+                or args.sampling_mode != "game_epoch" or len(args.shards) != 1):
+            parser.error("overlay qualification requires both receipt pins, game_epoch and exactly one corpus")
+        from chess_anti_engine.replay.target_overlay import verify_qualification
+        overlay_ref = {"path": str(args.overlay_storage_qualification.resolve()),
+                       "sha256": args.expected_overlay_storage_qualification_sha256}
+        overlay_qualification = verify_qualification(overlay_ref, Path(args.shards[0]))
+        overlay_seal = BaseSeal(overlay_qualification["base_seal"])
     if args.epochs < 1 or (args.epochs > 1 and (
         args.sampling_mode != "game_epoch" or args.steps != 0
     )):
@@ -2057,11 +2076,19 @@ def main(argv: list[str] | None = None) -> int:
             "purity receipt (which compares sets) can see it. Name each "
             "directory once.",
         )
-    coverage = preflight(
-        cfg, shard_dirs, allow_leak=bool(args.allow_leak),
-        allow_mixed_history=bool(args.allow_mixed_history),
-        allow_partial_corpus=bool(args.allow_partial_corpus),
-    )
+    if overlay_ref is not None:
+        coverage = preflight(
+            cfg, shard_dirs, allow_leak=bool(args.allow_leak),
+            allow_mixed_history=bool(args.allow_mixed_history),
+            allow_partial_corpus=bool(args.allow_partial_corpus),
+            allow_target_overlay=True, overlay_seal=overlay_seal,
+        )
+    else:
+        coverage = preflight(
+            cfg, shard_dirs, allow_leak=bool(args.allow_leak),
+            allow_mixed_history=bool(args.allow_mixed_history),
+            allow_partial_corpus=bool(args.allow_partial_corpus),
+        )
     history_identity = history_identity_record(
         read_history_stamps(shard_dirs),
         allow_mixed_history=bool(args.allow_mixed_history),
@@ -2216,6 +2243,8 @@ def main(argv: list[str] | None = None) -> int:
             "objective_mask_counter": trainer.exact_objective_mask_counter,
             "host_batch_overlap": bool(args.epoch_host_batch_overlap),
         }
+        if overlay_ref is not None:
+            epoch_buffer_kwargs["overlay_storage_qualification"] = overlay_ref
         buf: Any = GameAwareEpochBuffer(**epoch_buffer_kwargs, seed=int(args.seed))
         epoch_steps = buf.num_batches * args.epochs
         if int(args.steps) == 0:
@@ -2641,6 +2670,7 @@ def main(argv: list[str] | None = None) -> int:
   # `realized_after_guard` does one entry down: a recipe that is certified and
   # then changed must not be able to look identical to one that was not.
         "realized_replay_after_guard": realized_replay,
+        **({"overlay_storage_qualification": overlay_ref} if overlay_ref is not None else {}),
         # Exact-epoch mode banks both the pre-training plan hash and the
         # independently accumulated realized hash. A completed step count is
         # not evidence that every row was used; this receipt is.

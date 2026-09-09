@@ -13,6 +13,8 @@ from typing import Any
 
 import numpy as np
 import zarr
+
+from .target_overlay import BaseSeal
 from numcodecs import Blosc
 
 from chess_anti_engine.moves import (
@@ -1871,6 +1873,8 @@ def load_shard_arrays(
     *,
     lazy: bool = False,
     validate: bool = True,
+    allow_target_overlay: bool = False,
+    overlay_seal: BaseSeal | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load a shard's arrays + meta, dispatching on suffix.
 
@@ -1908,8 +1912,21 @@ def load_shard_arrays(
         if validate:
             validate_arrays(arrs)
         return arrs, meta
-    g = zarr.open_group(str(p), mode="r")
-    meta = dict(g.attrs.asdict())
+    from .target_overlay import has_overlay, overlay_content_sha256, overlay_proxies, seal_for_overlay
+    is_overlay = has_overlay(p)
+    if is_overlay and not allow_target_overlay:
+        raise ValueError("immutable target overlay requires explicit qualified exact-epoch opt-in")
+    if overlay_seal is not None and not is_overlay:
+        raise ValueError("overlay seal supplied for ordinary shard")
+    if is_overlay and overlay_seal is None:
+        overlay_seal = seal_for_overlay(p)
+    overlay_before = overlay_content_sha256(p, seal=overlay_seal) if is_overlay else None
+    if is_overlay:
+        proxies, meta = overlay_proxies(p, _SHARD_FIELDS, seal=overlay_seal)
+    else:
+        g = zarr.open_group(str(p), mode="r")
+        meta = dict(g.attrs.asdict())
+        proxies = {name: g[name] for name in _SHARD_FIELDS if name in g}
     # Untrusted-deserialization guard (issue #411): reject object dtypes and
     # non-allowlisted codecs BEFORE any chunk is decoded. This runs on BOTH the
     # lazy and eager path so every materialization sink -- the upload handler's
@@ -1923,19 +1940,22 @@ def load_shard_arrays(
     # it twice would re-walk all ~89 `_SHARD_FIELDS` (measured +140% on the lazy
     # path, which is the hot one: replay_exchange, trainable_init startup, the
     # worker, and the inbox loop) and would let the two walks drift apart.
-    proxies: dict[str, Any] = {name: g[name] for name in _SHARD_FIELDS if name in g}
     _reject_unsafe_shard_codecs(proxies)
     if lazy:
         arrs: dict[str, Any] = proxies
         _attach_identity_meta_arrays(arrs, meta)
         _attach_policy_metadata(arrs, meta)
         validate_array_declarations(arrs)
+        if is_overlay and overlay_content_sha256(p, seal=overlay_seal) != overlay_before:
+            raise ValueError("overlay changed while loading declarations")
         return arrs, meta
     arrs = {name: np.asarray(value) for name, value in proxies.items()}
     _attach_identity_meta_arrays(arrs, meta)
     _attach_policy_metadata(arrs, meta)
     if validate:
         validate_arrays(arrs)
+    if is_overlay and overlay_content_sha256(p, seal=overlay_seal) != overlay_before:
+        raise ValueError("overlay changed during decode")
     return arrs, meta
 
 

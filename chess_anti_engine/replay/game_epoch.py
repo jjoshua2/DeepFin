@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import os
 import struct
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
@@ -44,6 +43,7 @@ import numpy as np
 
 from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
 
+from .target_overlay import BaseSeal
 from .disk_buffer import _concat_sparse_batches
 from .shard import (
     HISTORY_REP_FIX_ARRAY_KEY,
@@ -272,42 +272,23 @@ def _seeded_rng(seed: int, stream: int) -> np.random.Generator:
 
 
 def _shard_content_sha256(path: Path) -> str:
-    """Stream a deterministic digest over a Zarr tree's names and bytes."""
-    root = path.resolve(strict=True)
-    if not root.is_dir():
-        raise ValueError(f"exact-epoch shard is not a directory: {path}")
-    digest = hashlib.sha256()
-    files_seen = 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames.sort()
-        for filename in sorted(filenames):
-            file_path = Path(dirpath) / filename
-            relative = file_path.relative_to(root).as_posix().encode(
-                "utf-8", errors="surrogateescape",
-            )
-            before = file_path.stat()
-            digest.update(struct.pack("<I", len(relative)))
-            digest.update(relative)
-            digest.update(struct.pack("<Q", int(before.st_size)))
-            bytes_read = 0
-            with file_path.open("rb") as handle:
-                while block := handle.read(1024 * 1024):
-                    bytes_read += len(block)
-                    digest.update(block)
-                after = os.fstat(handle.fileno())
-            if (
-                bytes_read != int(before.st_size)
-                or int(after.st_size) != int(before.st_size)
-                or int(after.st_mtime_ns) != int(before.st_mtime_ns)
-                or int(after.st_ctime_ns) != int(before.st_ctime_ns)
-            ):
-                raise RuntimeError(
-                    f"{path} changed while its exact-epoch content was hashed",
-                )
-            files_seen += 1
-    if files_seen == 0:
-        raise ValueError(f"exact-epoch shard contains no files: {path}")
-    return digest.hexdigest()
+    from .target_overlay import has_overlay, plain_content_sha256
+    if has_overlay(path):
+        raise ValueError("overlay requires explicit exact-epoch storage admission")
+    return plain_content_sha256(path)
+
+
+def _storage_hash(path: Path, allow_target_overlay: bool, overlay_seal: BaseSeal | None = None) -> str:
+    from .target_overlay import has_overlay, overlay_content_sha256
+    if allow_target_overlay and has_overlay(path):
+        return overlay_content_sha256(path, seal=overlay_seal)
+    return _shard_content_sha256(path)
+
+
+def _storage_load(path: Path, allow_target_overlay: bool, *, lazy: bool, overlay_seal: BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    if allow_target_overlay:
+        return load_shard_arrays(path, lazy=lazy, allow_target_overlay=True, overlay_seal=overlay_seal)
+    return load_shard_arrays(path, lazy=lazy)
 
 
 def _corpus_sha256(records: Sequence[_ShardGames]) -> str:
@@ -412,12 +393,12 @@ def _input_history_identity(
     return next(iter(encodings)), next(iter(fixes))
 
 
-def _scan_shard(path: Path) -> _ShardGames:
+def _scan_shard(path: Path, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None) -> _ShardGames:
     # Freeze a staging symlink's target along with its bytes. Re-resolving the
     # link later could otherwise move an exact plan to another source tree.
     path = path.resolve(strict=True)
-    content_sha256 = _shard_content_sha256(path)
-    arrs, _ = load_shard_arrays(path, lazy=True)
+    content_sha256 = _storage_hash(path, allow_target_overlay, overlay_seal)
+    arrs, _ = _storage_load(path, allow_target_overlay, lazy=True, overlay_seal=overlay_seal)
     input_history_encoding, history_rep_fix = _input_history_identity(
         arrs, path=path,
     )
@@ -498,7 +479,7 @@ def _scan_shard(path: Path) -> _ShardGames:
     )
 
 
-def _scan_shards(paths: Sequence[Path], workers: int) -> list[_ShardGames]:
+def _scan_shards(paths: Sequence[Path], workers: int, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None) -> list[_ShardGames]:
     resolved_paths: list[Path] = []
     staged_for_resolved: dict[Path, Path] = {}
     for staged_path in paths:
@@ -512,16 +493,18 @@ def _scan_shards(paths: Sequence[Path], workers: int) -> list[_ShardGames]:
         staged_for_resolved[resolved_path] = staged_path
         resolved_paths.append(resolved_path)
 
+    from functools import partial
+    scan = partial(_scan_shard, allow_target_overlay=True, overlay_seal=overlay_seal) if allow_target_overlay else _scan_shard
     n_workers = max(1, min(int(workers), len(resolved_paths)))
     if n_workers <= 1:
-        records = [_scan_shard(path) for path in resolved_paths]
+        records = [scan(path) for path in resolved_paths]
     else:
         with ThreadPoolExecutor(
             max_workers=n_workers, thread_name_prefix="game-epoch-plan",
         ) as pool:
             # map preserves submission order; filesystem timing cannot change
             # the namespace assignment, seeded permutation, or plan hash.
-            records = list(pool.map(_scan_shard, resolved_paths))
+            records = list(pool.map(scan, resolved_paths))
 
     # ``quarantine_desync_shards.py`` deliberately leaves a valid zero-row
     # zarr at the highest quarantined index so the writable replay counter
@@ -570,6 +553,7 @@ def _attach_objective_mask_weights(
     records: Sequence[_ShardGames],
     counter: ObjectiveMaskCounter | None,
     workers: int,
+    *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None,
 ) -> list[_ShardGames]:
     """Bank each shard's exact objective populations and freeze its content.
 
@@ -583,7 +567,7 @@ def _attach_objective_mask_weights(
     for record in records:
         weights: tuple[tuple[str, float], ...] = ()
         if counter is not None:
-            arrs, _ = load_shard_arrays(record.path, lazy=True)
+            arrs, _ = _storage_load(record.path, allow_target_overlay, lazy=True, overlay_seal=overlay_seal)
             raw = counter(arrs)
             weights = tuple(
                 (str(name), float(value)) for name, value in raw.items()
@@ -604,15 +588,17 @@ def _attach_objective_mask_weights(
                     )
         out.append(replace(record, objective_mask_weights=weights))
 
+    from functools import partial
+    content_hash = partial(_storage_hash, allow_target_overlay=True, overlay_seal=overlay_seal) if allow_target_overlay else _shard_content_sha256
     n_workers = max(1, min(int(workers), len(out)))
     if n_workers <= 1:
-        after_hashes = [_shard_content_sha256(record.path) for record in out]
+        after_hashes = [content_hash(record.path) for record in out]
     else:
         with ThreadPoolExecutor(
             max_workers=n_workers, thread_name_prefix="game-epoch-fingerprint",
         ) as pool:
             after_hashes = list(pool.map(
-                _shard_content_sha256, (record.path for record in out),
+                content_hash, (record.path for record in out),
             ))
     for record, after_sha256 in zip(out, after_hashes, strict=True):
         if after_sha256 != record.content_sha256:
@@ -1148,9 +1134,22 @@ class GameAwareEpochBuffer:
         max_working_set_bytes: int = DEFAULT_MAX_WORKING_SET_BYTES,
         objective_mask_counter: ObjectiveMaskCounter | None = None,
         host_batch_overlap: bool = False,
+        overlay_storage_qualification: dict[str, str] | None = None,
     ) -> None:
         paths = iter_shard_paths(shard_dir)
-        records = _scan_shards(paths, int(plan_workers))
+        allow_target_overlay = overlay_storage_qualification is not None
+        qualified: dict[Path, str] | None = None
+        self._overlay_seal: BaseSeal | None = None
+        if overlay_storage_qualification is not None:
+            from .target_overlay import qualified_paths
+            qualified, self._overlay_seal = qualified_paths(overlay_storage_qualification, paths)
+        self._allow_target_overlay = allow_target_overlay
+        records = (_scan_shards(paths, int(plan_workers), allow_target_overlay=True, overlay_seal=self._overlay_seal)
+                   if allow_target_overlay else _scan_shards(paths, int(plan_workers)))
+        if qualified is not None and any(
+            record.content_sha256 != qualified[record.path] for record in records
+        ):
+            raise ValueError("overlay content differs from storage qualification during planning")
         required_history_encoding = normalize_lc0_history_encoding(
             input_history_encoding,
         )
@@ -1187,8 +1186,11 @@ class GameAwareEpochBuffer:
                 "exact-epoch corpus mixes policy widths "
                 f"{policy_sizes}; normalize the corpus before training",
             )
-        records = _attach_objective_mask_weights(
-            records, objective_mask_counter, int(plan_workers),
+        records = (
+            _attach_objective_mask_weights(records, objective_mask_counter, int(plan_workers),
+                                          allow_target_overlay=True, overlay_seal=self._overlay_seal)
+            if allow_target_overlay else
+            _attach_objective_mask_weights(records, objective_mask_counter, int(plan_workers))
         )
         effective_load_workers = max(1, int(load_workers))
         self.plan, self._records = _plan_epoch(
@@ -1282,14 +1284,14 @@ class GameAwareEpochBuffer:
             )
 
     def _load_one(self, record: _ShardGames) -> dict[str, np.ndarray]:
-        before_sha256 = _shard_content_sha256(record.path)
+        before_sha256 = _storage_hash(record.path, self._allow_target_overlay, self._overlay_seal)
         if before_sha256 != record.content_sha256:
             raise RuntimeError(
                 f"{record.path} content changed after exact-epoch preflight "
                 "and before full decode",
             )
-        arrs, _ = load_shard_arrays(record.path, lazy=False, validate=True)
-        after_sha256 = _shard_content_sha256(record.path)
+        arrs, _ = _storage_load(record.path, self._allow_target_overlay, lazy=False, overlay_seal=self._overlay_seal)
+        after_sha256 = _storage_hash(record.path, self._allow_target_overlay, self._overlay_seal)
         if after_sha256 != record.content_sha256:
             raise RuntimeError(
                 f"{record.path} content changed during exact-epoch full decode",
