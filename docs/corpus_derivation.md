@@ -307,6 +307,54 @@ training arm, launch training, or replace corpus/schedule qualification. The
 [training-only sample](experiments/2026-09-08-soft-sf-qualified-training-sample.md) motivates
 10 cp as a descriptive entropy match; it is not evidence of playing strength.
 
+### SF tactical attenuation of stored B100 policy
+
+The explicit `--tactical-bt4-source` mode uses the same full raw legal d9 join,
+original missing-result filter, legacy shuffle and original SF-policy reconstruction.
+It additionally admits the pinned B100 global BT4 T=0.5 parent and checks every
+nonpolicy compressed file against original SF. The base is the **actual stored
+B100 float16 policy**, normalized over legal moves; it is not reconstructed from
+ideal float32 teacher probabilities.
+
+This selected recipe fixes onset gap 100 cp, decay 100 cp and relative weight
+floor 0.1. For nonmate alternatives, each multiplier is
+`max(0.1, exp(-max(0, best_cp - move_cp - 100) / 100))`, followed by normalization.
+Moves within the onset gap retain their B100 odds up to storage rounding. The
+floor bounds the relative multiplier, not the final probability.
+
+Attenuation preserves existing zero probabilities: a winning mate or good move
+with zero stored B100 mass cannot be recovered. A separate counter records rows
+whose entire winning-mate group has zero original mass.
+
+Mates are categorical. If any winning mate exists, all winning-mate moves receive
+weight 1 and all other moves 0.1. Otherwise the best nonmate sets the gap, and
+losing-mate alternatives receive 0.1. An all-forced-loss row remains byte-identical
+to B100. No cp differences are taken across the mate band or between mate distances.
+Ordinary scores must lie within the shared ±32,000 cp domain; larger magnitudes
+must be exact outputs of the shared mate map. Ambiguous or malformed scores fail.
+The original raw producer discarded UCI bound lines before storage; aggregate
+`bound_lines` counts may therefore be nonzero. This is inherited producer semantics,
+not an independent per-line exact-bound witness.
+
+```bash
+PYTHONPATH=. python scripts/sf_policy_rewrite.py \
+  --raw /path/to/original_raw --source /path/to/original_sf \
+  --expected-source-summary-sha256 ORIGINAL_SF_DERIVE_SHA \
+  --tactical-bt4-source /path/to/B100 \
+  --expected-bt4-summary-sha256 B100_DERIVE_SHA \
+  --expected-bt4-mix-sha256 B100_MIX_SHA --out /path/to/new_tactical_corpus
+```
+
+The tactical mode rejects alternate score-space/temperature flags. Its distinct
+`bt4_sf_tactical_policy_summary.json` records both source lineages, consumed B100
+policy hashes, fixed recipe, mate-category counts and float16 support-loss/error
+diagnostics. Float64 attenuation is cast through float32 to float16; all-one
+weights preserve original bytes. Old B100 mix stamps are removed from output
+shards and replaced by the tactical recipe. All 16 other arrays, including SF
+value and stored history, are ordinary verified copies. History qualifications
+remain inherited. This producer neither admits a training profile nor establishes
+full-source success or playing strength; training admission is a separate change.
+
 ### WDL-only labels from the original derived SF corpus
 
 `scripts/bt4_derived_wdl_sidecar.py` can bank a named BT4 WDL head beside a
