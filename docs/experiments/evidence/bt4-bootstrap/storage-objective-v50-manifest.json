@@ -1,0 +1,150 @@
+{
+  "schema": 1,
+  "snapshot_date": "2026-09-08 local time",
+  "scope": "Persistent storage objective and completed copy/source-retained snapshot; V50 preparation only. No new transfer, deletion or payload verification for publication.",
+  "storage_objective_source": {
+    "path": "scratchpad/bt4_joint20/STORAGE_OBJECTIVE.md",
+    "sha256": "bdcfdf1c3654ad7e678f27453a166626968a996b52a8b493a018bbca3322bb25",
+    "publication": "Substantive requirement restated in capacity/roadmap prose; original local note not copied."
+  },
+  "latest_reported_capacity": {
+    "ssd_free_gib_rounded": 359,
+    "external_free_tib_rounded": 7.5,
+    "operating_reserve_gib": 150,
+    "full_100m_workflow_capacity_proven": false,
+    "basis": "Latest rounded observation recorded in storage-objective source; not a new disk scan or reserved allocation."
+  },
+  "g20t1": {
+    "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE_SOURCE_RETAINED",
+    "outer_exit_code": 0,
+    "outer_wall_seconds": 2977.5667877197266,
+    "verified_members": 713331,
+    "external_archive_bytes": 13529845760,
+    "external_archive_sha256": "c742245979a3878ba8c8d212703f7a95ebae4e7df740a7a8f7ca2de4f607aa2d",
+    "source_manifest_sha256": "bab02f0a00202b821695c512d6610de18849905abe385d671dec04e49948c65d",
+    "source_deleted": false,
+    "source_bytes_reclaimed": 0,
+    "limits": "Independent copy/content review PASS; current full source-stamp/consumer checks still required before exact shard removal. No restore test or independent ACL/xattr comparison; source retained."
+  },
+  "v50": {
+    "status": "PREPARED_REVIEWED_WDL_BANK_INCOMPLETE_NOT_LAUNCHED",
+    "reviewed_head": "5afc1e2f0923704b2bb8f1aa7ffe45cc15141757",
+    "implementation_pr": 592,
+    "producer_bt4_alpha": 0.5,
+    "producer_sf_weight": 0.5,
+    "producer_seconds_including_kill": 21600,
+    "supervisor_metadata_seconds_cap": null,
+    "output_sampled_allocated_cap_gib": 32,
+    "minimum_free_gib": 150,
+    "scope": "Only search_wdl changes; B100 policy retained. Remainder completion/final launch/current dataset qualification/prospective schedule pending.",
+    "prospective_comparison": {
+      "control": "completed B100 SF-value control",
+      "training_seconds": 16200,
+      "each_arena_seconds": 5400,
+      "total_new_gpu_stage_ceiling_seconds": 27000,
+      "scope": "Original seed0 one-epoch runtime/objective/schedule; ordered100 SPRT and protected400 fixed128-pair probe. Separate CPU qualification/schedules/preparation and rewrite costs; executable training/match manifests pending."
+    }
+  },
+  "artifacts": [
+    {
+      "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/operator.actual_complete.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/g20t1/operator.actual_complete.json",
+      "source_sha256": "29ea229d3040e0334010e776527ef8b06224e91585c40e5db936a511ec386d74",
+      "source_bytes": 910,
+      "sha256": "29ea229d3040e0334010e776527ef8b06224e91585c40e5db936a511ec386d74",
+      "bytes": 910,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_global_G20T1/verified.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/g20t1/verified.json",
+      "source_sha256": "17f9d6b9a0e625eab66608c84dddeca9fc4c66491a0348d796334e2f3ea8455a",
+      "source_bytes": 2590,
+      "sha256": "17f9d6b9a0e625eab66608c84dddeca9fc4c66491a0348d796334e2f3ea8455a",
+      "bytes": 2590,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/preparation_receipt.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/v50/preparation_receipt.json",
+      "source_sha256": "6bff57cfa93026bb0118045f5f9270a1f786181d1a4429a66c66fbff0ad41c23",
+      "source_bytes": 2735,
+      "sha256": "6bff57cfa93026bb0118045f5f9270a1f786181d1a4429a66c66fbff0ad41c23",
+      "bytes": 2735,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/parent_preparation_review.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/v50/parent_preparation_review.json",
+      "source_sha256": "5d0b5eb12bc3e66e2d9eff0f2411809b48a9488c760c987d8ed99f86db4db57c",
+      "source_bytes": 1736,
+      "sha256": "5d0b5eb12bc3e66e2d9eff0f2411809b48a9488c760c987d8ed99f86db4db57c",
+      "bytes": 1736,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/runtime_and_plan_binding.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/v50/runtime_and_plan_binding.json",
+      "source_sha256": "0106d452ea322dac10c21df58eab2cd1743b7ef0398313e19383bb7c81a000c3",
+      "source_bytes": 1563,
+      "sha256": "0106d452ea322dac10c21df58eab2cd1743b7ef0398313e19383bb7c81a000c3",
+      "bytes": 1563,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/runtime_command_admission.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/v50/runtime_command_admission.json",
+      "source_sha256": "4d05448d92c23541e5737bdef51c66bfceaccbb6e70e8f4eec64334c759220a0",
+      "source_bytes": 658,
+      "sha256": "4d05448d92c23541e5737bdef51c66bfceaccbb6e70e8f4eec64334c759220a0",
+      "bytes": 658,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/producer_argv.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/v50/producer_argv.json",
+      "source_sha256": "cd7f7305796adbba6a77b19afe435ed94c3b9686ccc87429364db808fff4e25d",
+      "source_bytes": 944,
+      "sha256": "cd7f7305796adbba6a77b19afe435ed94c3b9686ccc87429364db808fff4e25d",
+      "bytes": 944,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/rewrite_preparation_v1/plan.prepared.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/v50/plan.prepared.json.gz",
+      "source_sha256": "8016040bb8585b3818078c444ac77970afd16102e1c65c0c0da3917c8db2e670",
+      "source_bytes": 188134,
+      "sha256": "ea3fde11b5a8942126469026c7ddf119737c7729b8206916af9dab3609404fe8",
+      "bytes": 53659,
+      "encoding": "gzip"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100V50_preparation_v1/TRAINING_COMPARISON.md",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/v50/TRAINING_COMPARISON.md",
+      "source_sha256": "2fc1395c2af350abfcd2334315c4ff829c63d6f8a9c79eefac8f75cbe64e5332",
+      "source_bytes": 4204,
+      "sha256": "2fc1395c2af350abfcd2334315c4ff829c63d6f8a9c79eefac8f75cbe64e5332",
+      "bytes": 4204,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/independent_completion_review.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/g20t1/independent_review.curated.json",
+      "source_sha256": "d2c14ef8358f969cd03b7c2b318eab3e40591ba32af37584542934c0a45ff3bf",
+      "source_bytes": 5371,
+      "sha256": "e97d3112986c02f7b794e88ebe1130475088b53c241405a920e294c6773cdd6f",
+      "bytes": 3763,
+      "encoding": "curated-json",
+      "projection": "Exact selected review fields; local evidence paths and external inode/stat tuple omitted. Original receipt remains externally hash-bound."
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/G20T1_cold_archive_v1/independent_completion_review.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/g20t1/independent_completion_review.json",
+      "source_sha256": "d2c14ef8358f969cd03b7c2b318eab3e40591ba32af37584542934c0a45ff3bf",
+      "source_bytes": 5371,
+      "sha256": "d2c14ef8358f969cd03b7c2b318eab3e40591ba32af37584542934c0a45ff3bf",
+      "bytes": 5371,
+      "encoding": "identity"
+    }
+  ]
+}

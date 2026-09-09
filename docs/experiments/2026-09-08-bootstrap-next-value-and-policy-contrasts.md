@@ -7,6 +7,17 @@ favors B100 at both budgets. This motivates separating useful SF information fro
 forcing the whole policy to imitate SF rankings. The priorities below are research
 choices, not a launched queue or a claim that their targets improve play.
 
+## Ongoing storage work supports the whole roadmap
+
+Continue SSD-to-external transfers and **verified local reclamation** alongside
+research so the approximately 100M-position bootstrap has room. The
+[capacity record](2026-09-08-bootstrap-storage-capacity.md#continuing-storage-objective--september-8-update)
+tracks working data, labels, rewrite/transfer temporaries and space actually
+recovered. The 150 GiB reserve is an operating floor, not full-scale capacity
+proof. G20T1's copy is complete with its source retained; that success has not
+reclaimed the original dataset's space. Preserve live sources and selected
+controls while continuing through eligible cold recipes.
+
 ## First: B100V50 with policy supervision fixed
 
 Keep B100's 100% sharpened BT4 policy target bytes and compare its SF-value control
@@ -32,15 +43,26 @@ decisive SF rows and only six near-equal rows. Draw-mass changes can be substant
 without large q shifts. These weighted, correlated training observations establish
 neither value accuracy nor corrected bias, calibration, or population precision.
 
-The frozen V10 preparation is preserved. Existing V10-specific arithmetic and
-admission must carry an explicit 50% weight through target production, recipe
-identity and training qualification before V50 can launch. Complete native-WDL
+The frozen V10 preparation is preserved. [PR592](https://github.com/jjoshua2/DeepFin/pull/592)
+merged reusable alpha arithmetic and strict B100V50 admission, retaining exact
+historical V10 defaults and producer compatibility. The new V50 rewrite plan is
+[frozen and independently reviewed](2026-09-08-bootstrap-storage-capacity.md#account-for-the-next-value-rewrite),
+with no rewrite or training launch. Complete native-WDL
 coverage, exact policy/non-value preservation and the actual corpus/schedule pins
 remain required evidence. The full label pass is ongoing; partial coverage is not
 a qualified full-corpus recipe. The planned comparison uses unchanged B100 only
 if the original trainer, objective and canonical one-epoch schedule still match.
 A new runtime or objective needs a matched control. Freeze the actual training and
 two-budget match manifests and costs before execution; no new run is claimed here.
+
+The [prospective comparison registration](../../scratchpad/bt4_joint20/publication_20260908_storage_objective_v1/v50/TRAINING_COMPARISON.md)
+retains fresh seed-zero initialization and the original B100 trainer, 18,910,484-row
+canonical schedule, 36,935 updates and 420 windows. It proposes the established
+ordered 100-simulation SPRT and protected 400-simulation fixed 128-pair probe
+against B100. The **27,000-second combined GPU-stage ceiling** covers training
+and both arenas; CPU qualification, schedule checks, arena preparation and the
+value rewrite have separate allocations. It is not a 7.5-hour end-to-end budget.
+Actual corpus qualification and executable training/match manifests remain pending.
 
 ## Next policy question: attenuate large SF deficits
 

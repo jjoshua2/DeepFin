@@ -8,7 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Local reserve limits 100M coexistence; retain checkpoint/lineage evidence and archive cold recipes first; G20T1 copy/verify prepared, not launched |
+| [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1 copy complete, source retained; V50 rewrite prepared |
 | [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | 1.05M additional WDL rows complete; compiled CUDA and SF/B100 planners pass; SoftSF10 original-epoch training complete |
 | [Next value and policy contrasts](2026-09-08-bootstrap-next-value-and-policy-contrasts.md) | B100V50 selected first; banked dose and SF attenuation diagnostics, joint policy/value correction and optional reverse reranking; no new training |
 | [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row WDL diagnostic complete; B100V50 now selected as first value contrast, training pending |

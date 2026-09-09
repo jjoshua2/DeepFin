@@ -1,0 +1,26 @@
+{
+  "status": "INACTIVE_PINNED_RUNTIME_AND_PLAN_PREPARED_BANK_INCOMPLETE",
+  "runtime": "/tmp/deepfin-b100v50-rewrite-tools",
+  "commit": "5afc1e2f0923704b2bb8f1aa7ffe45cc15141757",
+  "source_delta_against_qualified_v10": [
+    {
+      "path": "/tmp/deepfin-b100v50-rewrite-tools/scripts/bt4_value_rewrite.py",
+      "old_sha256": "eedcee1030211503173bf6936d890ab64cadacf35f1b5b4e557cec85d173c428",
+      "new_sha256": "b041bd27a7bbf7dd02663436b141c1b7ae054c229e691dbc71ad1d72a615a432"
+    },
+    {
+      "path": "/tmp/deepfin-b100v50-rewrite-tools/scripts/bt4_one_epoch_screen.py",
+      "old_sha256": "021b7069e4768f2b94d31f20498273e5c52e528b3d0a22059849b83f58167332",
+      "new_sha256": "6552aa8f27e49b75ff416d7bbb38c74397bd312895841b322363519d9c397278"
+    }
+  ],
+  "original_project_nonvenv_pins": 100,
+  "shared_venv_realpath": "/tmp/deepfin-bt4-sf-close-followup/.venv",
+  "thirdparty_pins": "Reused unchanged old plan pins via identical shared virtualenv; no repeated full library hashing. Supervisor verifies pins before launch.",
+  "native": "Four exact old-runtime payload paths linked; no builds or inference.",
+  "plan_sha256": "8016040bb8585b3818078c444ac77970afd16102e1c65c0c0da3917c8db2e670",
+  "producer_argv_sha256": "cd7f7305796adbba6a77b19afe435ed94c3b9686ccc87429364db808fff4e25d",
+  "supervisor_sha256": "3e71d42826d2e369cbfecbd53bcf031f3c6c8123c787d976ea7bb086719ba500",
+  "finalizer_sha256": "1ef72714746263d2a7188501551fe007f3d2488ef614b490c42287347dbb9aca",
+  "source_scope": "No original corpus payload, model or WDL payload reads."
+}
