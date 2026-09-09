@@ -255,6 +255,20 @@ producer capabilities, not additional registered training profiles. Both reuse
 the original training command and separate matched-recipe arena workflow. No
 corpus rewrite, training run or scientific result is implied by this tooling.
 
+`B100Tactical100` is a separate schema3-only policy profile. It requires the genuine
+`bt4_sf_tactical_policy_summary.json`, its `rewrite_summary` qualification pin,
+and the reviewed gap100/decay100/floor0.1 categorical-mate recipe on stored B100.
+The producer proof must bind original SF/raw and qualified B100 summaries, all
+2,309 output shards, the consumed/output policy hashes, unchanged SF value and all
+16 nonpolicy columns. Mate-group counts and stored-support diagnostics remain
+visible, including winning-mate groups with zero original B100 mass; attenuation
+cannot invent that missing support. Its output path is the original B100 path
+with suffix `_tactical100`. Renaming another policy/value recipe is rejected.
+This is an admission path for a completed, independently qualified corpus, not a
+claim that the full rewrite or training has run. History/control limitations
+remain inherited. The existing `matched_original_epoch` arena route can consume
+its eventual completed training receipt without changing training or search rules.
+
 Training-only preserves the qualified old training runtime, exact 18,910,484-row
 seed-zero epoch, 512-row batches, complete finite-window checks and prospective /
 realized canonical schedule checks. The GPU stage keeps its 4.5-hour cap; the

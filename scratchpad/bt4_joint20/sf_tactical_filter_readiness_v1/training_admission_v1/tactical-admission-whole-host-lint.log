@@ -1,0 +1,17 @@
+
+::: running lint tools in parallel
+
+::: ruff check
+All checks passed!
+
+::: basedpyright
+/tmp/deepfin-sf-tactical-admission/tests/test_bt4_tactical_training_admission.py
+  /tmp/deepfin-sf-tactical-admission/tests/test_bt4_tactical_training_admission.py:262:30 - error: "__getitem__" method not defined on type "bool" (reportIndexIssue)
+  /tmp/deepfin-sf-tactical-admission/tests/test_bt4_tactical_training_admission.py:262:30 - error: Argument of type "Literal['role']" cannot be assigned to parameter "key" of type "SupportsIndex | slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None]" in function "__getitem__"
+    Type "Literal['role']" is not assignable to type "SupportsIndex | slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None]"
+      "Literal['role']" is incompatible with protocol "SupportsIndex"
+        "__index__" is not present
+      "Literal['role']" is not assignable to "slice[SupportsIndex | None, SupportsIndex | None, SupportsIndex | None]" (reportArgumentType)
+2 errors, 0 warnings, 0 notes
+
+::: vulture (dead code, min confidence 80)
