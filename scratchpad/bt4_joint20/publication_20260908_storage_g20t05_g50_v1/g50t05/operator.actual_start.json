@@ -1,0 +1,21 @@
+{
+  "status": "STARTED",
+  "started_unix": 1788924280.8522944,
+  "deadline_unix": 1788938680.8522944,
+  "outer_pid": 498377,
+  "capture_parent_pid": 498375,
+  "command": [
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=30s",
+    "14370s",
+    "/usr/bin/python3.10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/G50T05_cold_archive_v1/run_registered.py",
+    "--plan-sha256",
+    "d17c36201f3157934f6b2adf9d11b4f5a42df1cb3561db46e2d86addd378592c",
+    "--deadline",
+    "1788938680.8522944"
+  ],
+  "plan_sha256": "d17c36201f3157934f6b2adf9d11b4f5a42df1cb3561db46e2d86addd378592c",
+  "source_retained": true
+}

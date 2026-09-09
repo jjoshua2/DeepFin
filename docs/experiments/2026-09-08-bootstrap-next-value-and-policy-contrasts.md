@@ -14,8 +14,8 @@ research so the approximately 100M-position bootstrap has room. The
 [capacity record](2026-09-08-bootstrap-storage-capacity.md#continuing-storage-objective--september-8-update)
 tracks working data, labels, rewrite/transfer temporaries and space actually
 recovered. The 150 GiB reserve is an operating floor, not full-scale capacity
-proof. G20T1's verified archive now supports completed reclamation of its 2,309
-local shards, with both summaries retained; G20T05's copy operator has started.
+proof. G20T1 and G20T05 each completed verified reclamation of 2,309 local
+shards with original summaries retained; G50T05's copy operator has started.
 Preserve live sources and selected controls while continuing through eligible
 cold policy recipes. Assess only eligible payload components of already-verified
 archived pools, preserving checkpoint and holdout exclusions.

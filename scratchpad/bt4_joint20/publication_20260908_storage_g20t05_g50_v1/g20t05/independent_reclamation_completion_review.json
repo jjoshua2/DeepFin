@@ -1,0 +1,113 @@
+{
+  "status": "PASS_COMPLETED_EXACT_RECLAMATION",
+  "reviewed_unix": 1788924337.9666355,
+  "findings": [],
+  "evidence": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/operator.actual_complete.json",
+      "sha256": "e89418d8e8f5c231b8a165f322560220c1a113f30e0e1c27cb856f661bfaef46",
+      "bytes": 962
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_execution_v1/completed.json",
+      "sha256": "a06ce6e7391067f7b7e73f00f2152f2a46d9c5af5e58dcf103f6d7bcbdfcdb93",
+      "bytes": 1972
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_execution_v1/started.json",
+      "sha256": "9b6102d21f705b67b38a8727d1d76b0bc56c041c623e86da6007cad9054d56a6",
+      "bytes": 1790
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_execution_v1/shards.jsonl",
+      "sha256": "aa47536df986e00f1a8b9c310b7cc11189c13c22f3199d45a49059980fc6598c",
+      "bytes": 490734
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/proposed_shard_removal_list.json",
+      "sha256": "29d700034298709d9114fdbfa03fa65113380ba8e7238b383bc8c886252b50c9",
+      "bytes": 1117240
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/readiness_receipt.json",
+      "sha256": "78ba4203c4e1f3b1d6c57c0e9f29e04f483b165491f826643660cba2f56ebd7d",
+      "bytes": 4466
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/reclamation_preparation_v1/reclaim_shards.py",
+      "sha256": "6864bed695c9cc793fe5c92f885935a627143bb89be4af692f636d4270464be5",
+      "bytes": 9792
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T05_cold_archive_v1/independent_completion_review.json",
+      "sha256": "e77e1aeff15d1cebf99ac4823505d4f0a6b04f408ab6094315965759cef0cf91",
+      "bytes": 3933
+    }
+  ],
+  "checks": {
+    "outer_exit_code": 0,
+    "outer_wall_seconds": 86.3524718284607,
+    "within_registered_1800_seconds": true,
+    "exact_unique_removed_shards": 2309,
+    "journal_records": 4618,
+    "intent_removed_order_counts_and_timestamps_match_exact_list": true,
+    "current_source_membership": [
+      "bt4_policy_mix_summary.json",
+      "derive_targets_summary.json"
+    ],
+    "source_root_device_inode_mode_owner_preserved": true,
+    "retained_original_summaries": [
+      {
+        "name": "bt4_policy_mix_summary.json",
+        "sha256": "ff50d6b3f4c8ab38233de723c68924980d745335a374a71d6cfc3eac71c248ab",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 15575875,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 2624,
+          "st_mtime_ns": 1788659516545523989,
+          "st_ctime_ns": 1788659516545523989
+        }
+      },
+      {
+        "name": "derive_targets_summary.json",
+        "sha256": "8d43a70708fc64c867eee19d9b2ce8a9240c0b422d6af5fda5cade7ceab54b9e",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 15624725,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 165396,
+          "st_mtime_ns": 1788659516539364238,
+          "st_ctime_ns": 1788659516539364238
+        }
+      }
+    ],
+    "external_archive_current_stat": {
+      "st_dev": 75,
+      "st_ino": 281474978208047,
+      "st_mode": 33279,
+      "st_size": 13155164160,
+      "st_mtime_ns": 1788922973579643000,
+      "st_ctime_ns": 1788922974914928500
+    },
+    "external_identity_matches_completed_copy_and_removal": true,
+    "failed_receipt_absent": true
+  },
+  "space": {
+    "observed_whole_filesystem_free_delta_bytes": 14314201088,
+    "observed_whole_filesystem_free_delta_GiB": 13.331138610839844,
+    "prior_allocated_removed_shard_bytes": 14356144128,
+    "prior_allocated_removed_shard_GiB": 13.370201110839844,
+    "interpretation": "Actual removal completed. Whole-filesystem free-space change is concurrent and differs from prior allocated shard bytes; it is not isolated attribution."
+  },
+  "limits": [
+    "No bulk payload or external archive rehash repeated; current external stat identity is tied to the previously reviewed complete content verification.",
+    "Current check reads only terminal receipts, exact journal/list, one source-root directory listing, two retained summaries and external stat.",
+    "Checkpoints and other datasets were not rescanned. No deletion, transfer, lock acquisition, process signal or launch performed by this review.",
+    "Future training on this cold dataset requires restoring its shard arrays and any required source re-admission; summary-only retention supports the previously reviewed checkpoint/arena consumers."
+  ]
+}
