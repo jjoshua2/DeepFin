@@ -32,15 +32,23 @@ and restore location in the experiment record. Restored data must be admitted
 for its next consumer because inode/ctime identities can change. No broad new
 scan, transfer or deletion was performed for this publication.
 
-### E0T05 copy started — September 9
+### E0T05 copy complete; source retained — September 9
 
-The prepared E0T05 archive copy has launched under its reviewed **four-hour
-inclusive bound**, while V50 trains. The full local source, summaries and
-checkpoints remain retained. At this startup snapshot, archive content verification,
-external readback and source reclamation are **not complete**; no reclaimed bytes
-are credited. The 24 GiB sampled staging bound and 150 GiB reserve remain in force.
-[Compact status identities](artifacts/v50-training-g10-status-20260909/status.json)
-bind the prepared plan/review and actual start without exporting operational logs.
+E0T05's copy and content verification completed with exit zero in **2,484.38
+seconds**. The archive contains **713,331 verified members** and occupies
+**11,021,598,720 bytes**. Full external readback matched archive SHA-256
+`a1ad137e9f65829f1dc386b5cfb2322617ff9789c60f127be6b653ac538d8473`.
+The original dataset remains local: **source bytes reclaimed = 0**. Summaries,
+checkpoints and restore evidence remain retained; any later source removal still
+needs exact current source and consumer checks.
+
+[Compact completion identities](artifacts/storage-t1-wdl-update-20260909/status.json)
+bind the actual operator, content-verification and root-review receipts. They are
+selected public fields, not copies of the operational logs or a new archive rehash.
+The [earlier startup snapshot](artifacts/v50-training-g10-status-20260909/status.json)
+remains historical. After this copy finished, [T1 materialization started](2026-09-09-bt4-target-temperature-horizon.md#materialization-started--september-9)
+under its separate preparation plan. Copy completion provides no new reclaimed
+capacity and does not establish that the full 100M workflow fits.
 
 ### G50T05 copy and reclamation complete — September 9 update
 
@@ -83,8 +91,9 @@ now has an actual CPU rewrite launch; tactical work remains prepared, not launch
 The archive lock release did not make a GPU window: useful raw-WDL labeling remains
 active and must be preserved. Existing archived restart/checkpoint pools retain
 their exclusions; their tar totals are not a wholesale reclamation plan.
-The next candidate is the cold E0T05 `qtemp_0.0005_hist_20m_bt4_toptie_t050`
-corpus, pending fresh archive/consumer checks; no copy has started. Retain its two
+At that earlier snapshot, the next candidate was the cold E0T05
+`qtemp_0.0005_hist_20m_bt4_toptie_t050` corpus; its completed copy is now recorded
+above. Retain its two
 summaries and both seed runs, checkpoints, schedules and arena evidence.
 
 ### G20T05 reclaimed; G50T05 copy launched — September 8, 23:24 snapshot
