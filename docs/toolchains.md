@@ -85,7 +85,7 @@ This interface does not select an experiment or alter the active H20 protocol.
 ### Qualified two-epoch training coordinator
 
 [`scripts/bt4_two_epoch_train.py`](../scripts/bt4_two_epoch_train.py) is a separate
-training-only coordinator for H20, B100, G50 or genuine SoftSF10 on the qualified
+training-only coordinator for H20, B100, B100T1, G50 or genuine SoftSF10 on the qualified
 original 18,910,484-row corpus. It fixes two uninterrupted epochs, sampler seeds
 0/1, batch size 512 and 88-step windows. It consumes preparation evidence; it does
 not create prospective plans, select a family or launch a match. Preview with
@@ -99,6 +99,21 @@ Its manifest has `schema: 1`, `scope: original_corpus_two_epoch_training_only`,
 `launcher_sha256`, `stage_helper_sha256` and `recipe_helper_sha256` for the
 coordinator, `bt4_direct_screen.py` supervision and `bt4_one_epoch_screen.py`
 recipe admission. Extra manifest fields are refused.
+
+`B100T1` is pure global BT4 policy at target temperature 1.0, with the original
+SF value and other non-policy arrays retained. Its corpus is the original source
+directory with suffix `_bt4_global_B100T1`; `B100` continues to mean the separate
+temperature-0.5 corpus. The existing mixer produces T1 using `--scope global
+--alpha 1 --bt4-temperature 1` and the retained unsharpened BT4 sidecars. Do not
+reconstruct it from stored sharpened targets or substitute the SF-mixed G20T1
+or top-tie corpora. The new profile is only admitted by this two-epoch coordinator.
+
+T1 preparation needs its own pinned `PASS_REGISTERED_CORPUS_QUALIFICATION` with
+`profile: B100T1`, genuine derive/mix summaries, and both full prospective plans
+with source-qualified logical-order witnesses. It uses the same runtime,
+resource, completion and checkpoint requirements below. Adding the profile does
+not qualify a corpus or change the trainer, schedule, search settings or value
+targets; it does not admit historical B100 checkpoints as an epoch-one control.
 
 The runtime qualification declares `status: PASS_TWO_EPOCH_TRAINING_RUNTIME`,
 `root`, the pinned training `head` (`0ff96f006`), `runtime`, `environment_pins`,
