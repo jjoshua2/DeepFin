@@ -1,8 +1,9 @@
 # Next bootstrap contrasts: value first, selective SF policy use
 
 September 8, 2026 local time; the dose analysis completed September 9 UTC.
-**B100V50 is the selected first substantive value comparison; it has not trained
-or played.** The completed [SoftSF10/B100 result](2026-09-08-soft-sf-qualified-training-sample.md#completed-softsf10-versus-b100-result)
+**September 9 update: B100V50 training has started after completed rewrite,
+dataset qualification and prospective schedule checks. No training or arena result
+is available.** The completed [SoftSF10/B100 result](2026-09-08-soft-sf-qualified-training-sample.md#completed-softsf10-versus-b100-result)
 favors B100 at both budgets. This motivates separating useful SF information from
 forcing the whole policy to imitate SF rankings. The priorities below are research
 choices, not a launched queue or a claim that their targets improve play.
@@ -21,7 +22,44 @@ Preserve live sources and selected controls while continuing through eligible
 cold policy recipes. Assess only eligible payload components of already-verified
 archived pools, preserving checkpoint and holdout exclusions.
 
-## Actual V50 rewrite launch — September 9 update
+## V50 preparation complete; training started — September 9
+
+The admitted full corpus contains **18,910,484 rows in 2,309 shards**. Only
+`search_wdl` changes: equal weights of normalized stored SF WDL and normalized
+native BT4 WDL, stored as float16. Both are side-to-move W/D/L; native BT4
+probabilities are not softmaxed again. B100's T=0.5 policy target and the other
+15 arrays remain byte-preserved, including original game outcomes and inputs.
+This fixes policy supervision, not the learned policy: shared-trunk training can
+still alter both predictions.
+
+The earlier rewrite was interrupted by the host reboot and remains preserved.
+The separate completed recovery invocation exited zero after **4,827.09 seconds**.
+Actual dataset qualification passed in **44.45 seconds**; the original-runtime
+prospective schedule passed in **397.77 seconds**, matching canonical schedule
+`dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f`.
+The plan covers 36,935 updates / 420 windows and 97,968 games. These are prospective
+counts, not completed training updates. Qualification checks metadata and genuine
+producer provenance; it inherits the producer's all-row WDL/source checks and
+16 unchanged-array compressed-byte assertions, rather than claiming a second
+independent payload verification.
+
+The selected seed-zero **one-epoch** training attempt has launched in the original
+qualified runtime, retaining 16 planner and 16 loader workers. Startup records
+confirm the 61,444,448-parameter model initialized on CUDA. The training stage has
+a **16,200-second cap including cleanup**; GPU-lease wait is outside that stage
+cap, and realized CPU schedule verification has its separate 1,800-second bound.
+Training completion, its realized schedule and the registered B100 comparison
+remain pending. This is separate from the later two-epoch temperature experiment;
+no checkpoint quality or strength claim follows from successful startup.
+
+[Compact status and source identities](artifacts/v50-training-g10-status-20260909/status.json)
+bind the completed rewrite, qualification, prospective schedule, training manifest
+and startup snapshot. Operational paths and raw logs are retained separately.
+The earlier launch and preparation passages below are historical snapshots,
+superseded by this update where they describe work as pending.
+
+## Earlier V50 rewrite launch — before the reboot
+
 
 The [actual start receipt](../../scratchpad/bt4_joint20/publication_20260909_full_wdl_v50_storage_v1/v50/operator.actual_start.json)
 records the CPU rewrite launch at **00:26 local time**, with finalized launch SHA

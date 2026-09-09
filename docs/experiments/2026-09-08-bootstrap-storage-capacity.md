@@ -32,6 +32,16 @@ and restore location in the experiment record. Restored data must be admitted
 for its next consumer because inode/ctime identities can change. No broad new
 scan, transfer or deletion was performed for this publication.
 
+### E0T05 copy started — September 9
+
+The prepared E0T05 archive copy has launched under its reviewed **four-hour
+inclusive bound**, while V50 trains. The full local source, summaries and
+checkpoints remain retained. At this startup snapshot, archive content verification,
+external readback and source reclamation are **not complete**; no reclaimed bytes
+are credited. The 24 GiB sampled staging bound and 150 GiB reserve remain in force.
+[Compact status identities](artifacts/v50-training-g10-status-20260909/status.json)
+bind the prepared plan/review and actual start without exporting operational logs.
+
 ### G50T05 copy and reclamation complete — September 9 update
 
 G50T05's external copy completed with outer exit zero in **2,944.11 seconds**.
@@ -68,7 +78,7 @@ The active V50 rewrite and raw label queue can consume space afterward.
 keep continual transfers **and verified reclamation** part of bootstrap completion.
 A 150 GiB reserve is still only an operating floor. Account for continued raw/common
 data, policy/value labels, selected recipes, rewrite/transfer temporaries and
-training artifacts before claiming capacity for 100M. The [V50-first sequence](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#actual-v50-rewrite-launch--september-9-update)
+training artifacts before claiming capacity for 100M. The [V50-first sequence](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#v50-preparation-complete-training-started--september-9)
 now has an actual CPU rewrite launch; tactical work remains prepared, not launched.
 The archive lock release did not make a GPU window: useful raw-WDL labeling remains
 active and must be preserved. Existing archived restart/checkpoint pools retain

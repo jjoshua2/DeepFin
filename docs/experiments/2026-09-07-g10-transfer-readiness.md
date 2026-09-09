@@ -1,5 +1,20 @@
 # G10 transfer readiness and target alignment
 
+## Native WDL coverage update — September 9
+
+Native BT4 WDL sidecars now cover **1,574,952 selected existing common-input rows**.
+The latest independently reviewed slice adds 524,288 rows across 64 derived shards
+(indices 64–127), disjoint from the preceding 0–63 slice; earlier source-qualified
+banks contribute 1,050,664 rows. Independent review verified all 320 saved-array
+hashes, ordered row identities, source/feed bindings and finite native float32 WDL.
+Maximum unit-mass error was 1.472×10⁻⁷. The completed invocation took 316.43 seconds,
+including admission, lease, inference and teardown; this is not isolated GPU timing.
+
+This adds value coverage to existing inputs. It does **not** increase the
+9,298,514-row common corpus, complete its value coverage, create a value-mixture
+recipe or qualify combined transfer training. [Compact coverage and review identities](artifacts/v50-training-g10-status-20260909/status.json)
+retain the latest completion and independent review hashes without operational logs.
+
 September 7, 2026. This preparation work supports the larger-data stage of the
 [adaptive bootstrap research](2026-09-07-bt4-hybrid-endpoints.md). Preparation alone does not select another recipe or establish playing strength.
 

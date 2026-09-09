@@ -10,11 +10,11 @@ measurements support which claims.
 | --- | --- |
 | [BT4 target temperature and horizon](2026-09-09-bt4-target-temperature-horizon.md) | Preregistered preparation: T1 versus T0.5, two uninterrupted epochs and three fixed deep comparisons; V50 first, no launch |
 | [B100 search-prior calibration](2026-09-09-b100-prior-calibration.md) | Complete: 0.7 versus 1.0 gives +16.30 Elo [−20.83, +53.80]; no follow-up selected, common prior 1.0 retained |
-| [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1/G20T05/G50T05 reclamation complete; current space snapshot; V50-first resource sequencing |
-| [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | Full 18.91M original-source WDL bank complete; V50 rewrite launched; compiled CUDA and planners pass |
+| [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1/G20T05/G50T05 reclamation complete; E0T05 copy started with source retained, no new reclaimed bytes |
+| [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | Full 18.91M original-source WDL bank complete; V50 training started after rewrite/qualification/schedule; no training result |
 | [B100 tactical policy readiness](2026-09-08-b100-tactical-policy-readiness.md) | Producer/admission merged; corrected bounded preparation independently reviewed; V50-first schedule, no tactical rewrite/training |
-| [Next value and policy contrasts](2026-09-08-bootstrap-next-value-and-policy-contrasts.md) | B100V50 CPU rewrite launched; post-rewrite qualifier independently reviewed; actual dataset qualification/training pending |
-| [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row WDL diagnostic complete; B100V50 now selected as first value contrast, training pending |
+| [Next value and policy contrasts](2026-09-08-bootstrap-next-value-and-policy-contrasts.md) | B100V50 rewrite, qualification and prospective schedule complete; original one-epoch training started, no result |
+| [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row WDL diagnostic complete; B100V50 is the first value contrast |
 | [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 compatibility and 128-row training diagnostic complete: 88.28% top-move agreement with BT4 T=1; bounded CUDA probe reviewed, not launched |
 | [Faster recipe matches](2026-09-08-faster-recipe-matches.md) | First prospective SPRT plus fixed deep probe completed in46m35s; speculative scheduling bottleneck identified; no controlled speedup claim |
 | [BT4 adapter identity collection](2026-09-08-bt4-adapter-single-pass.md) | Exact identity parity and 34.1% CPU component reduction in one closed-shard pair; full-pipeline benefit unmeasured |
@@ -22,7 +22,7 @@ measurements support which claims.
 | [BT4 target geometry](2026-09-08-bt4-target-geometry.md) | Fixed 128-row training sample: C support/maxima and raw-cp controls; no temperature or strength selection |
 | [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity; first optimized group completed 132,467 rows, throughput descriptive only |
 | [G10 adapter/rank overlap](2026-09-08-g10-stage-overlap.md) | Adopted in Worker01 attempt; cache failure, no measured speedup |
-| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 9,298,514 common rows after completed 4.02M increment; outer exit uncaptured, transfer training and strength remain unestablished |
+| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 9,298,514 common rows; native WDL now covers 1,574,952 selected rows; transfer training/strength unestablished |
 | [G50 versus B100 policy dose](2026-09-08-bt4-g50-b100-dose-comparison.md) | Complete: G50 loses shallow SPRT and fixed deep comparison (−50.57 Elo); B100 retained, depth interaction unresolved |
 | [Pure BT4 policy endpoint](2026-09-08-bt4-pure-policy-endpoint.md) | B100 beats H20: shallow H1, deep +46.42 Elo [11.23,82.58]; search interaction unresolved, same-seed development |
 | [Bootstrap training-horizon readiness](2026-09-08-bootstrap-training-horizon-readiness.md) | CPU and bounded compiled-CUDA checks passed; full SF/B100 planner passed; training comparison not launched |
