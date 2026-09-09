@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "status": "PASS_MANDATORY_EXTERNAL_ENTRY_TIMEOUT_CORRECTION",
+  "reason": "Original Python operator entry could block before it execed the internal timeout. Mandatory external GNU timeout now covers that prelude and receipt I/O.",
+  "prior_manifest_sha256": "e5fc8cd83ea777df556e868b91bd1a3ec916c6a6d4e734088c4bc38c6ffa3977",
+  "command_sha256": "eafc129331702771a49500e794a7336d5afc9b04922c8a49694811fd3dc22197",
+  "readme_sha256": "e43610f911e6b07f0741c2adfdcf0a32901e932b09bb145d8bc3aebbba8c527f",
+  "unchanged_plan_sha256": "b3e3b485b26c7a01aef282c208a8262b42bd41f372f741f494831a86a0689b34",
+  "validation": {
+    "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/validate_outer_entry.py",
+    "source_sha256": "99600cd9f60474bace28fec2db21d05bde06735c321b1408a56a17f2f9f13f3a",
+    "result": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/outer_entry_validation.json",
+    "result_sha256": "6b45c87fcf3ed19958ca81391c688528baef1bd47f9fe34cead55811954e5845",
+    "exit_code": 0,
+    "argv": [
+      "/usr/bin/python3",
+      "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/validate_outer_entry.py"
+    ],
+    "cwd": "/home/josh/projects/chess"
+  },
+  "limits": "No operational launch or repeated producer/admission checks; prior author evidence remains unchanged. Three prior frozen publication files retained under superseded_entry_v1."
+}

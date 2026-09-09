@@ -1,0 +1,460 @@
+{
+  "schema": 1,
+  "snapshot": "2026-09-08 evening, corrected tactical preparation and independent review; compute/space baseline is parent02:55UTC observation",
+  "scope": "Merged producer/admission, reviewed unlaunched operational preparation and relative compute/space planning. No materialization/training/arena or new source processing.",
+  "source_path_convention": "Source paths are original-checkout-relative. Archive members retain exact original bytes; Python files are inert .data snapshots. Superseded commands/receipts and failed check logs are preserved as historical evidence.",
+  "implementation": {
+    "producer": {
+      "pr": 595,
+      "head": "c98d3d320e46a165bdb5a28b469d638c4eab6c13",
+      "merge": "e49cc5e82c0939779769bd6fcc5bd7017be0b917",
+      "author_cases": 58,
+      "static": "Final whole host pass after preserved initial import-cycle failure"
+    },
+    "admission": {
+      "pr": 596,
+      "head": "732d469ca1c909d016e67cb86bc4346663edb721",
+      "merge": "bbb4f6cac7dc914af772036745533b89d7bed345",
+      "author_focused_cases": 131,
+      "static": "Whole repository analyzed; fixture annotation-only delta then final scoped pass"
+    },
+    "independent_arithmetic_cases": 5,
+    "separate_case_sets_not_combined_suite": true
+  },
+  "recipe": {
+    "profile": "B100Tactical100",
+    "base": "actual stored float16 B100T0.5 legal policy",
+    "gap_cp": 100,
+    "decay_cp": 100,
+    "relative_multiplier_floor": 0.1,
+    "mates": "categorical; no mate-band cp differences",
+    "value": "unchanged original SF search_wdl",
+    "nonpolicy_arrays_unchanged": 16,
+    "stored_zero_cannot_be_recovered": true,
+    "history_and_raw_bound_semantics_inherited": true
+  },
+  "preparation": {
+    "status": "PREPARED_REVIEWED_NOT_LAUNCHED",
+    "runtime": "bbb4f6cac7dc914af772036745533b89d7bed345",
+    "expected_raw_rows": 20000000,
+    "expected_derived_rows": 18910484,
+    "expected_shards": 2309,
+    "metadata_check": {
+      "seconds": 6.7,
+      "source_summaries": 4,
+      "source_and_b100_attrs": 4618,
+      "raw_stat_files": 2410,
+      "payloads_read": false
+    },
+    "wall_seconds_including_cleanup": 28800,
+    "outer_term_seconds": 28770,
+    "kill_grace_seconds": 30,
+    "cpus": [
+      0,
+      1
+    ],
+    "numeric_torch_blosc_threads": 2,
+    "gpu_hidden": true,
+    "sampled_allocated_output_cap_gib": 32,
+    "reserve_gib": 150,
+    "hard_rss_quota": null,
+    "full_corpus_success": false,
+    "qualification_and_schedule_pins": "pending genuine completed output",
+    "entry_timeout_finding": "closed; original command and original manifest preserved in superseded_entry_v1"
+  },
+  "schedule": {
+    "value_first": true,
+    "shared_cpu_preparation_lock": true,
+    "tactical_overlap": "Possible during V50 GPU training after its prospective CPU planning, subject current memory/I/O resources",
+    "ceres": "One900s probe only at a genuinely idle GPU boundary; existing raw-label waiter preserved, no guaranteed priority",
+    "baseline_ssd_free_gib": 358,
+    "baseline_external_free_tib": 7.5,
+    "additive_planning_gib": 92.125,
+    "remaining_before_unbudgeted_growth_gib": 265.875,
+    "above_150gib_reserve_before_growth": 115.875,
+    "caps_are_not_expected_sizes_or_reservations": true,
+    "full_100m_capacity_proof": false
+  },
+  "artifacts": [
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_tactical_schedule_v1/implementation.tar.gz",
+      "sha256": "ebfcbca8d836bc8e2077296f748ba66e7483d5d7a7c0d84549885884bcdca624",
+      "bytes": 27446,
+      "encoding": "tar+gzip",
+      "members": [
+        {
+          "member": "producer_qualification_v1/author_validation.json",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/author_validation.json",
+          "sha256": "615c2d25ae92935c27dceb02b93895f12b58987a76bf677db375d2791a7d5b13",
+          "bytes": 4581
+        },
+        {
+          "member": "producer_qualification_v1/reviewed_candidate.patch",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/reviewed_candidate.patch",
+          "sha256": "67b6b423873120271fb119e70396787db06933274a709dda9cd6522842747715",
+          "bytes": 40677
+        },
+        {
+          "member": "producer_qualification_v1/sf-tactical-chunk-delta.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/sf-tactical-chunk-delta.log",
+          "sha256": "c1d8f48099cc272eee7081e7697774f672c6441172edefcebcff16f62f03a9ff",
+          "bytes": 205
+        },
+        {
+          "member": "producer_qualification_v1/sf-tactical-final-scoped-host-lint.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/sf-tactical-final-scoped-host-lint.log",
+          "sha256": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc",
+          "bytes": 173
+        },
+        {
+          "member": "producer_qualification_v1/sf-tactical-focused-final.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/sf-tactical-focused-final.log",
+          "sha256": "8803a764e82b7ae2740d03e287ef5fd39cbae299dfccf8a53532febfdd4fa17d",
+          "bytes": 187
+        },
+        {
+          "member": "producer_qualification_v1/sf-tactical-focused-v1.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/sf-tactical-focused-v1.log",
+          "sha256": "b72a1da4519f119c71654edd5b3eb58a0bedc7db4883beefd5e5a988850d676c",
+          "bytes": 8496
+        },
+        {
+          "member": "producer_qualification_v1/sf-tactical-focused-v2.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/sf-tactical-focused-v2.log",
+          "sha256": "0712be0982f95c7bcffc473d2d65da5baaea9fbf22509c077ffabff283053ca6",
+          "bytes": 4585
+        },
+        {
+          "member": "producer_qualification_v1/sf-tactical-score-delta.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/sf-tactical-score-delta.log",
+          "sha256": "415c9b804e83a6d3c1dd869d282ac0acc81f2891716ffc7db60f89779c06acb0",
+          "bytes": 4587
+        },
+        {
+          "member": "producer_qualification_v1/sf-tactical-whole-host-lint-final.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/sf-tactical-whole-host-lint-final.log",
+          "sha256": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc",
+          "bytes": 173
+        },
+        {
+          "member": "producer_qualification_v1/sf-tactical-whole-host-lint.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/sf-tactical-whole-host-lint.log",
+          "sha256": "b8c48a2101b05e6b3ae59a9d60dffc17c86dd23cf89ef55a2019689712e75ad7",
+          "bytes": 494
+        },
+        {
+          "member": "producer_qualification_v1/sf-tactical-zero-mate-delta.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/producer_qualification_v1/sf-tactical-zero-mate-delta.log",
+          "sha256": "eae41752667c8e98631a6c52b6d957ed9a905677e81fe2830028aa1f0cddb61f",
+          "bytes": 205
+        },
+        {
+          "member": "training_admission_v1/author_validation.json",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/training_admission_v1/author_validation.json",
+          "sha256": "b02cc986c22fcc2143caf744b108a89164396be8068f556aa5667d11e1e63a8c",
+          "bytes": 3071
+        },
+        {
+          "member": "training_admission_v1/candidate.patch",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/training_admission_v1/candidate.patch",
+          "sha256": "a312471af0ea8186affac31b6c6dff096147d05f0b14dae61bdb50ba19cc02c8",
+          "bytes": 22943
+        },
+        {
+          "member": "training_admission_v1/tactical-admission-final-scoped-host-lint.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/training_admission_v1/tactical-admission-final-scoped-host-lint.log",
+          "sha256": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc",
+          "bytes": 173
+        },
+        {
+          "member": "training_admission_v1/tactical-admission-focused-v1.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/training_admission_v1/tactical-admission-focused-v1.log",
+          "sha256": "6d963927ed38eeed0681d9f7d7d7a7ff1e48b3fe07ec0436a8f1e503cb659b2e",
+          "bytes": 287
+        },
+        {
+          "member": "training_admission_v1/tactical-admission-whole-host-lint.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/training_admission_v1/tactical-admission-whole-host-lint.log",
+          "sha256": "a56c441968cf4d293a29b46793abddd35f986a89cf48282879ced8a0ce47d429",
+          "bytes": 1110
+        },
+        {
+          "member": "independent_review_v1/probe.log",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/independent_review_v1/probe.log",
+          "sha256": "b36b554bc8c6b324d4f6c52d1fc494673571151a05b0d6dfef60ca584a866c0c",
+          "bytes": 1125
+        },
+        {
+          "member": "independent_review_v1/probe.py.data",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/independent_review_v1/probe.py",
+          "sha256": "db5862f0f92f437d47a1b285d5354e42e89c9725de05c846a4a008175d35a1e4",
+          "bytes": 3857
+        },
+        {
+          "member": "independent_review_v1/receipt.json",
+          "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/independent_review_v1/receipt.json",
+          "sha256": "968897abd9b6b51740206224e42a8ab04d3e4056e948d3e0e8cebb8eb6562d5e",
+          "bytes": 5417
+        }
+      ]
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/sf_tactical_filter_readiness_v1/independent_review_v1/receipt.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_tactical_schedule_v1/implementation.independent_review.json",
+      "source_sha256": "968897abd9b6b51740206224e42a8ab04d3e4056e948d3e0e8cebb8eb6562d5e",
+      "sha256": "968897abd9b6b51740206224e42a8ab04d3e4056e948d3e0e8cebb8eb6562d5e",
+      "bytes": 5417,
+      "encoding": "identity"
+    },
+    {
+      "path": "scratchpad/bt4_joint20/publication_20260908_tactical_schedule_v1/preparation.tar.gz",
+      "sha256": "d114712354f8633d52cbedaf13d4778c88a02110de0545c5f5a42c59effb6af7",
+      "bytes": 111894,
+      "encoding": "tar+gzip",
+      "members": [
+        {
+          "member": "README.md",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/README.md",
+          "sha256": "e43610f911e6b07f0741c2adfdcf0a32901e932b09bb145d8bc3aebbba8c527f",
+          "bytes": 6521
+        },
+        {
+          "member": "independent_preparation_review_v1/receipt.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/independent_preparation_review_v1/receipt.json",
+          "sha256": "6a36e719c33663134d8e968e7669c8b249cf930675f78e60a9c173a75904f50e",
+          "bytes": 7347
+        },
+        {
+          "member": "materialization/author_preparation.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/author_preparation.json",
+          "sha256": "727d2c28d41fc5c5b07a6129b75a37c4bb45736ba435e36db8e8c7a51de51b2d",
+          "bytes": 2605
+        },
+        {
+          "member": "materialization/command.txt",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/command.txt",
+          "sha256": "eafc129331702771a49500e794a7336d5afc9b04922c8a49694811fd3dc22197",
+          "bytes": 500
+        },
+        {
+          "member": "materialization/entry_deadline_correction.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/entry_deadline_correction.json",
+          "sha256": "66dea7483321d99ee8a4ac5b04c2fe0e55ca7519a573ff3f42c31dc4cf2880e6",
+          "bytes": 1493
+        },
+        {
+          "member": "materialization/metadata_qualification.log",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/metadata_qualification.log",
+          "sha256": "d774572a6423c71656ccb08beec43034803c199ddc53ef498548172e8b3c45f7",
+          "bytes": 211
+        },
+        {
+          "member": "materialization/metadata_qualification_command.txt",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/metadata_qualification_command.txt",
+          "sha256": "e07066a840318bc1c7af7de3588dc7d78a94b50d041fae8407e02c47e5dbbe81",
+          "bytes": 679
+        },
+        {
+          "member": "materialization/metadata_qualification_plan.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/metadata_qualification_plan.json",
+          "sha256": "7a639f4fa5173ad32195ad5d667842fea7265467eec7830adf1b2892c37c6057",
+          "bytes": 1117
+        },
+        {
+          "member": "materialization/metadata_qualification_terminal.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/metadata_qualification_terminal.json",
+          "sha256": "bd4071d1022c79010f0bb022403883f8c23a1b33cef57e63fa70168f02588cdf",
+          "bytes": 973
+        },
+        {
+          "member": "materialization/native_reuse.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/native_reuse.json",
+          "sha256": "4891b24fa60ee1deea80c5c7d9c54501496e2dfae1214c92b709960385e59037",
+          "bytes": 7413
+        },
+        {
+          "member": "materialization/operator.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/operator.py",
+          "sha256": "1d9e4b9c3e1fe3dfd7c3d1700ddf3ff8ea49d47f36c473b9bdf56547d93ea14b",
+          "bytes": 1320
+        },
+        {
+          "member": "materialization/outer_entry_validation.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/outer_entry_validation.json",
+          "sha256": "6b45c87fcf3ed19958ca81391c688528baef1bd47f9fe34cead55811954e5845",
+          "bytes": 760
+        },
+        {
+          "member": "materialization/plan.prepared.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/plan.prepared.json",
+          "sha256": "b3e3b485b26c7a01aef282c208a8262b42bd41f372f741f494831a86a0689b34",
+          "bytes": 28715
+        },
+        {
+          "member": "materialization/python_bootstrap/sitecustomize.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/python_bootstrap/sitecustomize.py",
+          "sha256": "e5f31f339fc737f98a9b256e7a280b7a681a90d929fc101faa057d661d91b7ad",
+          "bytes": 382
+        },
+        {
+          "member": "materialization/qualification_command.prepared.txt",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/qualification_command.prepared.txt",
+          "sha256": "a621cde875b24a587aa9fe948d51ce0d002446179d9fc33a7e56c3dc817c3941",
+          "bytes": 802
+        },
+        {
+          "member": "materialization/qualify_completed.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/qualify_completed.py",
+          "sha256": "b71caf6c3336ff93335d7fa1618a20a16a3eb2c0e6d78aea2c7a2bc2148c567b",
+          "bytes": 6599
+        },
+        {
+          "member": "materialization/qualify_runtime_and_metadata.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/qualify_runtime_and_metadata.py",
+          "sha256": "4ca4bc911c45f684488d424275d958fb25536eedbfd9acb1de81912ecc3c808b",
+          "bytes": 7836
+        },
+        {
+          "member": "materialization/qualify_supervisor_fixture.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/qualify_supervisor_fixture.py",
+          "sha256": "5fd56a8f19838b738d270d6eee718ef7d4e52d05ac5e726d3439213ca41d195e",
+          "bytes": 3630
+        },
+        {
+          "member": "materialization/run_materialization.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/run_materialization.py",
+          "sha256": "1d9f7a7ba64d4b3eade36d7f28fbb504359dd53a540235da8afa52eed93080d4",
+          "bytes": 11306
+        },
+        {
+          "member": "materialization/runtime_qualification.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/runtime_qualification.json",
+          "sha256": "bab2a9a9464c2f1ed586fb7b636b1ed71d4f4e65abe4bd7cc4442a9340471540",
+          "bytes": 21084
+        },
+        {
+          "member": "materialization/source_metadata.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/source_metadata.json",
+          "sha256": "f4e922aa580a1288351023f14cdf040445e4c98ca8bd7eaf3bbc8bf022057dab",
+          "bytes": 711316
+        },
+        {
+          "member": "materialization/supervisor_delta.patch",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/supervisor_delta.patch",
+          "sha256": "4df6f4cdef533cd9e8b5bd89ac7d913ea8478d526b63cf3a59e60d2182589ba8",
+          "bytes": 7578
+        },
+        {
+          "member": "materialization/supervisor_fixture.log",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/supervisor_fixture.log",
+          "sha256": "e727726a7bce4eaba1befb7b8e5b15c0e68b50fca53cf8005454e5d2caab8281",
+          "bytes": 332
+        },
+        {
+          "member": "materialization/validate_outer_entry.py.data",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/validate_outer_entry.py",
+          "sha256": "99600cd9f60474bace28fec2db21d05bde06735c321b1408a56a17f2f9f13f3a",
+          "bytes": 1625
+        },
+        {
+          "member": "preparation_manifest.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/preparation_manifest.json",
+          "sha256": "2c0969019dc2019eed0c40bcf0f964af2f4a26ff6ac2ac85a055d2a1b7967dbe",
+          "bytes": 5109
+        },
+        {
+          "member": "prospective_schedule_v1/command.prepared.txt",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/prospective_schedule_v1/command.prepared.txt",
+          "sha256": "f64f6a778212229d06dfc0d973357a2ba1c0fbcf4d454f979883bf8ccfed9f61",
+          "bytes": 824
+        },
+        {
+          "member": "prospective_schedule_v1/plan.prepared.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/prospective_schedule_v1/plan.prepared.json",
+          "sha256": "e9ad3b9b4ddd2da4a68477eb92f47d35f3f0ca606c8992239f6bc370d189bd00",
+          "bytes": 4961
+        },
+        {
+          "member": "superseded_entry_v1/README.md",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/superseded_entry_v1/README.md",
+          "sha256": "bbe78aea68fa0d9c6117bda486e0124bb2a87b0dca75a3aab1719091719c8e12",
+          "bytes": 6240
+        },
+        {
+          "member": "superseded_entry_v1/command.txt",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/superseded_entry_v1/command.txt",
+          "sha256": "eee26052963a45d072895f1ba1c9f4706ddf117391e629fc0d1eacc9d6c26bfb",
+          "bytes": 377
+        },
+        {
+          "member": "superseded_entry_v1/preparation_manifest.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/superseded_entry_v1/preparation_manifest.json",
+          "sha256": "e5fc8cd83ea777df556e868b91bd1a3ec916c6a6d4e734088c4bc38c6ffa3977",
+          "bytes": 4119
+        },
+        {
+          "member": "training_continuation.prepared.json",
+          "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/training_continuation.prepared.json",
+          "sha256": "69933f88c0bdc9d6b07a008ef5e70b0f66b3d6d43866f3a5c699474640a36342",
+          "bytes": 1881
+        }
+      ]
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/independent_preparation_review_v1/receipt.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_tactical_schedule_v1/preparation.independent_review.json",
+      "source_sha256": "6a36e719c33663134d8e968e7669c8b249cf930675f78e60a9c173a75904f50e",
+      "sha256": "6a36e719c33663134d8e968e7669c8b249cf930675f78e60a9c173a75904f50e",
+      "bytes": 7347,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/B100Tactical100_preparation_v1/materialization/entry_deadline_correction.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_tactical_schedule_v1/entry_deadline_correction.json",
+      "source_sha256": "66dea7483321d99ee8a4ac5b04c2fe0e55ca7519a573ff3f42c31dc4cf2880e6",
+      "sha256": "66dea7483321d99ee8a4ac5b04c2fe0e55ca7519a573ff3f42c31dc4cf2880e6",
+      "bytes": 1493,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/near_term_compute_space_schedule_v1/README.md",
+      "path": "scratchpad/bt4_joint20/publication_20260908_tactical_schedule_v1/schedule/README.md",
+      "source_sha256": "0570c5c3cd587d088a730605ddf1a827c658759e28c543998e788d201a01eece",
+      "sha256": "0570c5c3cd587d088a730605ddf1a827c658759e28c543998e788d201a01eece",
+      "bytes": 6581,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/near_term_compute_space_schedule_v1/raw_label_owner_observation.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_tactical_schedule_v1/schedule/raw_label_owner_observation.json",
+      "source_sha256": "a6f0776c04bc651bc328493a4a8c249ee0c70a0b30a933d94dc67579dc4f3de9",
+      "sha256": "a6f0776c04bc651bc328493a4a8c249ee0c70a0b30a933d94dc67579dc4f3de9",
+      "bytes": 1671,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/near_term_compute_space_schedule_v1/saved_current_status_excerpt.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_tactical_schedule_v1/schedule/saved_current_status_excerpt.json",
+      "source_sha256": "02a94ad6c71683467ab9af5efca2534cc98e7415b06e1e54da421e2595a3d3c7",
+      "sha256": "02a94ad6c71683467ab9af5efca2534cc98e7415b06e1e54da421e2595a3d3c7",
+      "bytes": 3170,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/near_term_compute_space_schedule_v1/schedule.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_tactical_schedule_v1/schedule/schedule.json",
+      "source_sha256": "6479c4f41ec85322e1ad63822536a45b7eda6fe9dfce9c3cf3e849c9b8b97eaa",
+      "sha256": "6479c4f41ec85322e1ad63822536a45b7eda6fe9dfce9c3cf3e849c9b8b97eaa",
+      "bytes": 12009,
+      "encoding": "identity"
+    },
+    {
+      "source_path": "scratchpad/bt4_joint20/near_term_compute_space_schedule_v1/tactical_author_resource_handoff.json",
+      "path": "scratchpad/bt4_joint20/publication_20260908_tactical_schedule_v1/schedule/tactical_author_resource_handoff.json",
+      "source_sha256": "aeef82518283ab0442eb1c9c743fc2f0976aa575a84f1595efe1fb3add86c9ac",
+      "sha256": "aeef82518283ab0442eb1c9c743fc2f0976aa575a84f1595efe1fb3add86c9ac",
+      "bytes": 791,
+      "encoding": "identity"
+    }
+  ]
+}
