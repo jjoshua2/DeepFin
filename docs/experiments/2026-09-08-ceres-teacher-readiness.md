@@ -248,8 +248,9 @@ winner was selected from these 128 positions.
 
 ## September 8 update: reviewed CUDA probe prepared
 
-One bounded C3 CUDA probe is **prepared and independently reviewed, not launched
-or queued**. It reuses the saved 128 training positions and their exact original
+At the September 8 preparation snapshot, one bounded C3 CUDA probe was
+**prepared and independently reviewed, not launched or queued**. The September 9
+attempt and its initialization failure are recorded below. It reuses the saved 128 training positions and their exact original
 byte inputs, legal rosters, raw policy logits and primary value logits. It adds no
 new position selection, history replay or CPU reference inference. Existing
 [policy evidence](evidence/ceres-bootstrap/c3-training-sample-readout.json) and the
@@ -287,3 +288,41 @@ repetition-edge and nondefault-Q parity remain unresolved.
 · [independent preparation review](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/ceres_gpu/independent_preparation_review.json)
 · [collector source as data](../../scratchpad/bt4_joint20/publication_20260908_softsf_ceres_v1/ceres_gpu/collect.py.txt)
 · [snapshot manifest](evidence/bt4-bootstrap/softsf-training-ceres-gpu-manifest.json).
+
+
+## September 9 update: CUDA initialization failed before inference
+
+The registered **C3-768-30-pre8-I8 / ORT 1.23.2 CUDA package failed during session
+initialization**, before its first policy/value inference call. The operator
+acquired the shared GPU lease and exited nonzero after 9.92 seconds, within the
+900-second bound. The captured error reports no compatible CUDA kernel for this
+`Squeeze(23)` node during `TransformerMemcpyImpl::ProcessInitializers`.
+
+Independent review confirmed **zero completed inference calls**. No B1/B4/B16/B32
+comparison, numerical-tolerance result, CUDA neural-partition proof or throughput
+measurement was produced. The profile contains model-loading and initialization
+events only. This is a compatibility failure for the attempted package, not a
+Ceres strength result or evidence that Ceres cannot run on GPUs. Earlier completed
+CPU observations remain separate.
+
+Upstream [ORT PR #26075](https://github.com/microsoft/onnxruntime/pull/26075)
+adds the missing CUDA operator registrations; the
+[v1.26 Squeeze source](https://github.com/microsoft/onnxruntime/blob/v1.26.0/onnxruntime/core/providers/cuda/tensor/squeeze.cc)
+contains an explicit opset-23 registration absent from
+[v1.23.2](https://github.com/microsoft/onnxruntime/blob/v1.23.2/onnxruntime/core/providers/cuda/tensor/squeeze.cc).
+That supports investigating a separate newer runtime. It does **not** establish
+that an upgrade fixes this complete graph: the isolated replacement package remains
+unqualified, with no successful replacement session or unchanged retry claimed.
+
+The [failure evidence and curated review](../../scratchpad/bt4_joint20/publication_20260909_ceres_e0_v1/manifest.json)
+retain the exact operator/child failures, initialization profile, stage command/log
+and original source hashes. The existing model/reference banks were not reread for
+this publication; no model, encoder or running-labeler change was made.
+
+A separate saved-timing audit found four recent 16-shard raw policy/WDL groups at
+**447–491 rows/s in the combined labeling loop**, while reported closed-shard
+backlog fell **71 → 58 → 44 → 30**. That loop includes CPU preparation, inference
+and output work; it has no phase timers. These observations support leaving useful
+labeling progress intact, not a measured CPU/GPU bottleneck, device duty fraction
+or promised batching speedup. The compact timing records are included in the same
+manifest; no additional benchmark was run.

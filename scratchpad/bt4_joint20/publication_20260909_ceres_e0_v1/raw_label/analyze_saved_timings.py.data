@@ -1,0 +1,36 @@
+from pathlib import Path
+import json,re,hashlib,time
+R=Path('/home/josh/projects/chess');S=R/'scratchpad/bt4_joint20/raw_wdl_throughput_readiness_v1';runtime=Path('/tmp/deepfin-bt4-label-runtime-pr580-overlay')
+text=(S/'driver_tail.snapshot.log').read_text();groups=[];current=[]
+for line in text.splitlines():
+ m=re.search(r'\[bt4-raw\] (\d+)/(\d+) ([^/]+)/([^:]+): (\d+) rows, ([\d.]+) pos/s',line)
+ if not m:continue
+ i,n,src,shard,rows,rate=m.groups();r=dict(index=int(i),size=int(n),source=src,shard=shard,rows=int(rows),rate=float(rate))
+ if r['index']==1:current=[]
+ current.append(r)
+ if r['index']==r['size'] and current[0]['index']==1:groups.append(current);current=[]
+groups=groups[-5:];needed={(r['source'],r['shard']) for g in groups for r in g};receipts={};snapshots=[]
+for source in ['run06_g10','run07_g10_companion4']:
+ p=R/'data/lc0/bt4_policy_sidecars/g10_raw'/source/'bt4_raw_sidecar.progress.jsonl'
+ with p.open('rb') as f:
+  offset=max(0,p.stat().st_size-512*1024);f.seek(offset);data=f.read()
+ if offset:data=data.split(b'\n',1)[1]
+ saved=[]
+ for line in data.splitlines():
+  if not line.strip():continue
+  try:d=json.loads(line)
+  except json.JSONDecodeError:continue
+  if (source,d['source_shard']) in needed:receipts[source,d['source_shard']]=d;saved.append(d)
+ (S/(source+'.selected_receipts.json')).write_text(json.dumps(saved,indent=2)+'\n')
+result=[]
+for g in groups:
+ first,last=g[0],g[-1];f=receipts.get((first['source'],first['shard']));l=receipts.get((last['source'],last['shard']))
+ row={'shards':last['size'],'rows':last['rows'],'reported_pos_per_second':last['rate'],'approx_label_loop_seconds':last['rows']/last['rate'],'first':first,'last':last}
+ if f and l:row.update(first_published_unix=f['published_unix'],last_published_unix=l['published_unix'],first_to_last_publication_seconds=l['published_unix']-f['published_unix'])
+ result.append(row)
+for prev,nxt in zip(result,result[1:]):
+ if 'last_published_unix' in prev and 'first_published_unix' in nxt:
+  prev['last_to_next_first_published_seconds']=nxt['first_published_unix']-prev['last_published_unix']
+  prev['approx_nonloop_boundary_seconds']=prev['last_to_next_first_published_seconds']-nxt['first']['rows']/nxt['first']['rate']
+summary={'status':'READ_ONLY_SAVED_TIMING_ANALYSIS','observed_unix':time.time(),'groups':result,'limits':['Rates are one-decimal cumulative loop throughput, excluding session creation/leased preflight and final inventory refresh. Loop includes raw decode/history/encoding/key checks, policy+WDL inference, legal mapping, hashes and writing.','Publication timestamp is computed before writing its shard, so boundary subtraction is approximate and includes differential writes. No distinct preprocessing/inference timers or CUDA profiles exist here.','Source-qualified receipt matches only, bounded512KiB progress tails per source and64KiB driver tail; no raw/model/array reads.']}
+(S/'timing_readout.json').write_text(json.dumps(summary,indent=2)+'\n');print(json.dumps(result,indent=2))

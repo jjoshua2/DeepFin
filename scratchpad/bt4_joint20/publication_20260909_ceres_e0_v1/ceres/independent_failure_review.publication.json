@@ -1,0 +1,35 @@
+{
+  "status": "CONFIRMED_SESSION_INITIALIZATION_FAILURE_NO_INFERENCE_RESULT",
+  "classification": {
+    "failure_phase": "session",
+    "reason": "ORT session initialization could not find a compatible CUDA kernel for this graph Squeeze(23) node; exception raised from TransformerMemcpyImpl::ProcessInitializers.",
+    "model_sha256_from_registered_plan": "44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3",
+    "runtime_versions": {
+      "onnxruntime": "1.23.2",
+      "numpy": "1.26.2"
+    },
+    "selected_model": "C3-768-30-pre8-I8",
+    "captured_outer_exit_code": 1,
+    "outer_wall_seconds": 9.924536228179932,
+    "lease_acquired_before_session_failure": true,
+    "requested_inference_calls_completed": 0,
+    "session_created_receipt_absent": true,
+    "numeric_bank_outputs_absent": true,
+    "CUDA_partition_proof_absent": true,
+    "child_success_receipt_absent": true,
+    "within900second_bound": true
+  },
+  "interpretation": [
+    "This model/runtime/provider package failed initialization before first session.run(policy,value). The numerical tolerances and B1/4/16/32 comparisons were never exercised.",
+    "No Ceres playing-strength result, numerical-parity failure or validated CUDA graph-partition result follows from this attempt.",
+    "The initialization error does not establish that every Squeeze23 type/shape is unsupported, that Ceres is GPU-incompatible in general, or that the model weights are invalid.",
+    "An ORT profile file created during failed initialization is not a successful profiled neural inference proof.",
+    "Earlier CPU results remain separate; this failure does not invalidate their completed observations. No automatic unchanged retry was performed by the reviewer."
+  ],
+  "origin": {
+    "path": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/independent_failure_review.json",
+    "sha256": "758cc93702b25f1d674098dd3f4350d65f557f7a3300646114704cd9dc792f5e",
+    "bytes": 5452,
+    "projection": "Selected scientific fields only; original host liveness observations and review timestamp omitted."
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "status": "FAILED_NO_RETRY",
+  "phase": "session",
+  "ended_unix": 1788929151.296104,
+  "error": "RuntimeException(\"[ONNXRuntimeError] : 6 : RUNTIME_EXCEPTION : Exception during initialization: /onnxruntime_src/onnxruntime/core/optimizer/transformer_memcpy.cc:450 bool onnxruntime::TransformerMemcpyImpl::ProcessInitializers(const onnxruntime::KernelRegistryManager&, const onnxruntime::InitializedTensorSet&, const onnxruntime::logging::Logger&) status.IsOK() was false. Failed to find kernel for Squeeze(23) (node:'Squeeze' ep:'CUDAExecutionProvider'). Op with name (Squeeze) domain () and type (Squeeze) kernel is not supported in CUDAExecutionProvider. Encountered following errors: ( Version mismatch. node_version: 23 kernel start version: 1 kernel_end_version: 10\\n Version mismatch. node_version: 23 kernel start version: 11 kernel_end_version: 12\\n Version mismatch. node_version: 23 kernel start version: 13 kernel_end_version: 2147483647\\n)\\n\")"
+}

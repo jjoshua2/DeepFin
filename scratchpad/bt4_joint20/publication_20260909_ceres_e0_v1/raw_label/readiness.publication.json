@@ -1,0 +1,10 @@
+{
+  "status": "READ_ONLY_AUDIT_COMPLETE_NO_OPERATION",
+  "decision": "Preserve qualified active raw policy/WDL labeling. Existing source and saved timings explain intermittentGPU use; there is no phase timing sufficient to assert a measured CPU/inference split. Do not interrupt useful progress for an unmeasured optimization.",
+  "origin": {
+    "path": "scratchpad/bt4_joint20/raw_wdl_throughput_readiness_v1/readiness.json",
+    "sha256": "a691449c2d838c852722cf6893be6249ee1ac174a3b8f19d3d292e4bfb9dfe3e",
+    "bytes": 11691
+  },
+  "limits": "Curated decision only; live process snapshot omitted. Timing observations were saved before the Ceres attempt. No new phase timings or benchmark."
+}

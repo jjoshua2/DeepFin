@@ -1,0 +1,249 @@
+{
+  "schema": 1,
+  "scope": "Completed Ceres session-initialization failure; prepared E0T05 copy, not launched; saved raw-label timing observation. Publication only, no operational rerun.",
+  "original_snapshots": [
+    {
+      "published": "ceres/operator.actual_start.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/operator.actual_start.json",
+      "sha256": "53abb3bb9334518f8b4fc8cd4a770051442404184daf9ee7a83e964b47875cb9",
+      "bytes": 766
+    },
+    {
+      "published": "ceres/operator.actual_complete.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/operator.actual_complete.json",
+      "sha256": "e671e1f5f8891b2a4042c2e5ea4fa979597be526c35a8a616cfe39776c5fafc4",
+      "bytes": 869
+    },
+    {
+      "published": "ceres/plan.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/plan.json",
+      "sha256": "b43878b598ffe6fea94370d1a7e98ff98f668adf71905d5ba87d1bd6822e9809",
+      "bytes": 23457
+    },
+    {
+      "published": "ceres/operator_command.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/operator_command.json",
+      "sha256": "bd98fa360fa930a0dec5f52f44c5ff7e920c807631a8a3c951ac3e8908fa4718",
+      "bytes": 954
+    },
+    {
+      "published": "ceres/run/started.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run/started.json",
+      "sha256": "2ba95d70d95ded355a3ee234d91ccd36be18fbf091b9bfb8c790a7063a5e5814",
+      "bytes": 203
+    },
+    {
+      "published": "ceres/run/failed.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run/failed.json",
+      "sha256": "7abfde617da57552f0346504483b5161e5f05955f0acd6ba8dc3ebe508257d65",
+      "bytes": 658
+    },
+    {
+      "published": "ceres/run/child_failed.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run/child_failed.json",
+      "sha256": "635a4845c6d98db1926e44cf3fa9bcb73cfe9fda7de6f4d945f4734ef90f81bf",
+      "bytes": 969
+    },
+    {
+      "published": "ceres/run/lease_acquired.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run/lease_acquired.json",
+      "sha256": "ec67a5d8237750623f25c3b093194c81da451799dcc59fd60a882ae7a21bacec",
+      "bytes": 350
+    },
+    {
+      "published": "ceres/run/ort_profile_2026-09-09_00-45-47.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run/ort_profile_2026-09-09_00-45-47.json",
+      "sha256": "60acc9485e7e21a07abd09ec5ef2c18aa20741122d9ae14fe92f922fe1dcb242",
+      "bytes": 260
+    },
+    {
+      "published": "ceres/run/stage/process.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run/stage/process.json",
+      "sha256": "b26fc55ec794a9577e589e9c75c7f4c9ec65ffb278d683f6fa806c15959cb42f",
+      "bytes": 1893
+    },
+    {
+      "published": "ceres/run/stage/failed.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run/stage/failed.json",
+      "sha256": "a030461402863b193df4c0c5bf83b5f041120633bee6c1b41b6ae09f1a16efed",
+      "bytes": 2046
+    },
+    {
+      "published": "ceres/run/stage/manifest.json",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run/stage/manifest.json",
+      "sha256": "859e55df2cc268cb0f014d48036e6c016c524486fdb632116aad1ea3c6bce8e1",
+      "bytes": 23457
+    },
+    {
+      "published": "ceres/collect.py.txt",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/collect.py",
+      "sha256": "14161c5da30d310cce4a7f442739f64582fd6bfe1e5abe1779cd130b991f6cf1",
+      "bytes": 11815
+    },
+    {
+      "published": "ceres/run_probe.py.txt",
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run_probe.py",
+      "sha256": "4c5d081896738b125489e75e64630e24b72c55b5de80a5e261f7dba534160031",
+      "bytes": 6846
+    },
+    {
+      "published": "raw_label/timing_readout.json",
+      "original": "scratchpad/bt4_joint20/raw_wdl_throughput_readiness_v1/timing_readout.json",
+      "sha256": "271d88c4539acd03a6a26acfa11478cd6316f8d26be3e925e56e1d99006eaad5",
+      "bytes": 4602
+    },
+    {
+      "published": "raw_label/analyze_saved_timings.py.data",
+      "original": "scratchpad/bt4_joint20/raw_wdl_throughput_readiness_v1/analyze_saved_timings.py.data",
+      "sha256": "1bd92bbb97415eaa33d47499704428426b5653a84d33fc4909b3738171a49c1f",
+      "bytes": 3012
+    }
+  ],
+  "archives": {
+    "e0t05-preparation.tar.gz": {
+      "sha256": "354508e4533479f3f3197711a1f9fce10fbe5803220387f01be167333c2b4ef2",
+      "bytes": 22492,
+      "members": [
+        {
+          "name": "README.md",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/README.md",
+          "sha256": "215c12a0f4c25c2aae750d9e3aab3f174f5b98272f6d664a0eef891267b9e50b",
+          "bytes": 3720
+        },
+        {
+          "name": "archive_E0T05.py",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/archive_E0T05.py",
+          "sha256": "eae372ac6e22c864b1692ba629ed3423559e3e4493188a4b00c49d3c2553da63",
+          "bytes": 20618
+        },
+        {
+          "name": "archive_E0T05.py.binding.patch",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/archive_E0T05.py.binding.patch",
+          "sha256": "e6ee81162392a36828ed93c5df2e731e7cc6d1ead65829c03d02cf4a688d3020",
+          "bytes": 1608
+        },
+        {
+          "name": "author_preparation.json",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/author_preparation.json",
+          "sha256": "bb01dd5e841ea56b4d30da4b13fd7e365fb407e2832a0cc75f7e87d7cdbd3ad3",
+          "bytes": 5270
+        },
+        {
+          "name": "independent_preparation_review.json",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/independent_preparation_review.json",
+          "sha256": "fedabe07be8c3ca66c089c235187d4511beded43086a0c7f1176c2357421db0c",
+          "bytes": 4680
+        },
+        {
+          "name": "operator_command.json",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/operator_command.json",
+          "sha256": "edaf0f202b0a00df6deedf8a7af75b2556d9d817cad631089298250f3425ba6d",
+          "bytes": 1111
+        },
+        {
+          "name": "plan.json",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/plan.json",
+          "sha256": "32b9e4af875ef9b591a7ba68a59b2f1becdd2328a4c220592d84eee344ab6bae",
+          "bytes": 11584
+        },
+        {
+          "name": "preparation_checks.json",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/preparation_checks.json",
+          "sha256": "f829f7af6c9cb8db9fd34eadc072105160e1fd10c2b11955dbbf5ef0041a4649",
+          "bytes": 3556
+        },
+        {
+          "name": "preparation_host.log",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/preparation_host.log",
+          "sha256": "ef49cdf0bacb29691c59b0c07c0fae132fc164bdb21482542b71516eab5b75f4",
+          "bytes": 340
+        },
+        {
+          "name": "prepare.py",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/prepare.py",
+          "sha256": "3b9a03fc9d0f7a899c3bd188ebed6d09f94b7189634e460923b14195920b400e",
+          "bytes": 7493
+        },
+        {
+          "name": "run_registered.py",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/run_registered.py",
+          "sha256": "c92c80488c3666bc7adf960eed139f33c72ad3db07ed67a729f532c63afa699c",
+          "bytes": 2570
+        },
+        {
+          "name": "run_registered.py.binding.patch",
+          "original": "scratchpad/bt4_joint20/E0T05_cold_archive_v1/run_registered.py.binding.patch",
+          "sha256": "543dcde5c4b807671f0df511a2bc0b7f230c5db7729365f9d073f1cd544fe82f",
+          "bytes": 788
+        },
+        {
+          "name": "source_readiness.json",
+          "original": "scratchpad/storage_scaling_20260908/top_tie_readiness_v1/receipt.json",
+          "sha256": "70d79feb6c08dbd8af55358d36b5354604bdfd1cba72573ed64ce1f528392f1f",
+          "bytes": 12468
+        }
+      ]
+    },
+    "raw_label/selected-receipts.tar.gz": {
+      "sha256": "3b4b8910aec7c51bd4faffaa628fdfb14eead9929ed3b64ac6f6f6a7febf9b4f",
+      "bytes": 16315,
+      "members": [
+        {
+          "name": "run06_g10.selected_receipts.json",
+          "original": "scratchpad/bt4_joint20/raw_wdl_throughput_readiness_v1/run06_g10.selected_receipts.json",
+          "sha256": "2eb4ffab8da2b1553e12ad4881cbb30742a6ddb22ab517d3185addbb3e815198",
+          "bytes": 82212
+        },
+        {
+          "name": "run07_g10_companion4.selected_receipts.json",
+          "original": "scratchpad/bt4_joint20/raw_wdl_throughput_readiness_v1/run07_g10_companion4.selected_receipts.json",
+          "sha256": "49b6cc1e35dfe2c8fffc6820138248825b0cbefd6a701f84cef803ffb2620e58",
+          "bytes": 27025
+        }
+      ]
+    },
+    "ceres/stage-log.tar.gz": {
+      "sha256": "adcac36208a857dd29a006f19f5cab51b20ae31b466ae3ae7236e2e898aa1271",
+      "bytes": 1063,
+      "members": [
+        {
+          "name": "ceres_probe.log",
+          "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run/stage/ceres_probe.log",
+          "sha256": "f88ddb33d88ede07b560dfab09aab07557d8e9b405e9cefba10ea1ba23f7a14f",
+          "bytes": 2947
+        }
+      ]
+    }
+  },
+  "curated_projections": [
+    {
+      "published": "ceres/independent_failure_review.publication.json",
+      "sha256": "faa4e6de90d3f5a14cc452107c5d98a2b2711ccea14f7d99aee23ed3f424897b",
+      "original": {
+        "path": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/independent_failure_review.json",
+        "sha256": "758cc93702b25f1d674098dd3f4350d65f557f7a3300646114704cd9dc792f5e",
+        "bytes": 5452,
+        "projection": "Selected scientific fields only; original host liveness observations and review timestamp omitted."
+      }
+    },
+    {
+      "published": "raw_label/readiness.publication.json",
+      "sha256": "01e22bbb52ca1da9d9520d53015f1d4df76110efbbd98c0b2a2e1208b2b4cdb7",
+      "original": {
+        "path": "scratchpad/bt4_joint20/raw_wdl_throughput_readiness_v1/readiness.json",
+        "sha256": "a691449c2d838c852722cf6893be6249ee1ac174a3b8f19d3d292e4bfb9dfe3e",
+        "bytes": 11691
+      }
+    }
+  ],
+  "independent_reviews": {
+    "ceres_failure": {
+      "original": "scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/independent_failure_review.json",
+      "sha256": "758cc93702b25f1d674098dd3f4350d65f557f7a3300646114704cd9dc792f5e"
+    },
+    "e0t05_preparation": {
+      "member": "independent_preparation_review.json",
+      "sha256": "fedabe07be8c3ca66c089c235187d4511beded43086a0c7f1176c2357421db0c"
+    }
+  }
+}

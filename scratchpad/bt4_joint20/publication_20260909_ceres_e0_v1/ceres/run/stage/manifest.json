@@ -1,0 +1,729 @@
+{
+  "allowed_CPU_shape_ops": [
+    "Shape",
+    "Size",
+    "Gather",
+    "Unsqueeze",
+    "Squeeze",
+    "Concat",
+    "Slice",
+    "Cast",
+    "Reshape",
+    "Add",
+    "Mul",
+    "Div",
+    "Equal",
+    "Where"
+  ],
+  "batch_sizes": [
+    1,
+    4,
+    16,
+    32
+  ],
+  "calls_total": 172,
+  "cpu_affinity": [
+    0,
+    1
+  ],
+  "created_unix": 1788906090.9593475,
+  "environment": {
+    "CHESS_EXPERIMENT_ROOT": "/home/josh/projects/chess",
+    "CUDA_CACHE_PATH": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run/cuda_cache",
+    "CUDA_VISIBLE_DEVICES": "0",
+    "LD_LIBRARY_PATH": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib:/usr/local/cuda/targets/x86_64-linux/lib",
+    "MKL_NUM_THREADS": "2",
+    "NUMEXPR_NUM_THREADS": "2",
+    "OMP_NUM_THREADS": "2",
+    "OPENBLAS_NUM_THREADS": "2",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "gpu_identity": "NVIDIA GeForce RTX 5090, GPU-74f4e66d-9989-28ea-b243-6afea9e766b2, 610.74, 32607",
+  "gpu_lease": "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock",
+  "inclusive_seconds": 900,
+  "launch_order": "A later GPU gap during CPU value rewrite after active SoftSF training/arenas priority. No queue: busy shared GPU lease or competing compute PID refuses. No pause request, launch or automatic retry is part of preparation.",
+  "limitations": [
+    "CPU references use ORT1.29/NumPy2.2.6 B4; GPU uses installed ORT1.23.2/NumPy1.26.2. This jointly tests backend/version/batch consistency, not same-version device-only error.",
+    "Original saved128 TPG bytes and source identities are reused. No native Ceres repetition-edge oracle, nondefault-Q qualification, corpus replay, CPU reference inference or new policy sampling.",
+    "One fixed ascending B1/B4/B16/B32 sweep, each on128 rows; first B1 call includes profiling and is separately reported. Single-order warm-cache and batch-shape effects remain.",
+    "Host session.run timing includes H2D/D2H and synchronous outputs, excludes masking/output writes/resource checks. It is component cost, not production labeling throughput or strength.",
+    "Successful child output is not sufficient: completed operator receipt and independently captured actual outer terminal exit are required. No environment/runtime mutation or speculative fallback."
+  ],
+  "limits_interpretation": "8 GiB limits the ORT CUDA arena, not all CUDA memory. Device-wide 12 GiB, child RSS12 GiB, host available16 GiB, reserve150 GiB and aggregate logical output128 MiB are sampled; transient overshoot is possible. Per-file RLIMIT_FSIZE128 MiB is not an aggregate quota. Absolute outer deadline includes preflight, library/model verification, session startup, all calls, profiling/readout and cleanup; inherited inner timeout keeps lease through process teardown if coordinator dies.",
+  "minimum_host_available_bytes": 17179869184,
+  "minimum_local_free_bytes": 161061273600,
+  "model": {
+    "input": {
+      "dtype": "uint8",
+      "name": "squares_byte",
+      "ort_type": "tensor(uint8)",
+      "shape": [
+        64,
+        137
+      ]
+    },
+    "outputs": {
+      "value": {
+        "dtype": "float16",
+        "interpretation": "independent stable float64 softmax, temperature1; no blend",
+        "kind": "logits",
+        "order": [
+          "W",
+          "D",
+          "L"
+        ],
+        "ort_type": "tensor(float16)",
+        "pov": "current side to move per local adapter contract"
+      },
+      "value2": {
+        "dtype": "float16",
+        "interpretation": "independent stable float64 softmax, temperature1; no blend",
+        "kind": "logits",
+        "order": [
+          "W",
+          "D",
+          "L"
+        ],
+        "ort_type": "tensor(float16)",
+        "pov": "current side to move per local adapter contract"
+      }
+    },
+    "path": "/home/josh/projects/chess/data/ceres/C3-768-30-pre8-I8/C3-768-30-pre8-I8.onnx",
+    "sha256": "44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3",
+    "stat": [
+      2096,
+      41032624,
+      639132168,
+      1788878564964613017,
+      1788878564964613017
+    ]
+  },
+  "nvidia_smi": "/usr/lib/wsl/lib/nvidia-smi",
+  "official_runtime_documentation": [
+    "https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html"
+  ],
+  "outer_KILL_grace_seconds": 30,
+  "outer_TERM_seconds": 870,
+  "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run",
+  "output_interpretation": {
+    "policy": "Raw native float16 1858 logits; float64 stable softmax only over the pinned full legal roster, T1.",
+    "value": "Raw native float16 primary value logits, W/D/L current side to move per existing adapter contract; independent float64 stable softmax T1. No value2 blend."
+  },
+  "output_limit_bytes": 134217728,
+  "outputs": [
+    "policy",
+    "value"
+  ],
+  "pins": [
+    {
+      "bytes": 16754,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/numpy/__init__.py",
+      "sha256": "11a9455eb4297e45351657f5a60f198c21831c7a395f8c59a7361fb2edf785e5",
+      "stat": [
+        2096,
+        34054365,
+        16754,
+        1787014331368818369,
+        1787014331368818369
+      ]
+    },
+    {
+      "bytes": 7431089,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/numpy/core/_multiarray_umath.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "66fd7a7c485be559a11fa2cd69b5d86ab87198f187067b572ab7f30ea1e41fa4",
+      "stat": [
+        2096,
+        34054932,
+        7431089,
+        1787014331629711231,
+        1787014331629711231
+      ]
+    },
+    {
+      "bytes": 129240,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn.so.9",
+      "sha256": "94f44e2e8fb2d4bca8c534b14f03ef84e095376dad72a257fd854377ef0b3427",
+      "stat": [
+        2096,
+        33807796,
+        129240,
+        1787014861429038134,
+        1787014861429038134
+      ]
+    },
+    {
+      "bytes": 272749720,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_adv.so.9",
+      "sha256": "a0b81bcbf08d179bae332c62218ed907f51f311b5fbd2156f0c0b13a6c1bcf63",
+      "stat": [
+        2096,
+        33807800,
+        272749720,
+        1787014866329693533,
+        1787014866329693533
+      ]
+    },
+    {
+      "bytes": 4203784,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_cnn.so.9",
+      "sha256": "94341125830e58eaa50b908f73f356802c5f66a60a1940efa5f6b427cc6058aa",
+      "stat": [
+        2096,
+        33807852,
+        4203784,
+        1787014866425693530,
+        1787014866425693530
+      ]
+    },
+    {
+      "bytes": 515924288,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_engines_precompiled.so.9",
+      "sha256": "5192b64e6a1c59165716bbe4517b37f0dfdfa349dfbb1772a4ba38a1e83b0b41",
+      "stat": [
+        2096,
+        33807923,
+        515924288,
+        1787014873526190921,
+        1787014873526190921
+      ]
+    },
+    {
+      "bytes": 31483304,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_engines_runtime_compiled.so.9",
+      "sha256": "d6184fc49c8e93c47440de8d63b77f7e7d5ad1e5e223b82608789fe599035d2f",
+      "stat": [
+        2096,
+        33807924,
+        31483304,
+        1787014873821693297,
+        1787014873821693297
+      ]
+    },
+    {
+      "bytes": 4451608,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_graph.so.9",
+      "sha256": "74d0007de32dd07a5a1e7a0e9d2c53cb101ac9bd7b0d5d88b63cc6e7a3691129",
+      "stat": [
+        2096,
+        33807925,
+        4451608,
+        1787014873861693296,
+        1787014873861693296
+      ]
+    },
+    {
+      "bytes": 60822016,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_heuristic.so.9",
+      "sha256": "b7051f52dea857d0c0c612865b058e538d703d35cb4fbfa066e81cbca785fda5",
+      "stat": [
+        2096,
+        33807927,
+        60822016,
+        1787014874429693278,
+        1787014874429693278
+      ]
+    },
+    {
+      "bytes": 106964632,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/nvidia/cudnn/lib/libcudnn_ops.so.9",
+      "sha256": "282e3829ea9dd547ab02bd880e68bc96fcf06e5ac50da48b571288502467f372",
+      "stat": [
+        2096,
+        33807928,
+        106964632,
+        1787014876605693211,
+        1787014876605693211
+      ]
+    },
+    {
+      "bytes": 14874,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/__init__.py",
+      "sha256": "1ca44e862e236031dde5dfb8a4d217e3770fa43201dadcf0b947fd43ed16d20e",
+      "stat": [
+        2096,
+        33556126,
+        14874,
+        1774996556538983259,
+        1783009385050018131
+      ]
+    },
+    {
+      "bytes": 21152312,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/libonnxruntime.so.1.23.2",
+      "sha256": "c7111c65636e247bb31d922af77ce77c47b4f902b670c13f635a9912f1b39845",
+      "stat": [
+        2096,
+        33556137,
+        21152312,
+        1774996556658983227,
+        1783009385055192582
+      ]
+    },
+    {
+      "bytes": 435854600,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/libonnxruntime_providers_cuda.so",
+      "sha256": "d4c2601ea14a704cfabeb8222b769a71e9cfbacc86b797ccaa5eaea7c492ca4f",
+      "stat": [
+        2096,
+        33556138,
+        435854600,
+        1774996559990982342,
+        1783009385055192582
+      ]
+    },
+    {
+      "bytes": 14632,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/libonnxruntime_providers_shared.so",
+      "sha256": "ee7bf6d4d32f523dbdebf9dec70a1b3287a1a60d019192490732750dc385f98c",
+      "stat": [
+        2096,
+        33556139,
+        14632,
+        1774996559990982342,
+        1783009385055192582
+      ]
+    },
+    {
+      "bytes": 760488,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/libonnxruntime_providers_tensorrt.so",
+      "sha256": "130243507df6b6f432a9722a5aeeafb184da20811efd629584ef46477caec172",
+      "stat": [
+        2096,
+        33556140,
+        760488,
+        1774996559994982341,
+        1783009385055192582
+      ]
+    },
+    {
+      "bytes": 59838,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/onnxruntime_inference_collection.py",
+      "sha256": "e63ae30f05880589a999b5e79537042bad6baed6f749ef9d779edd74730ae587",
+      "stat": [
+        2096,
+        33556142,
+        59838,
+        1774996559998982339,
+        1783009385055192582
+      ]
+    },
+    {
+      "bytes": 22582104,
+      "path": "/home/josh/.local/lib/python3.10/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "c0da77661bac217b929677466c9229e79031954dd3465b71198daf876ad66fe9",
+      "stat": [
+        2096,
+        33556143,
+        22582104,
+        1774996560134982303,
+        1783009385055192582
+      ]
+    },
+    {
+      "bytes": 5937704,
+      "path": "/usr/bin/python3.10",
+      "sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49",
+      "stat": [
+        2096,
+        89253,
+        5937704,
+        1772538992000000000,
+        1773693016214688042
+      ]
+    },
+    {
+      "bytes": 2220400,
+      "path": "/usr/lib/x86_64-linux-gnu/libc.so.6",
+      "sha256": "e01b1ce7be2987f3b8560e26d0df2623f9dd5cec17be923ae28a785bc0d32d50",
+      "stat": [
+        2096,
+        89424,
+        2220400,
+        1784895077000000000,
+        1786141137282391359
+      ]
+    },
+    {
+      "bytes": 14432,
+      "path": "/usr/lib/x86_64-linux-gnu/libdl.so.2",
+      "sha256": "d255ba9c9e3a7c35115e578c898147edaba1a2bcf742cc3a76995ceed9d5ac4f",
+      "stat": [
+        2096,
+        89427,
+        14432,
+        1784895077000000000,
+        1786141137282391359
+      ]
+    },
+    {
+      "bytes": 125488,
+      "path": "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "sha256": "fc9d43b2f6c20e53b009238f767c5b949d202389e20de9e202ea684b4ba3729a",
+      "stat": [
+        2096,
+        16203,
+        125488,
+        1766181126000000000,
+        1773692995438699302
+      ]
+    },
+    {
+      "bytes": 940560,
+      "path": "/usr/lib/x86_64-linux-gnu/libm.so.6",
+      "sha256": "df621c68dbfed7e843434ef2faedb9f4d4b0543ad161e9a55eaf4d4ce2443176",
+      "stat": [
+        2096,
+        89428,
+        940560,
+        1784895077000000000,
+        1786141137286391359
+      ]
+    },
+    {
+      "bytes": 21448,
+      "path": "/usr/lib/x86_64-linux-gnu/libpthread.so.0",
+      "sha256": "fbed9505adacada2abb37c6b43be2df6de81e742712c6025694ba48de62c7e78",
+      "stat": [
+        2096,
+        89440,
+        21448,
+        1784895077000000000,
+        1786141137294391358
+      ]
+    },
+    {
+      "bytes": 14664,
+      "path": "/usr/lib/x86_64-linux-gnu/librt.so.1",
+      "sha256": "83eda8758c8697323bedf48bc0186c006cca2205441a988cb0f5072b96262100",
+      "stat": [
+        2096,
+        89443,
+        14664,
+        1784895077000000000,
+        1786141137298391356
+      ]
+    },
+    {
+      "bytes": 2260296,
+      "path": "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.30",
+      "sha256": "ff0825e113603c3866680d5d52216bc6d8eedf3a59f52a0aef67ff01994db128",
+      "stat": [
+        2096,
+        15655,
+        2260296,
+        1766181126000000000,
+        1773692994370699662
+      ]
+    },
+    {
+      "bytes": 105140976,
+      "path": "/usr/local/cuda-12.9/targets/x86_64-linux/lib/libcublas.so.12.9.1.4",
+      "sha256": "d63456d94f1b8e2408a8a9538c8740eb474c9eba48a84f420b15e2e10fbcd048",
+      "stat": [
+        2096,
+        2263,
+        105140976,
+        1748715224000000000,
+        1773692949306709962
+      ]
+    },
+    {
+      "bytes": 749205904,
+      "path": "/usr/local/cuda-12.9/targets/x86_64-linux/lib/libcublasLt.so.12.9.1.4",
+      "sha256": "96ddf4891ca4f4ed1475966783a9185df2abd64a81c3cc713b96d036696fc541",
+      "stat": [
+        2096,
+        2330,
+        749205904,
+        1748715224000000000,
+        1773692965182705035
+      ]
+    },
+    {
+      "bytes": 741088,
+      "path": "/usr/local/cuda-12.9/targets/x86_64-linux/lib/libcudart.so.12.9.79",
+      "sha256": "256e6409e4f06f618e1fb53d4844a6b81cdded1013afa8ade40c22f99eb133b7",
+      "stat": [
+        2096,
+        2354,
+        741088,
+        1747087761000000000,
+        1773692967338704377
+      ]
+    },
+    {
+      "bytes": 289566960,
+      "path": "/usr/local/cuda-12.9/targets/x86_64-linux/lib/libcufft.so.11.4.1.4",
+      "sha256": "edff31b0fbda98a7918b15f5bf562ea8bf4eab7e81376f7a8037b05c153fb5f8",
+      "stat": [
+        2096,
+        2250,
+        289566960,
+        1748192874000000000,
+        1773692948170710315
+      ]
+    },
+    {
+      "bytes": 166965432,
+      "path": "/usr/local/cuda-12.9/targets/x86_64-linux/lib/libcurand.so.10.3.10.19",
+      "sha256": "ab8c07338fa663c018b16df5b3f3878c84aaae98bda930e9e8bad340427b0faa",
+      "stat": [
+        2096,
+        2253,
+        166965432,
+        1741064153000000000,
+        1773692948886710093
+      ]
+    },
+    {
+      "bytes": 5659,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/prepare.py",
+      "sha256": "02124e76d6e624075c2ba41145a7c0893993dc5e06c4d7bab93eeece85c9391a",
+      "stat": [
+        2096,
+        73617242,
+        5659,
+        1788905662261365795,
+        1788905662261365795
+      ]
+    },
+    {
+      "bytes": 7293,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/freeze_plan.py",
+      "sha256": "afa04c669c4a1291f85c9e39954707bba30e12c50f99cb3f70a4e1b236cb2d61",
+      "stat": [
+        2096,
+        73620120,
+        7293,
+        1788906090626224916,
+        1788906090626224916
+      ]
+    },
+    {
+      "bytes": 11815,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/collect.py",
+      "sha256": "14161c5da30d310cce4a7f442739f64582fd6bfe1e5abe1779cd130b991f6cf1",
+      "stat": [
+        2096,
+        73617972,
+        11815,
+        1788906204133844784,
+        1788906204133844784
+      ]
+    },
+    {
+      "bytes": 6846,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run_probe.py",
+      "sha256": "4c5d081896738b125489e75e64630e24b72c55b5de80a5e261f7dba534160031",
+      "stat": [
+        2096,
+        73618460,
+        6846,
+        1788905993094510642,
+        1788905993094510642
+      ]
+    },
+    {
+      "bytes": 460552,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/references.npz",
+      "sha256": "c9b726994d74d433558fc98f1decb3673d41dab2a0bc8183b6cdaab99a81713b",
+      "stat": [
+        2096,
+        73617323,
+        460552,
+        1788905674761339246,
+        1788905674761339246
+      ]
+    },
+    {
+      "bytes": 192874,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/reference_rows.json",
+      "sha256": "4f09017553806c1868c8566a03ee4e047a4d277f9ecbe64cff51a351954f3cf3",
+      "stat": [
+        2096,
+        73617324,
+        192874,
+        1788905674765339245,
+        1788905674765339245
+      ]
+    },
+    {
+      "bytes": 38607,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/reference_assembly.json",
+      "sha256": "247767f3de68dce7f97c4fec2560db5144b5225db2a761931de4a3b8e044b17f",
+      "stat": [
+        2096,
+        73617325,
+        38607,
+        1788905674773950029,
+        1788905674773950029
+      ]
+    },
+    {
+      "bytes": 12047,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/runtime_inspection.json",
+      "sha256": "30a104d2708070c8044723eecd79bcdd05c399603806249f6da9830fbc8565ac",
+      "stat": [
+        2096,
+        73603500,
+        12047,
+        1788905678262676918,
+        1788905678262676918
+      ]
+    },
+    {
+      "bytes": 6508,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/graph_metadata.json",
+      "sha256": "71ccfeed1cda5f708f5b28e43796954e5d72600d90e2bdd59d07c3383047ed87",
+      "stat": [
+        2096,
+        71464865,
+        6508,
+        1788878598512633610,
+        1788878598512633610
+      ]
+    },
+    {
+      "bytes": 22348,
+      "path": "/tmp/deepfin-g20t1-cold-archive-publication/scripts/bt4_direct_screen.py",
+      "sha256": "41d736832d026f32ec90b36cd75d541c7004540df37d686bd78bae268c36c329",
+      "stat": [
+        2096,
+        14765523,
+        22348,
+        1788901496290459319,
+        1788901496290459319
+      ]
+    },
+    {
+      "bytes": 39880,
+      "path": "/usr/bin/timeout",
+      "sha256": "8d21b4cf1b204cc2387377a63c542ecdd0ae0895613db67ceb7da1e253110741",
+      "stat": [
+        2096,
+        88655,
+        39880,
+        1707363999000000000,
+        1773693013422690635
+      ]
+    },
+    {
+      "bytes": 22912,
+      "path": "/usr/bin/taskset",
+      "sha256": "63e52c4b99a688ccd7bab6edbc6df2af1acad124eb852adcb4d20043d28eb2d3",
+      "stat": [
+        2096,
+        88910,
+        22912,
+        1772813404000000000,
+        1773693013726690353
+      ]
+    },
+    {
+      "bytes": 35336,
+      "path": "/usr/bin/nice",
+      "sha256": "6e3fd69addd6cff40185a406577b80ca03072588d593387a6a6ef73e9bc36348",
+      "stat": [
+        2096,
+        88988,
+        35336,
+        1707363999000000000,
+        1773693013970690126
+      ]
+    },
+    {
+      "bytes": 18816,
+      "path": "/usr/bin/ionice",
+      "sha256": "5681a648bb9901890cd58322f057a237d5eb9c0791d3e5bbf7c4164533973c67",
+      "stat": [
+        2096,
+        89047,
+        18816,
+        1772813404000000000,
+        1773693015826688402
+      ]
+    },
+    {
+      "bytes": 3710360,
+      "path": "/usr/bin/git",
+      "sha256": "587ef21868c948b883993e23209b86a72a6ddc06aab1545c697ffc31075acd4a",
+      "stat": [
+        2096,
+        88470,
+        3710360,
+        1772135393000000000,
+        1773693013322690727
+      ]
+    },
+    {
+      "bytes": 859968,
+      "path": "/usr/lib/wsl/lib/nvidia-smi",
+      "sha256": "9a04592a551e6030846733943c19965c3473ca8717857295255ece387746d90f",
+      "stat": [
+        60,
+        9851624186157136,
+        859968,
+        1783035843000000000,
+        1784161883338419800
+      ]
+    },
+    {
+      "bytes": 187984,
+      "path": "/usr/lib/wsl/lib/libcuda.so.1",
+      "sha256": "8591d53d18ab84e5f446a474b96fb8bc06766b429cdae5c36c650a6b18a26603",
+      "stat": [
+        60,
+        16325548650427248,
+        187984,
+        1783035843000000000,
+        1784161882774295500
+      ]
+    },
+    {
+      "bytes": 639132168,
+      "path": "/home/josh/projects/chess/data/ceres/C3-768-30-pre8-I8/C3-768-30-pre8-I8.onnx",
+      "sha256": "44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3",
+      "stat": [
+        2096,
+        41032624,
+        639132168,
+        1788878564964613017,
+        1788878564964613017
+      ]
+    }
+  ],
+  "provider_admission": "No TensorRT, no Python constructor/run fallback. Profile first B1 call in sole session: CUDA MatMul/Gemm-family events required; any CPU event must be a listed shape operator with only integer/bool outputs totaling <=4096 elements. No CPU floating neural compute. Same graph partition/fallback state retained for all later calls.",
+  "provider_options": {
+    "arena_extend_strategy": "kSameAsRequested",
+    "device_id": 0,
+    "gpu_mem_limit": 8589934592,
+    "use_tf32": 0
+  },
+  "purpose": "One direct ORT CUDA session: compatibility, saved-input numerical parity and bounded batch cost; no teacher or training selection.",
+  "python": "/usr/bin/python3.10",
+  "references": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/references.npz",
+  "rows": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/reference_rows.json",
+  "rows_per_batch_sweep": 128,
+  "sample_interval_seconds": 5,
+  "sampled_child_rss_limit_bytes": 12884901888,
+  "sampled_device_memory_limit_MiB": 12288,
+  "schema": 1,
+  "status": "PREPARED_NOT_LAUNCHED",
+  "stop_paths": [
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/STOP"
+  ],
+  "supervisor": "/tmp/deepfin-g20t1-cold-archive-publication/scripts/bt4_direct_screen.py",
+  "supervisor_head": "daf27a9afc5fd3ffea0f7b89a1a115c4f3c707b8",
+  "supervisor_runtime": "/tmp/deepfin-g20t1-cold-archive-publication",
+  "tolerance_rationale": "Prespecified engineering acceptance, not a strength or native-parity criterion. CPU eight-board B1/B4 observed max raw logit difference 0.001953125 and max legal probability difference 0.0003513172. Absolute logit tolerance is about 10x that observed maximum, probability about 5.7x, with relative allowance for larger logits. Primary WDL uses the same prospective probability bound; no prior WDL batch-variability bound was measured. Require all raw logits and legal/WDL probabilities within limits; top-move changes only if CPU/B1 probability gap <=0.004. Abort at first failure without replacing rows or retrying smaller batches.",
+  "tolerances": {
+    "logit_atol": 0.02,
+    "logit_rtol": 0.002,
+    "probability_atol": 0.002
+  },
+  "versions": {
+    "numpy": "1.26.2",
+    "onnxruntime": "1.23.2"
+  }
+}

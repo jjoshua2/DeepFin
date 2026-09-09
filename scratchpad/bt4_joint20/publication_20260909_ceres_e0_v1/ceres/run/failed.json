@@ -1,0 +1,21 @@
+{
+  "status": "FAILED_OR_STOPPED_NO_RETRY",
+  "started_unix": 1788929142.890643,
+  "deadline_unix": 1788930042.816109,
+  "pid": 506179,
+  "plan_sha256": "b43878b598ffe6fea94370d1a7e98ff98f668adf71905d5ba87d1bd6822e9809",
+  "lease_acquired_unix": 1788929147.1069396,
+  "gpu_identity": "NVIDIA GeForce RTX 5090, GPU-74f4e66d-9989-28ea-b243-6afea9e766b2, 610.74, 32607",
+  "ended_unix": 1788929152.6633894,
+  "error": "ValueError('ceres_probe/timeout exited 1')",
+  "resource_samples": [
+    {
+      "unix": 1788929147.493887,
+      "device0_memory_used_MiB": 3466
+    },
+    {
+      "unix": 1788929152.662793,
+      "device0_memory_used_MiB": 3466
+    }
+  ]
+}

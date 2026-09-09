@@ -1,0 +1,144 @@
+{
+  "status": "READ_ONLY_SAVED_TIMING_ANALYSIS",
+  "observed_unix": 1788928945.518758,
+  "groups": [
+    {
+      "shards": 1,
+      "rows": 8355,
+      "reported_pos_per_second": 430.0,
+      "approx_label_loop_seconds": 19.430232558139537,
+      "first": {
+        "index": 1,
+        "size": 1,
+        "source": "run06_g10",
+        "shard": "w03-00296.jsonl.zst",
+        "rows": 8355,
+        "rate": 430.0
+      },
+      "last": {
+        "index": 1,
+        "size": 1,
+        "source": "run06_g10",
+        "shard": "w03-00296.jsonl.zst",
+        "rows": 8355,
+        "rate": 430.0
+      },
+      "first_published_unix": 1788916886.864767,
+      "last_published_unix": 1788916886.864767,
+      "first_to_last_publication_seconds": 0.0,
+      "last_to_next_first_published_seconds": 10622.172156333923,
+      "approx_nonloop_boundary_seconds": 10603.28655925097
+    },
+    {
+      "shards": 16,
+      "rows": 132934,
+      "reported_pos_per_second": 490.9,
+      "approx_label_loop_seconds": 270.7964962314117,
+      "first": {
+        "index": 1,
+        "size": 16,
+        "source": "run07_g10_companion4",
+        "shard": "w01-00234.jsonl.zst",
+        "rows": 8287,
+        "rate": 438.8
+      },
+      "last": {
+        "index": 16,
+        "size": 16,
+        "source": "run07_g10_companion4",
+        "shard": "w01-00235.jsonl.zst",
+        "rows": 132934,
+        "rate": 490.9
+      },
+      "first_published_unix": 1788927509.0369234,
+      "last_published_unix": 1788927760.9946795,
+      "first_to_last_publication_seconds": 251.95775604248047,
+      "last_to_next_first_published_seconds": 71.50458788871765,
+      "approx_nonloop_boundary_seconds": 53.39279211406976
+    },
+    {
+      "shards": 16,
+      "rows": 132883,
+      "reported_pos_per_second": 470.8,
+      "approx_label_loop_seconds": 282.24936278674596,
+      "first": {
+        "index": 1,
+        "size": 16,
+        "source": "run06_g10",
+        "shard": "w10-00295.jsonl.zst",
+        "rows": 8230,
+        "rate": 454.4
+      },
+      "last": {
+        "index": 16,
+        "size": 16,
+        "source": "run07_g10_companion4",
+        "shard": "w01-00236.jsonl.zst",
+        "rows": 132883,
+        "rate": 470.8
+      },
+      "first_published_unix": 1788927832.4992673,
+      "last_published_unix": 1788928096.6276867,
+      "first_to_last_publication_seconds": 264.1284193992615,
+      "last_to_next_first_published_seconds": 69.91896390914917,
+      "approx_nonloop_boundary_seconds": 50.239656793044304
+    },
+    {
+      "shards": 16,
+      "rows": 132649,
+      "reported_pos_per_second": 460.6,
+      "approx_label_loop_seconds": 287.9917498914459,
+      "first": {
+        "index": 1,
+        "size": 16,
+        "source": "run06_g10",
+        "shard": "w07-00298.jsonl.zst",
+        "rows": 8407,
+        "rate": 427.2
+      },
+      "last": {
+        "index": 16,
+        "size": 16,
+        "source": "run07_g10_companion4",
+        "shard": "w01-00237.jsonl.zst",
+        "rows": 132649,
+        "rate": 460.6
+      },
+      "first_published_unix": 1788928166.5466506,
+      "last_published_unix": 1788928434.8735552,
+      "first_to_last_publication_seconds": 268.3269045352936,
+      "last_to_next_first_published_seconds": 70.11878561973572,
+      "approx_nonloop_boundary_seconds": 50.76193914670667
+    },
+    {
+      "shards": 16,
+      "rows": 132941,
+      "reported_pos_per_second": 446.9,
+      "approx_label_loop_seconds": 297.4737077646006,
+      "first": {
+        "index": 1,
+        "size": 16,
+        "source": "run06_g10",
+        "shard": "w07-00299.jsonl.zst",
+        "rows": 8397,
+        "rate": 433.8
+      },
+      "last": {
+        "index": 16,
+        "size": 16,
+        "source": "run06_g10",
+        "shard": "w06-00299.jsonl.zst",
+        "rows": 132941,
+        "rate": 446.9
+      },
+      "first_published_unix": 1788928504.9923408,
+      "last_published_unix": 1788928783.0771642,
+      "first_to_last_publication_seconds": 278.08482336997986
+    }
+  ],
+  "limits": [
+    "Rates are one-decimal cumulative loop throughput, excluding session creation/leased preflight and final inventory refresh. Loop includes raw decode/history/encoding/key checks, policy+WDL inference, legal mapping, hashes and writing.",
+    "Publication timestamp is computed before writing its shard, so boundary subtraction is approximate and includes differential writes. No distinct preprocessing/inference timers or CUDA profiles exist here.",
+    "Source-qualified receipt matches only, bounded512KiB progress tails per source and64KiB driver tail; no raw/model/array reads."
+  ]
+}

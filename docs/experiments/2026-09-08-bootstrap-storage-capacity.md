@@ -258,3 +258,32 @@ The [operator command](../../scratchpad/bt4_joint20/G20T1_cold_archive_v1/operat
 Execution would inventory the source progressively, verify every tar member and its contents against that inventory, compare external readback and local archive digests, and recheck source stability. **The full source remains in place even after success.** Existing attempts refuse, with no automatic resume; failures retain source and partial archive state. Only the verified local staging tar can be removed after successful external readback. ACL/xattrs are captured but not independently compared, and no restore test is claimed.
 
 The [publication manifest](../../scratchpad/bt4_joint20/G20T1_cold_archive_v1/publication_manifest.json) binds the exact helper, wrapper, command, plan and review evidence. Six focused disposable checks passed before a separately reviewed absolute-tool-path correction; their original source/result and correction supplement are preserved. This publication ran only link, hash and hygiene checks. No dataset inventory, copy, transfer, deletion or launch has occurred in this preparation.
+
+
+## September 9: next E0T05 archive prepared
+
+The next concrete copy candidate is **E0T05**,
+`data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_t050`, with 18,910,484 rows
+and 2,309 shards in its completed summary. It is distinct from the older
+`_bt4_toptie_a100` corpus. Its two summary hashes match the completed seed-zero
+training and seed-one confirmation bindings. The inspected V50, tactical and
+SF/B100 horizon plans do not need this top-tie payload; keep both source summaries
+and every checkpoint, run summary, completion/schedule and arena record.
+
+The [exact prepared bundle](../../scratchpad/bt4_joint20/publication_20260909_ceres_e0_v1/e0t05-preparation.tar.gz)
+has **independent preparation PASS and is not launched or queued**. It changes
+only literal source/profile/destination bindings in the reviewed G50 archive
+helper and wrapper. Metadata/source pins, source-root identity, actual mount and
+resources, and the bounded command were checked. This was not a recursive payload
+inventory or a fresh full-source checksum.
+
+The unchanged four-hour inclusive cap, 24 GiB staging ceiling, 150 GiB reserve,
+CPUs 0,1 and shared nonblocking preparation lock apply. V50 CPU preparation has
+priority; a later compatible window may fall during GPU training. The completed
+G50 copy's 49.1 minutes is a cost reference, not an E0T05 completion promise or
+measured size. **The full source remains retained even after a successful copy.**
+Any later shard-only reclamation needs its own exact verified-archive/current-source
+review, with summaries and evaluation evidence left in place. No E0T05 transfer
+or removal occurred in this publication. The
+[member/hash manifest and review](../../scratchpad/bt4_joint20/publication_20260909_ceres_e0_v1/manifest.json)
+preserve the original frozen evidence.

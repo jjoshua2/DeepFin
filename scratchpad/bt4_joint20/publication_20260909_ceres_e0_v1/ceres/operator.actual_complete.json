@@ -1,0 +1,33 @@
+{
+  "status": "OUTER_NONZERO",
+  "started_unix": 1788929142.816109,
+  "deadline_unix": 1788930042.816109,
+  "outer_pid": 506178,
+  "capture_parent_pid": 506177,
+  "command": [
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=30s",
+    "870s",
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/taskset",
+    "-c",
+    "0,1",
+    "/usr/bin/python3.10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/gpu_probe_v1/run_probe.py",
+    "--expected-plan-sha256",
+    "b43878b598ffe6fea94370d1a7e98ff98f668adf71905d5ba87d1bd6822e9809",
+    "--execute",
+    "--deadline",
+    "1788930042.816109"
+  ],
+  "plan_sha256": "b43878b598ffe6fea94370d1a7e98ff98f668adf71905d5ba87d1bd6822e9809",
+  "exit_code": 1,
+  "ended_unix": 1788929152.7406452,
+  "outer_wall_seconds": 9.924536228179932
+}
