@@ -5,9 +5,11 @@ before a nearly redundant Ceres arm. It does not establish better calibration,
 reduced bias or playing strength. This record tracks the collection and runtime
 work needed to run that test and the separate training-horizon comparison.
 
-**September 9:** the [V50 rewrite, qualification and prospective schedule completed;
-training has started](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#v50-preparation-complete-training-started--september-9).
-This is startup evidence, not a training or playing result.
+**September 9:** [V50 training and realized schedule verification completed; its
+registered B100 arena started](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#v50-training-complete-b100-arena-started--september-9).
+No playing result is reported. [T1 materialization and metadata qualification are
+complete](2026-09-09-bt4-target-temperature-horizon.md#materialization-and-qualification-complete--september-9);
+its two-epoch training and matches remain pending.
 
 Related science: [value-head readout](2026-09-08-sf-anchored-value-bootstrap.md)
 and [completed G50/B100 comparison](2026-09-08-bt4-g50-b100-dose-comparison.md).
