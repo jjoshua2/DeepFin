@@ -48,6 +48,7 @@ CORPORA = {
     'SoftSF10': SOURCE.with_name(SOURCE.name + '_softsf_cp10'),
     'B100V10': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_value10'),
     'B100V50': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_value50'),
+    'B100Tactical100': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_tactical100'),
 }
 TOTAL_CAPS = {'H20': 32400, 'B100': 27000, 'G50': 21600}
 C_CORPUS = SOURCE.with_name(SOURCE.name + '_bt4_sfclose_C20T05')
@@ -78,7 +79,19 @@ VALUE_ALPHAS = {'B100V10': .1, 'B100V50': .5}
 VALUE_ALPHA_PRODUCER_SHA = 'b041bd27a7bbf7dd02663436b141c1b7ae054c229e691dbc71ad1d72a615a432'
 B100_PARENT_PINS = {'derive_targets_summary.json': '47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43', 'bt4_policy_mix_summary.json': '221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38'}
 
+# Qualified producer snapshots, independent of the historical training runtime.
+TACTICAL_PROFILE = 'B100Tactical100'
+TACTICAL_PRODUCER_PINS = {
+    'scripts/sf_policy_rewrite.py': 'f2926d10ca695d2cbbcd12f03a26cee23529f6e798e9a3585148392858fda176',
+    'scripts/derive_corpus_targets.py': '248574582a904a563217ce6cb86b0dc1fb000b3fc4bb6c6c232d3dbc9770380f',
+    'scripts/sf_d9_rank_sidecar.py': '53c2d1d1638c9e0646e68430c56a413c2b0b78a5ca815996eda770eecd8d3def',
+    'chess_anti_engine/stockfish/wdl.py': '11b80c842254e825272d2e84bff473fb12cd3cb5d61c98d5f0bd9f743af43b98',
+}
+
+
 def recipe_summary_name(m):
+    if role_for(m) == TACTICAL_PROFILE:
+        return 'bt4_sf_tactical_policy_summary.json'
     if role_for(m) in VALUE_ALPHAS:
         return 'bt4_value_rewrite_summary.json'
     return 'sf_policy_rewrite_summary.json' if role_for(m) == 'SoftSF10' else 'bt4_policy_mix_summary.json'
@@ -194,6 +207,87 @@ def verify_value_recipe(m, rewritten, derived):
                   == [(o['path'], o['rows']) for o in sf['shards']], 'value coverage differs')
 
 
+def verify_tactical_recipe(m, rewritten, derived):
+    """Fixed B100 tactical policy only; original SF value/history stay identical."""
+    corpus = corpus_for(m)
+    arena.require(corpus.is_dir() and not corpus.is_symlink()
+                  and not corpus.with_name(corpus.name + '.writing').exists()
+                  and not corpus.with_name(corpus.name + '.writing').is_symlink()
+                  and not (corpus / 'failed.json').exists(), 'tactical output is incomplete')
+    parent = CORPORA['B100']
+    parent_summary = parent / 'derive_targets_summary.json'
+    parent_policy = parent / 'bt4_policy_mix_summary.json'
+    arena.require(rewritten.get('source_derive_summary_sha256') == B100_PARENT_PINS[parent_summary.name]
+                  and rewritten.get('source_policy_summary_sha256') == B100_PARENT_PINS[parent_policy.name],
+                  'tactical parent is not qualified B100')
+    arena.pin(parent_summary, B100_PARENT_PINS[parent_summary.name])
+    arena.pin(parent_policy, B100_PARENT_PINS[parent_policy.name])
+    original, mix = arena.read(parent_summary), arena.read(parent_policy)
+    sf = arena.read(SOURCE / 'derive_targets_summary.json')
+    sf_sha = COMMON_PINS[str(SOURCE / 'derive_targets_summary.json')]
+    def equal_json(a, b):
+        return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+    arena.require(equal_json({k: v for k, v in original.items() if k != 'policy_target_postprocess'}, sf)
+                  and equal_json(original.get('policy_target_postprocess'), mix),
+                  'tactical B100 parent changed original SF metadata')
+    expected_mix = {'kind': 'global', 'algorithm': 'legal-normalized-global-arithmetic-v1',
+                    'alpha': 1.0, 'bt4_temperature': .5, 'rows': 18910484,
+                    'expected_shards': 2309, 'source_dir': str(SOURCE),
+                    'source_derive_summary_sha256': sf_sha, 'mutated_arrays': ['policy_target']}
+    arena.require(all(mix.get(k) == v for k, v in expected_mix.items()), 'tactical parent recipe differs')
+    expected = {'schema': 1, 'status': 'COMPLETE', 'kind': 'bt4_sf_tactical_policy_attenuation',
+                'algorithm': 'stored-b100-sf-gap100-decay100-floor0.1-categorical-mates-v1',
+                'source_dir': str(parent), 'sf_source_dir': str(SOURCE), 'raw_dir': str(SOFTSF_RAW),
+                'raw_limit': 20000000, 'rows': 18910484, 'shards': 2309,
+                'rows_dropped_no_result': 1089516, 'mutated_arrays': ['policy_target'],
+                'nonpolicy_arrays_copied': 16, 'raw_manifest_present': False,
+                'sf_derive_summary_sha256': sf_sha,
+                'recipe': {'gap_cp': 100.0, 'decay_cp': 100.0, 'relative_floor': .1,
+                           'mate_handling': 'categorical-v1', 'cp_domain': [-32000, 32000],
+                           'base': 'normalized stored B100 float16 policy',
+                           'storage': 'float64 attenuation -> float32 -> float16; all-one weights preserve bytes'}}
+    arena.require(equal_json({k: rewritten.get(k) for k in expected}, expected),
+                  'tactical fixed policy/source recipe differs')
+    wanted = {**sf, 'policy_target_postprocess': {k: v for k, v in rewritten.items() if k != 'outputs'}}
+    arena.require(equal_json(derived, wanted), 'tactical rewrite changed SF value/history/source lineage')
+    count, error = rewritten.get('changed_rows'), rewritten.get('stored_mass_error_max')
+    arena.require(type(count) is int and 0 < count <= 18910484
+                  and type(error) in (int, float) and math.isfinite(error) and 0 <= error <= 2**-10,
+                  'inert or invalid tactical rewrite')
+    categories = rewritten.get('categories', {})
+    arena.require(isinstance(categories, dict) and set(categories) <= {
+                      'no_mate', 'losing_mate_alternatives', 'winning_mate_available', 'all_forced_losses'}
+                  and all(type(v) is int and v >= 0 for v in categories.values())
+                  and sum(categories.values()) == 18910484, 'tactical mate coverage differs')
+    zeros, losses = rewritten.get('winning_mate_zero_base_mass_rows'), rewritten.get('stored_support_losses')
+    arena.require(type(zeros) is int and 0 <= zeros <= categories.get('winning_mate_available', 0)
+                  and type(losses) is int and 0 <= losses <= 18910484 * 1858,
+                  'tactical support diagnostics differ')
+    for key in ('stored_relative_error_max', 'stored_TV_error_max'):
+        value = rewritten.get(key)
+        arena.require(type(value) in (int, float) and math.isfinite(value) and value >= 0,
+                      'tactical storage diagnostics differ')
+    producers = rewritten.get('producer_sha256', {})
+    arena.require(len(producers) == len(TACTICAL_PRODUCER_PINS), 'tactical producer identities differ')
+    for suffix, digest in TACTICAL_PRODUCER_PINS.items():
+        matches = [v for k, v in producers.items() if Path(k).is_absolute() and k.endswith('/' + suffix)]
+        arena.require(matches == [digest], 'tactical producer identities differ')
+    metadata = rewritten.get('metadata_sha256', {})
+    expected_metadata = {str(SOURCE / 'derive_targets_summary.json'): sf_sha,
+                         str(SOFTSF_RAW / 'summary.json'): SOFTSF_RAW_SUMMARY_SHA,
+                         str(parent_summary): B100_PARENT_PINS[parent_summary.name],
+                         str(parent_policy): B100_PARENT_PINS[parent_policy.name]}
+    arena.require(metadata == expected_metadata, 'tactical source metadata differs')
+    outputs = rewritten.get('outputs', [])
+    arena.require(len(outputs) == 2309 and [(o['path'], o['rows']) for o in outputs]
+                  == [(o['path'], o['rows']) for o in sf['shards']], 'tactical output coverage differs')
+    for output in outputs:
+        for key in ('source_policy_sha256', 'policy_sha256', 'source_storage_identity', 'original_sf_storage_identity'):
+            digest = output.get(key)
+            arena.require(isinstance(digest, str) and len(digest) == 64
+                          and all(c in '0123456789abcdef' for c in digest), 'tactical output proof differs')
+
+
 def role_for(m):
     return m.get('profile', 'E0T05')
 
@@ -229,7 +323,7 @@ def validate(m):
     if registered:
         keys |= {'profile', 'data_qualification'}
         arena.require(m['schema'] in (2, 3) and role_for(m) in CORPORA, 'unsupported registered profile')
-        arena.require(role_for(m) not in {'SoftSF10', *VALUE_ALPHAS} or only, f'{role_for(m)} requires schema3 training_only')
+        arena.require(role_for(m) not in {'SoftSF10', TACTICAL_PROFILE, *VALUE_ALPHAS} or only, f'{role_for(m)} requires schema3 training_only')
         if not only:
             keys |= {'reader', 'comparisons'}
             arena.require(m['comparisons'] == [list(cell) for cell in comparisons(m)], 'registered comparison order differs')
@@ -275,7 +369,7 @@ def verify_data_qualification(m):
         'source': {'path': str(SOURCE), 'derive_sha256': COMMON_PINS[str(SOURCE / 'derive_targets_summary.json')]},
         'derive_summary': {'path': str(corpus / 'derive_targets_summary.json'),
                            'sha256': input_pins(m)[str(corpus / 'derive_targets_summary.json')]},
-        ('rewrite_summary' if role_for(m) in {'SoftSF10', *VALUE_ALPHAS} else 'mix_summary'): {
+        ('rewrite_summary' if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, *VALUE_ALPHAS} else 'mix_summary'): {
             'path': str(corpus / recipe_summary_name(m)),
             'sha256': input_pins(m)[str(corpus / recipe_summary_name(m))]},
     }
@@ -319,13 +413,15 @@ def check_pins(m):
     corpus = corpus_for(m)
     mix = arena.read(corpus / recipe_summary_name(m))
     derived = arena.read(corpus / 'derive_targets_summary.json')
-    expected_postprocess = {k: v for k, v in mix.items() if k != 'outputs'} if role_for(m) == 'SoftSF10' else mix
+    expected_postprocess = {k: v for k, v in mix.items() if k != 'outputs'} if role_for(m) in {'SoftSF10', TACTICAL_PROFILE} else mix
     if role_for(m) in VALUE_ALPHAS:
         verify_value_recipe(m, mix, derived)
     else:
         arena.require(derived['policy_target_postprocess'] == expected_postprocess, 'published recipe lineage differs')
     if role_for(m) in VALUE_ALPHAS:
         pass
+    elif role_for(m) == TACTICAL_PROFILE:
+        verify_tactical_recipe(m, mix, derived)
     elif role_for(m) == 'SoftSF10':
         verify_softsf_recipe(m, mix, derived)
     elif 'profile' in m:
