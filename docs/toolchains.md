@@ -376,3 +376,21 @@ its result. Useful changes from either route still target main under the
 Dated `scratchpad/` drivers preserve experiment history and may contain old absolute
 paths or run selections. Inspect and adapt those before use; the supported entry points
 above expose their current interfaces through `--help`.
+
+## Stored features to Ceres byte inputs
+
+`chess_anti_engine.encoding.ceres_tpg.stored_x_to_ceres_tpg_bytes` converts original
+float16 `(175,8,8)` features, singly or in a batch, under explicit
+`input_history_encoding="lc0_root_legacy_meta"` and `history_rep_fix=True`. It
+preserves the eight recorded root-relative piece/repetition slots and fills
+missing trailing slots from the oldest real position. It retains the original EP
+file, recovers the integral rule-50 counter and emits default uint8 TPG records
+with symmetric Q=.03 and zero ply features. Unsupported encodings, nonfinite or
+malformed writer-domain inputs fail. The existing Board API is unchanged.
+
+This is a feature conversion, not raw-history or float32 input-key reconstruction.
+Callers must bind the qualified source lineage; structurally valid history slots
+do not prove a legal move sequence. Exact comparison with the local Board encoder
+and saved source-qualified inputs does not establish a native Ceres oracle,
+model quality, runtime qualification or a complete policy/value collector. Keep
+original stored features: `x_to_lc0_planes` removes the EP metadata needed here.
