@@ -1,0 +1,33 @@
+{
+  "status": "OUTER_EXIT_ZERO",
+  "started_unix": 1788920341.1868932,
+  "deadline_unix": 1788922141.1868932,
+  "outer_pid": 487537,
+  "capture_pid": 487536,
+  "argv": [
+    "/usr/bin/timeout",
+    "--signal=TERM",
+    "--kill-after=30s",
+    "1770s",
+    "/usr/bin/ionice",
+    "-c",
+    "3",
+    "/usr/bin/nice",
+    "-n",
+    "19",
+    "/usr/bin/taskset",
+    "-c",
+    "0,1",
+    "/usr/bin/python3.10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/G20T1_cold_archive_v1/reclamation_preparation_v1/reclaim_shards.py",
+    "--execute",
+    "--script-sha256",
+    "f5a960a9a743e94cc73deb72f6c0f044efe575aa1bf4a53d50aa856340549dfb",
+    "--deadline",
+    "1788922141.1868932"
+  ],
+  "script_sha256": "f5a960a9a743e94cc73deb72f6c0f044efe575aa1bf4a53d50aa856340549dfb",
+  "exit_code": 0,
+  "ended_unix": 1788920427.6805713,
+  "outer_wall_seconds": 86.49367809295654
+}
