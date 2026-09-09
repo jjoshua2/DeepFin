@@ -24,17 +24,22 @@ class Teacher:
     def __init__(self, offset: int = 0):
         self.offset = offset
 
-    def run(self, _outputs: Any, feed: dict[str, np.ndarray]) -> list[np.ndarray]:
+    def run(self, outputs: Any, feed: dict[str, np.ndarray]) -> list[np.ndarray]:
         rows = next(iter(feed.values())).shape[0]
-        return [np.sin(np.arange(mix.COMPACT_POLICY_SIZE)[None, :] *
+        policy = [np.sin(np.arange(mix.COMPACT_POLICY_SIZE)[None, :] *
                        (np.arange(rows)[:, None] + self.offset + 1) * .01).astype(np.float32)]
+        if outputs == ['policy', 'value']:
+            win = (np.arange(rows) + self.offset + 1) / 32
+            return [*policy, np.column_stack((win, np.full(rows, .25), .75-win)).astype('float32')]
+        assert outputs == ['policy']
+        return policy
 
 
 def pinned(path: Path) -> dict[str, str]:
     return {'path': str(path.resolve()), 'sha256': file_sha256(path)}
 
 
-def prepare(tmp_path: Path, *, offset: int = 0, three_shards: bool = False) -> tuple[Path, Path, Path, dict[str, Any]]:
+def prepare(tmp_path: Path, *, offset: int = 0, three_shards: bool = False, wdl: bool = False) -> tuple[Path, Path, Path, dict[str, Any]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     rows = [history_row(game_id=i, result=None if i == 2 else 1.0) for i in range(9 if three_shards else 8)]
     for row in rows:
@@ -58,12 +63,15 @@ def prepare(tmp_path: Path, *, offset: int = 0, three_shards: bool = False) -> t
         attrs = raw.label_shard(pending, sess=Teacher(offset), input_name='input', input_dtype=np.dtype(np.float32),
                                 providers=teacher['providers'], policy_name='policy',
                                 onnx_path=Path(teacher['onnx']['path']), onnx_sha256='a' * 64,
-                                remap_stamp=remap, batch_size=128)
+                                remap_stamp=remap, batch_size=128,
+                                wdl_output={'output': 'value', 'kind': 'probabilities', 'dtype': 'float32'} if wdl else None)
         raw.append_receipt(receipt_path, raw.receipt_from_attrs(attrs, pending.target))
     manifest = {'schema': 1, 'derived_summary': pinned(derived / 'derive_targets_summary.json'),
                 'teacher': teacher, 'sources': [{'source_dir': str(source), 'sidecar_dir': str(spec.out_dir),
                                                'manifest': pinned(source / 'manifest.json'),
                                                'receipts': pinned(receipt_path)}]}
+    if wdl:
+        manifest['wdl'] = {'output': 'value', 'kind': 'probabilities', 'dtype': 'float32'}
     manifest_path = tmp_path / 'adapter.json'
     manifest_path.write_text(json.dumps(manifest))
     return manifest_path, derived, spec.out_dir, manifest
