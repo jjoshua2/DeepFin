@@ -8,12 +8,12 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [BT4 target temperature and horizon](2026-09-09-bt4-target-temperature-horizon.md) | T1 materialization started; two-epoch training/matches pending; raw-WDL reuse merged, no coverage added |
+| [BT4 target temperature and horizon](2026-09-09-bt4-target-temperature-horizon.md) | T1 materialization and metadata qualification complete; two-epoch training/matches pending |
 | [B100 search-prior calibration](2026-09-09-b100-prior-calibration.md) | Complete: 0.7 versus 1.0 gives +16.30 Elo [−20.83, +53.80]; no follow-up selected, common prior 1.0 retained |
 | [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1/G20T05/G50T05 reclamation complete; E0T05 copy verified complete with source retained, zero new reclaimed bytes |
-| [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | Full 18.91M original-source WDL bank complete; V50 training started after rewrite/qualification/schedule; no training result |
+| [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | Full 18.91M WDL bank and V50 training complete; V50 arena started, no playing result |
 | [B100 tactical policy readiness](2026-09-08-b100-tactical-policy-readiness.md) | Producer/admission merged; corrected bounded preparation independently reviewed; V50-first schedule, no tactical rewrite/training |
-| [Next value and policy contrasts](2026-09-08-bootstrap-next-value-and-policy-contrasts.md) | B100V50 rewrite, qualification and prospective schedule complete; original one-epoch training started, no result |
+| [Next value and policy contrasts](2026-09-08-bootstrap-next-value-and-policy-contrasts.md) | B100V50 training and realized schedule complete; registered B100 arena started, no playing result |
 | [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row WDL diagnostic complete; B100V50 is the first value contrast |
 | [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 CPU/sample evidence retained; approximate fixed32 policy + primary-value collector implemented, 8,192-row integrated cost pilot prepared, not launched |
 | [Faster recipe matches](2026-09-08-faster-recipe-matches.md) | First prospective SPRT plus fixed deep probe completed in46m35s; speculative scheduling bottleneck identified; no controlled speedup claim |

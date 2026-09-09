@@ -1,9 +1,8 @@
 # Next bootstrap contrasts: value first, selective SF policy use
 
 September 8, 2026 local time; the dose analysis completed September 9 UTC.
-**September 9 update: B100V50 training has started after completed rewrite,
-dataset qualification and prospective schedule checks. No training or arena result
-is available.** The completed [SoftSF10/B100 result](2026-09-08-soft-sf-qualified-training-sample.md#completed-softsf10-versus-b100-result)
+**September 9 update: B100V50 training and realized schedule verification are
+complete. Its registered B100 arena has started; no playing result is reported.** The completed [SoftSF10/B100 result](2026-09-08-soft-sf-qualified-training-sample.md#completed-softsf10-versus-b100-result)
 favors B100 at both budgets. This motivates separating useful SF information from
 forcing the whole policy to imitate SF rankings. The priorities below are research
 choices, not a launched queue or a claim that their targets improve play.
@@ -21,6 +20,37 @@ the latest completed copy and removal evidence.
 Preserve live sources and selected controls while continuing through eligible
 cold policy recipes. Assess only eligible payload components of already-verified
 archived pools, preserving checkpoint and holdout exclusions.
+
+## V50 training complete; B100 arena started — September 9
+
+The original-runtime seed-zero V50 run completed **18,910,484 rows, 36,935
+updates and 420 windows**, with finite loss/gradient checks and **zero nonfinite
+skips or transient retries**. The training stage took **9,075.04 seconds**;
+realized CPU schedule verification took **257.02 seconds** (252.20 seconds inside
+the report). Its canonical source schedule and actual physical plan match the
+prospective witness. Independent review passed the completed receipt chain.
+
+The final checkpoint SHA-256 is
+`f813e47e43907f1dd7b716a191b69f7444d9b70bdce53cd90010d613d6e504a8`.
+This remains the value-only supervision contrast: 50% normalized stored SF WDL
+plus 50% native BT4 WDL, with B100 policy targets unchanged. Historical
+`valid_control=false` is retained: no held-out purity receipt, committed rather
+than live-config premises, and game-epoch sampling distinct from the old
+replacement-sampled control. These inherited limits are not a new run failure
+or fresh-seed confirmation.
+
+The bounded CPU arena preparation passed, binding the actual checkpoint, B100
+reference, qualified runtime and full opening histories. The **100-simulation
+low stage started at 17:23:44 UTC**, with **prior temperature 1.0 on both sides**.
+Its registered ordered SPRT retains H0=0/H1=+15 Elo, alpha=.05/beta=.10, first 128
+pairs then 64-pair looks, cap 500 and lookahead 64. The protected 400-simulation
+comparison remains fixed 128 pairs after a valid low outcome. Each arena stage
+retains its 5,400-second ceiling. **No arena outcome or strength verdict is
+reported in this snapshot.**
+
+[Compact scientific evidence](artifacts/v50-complete-t1-qualified-20260909/status.json)
+binds training, schedule, independent review, CPU preparation and launch identities.
+The startup passages below remain historical snapshots.
 
 ## V50 preparation complete; training started — September 9
 

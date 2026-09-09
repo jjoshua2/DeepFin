@@ -1,11 +1,38 @@
 # BT4 target temperature, training horizon and search placement
 
-**T1 materialization started; no completed T1 corpus, training or matches claimed.** Compare
+**T1 materialization and metadata qualification completed; two-epoch training
+and matches remain pending.** Compare
 pure BT4 policy targets at T=1 and T=0.5 on the original corpus, with unchanged SF
 value supervision. [B100V50 remains first](2026-09-08-bootstrap-next-value-and-policy-contrasts.md).
 This experiment asks whether the relative benefit of target sharpening changes
 with training exposure, and whether sharpening at search time can substitute for
 sharpening during training.
+
+## Materialization and qualification complete — September 9
+
+Pure-T1 materialization completed with outer exit zero in **6,825.75 seconds**,
+within its four-hour inclusive bound. The genuine output and subsequent
+`PASS_REGISTERED_CORPUS_QUALIFICATION` receipt cover **18,910,484 rows in 2,309
+shards**. The recipe is global alpha 1, BT4 teacher T=1, constructed from original
+float32 sidecars; only `policy_target` changes, with all 16 non-policy arrays and
+original SF value supervision retained.
+
+Qualification checks the completed producer/recipe identities, every shard's
+metadata/layout and stability. Independent review passed this completed evidence
+chain and recipe admission. It inherits the producer's row/legal-target and
+copy checks; it is **not a second corpus payload scan or an independent checksum
+of unchanged arrays**. The cached 4,000-row FEN audit is descriptive, not a
+whole-corpus SF strength test. Saved rounding and zero tails remain part of the
+realized targets.
+
+[Compact completion and qualification identities](artifacts/v50-complete-t1-qualified-20260909/status.json)
+record the exact mix/derive summaries and metadata witness. The T1 two-epoch
+prospective planner has now started under its 1,800-second inclusive CPU bound,
+with 12 GiB address-space and 8 GiB working-memory limits. No planner result is
+reported yet; matched logical-order admission still requires its actual witnesses.
+No T1 training or arena result follows from materialization. The two fresh trajectories
+and three fixed 400 cells below remain the registered scientific comparison.
+The earlier startup section is preserved as a historical snapshot.
 
 ## Materialization started — September 9
 
