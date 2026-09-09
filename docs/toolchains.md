@@ -394,3 +394,33 @@ do not prove a legal move sequence. Exact comparison with the local Board encode
 and saved source-qualified inputs does not establish a native Ceres oracle,
 model quality, runtime qualification or a complete policy/value collector. Keep
 original stored features: `x_to_lc0_planes` removes the EP metadata needed here.
+
+
+### Compact Ceres collection options
+
+`scripts/ceres_derived_sidecar.py` keeps fixed physical batches of 32. By default,
+it retains raw primary `value` logits and refuses nondivisible shards, preserving
+the original primary-only profile. `--pad-final-batch` explicitly repeats the last
+real TPG feed row to complete a batch, validates the full returned batch, and trims
+all outputs before gathering or storage. Source hashes, row identities and feed
+digests cover only real rows. Shard and completion receipts distinguish real rows,
+padding rows, physical input rows and calls; completion also records newly executed
+counts separately from verified cache coverage.
+
+`--retain-value2` requests `policy`, `value` and `value2` in the same session call.
+It retains secondary raw float16 `(N,3)` W/D/L logits as `value2_logits`, alongside
+unchanged primary `value_logits`. There is no softmax, temperature or native blend.
+Missing, malformed or nonfinite outputs fail, including outputs for padded rows.
+Secondary storage adds six raw bytes per real row, before container overhead.
+
+Either option selects the extended profile; requested heads and remainder policy
+are bound in the namespace. Primary-only banks remain verifiable under their
+original profile, including older receipts without explicit counts. They cannot
+satisfy secondary coverage or be silently backfilled. Producer source pins remain
+exact: a new code revision does not automatically adopt an older output namespace,
+even with default flags. Use a distinct qualified output lineage for new options.
+
+These are collection capabilities, not operational or numerical qualification of
+a full corpus. The earlier fixed32 approximation and native-order/history limits
+remain. A future launch needs its own exact source selection, call budget and
+runtime evidence; an old fixed-count pilot wrapper is not a full-collection plan.

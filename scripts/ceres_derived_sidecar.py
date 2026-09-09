@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Fixed32 C3 compact legal logits and primary WDL logits from qualified stored x.
+"""Fixed32 C3 compact legal and raw WDL logits from qualified stored x.
 
-Approximate research backend only; no value2, native value blend or strength claim.
+Optional last-row padding and secondary logits; no native blend or strength claim.
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from scripts import bt4_derived_wdl_sidecar as shared
 from scripts.sf_policy_rewrite import require
 
 PROFILE = 'ceres-c3-fixed32-primary-compact-v1'
+EXTENDED_PROFILE = 'ceres-c3-fixed32-compact-v2'
 MODEL_SHA = '44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3'
 BATCH = 32
 COLUMNS = (*shared.COLUMNS, 'legal_mask', 'has_legal_mask')
@@ -48,13 +49,46 @@ BACKEND: dict[str, Any] = {'onnxruntime': '1.29.0', 'numpy': '2.2.6', 'batch_siz
            'value_interpretation': 'primary raw logits; local head contract, no native blend'}
 
 
+def extended(args: argparse.Namespace) -> bool:
+    return bool(args.pad_final_batch or args.retain_value2)
+
+
+def profile(args: argparse.Namespace) -> str:
+    return EXTENDED_PROFILE if extended(args) else PROFILE
+
+
+def backend(args: argparse.Namespace) -> dict[str, Any]:
+    if not extended(args):
+        return BACKEND
+    return {**BACKEND, 'outputs': ['policy', 'value', *(['value2'] if args.retain_value2 else [])],
+            'remainder': 'repeat_last_real' if args.pad_final_batch else 'refuse',
+            'value_interpretation': 'primary raw logits; optional secondary raw logits; no native blend'}
+
+
+def binding_options(expected: dict[str, Any]) -> argparse.Namespace:
+    contract = expected['backend']
+    args = argparse.Namespace(pad_final_batch=contract.get('remainder') == 'repeat_last_real',
+                              retain_value2='value2' in contract.get('outputs', []))
+    require(expected['profile'] == profile(args) and contract == backend(args),
+            'unsupported Ceres profile/backend')
+    return args
+
+
+def collection_counts(n: int, pad_final_batch: bool) -> dict[str, int]:
+    require(type(n) is int and 0 < n <= 8192 and (pad_final_batch or n % BATCH == 0),
+            'fixed32 requires divisible shards of at most8192 rows unless padding is explicit')
+    padding = (-n) % BATCH
+    return {'real_rows': n, 'padding_rows': padding, 'calls': (n + padding) // BATCH,
+            'input_rows': n + padding}
+
+
 def validate_args(args: argparse.Namespace) -> None:
     require(args.batch_size == BATCH and args.threads == 2, 'requires fixed32 and two threads')
     require(args.gpu_mem_gb == 8 and args.gpu_lock and Path(args.gpu_lock).is_absolute(),
             'requires explicit shared GPU lock and accepted8GiB CUDA arena')
     require(args.expected_onnx_sha256 == MODEL_SHA, 'requires accepted C3 model hash')
     require(args.wdl_output == 'value' and args.wdl_output_kind == 'logits',
-            'requires primary value logits only')
+            'requires primary value logits (secondary retention is separately explicit)')
 
 
 def provider_proof(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -115,22 +149,23 @@ def open_teacher(args: argparse.Namespace) -> Any:
             and inputs[0].type == 'tensor(uint8)' and list(inputs[0].shape[1:]) == [64, 137],
             'teacher input differs')
     outputs = {x.name: x for x in session.get_outputs()}
-    for name, width in [('policy', 1858), ('value', 3)]:
+    for name in backend(args)['outputs']:
+        width = 1858 if name == 'policy' else 3
         require(name in outputs and outputs[name].type == 'tensor(float16)'
                 and len(outputs[name].shape) == 2 and outputs[name].shape[-1] == width,
                 'teacher output differs')
     shared.raw.atomic_json(Path(args.invocation) / 'session.json',
-        {'backend': BACKEND, 'providers': session.get_providers(), 'options': realized,
+        {'backend': backend(args), 'providers': session.get_providers(), 'options': realized,
          'python': sys.version, 'executable': sys.executable, 'ort_build': ort.get_build_info(),
          'qualification': 'Session created; first-call provider proof still required'})
     return session
 
 
 def namespace(args: argparse.Namespace) -> dict[str, Any]:
-    return {'profile': PROFILE, 'source': str(Path(args.source).resolve()),
+    return {'profile': profile(args), 'source': str(Path(args.source).resolve()),
             'summary_sha256': args.expected_source_summary_sha256,
             **shared.g10_binding(args), 'model_sha256': args.expected_onnx_sha256,
-            'backend': BACKEND,
+            'backend': backend(args),
             'producer': {str(Path(p).resolve().relative_to(Path(__file__).resolve().parents[1])):
                          shared.file_sha256(p) for p in (__file__, shared.__file__,
                          tpg.__file__, mapping.__file__)}}
@@ -148,10 +183,14 @@ def verify_cached(path: Path, expected: dict[str, Any]) -> dict[str, Any]:
     require(attrs.get('complete') is True and attrs.get('binding') == expected,
             'completed Ceres binding differs')
     n = expected['rows']
-    require(n > 0 and n % BATCH == 0 and set(group.array_keys()) == set(DTYPES),
-            'Ceres array inventory/count differs')
+    options = binding_options(expected)
+    counts = collection_counts(n, options.pad_final_batch)
+    if extended(options) or 'collection_counts' in attrs:
+        require(attrs.get('collection_counts') == counts, 'Ceres collection counts differ')
+    dtypes = {**DTYPES, **({'value2_logits': 'float16'} if options.retain_value2 else {})}
+    require(set(group.array_keys()) == set(dtypes), 'Ceres array inventory/count differs')
     arrays = {}
-    for key, dtype in DTYPES.items():
+    for key, dtype in dtypes.items():
         array = group[key]
         require(array.dtype == np.dtype(dtype), 'native Ceres array dtype differs')
         shared.complete_chunks(array)
@@ -163,10 +202,12 @@ def verify_cached(path: Path, expected: dict[str, Any]) -> dict[str, Any]:
     shapes = {'legal_offsets': (n + 1,), 'legal_indices': (count,), 'policy_logits': (count,),
               'value_logits': (n, 3), 'row_index': (n,), 'game_id': (n,),
               'ply_index': (n,), 'tpg_feed_sha256': (n, 32)}
+    if options.retain_value2:
+        shapes['value2_logits'] = (n, 3)
     require(all(arrays[k].shape == shape for k, shape in shapes.items()), 'Ceres array shape differs')
     require(np.array_equal(arrays['row_index'], np.arange(n)), 'Ceres row order differs')
     require(bool(np.all(arrays['game_id'] >= 0) and np.all(arrays['ply_index'] >= 0)), 'negative identity')
-    require(np.isfinite(arrays['policy_logits']).all() and np.isfinite(arrays['value_logits']).all(),
+    require(all(np.isfinite(arrays[k]).all() for k in dtypes if k.endswith('_logits')),
             'nonfinite Ceres logits')
     for i in range(n):
         indices = arrays['legal_indices'][int(offsets[i]):int(offsets[i + 1])]
@@ -186,7 +227,7 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
     source = Path(args.source) / spec['path']
     state = shared.storage_identity(source)
     n = spec['rows']
-    require(0 < n <= 8192 and n % BATCH == 0, 'partial/oversized fixed32 pilot shard refused; no padding/drop')
+    accounting = collection_counts(n, args.pad_final_batch)
     group = shared.source_arrays(source, summary, n)
     for key in ('legal_mask', 'has_legal_mask'):
         require(key in group, 'missing source legal mask')
@@ -205,11 +246,13 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
                'row_index': np.arange(n, dtype='uint64'),
                'game_id': np.empty(n, dtype='int64'), 'ply_index': np.empty(n, dtype='int32'),
                'tpg_feed_sha256': np.empty((n, 32), dtype='uint8')}
+    if args.retain_value2:
+        payload['value2_logits'] = np.empty((n, 3), dtype='float16')
     hashes = {k: hashlib.sha256() for k in COLUMNS}
     proof = None
     for start in range(0, n, BATCH):
         guard()
-        end = start + BATCH
+        end = min(start + BATCH, n)
         batch = {k: np.asarray(group[k][start:end]) for k in COLUMNS}
         for k, digest in hashes.items():
             digest.update(batch[k].tobytes(order='C'))
@@ -221,12 +264,19 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
             payload[name][start:end] = batch[name]
         feed = tpg.stored_x_to_ceres_tpg_bytes(batch['x'], input_history_encoding=shared.HISTORY,
                                              history_rep_fix=True)
-        fetched = session.run(['policy', 'value'], {'squares_byte': feed})
-        require(len(fetched) == 2, 'missing teacher outputs')
-        policy, value = fetched
-        require(policy.dtype == value.dtype == np.dtype('float16')
-                and policy.shape == (BATCH, 1858) and value.shape == (BATCH, 3)
-                and np.isfinite(policy).all() and np.isfinite(value).all(), 'invalid native outputs')
+        real = end - start
+        session_feed = feed if real == BATCH else np.concatenate(
+            (feed, np.repeat(feed[-1:], BATCH - real, axis=0)), axis=0)
+        names = backend(args)['outputs']
+        fetched = session.run(names, {'squares_byte': session_feed})
+        require(len(fetched) == len(names), 'missing teacher outputs')
+        for name, output in zip(names, fetched, strict=True):
+            width = 1858 if name == 'policy' else 3
+            require(bool(isinstance(output, np.ndarray) and output.dtype == np.dtype('float16')
+                    and output.shape == (BATCH, width) and np.isfinite(output).all()),
+                    'invalid native outputs')
+        # Validate the full physical batch, then retain only actual source rows.
+        policy, value = fetched[0][:real], fetched[1][:real]
         proof = qualify()
         gather = mapping.leela_gather_indices(*tpg.ceres_tpg_gather_context(feed))
         for local, row in enumerate(range(start, end)):
@@ -237,6 +287,8 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
                     'invalid legal Leela mapping')
             payload['policy_logits'][lo:hi] = policy[local, slots]
         payload['value_logits'][start:end] = value
+        if args.retain_value2:
+            payload['value2_logits'][start:end] = fetched[2][:real]
         payload['tpg_feed_sha256'][start:end] = shared.row_digests(feed)
     guard()
     require(shared.storage_identity(source) == state, 'source changed during Ceres collection')
@@ -250,6 +302,7 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
     result.attrs.update(complete=True, binding=expected_binding(args, spec, state),
         array_sha256={k: shared.raw.sha_array(v) for k, v in payload.items()},
         source_array_sha256={k: v.hexdigest() for k, v in hashes.items()}, provider_proof=proof,
+        collection_counts=accounting,
         history_lineage='Inherited stored history and source qualification; no raw replay or native repetition oracle.')
     verify_cached(writing, expected_binding(args, spec, state))
     guard()
@@ -262,8 +315,7 @@ def produce(args: argparse.Namespace) -> None:
     with shared.raw.advisory_lease(Path(args.out) / '.writer.lock', poll_seconds=1,
                                    description='Ceres writer'):
         summary, specs = shared.source_inventory(args)
-        require(all(0 < s['rows'] <= 8192 and s['rows'] % BATCH == 0 for s in specs),
-                'fixed32 pilot requires divisible shards of at most8192 rows; no padding/drop')
+        counts = [collection_counts(s['rows'], args.pad_final_batch) for s in specs]
         marker = Path(args.out) / 'ceres_source.json'
         wanted = namespace(args)
         if marker.exists():
@@ -328,9 +380,12 @@ def produce(args: argparse.Namespace) -> None:
                     == attrs['binding']['source_storage_identity'], 'source changed before completion')
         guard()
         shared.raw.atomic_json(Path(args.invocation) / 'child_completed.json',
-            {'schema': 1, 'complete': True, 'profile': PROFILE, 'selection': specs,
+            {'schema': 1, 'complete': True, 'profile': profile(args), 'selection': specs,
              'rows': sum(s['rows'] for s in specs), 'shards': len(specs), 'new_shards': len(todo),
-             'namespace': wanted, 'scope': 'Compact primary Ceres teacher bank only; no training qualification'})
+             'collection_counts': {k: sum(c[k] for c in counts) for k in counts[0]},
+             'new_collection_counts': {k: sum(collection_counts(s['rows'], args.pad_final_batch)[k]
+                 for s in todo) for k in counts[0]},
+             'namespace': wanted, 'scope': 'Compact raw Ceres teacher bank only; no training qualification'})
 
 
 def child(args: argparse.Namespace) -> None:
@@ -338,7 +393,7 @@ def child(args: argparse.Namespace) -> None:
     validate_args(args)
     set_nthreads(2)
     shared.raw.atomic_json(Path(args.invocation) / 'child_started.json',
-        {'pid': os.getpid(), 'profile': PROFILE, 'affinity': sorted(os.sched_getaffinity(0)),
+        {'pid': os.getpid(), 'profile': profile(args), 'affinity': sorted(os.sched_getaffinity(0)),
          'blosc_threads': shared.get_nthreads(), 'threads': 2})
     produce(args)
 
@@ -347,6 +402,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = shared.build_parser()
     parser.description = __doc__
     parser.set_defaults(batch_size=BATCH, gpu_mem_gb=8)
+    parser.add_argument('--pad-final-batch', action='store_true',
+                        help='Repeat the last real feed row to32 and store only real rows')
+    parser.add_argument('--retain-value2', action='store_true',
+                        help='Also retain raw secondary float16 WDL logits; no native blend')
     return parser
 
 
