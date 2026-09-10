@@ -103,10 +103,12 @@ def matches_selection(proof, source):
 
 
 def source_storage(source):
+    from scripts import bt4_raw_corpus_sidecar as raw
+
     entries = read(pinned(source["source_metadata"]))
-    wanted = {
-        str(Path(source["source_dir"]) / e["source_shard"]) for e in selected(source)
-    }
+    selection = {e["source_shard"]: e for e in selected(source)}
+    receipts = raw.read_receipts(pinned(source["closed_bt4_receipts"]))
+    wanted = {str(Path(source["source_dir"]) / name) for name in selection}
     require(
         len(entries) == len(wanted) and {e["source_path"] for e in entries} == wanted,
         "source stat universe differs",
@@ -119,15 +121,29 @@ def source_storage(source):
             identity(entry["source_path"]) == expected,
             f"selected raw storage changed: {entry['source_path']}",
         )
+        raw_name = Path(entry["source_path"]).name
         side = Path(entry["sidecar_path"])
         require(
-            side.parent == Path(source["sidecar_dir"]) and not side.is_symlink(),
+            side == Path(source["sidecar_dir"]) / raw.sidecar_name(raw_name) and not side.is_symlink(),
             "foreign/aliased sidecar",
         )
-        pinned(entry["sidecar_attrs_snapshot"])
+        attrs_path = pinned(entry["sidecar_attrs_snapshot"])
         require(
             sha(side / ".zattrs") == entry["sidecar_attrs_snapshot"]["sha256"],
             "teacher attrs changed",
+        )
+        # Match the adapter's complete reconstruction, including optional WDL.
+        # This is metadata compatibility, not a substitute for its payload proof.
+        receipt = raw.receipt_from_attrs(read(attrs_path), side)
+        require(
+            receipt == receipts.get(raw_name),
+            f"raw receipt differs from selected sidecar metadata: {raw_name}",
+        )
+        require(
+            receipt["source_shard"] == raw_name
+            and receipt["positions"] == selection[raw_name]["rows"]
+            and receipt["source_sha256"] == selection[raw_name]["source_sha256"],
+            f"raw receipt differs from selected source identity: {raw_name}",
         )
 
 
