@@ -52,7 +52,13 @@ original source/config/manifest identity and selected shard names, closed row
 counts and raw SHA256. `physical_rows` must equal their sum. `source_metadata` is
 a list covering exactly those files, with `source_path`, `device`, `inode`,
 `bytes`, `mtime_ns`, `ctime_ns`, `sidecar_path` and a pinned
-`sidecar_attrs_snapshot`. Unselected live source growth is allowed. Raw payload
+`sidecar_attrs_snapshot`. Before launching derivation, admission reconstructs each
+selected closed receipt from those pinned/current-matching attributes using the
+same helper as the raw BT4 adapter. Complete equality includes optional WDL
+provenance; missing, changed or extra receipt fields refuse early. The sidecar
+name, row count and raw digest must also match the frozen selection. This metadata
+check does not qualify policy/WDL payloads or retrofit an older frozen runtime.
+Unselected live source growth is allowed. Raw payload
 checks occur in the actual consumers, not in a redundant preliminary census.
 The runner accepts reversed selection JSON; consumers retain original corpus order.
 

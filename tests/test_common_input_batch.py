@@ -28,7 +28,7 @@ def pin(path: Path, data: Any) -> dict[str, str]:
     return {"path": str(path), "sha256": batch.sha(path)}
 
 
-def fixture(tmp_path: Path, concurrency: int = 2) -> dict[str, Any]:
+def fixture(tmp_path: Path, concurrency: int = 2, *, with_wdl: bool = False) -> dict[str, Any]:
     cpus = sorted(batch.available_cpus())
     # Production validates against the actual allowed cpuset; tests need four
     # available CPU ids for the two-lane admission case, without consuming them.
@@ -81,12 +81,29 @@ def fixture(tmp_path: Path, concurrency: int = 2) -> dict[str, Any]:
         )
         entries = []
         metadata = []
+        closed_receipts = []
         for k in (2, 4):
             path = raw / f"w00-{k:05d}.jsonl.zst"
             path.write_bytes(b"closed raw fixture")
             sidepath = side / f"w00-{k:05d}.bt4.zarr"
             sidepath.mkdir()
-            attrs = pin(sidepath / ".zattrs", {"onnx_path": "fixture.onnx"})
+            receipt = {
+                "source_id": name, "source_shard": path.name, "positions": 5,
+                "source_sha256": batch.sha(path), "source_key_sha256": "1" * 64,
+                "input_key_sha256": "2" * 64, "bt4_policy_sha256": "3" * 64,
+                "onnx_sha256": "c" * 64, "policy_output": "policy",
+                "providers": ["CPUExecutionProvider"], "remap_provenance": {},
+                "teacher_evaluations_per_position": 1, "published_unix": 1234.5,
+            }
+            if with_wdl:
+                receipt["wdl"] = {
+                    "schema": 1, "order": ["win", "draw", "loss"], "pov": "side_to_move",
+                    "rows": 5, "semantic_basis": "explicit_named_output_contract",
+                    "output": "/output/wdl", "kind": "probabilities", "dtype": "float32",
+                    "sha256": "4" * 64,
+                }
+            attrs = pin(sidepath / ".zattrs", {**receipt, "onnx_path": "fixture.onnx"})
+            closed_receipts.append({**receipt, "sidecar": sidepath.name})
             entries.append(
                 {"source_shard": path.name, "rows": 5, "source_sha256": batch.sha(path)}
             )
@@ -113,16 +130,9 @@ def fixture(tmp_path: Path, concurrency: int = 2) -> dict[str, Any]:
                 "shards": list(reversed(entries)),
             },
         )
-        receipts = pin(
-            tmp_path / (name + "_receipts.jsonl"),
-            {
-                "sidecar": "w00-00002.bt4.zarr",
-                "onnx_sha256": "c" * 64,
-                "policy_output": "policy",
-                "providers": ["CPUExecutionProvider"],
-                "remap_provenance": {},
-            },
-        )
+        receipt_path = tmp_path / (name + "_receipts.jsonl")
+        receipt_path.write_text("".join(json.dumps(r) + "\n" for r in closed_receipts))
+        receipts = {"path": str(receipt_path), "sha256": batch.sha(receipt_path)}
         plan["sources"].append(
             {
                 "source_id": name,
@@ -249,11 +259,12 @@ def test_admission_rejects_invalid_frozen_contract(tmp_path: Path, change: str) 
         batch.validate_manifest(plan)
 
 
+@pytest.mark.parametrize("with_wdl", [False, True])
 @pytest.mark.parametrize("overlap", [False, True])
 def test_lane_builds_real_selected_commands(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overlap: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overlap: bool, with_wdl: bool
 ) -> None:
-    plan = fixture(tmp_path)
+    plan = fixture(tmp_path, with_wdl=with_wdl)
     plan["overlap_adapt_rank"] = overlap
     source = plan["sources"][0]
     calls = []
@@ -301,6 +312,61 @@ def test_lane_builds_real_selected_commands(
     assert adapt[adapt.index("--max-index-bytes") + 1] == str(plan["limits"]["adapter_index_cache_bytes"])
     with pytest.raises(ValueError, match="unregistered tool"):
         batch.command(plan, "lc0_control_train.py")
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["missing_wdl", "wdl_output", "wdl_digest", "extra_field", "missing_receipt", "policy_digest"],
+)
+def test_receipt_mismatch_refuses_before_derivation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    plan = fixture(tmp_path, with_wdl=change != "policy_digest")
+    source = plan["sources"][0]
+    path = Path(source["closed_bt4_receipts"]["path"])
+    receipts = [json.loads(line) for line in path.read_text().splitlines()]
+    if change == "missing_wdl":
+        del receipts[0]["wdl"]
+    elif change == "wdl_output":
+        receipts[0]["wdl"]["output"] = "/other/wdl"
+    elif change == "wdl_digest":
+        receipts[0]["wdl"]["sha256"] = "9" * 64
+    elif change == "extra_field":
+        receipts[0]["unrecognized"] = "must not be silently dropped"
+    elif change == "missing_receipt":
+        receipts.pop(0)
+    else:
+        receipts[0]["bt4_policy_sha256"] = "9" * 64
+    path.write_text("".join(json.dumps(r) + "\n" for r in receipts))
+    source["closed_bt4_receipts"]["sha256"] = batch.sha(path)
+    calls = []
+    monkeypatch.setattr(batch, "verify", lambda _p: None)
+    monkeypatch.setattr(batch, "stage", lambda *args: calls.append(args))
+    with pytest.raises(ValueError, match="raw receipt differs from selected sidecar metadata"):
+        batch.validate_manifest(plan)
+    with pytest.raises(ValueError, match="raw receipt differs from selected sidecar metadata"):
+        batch.lane(plan, tmp_path / "manifest.json", "d" * 64, source, time.time() + 60)
+    assert calls == []
+    assert not Path(source["derived_output"]).exists()
+
+
+def test_receipt_admission_uses_actual_adapter_reconstruction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import bt4_raw_corpus_sidecar as raw
+
+    plan = fixture(tmp_path, with_wdl=True)
+    source = plan["sources"][0]
+    reconstruct = raw.receipt_from_attrs
+
+    def old_reconstruction(attrs, target):
+        receipt = reconstruct(attrs, target)
+        receipt.pop("wdl", None)
+        return receipt
+
+    monkeypatch.setattr(raw, "receipt_from_attrs", old_reconstruction)
+    with pytest.raises(ValueError, match="raw receipt differs from selected sidecar metadata"):
+        batch.source_storage(source)
 
 
 def test_aggregate_usage_tolerates_rename_only_during_sample(
