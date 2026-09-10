@@ -425,6 +425,30 @@ a full corpus. The earlier fixed32 approximation and native-order/history limits
 remain. A future launch needs its own exact source selection, call budget and
 runtime evidence; an old fixed-count pilot wrapper is not a full-collection plan.
 
+### Qualified selected-bank Ceres collection
+
+`--selected-bank-qualification /bank/complete.json` together with
+`--expected-selected-bank-qualification-sha256` opts into the immutable
+`soft_sf_qualified_sample_v1` selection (4,096 rows in 64 saved NPZ fragments).
+Use `--source /bank --max-shards 64 --pad-final-batch --retain-value2`; omit the
+whole-corpus summary and G10 qualification arguments. Partial shard ranges are
+rejected. This profile has its own namespace and `selection_*.zarr` outputs; its
+completion counts fragments, never full source shards. It does not qualify a
+training corpus or expand the sample.
+
+Admission binds the exact completion receipt, original ordered selection, inclusion
+weights, saved raw-history records and fragment bytes. Collection uses the shared
+stored-x converter, fixed32 provider proof, lease, resource guards and compact
+writer, with one GPU session across all uncached fragments. It retains compact legal
+policy logits and both raw WDL heads. Original derived-row indices remain
+`row_index`; `selection_index` records their position in the frozen selection.
+Bindings retain original source/raw-shard/physical-row/game/ply/worker identities,
+input keys, selection strata/weights and raw-record/history hashes. Per-row stored-x
+and TPG-feed hashes bind the actual inputs. History and original float32 input-key
+correctness are inherited from the qualified bank; collection does not replay the
+original corpus or establish a native repetition oracle. Numerical, library and
+operational qualification for an actual selected-bank launch remains separate.
+
 ### Optional exact-epoch host overlap
 
 `lc0_control_train.py --sampling-mode game_epoch --epoch-host-batch-overlap`
