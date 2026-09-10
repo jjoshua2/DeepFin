@@ -8,7 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [BT4 target temperature and horizon](2026-09-09-bt4-target-temperature-horizon.md) | T1 materialization and metadata qualification complete; two-epoch training/matches pending |
+| [BT4 target temperature and horizon: results](2026-09-10-bt4-target-temperature-horizon-results.md) | Complete: all three fixed deep matches; relative horizon change +5.664 points [−2.734, +13.867], direction and placement unresolved; [registration record](2026-09-09-bt4-target-temperature-horizon.md) retained |
 | [B100 search-prior calibration](2026-09-09-b100-prior-calibration.md) | Complete: 0.7 versus 1.0 gives +16.30 Elo [−20.83, +53.80]; no follow-up selected, common prior 1.0 retained |
 | [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1/G20T05/G50T05 reclamation complete; E0T05 copy verified complete with source retained, zero new reclaimed bytes |
 | [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | Full 18.91M WDL bank and V50 training complete; V50 arena started, no playing result |
