@@ -425,6 +425,33 @@ a full corpus. The earlier fixed32 approximation and native-order/history limits
 remain. A future launch needs its own exact source selection, call budget and
 runtime evidence; an old fixed-count pilot wrapper is not a full-collection plan.
 
+### Bounded Ceres collection batches
+
+`scripts/ceres_collection_batches.py` runs an ordered JSON plan of prepared
+collector commands. Validate first with `--plan PLAN --expected-plan-sha256 SHA`;
+add `--execute` to run it. Each chunk needs a fresh output directory, explicit
+source range and expected row/padding counts, argv array, working directory,
+completion mode and timeout. The plan pins its dependencies and sets a fresh
+state directory, disk reserve, whole-operation budget and inter-chunk pause.
+
+Use `completion_mode: "ceres_invocations"` for the collector's timestamped
+`invocations/<id>/completed.json`. Exactly one genuine parent completion must
+match the current invocation and all expected counts; a child receipt alone does
+not qualify. `fixed_path` instead requires `expected_completion` within that
+chunk's output directory. Existing output is refused, not counted as new work.
+
+The limits are 30 minutes per chunk, 30 hours overall, at least 150 GiB free and
+at least 30 seconds between chunks. `state_directory/STOP` or a termination
+signal stops the queue and cleans up its owned process group. Failures retain
+completed-chunk receipts and do not retry. Cleanup cannot recover a kernel-stuck
+process or descendants that deliberately leave the group.
+
+The prepared collector command must acquire the shared GPU lease and implement
+its own inference/resource checks. This driver does not acquire that lease or
+validate the meaning of arbitrary argv. Its process tests do not qualify a new
+backend, dataset, teacher recipe or full-corpus collection; register and verify
+those separately before launching collection.
+
 ### Qualified selected-bank Ceres collection
 
 `--selected-bank-qualification /bank/complete.json` together with
