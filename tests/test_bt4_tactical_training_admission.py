@@ -12,6 +12,7 @@ import pytest
 
 from scripts import bt4_direct_screen as arena
 from scripts import bt4_one_epoch_screen as epoch
+from scripts.sf_policy_rewrite import recipe_for_summary
 from tests.test_bt4_one_epoch_screen import training_fixture, training_only_manifest
 from tests.test_bt4_value_training_admission import prepared as value_prepared
 
@@ -53,15 +54,7 @@ def prepared(tmp_path, monkeypatch):
             "bt4_policy_mix_summary.json"
         ],
         "sf_derive_summary_sha256": source_sha,
-        "recipe": {
-            "gap_cp": 100.0,
-            "decay_cp": 100.0,
-            "relative_floor": 0.1,
-            "mate_handling": "categorical-v1",
-            "cp_domain": [-32000, 32000],
-            "base": "normalized stored B100 float16 policy",
-            "storage": "float64 attenuation -> float32 -> float16; all-one weights preserve bytes",
-        },
+        "recipe": recipe_for_summary(),
         "changed_rows": 5000,
         "stored_mass_error_max": 0.0001,
         "categories": {
@@ -112,6 +105,7 @@ def prepared(tmp_path, monkeypatch):
     [
         "none",
         "gap",
+        "cp_domain",
         "decay",
         "floor",
         "mates",
@@ -144,6 +138,8 @@ def test_tactical_recipe_admission_and_exact_original_command(
         recipe["recipe"][
             {"gap": "gap_cp", "decay": "decay_cp", "floor": "relative_floor"}[defect]
         ] *= 2
+    elif defect == "cp_domain":
+        recipe["recipe"]["cp_domain"][1] = 31999.0
     elif defect == "mates":
         recipe["recipe"]["mate_handling"] = "cp-gaps"
     elif defect == "ideal_base":
