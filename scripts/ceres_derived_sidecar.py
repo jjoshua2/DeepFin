@@ -25,7 +25,7 @@ from numcodecs.blosc import set_nthreads
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from chess_anti_engine.encoding import ceres_tpg as tpg
 from chess_anti_engine.moves import leela_index as mapping
-from scripts import bt4_derived_wdl_sidecar as shared
+from scripts import bt4_derived_wdl_sidecar as shared, ceres_selected_bank as selected
 from scripts.sf_policy_rewrite import require
 
 PROFILE = 'ceres-c3-fixed32-primary-compact-v1'
@@ -54,6 +54,8 @@ def extended(args: argparse.Namespace) -> bool:
 
 
 def profile(args: argparse.Namespace) -> str:
+    if selected.enabled(args):
+        return selected.PROFILE
     return EXTENDED_PROFILE if extended(args) else PROFILE
 
 
@@ -68,9 +70,14 @@ def backend(args: argparse.Namespace) -> dict[str, Any]:
 def binding_options(expected: dict[str, Any]) -> argparse.Namespace:
     contract = expected['backend']
     args = argparse.Namespace(pad_final_batch=contract.get('remainder') == 'repeat_last_real',
-                              retain_value2='value2' in contract.get('outputs', []))
+                              retain_value2='value2' in contract.get('outputs', []),
+                              selected_bank_qualification=('bound' if expected['profile'] == selected.PROFILE else None))
     require(expected['profile'] == profile(args) and contract == backend(args),
             'unsupported Ceres profile/backend')
+    if selected.enabled(args):
+        require(args.pad_final_batch and args.retain_value2
+                and expected.get('selected_bank_qualification_sha256') == selected.QUALIFICATION_SHA,
+                'unsupported selected Ceres backend/qualification')
     return args
 
 
@@ -83,6 +90,7 @@ def collection_counts(n: int, pad_final_batch: bool) -> dict[str, int]:
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    selected.validate(args)
     require(args.batch_size == BATCH and args.threads == 2, 'requires fixed32 and two threads')
     require(args.gpu_mem_gb == 8 and args.gpu_lock and Path(args.gpu_lock).is_absolute(),
             'requires explicit shared GPU lock and accepted8GiB CUDA arena')
@@ -164,7 +172,8 @@ def open_teacher(args: argparse.Namespace) -> Any:
 def namespace(args: argparse.Namespace) -> dict[str, Any]:
     return {'profile': profile(args), 'source': str(Path(args.source).resolve()),
             'summary_sha256': args.expected_source_summary_sha256,
-            **shared.g10_binding(args), 'model_sha256': args.expected_onnx_sha256,
+            **(selected.binding(args) if selected.enabled(args) else shared.g10_binding(args)),
+            'model_sha256': args.expected_onnx_sha256,
             'backend': backend(args),
             'producer': {str(Path(p).resolve().relative_to(Path(__file__).resolve().parents[1])):
                          shared.file_sha256(p) for p in (__file__, shared.__file__,
@@ -173,7 +182,8 @@ def namespace(args: argparse.Namespace) -> dict[str, Any]:
 
 def expected_binding(args: argparse.Namespace, spec: dict[str, Any], state: str) -> dict[str, Any]:
     return {**namespace(args), 'shard': spec['path'], 'rows': spec['rows'],
-            'source_storage_identity': state}
+            'source_storage_identity': state,
+            **({'selected_rows': spec} if selected.enabled(args) else {})}
 
 
 def verify_cached(path: Path, expected: dict[str, Any]) -> dict[str, Any]:
@@ -187,7 +197,8 @@ def verify_cached(path: Path, expected: dict[str, Any]) -> dict[str, Any]:
     counts = collection_counts(n, options.pad_final_batch)
     if extended(options) or 'collection_counts' in attrs:
         require(attrs.get('collection_counts') == counts, 'Ceres collection counts differ')
-    dtypes = {**DTYPES, **({'value2_logits': 'float16'} if options.retain_value2 else {})}
+    dtypes = {**DTYPES, **({'value2_logits': 'float16'} if options.retain_value2 else {}),
+              **(selected.EXTRA_DTYPES if selected.enabled(options) else {})}
     require(set(group.array_keys()) == set(dtypes), 'Ceres array inventory/count differs')
     arrays = {}
     for key, dtype in dtypes.items():
@@ -204,8 +215,18 @@ def verify_cached(path: Path, expected: dict[str, Any]) -> dict[str, Any]:
               'ply_index': (n,), 'tpg_feed_sha256': (n, 32)}
     if options.retain_value2:
         shapes['value2_logits'] = (n, 3)
+    if selected.enabled(options):
+        shapes.update(selection_index=(n,), x_sha256=(n, 32))
+        rows = expected['selected_rows']
+        require(np.array_equal(arrays['selection_index'], rows['indices'])
+                and np.array_equal(arrays['game_id'], [r['game_id'] for r in rows['identities']])
+                and np.array_equal(arrays['ply_index'], [r['ply'] for r in rows['identities']]),
+                'selected cached identity differs')
+        order = [r['derived_row'] for r in rows['identities']]
+    else:
+        order = np.arange(n)
     require(all(arrays[k].shape == shape for k, shape in shapes.items()), 'Ceres array shape differs')
-    require(np.array_equal(arrays['row_index'], np.arange(n)), 'Ceres row order differs')
+    require(np.array_equal(arrays['row_index'], order), 'Ceres row order differs')
     require(bool(np.all(arrays['game_id'] >= 0) and np.all(arrays['ply_index'] >= 0)), 'negative identity')
     require(all(np.isfinite(arrays[k]).all() for k in dtypes if k.endswith('_logits')),
             'nonfinite Ceres logits')
@@ -224,14 +245,16 @@ def verify_cached(path: Path, expected: dict[str, Any]) -> dict[str, Any]:
 
 def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[str, Any],
                 session: Any, guard: Callable[[], None], qualify: Callable[[], dict[str, Any]]) -> None:
-    source = Path(args.source) / spec['path']
+    source = source_path(args, spec)
     state = shared.storage_identity(source)
     n = spec['rows']
     accounting = collection_counts(n, args.pad_final_batch)
-    group = shared.source_arrays(source, summary, n)
+    group = (selected.arrays(args, spec, COLUMNS) if selected.enabled(args)
+             else shared.source_arrays(source, summary, n))
     for key in ('legal_mask', 'has_legal_mask'):
         require(key in group, 'missing source legal mask')
-        shared.complete_chunks(group[key])
+        if not selected.enabled(args):
+            shared.complete_chunks(group[key])
     legal = np.asarray(group['legal_mask'][:])
     require(bool(legal.shape == (n, 1858) and group['has_legal_mask'].shape == (n,)
             and np.all((legal == 0) | (legal == 1))
@@ -248,6 +271,10 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
                'tpg_feed_sha256': np.empty((n, 32), dtype='uint8')}
     if args.retain_value2:
         payload['value2_logits'] = np.empty((n, 3), dtype='float16')
+    if selected.enabled(args):
+        payload['row_index'] = np.asarray([r['derived_row'] for r in spec['identities']], dtype='uint64')
+        payload['selection_index'] = np.asarray(spec['indices'], dtype='uint64')
+        payload['x_sha256'] = shared.row_digests(group['x'])
     hashes = {k: hashlib.sha256() for k in COLUMNS}
     proof = None
     for start in range(0, n, BATCH):
@@ -310,18 +337,22 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
     os.replace(writing, target)
 
 
+def source_path(args: argparse.Namespace, spec: dict[str, Any]) -> Path:
+    return Path(args.source) / (spec['fragment'] if selected.enabled(args) else spec['path'])
+
+
 def produce(args: argparse.Namespace) -> None:
     validate_args(args)
     with shared.raw.advisory_lease(Path(args.out) / '.writer.lock', poll_seconds=1,
                                    description='Ceres writer'):
-        summary, specs = shared.source_inventory(args)
+        summary, specs = selected.admit(args) if selected.enabled(args) else shared.source_inventory(args)
         counts = [collection_counts(s['rows'], args.pad_final_batch) for s in specs]
         marker = Path(args.out) / 'ceres_source.json'
         wanted = namespace(args)
         if marker.exists():
             require(json.loads(marker.read_text()) == wanted, 'Ceres source namespace differs')
         else:
-            require(not list(Path(args.out).glob('shard_*.zarr*'))
+            require(not list(Path(args.out).glob('*.zarr*'))
                     and not (Path(args.out) / 'g10_common_source.json').exists(),
                     'existing foreign or unbound output namespace')
             shared.raw.atomic_json(marker, wanted)
@@ -334,7 +365,7 @@ def produce(args: argparse.Namespace) -> None:
             target = Path(args.out) / spec['path']
             require(not target.with_name(target.name + '.writing').exists(), 'partial Ceres shard exists')
             if target.exists():
-                source_state = shared.storage_identity(Path(args.source) / spec['path'])
+                source_state = shared.storage_identity(source_path(args, spec))
                 verify_cached(target, expected_binding(args, spec, source_state))
             else:
                 todo.append(spec)
@@ -343,7 +374,10 @@ def produce(args: argparse.Namespace) -> None:
             shared.guard_resources(args)
             require(shared.storage_identity(Path(args.onnx)) == model_state, 'model changed')
             require(json.loads(marker.read_text()) == wanted, 'Ceres namespace changed')
-            shared.check_g10_pin(args)
+            if selected.enabled(args):
+                selected.guard(args)
+            else:
+                shared.check_g10_pin(args)
 
         if todo:
             gpu_path = Path(args.gpu_lock)
@@ -368,24 +402,28 @@ def produce(args: argparse.Namespace) -> None:
             for spec in todo:
                 label_shard(args, spec, summary, session, guard, qualify)
         guard()
-        require(shared.file_sha256(Path(args.source) / shared.SUMMARY)
-                == args.expected_source_summary_sha256, 'source summary changed')
+        if not selected.enabled(args):
+            require(shared.file_sha256(Path(args.source) / shared.SUMMARY)
+                    == args.expected_source_summary_sha256, 'source summary changed')
         if getattr(args, 'g10_admission', None) is not None:
             current = shared.g10.admit(Path(args.g10_common_qualification),
                 args.expected_g10_common_qualification_sha256, Path(args.source), summary)
             require(shared.g10.same(current, args.g10_admission), 'G10 admission changed')
         for spec in specs:
             attrs = dict(zarr.open_group(str(Path(args.out) / spec['path']), mode='r').attrs)
-            require(shared.storage_identity(Path(args.source) / spec['path'])
+            require(shared.storage_identity(source_path(args, spec))
                     == attrs['binding']['source_storage_identity'], 'source changed before completion')
         guard()
         shared.raw.atomic_json(Path(args.invocation) / 'child_completed.json',
             {'schema': 1, 'complete': True, 'profile': profile(args), 'selection': specs,
-             'rows': sum(s['rows'] for s in specs), 'shards': len(specs), 'new_shards': len(todo),
+             'rows': sum(s['rows'] for s in specs),
+             **({'fragments': len(specs), 'new_fragments': len(todo)} if selected.enabled(args)
+                else {'shards': len(specs), 'new_shards': len(todo)}),
              'collection_counts': {k: sum(c[k] for c in counts) for k in counts[0]},
              'new_collection_counts': {k: sum(collection_counts(s['rows'], args.pad_final_batch)[k]
                  for s in todo) for k in counts[0]},
-             'namespace': wanted, 'scope': 'Compact raw Ceres teacher bank only; no training qualification'})
+             'namespace': wanted, 'scope': ('Qualified selected rows only; fragment count is not whole shards'
+                if selected.enabled(args) else 'Compact raw Ceres teacher bank only; no training qualification')})
 
 
 def child(args: argparse.Namespace) -> None:
@@ -402,6 +440,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = shared.build_parser()
     parser.description = __doc__
     parser.set_defaults(batch_size=BATCH, gpu_mem_gb=8)
+    parser._option_string_actions['--expected-source-summary-sha256'].required = False
+    parser.add_argument('--selected-bank-qualification',
+                        help='Explicit immutable Soft-SF sample complete.json; --source is its bank directory')
+    parser.add_argument('--expected-selected-bank-qualification-sha256')
     parser.add_argument('--pad-final-batch', action='store_true',
                         help='Repeat the last real feed row to32 and store only real rows')
     parser.add_argument('--retain-value2', action='store_true',
