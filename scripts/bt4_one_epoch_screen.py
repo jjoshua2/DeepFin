@@ -243,7 +243,7 @@ def verify_tactical_recipe(m, rewritten, derived):
                 'nonpolicy_arrays_copied': 16, 'raw_manifest_present': False,
                 'sf_derive_summary_sha256': sf_sha,
                 'recipe': {'gap_cp': 100.0, 'decay_cp': 100.0, 'relative_floor': .1,
-                           'mate_handling': 'categorical-v1', 'cp_domain': [-32000, 32000],
+                           'mate_handling': 'categorical-v1', 'cp_domain': [-32000.0, 32000.0],
                            'base': 'normalized stored B100 float16 policy',
                            'storage': 'float64 attenuation -> float32 -> float16; all-one weights preserve bytes'}}
     arena.require(equal_json({k: rewritten.get(k) for k in expected}, expected),
