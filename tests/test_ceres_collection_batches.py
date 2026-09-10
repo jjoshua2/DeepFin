@@ -335,6 +335,7 @@ def test_default_validates_and_does_not_execute(
         (lambda plan: plan["chunks"][0].__setitem__("start_shard", 1.0), "integer"),
         (lambda plan: plan["chunks"][0].__setitem__("max_shards", 0), "out of range"),
         (lambda plan: plan["chunks"][0].__setitem__("timeout_seconds", 1801), "out of range"),
+        (lambda plan: plan["chunks"][0].__setitem__("timeout_seconds", 31), "out of range"),
         (lambda plan: plan.__setitem__("overall_seconds", 108001), "out of range"),
         (lambda plan: plan.__setitem__("pause_between_chunks_seconds", 29), "out of range"),
         (lambda plan: plan.__setitem__("minimum_free_gib", 149), "out of range"),
@@ -679,6 +680,33 @@ def test_last_chunk_pin_mutation_refuses_complete(
     assert manifest["completed_chunks"][0]["completion_sha256"] == sha(
         tmp_path / "outs" / "c16" / "completed.json"
     )
+
+
+@pytest.mark.usefixtures("_plenty_disk")
+def test_second_signal_during_failure_receipt_keeps_failed_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, digest, _worker = two_chunk_plan(tmp_path)
+    real_write = tool.write_exclusive
+
+    def interrupted_chunk(*_args: Any, **_kwargs: Any) -> None:
+        os.kill(os.getpid(), signal.SIGTERM)
+        raise AssertionError("first signal must interrupt")
+
+    def interrupted_write(path: Path, value: Any) -> None:
+        if path.name == "failed.json":
+            os.kill(os.getpid(), signal.SIGTERM)
+        real_write(path, value)
+
+    monkeypatch.setattr(tool, "run_chunk", interrupted_chunk)
+    monkeypatch.setattr(tool, "write_exclusive", interrupted_write)
+    before = signal.getsignal(signal.SIGTERM)
+    assert tool.main(["--plan", str(path), "--expected-plan-sha256", digest, "--execute"]) == 1
+    assert signal.getsignal(signal.SIGTERM) == before
+    for name in ("failed.json", "manifest.json"):
+        receipt = json.loads((tmp_path / "state" / name).read_text())
+        assert receipt["status"] == "FAILED"
+        assert receipt["completed_chunks"] == []
 
 
 def test_external_sigterm_cleans_owned_child_and_releases_lock(

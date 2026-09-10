@@ -32,6 +32,7 @@ from typing import Any
 SCHEMA = 1
 POLL_SECONDS = 2.0
 CLEANUP_SECONDS = 30.0
+MIN_CHUNK_SECONDS = int(CLEANUP_SECONDS + POLL_SECONDS) + 1
 MAX_CHUNK_TIMEOUT_SECONDS = 1800
 MAX_OVERALL_SECONDS = 108000
 MIN_FREE_GIB = 150
@@ -291,7 +292,7 @@ def validate_chunk(chunk: Any, index: int, state: Path, seen_ids: set[str],
     padding = require_int(chunk["expected_padding_rows"],
                           f"{ident}.expected_padding_rows", minimum=0)
     timeout = require_int(chunk["timeout_seconds"], f"{ident}.timeout_seconds",
-                          minimum=1, maximum=MAX_CHUNK_TIMEOUT_SECONDS)
+                          minimum=MIN_CHUNK_SECONDS, maximum=MAX_CHUNK_TIMEOUT_SECONDS)
     mode = chunk["completion_mode"]
     require(mode in (COMPLETION_FIXED, COMPLETION_CERES),
             f"{ident} completion_mode must be {COMPLETION_FIXED} or {COMPLETION_CERES}")
@@ -498,7 +499,7 @@ def interruptible_wait(seconds: float, guard: Callable[[], None]) -> None:
 
 def run_chunk(chunk: dict[str, Any], state: Path, bound: float,
               guard: Callable[[], None]) -> dict[str, Any]:
-    require(bound > CLEANUP_SECONDS, f"{chunk['id']} insufficient remaining time")
+    require(bound > CLEANUP_SECONDS + POLL_SECONDS, f"{chunk['id']} insufficient remaining time")
     require(not chunk["output_directory"].exists(),
             f"{chunk['id']} output directory is not fresh")
     chunk_state = state / "chunks" / chunk["id"]
@@ -610,8 +611,8 @@ def execute(plan: dict[str, Any]) -> dict[str, Any]:
                 "overall budget exhausted")
         check_resources(state, plan["minimum_free_gib"], extra_disk)
 
-    try:
-        with execute_termination_signals():
+    with execute_termination_signals():
+        try:
             authenticity()
             resources()
             for index, chunk in enumerate(plan["chunks"]):
@@ -645,26 +646,28 @@ def execute(plan: dict[str, Any]) -> dict[str, Any]:
             }
             write_exclusive(state / "manifest.json", manifest)
             return manifest
-    except BaseException as exc:
-        failed = {
-            "schema": SCHEMA,
-            "status": "FAILED",
-            "plan_sha256": plan["plan_sha256"],
-            "ended_unix": time.time(),
-            "elapsed_seconds": time.monotonic() - started_monotonic,
-            "error": repr(exc),
-            "completed_chunks": completed,
-        }
-        write_exclusive(state / "failed.json", failed)
-        write_exclusive(state / "manifest.json", {
-            "schema": SCHEMA,
-            "status": "FAILED",
-            "plan_sha256": plan["plan_sha256"],
-            "ended_unix": failed["ended_unix"],
-            "elapsed_seconds": failed["elapsed_seconds"],
-            "completed_chunks": completed,
-        })
-        raise
+        except BaseException as exc:
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                signal.signal(sig, signal.SIG_IGN)
+            failed = {
+                "schema": SCHEMA,
+                "status": "FAILED",
+                "plan_sha256": plan["plan_sha256"],
+                "ended_unix": time.time(),
+                "elapsed_seconds": time.monotonic() - started_monotonic,
+                "error": repr(exc),
+                "completed_chunks": completed,
+            }
+            write_exclusive(state / "failed.json", failed)
+            write_exclusive(state / "manifest.json", {
+                "schema": SCHEMA,
+                "status": "FAILED",
+                "plan_sha256": plan["plan_sha256"],
+                "ended_unix": failed["ended_unix"],
+                "elapsed_seconds": failed["elapsed_seconds"],
+                "completed_chunks": completed,
+            })
+            raise
 
 
 def public_plan(plan: dict[str, Any]) -> dict[str, Any]:
