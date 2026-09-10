@@ -1,0 +1,60 @@
+{
+  "status": "TRAINING_STARTED_NO_COMPLETED_CHECKPOINT_OR_MATCH",
+  "profile": "B100Tactical100",
+  "recipe": {
+    "base": "stored B100 teacher T0.5",
+    "gap_cp": 100,
+    "decay_cp": 100,
+    "relative_floor": 0.1,
+    "mate_handling": "categorical-v1",
+    "value": "all original SF value and nonpolicy arrays unchanged"
+  },
+  "counts": {
+    "rows": 18910484,
+    "shards": 2309,
+    "planned_updates": 36935,
+    "planned_windows": 420,
+    "games": 97968
+  },
+  "control_checkpoint_sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62",
+  "preregistration_sha256": "f21b63451b060679fa28b31dbe71c8d362e4b9a26540f3c5b65e1fabdb1bb1cc",
+  "data_qualification_sha256": "824688565a33315f4ede4e309a019e59848d6d604c97d620bedcc3d52667834a",
+  "training_manifest_sha256": "b83b04b0a687ec6b75281b460f49b31509f83e0d823f9f75ca6e85fdb91cb428",
+  "prospective_schedule_sha256": "5b2d774b11732c81512a0293772bdbbc74955919ce05a8e88addb49c743a73b1",
+  "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+  "producer_exit_code": 0,
+  "materialization_producer_seconds": 21242.78,
+  "recovery_qualification_seconds": 59.28774046897888,
+  "training_started_utc": "2026-09-10T22:33:07.097986+00:00",
+  "training_stage_seconds_cap": 16200,
+  "primary_match": {
+    "simulations_each": 400,
+    "pairs": 128,
+    "games": 256,
+    "search_priors_each": 1.0,
+    "opening_seed": 20260909,
+    "opening_panel_sha256": "3c955d68a6c010e373b44418f3bbbf1500cf9192d04ca17ffdd3dcd191d7cbb1",
+    "max_plies": 300,
+    "tablebases": false,
+    "owned_stage_seconds_cap": 5400,
+    "lease_wait_seconds_cap": 3600,
+    "whole_operation_seconds_cap": 10230,
+    "reader": "qualified strict checkpoint package and paired complete-game reader"
+  },
+  "decision": {
+    "metric": "mean candidate score over 128 swapped opening pairs, paired nominal 95 percent interval and descriptive Elo",
+    "above_half": "interval wholly above 0.5 supports this bounded recipe and may motivate fresh-seed/fresh-panel confirmation",
+    "below_half": "interval wholly below 0.5 favors control",
+    "otherwise": "unresolved; choose next science by effect size, uncertainty and distinct hypotheses; no automatic extension"
+  },
+  "recovery": {
+    "original_supervisor_status": "FAILED_EXCEPTION",
+    "reason": "Producer serialized cp_domain floats; admission expected integer JSON spelling. PR620 fixes admission; original failed receipt retained and completed data independently qualified through reviewed recovery inspector."
+  },
+  "limitations": [
+    "One training seed and reused development panel; no promotion or seed generalization.",
+    "Cannot recover stored zero BT4 support. SF d9 scores and bound limitations remain.",
+    "Materialization and schedule qualification are prerequisites; this scientific registration is not an executable manifest.",
+    "Snapshot of a launched run only; no playing result or promotion. Historical trainer purity/live-configuration caveats remain; this is the matched exact-epoch comparison, not a claim about the replacement-sampled historical control."
+  ]
+}
