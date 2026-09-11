@@ -85,8 +85,10 @@ def _d9_scores(row: dict[str, Any], legal: set[str]) -> dict[str, float]:
     lines = blocks[0]["lines"]
     require(len(lines) == len(legal), "phase0 d9 roster is not full width")
     values = {str(line[1]): float(line[2]) for line in lines}
-    require(set(values) == legal and all(math.isfinite(v) for v in values.values()),
-            "phase0 d9 legal roster differs")
+    require(
+        set(values) == legal and all(math.isfinite(v) for v in values.values()),
+        "phase0 d9 legal roster differs",
+    )
     return values
 
 
@@ -94,8 +96,10 @@ def _validate_score_domain(scores: dict[str, float]) -> None:
     values = np.asarray(list(scores.values()), dtype=np.float64)
     require(bool(np.isfinite(values).all()), "nonfinite SF score")
     mate = np.abs(values) > SF_CP_CLAMP_CP
-    require(bool(np.isin(np.abs(values[mate]), sf_rewrite.MATE_SCORE_VALUES).all()),
-            "SF score outside cp or shared mate domain")
+    require(
+        bool(np.isin(np.abs(values[mate]), sf_rewrite.MATE_SCORE_VALUES).all()),
+        "SF score outside cp or shared mate domain",
+    )
 
 
 def _policy_view(
@@ -130,8 +134,10 @@ def _ordinary_d9_best(
     scores: dict[str, float],
 ) -> tuple[set[str], float | None]:
     values = np.asarray(list(scores.values()), dtype=np.float64)
-    require(not bool(np.any(np.abs(values) > SF_CP_CLAMP_CP)),
-            "ordinary d9 helper received mate-domain score")
+    require(
+        not bool(np.any(np.abs(values) > SF_CP_CLAMP_CP)),
+        "ordinary d9 helper received mate-domain score",
+    )
     best_score = float(values.max())
     best = {move for move, score in scores.items() if score == best_score}
     lower = [score for score in scores.values() if score < best_score]
@@ -160,7 +166,9 @@ def _deeper_comparison(
     if d9_complete and bt4_complete:
         d9_score = max(final_scores[move] for move in d9_best)
         bt4_score = max(final_scores[move] for move in bt4_top)
-        pairwise = "bt4" if bt4_score > d9_score else "d9" if d9_score > bt4_score else "tie"
+        pairwise = (
+            "bt4" if bt4_score > d9_score else "d9" if d9_score > bt4_score else "tie"
+        )
         final_max = max(final_scores.values())
         global_set = {move for move, score in final_scores.items() if score == final_max}
         d9_global = bool(global_set & d9_best)
@@ -212,7 +220,11 @@ def analyze_row(row: dict[str, Any], raw_bt4_policy: np.ndarray) -> dict[str, An
     }
     if winning_mates:
         final_winning = (
-            {move for move, score in final_scores.items() if score > SF_CP_CLAMP_CP}
+            {
+                move
+                for move, score in final_scores.items()
+                if score > SF_CP_CLAMP_CP
+            }
             if final_scores is not None
             else set()
         )
@@ -234,11 +246,15 @@ def analyze_row(row: dict[str, Any], raw_bt4_policy: np.ndarray) -> dict[str, An
 
     d9_best, gap = _ordinary_d9_best(d9)
     disagreement = d9_best.isdisjoint(bt4_top)
-    comparison = _deeper_comparison(final_scores, d9_best, bt4_top) if disagreement else {
-        "roster_case": "bt4_agrees_d9",
-        "pairwise": None,
-        "global_best": None,
-    }
+    comparison = (
+        _deeper_comparison(final_scores, d9_best, bt4_top)
+        if disagreement
+        else {
+            "roster_case": "bt4_agrees_d9",
+            "pairwise": None,
+            "global_best": None,
+        }
+    )
     return {
         **base,
         "kind": "ordinary",
@@ -271,7 +287,9 @@ def _empty_cell() -> dict[str, int]:
     }
 
 
-def _update_cell(cell: dict[str, int], result: dict[str, Any], *, disagreement: bool) -> None:
+def _update_cell(
+    cell: dict[str, int], result: dict[str, Any], *, disagreement: bool
+) -> None:
     cell["eligible_gap"] += 1
     if not disagreement:
         return
@@ -280,14 +298,20 @@ def _update_cell(cell: dict[str, int], result: dict[str, Any], *, disagreement: 
     if roster == "both_complete":
         cell["adjudicable"] += 1
         pairwise = str(result["pairwise"])
-        cell[{"bt4": "bt4_pairwise_wins", "d9": "d9_pairwise_wins", "tie": "pairwise_ties"}[pairwise]] += 1
+        cell[
+            {"bt4": "bt4_pairwise_wins", "d9": "d9_pairwise_wins", "tie": "pairwise_ties"}[
+                pairwise
+            ]
+        ] += 1
         global_best = str(result["global_best"])
-        cell[{
-            "bt4": "global_bt4",
-            "d9": "global_d9",
-            "tie_d9_bt4": "global_tie_d9_bt4",
-            "third": "global_third",
-        }[global_best]] += 1
+        cell[
+            {
+                "bt4": "global_bt4",
+                "d9": "global_d9",
+                "tie_d9_bt4": "global_tie_d9_bt4",
+                "third": "global_third",
+            }[global_best]
+        ] += 1
     else:
         require(roster in cell, "unknown roster calibration class")
         cell[roster] += 1
@@ -311,7 +335,11 @@ def _new_aggregate() -> dict[str, Any]:
             name: _empty_cell()
             for name in ("lt_0.25", "0.25_to_0.50", "0.50_to_0.75", "ge_0.75")
         },
-        "threshold300_by_depth": {"10": _empty_cell(), "12": _empty_cell(), "9_fallback": _empty_cell()},
+        "threshold300_by_depth": {
+            "10": _empty_cell(),
+            "12": _empty_cell(),
+            "9_fallback": _empty_cell(),
+        },
     }
 
 
@@ -327,7 +355,11 @@ def aggregate_row(aggregate: dict[str, Any], result: dict[str, Any]) -> None:
             "final_preserves_d9_winning_mate",
             "bt4_top_is_final_winning_mate",
         ):
-            target = "bt4_agrees_d9_winning_mate" if key == "bt4_agrees_with_d9_winning_mate" else key
+            target = (
+                "bt4_agrees_d9_winning_mate"
+                if key == "bt4_agrees_with_d9_winning_mate"
+                else key
+            )
             mate[target] += int(bool(result[key]))
         mate["fallback_no_deeper_scores"] += int(result["final_depth"] == 9)
         return
@@ -342,15 +374,33 @@ def aggregate_row(aggregate: dict[str, Any], result: dict[str, Any]) -> None:
     disagreement = bool(result["disagreement"])
     for threshold in THRESHOLDS_CP:
         if float(gap) > threshold:
-            _update_cell(aggregate["thresholds"][str(int(threshold))], result, disagreement=disagreement)
+            _update_cell(
+                aggregate["thresholds"][str(int(threshold))],
+                result,
+                disagreement=disagreement,
+            )
     if float(gap) > SELECTED_THRESHOLD_CP:
         bucket = str(result["bt4_confidence_bucket"])
-        _update_cell(aggregate["threshold300_by_confidence"][bucket], result, disagreement=disagreement)
-        depth_key = str(result["final_depth"]) if result["final_depth"] in (10, 12) else "9_fallback"
-        _update_cell(aggregate["threshold300_by_depth"][depth_key], result, disagreement=disagreement)
+        _update_cell(
+            aggregate["threshold300_by_confidence"][bucket],
+            result,
+            disagreement=disagreement,
+        )
+        depth_key = (
+            str(result["final_depth"])
+            if result["final_depth"] in (10, 12)
+            else "9_fallback"
+        )
+        _update_cell(
+            aggregate["threshold300_by_depth"][depth_key],
+            result,
+            disagreement=disagreement,
+        )
 
 
-def decision_from_aggregate(aggregate: dict[str, Any], *, full_source_coverage: bool) -> dict[str, Any]:
+def decision_from_aggregate(
+    aggregate: dict[str, Any], *, full_source_coverage: bool
+) -> dict[str, Any]:
     selected = aggregate["thresholds"][str(int(SELECTED_THRESHOLD_CP))]
     denominator = int(selected["adjudicable"])
     numerator = int(selected["bt4_pairwise_wins"])
@@ -399,24 +449,41 @@ def calibrate(
 ) -> dict[str, Any]:
     """Run the provenance-qualified retrospective diagnostic without new inference."""
     require(_hex64(expected_manifest_sha256), "adapter manifest SHA256 required")
-    require(start_shard >= 0 and (max_shards is None or max_shards > 0), "invalid shard slice")
+    require(
+        start_shard >= 0 and (max_shards is None or max_shards > 0),
+        "invalid shard slice",
+    )
     manifest_path = manifest_path.resolve()
     manifest_pin = {"path": str(manifest_path), "sha256": expected_manifest_sha256}
     manifest = json.loads(adapter.pin(manifest_pin).read_text())
-    require(set(manifest) in ({"schema", "derived_summary", "teacher", "sources"},
-                              {"schema", "derived_summary", "teacher", "sources", "wdl"})
-            and manifest["schema"] == 1, "adapter manifest fields/schema differ")
+    require(
+        set(manifest)
+        in (
+            {"schema", "derived_summary", "teacher", "sources"},
+            {"schema", "derived_summary", "teacher", "sources", "wdl"},
+        )
+        and manifest["schema"] == 1,
+        "adapter manifest fields/schema differ",
+    )
     summary_path = adapter.pin(manifest["derived_summary"])
     require(summary_path.name == derive.SUMMARY_NAME, "expected derived corpus summary")
     source = summary_path.parent
     summary = json.loads(summary_path.read_text())
-    require(summary.get("row_provenance", {}).get("path_in_shard") == provenance.FILENAME,
-            "derivation has no row provenance")
+    require(
+        summary.get("row_provenance", {}).get("path_in_shard") == provenance.FILENAME,
+        "derivation has no row provenance",
+    )
     paths = sorted(source.glob("shard_*.zarr"))
     written = {entry["path"]: entry for entry in summary["shards"]}
-    require(bool(paths) and set(written) == {path.name for path in paths},
-            "derived shard inventory differs from summary")
-    stop = len(paths) if max_shards is None else min(len(paths), start_shard + max_shards)
+    require(
+        bool(paths) and set(written) == {path.name for path in paths},
+        "derived shard inventory differs from summary",
+    )
+    stop = (
+        len(paths)
+        if max_shards is None
+        else min(len(paths), start_shard + max_shards)
+    )
     selected = paths[start_shard:stop]
     require(bool(selected), "selected shard slice is empty")
     full_source_coverage = start_shard == 0 and len(selected) == len(paths)
@@ -426,8 +493,13 @@ def calibrate(
     writing = out.with_name(out.name + ".writing")
     protected = [source, manifest_path, *[Path(value) for value in inputs.sources]]
     protected += [spec.out_dir for spec, _receipts in inputs.sources.values()]
-    require(all(out != path and out not in path.parents and path not in out.parents for path in protected),
-            "output overlaps inputs")
+    require(
+        all(
+            out != path and out not in path.parents and path not in out.parents
+            for path in protected
+        ),
+        "output overlaps inputs",
+    )
     require(not out.exists() and not writing.exists(), "new output required; no adoption")
     writing.mkdir(parents=True)
     inputs.cache_dir = writing / "._raw_identity_cache"
@@ -445,16 +517,29 @@ def calibrate(
             group: Any = zarr.open_group(str(path), mode="r")
             x = np.asarray(group["x"][:])
             rows = len(x)
-            require(rows == written[path.name]["rows"] and rows > 0, "derived row count differs")
+            require(
+                rows == written[path.name]["rows"] and rows > 0,
+                "derived row count differs",
+            )
             stamp = dict(group.attrs).get("derive_row_provenance")
-            require(isinstance(stamp, dict) and stamp == written[path.name].get("row_provenance"),
-                    "provenance summary/attribute pin mismatch")
-            require(stamp["schema"] == provenance.SCHEMA and stamp["rows"] == rows
-                    and stamp["record_bytes"] == provenance.RECORD_DTYPE.itemsize
-                    and stamp["path"] == provenance.FILENAME,
-                    "provenance stamp format differs")
+            if not isinstance(stamp, dict):
+                raise ValueError("provenance attribute is not a mapping")
+            require(
+                stamp == written[path.name].get("row_provenance"),
+                "provenance summary/attribute pin mismatch",
+            )
+            require(
+                stamp["schema"] == provenance.SCHEMA
+                and stamp["rows"] == rows
+                and stamp["record_bytes"] == provenance.RECORD_DTYPE.itemsize
+                and stamp["path"] == provenance.FILENAME,
+                "provenance stamp format differs",
+            )
             provenance_path = path / provenance.FILENAME
-            require(file_sha256(provenance_path) == stamp["sha256"], "corrupted row provenance")
+            require(
+                file_sha256(provenance_path) == stamp["sha256"],
+                "corrupted row provenance",
+            )
             refs = provenance.read(provenance_path, rows=rows)
             game_ids = np.asarray(group["game_id"][:])
             ply_indices = np.asarray(group["ply_index"][:])
@@ -462,76 +547,138 @@ def calibrate(
             grouped: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
             seen: set[tuple[str, str, int]] = set()
             for index, ref in enumerate(refs):
-                source_identity = (ref["source_namespace"], ref["source_shard"], int(ref["source_row"]))
-                require(source_identity not in seen, "duplicate source-qualified derived row")
+                source_identity = (
+                    ref["source_namespace"],
+                    ref["source_shard"],
+                    int(ref["source_row"]),
+                )
+                require(
+                    source_identity not in seen,
+                    "duplicate source-qualified derived row",
+                )
                 seen.add(source_identity)
-                grouped.setdefault((str(ref["source_dir"]), str(ref["source_shard"])), []).append((index, ref))
+                grouped.setdefault(
+                    (str(ref["source_dir"]), str(ref["source_shard"])), []
+                ).append((index, ref))
 
             for requests in grouped.values():
                 first_ref = requests[0][1]
                 raw_group, records = inputs.get(first_ref)
                 offsets = {int(ref["source_row"]) for _index, ref in requests}
-                raw_path = Path(str(first_ref["source_dir"])) / str(first_ref["source_shard"])
+                raw_path = Path(str(first_ref["source_dir"])) / str(
+                    first_ref["source_shard"]
+                )
                 source_rows = _raw_rows(raw_path, offsets)
-                raw_offsets = np.asarray([int(ref["source_row"]) for _index, ref in requests], dtype=np.int64)
-                policies = np.asarray(raw_group[raw.POLICY_FIELD].oindex[raw_offsets, :])
-                require(policies.shape == (len(requests), COMPACT_POLICY_SIZE), "raw BT4 policy shape differs")
+                raw_offsets = np.asarray(
+                    [int(ref["source_row"]) for _index, ref in requests],
+                    dtype=np.int64,
+                )
+                policies = np.asarray(
+                    raw_group[raw.POLICY_FIELD].oindex[raw_offsets, :]
+                )
+                require(
+                    policies.shape == (len(requests), COMPACT_POLICY_SIZE),
+                    "raw BT4 policy shape differs",
+                )
 
                 for request_index, (derived_index, ref) in enumerate(requests):
                     offset = int(ref["source_row"])
-                    require(0 <= offset < len(records), "physical source row outside closed shard")
+                    require(
+                        0 <= offset < len(records),
+                        "physical source row outside closed shard",
+                    )
                     record = records[offset]
-                    require(ref["input_key"] == record["input_key"].tobytes().hex(),
-                            "raw full-history key mismatch")
-                    require(ref["stored_input_key"] == record["stored_input_key"].tobytes().hex()
-                            == adapter.corpus.input_tensor_key(x[derived_index]),
-                            "stored quantized full-history key mismatch")
-                    require(all(int(ref[field]) == int(record[field]) for field in ("worker_id", "game_id", "ply")),
-                            "raw physical row/game/ply/worker identity mismatch")
-                    require(int(game_ids[derived_index]) == int(ref["game_id"])
-                            and int(ply_indices[derived_index]) == int(ref["ply"]),
-                            "derived game/ply alignment mismatch")
+                    require(
+                        ref["input_key"] == record["input_key"].tobytes().hex(),
+                        "raw full-history key mismatch",
+                    )
+                    require(
+                        ref["stored_input_key"]
+                        == record["stored_input_key"].tobytes().hex()
+                        == adapter.corpus.input_tensor_key(x[derived_index]),
+                        "stored quantized full-history key mismatch",
+                    )
+                    require(
+                        all(
+                            int(ref[field]) == int(record[field])
+                            for field in ("worker_id", "game_id", "ply")
+                        ),
+                        "raw physical row/game/ply/worker identity mismatch",
+                    )
+                    require(
+                        int(game_ids[derived_index]) == int(ref["game_id"])
+                        and int(ply_indices[derived_index]) == int(ref["ply"]),
+                        "derived game/ply alignment mismatch",
+                    )
                     raw_row = source_rows[offset]
-                    derive._check_row_identity(raw_row, str(ref["source_config_sha256"]))
-                    require(int(raw_row["worker_id"]) == int(ref["worker_id"])
-                            and int(raw_row["game_id"]) == int(ref["game_id"])
-                            and int(raw_row["ply"]) == int(ref["ply"])
-                            and raw_row["input_key"] == ref["input_key"],
-                            "raw row identity differs from provenance")
+                    derive._check_row_identity(
+                        raw_row, str(ref["source_config_sha256"])
+                    )
+                    require(
+                        int(raw_row["worker_id"]) == int(ref["worker_id"])
+                        and int(raw_row["game_id"]) == int(ref["game_id"])
+                        and int(raw_row["ply"]) == int(ref["ply"])
+                        and raw_row["input_key"] == ref["input_key"],
+                        "raw row identity differs from provenance",
+                    )
 
                     board = chess.Board(str(raw_row["fen"]))
                     expected_legal = np.zeros(COMPACT_POLICY_SIZE, dtype=bool)
                     for move in board.legal_moves:
                         expected_legal[compact_index_for_move(board, move)] = True
-                    require(np.array_equal(expected_legal, derived_legal[derived_index]),
-                            "raw board legal support differs from derived row")
+                    require(
+                        np.array_equal(
+                            expected_legal, derived_legal[derived_index]
+                        ),
+                        "raw board legal support differs from derived row",
+                    )
                     result = analyze_row(raw_row, policies[request_index])
                     aggregate_row(aggregate, result)
-                    identity.update(json.dumps([
-                        str(ref["source_namespace"]), str(ref["source_shard"]), offset,
-                        str(ref["input_key"]), sorted(result.get("bt4_top", [])),
-                    ], separators=(",", ":")).encode())
+                    identity.update(
+                        json.dumps(
+                            [
+                                str(ref["source_namespace"]),
+                                str(ref["source_shard"]),
+                                offset,
+                                str(ref["input_key"]),
+                                sorted(result.get("bt4_top", [])),
+                            ],
+                            separators=(",", ":"),
+                        ).encode()
+                    )
                     rows_analyzed += 1
 
-            require(adapter.storage_identity(path) == derived_stable[path],
-                    "derived source changed during calibration")
-            require(file_sha256(provenance_path) == stamp["sha256"],
-                    "row provenance changed during calibration")
-            shard_receipts.append({
-                "path": path.name,
-                "rows": rows,
-                "row_provenance_sha256": stamp["sha256"],
-                "source_storage_identity": derived_stable[path],
-            })
+            require(
+                adapter.storage_identity(path) == derived_stable[path],
+                "derived source changed during calibration",
+            )
+            require(
+                file_sha256(provenance_path) == stamp["sha256"],
+                "row provenance changed during calibration",
+            )
+            shard_receipts.append(
+                {
+                    "path": path.name,
+                    "rows": rows,
+                    "row_provenance_sha256": stamp["sha256"],
+                    "source_storage_identity": derived_stable[path],
+                }
+            )
 
         require(rows_analyzed == aggregate["rows"], "aggregate row count differs")
-        require(all(adapter.storage_identity(path) == stamp
-                    for path, stamp in (inputs.stable | derived_stable).items()),
-                "verified input storage changed before publication")
+        require(
+            all(
+                adapter.storage_identity(path) == stamp
+                for path, stamp in (inputs.stable | derived_stable).items()
+            ),
+            "verified input storage changed before publication",
+        )
         for item in [manifest_pin, manifest["derived_summary"], *inputs.pins]:
             adapter.pin(item)
 
-        decision = decision_from_aggregate(aggregate, full_source_coverage=full_source_coverage)
+        decision = decision_from_aggregate(
+            aggregate, full_source_coverage=full_source_coverage
+        )
         final = {
             "schema": SCHEMA,
             "status": "COMPLETE_DIAGNOSTIC_NOT_TRAINING_ADMISSION",
@@ -561,9 +708,15 @@ def calibrate(
             "shards": shard_receipts,
             "producer_sha256": {
                 str(Path(__file__).resolve()): file_sha256(Path(__file__).resolve()),
-                str(Path(adaptive.__file__).resolve()): file_sha256(Path(adaptive.__file__).resolve()),
-                str(Path(adapter.__file__).resolve()): file_sha256(Path(adapter.__file__).resolve()),
-                str(Path(mix.__file__).resolve()): file_sha256(Path(mix.__file__).resolve()),
+                str(Path(adaptive.__file__).resolve()): file_sha256(
+                    Path(adaptive.__file__).resolve()
+                ),
+                str(Path(adapter.__file__).resolve()): file_sha256(
+                    Path(adapter.__file__).resolve()
+                ),
+                str(Path(mix.__file__).resolve()): file_sha256(
+                    Path(mix.__file__).resolve()
+                ),
             },
             "elapsed_seconds": time.monotonic() - started,
             "limits": [
@@ -583,11 +736,14 @@ def calibrate(
     except BaseException as exc:
         inputs.cache.clear()
         if writing.exists():
-            mix._atomic_json(writing / "failed.json", {
-                "error": repr(exc),
-                "rows_analyzed": rows_analyzed,
-                "partial_output_preserved": True,
-            })
+            mix._atomic_json(
+                writing / "failed.json",
+                {
+                    "error": repr(exc),
+                    "rows_analyzed": rows_analyzed,
+                    "partial_output_preserved": True,
+                },
+            )
         raise
 
 
