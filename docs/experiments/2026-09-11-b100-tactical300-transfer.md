@@ -7,6 +7,14 @@ Registered September 11, 2026.
 Implementation and focused tests are prepared in this branch. No real corpus rewrite,
 training run, arena, playing-strength result, or production adoption is claimed.
 
+**Real Tactical300 materialization and training are now explicitly blocked on the
+stacked retrospective G10 calibration.** That calibration must measure how often a
+one-node BT4 policy disagreement with a large d9 Stockfish margin is subsequently
+vindicated by the already-recorded d10/d12 searches, including the fraction that can
+actually be adjudicated after G10's narrowed search rosters. A later training
+admission must pin that completed calibration receipt or adopt a separately
+registered depth-stable gate justified by it.
+
 The existing incumbent remains **B100**: pure BT4 policy supervision sharpened at
 teacher temperature 0.5, with the original Stockfish-derived value target unchanged.
 
@@ -23,16 +31,19 @@ its tactical evidence is overwhelming, and then correct the policy strongly.**
 ## Hypothesis
 
 A one-node neural teacher can be strategically stronger than Stockfish policy
-imitation overall while still miss tactics that a short search exposes. In
-particular, a d9 Stockfish search can identify positions where one move is hundreds
-of centipawns better than every alternative, or where a winning mate exists.
+imitation overall while still miss tactics that a short search exposes. Conversely,
+a large shallow-Stockfish gap is not automatically truth: a deeper search can overturn
+its preferred move, and a neural teacher can encode positional information that a
+short tactical search has not resolved.
 
-If Stockfish's best non-mate move beats the next-best non-mate move by **strictly
-more than 300 effective centipawns**, treat that as a sparse tactical-confidence
-gate. Do not change ordinary B100 targets below or at the 300 cp boundary.
+The mechanism implemented here uses a d9 best-vs-second gate of **strictly more than
+300 effective centipawns**. That 300 cp threshold is an experimental candidate, not
+a calibrated confidence statement. Do not change ordinary B100 targets below or at
+the boundary.
 
-When the gate fires, move probability mass toward the Stockfish-best move/set
-instead of merely multiplying inferior moves downward.
+When the gate fires, move probability mass toward the Stockfish-best move/set instead
+of merely multiplying inferior moves downward. Whether d9 alone is strong enough to
+trigger that transfer is the subject of the mandatory calibration below.
 
 ## Target construction
 
@@ -124,21 +135,78 @@ Focused tests cover:
 - byte preservation of all non-policy arrays;
 - source-pin and partial-output refusal.
 
-## Intended next experiment
+## Mandatory retrospective calibration gate
 
-After independent implementation review and a bounded real-corpus diagnostic,
-materialize the full 18,910,484-row treatment only if the intervention frequency
-and target geometry are sensible.
+Before **any real Tactical300 materialization or training**, use the qualified G10
+rows that already contain deeper recorded Stockfish observations plus a source-bound
+BT4 policy to measure the failure mode that the original recipe cannot see.
 
-The most useful pre-training readout is:
+For ordinary, non-mate rows, report at least the following threshold grid using the
+d9 best-vs-BT4-top disagreement:
 
-1. fraction of rows with the ordinary `>300 cp` gate;
+- `>100 cp`, `>200 cp`, `>300 cp`, `>500 cp`, and `>1000 cp` d9 margins;
+- BT4 top-probability strata `<0.25`, `[0.25,0.5)`, `[0.5,0.75)`, and `>=0.75`;
+- d10 versus d12 final selected depth;
+- whether the later narrowed roster scores both the d9-best set and the BT4-top set.
+
+Among rows where both competing sets are scored at the final recorded depth, classify
+whether deeper SF:
+
+1. still favors the original d9-best set;
+2. favors the BT4-top set;
+3. ties them; or
+4. favors neither set / a third move.
+
+Also report the one-sided roster cases separately (`BT4 scored / d9-best absent`,
+`d9-best scored / BT4 absent`, neither scored). A narrowed roster is evidence about
+what was retained by the prior search, not an invented score for a move that was not
+searched. Do not silently count those cases as pairwise wins.
+
+For mate rows, separately report whether a d9 winning-mate set persists at the final
+recorded depth and whether BT4's top set agreed with it. Do not convert encoded mate
+distance differences into ordinary centipawns.
+
+The diagnostic must preserve source/config/game/ply identities and its BT4 sidecar
+provenance. Deeper d10/d12 restricted searches are **not ground truth**: d12 is
+selected by the d10 gate, later rosters are narrowed, and searches share historical
+transposition-table state. The purpose is calibration of the intervention, not a
+claim about optimal play.
+
+### Decision rule
+
+The calibration is intentionally asymmetric because a strong d9-only transfer can
+remove useful BT4 information.
+
+- If **5% or more** of adjudicable `>300 cp` BT4-disagreement rows are later pairwise
+  won by the BT4-top set, a d9-only Tactical300 training treatment is **blocked**;
+  a follow-up recipe must require deeper-search stability (or otherwise justify a
+  different threshold/intervention).
+- If the observed rate is below 5%, report it together with its denominator,
+  adjudicability and one-sided roster counts. This does **not** automatically admit
+  training; it only removes this specific mandatory stability trigger.
+- Regardless of that rate, a completed calibration receipt must precede full-corpus
+  materialization/training admission.
+
+The 5% boundary is an experiment-allocation rule, not an accuracy confidence bound.
+Do not tune the threshold repeatedly against the same diagnostic bank and then call
+the selected value confirmed.
+
+## Subsequent geometry and strength experiment
+
+Only after the calibration gate is satisfied should a bounded original-corpus
+geometry pass inspect:
+
+1. fraction of rows with the ordinary selected gate;
 2. mean B100 mass already on the SF-best set in gated rows;
 3. total probability mass transferred by ordinary and mate rules;
 4. mean/quantiles of target total variation and support gains.
 
-If admitted for training, keep the historical B100 initialization/runtime, one-epoch
-row schedule and original SF value supervision fixed. Compare the resulting
+A real 18,910,484-row Tactical300 treatment must not be produced merely because the
+rewriter exists. Its admission must bind the chosen post-calibration rule, completed
+producer receipt, and exact historical B100 training runtime/schedule.
+
+If eventually admitted for training, keep the historical B100 initialization/runtime,
+one-epoch row schedule and original SF value supervision fixed. Compare the resulting
 checkpoint directly with B100 at the same 400-simulation / swapped-opening setting
 used for the prior tactical screen.
 
@@ -148,10 +216,7 @@ in the first strength test.
 
 ## Scope limitation
 
-The original 18.91M source is a single-phase d9 corpus. This implementation therefore
-tests **sparse strong correction from the same d9 evidence used by the earlier
-tactical experiment**, not d10/d12 stability.
-
-A later G10 transfer should be a separate experiment and should preferentially
-require agreement of the selected move across the recorded deeper adaptive
-observations before treating `>300 cp` as high-confidence search evidence.
+The original 18.91M source is a single-phase d9 corpus. The current mechanism is
+therefore a **d9 candidate recipe**, not evidence that d9 is sufficiently reliable.
+The stacked G10 calibration exists specifically to determine whether a deeper-stable
+gate is required before this mechanism can be trained.
