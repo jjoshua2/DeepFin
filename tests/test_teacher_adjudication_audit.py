@@ -144,3 +144,82 @@ def test_selection_strata_prioritize_known_reversal() -> None:
     assert audit._selection_stratum(disagreement=True, gap=500.0, reversal=False) == "d9_bt4_large_conflict"
     assert audit._selection_stratum(disagreement=True, gap=100.0, reversal=False) == "d9_bt4_other_conflict"
     assert audit._selection_stratum(disagreement=False, gap=500.0, reversal=False) == "agreement_control"
+
+
+def test_zero_coverage_and_missing_policy_have_separate_denominators() -> None:
+    board = chess.Board()
+    moves = [m.uci() for m in board.legal_moves]
+    aggregate = audit.new_aggregate()
+    cell = aggregate['policy']['bt4']
+    zero = audit.conditional_policy_metrics(board, _policy(board, {moves[0]: 1}), {moves[1]: 10})
+    covered = audit.conditional_policy_metrics(board, _policy(board, {moves[1]: 1}), {moves[1]: 10})
+    audit._add_policy_metric(cell, zero)
+    audit._add_policy_metric(cell, covered)
+    audit._add_policy_metric(cell, None)
+    audit._add_policy_metric(cell, None, policy_present=False)
+    result = audit.finalize(aggregate)['policy']['bt4']
+    assert result['rows'] == 4
+    assert result['coverage_rows'] == 2
+    assert result['zero_coverage_rows'] == result['regret_rows'] == 1
+    assert result['invalid_final_rows'] == result['missing_policy_rows'] == 1
+    assert result['mean_scored_mass'] == .5
+    assert result['mean_conditional_regret_cp'] == 0
+
+
+def test_unknown_reversal_is_not_a_negative_or_a_search_savings_claim() -> None:
+    aggregate = audit.new_aggregate()
+    for reversal in (True, False, None):
+        audit._update_position_strata(aggregate, ['quiet'], reversal=reversal, bt4_regret=None)
+        audit._update_routing(aggregate, disagreement=reversal is None, gap=400,
+                              top_probability=.8, reversal=reversal)
+    result = audit.finalize(aggregate)
+    assert result['position_strata']['quiet']['reversal_rate'] == .5
+    assert result['position_strata']['quiet']['unscored_rows'] == 1
+    route = result['routing']['bt4_disagrees_d9']
+    assert route['search_fraction'] == 0
+    assert route['selection_fraction_all_ordinary'] == pytest.approx(1 / 3)
+    assert route['unscored'] == 1
+
+
+def test_tied_best_set_does_not_validate_every_winner_or_duplicate_inferior_mass() -> None:
+    aggregate = audit.new_aggregate()
+    row = audit._update_ranking(aggregate, {'a': 500, 'b': 500, 'c': 0, 'd': -100},
+                                {'a', 'b'}, {'a': 100, 'b': -100, 'c': 0},
+                                {'a': .1, 'b': .2, 'c': .3, 'd': .4})['300']
+    assert row['confirmed'] == 1
+    assert row['all_winner']['contradicted'] == 1
+    assert row['all_winner']['contradicted_bt4_mass'] == .3
+    assert row['all_winner']['unscored_bt4_mass'] == .4
+    assert row['inferior_bt4_mass'] == pytest.approx(.7)
+    assert row['constraints'] == 2
+
+
+def test_row_bank_distinguishes_sf_margin_from_bt4_top_gap_and_missing_ceres() -> None:
+    import json
+    row = g10_row(extended=False)
+    board = chess.Board(row['fen'])
+    moves = [m.uci() for m in board.legal_moves]
+    scores = dict.fromkeys(moves, -400.0)
+    scores[moves[0]], scores[moves[1]] = 50.0, 45.0
+    _set_d9(row, scores)
+    # Keep exact G10 rank roster/gate; only the phase0 scores change here.
+    aggregate = audit.new_aggregate()
+    ref = {'source_dir': '/tmp/raw', 'source_namespace': 'qualified-namespace',
+           'source_shard': 'w00.jsonl.zst', 'source_row': 3, 'worker_id': 0,
+           'game_id': 7, 'ply': 3, 'input_key': 'a' * 32, 'stored_input_key': 'b' * 32}
+    bank = audit.analyze_row(aggregate, audit.Selector(), raw_row=row,
+                             raw_bt4=_policy(board, {moves[2]: 1}).astype('float32'),
+                             ref=ref, derived_shard='shard_000000.zarr', derived_row=2,
+                             derived_wdl=np.array([.3, .4, .3]))
+    assert bank['position_strata'] == audit._position_strata(board, row)
+    assert set(bank['position_strata']) <= set(aggregate['position_strata'])
+    assert bank['d9_best_minus_next_lower_cp'] == 5
+    assert bank['d9_best_minus_bt4_top_best_cp'] == 450
+    assert bank['d9_best_count'] == 1
+    assert bank['identity']['source_namespace'] == 'qualified-namespace'
+    assert bank['final_depth'] in (9, 10, 12)
+    assert bank['final_reason']
+    assert bank['policy']['ceres'] is None
+    assert aggregate['policy']['ceres']['missing_policy_rows'] == 1
+    assert bank['ranking_best_set_and_all_winner']['300']['inferior_bt4_mass'] == 1
+    json.dumps(bank, allow_nan=False)
