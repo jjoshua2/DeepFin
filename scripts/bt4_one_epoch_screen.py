@@ -49,6 +49,7 @@ CORPORA = {
     'B100V10': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_value10'),
     'B100V50': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_value50'),
     'B100Tactical100': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_tactical100'),
+    'CeresB50': SOURCE.with_name(SOURCE.name + '_bt4_ceres_policy_B50T05'),
 }
 TOTAL_CAPS = {'H20': 32400, 'B100': 27000, 'G50': 21600}
 C_CORPUS = SOURCE.with_name(SOURCE.name + '_bt4_sfclose_C20T05')
@@ -80,6 +81,20 @@ VALUE_ALPHA_PRODUCER_SHA = 'b041bd27a7bbf7dd02663436b141c1b7ae054c229e691dbc71ad
 B100_PARENT_PINS = {'derive_targets_summary.json': '47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43', 'bt4_policy_mix_summary.json': '221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38'}
 
 # Qualified producer snapshots, independent of the historical training runtime.
+CERES_PROFILE = 'CeresB50'
+# The collected fixed32 dual-head teacher; no native Ceres parity is implied.
+CERES_BACKEND = {
+    'batch_size': 32, 'execution': 'sequential',
+    'input': ['squares_byte', 'uint8', [64, 137]], 'native_dtype': 'float16',
+    'numpy': '2.2.6', 'onnxruntime': '1.29.0', 'optimization': 'extended',
+    'outputs': ['policy', 'value', 'value2'],
+    'provider_options': {'arena_extend_strategy': 'kSameAsRequested', 'device_id': 0,
+                         'gpu_mem_limit': 8589934592, 'use_tf32': 0},
+    'providers': ['CUDAExecutionProvider', 'CPUExecutionProvider'],
+    'remainder': 'repeat_last_real', 'threads': [2, 1],
+    'value_interpretation': 'primary raw logits; optional secondary raw logits; no native blend',
+    'value_order': ['win', 'draw', 'loss'], 'value_pov': 'side_to_move',
+}
 TACTICAL_PROFILE = 'B100Tactical100'
 TACTICAL_PRODUCER_PINS = {
     'scripts/sf_policy_rewrite.py': 'f2926d10ca695d2cbbcd12f03a26cee23529f6e798e9a3585148392858fda176',
@@ -90,6 +105,8 @@ TACTICAL_PRODUCER_PINS = {
 
 
 def recipe_summary_name(m):
+    if role_for(m) == CERES_PROFILE:
+        return 'ceres_target_mix_summary.json'
     if role_for(m) == TACTICAL_PROFILE:
         return 'bt4_sf_tactical_policy_summary.json'
     if role_for(m) in VALUE_ALPHAS:
@@ -288,6 +305,84 @@ def verify_tactical_recipe(m, rewritten, derived):
                           and all(c in '0123456789abcdef' for c in digest), 'tactical output proof differs')
 
 
+
+def verify_ceres_recipe(m, rewritten, derived):
+    """Admit a separately produced policy mixture without changing the trainer."""
+    corpus = corpus_for(m)
+    partial = corpus.with_name(corpus.name + '.writing')
+    arena.require(corpus.is_dir() and not corpus.is_symlink()
+                  and not partial.exists() and not partial.is_symlink()
+                  and not (corpus / 'failed.json').exists(), 'Ceres corpus is incomplete')
+    expected = {
+        'schema': 1, 'complete': True, 'status': 'COMPLETE',
+        'kind': 'bt4-ceres-policy',
+        'algorithm': 'separately-normalized-probability-mixture-float16-v1',
+        'weights': {'bt4': .5, 'ceres': .5},
+        'temperatures': {'bt4': .5, 'ceres': .5},
+        'source_dir': str(SOURCE),
+        'source_summary_sha256': COMMON_PINS[str(SOURCE / 'derive_targets_summary.json')],
+        'rows': 18910484, 'shards': 2309, 'mutated_arrays': ['policy_target'],
+    }
+    arena.require(all(rewritten.get(k) == v for k, v in expected.items()),
+                  'Ceres teacher mixture or historical source differs')
+    unchanged = sorted({'x', 'legal_mask', 'game_id', 'ply_index', 'wdl_target',
+                        'search_wdl', 'priority', 'is_selfplay', 'is_network_turn',
+                        'has_game_id', 'has_ply_index', 'has_policy', 'has_legal_mask',
+                        'has_search_wdl', 'has_is_selfplay', 'has_is_network_turn'})
+    arena.require(rewritten.get('unchanged_arrays') == unchanged,
+                  'Ceres mixture nonpolicy preservation differs')
+    teachers = rewritten.get('teachers', {})
+    arena.require(teachers.get('bt4') == {
+        'model_sha256': '1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0',
+        'providers': ['CUDAExecutionProvider', 'CPUExecutionProvider'],
+        'policy_output': '/output/policy'}, 'Ceres mixture changed the BT4 teacher')
+    ceres = teachers.get('ceres', {})
+    arena.require(ceres.get('model_sha256') ==
+                  '44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3'
+                  and ceres.get('profile') == 'ceres-c3-fixed32-compact-v2'
+                  and ceres.get('backend') == CERES_BACKEND,
+                  'Ceres model, collection profile or backend proof differs')
+    for key, bound in (('max_stored_mass_error', 2**-10),
+                       ('max_stored_total_variation', 2**-10)):
+        value = rewritten.get(key)
+        arena.require(type(value) in (int, float) and math.isfinite(value)
+                      and 0 <= value <= bound, 'Ceres stored target error exceeds bound')
+    lineage = rewritten.get('bt4_lineage', {})
+    legacy_summary = ROOT / 'data/lc0/bt4_policy_sidecars/armB_qtemp0005_hist20m/bt4_policy_sidecar_summary.json'
+    legacy_sha = '68b32a41e89c03737aa28c89310d9ac744f6b1e5afcbfba198d2a0155bd646b3'
+    arena.require(lineage.get('mode') == 'legacy-root-position-v1'
+                  and lineage.get('summary') == {'path': str(legacy_summary), 'sha256': legacy_sha}
+                  and lineage.get('root_position_and_history_regime_verified') is True
+                  and lineage.get('full_historical_input_provenance') == 'inherited_from_pinned_collection',
+                  'Ceres mixture upgraded or changed historical BT4 provenance')
+    verified = lineage.get('full_input_digest_verified_shards')
+    arena.require(type(verified) is int and 0 <= verified <= 2309,
+                  'invalid BT4 full-input coverage')
+    arena.pin(legacy_summary, legacy_sha)
+    source = arena.read(SOURCE / 'derive_targets_summary.json')
+    rest = {k: v for k, v in derived.items() if k != 'policy_target_postprocess'}
+    arena.require(json.dumps(rest, sort_keys=True) == json.dumps(source, sort_keys=True),
+                  'Ceres mixture changed source value/history metadata')
+    producer_pins = m['ceres_producer_pins']
+    arena.require(rewritten.get('producer_sha256') == producer_pins,
+                  'Ceres producer differs from registered freeze')
+    arena.require(any(Path(k).name == 'ceres_target_mix.py' for k in producer_pins),
+                  'Ceres producer source is not pinned')
+    for path, digest in producer_pins.items():
+        arena.pin(path, digest)
+    outputs = rewritten.get('outputs', [])
+    arena.require(len(outputs) == 2309 and [(o['path'], o['rows']) for o in outputs]
+                  == [(o['path'], o['rows']) for o in source['shards']],
+                  'Ceres completed shard inventory differs')
+    for output in outputs:
+        for key in ('source_storage_identity', 'bt4_storage_identity', 'ceres_storage_identity',
+                    'policy_target_sha256', 'files_manifest_sha256', 'attrs_sha256'):
+            digest = output.get(key)
+            arena.require(isinstance(digest, str) and len(digest) == 64
+                          and all(c in '0123456789abcdef' for c in digest),
+                          'Ceres output integrity proof missing')
+
+
 def role_for(m):
     return m.get('profile', 'E0T05')
 
@@ -322,8 +417,16 @@ def validate(m):
         arena.require(m.get('mode') == 'training_only' and registered, 'schema3 requires training_only mode and profile')
     if registered:
         keys |= {'profile', 'data_qualification'}
+        if role_for(m) == CERES_PROFILE:
+            keys.add('ceres_producer_pins')
+            pins = m.get('ceres_producer_pins')
+            arena.require(isinstance(pins, dict) and bool(pins), 'Ceres producer freeze required')
+            arena.require(all(isinstance(k, str) and Path(k).is_absolute()
+                              and isinstance(v, str) and len(v) == 64
+                              and all(c in '0123456789abcdef' for c in v)
+                              for k, v in pins.items()), 'invalid Ceres producer pins')
         arena.require(m['schema'] in (2, 3) and role_for(m) in CORPORA, 'unsupported registered profile')
-        arena.require(role_for(m) not in {'SoftSF10', TACTICAL_PROFILE, *VALUE_ALPHAS} or only, f'{role_for(m)} requires schema3 training_only')
+        arena.require(role_for(m) not in {'SoftSF10', TACTICAL_PROFILE, CERES_PROFILE, *VALUE_ALPHAS} or only, f'{role_for(m)} requires schema3 training_only')
         if not only:
             keys |= {'reader', 'comparisons'}
             arena.require(m['comparisons'] == [list(cell) for cell in comparisons(m)], 'registered comparison order differs')
@@ -369,7 +472,7 @@ def verify_data_qualification(m):
         'source': {'path': str(SOURCE), 'derive_sha256': COMMON_PINS[str(SOURCE / 'derive_targets_summary.json')]},
         'derive_summary': {'path': str(corpus / 'derive_targets_summary.json'),
                            'sha256': input_pins(m)[str(corpus / 'derive_targets_summary.json')]},
-        ('rewrite_summary' if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, *VALUE_ALPHAS} else 'mix_summary'): {
+        ('rewrite_summary' if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, CERES_PROFILE, *VALUE_ALPHAS} else 'mix_summary'): {
             'path': str(corpus / recipe_summary_name(m)),
             'sha256': input_pins(m)[str(corpus / recipe_summary_name(m))]},
     }
@@ -413,13 +516,15 @@ def check_pins(m):
     corpus = corpus_for(m)
     mix = arena.read(corpus / recipe_summary_name(m))
     derived = arena.read(corpus / 'derive_targets_summary.json')
-    expected_postprocess = {k: v for k, v in mix.items() if k != 'outputs'} if role_for(m) in {'SoftSF10', TACTICAL_PROFILE} else mix
+    expected_postprocess = {k: v for k, v in mix.items() if k != 'outputs'} if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, CERES_PROFILE} else mix
     if role_for(m) in VALUE_ALPHAS:
         verify_value_recipe(m, mix, derived)
     else:
         arena.require(derived['policy_target_postprocess'] == expected_postprocess, 'published recipe lineage differs')
     if role_for(m) in VALUE_ALPHAS:
         pass
+    elif role_for(m) == CERES_PROFILE:
+        verify_ceres_recipe(m, mix, derived)
     elif role_for(m) == TACTICAL_PROFILE:
         verify_tactical_recipe(m, mix, derived)
     elif role_for(m) == 'SoftSF10':
