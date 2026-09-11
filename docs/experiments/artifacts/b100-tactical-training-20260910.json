@@ -1,5 +1,5 @@
 {
-  "status": "TRAINING_STARTED_NO_COMPLETED_CHECKPOINT_OR_MATCH",
+  "status": "TRAINING_COMPLETE_ARENA_OPERATOR_STARTED_WAITING_LEASE_NO_RESULT",
   "profile": "B100Tactical100",
   "recipe": {
     "base": "stored B100 teacher T0.5",
@@ -55,6 +55,43 @@
     "One training seed and reused development panel; no promotion or seed generalization.",
     "Cannot recover stored zero BT4 support. SF d9 scores and bound limitations remain.",
     "Materialization and schedule qualification are prerequisites; this scientific registration is not an executable manifest.",
-    "Snapshot of a launched run only; no playing result or promotion. Historical trainer purity/live-configuration caveats remain; this is the matched exact-epoch comparison, not a claim about the replacement-sampled historical control."
-  ]
+    "Completed matched exact-epoch training; no playing result or promotion. Historical trainer purity/live-configuration caveats remain; this is not a claim about the replacement-sampled historical control."
+  ],
+  "training_completion": {
+    "checkpoint_sha256": "e2d4ed704908fa8579b39c655ed3329f375fa6a819eab6d2786aed1d8531ab08",
+    "receipt_sha256": "23a0073db30083e86ef0b45cafbd4aa4e1485c096b25c9bab62bb9b3527be6dd",
+    "summary_sha256": "8c78478e220032b58ae545b5e13ab10eeb33c503e4effa285268eaca9b6daa9e",
+    "realized_schedule_sha256": "1e45b1ff898ac235c97fe8456b2816da2ec824882367477673e3635bb5cd1aa3",
+    "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+    "rows_realized": 18910484,
+    "updates_realized": 36935,
+    "training_stage_seconds": 9063.984949160003,
+    "outer_seconds": 9355.235896587372,
+    "outer_exit_code": 0
+  },
+  "support_diagnostic": {
+    "winning_mate_rows": 1841617,
+    "winning_mate_rows_without_any_positive_B100_mate_move": 0,
+    "stored_support_loss_move_entries": 6711,
+    "fraction_of_rows_with_any_storage_support_loss_upper_bound": 0.00035488250855980207,
+    "maximum_ideal_to_stored_TV": 0.00022405048887653382,
+    "scope": "Producer-tagged mate scores; no per-line bound flags retained. Positive mass on at least one winning-mate move does not prove adequate probability or search success. Storage loss count is move entries, not rows."
+  },
+  "match_preparation": {
+    "status": "CPU_PAIR_PREPARED_AND_REVIEWED",
+    "prepared_sha256": "23d15775bb5c5449f821b4a560c05f4bdd1ade3dbf204c7e8878ec2b6c441497",
+    "cpu_observed_sha256": "f1f8153bf484e55c5293f2127fc2e81e7afc6701946f1509f331fe93248d2026",
+    "cpu_outer_seconds": 113.80079412460327,
+    "architecture_parameters_each": 61444448,
+    "cuda_initialized_during_cpu_preparation": false,
+    "review": "Independent Grok source review found no integration defects; parent verified actual completed CPU package and fixed contract."
+  },
+  "match_execution": {
+    "status": "ARENA_OPERATOR_STARTED_WAITING_LEASE_NO_RESULT",
+    "operator_started_utc": "2026-09-11T01:16:40.375162+00:00",
+    "whole_deadline_utc": "2026-09-11T04:06:37.112125+00:00",
+    "candidate_checkpoint_sha256": "e2d4ed704908fa8579b39c655ed3329f375fa6a819eab6d2786aed1d8531ab08",
+    "reference_checkpoint_sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62",
+    "result": null
+  }
 }

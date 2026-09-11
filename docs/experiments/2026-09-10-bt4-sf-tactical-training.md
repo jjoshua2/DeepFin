@@ -1,6 +1,6 @@
 # SF tactical guidance for BT4 policy
 
-Status: the full tactical corpus is qualified and its registered training run has started. No completed checkpoint, match result or strength gain is claimed. This updates the [earlier readiness record](2026-09-08-b100-tactical-policy-readiness.md).
+Status: registered training and realized-schedule verification completed successfully. CPU preparation passed and the fixed-match operator has started; no match result or strength gain is claimed. This updates the [earlier readiness record](2026-09-08-b100-tactical-policy-readiness.md).
 
 ## Question and treatment
 
@@ -22,8 +22,20 @@ The registered comparison is against the original one-epoch B100 checkpoint: 400
 
 This remains one training seed on a development corpus/panel. Original source/history/score-bound and trainer purity caveats remain; it does not establish a result for 100M rows or resumed RL.
 
+## Completed training
+
+The candidate completed all 18,910,484 rows and 36,935 updates. Actual staging and realized sampling share physical schedule hash `fb08f981…`; separate reconstruction matched canonical schedule `dc687fc3…`, the original control protocol. Training took 9,063.98 seconds and the whole operation took 9,355.24 seconds (2.60 hours), both exiting successfully. The final checkpoint hash begins `e2d4ed70…`; the compact evidence contains full identities. The GPU lease was released before CPU schedule verification, and existing BT4 labeling resumed.
+
+The producer reported 1,841,617 rows with a winning-mate move; every such row already had positive B100 probability on at least one reported winning-mate move. This rules out an all-mate-moves-missing support intervention on this corpus, not insufficient probability or tactical search mistakes. The 6,711 storage support losses count individual move entries, not positions; at most 0.0355% of rows are affected. Source score-bound limitations remain.
+
+## Match preparation and launch
+
+Both final checkpoints loaded on CPU with the same 61,444,448-parameter architecture and the frozen runtime. The actual opening histories, 400-simulation search settings, priors 1.0 and no-tablebase configuration matched the registration. CPU preparation completed in 113.80 seconds with CUDA uninitialized. Independent Grok review found no integration defects in the preparation/launch path; the parent checked the completed CPU package and final contract.
+
+The fixed-match operator has started and acquires the shared GPU lease at a labeling boundary. Its 5,400-second owned stage and 10,230-second whole-operation bound remain unchanged. It produces one 128-pair bank and a strict completed-bank readout; no result is available at this snapshot.
+
 ## Evidence and next decisions
 
-[Compact launch and completion evidence](artifacts/b100-tactical-training-20260910.json) records the qualification, schedule, training-manifest and control identities. Bulk corpus, logs and checkpoints remain outside Git. The next readout is the completed training and registered match, not teacher agreement alone.
+[Compact launch and completion evidence](artifacts/b100-tactical-training-20260910.json) records qualification, completed training, realized schedule and checkpoint identities. Bulk corpus, logs and checkpoints remain outside Git. The next deciding readout is the registered match, not teacher agreement alone.
 
 Weighted teacher mixtures are the preferred next family for both heads. Ceres policy mixtures should initially keep value fixed; adding Ceres to SF/BT4 values should be tested with policy fixed. The tactical result and actual collection readiness will choose the next comparison; these directions are not a mandatory queue.
