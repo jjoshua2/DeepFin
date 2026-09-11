@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "status": "PILOT_COMPLETE_REMAINING31_LAUNCHED",
+  "runtime_commit": "bf668d7c5dc35558bb3b0351dc7edb48409330a6",
+  "pilot_root_session": 61715,
+  "pilot_terminal_exit_code": 0,
+  "pilot_rows": 8192,
+  "ordinary_rows": 6103,
+  "mate_domain_exclusions": 2089,
+  "elapsed_seconds": 46.897378030000255,
+  "producer_seconds": 46.81,
+  "max_rss_kib": 1250120,
+  "remaining_root_session": 17956,
+  "remaining_rows": 253887,
+  "remaining_shards": 31,
+  "remaining_completed_result": false,
+  "training_or_strength_result": false,
+  "pins": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/plan.json": "eac5409157f1646ab5dcc4650f1ad3e6d38a3a69d3b609625174ba2f37beb151",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/execution/status.json": "3ae5824e0dad73fd03458c4db1c17833bf0078cc99276b5771a03bf1c6d781d4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/execution/audit/teacher_adjudication_audit.json": "54c452a37dcf8c16af8477e88574ea49f585b55907337c32b35b955fead6781e",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/execution/audit/teacher_adjudication_rows.jsonl": "cdeeefb7a613f27f86a84edc0e457db86cdce58881d5b2d2161bb04a12f517b4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/completed_review.json": "5384a0cdbf4f4102acce3b0d9454f422a262cff72f2096f4ad5446c516fe9605",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/remaining31/plan.json": "17585d8e2fef24e60440c583bb227df21676bf1380fc8a4996910e515d867199",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/remaining31/run.py": "51a5aaa0bda086eb547f3539f9eacd515841437f4efb7bb5ee84b339b7c28bb1"
+  }
+}

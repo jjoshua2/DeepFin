@@ -50,24 +50,28 @@ bounded snapshot audit qualified recovery shards 48–79 (262,144 rows), scannin
 the newly completed chunk and reusing unchanged pinned prior qualification. This
 snapshot excludes in-progress chunks and is not full-corpus completion.
 
-## Qualified collection progress, September 11 at 19:54 UTC
+## Qualified collection progress, September 11 at 23:12 UTC
 
-The completed-chunk audit qualified recovery shards 48–1743: 13,893,632 rows.
-Together with previously accepted shards 0–47 and final partial shard 2308,
-this gives **14,290,196 of 18,910,484 positions** (75.6%). Audit session 35806
-exited zero under the existing ten-minute, two-core, 2 GiB limit. Twenty-one new
-chunks received payload checks and 85 unchanged qualified chunks reused their
-pinned evidence. In-progress output is excluded. This is label qualification,
-not completed mixture training or playing-strength evidence.
+Snapshot 15 qualified recovery shards 48–2063: 16,515,072 rows. Together with
+previously accepted shards 0–47 and final partial shard 2308, this gives
+**16,911,636 of 18,910,484 positions (89.43%)**, across 2,065 shards. Audit session
+19685 exited zero under the existing ten-minute, two-core, 2 GiB limit. Twenty new
+chunks received saved-array checks; 106 unchanged qualified chunks reused their
+pinned prior evidence. In-progress output is excluded. This is label
+qualification, not completed mixture training or playing-strength evidence.
 
-[Compact milestone evidence](evidence/ceres-three-quarter-20260911.json) pins
-snapshot 14 (`d9a4bcd2b1b81e1baf856165cd616cc56fc77f5d3b4f091a389bc115ddda6ba6`)
-and its prior snapshot 13. Earlier snapshots remain preserved in host storage.
-Collection continued through this audit. Monitoring uses a completion observer
-and infrequent host-process checks; the preceding waits were one hour and then
-25 minutes to reach this milestone. No collector restart or inference was added
-by the audit. The next substantive work remains full-bank materialization and
-the registered policy/value comparisons below.
+[Compact snapshot15 evidence](evidence/ceres-snapshot15-20260911.json) pins the
+completed snapshot (`ca515de4a06cb2c60bb5ee822643eb81bca7409aa40c5a8071b17eaf353ab48c`),
+its snapshot14 predecessor, and the unchanged audit helpers. The publication check
+matched all 126 terminal chunk receipt hashes and checked the reused review chain
+and exact coverage without repeating array verification. The earlier
+[snapshot14 milestone](evidence/ceres-three-quarter-20260911.json) remains preserved.
+
+Collection continues. The last host process observation at 23:00 UTC found driver
+276374 and child 554254 collecting shards 2064–2079; those rows are outside this
+qualified snapshot. This observation is not a continuous liveness claim. No
+collector restart or inference was added by the audit. The next substantive work
+remains full-bank materialization and the registered policy/value comparisons below.
 
 ## Real-teacher policy pilot
 
