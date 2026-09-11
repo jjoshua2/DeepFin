@@ -1,6 +1,6 @@
 # Saved G10 values and neural-teacher coverage
 
-Status: matched saved-SF derivations now cover all 1,574,952 rows with existing native-BT4 WDL. The exact prefix succeeded after the full-large attempt failed outside that subset. Value consumers are implemented for complete increments; no new training or strength result.
+Status: matched saved-SF derivations now cover all 1,574,952 rows with existing native-BT4 WDL. The exact prefix succeeded after the full-large attempt failed outside that subset. A real 262,079-row fixed-policy value pair passed materialization; no new training or strength result.
 
 The next SF value comparison reuses the recorded adaptive d10/d12 observations. It does not increase search depth or launch additional Stockfish inference over the future 100M-position corpus. The opt-in selector is implemented in [PR #633](https://github.com/jjoshua2/DeepFin/pull/633). The existing [census](2026-09-11-deeper-sf-value-census.md) establishes target differences, not improved accuracy.
 
@@ -82,4 +82,14 @@ Derivation took 1,934.20 seconds (32.24 minutes), with peak reported RSS 868,760
 
 Together with the two increments, this completes matched derivation for **1,574,952 native-BT4-WDL-covered rows**. It does not make the whole original large batch valid: the previous full-stage failure and its malformed row remain preserved outside this prefix. No failed worker spills were reused, and no teacher inference was added.
 
-The value writer currently supports the two complete increments; consuming this prefix still needs honest selected-source handling for its original full-source teacher bindings. No G10 target mixture has yet been materialized or trained. Keep the registered Ceres comparisons ahead of an unqualified small-corpus training comparison; first exercise the existing writer on one complete increment using the same fixed policy and BT4 value weight.
+The value writer currently supports the two complete increments; consuming this prefix still needs honest selected-source handling for its original full-source teacher bindings. The next completed stage below exercises the writer on one complete increment. No G10 value comparison has been trained. Keep the registered Ceres comparisons ahead of an unqualified small-corpus training comparison.
+
+## First real matched SF–BT4 value products completed
+
+The complete run06 increment now has an actual B100 policy product and two value products on the same **262,079 rows in 32 shards**. Policy uses normalized global BT4 at teacher temperature 0.5. Both value products use 50% normalized SF WDL and 50% of the same native BT4 WDL; only the SF source changes from the original labels to the matched adaptive labels.
+
+All three existing producers exited zero. B100 policy materialization took 104.01 seconds, the original-SF value control 65.41 seconds, and the adaptive-SF value product 94.08 seconds. The full stage took 272.11 seconds (4 minutes 32 seconds), within the 20-minute cap. Peak reported stage RSS was 1,005,600 KiB. No teacher inference or training occurred.
+
+Both value writers consumed the same actual post-publication B100 derive/policy hashes and original teacher metadata. Their source, native feed/content, provenance, nonvalue preservation and publication checks passed. All 32 paired output-shard WDL digests differ, confirming that the adaptive SF input reached the real output. This does **not** establish that every row differs: each writer's `changed_rows=262079` counter is relative to original B100, not to the other value product. Maximum stored WDL mass error was 0.0003662109375 for each product.
+
+Independent completed-receipt review passed without repeating payload checks. [Compact materialization evidence](evidence/g10-value-readiness-20260911/value-materialization-run06.json) records all source/output summary pins and timings. The products remain integration artifacts, not a qualified training comparison or evidence of stronger values. Further G10 expansion or donor-mode implementation is deferred until its expected value warrants compute; Ceres collection and its registered policy/value comparisons retain priority.
