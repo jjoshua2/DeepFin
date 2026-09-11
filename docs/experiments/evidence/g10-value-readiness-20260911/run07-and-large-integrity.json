@@ -1,0 +1,286 @@
+{
+  "status": "RUN07_MATCHED_PASS_LARGE_DERIVATION_FAILED_DIAGNOSED",
+  "matched_completed_rows": 526376,
+  "run07": {
+    "rows": 264297,
+    "shards": 33,
+    "changed_wdl_rows": 179992,
+    "derive_seconds": 488.29,
+    "whole_seconds": 581.66,
+    "nonvalue_arrays_identical": 16
+  },
+  "large": {
+    "exit_code": 1,
+    "derive_seconds": 3136.43,
+    "selected_prefix_qualified": false
+  },
+  "evidence": {
+    "run07": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_value_cohort_run07_v1/execution/status.json",
+      "sha256": "b1b8f18232a7ef94f9ea86501ffc9b16791b2ffd61ca5689b788a9414c021443"
+    },
+    "run07_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_value_cohort_run07_v1/completed_review.json",
+      "sha256": "4eaacc790e2c068d793211e231440c5c61a3b84411385a75b6fbab147942ca61"
+    },
+    "large_failure": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_value_cohort_run06_large_v1/execution/status.json",
+      "sha256": "0bfda7c95d54c811df1789cb3c26d51419e945919bc0f4d82b5376370c8423bc"
+    },
+    "diagnosis": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_large_baseline_failure_diagnosis_v1/diagnosis.json",
+      "sha256": "fe923c52dc3fa7e64ff077cfe8f53f24b4de0058f0ec15de2e39be9205adf4a8"
+    },
+    "historical_manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_native_wdl_manifest_v1/manifest.json",
+      "sha256": "23fcb56ba8b975f0659085523bc19eacf5fe8edb73d12dc59cfbbbcf0aae0946"
+    },
+    "manifest_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_native_wdl_manifest_v1/independent_review.json",
+      "sha256": "a25733ee9ccf71defb5ea5076874d702f339d70c3ec1844a26ebecffe7e6892b"
+    },
+    "ceres_snapshot13": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/completed_snapshot_13.json",
+      "sha256": "39a80d443760446d2fe8f0578767a73d8e6531f5fb1868a98a9b85198d6bb9c1"
+    },
+    "run06_posthoc_stored_wdl": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_value_cohort_v1/stored_target_diagnostic.json",
+      "sha256": "2b129a99bb867c1907eaa04c7c1d4d1f0669ad1db3515cc8cef1c995d2fab43d"
+    }
+  },
+  "exact_row_diagnosis": {
+    "status": "DIAGNOSED_GENUINE_LATER_D9_ROSTER_AMBIGUITY_OUTSIDE_WDL_SUBSET",
+    "reference": {
+      "source_config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+      "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+      "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+      "source_shard": "w02-00196.jsonl.zst",
+      "source_row": 3541,
+      "worker_id": 2,
+      "game_id": 99518,
+      "ply": 318,
+      "input_key": "a78fbdbdb9ee63fd1d47fcff58b81f59",
+      "stored_input_key": "00e9bb55f198a2bdeb310749f17dcbd3",
+      "derived_shard": "shard_000197.zarr",
+      "derived_row": 5084,
+      "provenance_sha256": "70e489f9390a6aefd498a226728e9789fada261c622655c5434a9772fa55052f",
+      "within_first128_native_wdl_shards": false
+    },
+    "raw_source": {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w02-00196.jsonl.zst",
+      "sha256": "2e05a609205faec041dc30f4638840e36b2603dc0f25ff9675cc499da009071d"
+    },
+    "exact_source_row_sha256": "c1f8026ba9360646d84be09649993111bfa0f99b43bf157bda6a68c1566af95f",
+    "initial_evidence_sha256": "9c4d41ff736c7753080235f3eb8977304ea4fc4ede891c9d3c3e6c480d5f3e03",
+    "single_row_actual_original_deriver": {
+      "accepted": true,
+      "original_input_key_verified": 1,
+      "policy_legal_moves": [
+        "d2e3",
+        "d2d3",
+        "c3a5",
+        "c3h8",
+        "c3f6",
+        "c3g7",
+        "d2e1",
+        "c3d4",
+        "d2c2",
+        "c3e5",
+        "c3a1",
+        "d2c1",
+        "c3b2",
+        "c3b4"
+      ],
+      "policy_support_complete": true,
+      "phase0_d9_lines": [
+        [
+          1,
+          "d2e3",
+          -625.0,
+          2767115
+        ],
+        [
+          2,
+          "d2d3",
+          -650.0,
+          2767115
+        ],
+        [
+          3,
+          "c3a5",
+          -667.0,
+          2767115
+        ],
+        [
+          4,
+          "c3h8",
+          -669.0,
+          2767115
+        ],
+        [
+          5,
+          "c3f6",
+          -669.0,
+          2767115
+        ],
+        [
+          6,
+          "c3g7",
+          -669.0,
+          2767115
+        ],
+        [
+          7,
+          "d2e1",
+          -674.0,
+          2767115
+        ],
+        [
+          8,
+          "c3d4",
+          -700.0,
+          2767115
+        ],
+        [
+          9,
+          "d2c2",
+          -708.0,
+          2767115
+        ],
+        [
+          10,
+          "c3e5",
+          -715.0,
+          2767115
+        ],
+        [
+          11,
+          "c3a1",
+          -715.0,
+          2767115
+        ],
+        [
+          12,
+          "d2c1",
+          -816.0,
+          2767115
+        ],
+        [
+          13,
+          "c3b2",
+          -19998.0,
+          2767115
+        ],
+        [
+          14,
+          "c3b4",
+          -19998.0,
+          2767115
+        ]
+      ],
+      "phase0_best_cp": -625.0,
+      "composite_d9_moves": [
+        {
+          "move": "d2e3",
+          "cp": -625.0,
+          "phase": 0
+        },
+        {
+          "move": "d2d3",
+          "cp": 0.0,
+          "phase": 2
+        },
+        {
+          "move": "c3a5",
+          "cp": -744.0,
+          "phase": 1
+        },
+        {
+          "move": "c3h8",
+          "cp": -823.0,
+          "phase": 1
+        },
+        {
+          "move": "c3f6",
+          "cp": -669.0,
+          "phase": 0
+        },
+        {
+          "move": "c3g7",
+          "cp": -786.0,
+          "phase": 2
+        },
+        {
+          "move": "d2e1",
+          "cp": -674.0,
+          "phase": 0
+        },
+        {
+          "move": "c3d4",
+          "cp": -744.0,
+          "phase": 1
+        },
+        {
+          "move": "d2c2",
+          "cp": -708.0,
+          "phase": 0
+        },
+        {
+          "move": "c3e5",
+          "cp": -715.0,
+          "phase": 0
+        },
+        {
+          "move": "c3a1",
+          "cp": -715.0,
+          "phase": 0
+        },
+        {
+          "move": "d2c1",
+          "cp": -816.0,
+          "phase": 0
+        },
+        {
+          "move": "c3b2",
+          "cp": -19998.0,
+          "phase": 0
+        },
+        {
+          "move": "c3b4",
+          "cp": -19998.0,
+          "phase": 0
+        }
+      ],
+      "baseline_best_cp": 0.0,
+      "baseline_wdl_float32": [
+        0.3273929953575134,
+        0.34521403908729553,
+        0.3273929953575134
+      ]
+    },
+    "actual_adaptive_exception": "game 99518 ply 318: invalid adaptive SF baseline/identity: invalid_roster",
+    "diagnosis": [
+      "Frozen source bytes match accepted raw shard SHA; original row provenance and full-history input_key match. Actual original deriver accepts this row, so this is not namespace/history/parser mismatch.",
+      "Phase0 d9 has complete unique legal support; the row is retained by historical policy and is not among policy-support exclusions.",
+      "Phase2 d9 is consumed first by latest-phase baseline. It repeats d2d3 three times (-753,0,0); RowBank dict construction keeps the last zero. Phase1 d9 also has duplicated moves and missing requested moves.",
+      "The stricter adaptive baseline validator correctly refuses these consumed ambiguous rosters. Deeper phase1/phase2 records are also malformed; this is not merely a single-move case.",
+      "Matched source is original derived shard197 row5084, beyond requested native-WDL shards0..127. This row need not be admitted to that WDL experiment, but the current full-batch derivation traverses it. No claim that the requested prefix is otherwise free of faults."
+    ],
+    "preservation": "No prior output/plan/runtime edits, no fallback relaxation, no inference, no corpus rerun. One metadata provenance pass and one matching raw shard/row only; one-row original/adaptive API diagnosis.",
+    "resources": {
+      "seconds": 0.005418335000285879,
+      "max_rss_kib": 254032,
+      "provenance_scan_seconds": 1.1619195079838391,
+      "provenance_scan_max_rss_kib": 62648
+    }
+  },
+  "ceres_qualified_coverage": {
+    "recovery_rows": 11141120,
+    "prior_rows": 396564,
+    "total_rows": 11537684,
+    "expected_rows": 18910484,
+    "prior_shards": "0..47 and 2308",
+    "recovery_shards": "48..1407",
+    "audit_completed_unix": 1789144256.5722551
+  }
+}
