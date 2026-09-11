@@ -8,8 +8,8 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | 128-row integration pilot passed; 1.575M existing BT4 WDL rows plus 0.890M prospective typed-join rows; no strength result |
-| [AVI-style one-ply value backup](2026-09-11-avi-value-backup.md) | One-ply successor evaluator and bounded 4,096-position diagnostic implemented; no full-corpus sidecar, training or strength result |
+| [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | First 262,079-row matched adaptive-SF derivation passed; 1.575M existing BT4 WDL rows, no strength result |
+| [AVI-style one-ply value backup](2026-09-11-avi-value-backup.md) | One-ply evaluator, provenance-gated sidecar and value-only rewrite implemented; no executed AVI corpus, training or strength result |
 | [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | 9.31M/18.91M Ceres labels qualified at September 11 13:40 UTC; collection continues, policy/value screens prepared, no Ceres playing result |
 | [SF tactical guidance for BT4 policy](2026-09-10-bt4-sf-tactical-training.md) | Completed 400-simulation match: tactical recipe −13.6 Elo [−52.4,+24.9]; unresolved, retain B100 |
 | [Deeper SF value census](2026-09-11-deeper-sf-value-census.md) | Complete: saved SF values pass label-change thresholds; 3,247 single-move exclusions and two malformed rosters explained; opt-in selector selected, no strength claim |
