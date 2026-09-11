@@ -277,3 +277,34 @@ The [operator command](../../scratchpad/bt4_joint20/G20T1_cold_archive_v1/operat
 Execution would inventory the source progressively, verify every tar member and its contents against that inventory, compare external readback and local archive digests, and recheck source stability. **The full source remains in place even after success.** Existing attempts refuse, with no automatic resume; failures retain source and partial archive state. Only the verified local staging tar can be removed after successful external readback. ACL/xattrs are captured but not independently compared, and no restore test is claimed.
 
 The [publication manifest](../../scratchpad/bt4_joint20/G20T1_cold_archive_v1/publication_manifest.json) binds the exact helper, wrapper, command, plan and review evidence. Six focused disposable checks passed before a separately reviewed absolute-tool-path correction; their original source/result and correction supplement are preserved. This publication ran only link, hash and hygiene checks. No dataset inventory, copy, transfer, deletion or launch has occurred in this preparation.
+
+## 2026-09-11: legacy run04/run05 external copies verified
+
+The bounded two-pool archive operation finished successfully in 2,778.74 seconds.
+Both pools were inventoried, checked against every tar member, copied to the
+external drive and verified by full archive readback. A later parent check confirmed
+the external sizes and mtimes still match those receipts. Verified local staging
+tars were removed; the original SSD source directories remain present. **This copy
+operation reclaimed zero source bytes.** Source reclamation remains a separate
+dependency and stability decision.
+
+| Pool | Verified members | Archive bytes | External tar SHA256 |
+| --- | --- | --- | --- |
+| run04 | 452 | 6,547,896,320 | `52a5338cf999708e39b4721a715ef33d7a1fbb3850fe0d35f12ab1c9971ca72f` |
+| run05 | 458 | 6,509,905,920 | `cfe7806d9b893b87852465a34d5fd157d4d9632a5c59aad43a33763b6d39027f` |
+
+External location: `/mnt/e/chess_raw_archive_20260911/legacy_run04_run05_v1/`,
+with `run04.tar` and `run05.tar`. Source locations are
+`data/nnue_bootstrap/run04` and `data/nnue_bootstrap/run05`. The source manifests
+and archive verification receipts remain under
+`scratchpad/bt4_joint20/legacy_run04_run05_cold_archive_v1/staging/{run04,run05}/`.
+Restore into a fresh staging directory and compare against the retained source
+manifest before replacing a research input. No restore rehearsal is claimed.
+
+The plan SHA256 is
+`42671cd1650afa6fd88b7aad86971894afe63c0b1003f82f7f2e72f7fbdf15d3`;
+the run04 and run05 verification receipt SHA256 values are respectively
+`43f3d4caafa9027e3049d6aace859ad0e0a24a499951dc2f99a7e0a084a38924`
+and `c0b50d19d773faa9f5ad96c38be143c5dcbdda4af9b600949e47538bf0f56ee7`.
+File contents and mode/uid/gid/mtime were checked. ACL/xattrs were captured but
+not independently compared. The live Ceres and BT4 labelers were preserved.

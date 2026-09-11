@@ -43,6 +43,13 @@ before and after attempts. It never substitutes a stale reading or retries the
 collection workload. The enclosing process timeout remains the hard termination
 bound. Helper behavior passed 17 mocked tests and independent review.
 
+The first recovery chunk subsequently completed in 532.32 seconds and passed
+independent checks of all 144 saved arrays and final runtime evidence. It recovered
+one actual telemetry exit-code-3 failure without relaunching inference. A later
+bounded snapshot audit qualified recovery shards 48–79 (262,144 rows), scanning only
+the newly completed chunk and reusing unchanged pinned prior qualification. This
+snapshot excludes in-progress chunks and is not full-corpus completion.
+
 ## Real-teacher policy pilot
 
 One actual 8,192-row shard passed the equal-weight, temperature-0.5 policy mixture
@@ -87,6 +94,72 @@ and gradients changed. All 16 other stored arrays were byte-identical and all 69
 imported project modules matched the unchanged historical runtime. This establishes
 the exercised target-to-loss path, not full-corpus admission or strength.
 
+## Registered next training and match allocation
+
+This allocation begins only after the same complete 18,910,484-row Ceres manifest
+is qualified. It does not treat a partially labeled subset as the original corpus.
+Train the two already selected recipes separately:
+
+| Candidate | Policy target | Search value target | Comparisons |
+| --- | --- | --- | --- |
+| CeresB50 | Equal BT4/Ceres policies, each teacher T=0.5 | Original SF | B100 |
+| B100CeresV25 | Unchanged B100 policy | 50% SF / 25% BT4 / 25% Ceres, conversions above | B100 and B100V50 |
+
+Run policy training first, then value training. Each uses the historical seed-zero
+initialization and exact canonical row schedule: 18,910,484 rows, batch 512,
+36,935 updates and 420 windows, with the same frozen trainer/runtime and non-target
+settings as its controls. Each training has a 16,200-second cap; each enclosing
+operation allows 21,630 seconds including waiting, cleanup and realized-schedule
+verification. Use the training-only coordinator profiles, not a legacy automatic
+multi-depth arena sequence. Admission must verify final corpus/producer identities,
+prospective and realized schedules, actual runtime, and the final checkpoint.
+If compatibility with an old control fails, stop that comparison and register a
+fresh matched control before spending training compute; do not label an unmatched
+historical comparison a recipe test.
+
+Each of the three direct matches gets 128 swapped opening pairs (256 games),
+400 simulations per side, search-prior temperature 1.0, maximum 300 plies and no
+tablebases. Reuse the explicit training search shape and development opening panel
+from the tactical screen (seed 20260909, panel hash below); only checkpoint identity
+changes. The existing rolling match path permits up to 128 concurrent games and
+batch 4096 under its qualified resource guards. Each match has a 5,400-second owned-stage
+cap and a 10,230-second enclosing-operation cap, including lease waiting and
+cleanup, matching the qualified launcher. These are common-search-setting development tests, not a measurement
+of search scaling, optimized play settings or unseen-opening generalization.
+
+Freeze the exact match package and output identities before each launch. All
+completed swapped pairs enter the paired score/95% interval readout. A timeout or
+incomplete registered match is not a completed fixed-horizon result. No automatic
+game extension, additional depth or temperature sweep is allocated. Existing GPU
+leases, STOP markers, RAM guards and 150 GiB disk reserve remain in force; collection
+and source generation retain their existing recovery and scheduling contracts.
+
+For allocation decisions, an estimated gain of at least 15 Elo earns consideration
+for the next investigation; a lower interval bound above zero additionally supports
+a win for the tested checkpoints. An upper bound below +15 stops ordinary refinement
+of that candidate in this regime. Other outcomes remain unresolved, without demanding
+more games on the same pair of models. These thresholds do not rank entire teacher
+families or account for training-seed variability. The three comparisons are
+exploratory; report them separately without treating their intervals as a joint
+confirmation test. The value candidate faces both controls regardless of its first
+match result, so Ceres's incremental contribution is not selected by a favorable
+SF-baseline result.
+
+Use the completed results to choose the next substantive experiment. Combining both
+head changes, adjusting teacher weights or testing a pure-Ceres endpoint is not an
+automatic queue. Fresh matched training seeds and fresh openings remain necessary
+before a promotion claim, followed by transfer to the largest qualified common
+corpus relevant to the intended 100M bootstrap.
+
+Registered controls: B100 checkpoint SHA256
+`b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62`;
+B100V50 checkpoint SHA256
+`f813e47e43907f1dd7b716a191b69f7444d9b70bdce53cd90010d613d6e504a8`.
+The development panel SHA256 is
+`3c955d68a6c010e373b44418f3bbbf1500cf9192d04ca17ffdd3dcd191d7cbb1`.
+Final launch manifests must verify these identities and pin newly produced artifacts;
+this allocation is not itself a runnable or completed launch manifest.
+
 ## Compact evidence identities
 
 | Evidence | SHA256 |
@@ -97,6 +170,8 @@ the exercised target-to-loss path, not full-corpus admission or strength.
 | Remaining collection independent review | `f97cb4dbd6812c886f23ea9c7d06abd0167e4f34a2ae2f43c2120295555c9764` |
 | Real-teacher value pilot | `0df10b9a7288385f2685881f734bc1ffd4bb0f8a2b8b62b5f04951847961da3b` |
 | Recovery coverage review | `5487e2a3d7781cae23812deb680a825f0a1528251ad2693983b6cb7dc1cde9a8` |
+| First recovery chunk independent readout | `ad02a3c2529af736b5abc5c580e4df500a642fe9a276147d4a4040d2700a030d` |
+| Completed recovery snapshot 01 | `e20953e4a9f93d56baaa62379913a4186bb812ef022029521d5241c72662bd06` |
 | Fresh recovery driver plan | `053c1365cbeee1919141007c0b4e7bf94997733f4c6e47b1c26f52cd180e36ae` |
 | Real-teacher policy pilot | `b25ae0621f3e87e3d66bd6aa7b1437198f6917396531d082de4da5e49da5f922` |
 | Frozen value consumer readout | `155adc4c1bfa24f9e565f3d03f12fee6569dff00e9def9206198ddc2733ab024` |
