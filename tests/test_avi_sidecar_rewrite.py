@@ -44,7 +44,7 @@ def _raw_row_and_ref() -> tuple[dict[str, Any], dict[str, Any], chess.Board]:
 
 def test_raw_history_replay_reconstructs_authenticated_board() -> None:
     row, ref, expected = _raw_row_and_ref()
-    got = sidecar._raw_row_board(row, ref)  # noqa: SLF001 - behavioral seam under test
+    got = sidecar._raw_row_board(row, ref)
     assert got.fen() == expected.fen()
     assert tuple(move.uci() for move in got.move_stack) == tuple(
         move.uci() for move in expected.move_stack[-len(got.move_stack) :]
@@ -57,8 +57,8 @@ def test_raw_history_replay_rejects_tampered_window() -> None:
     moves = row["history_uci"]
     assert isinstance(moves, list)
     row["history_uci"] = [*moves[:-1], "b8a6"]
-    with pytest.raises(ValueError, match="reproduce FEN|input_key"):
-        sidecar._raw_row_board(row, ref)  # noqa: SLF001
+    with pytest.raises(ValueError, match=r"reproduce FEN|input_key"):
+        sidecar._raw_row_board(row, ref)
 
 
 def test_sidecar_names_are_canonical() -> None:
@@ -106,7 +106,7 @@ def test_complete_sidecar_manifest_is_required(tmp_path: Path) -> None:
     path.write_text(json.dumps(payload))
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     with pytest.raises(ValueError, match="complete source collection"):
-        rewrite._sidecar_manifest(  # noqa: SLF001
+        rewrite._sidecar_manifest(
             path,
             digest,
             sf_root,
