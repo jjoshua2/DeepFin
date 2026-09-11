@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from chess_anti_engine.encoding import encode_positions_batch
 from chess_anti_engine.inference import LocalModelEvaluator
+from chess_anti_engine.mcts import one_ply as one_ply_module
 from chess_anti_engine.mcts.one_ply import evaluate_wdl_probabilities, one_ply_value_backups
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 from scripts import bt4_derived_wdl_sidecar as derived
@@ -60,7 +61,8 @@ def _raw_row_board(row: dict[str, Any], ref: dict[str, Any]) -> chess.Board:
     """Replay and authenticate one raw history row referenced by derived provenance."""
     require(int(row.get("schema", 0)) >= 3, "AVI requires schema-3 raw history rows")
     run = row.get("run")
-    require(isinstance(run, dict), "raw row missing run identity")
+    if not isinstance(run, dict):
+        raise ValueError("raw row missing run identity")
     require(run.get("config_sha256") == ref["source_config_sha256"], "raw config differs")
     require(
         int(row.get("worker_id", -1)) == int(ref["worker_id"])
@@ -71,11 +73,13 @@ def _raw_row_board(row: dict[str, Any], ref: dict[str, Any]) -> chess.Board:
     require(row.get("input_key") == ref["input_key"], "raw input_key differs")
     root = row.get("history_root_fen")
     moves = row.get("history_uci")
-    require(isinstance(root, str) and isinstance(moves, list), "raw history window missing")
+    if not isinstance(root, str) or not isinstance(moves, list):
+        raise ValueError("raw history window missing")
     require(int(row.get("history_plies", -1)) == len(moves), "raw history length differs")
     board = chess.Board(root)
     for uci in moves:
-        require(isinstance(uci, str), "non-string raw history move")
+        if not isinstance(uci, str):
+            raise ValueError("non-string raw history move")
         move = chess.Move.from_uci(uci)
         require(move in board.legal_moves, "illegal move in raw history window")
         board.push(move)
@@ -142,7 +146,7 @@ def _root_feed_matches_source(
     )
     require(encoded.shape == stored_x.shape, "replayed root input shape differs from source x")
     require(
-        np.array_equal(np.asarray(encoded, dtype=np.float16), stored_x),
+        bool(np.array_equal(np.asarray(encoded, dtype=np.float16), stored_x)),
         "replayed root input differs from stored source x after float16 quantization",
     )
 
@@ -170,9 +174,12 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     history_encoding = getattr(model, "input_history_encoding", None)
     extra_features = getattr(model, "input_extra_features", None)
     compute_relations = bool(getattr(model, "use_dynamic_relations", False))
+    input_summary = summary.get("input")
+    if not isinstance(input_summary, dict):
+        raise ValueError("source summary input contract missing")
     require(
-        history_encoding == summary["input"].get("input_history_encoding")
-        and extra_features == summary["input"].get("input_extra_features"),
+        history_encoding == input_summary.get("input_history_encoding")
+        and extra_features == input_summary.get("input_extra_features"),
         "teacher checkpoint input encoding differs from source corpus",
     )
     evaluator = LocalModelEvaluator(model, device=str(args.device), use_amp=True)
@@ -181,11 +188,13 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     source_summary = source / derived.SUMMARY
     pins = {source_summary: args.expected_source_summary_sha256, checkpoint: args.expected_checkpoint_sha256}
     source_states = {source / spec["path"]: storage_identity(source / spec["path"]) for spec in specs}
+    one_ply_file = one_ply_module.__file__
+    if one_ply_file is None:
+        raise ValueError("one-ply module has no source-file identity")
+    one_ply_path = Path(one_ply_file).resolve()
     producer = {
         str(Path(__file__).resolve()): file_sha256(Path(__file__).resolve()),
-        str(Path(sys.modules["chess_anti_engine.mcts.one_ply"].__file__).resolve()): file_sha256(
-            Path(sys.modules["chess_anti_engine.mcts.one_ply"].__file__).resolve()
-        ),
+        str(one_ply_path): file_sha256(one_ply_path),
         str(Path(provenance.__file__).resolve()): file_sha256(Path(provenance.__file__).resolve()),
         str(Path(corpus.__file__).resolve()): file_sha256(Path(corpus.__file__).resolve()),
     }
@@ -204,8 +213,10 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             path = source / name
             require(storage_identity(path) == source_states[path], "source shard changed")
             group: Any = zarr.open_group(str(path), mode="r")
-            stamp = dict(group.attrs).get("derive_row_provenance")
-            require(isinstance(stamp, dict), "source shard has no row provenance")
+            raw_stamp = dict(group.attrs).get("derive_row_provenance")
+            if not isinstance(raw_stamp, dict):
+                raise ValueError("source shard has no row provenance")
+            stamp: dict[str, Any] = dict(raw_stamp)
             require(
                 stamp.get("schema") == provenance.SCHEMA
                 and stamp.get("path") == provenance.FILENAME
@@ -270,10 +281,12 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             backup_wdl = np.concatenate(backup_parts).astype(np.float32, copy=False)
             require(root_wdl.shape == backup_wdl.shape == (rows, 3), "collected WDL shape differs")
             require(
-                np.isfinite(root_wdl).all()
-                and np.isfinite(backup_wdl).all()
-                and np.allclose(root_wdl.sum(axis=1), 1, atol=2e-6, rtol=0)
-                and np.allclose(backup_wdl.sum(axis=1), 1, atol=2e-6, rtol=0),
+                bool(
+                    np.isfinite(root_wdl).all()
+                    and np.isfinite(backup_wdl).all()
+                    and np.allclose(root_wdl.sum(axis=1), 1, atol=2e-6, rtol=0)
+                    and np.allclose(backup_wdl.sum(axis=1), 1, atol=2e-6, rtol=0)
+                ),
                 "collected WDL mass differs",
             )
             sidecar = writing / sidecar_name(name)
