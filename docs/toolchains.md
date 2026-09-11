@@ -608,3 +608,35 @@ changes only `search_wdl`, and atomically publishes a complete manifest. The
 Weights and Ceres head conversions are defined in the
 [weighted-bootstrap record](experiments/2026-09-11-ceres-weighted-bootstrap.md).
 This is a separate value intervention from the equal-weight policy mixture.
+
+### Ceres corpus publication and admission
+
+`scripts/ceres_materialize.py` runs either `CeresB50` or `B100CeresV25` from a
+pinned, complete teacher manifest. It constructs the registered producer command,
+uses the shared preparation lock, keeps the GPU hidden and preserves the existing
+STOP, disk, process-cleanup and eight-hour enclosing bounds. Run it with the exact
+planned interpreter and an external timeout; a merged tool does not start a rewrite.
+
+The plan records `schema`, `profile`, frozen `cwd`/`commit`, `python`, fresh `state`
+and `corpus`, `producer_manifest` (path/hash), `producer_sha256`, `pins`,
+`supervisor_sha256` and `stop_paths`. Default execution validates only. Add
+`--execute --deadline UNIX_SECONDS` to the `--plan PATH
+--expected-plan-sha256 SHA` invocation only after the concrete allocation qualifies.
+The deadline includes preflight, waiting, publication checks and cleanup; at the
+maximum eight-hour allocation, use an outer timeout of 28,770 seconds followed by
+30 seconds of kill grace.
+
+Both Ceres producers bind each completed shard's storage identity into the summary
+and recheck it before publication. `scripts/ceres_corpus_qualification.py` consumes
+that proof together with the successful materialization receipt. It checks actual
+array layouts, recipe attributes, full coverage and unchanged source/teacher/output
+identities, then uses the training coordinator's recipe admission. It does not
+reread all payloads or re-encode histories already verified by the producer.
+
+Qualification accepts `--plan PATH --expected-plan-sha256 SHA --out FRESH_JSON`,
+with `--execute` publishing the receipt. Its plan pins the producer manifest,
+final derive/rewrite summaries, successful materialization receipt and producer
+sources, plus the profile, corpus, deadline, disk reserve and STOP paths. Run with
+two CPU threads, GPU hidden and a separately bounded enclosing process. The emitted
+`PASS_REGISTERED_CORPUS_QUALIFICATION` receipt still precedes the frozen prospective
+schedule check and exact training manifest; it does not launch training.

@@ -236,7 +236,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             'source_storage_identity': local_states[src], 'sf_storage_identity': local_states[original_path],
             'bt4_storage_identity': local_states[Path(entry['bt4'])], 'ceres_storage_identity': local_states[Path(entry['ceres'])],
             'search_wdl_sha256': digest.hexdigest(), 'attrs_sha256': wdl.file_sha256(dest_path / '.zattrs'),
-            'files_manifest_sha256': hashlib.sha256(json.dumps(final_files, sort_keys=True).encode()).hexdigest()})
+            'files_manifest_sha256': hashlib.sha256(json.dumps(final_files, sort_keys=True).encode()).hexdigest(),
+            'output_storage_identity': wdl.storage_identity(dest_path)})
         changed_total += changed
     for path, identity in states.items():
         guard()
@@ -260,6 +261,10 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                'value_target_postprocess': {k: v for k, v in result.items() if k != 'outputs'}}
     for name, value in ((SUMMARY, result), (DERIVE_SUMMARY, derived)):
         (writing / name).write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
+    for proof in outputs:
+        guard()
+        require(wdl.storage_identity(writing / proof['path']) == proof['output_storage_identity'],
+                'completed output changed before publication')
     guard()
     require(not os.path.lexists(out), 'output appeared before publication')
     writing.rename(out)
