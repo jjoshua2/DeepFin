@@ -1,6 +1,6 @@
 # Weighted Ceres bootstrap preparation
 
-Status: qualified Ceres coverage now includes full shards 0–47 and the final partial shard. Collection stopped on a GPU telemetry query failure; an independently reviewed recovery is running. The policy mixer is merged and its real-teacher pilot passes. No Ceres-mixture training or playing-strength result is claimed.
+Status: 14,290,196 of 18,910,484 Ceres labels are qualified (75.6%) at September 11 19:54 UTC. The reviewed recovery collection is running. Policy/value producers and pilots are ready; no Ceres-mixture training or playing-strength result is claimed.
 
 ## Selected question
 
@@ -50,19 +50,24 @@ bounded snapshot audit qualified recovery shards 48–79 (262,144 rows), scannin
 the newly completed chunk and reusing unchanged pinned prior qualification. This
 snapshot excludes in-progress chunks and is not full-corpus completion.
 
-## Qualified collection progress, September 11 at 13:40 UTC
+## Qualified collection progress, September 11 at 19:54 UTC
 
-The completed-chunk audit qualified recovery shards 48–1135: 8,912,896 rows.
+The completed-chunk audit qualified recovery shards 48–1743: 13,893,632 rows.
 Together with previously accepted shards 0–47 and final partial shard 2308,
-this gives **9,309,460 of 18,910,484 positions** (49.2%). The audit exited zero;
-six new chunks received payload checks and 62 unchanged qualified chunks reused
-their pinned evidence. In-progress output is excluded. This is label qualification,
+this gives **14,290,196 of 18,910,484 positions** (75.6%). Audit session 35806
+exited zero under the existing ten-minute, two-core, 2 GiB limit. Twenty-one new
+chunks received payload checks and 85 unchanged qualified chunks reused their
+pinned evidence. In-progress output is excluded. This is label qualification,
 not completed mixture training or playing-strength evidence.
 
-Snapshot SHA256: `6c84c071f86a48ec8113c4a1aa723217a14db712dcf6476385760ba1bf2fbf5d`.
-The registered collection continues. Monitoring now uses a tool-side wait, with
-infrequent fallback checks while completion is distant; audits are batched rather
-than repeated after every small increment.
+[Compact milestone evidence](evidence/ceres-three-quarter-20260911.json) pins
+snapshot 14 (`d9a4bcd2b1b81e1baf856165cd616cc56fc77f5d3b4f091a389bc115ddda6ba6`)
+and its prior snapshot 13. Earlier snapshots remain preserved in host storage.
+Collection continued through this audit. Monitoring uses a completion observer
+and infrequent host-process checks; the preceding waits were one hour and then
+25 minutes to reach this milestone. No collector restart or inference was added
+by the audit. The next substantive work remains full-bank materialization and
+the registered policy/value comparisons below.
 
 ## Real-teacher policy pilot
 
