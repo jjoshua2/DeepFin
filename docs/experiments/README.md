@@ -8,6 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
+| [B100 Tactical300 mass transfer](2026-09-11-b100-tactical300-transfer.md) | Sparse >300cp / mate-gated strong SF policy transfer implemented; no real rewrite, training or strength result |
 | [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | 526,376 matched rows passed; larger stage rejected malformed saved SF labels; historical BT4 WDL reuse implemented, no strength result |
 | [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | 11.54M/18.91M Ceres labels qualified at September 11 16:30 UTC; collection continues, policy/value screens prepared, no Ceres playing result |
 | [SF tactical guidance for BT4 policy](2026-09-10-bt4-sf-tactical-training.md) | Completed 400-simulation match: tactical recipe −13.6 Elo [−52.4,+24.9]; unresolved, retain B100 |
