@@ -1,6 +1,6 @@
 # SF tactical guidance for BT4 policy
 
-Status: registered training and realized-schedule verification completed successfully. CPU preparation passed and the fixed match is running; no match result or strength gain is claimed. This updates the [earlier readiness record](2026-09-08-b100-tactical-policy-readiness.md).
+Status: training and the registered 256-game match completed. Tactical attenuation scored **−13.6 Elo versus B100, paired 95% interval [−52.4, +24.9]**, at 400 simulations. The result is unresolved; retain B100 and move to a different teacher-mixture question without extending this match. This updates the [earlier readiness record](2026-09-08-b100-tactical-policy-readiness.md).
 
 ## Question and treatment
 
@@ -32,10 +32,18 @@ The producer reported 1,841,617 rows with a winning-mate move; every such row al
 
 Both final checkpoints loaded on CPU with the same 61,444,448-parameter architecture and the frozen runtime. The actual opening histories, 400-simulation search settings, priors 1.0 and no-tablebase configuration matched the registration. CPU preparation completed in 113.80 seconds with CUDA uninitialized. Independent Grok review found no integration defects in the preparation/launch path; the parent checked the completed CPU package and final contract.
 
-The fixed match acquired the shared GPU lease at a labeling boundary after 208.18 seconds of waiting and started its arena process. Its 5,400-second owned stage and 10,230-second whole-operation bound remain unchanged. It produces one 128-pair bank and a strict completed-bank readout; no result is available at this snapshot.
+The fixed match acquired the shared GPU lease at a labeling boundary after 208.18 seconds of waiting and started its arena process. Its 5,400-second owned stage and 10,230-second whole-operation bound remain unchanged. It completed all 128 pairs and exited successfully. The whole match operation, including lease waiting and readout, took 1,669.77 seconds (27.83 minutes).
+
+## Completed match and decision
+
+The candidate scored 48.0469% across 256 games / 128 swapped opening pairs. The candidate-oriented pentanomial counts were WW=19, WD/DW=21, DD/WL=40, LD/DL=27, LL=21. The paired standard error was 0.028226; the nominal 95% interval transforms to −52.4 through +24.9 Elo around an estimate of −13.6 Elo.
+
+The interval crosses zero, so the registered rule gives an unresolved result. This is no demonstrated benefit from this particular 100 cp allowance / 100 cp decay / 0.1 floor recipe; it does not reject all Stockfish tactical guidance. Retain pure BT4 T0.5 policy with SF values as the incumbent. Do not extend the match or promote the candidate.
+
+The strict package reader checked the finished bank and checkpoint content. A separate parent calculation reconstructed all candidate scores from result/color, checked 128 unique swapped pairs and matching opening endpoints, and reproduced the paired estimate and interval. Launch runtime/history qualification comes from the previously reviewed preparation receipts, not from the bank reader alone. The final interpretation and this prose are parent-reviewed; no new independent playing-result review is claimed.
 
 ## Evidence and next decisions
 
-[Compact launch and completion evidence](artifacts/b100-tactical-training-20260910.json) records qualification, completed training, realized schedule and checkpoint identities. Bulk corpus, logs and checkpoints remain outside Git. The next deciding readout is the registered match, not teacher agreement alone.
+[Compact launch and completion evidence](artifacts/b100-tactical-training-20260910.json) records qualification, completed training, realized schedule and checkpoint identities. Bulk corpus, logs and checkpoints remain outside Git. The completed bank, package contract and independently reproduced numerical readout are identified in that artifact.
 
-Weighted teacher mixtures are the preferred next family for both heads. Ceres policy mixtures should initially keep value fixed; adding Ceres to SF/BT4 values should be tested with policy fixed. The tactical result and actual collection readiness will choose the next comparison; these directions are not a mandatory queue.
+Weighted teacher mixtures are the preferred next family for both heads. Ceres policy mixtures should initially keep value fixed; adding Ceres to SF/BT4 values should be tested with policy fixed. Next prepare a 50/50 BT4–Ceres policy mixture at teacher temperature 0.5 for each component, keeping SF values fixed. A later separate value candidate is 50% SF / 25% BT4 / 25% Ceres with policy fixed. Collection and producer qualification are still prerequisites; neither mixture has a trained strength result. These directions are not a mandatory queue.
