@@ -47,7 +47,8 @@ from scripts.bt4_policy_dump import file_sha256
 
 SUMMARY = "teacher_adjudication_audit.json"
 SELECTION = "teacher_adjudication_ceres_selection.json"
-SCHEMA = 1
+SCHEMA = 2
+ROW_BANK = "teacher_adjudication_rows.jsonl"
 BT4_TEMPERATURE = 0.5
 CERES_POLICY_TEMPERATURE = 0.5
 RANK_GAPS = (100.0, 300.0, 500.0, 1000.0)
@@ -171,7 +172,7 @@ def conditional_policy_metrics(
     board: chess.Board,
     policy: np.ndarray,
     final_scores: dict[str, float] | None,
-) -> dict[str, float] | None:
+) -> dict[str, Any] | None:
     """Evaluate only the saved deeper roster and expose its covered policy mass."""
     if final_scores is None or not final_scores:
         return None
@@ -185,7 +186,7 @@ def conditional_policy_metrics(
     if scored_mass <= 0:
         return {
             "scored_mass": 0.0,
-            "conditional_regret_cp": math.nan,
+            "conditional_regret_cp": None,
             "conditional_best_mass": 0.0,
         }
     best = max(final_scores.values())
@@ -233,31 +234,34 @@ def tactical300_preview(row: dict[str, Any], base: np.ndarray) -> np.ndarray:
 
 
 def _metric_cell() -> dict[str, float | int]:
-    return {
-        "rows": 0,
-        "scored_mass_sum": 0.0,
-        "regret_sum_cp": 0.0,
-        "best_mass_sum": 0.0,
-    }
+    return {"rows": 0, "missing_policy_rows": 0, "invalid_final_rows": 0,
+            "coverage_rows": 0, "zero_coverage_rows": 0, "regret_rows": 0,
+            "scored_mass_sum": 0.0, "regret_sum_cp": 0.0, "best_mass_sum": 0.0}
 
 
-def _add_policy_metric(
-    cell: dict[str, float | int], metric: dict[str, float] | None
-) -> None:
-    if metric is None or not math.isfinite(metric["conditional_regret_cp"]):
+def _add_policy_metric(cell: dict[str, float | int], metric: dict[str, Any] | None,
+                       *, policy_present: bool = True) -> None:
+    cell["rows"] += 1
+    if not policy_present:
+        cell["missing_policy_rows"] += 1
         return
-    cell["rows"] = int(cell["rows"]) + 1
-    cell["scored_mass_sum"] = float(cell["scored_mass_sum"]) + metric["scored_mass"]
-    cell["regret_sum_cp"] = float(cell["regret_sum_cp"]) + metric[
-        "conditional_regret_cp"
-    ]
-    cell["best_mass_sum"] = float(cell["best_mass_sum"]) + metric[
-        "conditional_best_mass"
-    ]
+    if metric is None:
+        cell["invalid_final_rows"] += 1
+        return
+    cell["coverage_rows"] += 1
+    cell["scored_mass_sum"] += metric["scored_mass"]
+    if metric["scored_mass"] == 0:
+        cell["zero_coverage_rows"] += 1
+        return
+    require(math.isfinite(metric["conditional_regret_cp"]), "nonfinite covered regret")
+    cell["regret_rows"] += 1
+    cell["regret_sum_cp"] += metric["conditional_regret_cp"]
+    cell["best_mass_sum"] += metric["conditional_best_mass"]
 
 
 def _routing_cell() -> dict[str, int]:
-    return {"eligible": 0, "selected": 0, "reversals": 0, "reversals_captured": 0}
+    return {"ordinary_rows": 0, "selected_ordinary": 0, "unscored": 0,
+            "eligible": 0, "selected": 0, "reversals": 0, "reversals_captured": 0}
 
 
 def _rank_cell() -> dict[str, int]:
@@ -268,6 +272,8 @@ def new_aggregate() -> dict[str, Any]:
     return {
         "rows": 0,
         "ordinary_rows": 0,
+        "excluded_mate_d9_rows": 0,
+        "final_reason_counts": {},
         "policy": {
             "bt4": _metric_cell(),
             "tactical300_preview": _metric_cell(),
@@ -335,7 +341,7 @@ def _update_position_strata(
     aggregate: dict[str, Any],
     strata: list[str],
     *,
-    reversal: bool,
+    reversal: bool | None,
     bt4_regret: float | None,
 ) -> None:
     for name in strata:
@@ -343,13 +349,15 @@ def _update_position_strata(
             name,
             {
                 "rows": 0,
-                "reversals": 0,
+                "reversals": 0, "adjudicable_rows": 0, "unscored_rows": 0,
                 "regret_rows": 0,
                 "bt4_regret_sum_cp": 0.0,
             },
         )
         cell["rows"] += 1
-        cell["reversals"] += int(reversal)
+        cell["unscored_rows"] += int(reversal is None)
+        cell["adjudicable_rows"] += int(reversal is not None)
+        cell["reversals"] += int(reversal is True)
         if bt4_regret is not None and math.isfinite(bt4_regret):
             cell["regret_rows"] += 1
             cell["bt4_regret_sum_cp"] += bt4_regret
@@ -368,29 +376,50 @@ def _deeper_reversal(
 
 
 def _update_ranking(
-    aggregate: dict[str, Any],
-    d9: dict[str, float],
-    d9_best: set[str],
-    final: dict[str, float] | None,
-) -> None:
+    aggregate: dict[str, Any], d9: dict[str, float], d9_best: set[str],
+    final: dict[str, float] | None, move_mass: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Best-set (existential) and conservative all-winner constraints, separately.
+
+    Mass counts each inferior move once, never once per tied winning move.
+    """
     best_score = max(d9.values())
+    result = {}
     for threshold in RANK_GAPS:
-        cell = aggregate["ranking"][str(int(threshold))]
+        key = str(int(threshold))
+        row: dict[str, Any] = {**_rank_cell(), 'inferior_bt4_mass': 0.0,
+                               'all_winner': {**_rank_cell(), **{k + '_bt4_mass': 0.0 for k in ('confirmed', 'contradicted', 'ties', 'unscored')}}}
         for move, score in d9.items():
             if move in d9_best or best_score - score <= threshold:
                 continue
-            cell["constraints"] += 1
+            mass = 0.0 if move_mass is None else move_mass[move]
+            row['inferior_bt4_mass'] += mass
+            row['constraints'] += 1
+            conservative = row['all_winner']
+            conservative['constraints'] += 1
             if final is None or move not in final or not d9_best <= set(final):
-                cell["unscored"] += 1
-                continue
-            d9_final = max(final[item] for item in d9_best)
-            other = final[move]
-            if d9_final > other:
-                cell["confirmed"] += 1
-            elif other > d9_final:
-                cell["contradicted"] += 1
+                existential = outcome = 'unscored'
             else:
-                cell["ties"] += 1
+                def compare(winner: float, other: float) -> str:
+                    return 'confirmed' if winner > other else 'contradicted' if winner < other else 'ties'
+                existential = compare(max(final[item] for item in d9_best), final[move])
+                outcome = compare(min(final[item] for item in d9_best), final[move])
+            row[existential] += 1
+            conservative[outcome] += 1
+            conservative[outcome + '_bt4_mass'] += mass
+        cell = aggregate['ranking'][key]
+        for name, value in row.items():
+            if name == 'all_winner':
+                target = cell.setdefault(name, dict.fromkeys(value, 0))
+                for field, count in value.items():
+                    target[field] += count
+            else:
+                cell[name] = cell.get(name, 0) + value
+        cell['ordinary_rows'] = cell.get('ordinary_rows', 0) + 1
+        cell['constraint_rows'] = cell.get('constraint_rows', 0) + int(row['constraints'] > 0)
+        cell['adjudicable_constraint_rows'] = cell.get('adjudicable_constraint_rows', 0) + int(row['constraints'] > row['unscored'])
+        result[key] = row
+    return result
 
 
 def _update_routing(
@@ -400,9 +429,7 @@ def _update_routing(
     gap: float | None,
     top_probability: float,
     reversal: bool | None,
-) -> None:
-    if reversal is None:
-        return
+) -> dict[str, bool]:
     rules = {
         "all": True,
         "bt4_disagrees_d9": disagreement,
@@ -413,10 +440,16 @@ def _update_routing(
     }
     for name, selected in rules.items():
         cell = aggregate["routing"][name]
+        cell["ordinary_rows"] += 1
+        cell["selected_ordinary"] += int(selected)
+        cell["unscored"] += int(reversal is None)
+        if reversal is None:
+            continue
         cell["eligible"] += 1
         cell["selected"] += int(selected)
         cell["reversals"] += int(reversal)
         cell["reversals_captured"] += int(reversal and selected)
+    return rules
 
 
 def _softmax3(logits: np.ndarray, temperature: float) -> np.ndarray:
@@ -569,12 +602,12 @@ def analyze_row(
     derived_wdl: np.ndarray,
     raw_bt4_wdl: np.ndarray | None = None,
     ceres_bank: Any | None = None,
-) -> None:
+) -> dict[str, Any]:
     board = chess.Board(str(raw_row["fen"]))
     mapping, legal = _legal_map(board)
     d9 = tactical._d9_scores(raw_row, set(mapping))
     tactical._validate_score_domain(d9)
-    final, _depth, _reason = adaptive.select(raw_row, set(mapping))
+    final, final_depth, final_reason = adaptive.select(raw_row, set(mapping))
     if final is not None:
         tactical._validate_score_domain(final)
     bt4 = bt4_policy(board, raw_bt4)
@@ -582,55 +615,79 @@ def analyze_row(
     bt4_top_probability = max(float(bt4[index]) for index in mapping.values())
     aggregate["rows"] += 1
 
-    ordinary = not any(abs(score) > sf_wdl.SF_CP_CLAMP_CP for score in d9.values())
-    if not ordinary:
-        return
-    aggregate["ordinary_rows"] += 1
-    d9_best, gap = tactical._ordinary_d9_best(d9)
-    disagreement = d9_best.isdisjoint(bt4_top)
-    reversal = _deeper_reversal(final, d9_best)
-
-    bt4_metric = conditional_policy_metrics(board, bt4, final)
-    _add_policy_metric(aggregate["policy"]["bt4"], bt4_metric)
-    preview = tactical300_preview(raw_row, bt4)
-    _add_policy_metric(
-        aggregate["policy"]["tactical300_preview"],
-        conditional_policy_metrics(board, preview, final),
-    )
-    _update_ranking(aggregate, d9, d9_best, final)
-    _update_routing(
-        aggregate,
-        disagreement=disagreement,
-        gap=gap,
-        top_probability=bt4_top_probability,
-        reversal=reversal,
-    )
-    _update_position_strata(
-        aggregate,
-        _position_strata(board, raw_row),
-        reversal=bool(reversal),
-        bt4_regret=(
-            None if bt4_metric is None else bt4_metric["conditional_regret_cp"]
-        ),
-    )
-
     identity = {
         "source_dir": str(Path(ref["source_dir"]).resolve()),
         "derived_shard": derived_shard,
         "derived_row": int(derived_row),
+        "source_namespace": str(ref["source_namespace"]),
+        "worker_id": int(ref["worker_id"]),
+        "stored_input_key": str(ref["stored_input_key"]),
         "game_id": int(ref["game_id"]),
         "ply": int(ref["ply"]),
         "raw_shard": str(ref["source_shard"]),
         "physical_row": int(ref["source_row"]),
         "input_key": str(ref["input_key"]),
     }
+    aggregate['final_reason_counts'][final_reason] = aggregate['final_reason_counts'].get(final_reason, 0) + 1
+    bank: dict[str, Any] = {'schema': SCHEMA, 'identity': identity, 'reversal': None, 'source_result': raw_row.get('result'),
+                            'final_depth': final_depth, 'final_reason': final_reason,
+                            'final_roster_size': 0 if final is None else len(final),
+                            'final_mate_domain': final is not None and any(abs(v) > sf_wdl.SF_CP_CLAMP_CP for v in final.values()),
+                            'bt4_top_probability': bt4_top_probability, 'bt4_entropy': entropy(bt4),
+                            'ceres_present': ceres_bank is not None, 'policy': {}, 'paired_regret_delta_cp': {},
+                            'position_strata': _position_strata(board, raw_row)}
+    ordinary = not any(abs(score) > sf_wdl.SF_CP_CLAMP_CP for score in d9.values())
+    bank["ordinary_d9"] = ordinary
+    if not ordinary:
+        aggregate["excluded_mate_d9_rows"] += 1
+        bank["exclusion"] = "mate_domain_d9"
+        return bank
+    aggregate["ordinary_rows"] += 1
+    d9_best, gap = tactical._ordinary_d9_best(d9)
+    bank.update(d9_best_count=len(d9_best), d9_best_minus_next_lower_cp=gap,
+                d9_best_cp=max(d9.values()),
+                d9_best_minus_bt4_top_best_cp=max(d9.values()) - max(d9[m] for m in bt4_top),
+                d9_best_minus_bt4_top_worst_cp=max(d9.values()) - min(d9[m] for m in bt4_top),
+                bt4_expected_d9_regret_cp=sum(bt4[mapping[m]] * (max(d9.values()) - v) for m, v in d9.items()))
+    disagreement = d9_best.isdisjoint(bt4_top)
+    reversal = _deeper_reversal(final, d9_best)
+
+    bt4_metric = conditional_policy_metrics(board, bt4, final)
+    def add_policy(name: str, policy: np.ndarray | None) -> None:
+        metric = None if policy is None else conditional_policy_metrics(board, policy, final)
+        bank['policy'][name] = metric
+        _add_policy_metric(aggregate['policy'][name], metric, policy_present=policy is not None)
+        if metric is not None and bt4_metric is not None and metric['conditional_regret_cp'] is not None and bt4_metric['conditional_regret_cp'] is not None:
+            bank['paired_regret_delta_cp'][name] = metric['conditional_regret_cp'] - bt4_metric['conditional_regret_cp']
+    add_policy('bt4', bt4)
+    preview = tactical300_preview(raw_row, bt4)
+    bank['tactical300_probability_mass_moved'] = float(np.abs(preview - bt4).sum() / 2)
+    add_policy('tactical300_preview', preview)
+    bank['ranking_best_set_and_all_winner'] = _update_ranking(
+        aggregate, d9, d9_best, final, {m: float(bt4[mapping[m]]) for m in mapping})
+    bank['reversal'] = reversal
+    bank['bt4_disagrees_d9'] = disagreement
+    bank['routing'] = _update_routing(
+        aggregate, disagreement=disagreement, gap=gap,
+        top_probability=bt4_top_probability, reversal=reversal)
+    _update_position_strata(
+        aggregate,
+        bank["position_strata"],
+        reversal=reversal,
+        bt4_regret=(
+            None if bt4_metric is None else bt4_metric["conditional_regret_cp"]
+        ),
+    )
+
     selector.add(
         _selection_stratum(disagreement=disagreement, gap=gap, reversal=reversal),
         identity,
     )
 
     if ceres_bank is None:
-        return
+        for name in ('ceres', 'arithmetic50', 'geometric50'):
+            add_policy(name, None)
+        return bank
     cpolicy = dense_ceres_policy(ceres_bank, derived_row, legal)
     ctop = top_set(cpolicy, mapping)
     pair = aggregate["neural_pair"]
@@ -642,20 +699,12 @@ def analyze_row(
     pair["bt4_entropy_sum"] += entropy(bt4)
     pair["ceres_entropy_sum"] += entropy(cpolicy)
 
-    _add_policy_metric(
-        aggregate["policy"]["ceres"], conditional_policy_metrics(board, cpolicy, final)
-    )
-    arithmetic = arithmetic_mix(bt4, cpolicy, legal)
-    _add_policy_metric(
-        aggregate["policy"]["arithmetic50"],
-        conditional_policy_metrics(board, arithmetic, final),
-    )
-    geometric = geometric_mix(bt4, cpolicy, legal)
-    if geometric is not None:
-        _add_policy_metric(
-            aggregate["policy"]["geometric50"],
-            conditional_policy_metrics(board, geometric, final),
-        )
+    bank['ceres_top_probability'] = max(float(cpolicy[index]) for index in mapping.values())
+    bank['ceres_entropy'] = entropy(cpolicy)
+    bank['neural_js'] = js_divergence(bt4, cpolicy, legal)
+    add_policy('ceres', cpolicy)
+    add_policy('arithmetic50', arithmetic_mix(bt4, cpolicy, legal))
+    add_policy('geometric50', geometric_mix(bt4, cpolicy, legal))
 
     if not agree and final is not None and bt4_top <= set(final) and ctop <= set(final):
         pair["adjudicable_disagreements"] += 1
@@ -674,7 +723,7 @@ def analyze_row(
 
     target = _deeper_wdl(final)
     if target is None or raw_bt4_wdl is None or "value2_logits" not in ceres_bank:
-        return
+        return bank
     primary = _softmax3(np.asarray(ceres_bank["value_logits"][derived_row]), 0.55)
     secondary = _softmax3(np.asarray(ceres_bank["value2_logits"][derived_row]), 1.5)
     dual = 0.6 * primary + 0.4 * secondary
@@ -690,29 +739,33 @@ def analyze_row(
         ("registered_sf50_bt425_ceres25", registered),
     ):
         _update_value(aggregate, name, prediction, target)
+    bank["value_losses"] = {name: {"brier": _wdl_loss(prediction, target)[0], "cross_entropy": _wdl_loss(prediction, target)[1]} for name, prediction in [("sf_saved", sf_saved), ("bt4_native", bt4_value), ("ceres_dual", dual)]}
+    return bank
 
 
 def finalize(aggregate: dict[str, Any]) -> dict[str, Any]:
     result = json.loads(json.dumps(aggregate))
     for cell in result["policy"].values():
-        rows = int(cell["rows"])
+        rows = int(cell["coverage_rows"])
+        regret_rows = int(cell["regret_rows"])
         cell["mean_scored_mass"] = cell["scored_mass_sum"] / rows if rows else None
         cell["mean_conditional_regret_cp"] = (
-            cell["regret_sum_cp"] / rows if rows else None
+            cell["regret_sum_cp"] / regret_rows if regret_rows else None
         )
         cell["mean_conditional_best_mass"] = (
-            cell["best_mass_sum"] / rows if rows else None
+            cell["best_mass_sum"] / regret_rows if regret_rows else None
         )
     for cell in result["routing"].values():
         eligible = int(cell["eligible"])
         reversals = int(cell["reversals"])
+        cell["selection_fraction_all_ordinary"] = cell["selected_ordinary"] / cell["ordinary_rows"] if cell["ordinary_rows"] else None
         cell["search_fraction"] = cell["selected"] / eligible if eligible else None
         cell["reversal_capture_rate"] = (
             cell["reversals_captured"] / reversals if reversals else None
         )
     for cell in result["position_strata"].values():
         cell["reversal_rate"] = (
-            cell["reversals"] / cell["rows"] if cell["rows"] else None
+            cell["reversals"] / cell["adjudicable_rows"] if cell["adjudicable_rows"] else None
         )
         cell["mean_bt4_regret_cp"] = (
             cell["bt4_regret_sum_cp"] / cell["regret_rows"]
@@ -812,7 +865,9 @@ def audit(
     started = time.monotonic()
     rows_analyzed = 0
     shard_receipts: list[dict[str, Any]] = []
+    row_stream = None
     try:
+        row_stream = (writing / ROW_BANK).open("x")
         for path in selected:
             derived_states[path] = adapter.storage_identity(path)
             group: Any = zarr.open_group(str(path), mode="r")
@@ -920,7 +975,7 @@ def audit(
                         np.array_equal(expected_legal, legal[derived_index]),
                         "legal support differs",
                     )
-                    analyze_row(
+                    row_metric = analyze_row(
                         aggregate,
                         selector,
                         raw_row=raw_row,
@@ -934,6 +989,7 @@ def audit(
                         ),
                         ceres_bank=cbank,
                     )
+                    row_stream.write(json.dumps(row_metric, separators=(",", ":"), allow_nan=False) + "\n")
                     rows_analyzed += 1
 
             require(
@@ -967,6 +1023,7 @@ def audit(
         if optional_ceres is not None:
             optional_ceres.guard()
 
+        row_stream.close()
         selected_rows = selector.selected()
         selection_payload = {
             "schema": 1,
@@ -1000,6 +1057,7 @@ def audit(
             "training_admission": False,
             "playing_strength_result": False,
             "metrics": finalize(aggregate),
+            "row_bank": {"path": ROW_BANK, "rows": rows_analyzed, "sha256": file_sha256(writing / ROW_BANK)},
             "ceres_selection": {
                 "path": SELECTION,
                 "rows": len(selected_rows),
@@ -1009,7 +1067,10 @@ def audit(
             "elapsed_seconds": time.monotonic() - started,
             "limitations": [
                 "Saved d10/d12 rosters are narrowed/adaptive and are calibration evidence, not ground truth.",
-                "Policy regret is conditional on actually rescored moves and always reports covered mass.",
+                "Coverage includes zero-mass rows; regret is an equal-row mean conditional on positive scored mass. Paired differences in row bank use common valid rows.",
+                "Ranking flat counts describe existential best-set constraints; all_winner requires every old tied winner to beat the inferior move. Unscored moves remain unknown.",
+                "Routing search_fraction is conditional on adjudicability; selection_fraction_all_ordinary is separate. Neither estimates prospective cost savings.",
+                "Selection large-conflict stratum retains Tactical300 best-minus-next-lower gap; both BT4-top gap endpoints are banked separately.",
                 "Ceres metrics exist only on exact row-aligned completed Ceres shards explicitly supplied.",
                 "The bounded Ceres selection is not a qualified selected bank and launches no inference.",
             ],
@@ -1023,6 +1084,8 @@ def audit(
         os.replace(writing, out)
         return final
     except BaseException:
+        if row_stream is not None:
+            row_stream.close()
         raise
 
 
