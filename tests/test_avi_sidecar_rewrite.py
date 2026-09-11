@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import chess
 import numpy as np
@@ -12,7 +14,7 @@ from scripts import avi_value_rewrite as rewrite
 from scripts import gen_sf_rooted_corpus as corpus
 
 
-def _raw_row_and_ref() -> tuple[dict[str, object], dict[str, object], chess.Board]:
+def _raw_row_and_ref() -> tuple[dict[str, Any], dict[str, Any], chess.Board]:
     corpus.apply_history_rep_fix()
     board = chess.Board()
     for uci in ("e2e4", "e7e5", "g1f3", "b8c6"):
@@ -20,7 +22,7 @@ def _raw_row_and_ref() -> tuple[dict[str, object], dict[str, object], chess.Boar
     history = corpus.history_for(board)
     config = "a" * 64
     input_key = corpus.row_key(board)
-    row: dict[str, object] = {
+    row: dict[str, Any] = {
         "schema": 3,
         "run": {"config_sha256": config},
         "worker_id": 2,
@@ -30,7 +32,7 @@ def _raw_row_and_ref() -> tuple[dict[str, object], dict[str, object], chess.Boar
         "fen": board.fen(),
         **history.as_row_fields(),
     }
-    ref: dict[str, object] = {
+    ref: dict[str, Any] = {
         "source_config_sha256": config,
         "worker_id": 2,
         "game_id": 7,
@@ -52,7 +54,9 @@ def test_raw_history_replay_reconstructs_authenticated_board() -> None:
 
 def test_raw_history_replay_rejects_tampered_window() -> None:
     row, ref, _expected = _raw_row_and_ref()
-    row["history_uci"] = [*row["history_uci"][:-1], "b8a6"]  # type: ignore[index]
+    moves = row["history_uci"]
+    assert isinstance(moves, list)
+    row["history_uci"] = [*moves[:-1], "b8a6"]
     with pytest.raises(ValueError, match="reproduce FEN|input_key"):
         sidecar._raw_row_board(row, ref)  # noqa: SLF001
 
@@ -96,7 +100,7 @@ def test_complete_sidecar_manifest_is_required(tmp_path: Path) -> None:
     }
     path = tmp_path / sidecar.SUMMARY
     path.write_text(json.dumps(payload))
-    digest = __import__("hashlib").sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
     with pytest.raises(ValueError, match="complete source collection"):
         rewrite._sidecar_manifest(  # noqa: SLF001
             path,
