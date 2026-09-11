@@ -425,6 +425,34 @@ a full corpus. The earlier fixed32 approximation and native-order/history limits
 remain. A future launch needs its own exact source selection, call budget and
 runtime evidence; an old fixed-count pilot wrapper is not a full-collection plan.
 
+### Offline BT4–Ceres policy mixtures
+
+`scripts/ceres_target_mix.py` consumes completed teacher sidecars; it performs no
+inference. A SHA-pinned JSON manifest names the original derived corpus, its summary,
+the two teachers, and one full Ceres/BT4 sidecar entry per source shard. It validates
+coverage, legal indices, row identities and available input provenance. Selected-row
+banks cannot stand in for full-shard coverage.
+
+Each teacher is independently normalized and temperature-scaled before probability
+mixing. Defaults are 50% BT4 / 50% Ceres, both at temperature 0.5. Feed raw BT4
+probabilities, not already sharpened B100 targets. Only `policy_target` changes;
+16 other compressed arrays remain byte-identical. The output uses ordinary copied
+shards and becomes complete through an atomic rename. Run with a disk reserve and
+external hard timeout; internal STOP/deadline checks are cooperative.
+
+Legacy BT4 collection uses an explicit pinned lineage mode: current-position and
+history-regime checks do not newly prove historical input frames. The summary records
+that inherited limitation. Full-input hashes are checked whenever supplied; stored-x
+mode requires them. Ceres alignment additionally checks actual input arrays and TPG
+feeds. These checks establish data construction, not playing strength.
+
+The script validates by default; `--execute` performs the rewrite. Its versioned
+`ceres_target_mix_summary.json` is distinct from BT4-only summaries. The registered
+`CeresB50` profile in `bt4_one_epoch_screen.py` admits the fixed 50/50 T0.5 recipe in
+schema3 training-only mode, with an explicit producer freeze, corpus qualification
+and matched schedule. This adds no new trainer or value mixture. A producer test on
+the development runtime does not qualify the historical training runtime.
+
 ### Bounded Ceres collection batches
 
 `scripts/ceres_collection_batches.py` runs an ordered JSON plan of prepared
