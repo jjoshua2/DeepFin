@@ -62,7 +62,8 @@ linking the original evidence; do not append to the frozen ledger.
 
 Include the hypothesis, baseline/control, realized settings and revision, deciding
 command/threshold, uncertainty method, budget, horizon, confounds, artifact identities
-and recovery plan. Add the readout against the precommitted rule, with its limits and next decision. Publish compact supporting evidence with the record: realized settings,
+and recovery plan. Add the readout against the precommitted rule, with its limits and
+next decision. Publish compact supporting evidence with the record: realized settings,
 readouts, review receipts and manageable game banks, with a source/hash manifest.
 Keep large corpora, checkpoints and transient logs external and document their
 identities and retrieval or restore locations. Historical absolute paths inside
