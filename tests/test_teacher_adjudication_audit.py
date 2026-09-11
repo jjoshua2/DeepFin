@@ -65,7 +65,7 @@ def test_tactical300_preview_moves_half_inferior_mass_only_above_300cp() -> None
     board = chess.Board(row["fen"])
     moves = [move.uci() for move in board.legal_moves]
     base = _policy(board, {moves[0]: 0.1, moves[1]: 0.9})
-    scores = {move: -1000.0 for move in moves}
+    scores = dict.fromkeys(moves, -1000.0)
     scores[moves[0]] = 500.0
     scores[moves[1]] = 199.0
     _set_d9(row, scores)
