@@ -25,6 +25,7 @@ from scripts import bt4_derived_wdl_sidecar as wdl
 from scripts import sf_policy_rewrite as sf_rewrite
 from scripts import raw_wdl_adaptation as reused
 from scripts import g10_native_wdl_reuse as historical
+from scripts import matched_sf_value as matched
 from scripts.sf_policy_rewrite import ARRAYS, require
 
 SUMMARY = "bt4_value_rewrite_summary.json"
@@ -56,11 +57,13 @@ def algorithm(alpha: float = 0.1) -> str:
     )
 
 
-def value_source(model_sha256: str, output: str, alpha: float = 0.1) -> str:
+def value_source(model_sha256: str, output: str, alpha: float = 0.1,
+                 sf_selector: str | None = None) -> str:
     """Identity consumed by the historical trainer, including the named teacher."""
     alpha = checked_alpha(alpha)
     original = f"{VALUE_SOURCE};onnx={model_sha256};output={output}"
-    return original if alpha == 0.1 else f"{original};bt4_weight={alpha!r}"
+    identity = original if alpha == 0.1 else f"{original};bt4_weight={alpha!r}"
+    return identity if sf_selector is None else f"{identity};sf_selector={sf_selector}"
 
 
 def equal_json(a: Any, b: Any) -> bool:
@@ -125,6 +128,11 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
     qualification_sha = getattr(args, 'expected_g10_common_qualification_sha256', None)
     require(bool(qualification) == bool(qualification_sha), 'G10 qualification requires path and SHA256')
     require(not native_path or bool(qualification), 'native WDL reuse requires original G10 qualification')
+    matched_path = getattr(args, 'matched_sf_manifest', None)
+    matched_sha = getattr(args, 'expected_matched_sf_manifest_sha256', None)
+    require(bool(matched_path) == bool(matched_sha), 'matched SF requires manifest and SHA256')
+    require(not matched_path or bool(qualification), 'matched SF requires original G10 qualification')
+    sf_selector = matched.SELECTOR if matched_path else None
     wdl.set_nthreads(2)
     require(
         type(args.batch_size) is int and 0 < args.batch_size <= 4096,
@@ -202,6 +210,17 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         all(policy.get(k) == v for k, v in expected_policy.items()),
         "requires unchanged B100 policy recipe",
     )
+    matched_input = None
+    if matched_path:
+        if not isinstance(matched_sha, str):
+            raise ValueError('matched SF digest required')
+        matched_input = matched.admit(
+            Path(matched_path).resolve(), matched_sha, original=sf_root,
+            original_sha=args.expected_sf_summary_sha256, summary=sf, specs=specs, pins=pins)
+        candidate = matched_input['root']
+        require(all(candidate != p and candidate not in p.parents and p not in candidate.parents
+                    for p in (source, side_root, out, writing)), 'matched SF input overlaps')
+        roots = (*roots, candidate)
     for root in roots:
         inventory(root, specs)
     states = {
@@ -224,6 +243,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         pins[Path(adapted_pin['path'])] = adapted_pin['sha256']
     if native_bindings is not None:
         producer[str(Path(historical.__file__).resolve())] = wdl.file_sha256(historical.__file__)
+    if matched_input is not None:
+        producer[str(Path(matched.__file__).resolve())] = wdl.file_sha256(matched.__file__)
     writing.mkdir(parents=True)
 
     def guard() -> None:
@@ -246,6 +267,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             name, n = spec["path"], spec["rows"]
             src, original, side = source / name, sf_root / name, side_root / name
             original_group = wdl.source_arrays(original, sf, n)
+            matched_group = (matched.verify_shard(matched_input, original, spec, original_group,
+                                                   args.batch_size, guard)
+                             if matched_input is not None else None)
             group: Any = zarr.open_group(str(src), mode="r")
             require(
                 set(group.array_keys())
@@ -350,7 +374,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 old = np.asarray(group["search_wdl"][start:end])
                 stored = target(
-                    old, np.asarray(side_group["bt4_wdl_raw"][start:end]), alpha
+                    (np.asarray(matched_group['search_wdl'][start:end])
+                     if matched_group is not None else old),
+                    np.asarray(side_group["bt4_wdl_raw"][start:end]), alpha
                 )
                 dest["search_wdl"][start:end] = stored
                 readback = np.asarray(dest["search_wdl"][start:end])
@@ -374,11 +400,13 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 "source_derive_summary_sha256": args.expected_source_summary_sha256,
                 "search_wdl_sha256": value_hash.hexdigest(),
             }
+            if matched_input is not None:
+                stamp['matched_sf'] = matched_input['provenance']
             dest.attrs.update(
                 derive_schema=2,
                 derive_value_scheme=value_scheme(alpha),
                 derive_value_source=value_source(
-                    args.expected_onnx_sha256, args.wdl_output, alpha
+                    args.expected_onnx_sha256, args.wdl_output, alpha, sf_selector
                 ),
                 value_target_postprocess=stamp,
             )
@@ -442,13 +470,15 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             "unchanged_arrays": sorted(ARRAYS - {"search_wdl"}),
             "value_scheme": value_scheme(alpha),
             "value_source": value_source(
-                args.expected_onnx_sha256, args.wdl_output, alpha
+                args.expected_onnx_sha256, args.wdl_output, alpha, sf_selector
             ),
             "changed_rows": changed,
             "stored_mass_error_max": max_error,
             "producer_sha256": producer,
             "outputs": outputs,
         }
+        if matched_input is not None:
+            recipe['matched_sf'] = matched_input['provenance']
         if adapted_pin is not None:
             recipe['wdl_adaptation'] = {'profile': reused.PROFILE, 'manifest': adapted_pin,
                                         'new_teacher_evaluations': 0}
@@ -467,7 +497,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         # Top-level original scheme remains source history; actual value metadata is explicit.
         derived["value_scheme"] = {
             "name": value_scheme(alpha),
-            "source": value_source(args.expected_onnx_sha256, args.wdl_output, alpha),
+            "source": value_source(args.expected_onnx_sha256, args.wdl_output, alpha, sf_selector),
         }
         (writing / POLICY_SUMMARY).write_bytes((source / POLICY_SUMMARY).read_bytes())
         (writing / SUMMARY).write_text(
@@ -507,6 +537,8 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("source-summary", "policy-summary", "sf-summary", "onnx"):
         parser.add_argument("--expected-" + name + "-sha256", required=True)
     parser.add_argument("--wdl-output", default="/output/wdl")
+    parser.add_argument('--matched-sf-manifest', type=Path, default=argparse.SUPPRESS)
+    parser.add_argument('--expected-matched-sf-manifest-sha256', default=argparse.SUPPRESS)
     parser.add_argument("--g10-common-qualification", type=Path, default=argparse.SUPPRESS)
     parser.add_argument("--expected-g10-common-qualification-sha256", default=argparse.SUPPRESS)
     parser.add_argument("--native-wdl-manifest", type=Path, default=argparse.SUPPRESS)

@@ -628,3 +628,47 @@ Proof pins are checked again before publication.
 Historical-native and `--wdl-adapter-manifest` provenance are mutually exclusive.
 The existing raw-adapter route retains its own typed lineage. Omitting the new
 options preserves the original completed-corpus behavior and recipe identity.
+
+### Matched adaptive SF input for the value blend
+
+`bt4_value_rewrite.py --matched-sf-manifest PATH
+--expected-matched-sf-manifest-sha256 SHA` optionally supplies the SF term from a
+separately matched adaptive derivation. Original `--sf-source`, B100 policy and
+native BT4 sidecars keep their original lineage. Original G10 qualification is
+required. This interface requires the complete same-layout cohort; it does not
+admit the large corpus's partial native-WDL prefix.
+
+The reviewed manifest has this structure (all paths absolute and canonical):
+
+```json
+{
+  "schema": 1,
+  "profile": "matched-g10-adaptive-sf-value-v1",
+  "original_source": "/original/derived",
+  "original_summary_sha256": "SHA",
+  "candidate_source": "/matched/adaptive",
+  "candidate_summary": {"path": "/matched/adaptive/derive_targets_summary.json", "sha256": "SHA"},
+  "launch_plan": {"path": "/matched/first_stage.json", "sha256": "SHA"},
+  "completed_receipt": {"path": "/matched/execution/status.json", "sha256": "SHA"},
+  "shards": {
+    "shard_000000.zarr": {
+      "attrs": {"path": "/matched/adaptive/shard_000000.zarr/.zattrs", "sha256": "SHA"},
+      "search_wdl_sha256": "SHA of decoded float16 C-order array bytes"
+    }
+  }
+}
+```
+
+List every shard. The existing terminal matching receipt attests source-qualified
+provenance and sixteen unchanged decoded arrays; it did not record a WDL hash.
+The manifest's WDL witness is an explicit later reviewed observation, not a claim
+that the old completion attested those bytes. The consumer checks actual arrays
+against both witnesses, complete coverage, fixed selector stamps and unchanged
+storage through publication. It checks the pinned historical producer files from
+the launch plan without substituting current source hashes.
+
+Only `g10-adaptive-final-or-d9-v1` is admitted here. Its selector participates in
+the shared value recipe identity; per-cohort paths and hashes remain provenance,
+so distinct qualified cohorts with the same recipe can join. No manifest means
+unchanged historical metadata and numerical behavior. This feature does not
+qualify a training schedule or launch an experiment.
