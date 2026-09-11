@@ -575,3 +575,56 @@ The shared parent supervisor retains STOP, reserve, sampled output and inclusive
 wall bounds and owns termination of its disposable child. The child holds the
 shared GPU lease through process exit and context teardown. No collector launch,
 full-corpus coverage, mixture selection or active-runtime adoption is implied.
+
+### Reusing historical native BT4 WDL on an original G10 cohort
+
+`bt4_value_rewrite.py` accepts a complete original G10 batch with
+`--g10-common-qualification PATH` and
+`--expected-g10-common-qualification-sha256 SHA`. The original SF directory,
+its actual B100 policy product, and the teacher's source stamps remain unchanged.
+This does not admit an adaptive-value replacement directory or a partial prefix.
+
+For previously collected direct-derived WDL, also supply
+`--native-wdl-manifest PATH --expected-native-wdl-manifest-sha256 SHA`.
+The reviewed manifest is the trust anchor for historical evidence. A successful
+collection receipt describes coverage but does not independently attest producer
+code; pin the historical producer files and accepted shard attributes separately.
+Every pin below is exactly `{"path": "/absolute/canonical/path", "sha256": "..."}`.
+
+```json
+{
+  "schema": 1,
+  "profile": "historical-g10-native-wdl-reuse-v1",
+  "source_dir": "/original/batch/derived",
+  "wdl_dir": "/original/wdl/bank",
+  "source_summary_sha256": "...",
+  "onnx_sha256": "...",
+  "wdl_output": "/output/wdl",
+  "invocations": [{
+    "completed": {"path": "/original/wdl/bank/invocations/ID/completed.json", "sha256": "..."},
+    "started": {"path": "/original/wdl/bank/invocations/ID/started.json", "sha256": "..."},
+    "producer": {
+      "scripts/bt4_derived_wdl_sidecar.py": {"path": "/frozen/collector.py", "sha256": "..."},
+      "scripts/bt4_raw_corpus_sidecar.py": {"path": "/frozen/raw_collector.py", "sha256": "..."},
+      "chess_anti_engine/encoding/lc0.py": {"path": "/frozen/lc0.py", "sha256": "..."}
+    },
+    "g10_admission_script": {"path": "/frozen/g10_wdl_admission.py", "sha256": "..."},
+    "attributes": {
+      "shard_000000.zarr": {"path": "/original/wdl/bank/shard_000000.zarr/.zattrs", "sha256": "..."}
+    }
+  }]
+}
+```
+
+List every selected shard's attribute pin in its actual invocation entry. The
+invocations must cover the entire original derived cohort exactly once, in the
+same WDL bank, and agree on source, model and named probability head. The consumer
+checks their actual launch selection and G10 admission, constructs the complete
+historical binding from the pinned evidence, and retains all cached-array hashes,
+source-column hashes, game/ply and actual stored LC0-feed checks. It does not run
+or modify the historical producer code or relabel its outputs as new inference.
+Proof pins are checked again before publication.
+
+Historical-native and `--wdl-adapter-manifest` provenance are mutually exclusive.
+The existing raw-adapter route retains its own typed lineage. Omitting the new
+options preserves the original completed-corpus behavior and recipe identity.

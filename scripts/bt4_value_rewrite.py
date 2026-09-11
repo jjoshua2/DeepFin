@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import bt4_derived_wdl_sidecar as wdl
 from scripts import sf_policy_rewrite as sf_rewrite
 from scripts import raw_wdl_adaptation as reused
+from scripts import g10_native_wdl_reuse as historical
 from scripts.sf_policy_rewrite import ARRAYS, require
 
 SUMMARY = "bt4_value_rewrite_summary.json"
@@ -116,6 +117,14 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError('adapter manifest SHA256 must be a string')
         adapted_pin = {'path': str(Path(adapter_path).resolve()), 'sha256': adapter_sha}
         reused.pin(adapted_pin)
+    native_path = getattr(args, 'native_wdl_manifest', None)
+    native_sha = getattr(args, 'expected_native_wdl_manifest_sha256', None)
+    require(bool(native_path) == bool(native_sha), 'native WDL requires manifest and SHA256')
+    require(not (native_path and adapter_path), 'native and raw-adapted WDL provenance are exclusive')
+    qualification = getattr(args, 'g10_common_qualification', None)
+    qualification_sha = getattr(args, 'expected_g10_common_qualification_sha256', None)
+    require(bool(qualification) == bool(qualification_sha), 'G10 qualification requires path and SHA256')
+    require(not native_path or bool(qualification), 'native WDL reuse requires original G10 qualification')
     wdl.set_nthreads(2)
     require(
         type(args.batch_size) is int and 0 < args.batch_size <= 4096,
@@ -148,14 +157,28 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         require(wdl.file_sha256(path) == digest, "source summary pin differs")
     base = json.loads((source / DERIVE_SUMMARY).read_text())
     policy = json.loads((source / POLICY_SUMMARY).read_text())
-    sf, specs = wdl.source_inventory(
-        argparse.Namespace(
-            source=str(sf_root),
-            expected_source_summary_sha256=args.expected_sf_summary_sha256,
-            start_shard=0,
-            max_shards=2**31,
-        )
+    inventory_args = argparse.Namespace(
+        source=str(sf_root), expected_source_summary_sha256=args.expected_sf_summary_sha256,
+        start_shard=0, max_shards=2**31, g10_common_qualification=qualification,
+        expected_g10_common_qualification_sha256=qualification_sha,
     )
+    sf, specs = wdl.source_inventory(inventory_args)
+    g10_admission = inventory_args.g10_admission
+    if g10_admission is not None:
+        require(bool(native_path or adapter_path), 'G10 values require explicit native or adapted WDL provenance')
+        if qualification is None or not isinstance(qualification_sha, str):
+            raise ValueError('G10 qualification pin is missing')
+        pins[Path(qualification)] = qualification_sha
+        pins.update({Path(p): h for p, h in g10_admission['summary_pins'].items()})
+    native_bindings = None
+    if native_path:
+        if not isinstance(native_sha, str) or not isinstance(g10_admission, dict):
+            raise ValueError('native WDL requires G10 admission and manifest digest')
+        native_bindings = historical.admit(
+            Path(native_path).resolve(), native_sha, source=sf_root, sidecar=side_root,
+            summary_sha=args.expected_sf_summary_sha256, model_sha=args.expected_onnx_sha256,
+            head=args.wdl_output, admission=g10_admission, specs=specs, pins=pins,
+        )
     require(
         equal_json(
             {k: v for k, v in base.items() if k != "policy_target_postprocess"}, sf
@@ -199,6 +222,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
     if adapted_pin is not None:
         producer[str(Path(reused.__file__).resolve())] = wdl.file_sha256(reused.__file__)
         pins[Path(adapted_pin['path'])] = adapted_pin['sha256']
+    if native_bindings is not None:
+        producer[str(Path(historical.__file__).resolve())] = wdl.file_sha256(historical.__file__)
     writing.mkdir(parents=True)
 
     def guard() -> None:
@@ -254,7 +279,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             )
             side_group: Any = zarr.open_group(str(side), mode="r")
             binding = dict(side_group.attrs)["binding"]
-            expected = wdl.binding(
+            expected = native_bindings[name] if native_bindings is not None else wdl.binding(
                 argparse.Namespace(
                     source=str(sf_root),
                     onnx=binding["onnx"],
@@ -427,6 +452,14 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         if adapted_pin is not None:
             recipe['wdl_adaptation'] = {'profile': reused.PROFILE, 'manifest': adapted_pin,
                                         'new_teacher_evaluations': 0}
+        if g10_admission is not None:
+            recipe['g10_common_admission'] = g10_admission
+        if native_path and native_bindings is not None:
+            recipe['native_wdl_reuse'] = {
+                'profile': historical.PROFILE,
+                'manifest': {'path': str(Path(native_path).resolve()), 'sha256': native_sha},
+                'new_teacher_evaluations': 0,
+            }
         derived = dict(base)
         derived["value_target_postprocess"] = {
             k: v for k, v in recipe.items() if k != "outputs"
@@ -474,6 +507,10 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("source-summary", "policy-summary", "sf-summary", "onnx"):
         parser.add_argument("--expected-" + name + "-sha256", required=True)
     parser.add_argument("--wdl-output", default="/output/wdl")
+    parser.add_argument("--g10-common-qualification", type=Path, default=argparse.SUPPRESS)
+    parser.add_argument("--expected-g10-common-qualification-sha256", default=argparse.SUPPRESS)
+    parser.add_argument("--native-wdl-manifest", type=Path, default=argparse.SUPPRESS)
+    parser.add_argument("--expected-native-wdl-manifest-sha256", default=argparse.SUPPRESS)
     parser.add_argument("--wdl-adapter-manifest", type=Path, default=argparse.SUPPRESS)
     parser.add_argument("--expected-wdl-adapter-manifest-sha256", default=argparse.SUPPRESS)
     parser.add_argument(
