@@ -50,8 +50,7 @@ def checked_alpha(alpha: float) -> float:
 
 def _checked_sha256(value: str, *, label: str) -> str:
     require(
-        isinstance(value, str)
-        and len(value) == 64
+        len(value) == 64
         and all(char in "0123456789abcdef" for char in value.lower()),
         f"{label} must be a 64-character SHA256",
     )
