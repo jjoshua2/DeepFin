@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from chess_anti_engine.inference import LocalModelEvaluator
 from chess_anti_engine.mcts.one_ply import (
+    OnePlyBackup,
     evaluate_wdl_probabilities,
     one_ply_value_backups,
 )
@@ -41,7 +42,9 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_unique_boards(path: Path, *, max_positions: int) -> tuple[list[chess.Board], int]:
+def load_unique_boards(
+    path: Path, *, max_positions: int
+) -> tuple[list[chess.Board], int]:
     if max_positions <= 0:
         raise ValueError("max_positions must be positive")
     lines = _load_fen_list(str(path))
@@ -75,6 +78,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--out", required=True, help="New .npz output path")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=4096)
+    parser.add_argument(
+        "--parent-batch",
+        type=int,
+        default=128,
+        help="Maximum parent positions whose legal children are materialized together",
+    )
     parser.add_argument("--max-positions", type=int, default=4096)
     parser.add_argument(
         "--claim-draws",
@@ -97,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("refusing to overwrite existing output")
     if args.batch_size <= 0:
         raise SystemExit("--batch-size must be positive")
+    if args.parent_batch <= 0:
+        raise SystemExit("--parent-batch must be positive")
 
     boards, source_lines = load_unique_boards(
         positions, max_positions=args.max_positions
@@ -104,29 +115,44 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     model = load_model_from_checkpoint(str(checkpoint), device=str(args.device))
     model.eval()
+    if hasattr(model, "_inference_only"):
+        setattr(model, "_inference_only", True)
     evaluator = LocalModelEvaluator(model, device=str(args.device), use_amp=True)
     history_encoding = getattr(model, "input_history_encoding", None)
     extra_features = getattr(model, "input_extra_features", None)
     compute_relations = bool(getattr(model, "use_dynamic_relations", False))
 
-    root_wdl = evaluate_wdl_probabilities(
-        boards,
-        evaluator,
-        batch_size=args.batch_size,
-        input_history_encoding=history_encoding,
-        input_extra_features=extra_features,
-        compute_relations=compute_relations,
-    )
-    backups = one_ply_value_backups(
-        boards,
-        evaluator,
-        batch_size=args.batch_size,
-        input_history_encoding=history_encoding,
-        input_extra_features=extra_features,
-        compute_relations=compute_relations,
-        claim_draws=bool(args.claim_draws),
-    )
-    backup_wdl = np.stack([backup.wdl for backup in backups], axis=0)
+    root_parts: list[np.ndarray] = []
+    backup_parts: list[np.ndarray] = []
+    backups: list[OnePlyBackup] = []
+    for start in range(0, len(boards), args.parent_batch):
+        chunk = boards[start : start + args.parent_batch]
+        root_parts.append(
+            evaluate_wdl_probabilities(
+                chunk,
+                evaluator,
+                batch_size=args.batch_size,
+                input_history_encoding=history_encoding,
+                input_extra_features=extra_features,
+                compute_relations=compute_relations,
+            )
+        )
+        chunk_backups = one_ply_value_backups(
+            chunk,
+            evaluator,
+            batch_size=args.batch_size,
+            input_history_encoding=history_encoding,
+            input_extra_features=extra_features,
+            compute_relations=compute_relations,
+            claim_draws=bool(args.claim_draws),
+        )
+        backup_parts.append(np.stack([backup.wdl for backup in chunk_backups], axis=0))
+        backups.extend(chunk_backups)
+    root_wdl = np.concatenate(root_parts, axis=0)
+    backup_wdl = np.concatenate(backup_parts, axis=0)
+    if root_wdl.shape != backup_wdl.shape or root_wdl.shape != (len(boards), 3):
+        raise RuntimeError("diagnostic root/backup WDL rows lost alignment")
+
     root_q = q_from_wdl(root_wdl)
     backup_q = q_from_wdl(backup_wdl)
     abs_q_delta = np.abs(backup_q - root_q)
@@ -143,7 +169,9 @@ def main(argv: list[str] | None = None) -> int:
         backup_wdl=np.asarray(backup_wdl, dtype=np.float32),
         chosen_move=np.asarray([backup.move.uci() for backup in backups]),
         chosen_q=np.asarray([backup.q for backup in backups], dtype=np.float32),
-        legal_moves=np.asarray([backup.legal_moves for backup in backups], dtype=np.int16),
+        legal_moves=np.asarray(
+            [backup.legal_moves for backup in backups], dtype=np.int16
+        ),
         terminal_children=np.asarray(
             [backup.terminal_children for backup in backups], dtype=np.int16
         ),
@@ -165,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         "rows": len(boards),
         "max_positions": int(args.max_positions),
         "batch_size": int(args.batch_size),
+        "parent_batch": int(args.parent_batch),
         "device": str(args.device),
         "claim_draws": bool(args.claim_draws),
         "input_history_encoding": history_encoding,
@@ -174,7 +203,9 @@ def main(argv: list[str] | None = None) -> int:
         "network_evaluated_children": int(
             sum(backup.evaluated_children for backup in backups)
         ),
-        "terminal_children": int(sum(backup.terminal_children for backup in backups)),
+        "terminal_children": int(
+            sum(backup.terminal_children for backup in backups)
+        ),
         "selected_terminal_rows": int(
             sum(backup.selected_terminal for backup in backups)
         ),
