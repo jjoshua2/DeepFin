@@ -88,7 +88,10 @@ def _legal_map(board: chess.Board) -> tuple[dict[str, int], np.ndarray]:
 def _normalize(policy: np.ndarray, legal: np.ndarray, *, name: str) -> np.ndarray:
     values = np.asarray(policy, dtype=np.float64)
     require(values.shape == (COMPACT_POLICY_SIZE,), f"{name} policy width differs")
-    require(bool(np.isfinite(values).all()) and bool(np.all(values >= 0)), f"invalid {name} policy")
+    require(
+        bool(np.isfinite(values).all()) and bool(np.all(values >= 0)),
+        f"invalid {name} policy",
+    )
     require(not bool(np.any(values[~legal] != 0)), f"{name} policy has illegal mass")
     total = float(values[legal].sum())
     require(math.isfinite(total) and total > 0, f"{name} policy has no legal mass")
@@ -215,7 +218,9 @@ def tactical300_preview(row: dict[str, Any], base: np.ndarray) -> np.ndarray:
     if not lower or best_score - max(lower) <= 300.0:
         return p
     recipients = np.asarray([mapping[move] for move in winners], dtype=np.int64)
-    donors = np.asarray([mapping[move] for move in mapping if move not in winners], dtype=np.int64)
+    donors = np.asarray(
+        [mapping[move] for move in mapping if move not in winners], dtype=np.int64
+    )
     donor_mass = float(p[donors].sum())
     transfer = 0.5 * donor_mass
     p[donors] *= 0.5
@@ -236,13 +241,19 @@ def _metric_cell() -> dict[str, float | int]:
     }
 
 
-def _add_policy_metric(cell: dict[str, float | int], metric: dict[str, float] | None) -> None:
+def _add_policy_metric(
+    cell: dict[str, float | int], metric: dict[str, float] | None
+) -> None:
     if metric is None or not math.isfinite(metric["conditional_regret_cp"]):
         return
     cell["rows"] = int(cell["rows"]) + 1
     cell["scored_mass_sum"] = float(cell["scored_mass_sum"]) + metric["scored_mass"]
-    cell["regret_sum_cp"] = float(cell["regret_sum_cp"]) + metric["conditional_regret_cp"]
-    cell["best_mass_sum"] = float(cell["best_mass_sum"]) + metric["conditional_best_mass"]
+    cell["regret_sum_cp"] = float(cell["regret_sum_cp"]) + metric[
+        "conditional_regret_cp"
+    ]
+    cell["best_mass_sum"] = float(cell["best_mass_sum"]) + metric[
+        "conditional_best_mass"
+    ]
 
 
 def _routing_cell() -> dict[str, int]:
@@ -309,17 +320,33 @@ def _position_strata(board: chess.Board, row: dict[str, Any]) -> list[str]:
     ply = int(row["ply"])
     return [
         "in_check" if board.is_check() else "not_in_check",
-        "legal_le_10" if legal_count <= 10 else "legal_11_30" if legal_count <= 30 else "legal_gt_30",
+        (
+            "legal_le_10"
+            if legal_count <= 10
+            else "legal_11_30"
+            if legal_count <= 30
+            else "legal_gt_30"
+        ),
         "ply_lt_40" if ply < 40 else "ply_40_79" if ply < 80 else "ply_ge_80",
     ]
 
 
 def _update_position_strata(
-    aggregate: dict[str, Any], strata: list[str], *, reversal: bool, bt4_regret: float | None
+    aggregate: dict[str, Any],
+    strata: list[str],
+    *,
+    reversal: bool,
+    bt4_regret: float | None,
 ) -> None:
     for name in strata:
         cell = aggregate["position_strata"].setdefault(
-            name, {"rows": 0, "reversals": 0, "regret_rows": 0, "bt4_regret_sum_cp": 0.0}
+            name,
+            {
+                "rows": 0,
+                "reversals": 0,
+                "regret_rows": 0,
+                "bt4_regret_sum_cp": 0.0,
+            },
         )
         cell["rows"] += 1
         cell["reversals"] += int(reversal)
@@ -328,7 +355,9 @@ def _update_position_strata(
             cell["bt4_regret_sum_cp"] += bt4_regret
 
 
-def _deeper_reversal(final_scores: dict[str, float] | None, d9_best: set[str]) -> bool | None:
+def _deeper_reversal(
+    final_scores: dict[str, float] | None, d9_best: set[str]
+) -> bool | None:
     if final_scores is None or not d9_best <= set(final_scores):
         return None
     values = np.asarray(list(final_scores.values()), dtype=np.float64)
@@ -339,7 +368,10 @@ def _deeper_reversal(final_scores: dict[str, float] | None, d9_best: set[str]) -
 
 
 def _update_ranking(
-    aggregate: dict[str, Any], d9: dict[str, float], d9_best: set[str], final: dict[str, float] | None
+    aggregate: dict[str, Any],
+    d9: dict[str, float],
+    d9_best: set[str],
+    final: dict[str, float] | None,
 ) -> None:
     best_score = max(d9.values())
     for threshold in RANK_GAPS:
@@ -362,8 +394,12 @@ def _update_ranking(
 
 
 def _update_routing(
-    aggregate: dict[str, Any], *, disagreement: bool, gap: float | None, top_probability: float,
-    reversal: bool | None
+    aggregate: dict[str, Any],
+    *,
+    disagreement: bool,
+    gap: float | None,
+    top_probability: float,
+    reversal: bool | None,
 ) -> None:
     if reversal is None:
         return
@@ -390,7 +426,10 @@ def _softmax3(logits: np.ndarray, temperature: float) -> np.ndarray:
 
 def _normalized_wdl(values: np.ndarray) -> np.ndarray:
     p = np.asarray(values, dtype=np.float64)
-    require(p.shape == (3,) and bool(np.isfinite(p).all()) and bool(np.all(p >= 0)), "invalid WDL")
+    require(
+        p.shape == (3,) and bool(np.isfinite(p).all()) and bool(np.all(p >= 0)),
+        "invalid WDL",
+    )
     total = float(p.sum())
     require(total > 0, "zero WDL mass")
     return p / total
@@ -426,7 +465,9 @@ def _deeper_wdl(final_scores: dict[str, float] | None) -> np.ndarray | None:
     ).astype(np.float64)
 
 
-def _selection_stratum(*, disagreement: bool, gap: float | None, reversal: bool | None) -> str:
+def _selection_stratum(
+    *, disagreement: bool, gap: float | None, reversal: bool | None
+) -> str:
     if reversal:
         return "deeper_reversal"
     if disagreement and gap is not None and gap > 300.0:
@@ -489,9 +530,15 @@ class CeresManifest:
         if entry is None:
             return None
         path = Path(entry["ceres"]).resolve()
-        require(path.is_dir() and not path.name.endswith(".writing"), "completed Ceres shard required")
+        require(
+            path.is_dir() and not path.name.endswith(".writing"),
+            "completed Ceres shard required",
+        )
         binding = entry["ceres_binding"]
-        require(binding["shard"] == shard and binding["rows"] == rows, "Ceres shard binding differs")
+        require(
+            binding["shard"] == shard and binding["rows"] == rows,
+            "Ceres shard binding differs",
+        )
         state = ceres.shared.storage_identity(path)
         attrs = ceres.verify_cached(path, binding)
         group: Any = zarr.open_group(str(path), mode="r")
@@ -502,15 +549,26 @@ class CeresManifest:
     def guard(self) -> None:
         require(file_sha256(self.path) == self.digest, "Ceres manifest changed")
         require(
-            all(ceres.shared.storage_identity(path) == state for path, state in self.states.items()),
+            all(
+                ceres.shared.storage_identity(path) == state
+                for path, state in self.states.items()
+            ),
             "Ceres input changed during audit",
         )
 
 
 def analyze_row(
-    aggregate: dict[str, Any], selector: Selector, *, raw_row: dict[str, Any], raw_bt4: np.ndarray,
-    ref: dict[str, Any], derived_shard: str, derived_row: int, derived_wdl: np.ndarray,
-    raw_bt4_wdl: np.ndarray | None = None, ceres_bank: Any | None = None
+    aggregate: dict[str, Any],
+    selector: Selector,
+    *,
+    raw_row: dict[str, Any],
+    raw_bt4: np.ndarray,
+    ref: dict[str, Any],
+    derived_shard: str,
+    derived_row: int,
+    derived_wdl: np.ndarray,
+    raw_bt4_wdl: np.ndarray | None = None,
+    ceres_bank: Any | None = None,
 ) -> None:
     board = chess.Board(str(raw_row["fen"]))
     mapping, legal = _legal_map(board)
@@ -535,7 +593,10 @@ def analyze_row(
     bt4_metric = conditional_policy_metrics(board, bt4, final)
     _add_policy_metric(aggregate["policy"]["bt4"], bt4_metric)
     preview = tactical300_preview(raw_row, bt4)
-    _add_policy_metric(aggregate["policy"]["tactical300_preview"], conditional_policy_metrics(board, preview, final))
+    _add_policy_metric(
+        aggregate["policy"]["tactical300_preview"],
+        conditional_policy_metrics(board, preview, final),
+    )
     _update_ranking(aggregate, d9, d9_best, final)
     _update_routing(
         aggregate,
@@ -548,7 +609,9 @@ def analyze_row(
         aggregate,
         _position_strata(board, raw_row),
         reversal=bool(reversal),
-        bt4_regret=(None if bt4_metric is None else bt4_metric["conditional_regret_cp"]),
+        bt4_regret=(
+            None if bt4_metric is None else bt4_metric["conditional_regret_cp"]
+        ),
     )
 
     identity = {
@@ -579,15 +642,19 @@ def analyze_row(
     pair["bt4_entropy_sum"] += entropy(bt4)
     pair["ceres_entropy_sum"] += entropy(cpolicy)
 
-    _add_policy_metric(aggregate["policy"]["ceres"], conditional_policy_metrics(board, cpolicy, final))
+    _add_policy_metric(
+        aggregate["policy"]["ceres"], conditional_policy_metrics(board, cpolicy, final)
+    )
     arithmetic = arithmetic_mix(bt4, cpolicy, legal)
     _add_policy_metric(
-        aggregate["policy"]["arithmetic50"], conditional_policy_metrics(board, arithmetic, final)
+        aggregate["policy"]["arithmetic50"],
+        conditional_policy_metrics(board, arithmetic, final),
     )
     geometric = geometric_mix(bt4, cpolicy, legal)
     if geometric is not None:
         _add_policy_metric(
-            aggregate["policy"]["geometric50"], conditional_policy_metrics(board, geometric, final)
+            aggregate["policy"]["geometric50"],
+            conditional_policy_metrics(board, geometric, final),
         )
 
     if not agree and final is not None and bt4_top <= set(final) and ctop <= set(final):
@@ -630,17 +697,27 @@ def finalize(aggregate: dict[str, Any]) -> dict[str, Any]:
     for cell in result["policy"].values():
         rows = int(cell["rows"])
         cell["mean_scored_mass"] = cell["scored_mass_sum"] / rows if rows else None
-        cell["mean_conditional_regret_cp"] = cell["regret_sum_cp"] / rows if rows else None
-        cell["mean_conditional_best_mass"] = cell["best_mass_sum"] / rows if rows else None
+        cell["mean_conditional_regret_cp"] = (
+            cell["regret_sum_cp"] / rows if rows else None
+        )
+        cell["mean_conditional_best_mass"] = (
+            cell["best_mass_sum"] / rows if rows else None
+        )
     for cell in result["routing"].values():
         eligible = int(cell["eligible"])
         reversals = int(cell["reversals"])
         cell["search_fraction"] = cell["selected"] / eligible if eligible else None
-        cell["reversal_capture_rate"] = cell["reversals_captured"] / reversals if reversals else None
+        cell["reversal_capture_rate"] = (
+            cell["reversals_captured"] / reversals if reversals else None
+        )
     for cell in result["position_strata"].values():
-        cell["reversal_rate"] = cell["reversals"] / cell["rows"] if cell["rows"] else None
+        cell["reversal_rate"] = (
+            cell["reversals"] / cell["rows"] if cell["rows"] else None
+        )
         cell["mean_bt4_regret_cp"] = (
-            cell["bt4_regret_sum_cp"] / cell["regret_rows"] if cell["regret_rows"] else None
+            cell["bt4_regret_sum_cp"] / cell["regret_rows"]
+            if cell["regret_rows"]
+            else None
         )
     pair = result["neural_pair"]
     rows = int(pair["rows"])
@@ -650,7 +727,9 @@ def finalize(aggregate: dict[str, Any]) -> dict[str, Any]:
     for cell in result["value"].values():
         rows = int(cell["rows"])
         cell["mean_brier"] = cell["brier_sum"] / rows if rows else None
-        cell["mean_cross_entropy"] = cell["cross_entropy_sum"] / rows if rows else None
+        cell["mean_cross_entropy"] = (
+            cell["cross_entropy_sum"] / rows if rows else None
+        )
     return result
 
 
@@ -667,7 +746,10 @@ def audit(
     max_index_bytes: int = 8 * 1024**3,
 ) -> dict[str, Any]:
     require(_hex64(expected_manifest_sha256), "adapter manifest SHA256 required")
-    require(start_shard >= 0 and (max_shards is None or max_shards > 0), "invalid shard slice")
+    require(
+        start_shard >= 0 and (max_shards is None or max_shards > 0),
+        "invalid shard slice",
+    )
     manifest_path = manifest_path.resolve()
     manifest_pin = {"path": str(manifest_path), "sha256": expected_manifest_sha256}
     manifest = json.loads(adapter.pin(manifest_pin).read_text())
@@ -681,19 +763,28 @@ def audit(
     )
     paths = sorted(source.glob("shard_*.zarr"))
     written = {entry["path"]: entry for entry in summary["shards"]}
-    require(bool(paths) and set(written) == {path.name for path in paths}, "derived inventory differs")
-    stop = len(paths) if max_shards is None else min(len(paths), start_shard + max_shards)
+    require(
+        bool(paths) and set(written) == {path.name for path in paths},
+        "derived inventory differs",
+    )
+    stop = (
+        len(paths)
+        if max_shards is None
+        else min(len(paths), start_shard + max_shards)
+    )
     selected = paths[start_shard:stop]
     require(bool(selected), "selected shard slice is empty")
 
     inputs = adapter.RawInputs(manifest, max_raw_rows, max_index_bytes)
     optional_ceres: CeresManifest | None = None
     if ceres_manifest_path is not None or expected_ceres_manifest_sha256 is not None:
-        require(ceres_manifest_path is not None and expected_ceres_manifest_sha256 is not None,
-                "Ceres manifest path and SHA256 are both required")
+        if ceres_manifest_path is None or expected_ceres_manifest_sha256 is None:
+            raise ValueError("Ceres manifest path and SHA256 are both required")
         optional_ceres = CeresManifest(
-            ceres_manifest_path.resolve(), expected_ceres_manifest_sha256, source,
-            manifest["derived_summary"]["sha256"]
+            ceres_manifest_path.resolve(),
+            expected_ceres_manifest_sha256,
+            source,
+            manifest["derived_summary"]["sha256"],
         )
 
     out = out.resolve()
@@ -703,7 +794,10 @@ def audit(
     if optional_ceres is not None:
         protected.append(optional_ceres.path)
     require(
-        all(out != path and out not in path.parents and path not in out.parents for path in protected),
+        all(
+            out != path and out not in path.parents and path not in out.parents
+            for path in protected
+        ),
         "output overlaps inputs",
     )
     require(not out.exists() and not writing.exists(), "new output required; no adoption")
@@ -724,35 +818,64 @@ def audit(
             group: Any = zarr.open_group(str(path), mode="r")
             x = np.asarray(group["x"][:])
             rows = len(x)
-            require(rows == written[path.name]["rows"] and rows > 0, "derived row count differs")
+            require(
+                rows == written[path.name]["rows"] and rows > 0,
+                "derived row count differs",
+            )
             stamp = dict(group.attrs).get("derive_row_provenance")
             if not isinstance(stamp, dict):
                 raise ValueError("provenance attribute is not a mapping")
-            require(stamp == written[path.name].get("row_provenance"), "provenance pin mismatch")
+            require(
+                stamp == written[path.name].get("row_provenance"),
+                "provenance pin mismatch",
+            )
             provenance_path = path / provenance.FILENAME
-            require(file_sha256(provenance_path) == stamp["sha256"], "corrupted row provenance")
+            require(
+                file_sha256(provenance_path) == stamp["sha256"],
+                "corrupted row provenance",
+            )
             refs = provenance.read(provenance_path, rows=rows)
             game_ids = np.asarray(group["game_id"][:])
             ply_indices = np.asarray(group["ply_index"][:])
             legal = np.asarray(group["legal_mask"][:]) != 0
             sf_values = np.asarray(group["search_wdl"][:])
-            cbank = optional_ceres.load(path.name, group, rows) if optional_ceres is not None else None
+            cbank = (
+                optional_ceres.load(path.name, group, rows)
+                if optional_ceres is not None
+                else None
+            )
             grouped: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
             seen: set[tuple[str, str, int]] = set()
             for index, ref in enumerate(refs):
-                identity = (str(ref["source_namespace"]), str(ref["source_shard"]), int(ref["source_row"]))
-                require(identity not in seen, "duplicate source-qualified derived row")
+                identity = (
+                    str(ref["source_namespace"]),
+                    str(ref["source_shard"]),
+                    int(ref["source_row"]),
+                )
+                require(
+                    identity not in seen,
+                    "duplicate source-qualified derived row",
+                )
                 seen.add(identity)
-                grouped.setdefault((str(ref["source_dir"]), str(ref["source_shard"])), []).append((index, ref))
+                grouped.setdefault(
+                    (str(ref["source_dir"]), str(ref["source_shard"])), []
+                ).append((index, ref))
 
             for requests in grouped.values():
                 first_ref = requests[0][1]
                 raw_group, records = inputs.get(first_ref)
                 offsets = {int(ref["source_row"]) for _index, ref in requests}
-                raw_path = Path(str(first_ref["source_dir"])) / str(first_ref["source_shard"])
+                raw_path = Path(str(first_ref["source_dir"])) / str(
+                    first_ref["source_shard"]
+                )
                 source_rows = tactical._raw_rows(raw_path, offsets)
-                raw_offsets = np.asarray([int(ref["source_row"]) for _index, ref in requests], dtype=np.int64)
-                policies = np.asarray(raw_group[raw.POLICY_FIELD].oindex[raw_offsets, :])
+                raw_offsets = np.asarray(
+                    [int(ref["source_row"]) for _index, ref in requests],
+                    dtype=np.int64,
+                )
+                policies = np.asarray(
+                    raw_group[raw.POLICY_FIELD].oindex[raw_offsets, :]
+                )
                 values = (
                     np.asarray(raw_group[raw.WDL_FIELD].oindex[raw_offsets, :])
                     if raw.WDL_FIELD in raw_group
@@ -760,16 +883,26 @@ def audit(
                 )
                 for request_index, (derived_index, ref) in enumerate(requests):
                     offset = int(ref["source_row"])
-                    require(0 <= offset < len(records), "physical source row outside closed shard")
-                    record = records[offset]
-                    require(ref["input_key"] == record["input_key"].tobytes().hex(), "raw input key mismatch")
                     require(
-                        ref["stored_input_key"] == record["stored_input_key"].tobytes().hex()
+                        0 <= offset < len(records),
+                        "physical source row outside closed shard",
+                    )
+                    record = records[offset]
+                    require(
+                        ref["input_key"] == record["input_key"].tobytes().hex(),
+                        "raw input key mismatch",
+                    )
+                    require(
+                        ref["stored_input_key"]
+                        == record["stored_input_key"].tobytes().hex()
                         == adapter.corpus.input_tensor_key(x[derived_index]),
                         "stored input key mismatch",
                     )
                     require(
-                        all(int(ref[field]) == int(record[field]) for field in ("worker_id", "game_id", "ply")),
+                        all(
+                            int(ref[field]) == int(record[field])
+                            for field in ("worker_id", "game_id", "ply")
+                        ),
                         "raw physical identity mismatch",
                     )
                     require(
@@ -778,10 +911,15 @@ def audit(
                         "derived game/ply alignment mismatch",
                     )
                     raw_row = source_rows[offset]
-                    derive._check_row_identity(raw_row, str(ref["source_config_sha256"]))
+                    derive._check_row_identity(
+                        raw_row, str(ref["source_config_sha256"])
+                    )
                     board = chess.Board(str(raw_row["fen"]))
                     _mapping, expected_legal = _legal_map(board)
-                    require(np.array_equal(expected_legal, legal[derived_index]), "legal support differs")
+                    require(
+                        np.array_equal(expected_legal, legal[derived_index]),
+                        "legal support differs",
+                    )
                     analyze_row(
                         aggregate,
                         selector,
@@ -791,24 +929,37 @@ def audit(
                         derived_shard=path.name,
                         derived_row=derived_index,
                         derived_wdl=sf_values[derived_index],
-                        raw_bt4_wdl=(None if values is None else values[request_index]),
+                        raw_bt4_wdl=(
+                            None if values is None else values[request_index]
+                        ),
                         ceres_bank=cbank,
                     )
                     rows_analyzed += 1
 
-            require(adapter.storage_identity(path) == derived_states[path], "derived source changed")
-            require(file_sha256(provenance_path) == stamp["sha256"], "row provenance changed")
-            shard_receipts.append({
-                "path": path.name,
-                "rows": rows,
-                "row_provenance_sha256": stamp["sha256"],
-                "source_storage_identity": derived_states[path],
-                "ceres_present": cbank is not None,
-            })
+            require(
+                adapter.storage_identity(path) == derived_states[path],
+                "derived source changed",
+            )
+            require(
+                file_sha256(provenance_path) == stamp["sha256"],
+                "row provenance changed",
+            )
+            shard_receipts.append(
+                {
+                    "path": path.name,
+                    "rows": rows,
+                    "row_provenance_sha256": stamp["sha256"],
+                    "source_storage_identity": derived_states[path],
+                    "ceres_present": cbank is not None,
+                }
+            )
 
         require(rows_analyzed == aggregate["rows"], "aggregate row count differs")
         require(
-            all(adapter.storage_identity(path) == state for path, state in (inputs.stable | derived_states).items()),
+            all(
+                adapter.storage_identity(path) == state
+                for path, state in (inputs.stable | derived_states).items()
+            ),
             "verified input changed before publication",
         )
         for item in [manifest_pin, manifest["derived_summary"], *inputs.pins]:
@@ -827,7 +978,9 @@ def audit(
             "new_ceres_inference": 0,
             "status": "SELECTION_ONLY_NOT_CERES_LABELS",
         }
-        (writing / SELECTION).write_text(json.dumps(selection_payload, indent=2, sort_keys=True) + "\n")
+        (writing / SELECTION).write_text(
+            json.dumps(selection_payload, indent=2, sort_keys=True) + "\n"
+        )
         final = {
             "schema": SCHEMA,
             "status": "COMPLETE_DIAGNOSTIC_NOT_TRAINING_ADMISSION",
@@ -861,7 +1014,9 @@ def audit(
                 "The bounded Ceres selection is not a qualified selected bank and launches no inference.",
             ],
         }
-        (writing / SUMMARY).write_text(json.dumps(final, indent=2, sort_keys=True) + "\n")
+        (writing / SUMMARY).write_text(
+            json.dumps(final, indent=2, sort_keys=True) + "\n"
+        )
         inputs.cache.clear()
         shutil.rmtree(cache_dir)
         require(not out.exists(), "output appeared before publication")
@@ -898,7 +1053,12 @@ def main(argv: list[str] | None = None) -> int:
         max_raw_rows=args.max_raw_rows,
         max_index_bytes=args.max_index_bytes,
     )
-    print(json.dumps({k: v for k, v in result.items() if k != "shard_receipts"}, sort_keys=True))
+    print(
+        json.dumps(
+            {k: v for k, v in result.items() if k != "shard_receipts"},
+            sort_keys=True,
+        )
+    )
     return 0
 
 
