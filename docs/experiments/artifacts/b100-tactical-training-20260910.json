@@ -1,5 +1,5 @@
 {
-  "status": "TRAINING_COMPLETE_ARENA_PROCESS_STARTED_NO_RESULT",
+  "status": "COMPLETE_UNRESOLVED_RETAIN_B100",
   "profile": "B100Tactical100",
   "recipe": {
     "base": "stored B100 teacher T0.5",
@@ -55,7 +55,7 @@
     "One training seed and reused development panel; no promotion or seed generalization.",
     "Cannot recover stored zero BT4 support. SF d9 scores and bound limitations remain.",
     "Materialization and schedule qualification are prerequisites; this scientific registration is not an executable manifest.",
-    "Completed matched exact-epoch training; no playing result or promotion. Historical trainer purity/live-configuration caveats remain; this is not a claim about the replacement-sampled historical control."
+    "Completed matched exact-epoch training and one fixed match; no promotion. Historical trainer purity/live-configuration caveats remain; this is not a claim about the replacement-sampled historical control."
   ],
   "training_completion": {
     "checkpoint_sha256": "e2d4ed704908fa8579b39c655ed3329f375fa6a819eab6d2786aed1d8531ab08",
@@ -87,14 +87,38 @@
     "review": "Independent Grok source review found no integration defects; parent verified actual completed CPU package and fixed contract."
   },
   "match_execution": {
-    "status": "ARENA_PROCESS_STARTED_NO_RESULT",
+    "status": "COMPLETE_REVIEWED",
     "operator_started_utc": "2026-09-11T01:16:40.375162+00:00",
     "whole_deadline_utc": "2026-09-11T04:06:37.112125+00:00",
     "candidate_checkpoint_sha256": "e2d4ed704908fa8579b39c655ed3329f375fa6a819eab6d2786aed1d8531ab08",
     "reference_checkpoint_sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62",
-    "result": null,
+    "result": {
+      "games": 256,
+      "pairs": 128,
+      "score": 0.48046875,
+      "score_se": 0.028225892825118896,
+      "elo": -13.578611811075177,
+      "elo_ci95": [
+        -52.407784073670335,
+        24.91309238381682
+      ],
+      "pentanomial": {
+        "WW": 19,
+        "WD_DW": 21,
+        "DD_WL": 40,
+        "LD_DL": 27,
+        "LL": 21
+      }
+    },
     "lease_acquired_utc": "2026-09-11T01:20:08.551501+00:00",
     "lease_wait_seconds": 208.17502328701084,
-    "arena_started_utc": "2026-09-11T01:20:08.553343+00:00"
-  }
+    "arena_started_utc": "2026-09-11T01:20:08.553343+00:00",
+    "outer_exit_code": 0,
+    "outer_elapsed_seconds": 1669.7665450572968,
+    "bank_sha256": "0b87633879f36c90bac25e9bdf2697226ba176983892f3ff32f1212f55c6fce1",
+    "contract_sha256": "5d9b48050520172383e61b9efc9cc7b7c8397841cef0458969d0478b6b16a5b7",
+    "readout_sha256": "58fe7dc21a0bb269f9777ae293ac46feaa782ad3b03ba0990558cf2b708d58de",
+    "parent_review_sha256": "3a7d6a07954642d4951f47e4f19909a0af6dbee725b61f6e4d6431bd5cbade94"
+  },
+  "observed_decision": "Unresolved under registered paired interval rule. Retain B100; no extra games or promotion. Prepare distinct Ceres policy/value mixtures."
 }
