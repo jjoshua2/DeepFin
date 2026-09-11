@@ -445,6 +445,7 @@ from scripts import audit_label_candidates as gate
 from scripts import gen_random_selfplay_shards as gen
 from scripts import gen_sf_rooted_corpus as corpus
 from scripts import corpus_row_provenance as row_refs
+from scripts import adaptive_sf_value
 from scripts.corpus_selection_schema import validate_selection_metadata
 
 #: Derived-shard schema.  Bumped when the MEANING of an emitted column changes,
@@ -1041,8 +1042,16 @@ class Scheme:
     value_depth: int | None = None
     policy_observation: str = "latest-phase"
     value_observation: str = "latest-phase"
+    sf_value_selector: str = "current"
 
     def __post_init__(self) -> None:
+        if self.sf_value_selector not in {"current", adaptive_sf_value.SELECTOR}:
+            raise ValueError("unknown SF value selector")
+        if self.sf_value_selector != "current" and (
+            self.kind != "uniform" or self.depth != 9 or self.value_depth is not None
+            or self.policy_observation != "phase0" or self.value_observation != "latest-phase"
+        ):
+            raise ValueError("adaptive SF value requires uniform-d9, phase0 policy, latest-phase value and no value-depth override")
         for name in ("policy_observation", "value_observation"):
             if getattr(self, name) not in {"latest-phase", "phase0"}:
                 raise ValueError(f"unknown {name}: {getattr(self, name)!r}")
@@ -1094,6 +1103,8 @@ class Scheme:
 
     @property
     def value_source(self) -> str:
+        if self.sf_value_selector != "current":
+            return adaptive_sf_value.VALUE_SOURCE
         if self.kind == "nodes":
             return VALUE_SOURCE_PHASE0
         source = (
@@ -1112,6 +1123,8 @@ class Scheme:
             "top_k": self.top_k,
             "nodes": self.nodes,
             "value_source": self.value_source,
+            **({"sf_value_selector": self.sf_value_selector}
+               if self.sf_value_selector != "current" else {}),
             #: ⚑ The REQUESTED depth, next to the source string it produced --
             #: and it is recorded even in the identity cell, where the source
             #: string deliberately does NOT mention it: the summary must still
@@ -2515,6 +2528,7 @@ class DeriveStats:
     #: asked for them. :func:`enforce_value_depth_take_effect` refuses a run any
     #: of whose rows disagree with the depth it was derived under.
     value_depth_histogram: dict[int, int] = field(default_factory=dict)
+    sf_value_selection_counts: dict[str, int] = field(default_factory=dict)
     #: Rows whose value READING ``--value-depth`` actually changed -- best move,
     #: cp, depth or phase. ⚑ NOT "rows a second view was built for": under a
     #: ``top-K`` scheme the exact read can select the very same reading the
@@ -2799,6 +2813,8 @@ class DeriveStats:
                 str(k): v for k, v in sorted(self.value_depth_histogram.items())
             },
             "value_depth_moved_rows": self.value_depth_moved_rows,
+            **({"sf_value_selection_counts": dict(sorted(self.sf_value_selection_counts.items()))}
+               if self.sf_value_selection_counts else {}),
             "phases_per_row": {
                 str(k): v for k, v in sorted(self.phases_per_row.items())
             },
@@ -2956,6 +2972,8 @@ class DeriveOptions:
     max_policy_support_misses: int = 0
 
     def __post_init__(self) -> None:
+        if self.scheme.sf_value_selector != "current" and self.value_scheme != VALUE_SCHEME_SEARCH:
+            raise ValueError("adaptive SF value initially requires value-scheme search")
         if self.max_policy_support_misses < 0:
             raise ValueError("max-policy-support-misses must be >= 0")
         if self.max_policy_support_misses and (
@@ -3160,6 +3178,18 @@ class TargetDeriver:
         read = apply_scheme(bank, requested)
         # ⚑ COUNTED ON THE REALIZED READING, not on "a view was built": see
         # `value_read_moved` for the top-K row where the two disagree.
+        if self.options.scheme.sf_value_selector != "current":
+            try:
+                selected, depth, reason = adaptive_sf_value.select(bank.row, set(values.moves))
+            except ValueError as exc:
+                raise CorpusIntegrityError(f"{_row_label(bank.row)}: invalid adaptive SF baseline/identity: {exc}") from exc
+            counts = self.stats.sf_value_selection_counts
+            counts[reason] = counts.get(reason, 0) + 1
+            if selected is not None:
+                moves = tuple(selected)
+                read = MoveValues(moves, np.asarray(list(selected.values()), dtype=np.float64),
+                                  (depth,) * len(moves), (1 if depth == 10 else 2,) * len(moves),
+                                  depth, False)
         if value_read_moved(values, read):
             self.stats.value_depth_moved_rows += 1
         return read
@@ -5480,6 +5510,8 @@ def build_summary(
             "search_wdl": (
                 "cp_to_wdl_array of the "
                 + (
+                    "saved G10 adaptive-final root-candidate value, with explicit latest-d9 fallback"
+                    if options.scheme.sf_value_selector != "current" else
                     f"best-move value from {options.scheme.value_observation} observation "
                     f"at depth {options.scheme.value_depth or options.scheme.depth}"
                     if options.scheme.policy_observation != "latest-phase"
@@ -5680,6 +5712,8 @@ def value_scheme_manifest(options: DeriveOptions) -> dict[str, Any]:
         # describe -- the same metadata-honesty failure as a counter that
         # over-reports (Codex re-review of PR #494).
         "q_definition": (
+            "cp_to_wdl_array of saved G10 adaptive-final root-candidate value, with explicit latest-d9 fallback"
+            if options.scheme.sf_value_selector != "current" else
             f"cp_to_wdl_array of the best-move {options.scheme.value_observation} "
             f"observation at depth {options.scheme.value_depth or options.scheme.depth}; "
             "the policy observation is selected independently"
@@ -6032,7 +6066,7 @@ _MAX_FIELDS: tuple[str, ...] = (
 #: ``{bucket: count}`` histograms, merged key by key.
 _DICT_SUM_FIELDS: tuple[str, ...] = (
     "depth_histogram", "values_by_phase", "phases_per_row",
-    "value_depth_histogram", "history_slots_filled_histogram",
+    "value_depth_histogram", "sf_value_selection_counts", "history_slots_filled_histogram",
     "history_root_reason_counts", "row_schema_counts",
 )
 
@@ -7350,6 +7384,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="how many rows may be dropped for lacking the block the scheme "
              "asks for before the run refuses. 0 (default) refuses on the first.",
     )
+    parser.add_argument("--sf-value-selector", choices=("current", adaptive_sf_value.SELECTOR),
+                        default="current", help="opt-in saved G10 adaptive-final SF value with explicit d9 fallback")
     return parser
 
 
@@ -7359,6 +7395,7 @@ def main(argv: list[str] | None = None) -> int:
         parse_scheme(str(args.scheme)),
         policy_observation=args.policy_observation,
         value_observation=args.value_observation,
+        sf_value_selector=args.sf_value_selector,
     )
     # ⚑ Next to the parse, and before the corpus is opened: a value depth on a
     # scheme that cannot consume it is refused rather than derived. The
