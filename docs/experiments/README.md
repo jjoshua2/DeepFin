@@ -8,6 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
+| [Saved SF negative constraints](2026-09-11-sf-negative-constraints-screen.md) | PR640/643/644/645 reviewed; corrected CPU-only G10 audit planned, no data or strength result |
 | [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | 1,574,952 matched saved-SF rows; real 262,079-row fixed-policy SF/BT4 value pair materialized in 4m32s; no training/strength result |
 | [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | 14.29M/18.91M Ceres labels qualified at September 11 19:54 UTC; collection continues, policy/value screens prepared, no Ceres playing result |
 | [SF tactical guidance for BT4 policy](2026-09-10-bt4-sf-tactical-training.md) | Completed 400-simulation match: tactical recipe −13.6 Elo [−52.4,+24.9]; unresolved, retain B100 |
