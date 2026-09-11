@@ -1,0 +1,183 @@
+{
+  "schema": 1,
+  "reviewer": "archive_review",
+  "status": "PASS_COMPLETED_SAVED_BANK_RECONCILIATION",
+  "readout_sha256": "b0789da1c5024e1e5251a9791e50b40a03b14074515cf9237c75b9744ab656a3",
+  "rows_sha256": "097c8387cb9ceccf56e1343864063bb28fd429dd27a7f60e8d3292e7c322abdc",
+  "rows_compressed_bytes": 109614378,
+  "all_counts_equal": true,
+  "all_group_sums_equal": true,
+  "group_count": 2709,
+  "eligible_metrics_checked_rows": 525296,
+  "denominators": {
+    "physical_rows": 531412,
+    "result_and_phase0_valid_rows": 528545,
+    "strict_eligible_rows": 525296,
+    "strict_ineligible_valid_rows": 3249,
+    "one_move_only_ineligible_valid_rows": 3247,
+    "other_ineligible_valid_rows": 2,
+    "strict_eligibility_fraction": 0.9938529358900378,
+    "strict_plus_one_move_fraction_if_prospectively_qualified": 0.9999962160270176
+  },
+  "ineligible_reasons": [
+    {
+      "gate_reason": "fewer_than_two_moves",
+      "flags": [
+        "no_complete_multi_move_d10"
+      ],
+      "rows": 3247,
+      "example": {
+        "source_id": "run06_g10",
+        "source_shard": "w00-00000.jsonl.zst",
+        "physical_row": 199,
+        "game_id": 12,
+        "gate": {
+          "adaptive": true,
+          "decision_after_phase": 1,
+          "decision_depth": 10,
+          "decision_depth_observed": 10,
+          "extend_when": "margin_cp<=threshold_cp",
+          "extended": false,
+          "extended_depth": 12,
+          "extended_phase": 2,
+          "extended_width": 4,
+          "margin_cp": null,
+          "metric": "effective_cp_rank1_minus_rank2",
+          "no_margin_action": "stop",
+          "policy": "g10",
+          "reason": "fewer_than_two_moves",
+          "threshold_cp": 10.0
+        },
+        "phase_flags": {
+          "0": [],
+          "1": []
+        },
+        "flags": [
+          "no_complete_multi_move_d10"
+        ],
+        "current_observation_flags": []
+      }
+    },
+    {
+      "gate_reason": "margin_at_or_below_threshold",
+      "flags": [
+        "phase2_duplicate_move",
+        "phase2_searchmove_roster"
+      ],
+      "rows": 1,
+      "example": {
+        "source_id": "run06_g10",
+        "source_shard": "w00-00001.jsonl.zst",
+        "physical_row": 7428,
+        "game_id": 936,
+        "gate": {
+          "adaptive": true,
+          "decision_after_phase": 1,
+          "decision_depth": 10,
+          "decision_depth_observed": 10,
+          "extend_when": "margin_cp<=threshold_cp",
+          "extended": true,
+          "extended_depth": 12,
+          "extended_phase": 2,
+          "extended_width": 4,
+          "margin_cp": 0.0,
+          "metric": "effective_cp_rank1_minus_rank2",
+          "no_margin_action": "stop",
+          "policy": "g10",
+          "reason": "margin_at_or_below_threshold",
+          "threshold_cp": 10.0
+        },
+        "phase_flags": {
+          "0": [],
+          "1": [],
+          "2": [
+            "duplicate_move",
+            "searchmove_roster"
+          ]
+        },
+        "flags": [
+          "phase2_duplicate_move",
+          "phase2_searchmove_roster"
+        ],
+        "current_observation_flags": []
+      }
+    },
+    {
+      "gate_reason": "margin_above_threshold",
+      "flags": [
+        "no_complete_multi_move_d10",
+        "phase1_duplicate_move",
+        "phase1_searchmove_roster"
+      ],
+      "rows": 1,
+      "example": {
+        "source_id": "run06_g10",
+        "source_shard": "w00-00018.jsonl.zst",
+        "physical_row": 4320,
+        "game_id": 9420,
+        "gate": {
+          "adaptive": true,
+          "decision_after_phase": 1,
+          "decision_depth": 10,
+          "decision_depth_observed": 10,
+          "extend_when": "margin_cp<=threshold_cp",
+          "extended": false,
+          "extended_depth": 12,
+          "extended_phase": 2,
+          "extended_width": 4,
+          "margin_cp": 229.0,
+          "metric": "effective_cp_rank1_minus_rank2",
+          "no_margin_action": "stop",
+          "policy": "g10",
+          "reason": "margin_above_threshold",
+          "threshold_cp": 10.0
+        },
+        "phase_flags": {
+          "0": [],
+          "1": [
+            "duplicate_move",
+            "searchmove_roster"
+          ]
+        },
+        "flags": [
+          "no_complete_multi_move_d10",
+          "phase1_duplicate_move",
+          "phase1_searchmove_roster"
+        ],
+        "current_observation_flags": []
+      }
+    }
+  ],
+  "effects": {
+    "eligible_mean_wdl_tv": 0.005199789352474803,
+    "eligible_abs_q_shift_ge005_rows": 12400,
+    "eligible_abs_q_shift_ge005_fraction": 0.023605738478876672,
+    "eligible_mean_abs_q_delta": 0.007121678797770914,
+    "eligible_mean_signed_q_delta": -0.00029642239772617346,
+    "eligible_best_sets_disjoint_fraction": 0.21760683500350278
+  },
+  "decision": {
+    "strict_999permille_eligibility_pass": false,
+    "mean_tv_0005_pass": true,
+    "large_q_shift_1percent_pass": true
+  },
+  "interpretation": [
+    "Both preregistered substantive-effect criteria pass on eligible rows; this nominates further controlled G10 value work, not accuracy or Elo. Strict original coverage criterion does not pass.",
+    "One-move attribution follows production fewer_than_two_moves plus sole no_complete_multi_move_d10 flag and otherwise passing phase/width/legal checks: strict d10 has exactly one move and expected width min(8, legal_count)=1. No raw SF bank was re-decoded.",
+    "Prospectively support the complete sole-move d10 observation when legal_count=1, gate reason/phase/roster agree and exact prior roster selection is verified; retain the same rows in baseline and candidate. This is a new selector rule requiring qualification, not retroactive success of the original preregistration.",
+    "Other structural faults require an explicit prospective identical-cohort exclusion or baseline-value fallback in both-recipe comparison, with counts/provenance retained. Do not silently discard whole deeper-value family or treat restricted search as full-root truth.",
+    "Static exact-top-k reconstruction limitation still applies. No population interval, new inference, target rewrite or training admission is supplied."
+  ],
+  "resources": {
+    "wall_seconds": 36.500720317009836,
+    "max_rss_kib": 25508,
+    "gpu_used": false,
+    "source_raw_scans": 0,
+    "saved_bank_passes": 1
+  },
+  "parent_reported_census_outer": {
+    "returncode": 0,
+    "wall_seconds": 503.61,
+    "session_id": 24929
+  }
+}
