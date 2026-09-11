@@ -598,3 +598,13 @@ large-corpus throughput have not been measured for this path. The earlier estima
 of roughly 42 GiB avoided per additional 100M-row policy recipe remains conditional
 on that sampled storage mix; it is neither measured exclusive allocation nor proof
 that a complete 100M experiment fits on the SSD.
+
+### Separate Ceres value mixture
+
+`scripts/ceres_value_mix.py` consumes original SF values, historical BT4 WDL
+sidecars and qualified Ceres dual-head sidecars. It copies the B100 policy corpus,
+changes only `search_wdl`, and atomically publishes a complete manifest. The
+`B100CeresV25` one-epoch profile keeps B100 policy and historical training settings.
+Weights and Ceres head conversions are defined in the
+[weighted-bootstrap record](experiments/2026-09-11-ceres-weighted-bootstrap.md).
+This is a separate value intervention from the equal-weight policy mixture.
