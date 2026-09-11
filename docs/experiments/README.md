@@ -79,7 +79,7 @@ references. Search it; read only the matching entries and their later correction
 rg -n -i 'YOUR_TOPIC_OR_CONFIG_KEY' docs/experiments docs/experiment_ledger.md docs/rl_loop_audit.md
 ```
 
-Search by experiment name, config key or artifact path. Historical
+Search by experiment name, config key, artifact path or checkpoint identity. Historical
 “LIVE” labels and operating instructions are not current authority. An artifact absent
 from a worktree may still exist under its original run directory.
 
