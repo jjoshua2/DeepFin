@@ -297,7 +297,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             'source_storage_identity': states[src], 'bt4_storage_identity': states[bpath],
             'ceres_storage_identity': states[cpath], 'policy_target_sha256': policy_hash.hexdigest(),
             'files_manifest_sha256': hashlib.sha256(json.dumps(after, sort_keys=True).encode()).hexdigest(),
-            'attrs_sha256': shared.file_sha256(dest_path / '.zattrs')})
+            'attrs_sha256': shared.file_sha256(dest_path / '.zattrs'),
+            'output_storage_identity': shared.storage_identity(dest_path)})
     guard()
     require(shared.file_sha256(manifest_path) == args.expected_manifest_sha256
             and shared.file_sha256(source / DERIVE_SUMMARY) == manifest['source_summary_sha256']
@@ -320,6 +321,10 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
     for name, value in ((SUMMARY, result), (DERIVE_SUMMARY,
             {**original, 'policy_target_postprocess': postprocess})):
         (writing / name).write_text(json.dumps(value, indent=2, sort_keys=True) + '\n')
+    for proof in outputs:
+        guard()
+        require(shared.storage_identity(writing / proof['path']) == proof['output_storage_identity'],
+                'completed output changed before publication')
     guard()
     require(not os.path.lexists(out), 'output appeared before publication')
     writing.rename(out)

@@ -94,6 +94,22 @@ and gradients changed. All 16 other stored arrays were byte-identical and all 69
 imported project modules matched the unchanged historical runtime. This establishes
 the exercised target-to-loss path, not full-corpus admission or strength.
 
+## Remaining preparation handoff
+
+The materialization supervisor and corpus qualifier now provide the two-profile
+handoff to the existing training coordinator. Producer summaries bind each completed
+output shard's storage identity and recheck it before atomic publication. The
+qualifier uses those identities plus actual metadata and the successful terminal
+receipt, avoiding another full payload/history scan. No target math, historical
+trainer or training schedule changes are introduced.
+
+This tooling does not qualify an unfinished teacher bank. Complete collection
+coverage, accepted invocation evidence, concrete producer manifests, realized corpus
+publication and the prospective schedule remain required before either registered
+training launch. The earlier real-teacher and historical-consumer pilots remain
+separate, pinned evidence for their exercised versions; they are not relabeled as
+full-corpus runs.
+
 ## Registered next training and match allocation
 
 This allocation begins only after the same complete 18,910,484-row Ceres manifest
