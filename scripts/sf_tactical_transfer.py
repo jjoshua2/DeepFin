@@ -278,7 +278,8 @@ def _b100_source(
         summary,
         source,
     )
-    require(admitted is not None, "B100 source admission failed")
+    if admitted is None:
+        raise ValueError("B100 source admission failed")
     return admitted
 
 
@@ -359,14 +360,12 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
 
     from chess_anti_engine.stockfish import wdl
 
-    producer_paths = [
-        Path(__file__),
-        Path(base.__file__),
-        Path(base.derive.__file__),
-        Path(base.rank.__file__),
-    ]
-    assert wdl.__file__ is not None
-    producer_paths.append(Path(wdl.__file__))
+    producer_paths = [Path(__file__)]
+    for module in (base, base.derive, base.rank, wdl):
+        module_file = module.__file__
+        if module_file is None:
+            raise ValueError("producer source path missing")
+        producer_paths.append(Path(module_file))
     producer_hashes = {str(path): base.file_sha256(path) for path in producer_paths}
 
     writing.mkdir(parents=True)
@@ -494,9 +493,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             support_gains += int(diagnostic["support_gains"])
             support_losses += int(diagnostic["support_losses"])
             transferred_mate_sum += float(diagnostic["transferred_mate_mass"])
-            transferred_ordinary_sum += float(
-                diagnostic["transferred_ordinary_mass"]
-            )
+            transferred_ordinary_sum += float(diagnostic["transferred_ordinary_mass"])
             best_base_mass_sum += float(diagnostic["sf_best_base_mass"])
             best_ideal_mass_sum += float(diagnostic["sf_best_ideal_mass"])
             gap = diagnostic["ordinary_gap_cp"]
