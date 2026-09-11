@@ -1,6 +1,6 @@
 # Saved SF constraints for neural bootstrap targets
 
-Registered September 11, 2026. Status: source review completed; corrected audit in preparation. No new data diagnostic, target rewrite, inference, training or playing result yet.
+Registered September 11, 2026. Status: corrected audit passed an 8,192-row real-data qualification; the remaining 31-shard CPU pass has launched. No new target rewrite, teacher inference, training or playing result.
 
 ## Decision
 
@@ -61,3 +61,13 @@ PR644 currently requires Ceres before computing any value metrics; today's G10 p
 The original-18.91M Ceres collection is not G10 row coverage. A later small G10 disagreement/control sample could compare Ceres, BT4 and arithmetic mixtures without training a student for every weight. Stratified selections need population weights and independent controls. No new Ceres collection is launched by this record.
 
 Retrospective routing is lower priority: capture of already observed reversals does not establish prospective search savings or outcomes on unsearched moves. Existing d8/d9/d10/d12 data remain the affordable starting point.
+
+## Real-data qualification and remaining cohort launch
+
+The corrected runtime in [PR648](https://github.com/jjoshua2/DeepFin/pull/648), commit `bf668d7c5dc35558bb3b0351dc7edb48409330a6`, passed independent review and final whole-repository static checks. Twenty focused tests passed before the final position-category banking change; its targeted row-bank regression passed afterward.
+
+The first 8,192-row shard completed in **46.90 seconds** (producer 46.81 seconds; peak RSS 1,250,120 KiB). Independent readback verified all 8,192 unique row identities, finite JSON, policy/ranking aggregate counts and mass, paired eligibility, and unknown-outcome accounting without rereading source arrays. The shard contains 6,103 ordinary d9 rows and 2,089 mate-domain exclusions. This qualifies the consumer and cost; it is not a representative full-cohort result or evidence of strength.
+
+Based on that measured cost, the remaining **253,887 rows / 31 shards** launched under the registered 90-minute limit, with unchanged runtime and resource bounds. Session 17956 owns this pass; shard zero is excluded and its completed bank will be reused once. The final cohort readout must verify the disjoint union against the original 32-shard inventory. No completed result for this pass is claimed here.
+
+[Compact qualification and launch evidence](evidence/sf-constraints-pilot-20260911.json) pins the receipts, metric bank, independent review and remaining-shard plan. Bulk per-row evidence stays at the named host paths.
