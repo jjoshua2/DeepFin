@@ -1,0 +1,50 @@
+{
+  "status": "METADATA_READINESS_NOT_FRESH_LABEL_OR_CORPUS_QUALIFICATION",
+  "observed_unix": 1789140012.729324,
+  "accepted_common_g10_rows": 16404093,
+  "raw_completed_native_wdl": {
+    "run06_g10": {
+      "all_completed_policy_receipts": 4806,
+      "all_completed_policy_raw_rows": 39885604,
+      "completed_native_wdl_shards": 1423,
+      "completed_native_wdl_raw_rows": 11807434,
+      "policy_only_shards": 3383,
+      "latest_wdl_publication_unix": 1789139520.5697308,
+      "bank": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run06_g10",
+      "progress": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run06_g10/bt4_raw_sidecar.progress.jsonl"
+    },
+    "run07_g10_companion4": {
+      "all_completed_policy_receipts": 1361,
+      "all_completed_policy_raw_rows": 11291274,
+      "completed_native_wdl_shards": 474,
+      "completed_native_wdl_raw_rows": 3932576,
+      "policy_only_shards": 887,
+      "latest_wdl_publication_unix": 1789140006.2337964,
+      "bank": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run07_g10_companion4",
+      "progress": "/home/josh/projects/chess/data/lc0/bt4_policy_sidecars/g10_raw/run07_g10_companion4/bt4_raw_sidecar.progress.jsonl"
+    }
+  },
+  "metadata_union": {
+    "direct_derived_rows": 1574952,
+    "additional_raw_wdl_supported_accepted_survivors": 889544,
+    "potential_total_after_typed_raw_join": 2464496,
+    "raw_wdl_physical_rows_all_banks": 15740010,
+    "disjointness": "Direct invocation selected derived shards are unique within source_dir; direct banks bind accepted common-increment and run06 common-large qualifiers. Their full source-qualified raw-shard sets are disjoint from the108raw-WDL-covered matched shards. Existing accepted common-cohort disjointness is inherited; no payload replay.",
+    "admission": "Only1,574,952have existing direct-derived WDL completion receipts. Additional889,544have exact metadata-supported raw receipt intersection but still need derived-order typed join/qualification.2,464,496is a prospective union size, not newly qualified arrays."
+  },
+  "existing_implementation": {
+    "adapter": "scripts/adapt_raw_bt4_sidecars.py accepts explicit manifest wdl contract, joins raw values with source-qualified row provenance, and writes typed /wdl output with source/feed/receipt proof.",
+    "lineage": "scripts/raw_wdl_adaptation.py PROFILE verified-raw-wdl-derived-adaptation-v1 already exists.",
+    "consumer": "scripts/bt4_value_rewrite.py already accepts --wdl-adapter-manifest plus --expected-wdl-adapter-manifest-sha256. Original-source/B100 and selected G10 source admission remain separate; existence of the flag is not automatic G10 recipe admission.",
+    "difference_from_older_readiness": "Older raw_wdl_reuse_readiness_v1 recommendation to implement WDL export is stale; current source already implements it. Reuse it with a new frozen cohort/manifest rather than create another adapter."
+  },
+  "limitations": [
+    "Read-only metadata readiness; no source scan, no payload/header requalification, no running-job changes.",
+    "Live progress was captured as a fixed byte prefix and may advance; counts are snapshot observations. Whole-bank status is not a WDL completion receipt for policy-only shards.",
+    "Previous1,574,952 refers to direct-derived WDL coverage; raw WDL capture has grown separately. Larger raw totals are not automatically additional qualified training rows."
+  ],
+  "source_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_value_mix_coverage_v2/readiness.json",
+    "sha256": "7025de7568a055b542b7b6af99c5398ba9ac80cc104814e1f3ea63ffb01cdb3e"
+  }
+}
