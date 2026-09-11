@@ -67,13 +67,17 @@ def test_sidecar_names_are_canonical() -> None:
         sidecar.sidecar_name("../shard_000123.zarr")
 
 
-def test_rewrite_identity_distinguishes_root_backup_and_dose() -> None:
+def test_rewrite_identity_distinguishes_root_backup_dose_and_sidecar() -> None:
     checkpoint = "b" * 64
+    summary_a = "c" * 64
+    summary_b = "d" * 64
     assert rewrite.value_scheme("root", 0.25) != rewrite.value_scheme("backup", 0.25)
     assert rewrite.value_scheme("backup", 0.25) != rewrite.value_scheme("backup", 0.5)
-    source = rewrite.value_source("backup", 0.25, checkpoint)
+    source = rewrite.value_source("backup", 0.25, checkpoint, summary_a)
     assert checkpoint in source
+    assert summary_a in source
     assert "backup" in source
+    assert source != rewrite.value_source("backup", 0.25, checkpoint, summary_b)
 
 
 @pytest.mark.parametrize("alpha", [-0.1, 1.1, float("nan")])
