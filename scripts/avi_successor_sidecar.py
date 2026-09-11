@@ -188,10 +188,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     source_summary = source / derived.SUMMARY
     pins = {source_summary: args.expected_source_summary_sha256, checkpoint: args.expected_checkpoint_sha256}
     source_states = {source / spec["path"]: storage_identity(source / spec["path"]) for spec in specs}
-    one_ply_file = one_ply_module.__file__
-    if one_ply_file is None:
-        raise ValueError("one-ply module has no source-file identity")
-    one_ply_path = Path(one_ply_file).resolve()
+    one_ply_path = Path(one_ply_module.__file__).resolve()
     producer = {
         str(Path(__file__).resolve()): file_sha256(Path(__file__).resolve()),
         str(one_ply_path): file_sha256(one_ply_path),
