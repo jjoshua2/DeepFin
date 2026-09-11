@@ -308,3 +308,34 @@ the run04 and run05 verification receipt SHA256 values are respectively
 and `c0b50d19d773faa9f5ad96c38be143c5dcbdda4af9b600949e47538bf0f56ee7`.
 File contents and mode/uid/gid/mtime were checked. ACL/xattrs were captured but
 not independently compared. The live Ceres and BT4 labelers were preserved.
+
+### Verified closed-shard reclamation
+
+After independent review and fresh source/consumer/mount checks, the operator
+removed exactly 870 archived shards explicitly listed as closed in the 18 worker
+progress files: 438 from run04 and 432 from run05. Their prior allocated size was
+12,935,413,760 bytes (12.05 GiB). The operation finished with exit 0 in 25.91 seconds.
+Both original directories, 20 metadata/progress files and 18 unlisted tails remain.
+All 38 retained files and both external archives kept their verified identities.
+
+The parent postcheck reconciled all 870 intent/removal journal pairs, exact final
+membership and unchanged retained/archive metadata. SSD free space measured
+359,738,429,440 bytes afterward; concurrent generation means this is not an exclusive
+filesystem-delta measurement attributable solely to reclamation. The earlier copy
+operation still correctly reports zero source reclamation; this later operation
+performed the removals.
+
+Archived progress records now describe historical closed files that are no longer
+local. Do not resume generation or silently repair an old derived lineage in these
+directories. For historical reconstruction, restore the required archived files into
+a fresh directory and verify their manifest identities before requalifying inputs.
+The active G10/BT4 generators use run06/run07, and the Ceres experiments use the
+original run03_s3-derived corpus; these inputs were preserved.
+
+Local evidence: `legacy_run04_run05_cold_archive_v1/reclamation_preparation_v1/`
+and `reclamation_execution_v1/` beneath `scratchpad/bt4_joint20/`. The independent
+review SHA256 is
+`813b01cf044820cd24f94db891d3fc1afafdfe62946a24cc204d688830cb53b7`;
+the completion receipt SHA256 is
+`a813f9ed47f151e876a4eb228c0032ecae846414553fe32010eccdee2eb7ddf3`.
+The full source manifests and external archives remain available.
