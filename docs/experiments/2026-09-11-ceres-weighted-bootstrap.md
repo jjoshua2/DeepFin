@@ -8,7 +8,7 @@ The [tactical SF attenuation experiment](2026-09-10-bt4-sf-tactical-training.md)
 
 The first candidate averages independently normalized BT4 and Ceres policies with equal weights and teacher temperature 0.5 each, holding SF values fixed. Use raw BT4 probabilities and apply sharpening once. Complementary teacher mistakes motivate this test; disagreement alone is not evidence that averaging improves play.
 
-A later separate value candidate is 50% SF / 25% BT4 / 25% Ceres, with policy fixed. Its raw-head conversion must be registered explicitly. This is a direction, not an implemented value producer or unconditional experiment queue.
+The separate value candidate is 50% SF / 25% BT4 / 25% Ceres, with B100 policy fixed. Its producer and training admission are implemented and independently reviewed. Normalize native SF and BT4 WDL probabilities; convert Ceres raw primary and secondary heads separately with softmax temperatures 0.55 and 1.5, then combine them 60/40. The final target is therefore 50% SF, 25% BT4, 15% Ceres primary and 10% Ceres secondary. All distributions use win/draw/loss order from the side to move. This probability calculation is a mathematical analogue, not verified native Ceres FP16 parity.
 
 ## Collection allocation
 
@@ -28,6 +28,27 @@ Independent review identified that provenance distinction, which was fixed and r
 
 Before training, qualify the completed full-corpus manifest and realized targets, freeze producing-code identities, and verify the same historical initialization, row schedule, update budget and runtime as B100. Register the deciding match and its resource/stopping rule before launching. A new trainer or sampling regime would require a fresh matched control.
 
+## Value-only implementation and pilot
+
+The value producer copies the B100 corpus and changes only `search_wdl`, retaining
+policy and the other 16 arrays. It preserves the original BT4 WDL collector's
+historical identity, checks actual stored inputs and teacher feeds, and requires
+complete source coverage before atomic publication. Teacher-array integrity does
+not establish missing invocation-finalization evidence; only independently qualified
+Ceres shards may enter the collection manifest.
+
+Tests cover actual storage, loader/collator and loss propagation: policy gradients
+remain identical while value gradients change. Twelve producer tests and 163
+admission/one-epoch tests passed, with 14 focused admission tests passing after final
+fixture cleanup. Independent review found no implementation blockers.
+
+The real-teacher value pilot checked one 8,192-row shard against the actual historical
+BT4 WDL and qualified Ceres dual-head output. It completed in 10.02 seconds on CPU,
+using about 656 MiB peak RAM. All 8,192 targets changed; maximum stored mass error was
+0.0003662, with zero support losses. Original source identities, B100 policy and
+other input arrays remained unchanged. Its standalone value array does not admit a
+full corpus or demonstrate a strength gain.
+
 ## Compact evidence identities
 
 | Evidence | SHA256 |
@@ -36,6 +57,7 @@ Before training, qualify the completed full-corpus manifest and realized targets
 | First new collector completion | `74e79c222e96d4dc03b957050cbe18866901739267755b466259858245d15b40` |
 | Remaining collection driver plan | `3a3e44f20ce2904a7bafd6d5b15ae73b4a4712188b1dca5b3a0c8a32bd61698b` |
 | Remaining collection independent review | `f97cb4dbd6812c886f23ea9c7d06abd0167e4f34a2ae2f43c2120295555c9764` |
+| Real-teacher value pilot | `0df10b9a7288385f2685881f734bc1ffd4bb0f8a2b8b62b5f04951847961da3b` |
 | Frozen consumer fixture readout | `89b625ac4d30eb89484a6cb1066803b058859a6279d498f8f47b44f36ecaf4e4` |
 
 Bulk labels, executable manifests, logs and receipts remain in the host experiment storage. These identities bind the launch snapshot; future completion and training results belong in this record.
