@@ -90,7 +90,9 @@ def test_d12_can_vindicate_bt4_against_large_d9_gap() -> None:
 def test_d10_can_reorder_roster_and_confirm_d9() -> None:
     row = g10_row(extended=False)
     a, b = _set_d9_scores(row, 700.0, 100.0)
-    d10 = [block for block in row["phases"][1]["per_depth"] if block["depth"] == 10][0]["lines"]
+    d10 = next(
+        block for block in row["phases"][1]["per_depth"] if block["depth"] == 10
+    )["lines"]
     # The saved requested roster is fixed, but returned rank order may differ.
     a_index = next(i for i, line in enumerate(d10) if line[1] == a)
     b_index = next(i for i, line in enumerate(d10) if line[1] == b)
