@@ -1,0 +1,28 @@
+{
+  "status": "IMPLEMENTATION_AND_REAL_METADATA_PASS_NOT_CORPUS_REWRITE_OR_TRAINING",
+  "focused_tests": 59,
+  "whole_lint": "PASS: Ruff; basedpyright 0 errors/0 warnings; Vulture",
+  "whole_lint_log": "/tmp/g10-matched-sf-whole-lint.log",
+  "pins": {
+    "code_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_value_consumer_audit_v1/matched_sf_independent_review.json",
+      "sha256": "54f4f527890910c9297f8ec073675067ab47187d0fc1f86cebd812281ce799d5"
+    },
+    "current_wdl_witness": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_value_wdl_witness_v1/witness.json",
+      "sha256": "c7204559661b54a9a97625fba980b73f46e63e4fe4c81a6b0bee8de2e5f08835"
+    },
+    "manifest_admission": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_sf_manifests_v1/readiness.json",
+      "sha256": "3f723d8f0ddffdbf9fabfd9aa973fb1802ace9e509cbaab36285ca83619470da"
+    },
+    "manifest_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_sf_manifests_v1/independent_review.json",
+      "sha256": "8a9ac84b36fe289b0024816f54de823c792591a41e85018f5b9dd3fc45f84521"
+    },
+    "continuation_audit": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_value_continuation_readiness_v1/readout.md",
+      "sha256": "b255c2dd5b880470a7394cf298a83db8e19c7831c28272ad229242bca0044e20"
+    }
+  }
+}
