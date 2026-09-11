@@ -1,5 +1,5 @@
 {
-  "status": "TRAINING_COMPLETE_ARENA_OPERATOR_STARTED_WAITING_LEASE_NO_RESULT",
+  "status": "TRAINING_COMPLETE_ARENA_PROCESS_STARTED_NO_RESULT",
   "profile": "B100Tactical100",
   "recipe": {
     "base": "stored B100 teacher T0.5",
@@ -87,11 +87,14 @@
     "review": "Independent Grok source review found no integration defects; parent verified actual completed CPU package and fixed contract."
   },
   "match_execution": {
-    "status": "ARENA_OPERATOR_STARTED_WAITING_LEASE_NO_RESULT",
+    "status": "ARENA_PROCESS_STARTED_NO_RESULT",
     "operator_started_utc": "2026-09-11T01:16:40.375162+00:00",
     "whole_deadline_utc": "2026-09-11T04:06:37.112125+00:00",
     "candidate_checkpoint_sha256": "e2d4ed704908fa8579b39c655ed3329f375fa6a819eab6d2786aed1d8531ab08",
     "reference_checkpoint_sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62",
-    "result": null
+    "result": null,
+    "lease_acquired_utc": "2026-09-11T01:20:08.551501+00:00",
+    "lease_wait_seconds": 208.17502328701084,
+    "arena_started_utc": "2026-09-11T01:20:08.553343+00:00"
   }
 }

@@ -1,6 +1,6 @@
 # SF tactical guidance for BT4 policy
 
-Status: registered training and realized-schedule verification completed successfully. CPU preparation passed and the fixed-match operator has started; no match result or strength gain is claimed. This updates the [earlier readiness record](2026-09-08-b100-tactical-policy-readiness.md).
+Status: registered training and realized-schedule verification completed successfully. CPU preparation passed and the fixed match is running; no match result or strength gain is claimed. This updates the [earlier readiness record](2026-09-08-b100-tactical-policy-readiness.md).
 
 ## Question and treatment
 
@@ -32,7 +32,7 @@ The producer reported 1,841,617 rows with a winning-mate move; every such row al
 
 Both final checkpoints loaded on CPU with the same 61,444,448-parameter architecture and the frozen runtime. The actual opening histories, 400-simulation search settings, priors 1.0 and no-tablebase configuration matched the registration. CPU preparation completed in 113.80 seconds with CUDA uninitialized. Independent Grok review found no integration defects in the preparation/launch path; the parent checked the completed CPU package and final contract.
 
-The fixed-match operator has started and acquires the shared GPU lease at a labeling boundary. Its 5,400-second owned stage and 10,230-second whole-operation bound remain unchanged. It produces one 128-pair bank and a strict completed-bank readout; no result is available at this snapshot.
+The fixed match acquired the shared GPU lease at a labeling boundary after 208.18 seconds of waiting and started its arena process. Its 5,400-second owned stage and 10,230-second whole-operation bound remain unchanged. It produces one 128-pair bank and a strict completed-bank readout; no result is available at this snapshot.
 
 ## Evidence and next decisions
 
