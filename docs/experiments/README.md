@@ -8,8 +8,9 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | First new chunk verified; remaining 18.64M labels collecting; policy mixer reviewed, no Ceres playing result |
+| [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | 9.31M/18.91M Ceres labels qualified at September 11 13:40 UTC; collection continues, policy/value screens prepared, no Ceres playing result |
 | [SF tactical guidance for BT4 policy](2026-09-10-bt4-sf-tactical-training.md) | Completed 400-simulation match: tactical recipe −13.6 Elo [−52.4,+24.9]; unresolved, retain B100 |
+| [Deeper SF value census](2026-09-11-deeper-sf-value-census.md) | Running: frozen 531,412-row CPU diagnostic of recorded d10/d12 values versus current d9; no training or strength result |
 | [BT4 target temperature and horizon: results](2026-09-10-bt4-target-temperature-horizon-results.md) | Complete: all three fixed deep matches; relative horizon change +5.664 points [−2.734, +13.867], direction and placement unresolved; [registration record](2026-09-09-bt4-target-temperature-horizon.md) retained |
 | [B100 search-prior calibration](2026-09-09-b100-prior-calibration.md) | Complete: 0.7 versus 1.0 gives +16.30 Elo [−20.83, +53.80]; no follow-up selected, common prior 1.0 retained |
 | [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1/G20T05/G50T05 reclamation complete; run04/run05 external copies verified and 870 closed shards reclaimed; metadata and unlisted tails retained |

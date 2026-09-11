@@ -50,6 +50,20 @@ bounded snapshot audit qualified recovery shards 48–79 (262,144 rows), scannin
 the newly completed chunk and reusing unchanged pinned prior qualification. This
 snapshot excludes in-progress chunks and is not full-corpus completion.
 
+## Qualified collection progress, September 11 at 13:40 UTC
+
+The completed-chunk audit qualified recovery shards 48–1135: 8,912,896 rows.
+Together with previously accepted shards 0–47 and final partial shard 2308,
+this gives **9,309,460 of 18,910,484 positions** (49.2%). The audit exited zero;
+six new chunks received payload checks and 62 unchanged qualified chunks reused
+their pinned evidence. In-progress output is excluded. This is label qualification,
+not completed mixture training or playing-strength evidence.
+
+Snapshot SHA256: `6c84c071f86a48ec8113c4a1aa723217a14db712dcf6476385760ba1bf2fbf5d`.
+The registered collection continues. Monitoring now uses a tool-side wait, with
+infrequent fallback checks while completion is distant; audits are batched rather
+than repeated after every small increment.
+
 ## Real-teacher policy pilot
 
 One actual 8,192-row shard passed the equal-weight, temperature-0.5 policy mixture

@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "status": "PREREGISTERED_NOT_EXECUTED",
+  "registered_utc": "2026-09-11T14:27:31.800988+00:00",
+  "purpose": "Determine whether already-paid adaptive-final G10 SF values are widely reconstructible and substantively different from the current composite latest-phase d9 anchor, before implementing a value-only training arm.",
+  "script_sha256": "035b97e8ee5d4c8e73687020a8902acfd0fd4a093b6abbd4402ef9856c4eb7e9",
+  "pins": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preregistration.json",
+      "sha256": "86de876067f255a36abd5a0f109ece4e9efdc899e2d1fb091750b7d75bc640bf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/launch.json",
+      "sha256": "8bd65b7bb18f6032e864d9defa8e7f29cbba4e97c2a613e59eb309964ced277b"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/manifest.json",
+      "sha256": "dee606e3b0aff482b985c4269d3abd86fc6c37c22d98b499f12a890643a213b4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run06_g10.closed_receipts.jsonl",
+      "sha256": "8684984ed17e457245f2e54c1e731aa46be7f20ecf2b46a51855eac28c88ab5e"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/manifest.json",
+      "sha256": "2b138dbb1098aeda0d9c9264d1b07f71a2632155f16b2d3b4c33d745945550a9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/run07_g10_companion4.closed_receipts.jsonl",
+      "sha256": "f27dc5c265448ccc1ea38b57cd0dbc30a5db84fdb2f5317fdfc25ba7b84012ed"
+    },
+    {
+      "path": "/tmp/deepfin-g10-pilot-tools/scripts/derive_corpus_targets.py",
+      "sha256": "7886094a27484ba86571819b86f3a1735d2078a3293981917dd983df292590bf"
+    },
+    {
+      "path": "/tmp/deepfin-g10-pilot-tools/scripts/gen_sf_rooted_corpus.py",
+      "sha256": "4bb5e22e81db93c74cfe88d2362136311b001e40e0254f8ff0adc9f3858ea655"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/readout.json",
+      "sha256": "423a29c3a545005c3162b131864fe55c70483fab05710e77acdc73d4c8276ff3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run06_g10.failures.jsonl",
+      "sha256": "cbb7f56be2986022eafaefc92b422fca5bede6dda554408b359b833ff5da2a85"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1/run07_g10_companion4.failures.jsonl",
+      "sha256": "656a4d5fb1e0f35c393f0ca0d77f37710809d3c3e681e88024fc64728e0d0008"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/census.py",
+      "sha256": "009bda300867c154098cfbcfe51131db9641178c1a42f1122fb2eac64a7b44e9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/readout.json",
+      "sha256": "f2f642059fb9b79a2bfb92cb77b6e7969c2236bd104da5e16b331c15c4d970a4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_deeper_sf_value_readiness_v1/readiness.json",
+      "sha256": "9971892be95d5239d5c61f2f73d06e6b5c49a3fa117a3858c4256c9660cf8b3d"
+    },
+    {
+      "path": "/tmp/deepfin-ceres-bootstrap-preparation/chess_anti_engine/stockfish/wdl.py",
+      "sha256": "11b80c842254e825272d2e84bff473fb12cd3cb5d61c98d5f0bd9f743af43b98"
+    },
+    {
+      "path": "/tmp/deepfin-ceres-bootstrap-preparation/scripts/derive_corpus_targets.py",
+      "sha256": "248574582a904a563217ce6cb86b0dc1fb000b3fc4bb6c6c232d3dbc9770380f"
+    },
+    {
+      "path": "/home/josh/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/bin/python3.13",
+      "sha256": "93a93f4c8af5ae6f127fb0310f923d5fab89eb7257a0b801eec2e44b3f199840"
+    }
+  ],
+  "source_registration": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/preregistration.json",
+  "historical_census": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/value_observation_census_v1/census.py",
+  "structural_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_batch_v1/diagnostics/structural_census_v1",
+  "wdl_module": "/tmp/deepfin-ceres-bootstrap-preparation/chess_anti_engine/stockfish/wdl.py",
+  "cohort": {
+    "closed_shards": 64,
+    "physical_rows": 531412,
+    "result_and_phase0_valid_rows": 528545,
+    "selection": "Exact historical first32 closed shards per run06_g10 and run07_g10_companion4; no new sampling or active-tail access."
+  },
+  "comparison": {
+    "baseline": "Current RowBank latest phase carrying each phase0 legal move at exactly d9; max effective cp after last same-depth block/last duplicate move semantics. Ambiguities reported and excluded from paired eligible effects, never silently repaired.",
+    "candidate": "Strict complete unique adaptive-final d10 or d12 according to recorded G10 gate; ancestors, rank IDs, widths, depth, roster and gate reconstructed. One-move/incomplete/forced-stop cases explicitly ineligible; no fallback or row deletion.",
+    "mapping": "Shared cp_to_wdl slope0.006/draw_width120 float32, side-to-move WDL. No mapping fit; no native UCI WDL claim.",
+    "tie_semantics": "Report score-optimum sets different and disjoint separately; representative first-rank move never determines disagreement.",
+    "mate_semantics": "Any abs effective cp above shared SF_CP_CLAMP_CP separates mate band; cp aggregate sums and denominators restricted to nonmate pairs."
+  },
+  "outputs": [
+    "execution/rows.jsonl.gz: every physical row source/config/shard/game/ply/input identity, gate/phase/raw anomaly and selection flags, current/final values and eligible paired metrics",
+    "execution/readout.json: cohort/eligibility/error counts, source/gate/score/game-level sums, stream hash/stats and resource receipt"
+  ],
+  "decision": {
+    "eligibility": "If >=99.9% of result-and-phase0-valid rows meet exact strict selector, consider a broader qualification/value-only producer; below this first inspect failure reasons and specify prospective equal-cohort/fallback semantics instead of enlarging blindly.",
+    "substantive_effect": "If eligible mean WDL TV>=0.005 or >=1% eligible rows have abs(W-L) shift>=0.05, nominate adaptive-final value as a distinct later G10 controlled training arm. Otherwise lower its priority. These are allocation thresholds, never a strength verdict.",
+    "uncertainty": "Exact descriptive totals within fixed64-shard bank. Retain source/config/shard/game cluster sufficient statistics for later estimators; no population CI or pseudo-independent position interval for this purposive bank."
+  },
+  "resources": {
+    "workers": 1,
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "numeric_threads": 2,
+    "gpu_hidden": true,
+    "nice": 19,
+    "ionice_class": 3,
+    "address_space_bytes": 2147483648,
+    "internal_deadline_seconds": 1770,
+    "outer_term_seconds": 1770,
+    "outer_kill_grace_seconds": 30,
+    "output_cap_bytes": 536870912,
+    "min_free_gib": 150,
+    "guard_every_rows": 2048,
+    "retry": "None; partial output remains and no completion receipt."
+  },
+  "limitations": [
+    "No GPU, new SF inference, rewrite, full-history encoding or training admission. Current derivation semantics verified from code; this does not certify whole derived arrays.",
+    "Fixed historical64-shard bank is purposive and not the current16.4M population. No broad coverage inference.",
+    "D12 selection depends on d10 gap and restricted root rosters with shared TT. It is not full-root uniform d12 or an accuracy bound.",
+    "Generation results are not optimal-play truth; no outcome fit/calibration or playing-strength claim.",
+    "Retain raw phase anomaly counters even when selected-block structure passes; counters refer to whole phase and are not silently interpreted as selected-block corruption.",
+    "2GiB address-space cap is stricter than RSS, output cap sampled every2048rows may overshoot by that bounded batch. No hidden resume."
+  ]
+}
