@@ -24,7 +24,8 @@ measurements support which claims.
 | [BT4 target geometry](2026-09-08-bt4-target-geometry.md) | Fixed 128-row training sample: C support/maxima and raw-cp controls; no temperature or strength selection |
 | [BT4 raw-label legal-move reuse](2026-09-07-bt4-label-legal-reuse.md) | Exact policy parity; first optimized group completed 132,467 rows, throughput descriptive only |
 | [G10 adapter/rank overlap](2026-09-08-g10-stage-overlap.md) | Adopted in Worker01 attempt; cache failure, no measured speedup |
-| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | 9,298,514 common rows; native WDL now covers 1,574,952 selected rows; transfer training/strength unestablished |
+| [G10 qualified inventory](2026-09-11-g10-qualified-inventory.md) | 16,404,093 accepted common-input rows; native WDL coverage remains separate; transfer training/strength unestablished |
+| [G10 transfer readiness and alignment](2026-09-07-g10-transfer-readiness.md) | Historical preparation and alignment protocol; later inventory linked above |
 | [G50 versus B100 policy dose](2026-09-08-bt4-g50-b100-dose-comparison.md) | Complete: G50 loses shallow SPRT and fixed deep comparison (−50.57 Elo); B100 retained, depth interaction unresolved |
 | [Pure BT4 policy endpoint](2026-09-08-bt4-pure-policy-endpoint.md) | B100 beats H20: shallow H1, deep +46.42 Elo [11.23,82.58]; search interaction unresolved, same-seed development |
 | [Bootstrap training-horizon readiness](2026-09-08-bootstrap-training-horizon-readiness.md) | CPU and bounded compiled-CUDA checks passed; full SF/B100 planner passed; training comparison not launched |
