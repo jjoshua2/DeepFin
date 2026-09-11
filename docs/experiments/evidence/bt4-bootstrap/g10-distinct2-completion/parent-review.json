@@ -1,0 +1,10 @@
+{
+  "status": "ACCEPTED_COMPLETED_BATCH",
+  "reviewed_unix": 1789033248.53267,
+  "independent_review_sha256": "686d51a2db71957a0245023b22668824e6f8eb3a132ebe4645a15406f5813c1c",
+  "evidence_hashes_verified": 52,
+  "qualified_increment_rows": 1846805,
+  "prior_eligible_common_rows": 14557288,
+  "total_eligible_common_rows": 16404093,
+  "scope": "Common-input eligibility only; no new derived WDL coverage, training admission or strength claim."
+}
