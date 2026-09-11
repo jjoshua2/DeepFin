@@ -1,6 +1,6 @@
 # Saved G10 values and neural-teacher coverage
 
-Status: two matched batches totaling 526,376 rows passed. The larger derivation stopped on a confirmed malformed saved SF roster. Historical native-BT4 value reuse is implemented; no new training or strength result.
+Status: matched saved-SF derivations now cover all 1,574,952 rows with existing native-BT4 WDL. The exact prefix succeeded after the full-large attempt failed outside that subset. Value consumers are implemented for complete increments; no new training or strength result.
 
 The next SF value comparison reuses the recorded adaptive d10/d12 observations. It does not increase search depth or launch additional Stockfish inference over the future 100M-position corpus. The opt-in selector is implemented in [PR #633](https://github.com/jjoshua2/DeepFin/pull/633). The existing [census](2026-09-11-deeper-sf-value-census.md) establishes target differences, not improved accuracy.
 
@@ -50,9 +50,9 @@ The large derivation exited 1 after 3,136.43 seconds, before its timeout. It enc
 
 The frozen raw hash, original provenance and full-history input key match. Phase-zero d9 has all 14 unique legal moves and a best score of −625 cp. Later consumed d9 records repeat moves: phase two contains `d2d3` at −753, 0 and 0 cp. The historical dictionary construction keeps the final duplicate, turning the composite best score into 0 cp and producing a near-balanced WDL label. Later deeper rosters are malformed too. This is a real ambiguity in saved labels, not a parser mismatch, policy-support exclusion or evidence against adaptive SF values.
 
-The new validator correctly rejected that ambiguous baseline. The failed output and exact source record remain preserved; no fallback rule was loosened and no new search was run. The next bounded investigation checks whether already-written prefix shards can be independently qualified, or whether an exact frozen source prefix can reproduce them. The failed whole stage remains failed even if a separately qualified subset is recovered. There is not yet a measured prevalence estimate for this defect.
+The new validator correctly rejected that ambiguous baseline. The failed output and exact source record remain preserved; no fallback rule was loosened and no new search was run. The follow-up below established an exact frozen source prefix and used a fresh derivation; the failed output contained only worker spills, with no completed final shards. The failed whole stage remains failed even if a separately qualified subset is recovered. There is not yet a measured prevalence estimate for this defect.
 
-[Compact evidence](evidence/g10-value-readiness-20260911/run07-and-large-integrity.json) pins the completed run07 receipt, failure and exact-row diagnosis. Do not count the intended 1.575M cohort as successfully prepared.
+[Compact evidence](evidence/g10-value-readiness-20260911/run07-and-large-integrity.json) pins the completed run07 receipt, failure and exact-row diagnosis. At this failed-stage readout, only 526,376 matched rows had passed. The later exact-prefix result below supersedes that coverage count.
 
 ## Reusing native BT4 values without new inference
 
@@ -71,3 +71,15 @@ Fifty-nine focused tests, whole-repository Ruff/basedpyright/Vulture and indepen
 A read-only training audit found that `lc0_control_train.py` currently starts a fresh model and has no checkpoint-donor CLI. Its multi-epoch option does not resume B100. Trainer checkpoints contain optimizer/scheduler state, but the existing tolerant restore behavior and unsaved RNG state require an explicit continuation contract. A deliberately matched optimizer reset could also be valid if specified for both arms. Neither path is qualified for this G10 comparison yet. The targeted inventory found no materialized B100 policy product for these complete G10 increments.
 
 Finish data/consumer readiness and reassess expected value before adding a donor mode or allocating GPU time to a small G10 comparison. The registered Ceres comparisons retain priority. Relevant local evidence is pinned in [consumer readiness](evidence/g10-value-readiness-20260911/matched-consumer.json).
+
+## Exact large-batch prefix completed
+
+The fresh exact-prefix derivation passed for **1,048,576 retained rows in 128 shards**. Its physical limit of 1,056,591 ends at original raw `w02-00127.jsonl.zst` row 2,278; the original frozen 244-shard selector remains recorded. It has exactly 7,999 missing-result and 16 policy-support exclusions, with no envelope omissions. Original prefix provenance/order and all 16 nonvalue arrays match in decoded bytes. The deriver uses the same per-output-shard shuffle sequence; row-local search values do not require the rest of the game after the cutoff.
+
+Search WDL changed on 718,464 rows. The selected values comprise 748,128 ordinary d10, 293,877 d12, 6,564 single-move d10 and seven malformed-later-roster fallbacks to valid original d9 baselines. Those fallbacks are retained rows, not exclusions or successful deeper selections.
+
+Derivation took 1,934.20 seconds (32.24 minutes), with peak reported RSS 868,760 KiB. Including complete prefix matching, the stage took 2,287.40 seconds (38.12 minutes), within its 45-minute child and 60-minute total limits. Parent-observed session 86138 exited zero; independent completed-result review passed without repeating the payload scan. [Compact prefix result](evidence/g10-value-readiness-20260911/matched-prefix128.json) pins the receipts and source reference.
+
+Together with the two increments, this completes matched derivation for **1,574,952 native-BT4-WDL-covered rows**. It does not make the whole original large batch valid: the previous full-stage failure and its malformed row remain preserved outside this prefix. No failed worker spills were reused, and no teacher inference was added.
+
+The value writer currently supports the two complete increments; consuming this prefix still needs honest selected-source handling for its original full-source teacher bindings. No G10 target mixture has yet been materialized or trained. Keep the registered Ceres comparisons ahead of an unqualified small-corpus training comparison; first exercise the existing writer on one complete increment using the same fixed policy and BT4 value weight.

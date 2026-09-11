@@ -1,0 +1,43 @@
+{
+  "status": "COMPLETE_MATCHED_DERIVATION_NOT_TRAINING_ADMISSION",
+  "rows": 1048576,
+  "shards": 128,
+  "physical_rows": 1056591,
+  "missing_result": 7999,
+  "policy_support_omissions": 16,
+  "changed_stored_wdl_rows": 718464,
+  "selector_counts": {
+    "fallback:invalid_roster": 7,
+    "selected_d10": 748128,
+    "selected_d12": 293877,
+    "selected_single_move_d10": 6564
+  },
+  "derive_seconds": 1934.2,
+  "whole_seconds": 2287.397331237793,
+  "max_rss_kib": 868760,
+  "combined_matched_rows": 1574952,
+  "prior_full_stage": "FAILED; outside-prefix malformed baseline remains rejected; no spill reuse",
+  "training_admission": false,
+  "pins": {
+    "plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_value_cohort_run06_prefix128_v1/first_stage.json",
+      "sha256": "f044da6369b142fee1d7a29a17ea0b5035df8f9ae8164d68146c39a50b44a8ed"
+    },
+    "comparison_reference": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_value_cohort_run06_prefix128_v1/prefix_comparison_reference.json",
+      "sha256": "12fa458c0aff2df464d7b173b8f4105f792f379e68cf5b5b423c9bef5c59a7e1"
+    },
+    "completed_receipt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_value_cohort_run06_prefix128_v1/execution/status.json",
+      "sha256": "e32ddee60c3286db066f0ffb2c06e7fe0ddec243ed17952a021e3483a319ca96"
+    },
+    "derive_summary": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_value_cohort_run06_prefix128_v1/execution/adaptive/derive_targets_summary.json",
+      "sha256": "7702d4a659ea9e2310e80d4e5852160acf8d7a8098c736985512ec753a451c06"
+    },
+    "independent_completed_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_matched_value_cohort_run06_prefix128_v1/completed_review.json",
+      "sha256": "932ae0d753257a88d74e337f5dd7451a88febe43f4f901c7e3bcd739e73807f1"
+    }
+  }
+}
