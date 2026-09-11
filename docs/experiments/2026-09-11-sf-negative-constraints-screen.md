@@ -1,6 +1,6 @@
 # Saved SF constraints for neural bootstrap targets
 
-Registered September 11, 2026. Status: corrected audit passed an 8,192-row real-data qualification; the remaining 31-shard CPU pass has launched. No new target rewrite, teacher inference, training or playing result.
+Registered September 11, 2026. Status: all 262,079 rows completed and the disjoint two-bank readout passed independent review. Tactical300 training remains on hold behind the registered Ceres anchors; the negative-constraint family remains plausible. No new target rewrite, teacher inference, training or playing result.
 
 ## Decision
 
@@ -68,6 +68,85 @@ The corrected runtime in [PR648](https://github.com/jjoshua2/DeepFin/pull/648), 
 
 The first 8,192-row shard completed in **46.90 seconds** (producer 46.81 seconds; peak RSS 1,250,120 KiB). Independent readback verified all 8,192 unique row identities, finite JSON, policy/ranking aggregate counts and mass, paired eligibility, and unknown-outcome accounting without rereading source arrays. The shard contains 6,103 ordinary d9 rows and 2,089 mate-domain exclusions. This qualifies the consumer and cost; it is not a representative full-cohort result or evidence of strength.
 
-Based on that measured cost, the remaining **253,887 rows / 31 shards** launched under the registered 90-minute limit, with unchanged runtime and resource bounds. Session 17956 owns this pass; shard zero is excluded and its completed bank will be reused once. The final cohort readout must verify the disjoint union against the original 32-shard inventory. No completed result for this pass is claimed here.
+Based on that measured cost, the remaining **253,887 rows / 31 shards** launched under the registered 90-minute limit, with unchanged runtime and resource bounds. Session 17956 owned this pass; shard zero was excluded and its completed bank was reused once. The completed readout below verified the disjoint union against the original 32-shard inventory.
 
 [Compact qualification and launch evidence](evidence/sf-constraints-pilot-20260911.json) pins the receipts, metric bank, independent review and remaining-shard plan. Bulk per-row evidence stays at the named host paths.
+
+
+## Completed cohort and next decision
+
+The remaining 31-shard pass completed in **23m23s**, with peak RSS **1,993,580 KiB**.
+The one-pass metric-bank readout verified **262,079 unique rows / 32 original shards**
+and reconstructed each input summary's counts and mass. It retained sufficient
+statistics for **1,331 source-qualified game clusters**. No raw source, teacher
+inference or bootstrap was repeated for this publication.
+
+Of all rows, **187,628 are ordinary d9 positions** and **74,451 (28.41%) are
+mate-domain exclusions**. Malformed required baselines remain fatal; the successful
+run did not silently omit invalid identities. BT4 and Tactical300 share 182,856
+valid conditional-regret rows, with 4,772 ordinary rows lacking eligible final
+policy metrics and zero observed zero-coverage rows. Those denominators remain
+separate from ranking constraints, which can include mate-domain final scores.
+
+| Strict d9 inferior-move threshold | Mean BT4 mass on flagged moves, across ordinary rows | Flagged mass without a complete deeper comparison | Contradicted fraction of adjudicable flagged mass |
+| --- | ---: | ---: | ---: |
+| >100 cp |18.929% |52.44% |13.17% |
+| >300 cp |6.100% |59.03% |11.66% |
+| >500 cp |3.948% |59.77% |12.32% |
+| >1000 cp |3.076% |60.41% |13.62% |
+
+Here a contradiction means **at least one tied d9 winner scores below the
+inferior move** under the conservative all-winner test. The 11.66% is
+probability-mass-weighted and conditional on available comparisons; it is **not an
+SF error rate**, a row error rate, or evidence that BT4 beats the surviving best
+SF move. At >300 cp, confirmed/contradicted/tied/unscored mass averages
+2.0545% / 0.2914% / 0.1532% / 3.6007% of each ordinary policy. Missing counterfactual
+scores dominate the flagged mass and cannot be treated as agreement.
+
+The exact ordinary Tactical300 preview moves mean probability mass **0.9817%**
+across ordinary rows and triggers on **13,495 rows**. On the 182,856 common valid
+rows, its conditional-regret change versus unchanged BT4 is **−48.23cp**,
+with stored 95% game-cluster interval **[−52.70,−43.63]cp**. Coverage rises
+**0.2755 percentage points**. Each target is independently normalized on the
+scored roster; common rows remove population mismatch, not this normalization
+or the missing-move bias. Scientific triggers use the exact >300 next-lower gap
+and positive inferior mass; 31,669 additional bit-level differences caused only
+normalization drift and are excluded from the changed-row population.
+
+| Phase0 d9 best-score bin | Ordinary rows | Common valid pairs | Mean >300cp inferior BT4 mass | Mean Tactical300 conditional-regret change |
+| --- | ---: | ---: | ---: | ---: |
+| Absolute score <=100cp |17,031 |17,012 |0.45266% |−0.971cp |
+| Score >100cp |97,360 |94,548 |6.92705% |−59.984cp |
+| Score <−100cp |73,237 |71,296 |6.31341% |−43.911cp |
+
+**99.81% of the summed paired-cp reduction lies outside absolute d9-best score
+<=100cp.** These are score bins, not established decisive positions. The balanced
+bin is only 9.1% of ordinary rows and has little mean affected mass; neither
+that observation nor the other bins establishes irrelevance to Elo. Rare
+important tactics remain possible. No finer concentration analysis is claimed. Separately,
+4,180 ordinary rows have BT4-top regret>300cp while the best-to-next-lower gap
+is<=300cp; only 40 of those lie in the balanced bin. This remains a different
+axis from Tactical300, not an optimized alternative recipe.
+
+The stored intervals use 1,000 cluster resamples, seed 20260911, grouped by
+(source_namespace, raw_shard, worker_id, game_id). They describe frozen-bank
+sampling uncertainty conditional on these teachers/checkpoints and observed
+rosters, not training-seed uncertainty, unbiased teacher truth, search savings
+or Elo. Score and position strata are descriptive.
+
+**Hold Tactical300 training behind the registered Ceres policy/value anchors.**
+Retain Tactical300 and SF negative constraints as plausible later candidates; this
+SF-agreement result alone neither promotes nor rejects the family. Ceres may
+change the strongest neural baseline or correct some of the same errors. A bounded,
+authenticated same-row G10 Ceres conflict/calibration sample with agreement
+controls could offer new discrimination; it is an option, not a mandatory new calibration
+gate. Existing stratified selections are not
+automatically collector-qualified or representative; preserve inclusion
+probabilities and held-out games before drawing population conclusions. This
+record launches no new teacher collection, target rewrite or training.
+
+[Compact completed evidence](evidence/sf-constraints-completed-20260911.json)
+pins the full readout, both terminal receipts and metric-bank hashes, game-cluster
+sufficient statistics, completed-input plan and independent reviews. The [complete machine-readable readout](evidence/sf-constraints-full-readout-20260911.json)
+publishes all reported strata and intervals. The original bulk row banks remain at
+their pinned host locations.

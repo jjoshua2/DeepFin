@@ -1,0 +1,2145 @@
+{
+  "status": "COMPLETE_SAVED_METRIC_READOUT_NOT_STRENGTH",
+  "inputs": [
+    {
+      "bank_sha256": "cdeeefb7a613f27f86a84edc0e457db86cdce58881d5b2d2161bb04a12f517b4",
+      "rows": 8192,
+      "summary_aggregate_check": "PASS"
+    },
+    {
+      "bank_sha256": "644e125c30c3c8f62fa4912a7323b9cbc6eb70dd112df9c50865e262fdae3dd4",
+      "rows": 253887,
+      "summary_aggregate_check": "PASS"
+    }
+  ],
+  "plan": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/readout/plan.completed_inputs.json",
+    "sha256": "a08310b3a39aff3bd47c39cc9956ff964f0728729cd140b1a9b16707a0a29d38"
+  },
+  "input_bindings": [
+    {
+      "expected_terminal_status": "COMPLETE_POLICY_DIAGNOSTIC_QUALIFICATION_NOT_TRAINING",
+      "bank": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/execution/audit/teacher_adjudication_rows.jsonl",
+        "sha256": "cdeeefb7a613f27f86a84edc0e457db86cdce58881d5b2d2161bb04a12f517b4"
+      },
+      "summary": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/execution/audit/teacher_adjudication_audit.json",
+        "sha256": "54c452a37dcf8c16af8477e88574ea49f585b55907337c32b35b955fead6781e"
+      },
+      "terminal": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/execution/status.json",
+        "sha256": "3ae5824e0dad73fd03458c4db1c17833bf0078cc99276b5771a03bf1c6d781d4"
+      },
+      "launch_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/qualification/plan.json",
+        "sha256": "eac5409157f1646ab5dcc4650f1ad3e6d38a3a69d3b609625174ba2f37beb151"
+      }
+    },
+    {
+      "expected_terminal_status": "COMPLETE_REMAINING31_POLICY_DIAGNOSTIC_NOT_TRAINING",
+      "bank": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/remaining31/execution/audit/teacher_adjudication_rows.jsonl",
+        "sha256": "644e125c30c3c8f62fa4912a7323b9cbc6eb70dd112df9c50865e262fdae3dd4"
+      },
+      "summary": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/remaining31/execution/audit/teacher_adjudication_audit.json",
+        "sha256": "def65dbe027339cbbff87f48cb7a96af1f659ea04930033f100bb146be0b6f40"
+      },
+      "terminal": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/remaining31/execution/status.json",
+        "sha256": "5b29b4dc2dcf5f0660fa779240ac8a05c3ec57a56096959b6da901bccb40cdc7"
+      },
+      "launch_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_teacher_adjudication_v1/remaining31/plan.json",
+        "sha256": "17585d8e2fef24e60440c583bb227df21676bf1380fc8a4996910e515d867199"
+      }
+    }
+  ],
+  "original_summary": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived/derive_targets_summary.json",
+    "sha256": "ab214d52665ee4ad6ccf756c0515344dc9653c3b51de15965fc74323198b7fd9"
+  },
+  "scientific_changed_definition": "ordinary next-lower gap>300 and positive BT4 mass on >300-inferior moves; banked L1 drift outside this gate reported separately",
+  "rows": 262079,
+  "shards": 32,
+  "clusters": 1331,
+  "invalid_baseline_rows": 0,
+  "invalid_baseline_scope": "Any malformed baseline is fatal upstream; zero is not an imputed row score.",
+  "all_rows": {
+    "sums": {
+      "rows": 262079,
+      "ordinary": 187628,
+      "mate_excluded": 74451,
+      "reversal_adjudicable": 174386,
+      "reversal": 51846,
+      "inferior_mass_100": 35515.98110424819,
+      "confirmed_mass_100": 14255.646780793266,
+      "contradicted_mass_100": 2224.8083388692216,
+      "ties_mass_100": 410.66643597059453,
+      "unscored_mass_100": 18624.859548614968,
+      "inferior_mass_300": 11445.028409951894,
+      "confirmed_mass_300": 3854.813565555156,
+      "contradicted_mass_300": 546.7324608012931,
+      "ties_mass_300": 287.4921390979201,
+      "unscored_mass_300": 6755.990244497087,
+      "inferior_mass_500": 7406.826625750221,
+      "confirmed_mass_500": 2350.815251130856,
+      "contradicted_mass_500": 366.9927888403592,
+      "ties_mass_500": 262.11115547959,
+      "unscored_mass_500": 4426.907430299422,
+      "inferior_mass_1000": 5772.148197731389,
+      "confirmed_mass_1000": 1732.4666452075269,
+      "contradicted_mass_1000": 311.20519585183723,
+      "ties_mass_1000": 241.42947531836057,
+      "unscored_mass_1000": 3487.046881353633,
+      "gap_comparable_rows": 184709,
+      "gap_discrepant_rows": 150043,
+      "bt4_top_gt300_next_lower_le300": 4180,
+      "moved_mass": 1841.9948401132096,
+      "changed_rows": 13495,
+      "recorded_l1_mass": 1841.9948401132096,
+      "bit_level_changed_rows": 45164,
+      "nontriggered_l1_mass": 2.9503952473916028e-12,
+      "nontriggered_bit_level_changed_rows": 31669,
+      "bt4_invalid_final_rows": 4772,
+      "bt4_coverage_rows": 182856,
+      "bt4_zero_coverage_rows": 0,
+      "bt4_regret_rows": 182856,
+      "t300_invalid_final_rows": 4772,
+      "t300_coverage_rows": 182856,
+      "t300_zero_coverage_rows": 0,
+      "t300_regret_rows": 182856,
+      "pair_coverage_rows": 182856,
+      "pair_coverage_delta": 503.8384748932452,
+      "pair_regret_rows": 182856,
+      "pair_regret_delta": -8818580.22497265,
+      "changed_pair_coverage_rows": 12673,
+      "changed_pair_coverage_delta": 503.8384748932452,
+      "changed_pair_regret_rows": 12673,
+      "changed_pair_regret_delta": -8818580.22497265
+    },
+    "thresholds": {
+      "100": {
+        "mean_inferior_mass_all_ordinary": 0.18928934436357148,
+        "outcomes": {
+          "confirmed": {
+            "mean_mass_all_ordinary": 0.07597824834669274,
+            "fraction_of_all_inferior_mass": 0.4013868218633583,
+            "fraction_of_adjudicable_inferior_mass": 0.8439727778786235
+          },
+          "contradicted": {
+            "mean_mass_all_ordinary": 0.011857549720026977,
+            "fraction_of_all_inferior_mass": 0.0626424575556243,
+            "fraction_of_adjudicable_inferior_mass": 0.1317146603641156
+          },
+          "ties": {
+            "mean_mass_all_ordinary": 0.0021887268210000347,
+            "fraction_of_all_inferior_mass": 0.011562863342144118,
+            "fraction_of_adjudicable_inferior_mass": 0.024312561757252674
+          },
+          "unscored": {
+            "mean_mass_all_ordinary": 0.09926481947585099,
+            "fraction_of_all_inferior_mass": 0.5244078572388694,
+            "fraction_of_adjudicable_inferior_mass": null
+          }
+        }
+      },
+      "300": {
+        "mean_inferior_mass_all_ordinary": 0.06099850987033862,
+        "outcomes": {
+          "confirmed": {
+            "mean_mass_all_ordinary": 0.02054498030973605,
+            "fraction_of_all_inferior_mass": 0.3368111836405095,
+            "fraction_of_adjudicable_inferior_mass": 0.8220904649389356
+          },
+          "contradicted": {
+            "mean_mass_all_ordinary": 0.002913917223449022,
+            "fraction_of_all_inferior_mass": 0.04777030176053457,
+            "fraction_of_adjudicable_inferior_mass": 0.11659799760837807
+          },
+          "ties": {
+            "mean_mass_all_ordinary": 0.001532245395665466,
+            "fraction_of_all_inferior_mass": 0.02511939060351607,
+            "fraction_of_adjudicable_inferior_mass": 0.061311537452592935
+          },
+          "unscored": {
+            "mean_mass_all_ordinary": 0.03600736694148574,
+            "fraction_of_all_inferior_mass": 0.5902991239954015,
+            "fraction_of_adjudicable_inferior_mass": null
+          }
+        }
+      },
+      "500": {
+        "mean_inferior_mass_all_ordinary": 0.039476126301779164,
+        "outcomes": {
+          "confirmed": {
+            "mean_mass_all_ordinary": 0.012529128121233801,
+            "fraction_of_all_inferior_mass": 0.31738494363539216,
+            "fraction_of_adjudicable_inferior_mass": 0.7888855693535768
+          },
+          "contradicted": {
+            "mean_mass_all_ordinary": 0.001955959605391302,
+            "fraction_of_all_inferior_mass": 0.04954791132338504,
+            "fraction_of_adjudicable_inferior_mass": 0.12315528199577269
+          },
+          "ties": {
+            "mean_mass_all_ordinary": 0.0013969724960005438,
+            "fraction_of_all_inferior_mass": 0.03538778058721489,
+            "fraction_of_adjudicable_inferior_mass": 0.08795914865065264
+          },
+          "unscored": {
+            "mean_mass_all_ordinary": 0.02359406607915355,
+            "fraction_of_all_inferior_mass": 0.5976793644540087,
+            "fraction_of_adjudicable_inferior_mass": null
+          }
+        }
+      },
+      "1000": {
+        "mean_inferior_mass_all_ordinary": 0.030763788974627393,
+        "outcomes": {
+          "confirmed": {
+            "mean_mass_all_ordinary": 0.009233518692346168,
+            "fraction_of_all_inferior_mass": 0.3001424401903668,
+            "fraction_of_adjudicable_inferior_mass": 0.7581574754653586
+          },
+          "contradicted": {
+            "mean_mass_all_ordinary": 0.0016586287539804147,
+            "fraction_of_all_inferior_mass": 0.053914969815596445,
+            "fraction_of_adjudicable_inferior_mass": 0.13618879549076027
+          },
+          "ties": {
+            "mean_mass_all_ordinary": 0.001286745450137296,
+            "fraction_of_all_inferior_mass": 0.04182662451619813,
+            "fraction_of_adjudicable_inferior_mass": 0.1056537290438676
+          },
+          "unscored": {
+            "mean_mass_all_ordinary": 0.01858489607816335,
+            "fraction_of_all_inferior_mass": 0.6041159654778333,
+            "fraction_of_adjudicable_inferior_mass": null
+          }
+        }
+      }
+    },
+    "gap_discrepancy_fraction_comparable": 0.8123210022251217,
+    "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.02227812480013644,
+    "t300_vs_bt4": {
+      "ordinary_rows": 187628,
+      "changed_rows": 13495,
+      "mean_moved_mass_all_ordinary": 0.009817270557236711,
+      "mean_moved_mass_changed": 0.13649461579201258,
+      "mean_regret_delta_common_valid": -48.226912023519326,
+      "mean_coverage_delta_common_final_valid": 0.002755383880721689,
+      "mean_regret_delta_changed_common_valid": -695.8557740844828,
+      "mean_coverage_delta_changed_common_final_valid": 0.039756843280458073
+    }
+  },
+  "strata_descriptive": {
+    "not_in_check": {
+      "sums": {
+        "rows": 245271,
+        "ordinary": 175940,
+        "mate_excluded": 69331,
+        "reversal_adjudicable": 163471,
+        "reversal": 49776,
+        "inferior_mass_100": 34090.18705619028,
+        "confirmed_mass_100": 13049.373962249598,
+        "contradicted_mass_100": 2098.152161201068,
+        "ties_mass_100": 383.8614977615031,
+        "unscored_mass_100": 18558.799434977962,
+        "inferior_mass_300": 10979.754592042778,
+        "confirmed_mass_300": 3470.2650523960374,
+        "contradicted_mass_300": 521.7240174792995,
+        "ties_mass_300": 267.47587872098575,
+        "unscored_mass_300": 6720.289643446044,
+        "inferior_mass_500": 7101.105349945706,
+        "confirmed_mass_500": 2111.957271820445,
+        "contradicted_mass_500": 349.34478073959497,
+        "ties_mass_500": 243.6966605675701,
+        "unscored_mass_500": 4396.106636818111,
+        "inferior_mass_1000": 5536.749048087678,
+        "confirmed_mass_1000": 1559.0710107629736,
+        "contradicted_mass_1000": 295.4413258309416,
+        "ties_mass_1000": 223.9131252177231,
+        "unscored_mass_1000": 3458.3235862760152,
+        "gap_comparable_rows": 174159,
+        "gap_discrepant_rows": 141612,
+        "bt4_top_gt300_next_lower_le300": 4026,
+        "moved_mass": 1720.9675531116845,
+        "changed_rows": 11784,
+        "recorded_l1_mass": 1720.9675531116845,
+        "bit_level_changed_rows": 42506,
+        "nontriggered_l1_mass": 2.8641263501177853e-12,
+        "nontriggered_bit_level_changed_rows": 30722,
+        "bt4_invalid_final_rows": 4291,
+        "bt4_coverage_rows": 171649,
+        "bt4_zero_coverage_rows": 0,
+        "bt4_regret_rows": 171649,
+        "t300_invalid_final_rows": 4291,
+        "t300_coverage_rows": 171649,
+        "t300_zero_coverage_rows": 0,
+        "t300_regret_rows": 171649,
+        "pair_coverage_rows": 171649,
+        "pair_coverage_delta": 499.8127122028207,
+        "pair_regret_rows": 171649,
+        "pair_regret_delta": -8216704.951429636,
+        "changed_pair_coverage_rows": 11070,
+        "changed_pair_coverage_delta": 499.8127122028207,
+        "changed_pair_regret_rows": 11070,
+        "changed_pair_regret_delta": -8216704.951429636
+      },
+      "thresholds": {
+        "100": {
+          "mean_inferior_mass_all_ordinary": 0.1937602992849283,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.07416945528162781,
+              "fraction_of_all_inferior_mass": 0.38278974359221124,
+              "fraction_of_adjudicable_inferior_mass": 0.8401936955347853
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.011925384569745753,
+              "fraction_of_all_inferior_mass": 0.061547100276766416,
+              "fraction_of_adjudicable_inferior_mass": 0.13509109503747574
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0021817750242213428,
+              "fraction_of_all_inferior_mass": 0.011260175754647243,
+              "fraction_of_adjudicable_inferior_mass": 0.02471520942772918
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.1054836844093325,
+              "fraction_of_all_inferior_mass": 0.5444029803763706,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "300": {
+          "mean_inferior_mass_all_ordinary": 0.06240624412892337,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.019724139208798667,
+              "fraction_of_all_inferior_mass": 0.3160603475519389,
+              "fraction_of_adjudicable_inferior_mass": 0.8147185372517982
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0029653519238336903,
+              "fraction_of_all_inferior_mass": 0.04751691061086211,
+              "fraction_of_adjudicable_inferior_mass": 0.12248581072399237
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0015202675839546763,
+              "fraction_of_all_inferior_mass": 0.024360824868966582,
+              "fraction_of_adjudicable_inferior_mass": 0.06279565202411272
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.038196485412333996,
+              "fraction_of_all_inferior_mass": 0.6120619169681949,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "500": {
+          "mean_inferior_mass_all_ordinary": 0.04036094890272653,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.012003849447655137,
+              "fraction_of_all_inferior_mass": 0.2974124685865409,
+              "fraction_of_adjudicable_inferior_mass": 0.7807609155490286
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0019855904327588663,
+              "fraction_of_all_inferior_mass": 0.0491958312859372,
+              "fraction_of_adjudicable_inferior_mass": 0.1291478546899835
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0013851123142410485,
+              "fraction_of_all_inferior_mass": 0.034318130566734,
+              "fraction_of_adjudicable_inferior_mass": 0.09009122976099358
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.024986396708071564,
+              "fraction_of_all_inferior_mass": 0.61907356956079,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "1000": {
+          "mean_inferior_mass_all_ordinary": 0.031469529658336236,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.008861378940337465,
+              "fraction_of_all_inferior_mass": 0.28158599879137686,
+              "fraction_of_adjudicable_inferior_mass": 0.7501212044448335
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.00167921635688838,
+              "fraction_of_all_inferior_mass": 0.053360071634993685,
+              "fraction_of_adjudicable_inferior_mass": 0.1421467025203876
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0012726675299404519,
+              "fraction_of_all_inferior_mass": 0.040441263144310256,
+              "fraction_of_adjudicable_inferior_mass": 0.10773209303476725
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.019656266831169805,
+              "fraction_of_all_inferior_mass": 0.6246126664293149,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        }
+      },
+      "gap_discrepancy_fraction_comparable": 0.8131190463886449,
+      "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.02288280095487098,
+      "t300_vs_bt4": {
+        "ordinary_rows": 175940,
+        "changed_rows": 11784,
+        "mean_moved_mass_all_ordinary": 0.009781559356096876,
+        "mean_moved_mass_changed": 0.14604273193412123,
+        "mean_regret_delta_common_valid": -47.8692270355763,
+        "mean_coverage_delta_common_final_valid": 0.0029118300264074984,
+        "mean_regret_delta_changed_common_valid": -742.2497697768416,
+        "mean_coverage_delta_changed_common_final_valid": 0.04515019983765318
+      }
+    },
+    "legal_gt_30": {
+      "sums": {
+        "rows": 106138,
+        "ordinary": 78479,
+        "mate_excluded": 27659,
+        "reversal_adjudicable": 75329,
+        "reversal": 22305,
+        "inferior_mass_100": 13547.67083630064,
+        "confirmed_mass_100": 5473.5445896853125,
+        "contradicted_mass_100": 783.9806147002594,
+        "ties_mass_100": 41.07220238689549,
+        "unscored_mass_100": 7249.0734295282455,
+        "inferior_mass_300": 3064.491840724152,
+        "confirmed_mass_300": 981.1636640558746,
+        "contradicted_mass_300": 99.9068892247816,
+        "ties_mass_300": 20.66628615417565,
+        "unscored_mass_300": 1962.7550012893273,
+        "inferior_mass_500": 1348.2851743626413,
+        "confirmed_mass_500": 382.6045077297075,
+        "contradicted_mass_500": 41.78534763948181,
+        "ties_mass_500": 16.56768695969587,
+        "unscored_mass_500": 907.3276320337503,
+        "inferior_mass_1000": 669.6688609153582,
+        "confirmed_mass_1000": 148.81288223786322,
+        "contradicted_mass_1000": 30.50842076163372,
+        "ties_mass_1000": 12.724462296178444,
+        "unscored_mass_1000": 477.6230956196813,
+        "gap_comparable_rows": 78479,
+        "gap_discrepant_rows": 63876,
+        "bt4_top_gt300_next_lower_le300": 714,
+        "moved_mass": 469.9794099565614,
+        "changed_rows": 4461,
+        "recorded_l1_mass": 469.9794099565614,
+        "bit_level_changed_rows": 18189,
+        "nontriggered_l1_mass": 1.2480482403006012e-12,
+        "nontriggered_bit_level_changed_rows": 13728,
+        "bt4_invalid_final_rows": 1580,
+        "bt4_coverage_rows": 76899,
+        "bt4_zero_coverage_rows": 0,
+        "bt4_regret_rows": 76899,
+        "t300_invalid_final_rows": 1580,
+        "t300_coverage_rows": 76899,
+        "t300_zero_coverage_rows": 0,
+        "t300_regret_rows": 76899,
+        "pair_coverage_rows": 76899,
+        "pair_coverage_delta": 124.06352814441523,
+        "pair_regret_rows": 76899,
+        "pair_regret_delta": -1237612.942072752,
+        "changed_pair_coverage_rows": 4121,
+        "changed_pair_coverage_delta": 124.0635281444152,
+        "changed_pair_regret_rows": 4121,
+        "changed_pair_regret_delta": -1237612.942072752
+      },
+      "thresholds": {
+        "100": {
+          "mean_inferior_mass_all_ordinary": 0.1726279748251206,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.06974534066037172,
+              "fraction_of_all_inferior_mass": 0.40402107903441886,
+              "fraction_of_adjudicable_inferior_mass": 0.8690100725917224
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.009989686600240312,
+              "fraction_of_all_inferior_mass": 0.05786829516108431,
+              "fraction_of_adjudicable_inferior_mass": 0.12446907844233791
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0005233527744606263,
+              "fraction_of_all_inferior_mass": 0.0030316799753389023,
+              "fraction_of_adjudicable_inferior_mass": 0.006520848965951329
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.09236959479004887,
+              "fraction_of_all_inferior_mass": 0.5350789458291633,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "300": {
+          "mean_inferior_mass_all_ordinary": 0.03904855873194297,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.012502244728600958,
+              "fraction_of_all_inferior_mass": 0.3201717332110832,
+              "fraction_of_adjudicable_inferior_mass": 0.890560820821057
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0012730397842070057,
+              "fraction_of_all_inferior_mass": 0.03260145381923196,
+              "fraction_of_adjudicable_inferior_mass": 0.09068126402674562
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0002633352381423776,
+              "fraction_of_all_inferior_mass": 0.006743788930856517,
+              "fraction_of_adjudicable_inferior_mass": 0.018757915152203822
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.025009938980992717,
+              "fraction_of_all_inferior_mass": 0.6404830240388306,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "500": {
+          "mean_inferior_mass_all_ordinary": 0.017180203294672985,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.004875246979825272,
+              "fraction_of_all_inferior_mass": 0.28377120434523173,
+              "fraction_of_adjudicable_inferior_mass": 0.8676674532178418
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0005324398582994407,
+              "fraction_of_all_inferior_mass": 0.03099147601265771,
+              "fraction_of_adjudicable_inferior_mass": 0.09476047834173555
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.00021110981230260158,
+              "fraction_of_all_inferior_mass": 0.012287969396035015,
+              "fraction_of_adjudicable_inferior_mass": 0.037572068440409515
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.011561406644245598,
+              "fraction_of_all_inferior_mass": 0.6729493502460712,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "1000": {
+          "mean_inferior_mass_all_ordinary": 0.008533096253970593,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.0018962127733261537,
+              "fraction_of_all_inferior_mass": 0.22221860821548967,
+              "fraction_of_adjudicable_inferior_mass": 0.774882393312596
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.000388746298521053,
+              "fraction_of_all_inferior_mass": 0.045557472569252085,
+              "fraction_of_adjudicable_inferior_mass": 0.1588601587473821
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.00016213843571118955,
+              "fraction_of_all_inferior_mass": 0.019001125838202494,
+              "fraction_of_adjudicable_inferior_mass": 0.06625744794001391
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.006085998746412177,
+              "fraction_of_all_inferior_mass": 0.7132227933770535,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        }
+      },
+      "gap_discrepancy_fraction_comparable": 0.8139247441990851,
+      "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.009097975254526689,
+      "t300_vs_bt4": {
+        "ordinary_rows": 78479,
+        "changed_rows": 4461,
+        "mean_moved_mass_all_ordinary": 0.00598860089905021,
+        "mean_moved_mass_changed": 0.1053529275849723,
+        "mean_regret_delta_common_valid": -16.094005670720712,
+        "mean_coverage_delta_common_final_valid": 0.0016133308384298265,
+        "mean_regret_delta_changed_common_valid": -300.31859793078183,
+        "mean_coverage_delta_changed_common_final_valid": 0.03010519974385227
+      }
+    },
+    "ply_40_79": {
+      "sums": {
+        "rows": 51524,
+        "ordinary": 38499,
+        "mate_excluded": 13025,
+        "reversal_adjudicable": 37163,
+        "reversal": 12259,
+        "inferior_mass_100": 7769.269040493923,
+        "confirmed_mass_100": 2845.038333738449,
+        "contradicted_mass_100": 391.04969999937344,
+        "ties_mass_100": 10.764187579082709,
+        "unscored_mass_100": 4522.4168191770295,
+        "inferior_mass_300": 1171.2557914816468,
+        "confirmed_mass_300": 336.52970275345524,
+        "contradicted_mass_300": 26.3780450157521,
+        "ties_mass_300": 0.9889887874179828,
+        "unscored_mass_300": 807.3590549250214,
+        "inferior_mass_500": 285.8538366379677,
+        "confirmed_mass_500": 89.52844504216067,
+        "contradicted_mass_500": 4.576913035241711,
+        "ties_mass_500": 0.6307526307106323,
+        "unscored_mass_500": 191.11772592985432,
+        "inferior_mass_1000": 31.823021378966953,
+        "confirmed_mass_1000": 10.956147198324317,
+        "contradicted_mass_1000": 0.4692654669214951,
+        "ties_mass_1000": 0.0,
+        "unscored_mass_1000": 20.397608713721166,
+        "gap_comparable_rows": 38363,
+        "gap_discrepant_rows": 31141,
+        "bt4_top_gt300_next_lower_le300": 173,
+        "moved_mass": 117.23351309203524,
+        "changed_rows": 1556,
+        "recorded_l1_mass": 117.23351309203527,
+        "bit_level_changed_rows": 8618,
+        "nontriggered_l1_mass": 6.588864673118783e-13,
+        "nontriggered_bit_level_changed_rows": 7062,
+        "bt4_invalid_final_rows": 444,
+        "bt4_coverage_rows": 38055,
+        "bt4_zero_coverage_rows": 0,
+        "bt4_regret_rows": 38055,
+        "t300_invalid_final_rows": 444,
+        "t300_coverage_rows": 38055,
+        "t300_zero_coverage_rows": 0,
+        "t300_regret_rows": 38055,
+        "pair_coverage_rows": 38055,
+        "pair_coverage_delta": 20.798266142939497,
+        "pair_regret_rows": 38055,
+        "pair_regret_delta": -38233.10911464718,
+        "changed_pair_coverage_rows": 1445,
+        "changed_pair_coverage_delta": 20.798266142939497,
+        "changed_pair_regret_rows": 1445,
+        "changed_pair_regret_delta": -38233.10911464718
+      },
+      "thresholds": {
+        "100": {
+          "mean_inferior_mass_all_ordinary": 0.2018044375306871,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.07389901903266187,
+              "fraction_of_all_inferior_mass": 0.3661912489978052,
+              "fraction_of_adjudicable_inferior_mass": 0.8762450951908516
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.010157398893461478,
+              "fraction_of_all_inferior_mass": 0.050332881762904284,
+              "fraction_of_adjudicable_inferior_mass": 0.12043963609799502
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0002795965500164344,
+              "fraction_of_all_inferior_mass": 0.001385482665483597,
+              "fraction_of_adjudicable_inferior_mass": 0.0033152687111570643
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.11746842305454763,
+              "fraction_of_all_inferior_mass": 0.5820903865738084,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "300": {
+          "mean_inferior_mass_all_ordinary": 0.03042301855844689,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.008741258286019253,
+              "fraction_of_all_inferior_mass": 0.287323832420707,
+              "fraction_of_adjudicable_inferior_mass": 0.9247945060949683
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0006851618227941531,
+              "fraction_of_all_inferior_mass": 0.0225211650670975,
+              "fraction_of_adjudicable_inferior_mass": 0.07248772073460859
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 2.5688687691056463e-05,
+              "fraction_of_all_inferior_mass": 0.0008443832633407132,
+              "fraction_of_adjudicable_inferior_mass": 0.0027177731704227243
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.020970909761942425,
+              "fraction_of_all_inferior_mass": 0.6893106192488546,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "500": {
+          "mean_inferior_mass_all_ordinary": 0.007424967833916924,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.0023254745588758324,
+              "fraction_of_all_inferior_mass": 0.31319658359369146,
+              "fraction_of_adjudicable_inferior_mass": 0.9450297713614425
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.00011888394595292633,
+              "fraction_of_all_inferior_mass": 0.016011375215643324,
+              "fraction_of_adjudicable_inferior_mass": 0.0483122328015281
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 1.6383610761594646e-05,
+              "fraction_of_all_inferior_mass": 0.002206556463013218,
+              "fraction_of_adjudicable_inferior_mass": 0.006657995837025781
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.004964225718326562,
+              "fraction_of_all_inferior_mass": 0.6685854847276508,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "1000": {
+          "mean_inferior_mass_all_ordinary": 0.0008265934538291113,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.00028458264366150595,
+              "fraction_of_all_inferior_mass": 0.34428368908948576,
+              "fraction_of_adjudicable_inferior_mass": 0.958927919658526
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 1.21890300247148e-05,
+              "fraction_of_all_inferior_mass": 0.014746100357134868,
+              "fraction_of_adjudicable_inferior_mass": 0.04107208034147624
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0,
+              "fraction_of_all_inferior_mass": 0.0,
+              "fraction_of_adjudicable_inferior_mass": 0.0
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.0005298217801428911,
+              "fraction_of_all_inferior_mass": 0.6409702105533801,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        }
+      },
+      "gap_discrepancy_fraction_comparable": 0.811745692464093,
+      "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.004493623210992493,
+      "t300_vs_bt4": {
+        "ordinary_rows": 38499,
+        "changed_rows": 1556,
+        "mean_moved_mass_all_ordinary": 0.0030451054077257913,
+        "mean_moved_mass_changed": 0.07534287473781184,
+        "mean_regret_delta_common_valid": -1.004680307834639,
+        "mean_coverage_delta_common_final_valid": 0.0005465317604241098,
+        "mean_regret_delta_changed_common_valid": -26.458899041278325,
+        "mean_coverage_delta_changed_common_final_valid": 0.014393263766740137
+      }
+    },
+    "score_winning": {
+      "sums": {
+        "rows": 97360,
+        "ordinary": 97360,
+        "mate_excluded": 0,
+        "reversal_adjudicable": 92228,
+        "reversal": 25161,
+        "inferior_mass_100": 19292.22341001546,
+        "confirmed_mass_100": 8243.780939057016,
+        "contradicted_mass_100": 1124.4903064533337,
+        "ties_mass_100": 128.3461539964964,
+        "unscored_mass_100": 9795.606010508824,
+        "inferior_mass_300": 6744.180342529496,
+        "confirmed_mass_300": 2277.650355266681,
+        "contradicted_mass_300": 262.3260511031878,
+        "ties_mass_300": 88.41621476333091,
+        "unscored_mass_300": 4115.787721396286,
+        "inferior_mass_500": 4230.932051046702,
+        "confirmed_mass_500": 1209.1053697982816,
+        "contradicted_mass_500": 169.089825304391,
+        "ties_mass_500": 80.09007906652614,
+        "unscored_mass_500": 2772.6467768774996,
+        "inferior_mass_1000": 3041.0612975716863,
+        "confirmed_mass_1000": 741.2239204049963,
+        "contradicted_mass_1000": 139.20288035963426,
+        "ties_mass_1000": 72.28375808625718,
+        "unscored_mass_1000": 2088.3507387207783,
+        "gap_comparable_rows": 97260,
+        "gap_discrepant_rows": 79566,
+        "bt4_top_gt300_next_lower_le300": 2000,
+        "moved_mass": 1324.6642363226374,
+        "changed_rows": 9432,
+        "recorded_l1_mass": 1324.6642363226374,
+        "bit_level_changed_rows": 26022,
+        "nontriggered_l1_mass": 1.544397546115084e-12,
+        "nontriggered_bit_level_changed_rows": 16590,
+        "bt4_invalid_final_rows": 2812,
+        "bt4_coverage_rows": 94548,
+        "bt4_zero_coverage_rows": 0,
+        "bt4_regret_rows": 94548,
+        "t300_invalid_final_rows": 2812,
+        "t300_coverage_rows": 94548,
+        "t300_zero_coverage_rows": 0,
+        "t300_regret_rows": 94548,
+        "pair_coverage_rows": 94548,
+        "pair_coverage_delta": 402.8206057425397,
+        "pair_regret_rows": 94548,
+        "pair_regret_delta": -5671399.663865845,
+        "changed_pair_coverage_rows": 8852,
+        "changed_pair_coverage_delta": 402.8206057425397,
+        "changed_pair_regret_rows": 8852,
+        "changed_pair_regret_delta": -5671399.663865845
+      },
+      "thresholds": {
+        "100": {
+          "mean_inferior_mass_all_ordinary": 0.1981534861340947,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.0846731813789751,
+              "fraction_of_all_inferior_mass": 0.42731108612277935,
+              "fraction_of_adjudicable_inferior_mass": 0.8680755043880459
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.01154981826677623,
+              "fraction_of_all_inferior_mass": 0.05828723224662432,
+              "fraction_of_adjudicable_inferior_mass": 0.11840956196800691
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0013182637016895687,
+              "fraction_of_all_inferior_mass": 0.006652740395379527,
+              "fraction_of_adjudicable_inferior_mass": 0.013514933643969293
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.10061222278665595,
+              "fraction_of_all_inferior_mass": 0.5077489412352276,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "300": {
+          "mean_inferior_mass_all_ordinary": 0.06927054583534814,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.02339410800397166,
+              "fraction_of_all_inferior_mass": 0.33772085555061204,
+              "fraction_of_adjudicable_inferior_mass": 0.8665563648876363
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0026943924723006143,
+              "fraction_of_all_inferior_mass": 0.03889665426781854,
+              "fraction_of_adjudicable_inferior_mass": 0.09980474339868146
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0009081369634688878,
+              "fraction_of_all_inferior_mass": 0.013110001552860198,
+              "fraction_of_adjudicable_inferior_mass": 0.03363889171367822
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.04227390839560688,
+              "fraction_of_all_inferior_mass": 0.6102724886287078,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "500": {
+          "mean_inferior_mass_all_ordinary": 0.043456574065804256,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.01241891300121489,
+              "fraction_of_all_inferior_mass": 0.2857775438627424,
+              "fraction_of_adjudicable_inferior_mass": 0.829128148802791
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0017367484110968675,
+              "fraction_of_all_inferior_mass": 0.03996514793059827,
+              "fraction_of_adjudicable_inferior_mass": 0.1159511299328747
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0008226179033127171,
+              "fraction_of_all_inferior_mass": 0.018929653821009116,
+              "fraction_of_adjudicable_inferior_mass": 0.05492072126433158
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.028478294750179742,
+              "fraction_of_all_inferior_mass": 0.6553276543856493,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "1000": {
+          "mean_inferior_mass_all_ordinary": 0.031235222859199736,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.007613228434726749,
+              "fraction_of_all_inferior_mass": 0.24373856620281545,
+              "fraction_of_adjudicable_inferior_mass": 0.7780158554125904
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0014297748598976403,
+              "fraction_of_all_inferior_mass": 0.0457744408081445,
+              "fraction_of_adjudicable_inferior_mass": 0.14611245678596332
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0007424379425457804,
+              "fraction_of_all_inferior_mass": 0.023769253893032798,
+              "fraction_of_adjudicable_inferior_mass": 0.07587168780142495
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.021449781622029356,
+              "fraction_of_all_inferior_mass": 0.6867177390960006,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        }
+      },
+      "gap_discrepancy_fraction_comparable": 0.8180752621838372,
+      "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.020542317173377157,
+      "t300_vs_bt4": {
+        "ordinary_rows": 97360,
+        "changed_rows": 9432,
+        "mean_moved_mass_all_ordinary": 0.013605836445384526,
+        "mean_moved_mass_changed": 0.14044362132343485,
+        "mean_regret_delta_common_valid": -59.984343020115126,
+        "mean_coverage_delta_common_final_valid": 0.004260487855296143,
+        "mean_regret_delta_changed_common_valid": -640.6913312094266,
+        "mean_coverage_delta_changed_common_final_valid": 0.045506168746333
+      }
+    },
+    "ply_lt_40": {
+      "sums": {
+        "rows": 53024,
+        "ordinary": 48490,
+        "mate_excluded": 4534,
+        "reversal_adjudicable": 47490,
+        "reversal": 12634,
+        "inferior_mass_100": 4463.8488287300015,
+        "confirmed_mass_100": 1796.3787754005136,
+        "contradicted_mass_100": 181.88274071994687,
+        "ties_mass_100": 4.67169378174909,
+        "unscored_mass_100": 2480.9156188278043,
+        "inferior_mass_300": 295.02160596195324,
+        "confirmed_mass_300": 85.11003926924356,
+        "contradicted_mass_300": 2.113750455664597,
+        "ties_mass_300": 0.3622760163062226,
+        "unscored_mass_300": 207.43554022073542,
+        "inferior_mass_500": 48.55475595733401,
+        "confirmed_mass_500": 17.149451298448472,
+        "contradicted_mass_500": 0.007716934192060081,
+        "ties_mass_500": 0.3622760163062226,
+        "unscored_mass_500": 31.035311708387905,
+        "inferior_mass_1000": 3.804826832816552,
+        "confirmed_mass_1000": 1.95469679382241,
+        "contradicted_mass_1000": 0.0,
+        "ties_mass_1000": 0.0,
+        "unscored_mass_1000": 1.850130038994161,
+        "gap_comparable_rows": 48415,
+        "gap_discrepant_rows": 39834,
+        "bt4_top_gt300_next_lower_le300": 54,
+        "moved_mass": 21.116652757478185,
+        "changed_rows": 2583,
+        "recorded_l1_mass": 21.116652757478246,
+        "bit_level_changed_rows": 10233,
+        "nontriggered_l1_mass": 6.704226689858947e-13,
+        "nontriggered_bit_level_changed_rows": 7650,
+        "bt4_invalid_final_rows": 75,
+        "bt4_coverage_rows": 48415,
+        "bt4_zero_coverage_rows": 0,
+        "bt4_regret_rows": 48415,
+        "t300_invalid_final_rows": 75,
+        "t300_coverage_rows": 48415,
+        "t300_zero_coverage_rows": 0,
+        "t300_regret_rows": 48415,
+        "pair_coverage_rows": 48415,
+        "pair_coverage_delta": 3.1274125175923215,
+        "pair_regret_rows": 48415,
+        "pair_regret_delta": -7220.5188245665195,
+        "changed_pair_coverage_rows": 2565,
+        "changed_pair_coverage_delta": 3.1274125175922727,
+        "changed_pair_regret_rows": 2565,
+        "changed_pair_regret_delta": -7220.5188245665195
+      },
+      "thresholds": {
+        "100": {
+          "mean_inferior_mass_all_ordinary": 0.09205710102557231,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.03704637606517867,
+              "fraction_of_all_inferior_mass": 0.40242822826766667,
+              "fraction_of_adjudicable_inferior_mass": 0.9059199606067998
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.00375093299071864,
+              "fraction_of_all_inferior_mass": 0.040745721393906136,
+              "fraction_of_adjudicable_inferior_mass": 0.09172408824042931
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 9.634344775725077e-05,
+              "fraction_of_all_inferior_mass": 0.001046561826126675,
+              "fraction_of_adjudicable_inferior_mass": 0.0023559511527771067
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.05116344852191801,
+              "fraction_of_all_inferior_mass": 0.5557794885123033,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "300": {
+          "mean_inferior_mass_all_ordinary": 0.006084174179458718,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.0017552080690708097,
+              "fraction_of_all_inferior_mass": 0.28848747871103236,
+              "fraction_of_adjudicable_inferior_mass": 0.9717303608625378
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 4.359147155422968e-05,
+              "fraction_of_all_inferior_mass": 0.007164731033079632,
+              "fraction_of_adjudicable_inferior_mass": 0.024133410237992578
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 7.47114902673175e-06,
+              "fraction_of_all_inferior_mass": 0.001227964355779904,
+              "fraction_of_adjudicable_inferior_mass": 0.004136228899430246
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.004277903489806876,
+              "fraction_of_all_inferior_mass": 0.7031198259000965,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "500": {
+          "mean_inferior_mass_all_ordinary": 0.0010013354497284803,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.00035366985560834137,
+              "fraction_of_all_inferior_mass": 0.3531981771985019,
+              "fraction_of_adjudicable_inferior_mass": 0.9788810109932631
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 1.5914485857001612e-07,
+              "fraction_of_all_inferior_mass": 0.00015893261205639873,
+              "fraction_of_adjudicable_inferior_mass": 0.0004404782527576067
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 7.47114902673175e-06,
+              "fraction_of_all_inferior_mass": 0.007461184989263697,
+              "fraction_of_adjudicable_inferior_mass": 0.020678510754016388
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.0006400353002348506,
+              "fraction_of_all_inferior_mass": 0.6391817052001915,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "1000": {
+          "mean_inferior_mass_all_ordinary": 7.84662163913498e-05,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 4.0311338292893584e-05,
+              "fraction_of_all_inferior_mass": 0.5137413290305858,
+              "fraction_of_adjudicable_inferior_mass": 1.0000000000000098
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0,
+              "fraction_of_all_inferior_mass": 0.0,
+              "fraction_of_adjudicable_inferior_mass": 0.0
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0,
+              "fraction_of_all_inferior_mass": 0.0,
+              "fraction_of_adjudicable_inferior_mass": 0.0
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 3.815487809845661e-05,
+              "fraction_of_all_inferior_mass": 0.4862586709694192,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        }
+      },
+      "gap_discrepancy_fraction_comparable": 0.8227615408447795,
+      "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.0011136316766343576,
+      "t300_vs_bt4": {
+        "ordinary_rows": 48490,
+        "changed_rows": 2583,
+        "mean_moved_mass_all_ordinary": 0.0004354846928743697,
+        "mean_moved_mass_changed": 0.00817524303425404,
+        "mean_regret_delta_common_valid": -0.14913805276394754,
+        "mean_coverage_delta_common_final_valid": 6.459594170385876e-05,
+        "mean_regret_delta_changed_common_valid": -2.8150170856009824,
+        "mean_coverage_delta_changed_common_final_valid": 0.0012192641394121921
+      }
+    },
+    "legal_11_30": {
+      "sums": {
+        "rows": 115671,
+        "ordinary": 84692,
+        "mate_excluded": 30979,
+        "reversal_adjudicable": 78164,
+        "reversal": 24311,
+        "inferior_mass_100": 17230.116906708983,
+        "confirmed_mass_100": 5673.215370187781,
+        "contradicted_mass_100": 785.8666391469218,
+        "ties_mass_100": 125.42299825619543,
+        "unscored_mass_100": 10645.61189911809,
+        "inferior_mass_300": 6047.348295979344,
+        "confirmed_mass_300": 1493.2584686160158,
+        "contradicted_mass_300": 183.00355025949483,
+        "ties_mass_300": 87.09053231409746,
+        "unscored_mass_300": 4283.995744789741,
+        "inferior_mass_500": 4279.537385917962,
+        "confirmed_mass_500": 987.3451903091186,
+        "contradicted_mass_500": 140.65013237076192,
+        "ties_mass_500": 82.15403994261814,
+        "unscored_mass_500": 3069.388023295456,
+        "inferior_mass_1000": 3577.5296581021507,
+        "confirmed_mass_1000": 785.7329533495518,
+        "contradicted_mass_1000": 120.41767470523739,
+        "ties_mass_1000": 78.40560433278341,
+        "unscored_mass_1000": 2592.9734257145565,
+        "gap_comparable_rows": 84438,
+        "gap_discrepant_rows": 69240,
+        "bt4_top_gt300_next_lower_le300": 2428,
+        "moved_mass": 903.9677712622697,
+        "changed_rows": 5995,
+        "recorded_l1_mass": 903.9677712622697,
+        "bit_level_changed_rows": 21417,
+        "nontriggered_l1_mass": 1.4623840768290979e-12,
+        "nontriggered_bit_level_changed_rows": 15422,
+        "bt4_invalid_final_rows": 1551,
+        "bt4_coverage_rows": 83141,
+        "bt4_zero_coverage_rows": 0,
+        "bt4_regret_rows": 83141,
+        "t300_invalid_final_rows": 1551,
+        "t300_coverage_rows": 83141,
+        "t300_zero_coverage_rows": 0,
+        "t300_regret_rows": 83141,
+        "pair_coverage_rows": 83141,
+        "pair_coverage_delta": 337.1972101121379,
+        "pair_regret_rows": 83141,
+        "pair_regret_delta": -5384865.236634626,
+        "changed_pair_coverage_rows": 5760,
+        "changed_pair_coverage_delta": 337.1972101121379,
+        "changed_pair_regret_rows": 5760,
+        "changed_pair_regret_delta": -5384865.236634626
+      },
+      "thresholds": {
+        "100": {
+          "mean_inferior_mass_all_ordinary": 0.20344444465485503,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.06698643756420655,
+              "fraction_of_all_inferior_mass": 0.32926157152066515,
+              "fraction_of_adjudicable_inferior_mass": 0.8616008893071629
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.009279113011228,
+              "fraction_of_all_inferior_mass": 0.045610058446029736,
+              "fraction_of_adjudicable_inferior_mass": 0.11935090614115136
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0014809308819746308,
+              "fraction_of_all_inferior_mass": 0.007279288871647691,
+              "fraction_of_adjudicable_inferior_mass": 0.019048204551686505
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.12569796319744592,
+              "fraction_of_all_inferior_mass": 0.6178490811616577,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "300": {
+          "mean_inferior_mass_all_ordinary": 0.07140400859560932,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.01763163543919161,
+              "fraction_of_all_inferior_mass": 0.24692780960025532,
+              "fraction_of_adjudicable_inferior_mass": 0.8468292217620497
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.002160812712646942,
+              "fraction_of_all_inferior_mass": 0.030261784389228427,
+              "fraction_of_adjudicable_inferior_mass": 0.10378160064250112
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0010283206479253938,
+              "fraction_of_all_inferior_mass": 0.014401441433760431,
+              "fraction_of_adjudicable_inferior_mass": 0.04938917759545247
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.05058323979584543,
+              "fraction_of_all_inferior_mass": 0.7084089645767567,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "500": {
+          "mean_inferior_mass_all_ordinary": 0.0505305977650541,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.01165806912470031,
+              "fraction_of_all_inferior_mass": 0.23071306575286124,
+              "fraction_of_adjudicable_inferior_mass": 0.8158870473388924
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0016607251259949218,
+              "fraction_of_all_inferior_mass": 0.032865732832146395,
+              "fraction_of_adjudicable_inferior_mass": 0.11622543193012148
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0009700330602963461,
+              "fraction_of_all_inferior_mass": 0.01919694409329154,
+              "fraction_of_adjudicable_inferior_mass": 0.06788752073098046
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.03624177045406244,
+              "fraction_of_all_inferior_mass": 0.7172242573216993,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "1000": {
+          "mean_inferior_mass_all_ordinary": 0.04224164806713917,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.009277534517422565,
+              "fraction_of_all_inferior_mass": 0.2196300320166672,
+              "fraction_of_adjudicable_inferior_mass": 0.7980579752607052
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0014218305708359395,
+              "fraction_of_all_inferior_mass": 0.03365944833819154,
+              "fraction_of_adjudicable_inferior_mass": 0.1223065486195938
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0009257734417983211,
+              "fraction_of_all_inferior_mass": 0.021916129795099146,
+              "fraction_of_adjudicable_inferior_mass": 0.07963547611967903
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.03061650953708209,
+              "fraction_of_all_inferior_mass": 0.7247943898500361,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        }
+      },
+      "gap_discrepancy_fraction_comparable": 0.8200099481276203,
+      "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.028668587351815992,
+      "t300_vs_bt4": {
+        "ordinary_rows": 84692,
+        "changed_rows": 5995,
+        "mean_moved_mass_all_ordinary": 0.010673591027042338,
+        "mean_moved_mass_changed": 0.1507869510028807,
+        "mean_regret_delta_common_valid": -64.76786707682884,
+        "mean_coverage_delta_common_final_valid": 0.004055727139583814,
+        "mean_regret_delta_changed_common_valid": -934.8724369157337,
+        "mean_coverage_delta_changed_common_final_valid": 0.05854118231113505
+      }
+    },
+    "ply_ge_80": {
+      "sums": {
+        "rows": 157531,
+        "ordinary": 100639,
+        "mate_excluded": 56892,
+        "reversal_adjudicable": 89733,
+        "reversal": 26953,
+        "inferior_mass_100": 23282.8632350244,
+        "confirmed_mass_100": 9614.229671654291,
+        "contradicted_mass_100": 1651.875898149896,
+        "ties_mass_100": 395.23055460976235,
+        "unscored_mass_100": 11621.527110610185,
+        "inferior_mass_300": 9978.75101250809,
+        "confirmed_mass_300": 3433.173823532482,
+        "contradicted_mass_300": 518.2406653298762,
+        "ties_mass_300": 286.1408742941958,
+        "unscored_mass_300": 5741.195649351348,
+        "inferior_mass_500": 7072.418033154924,
+        "confirmed_mass_500": 2244.1373547902585,
+        "contradicted_mass_500": 362.40815887092526,
+        "ties_mass_500": 261.11812683257307,
+        "unscored_mass_500": 4204.754392661137,
+        "inferior_mass_1000": 5736.520349519599,
+        "confirmed_mass_1000": 1719.5558012153786,
+        "contradicted_mass_1000": 310.7359303849158,
+        "ties_mass_1000": 241.42947531836057,
+        "unscored_mass_1000": 3464.7991426009035,
+        "gap_comparable_rows": 97931,
+        "gap_discrepant_rows": 79068,
+        "bt4_top_gt300_next_lower_le300": 3953,
+        "moved_mass": 1703.6446742636933,
+        "changed_rows": 9356,
+        "recorded_l1_mass": 1703.6446742636933,
+        "bit_level_changed_rows": 26313,
+        "nontriggered_l1_mass": 1.6210861110938298e-12,
+        "nontriggered_bit_level_changed_rows": 16957,
+        "bt4_invalid_final_rows": 4253,
+        "bt4_coverage_rows": 96386,
+        "bt4_zero_coverage_rows": 0,
+        "bt4_regret_rows": 96386,
+        "t300_invalid_final_rows": 4253,
+        "t300_coverage_rows": 96386,
+        "t300_zero_coverage_rows": 0,
+        "t300_regret_rows": 96386,
+        "pair_coverage_rows": 96386,
+        "pair_coverage_delta": 479.9127962327137,
+        "pair_regret_rows": 96386,
+        "pair_regret_delta": -8773126.59703345,
+        "changed_pair_coverage_rows": 8663,
+        "changed_pair_coverage_delta": 479.9127962327137,
+        "changed_pair_regret_rows": 8663,
+        "changed_pair_regret_delta": -8773126.59703345
+      },
+      "thresholds": {
+        "100": {
+          "mean_inferior_mass_all_ordinary": 0.23135030390827016,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.09553184820650336,
+              "fraction_of_all_inferior_mass": 0.4129315872624983,
+              "fraction_of_adjudicable_inferior_mass": 0.8244535248002932
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.01641387432456499,
+              "fraction_of_all_inferior_mass": 0.07094814248038789,
+              "fraction_of_adjudicable_inferior_mass": 0.14165408496300202
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.003927210669916855,
+              "fraction_of_all_inferior_mass": 0.01697516970400862,
+              "fraction_of_adjudicable_inferior_mass": 0.033892390236681905
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.11547737070728231,
+              "fraction_of_all_inferior_mass": 0.49914510055309375,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "300": {
+          "mean_inferior_mass_all_ordinary": 0.09915391659801956,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.034113751364108165,
+              "fraction_of_all_inferior_mass": 0.34404845047532434,
+              "fraction_of_adjudicable_inferior_mass": 0.8101779279114738
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.005149501339737837,
+              "fraction_of_all_inferior_mass": 0.051934421921167866,
+              "fraction_of_adjudicable_inferior_mass": 0.12229708426601318
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.002843240436552388,
+              "fraction_of_all_inferior_mass": 0.028675018941300978,
+              "fraction_of_adjudicable_inferior_mass": 0.06752498782246867
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.057047423457619297,
+              "fraction_of_all_inferior_mass": 0.575342108662188,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "500": {
+          "mean_inferior_mass_all_ordinary": 0.07027512230005191,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.022298883681179847,
+              "fraction_of_all_inferior_mass": 0.31730835822627057,
+              "fraction_of_adjudicable_inferior_mass": 0.782566449949422
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0036010707466382344,
+              "fraction_of_all_inferior_mass": 0.05124246858316139,
+              "fraction_of_adjudicable_inferior_mass": 0.12637749900421436
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0025946017630597788,
+              "fraction_of_all_inferior_mass": 0.03692062963592825,
+              "fraction_of_adjudicable_inferior_mass": 0.0910560510463531
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.04178056610917375,
+              "fraction_of_all_inferior_mass": 0.5945285435546355,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "1000": {
+          "mean_inferior_mass_all_ordinary": 0.05700096731405915,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.01708637606907241,
+              "fraction_of_all_inferior_mass": 0.2997558966838462,
+              "fraction_of_adjudicable_inferior_mass": 0.7569396262086843
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.003087629352288037,
+              "fraction_of_all_inferior_mass": 0.05416801675094522,
+              "fraction_of_adjudicable_inferior_mass": 0.1367843595589751
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0023989653645044226,
+              "fraction_of_all_inferior_mass": 0.042086397434043604,
+              "fraction_of_adjudicable_inferior_mass": 0.10627601423232268
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.03442799652819387,
+              "fraction_of_all_inferior_mass": 0.6039896891311578,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        }
+      },
+      "gap_discrepancy_fraction_comparable": 0.807384791332673,
+      "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.03927900714434762,
+      "t300_vs_bt4": {
+        "ordinary_rows": 100639,
+        "changed_rows": 9356,
+        "mean_moved_mass_all_ordinary": 0.016928275064971764,
+        "mean_moved_mass_changed": 0.18209113662502066,
+        "mean_regret_delta_common_valid": -91.02075609563059,
+        "mean_coverage_delta_common_final_valid": 0.004979071610324255,
+        "mean_regret_delta_changed_common_valid": -1012.7122933202644,
+        "mean_coverage_delta_changed_common_final_valid": 0.055397991023053636
+      }
+    },
+    "score_losing": {
+      "sums": {
+        "rows": 73237,
+        "ordinary": 73237,
+        "mate_excluded": 0,
+        "reversal_adjudicable": 67091,
+        "reversal": 23965,
+        "inferior_mass_100": 15861.400242346239,
+        "confirmed_mass_100": 5790.662807764162,
+        "contradicted_mass_100": 1095.6316877881718,
+        "ties_mass_100": 282.14627726428967,
+        "unscored_mass_100": 8692.959469529516,
+        "inferior_mass_300": 4623.7553275379805,
+        "confirmed_mass_300": 1548.9962385808146,
+        "contradicted_mass_300": 283.72228584588134,
+        "ties_mass_300": 199.07435002560698,
+        "unscored_mass_300": 2591.9624530856813,
+        "inferior_mass_500": 3152.482289164927,
+        "confirmed_mass_500": 1135.2218175210326,
+        "contradicted_mass_500": 197.90296353596915,
+        "ties_mass_500": 182.02107641306398,
+        "unscored_mass_500": 1637.3364316948646,
+        "inferior_mass_1000": 2722.2929368909017,
+        "confirmed_mass_1000": 989.9231736105909,
+        "contradicted_mass_1000": 172.0023154922033,
+        "ties_mass_1000": 169.14571723210338,
+        "unscored_mass_1000": 1391.2217305560118,
+        "gap_comparable_rows": 70804,
+        "gap_discrepant_rows": 56704,
+        "bt4_top_gt300_next_lower_le300": 2140,
+        "moved_mass": 509.3094356454349,
+        "changed_rows": 2538,
+        "recorded_l1_mass": 509.309435645435,
+        "bit_level_changed_rows": 14976,
+        "nontriggered_l1_mass": 1.1749094605165897e-12,
+        "nontriggered_bit_level_changed_rows": 12438,
+        "bt4_invalid_final_rows": 1941,
+        "bt4_coverage_rows": 71296,
+        "bt4_zero_coverage_rows": 0,
+        "bt4_regret_rows": 71296,
+        "t300_invalid_final_rows": 1941,
+        "t300_coverage_rows": 71296,
+        "t300_zero_coverage_rows": 0,
+        "t300_regret_rows": 71296,
+        "pair_coverage_rows": 71296,
+        "pair_coverage_delta": 98.63274170134555,
+        "pair_regret_rows": 71296,
+        "pair_regret_delta": -3130662.252249183,
+        "changed_pair_coverage_rows": 2302,
+        "changed_pair_coverage_delta": 98.63274170134555,
+        "changed_pair_regret_rows": 2302,
+        "changed_pair_regret_delta": -3130662.252249183
+      },
+      "thresholds": {
+        "100": {
+          "mean_inferior_mass_all_ordinary": 0.21657632402127666,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.07906744961923838,
+              "fraction_of_all_inferior_mass": 0.3650789160659626,
+              "fraction_of_adjudicable_inferior_mass": 0.8077994910305738
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.014960084216832637,
+              "fraction_of_all_inferior_mass": 0.06907534461321332,
+              "fraction_of_adjudicable_inferior_mass": 0.1528410044124088
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0038525100326923505,
+              "fraction_of_all_inferior_mass": 0.017788232624697593,
+              "fraction_of_adjudicable_inferior_mass": 0.03935950455700352
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.11869628015251193,
+              "fraction_of_all_inferior_mass": 0.5480575066961202,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "300": {
+          "mean_inferior_mass_all_ordinary": 0.06313414431964691,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.02115045999400323,
+              "fraction_of_all_inferior_mass": 0.3350082625166958,
+              "fraction_of_adjudicable_inferior_mass": 0.7623790092276853
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.003874029327332924,
+              "fraction_of_all_inferior_mass": 0.06136187270898598,
+              "fraction_of_adjudicable_inferior_mass": 0.1396413430785178
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.002718220981547674,
+              "fraction_of_all_inferior_mass": 0.04305468951610994,
+              "fraction_of_adjudicable_inferior_mass": 0.09797964769379876
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.03539143401676313,
+              "fraction_of_all_inferior_mass": 0.5605751752582091,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "500": {
+          "mean_inferior_mass_all_ordinary": 0.043044940251033316,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.01550065974194782,
+              "fraction_of_all_inferior_mass": 0.3601041063490783,
+              "fraction_of_adjudicable_inferior_mass": 0.749249197312651
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.002702226518507983,
+              "fraction_of_all_inferior_mass": 0.0627768676817507,
+              "fraction_of_adjudicable_inferior_mass": 0.13061644366465194
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0024853704604648466,
+              "fraction_of_all_inferior_mass": 0.05773896876079841,
+              "fraction_of_adjudicable_inferior_mass": 0.12013435902269926
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.02235668353011271,
+              "fraction_of_all_inferior_mass": 0.5193800572083737,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "1000": {
+          "mean_inferior_mass_all_ordinary": 0.03717100559677351,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.01351670840709738,
+              "fraction_of_all_inferior_mass": 0.36363580134809825,
+              "fraction_of_adjudicable_inferior_mass": 0.7437041451271029
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0023485712889960444,
+              "fraction_of_all_inferior_mass": 0.06318288276817303,
+              "fraction_of_adjudicable_inferior_mass": 0.12922097230681776
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.002309566438167912,
+              "fraction_of_all_inferior_mass": 0.06213354740040676,
+              "fraction_of_adjudicable_inferior_mass": 0.12707488256608512
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.01899615946251228,
+              "fraction_of_all_inferior_mass": 0.5110477684833248,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        }
+      },
+      "gap_discrepancy_fraction_comparable": 0.8008587085475397,
+      "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.02922020290290427,
+      "t300_vs_bt4": {
+        "ordinary_rows": 73237,
+        "changed_rows": 2538,
+        "mean_moved_mass_all_ordinary": 0.006954264042020221,
+        "mean_moved_mass_changed": 0.20067353650332345,
+        "mean_regret_delta_common_valid": -43.910769920460936,
+        "mean_coverage_delta_common_final_valid": 0.0013834260225166286,
+        "mean_regret_delta_changed_common_valid": -1359.974914096083,
+        "mean_coverage_delta_changed_common_final_valid": 0.04284654287634472
+      }
+    },
+    "legal_le_10": {
+      "sums": {
+        "rows": 40270,
+        "ordinary": 24457,
+        "mate_excluded": 15813,
+        "reversal_adjudicable": 20893,
+        "reversal": 5230,
+        "inferior_mass_100": 4738.193361238546,
+        "confirmed_mass_100": 3108.8868209203047,
+        "contradicted_mass_100": 654.9610850220428,
+        "ties_mass_100": 244.17123532750395,
+        "unscored_mass_100": 730.1742199686687,
+        "inferior_mass_300": 2333.1882732480126,
+        "confirmed_mass_300": 1380.3914328832811,
+        "contradicted_mass_300": 263.8220213170163,
+        "ties_mass_300": 179.73532062964728,
+        "unscored_mass_300": 509.2394984180685,
+        "inferior_mass_500": 1779.004065469651,
+        "confirmed_mass_500": 980.8655530920515,
+        "contradicted_mass_500": 184.55730883011628,
+        "ties_mass_500": 163.38942857727605,
+        "unscored_mass_500": 450.19177497020684,
+        "inferior_mass_1000": 1524.9496787138655,
+        "confirmed_mass_1000": 797.9208096201121,
+        "contradicted_mass_1000": 160.27910038496643,
+        "ties_mass_1000": 150.29940868939875,
+        "unscored_mass_1000": 416.45036001938263,
+        "gap_comparable_rows": 21792,
+        "gap_discrepant_rows": 16927,
+        "bt4_top_gt300_next_lower_le300": 1038,
+        "moved_mass": 468.0476588943755,
+        "changed_rows": 3039,
+        "recorded_l1_mass": 468.0476588943755,
+        "bit_level_changed_rows": 5558,
+        "nontriggered_l1_mass": 2.3996293026190367e-13,
+        "nontriggered_bit_level_changed_rows": 2519,
+        "bt4_invalid_final_rows": 1641,
+        "bt4_coverage_rows": 22816,
+        "bt4_zero_coverage_rows": 0,
+        "bt4_regret_rows": 22816,
+        "t300_invalid_final_rows": 1641,
+        "t300_coverage_rows": 22816,
+        "t300_zero_coverage_rows": 0,
+        "t300_regret_rows": 22816,
+        "pair_coverage_rows": 22816,
+        "pair_coverage_delta": 42.57773663669268,
+        "pair_regret_rows": 22816,
+        "pair_regret_delta": -2196102.0462652924,
+        "changed_pair_coverage_rows": 2792,
+        "changed_pair_coverage_delta": 42.57773663669266,
+        "changed_pair_regret_rows": 2792,
+        "changed_pair_regret_delta": -2196102.0462652924
+      },
+      "thresholds": {
+        "100": {
+          "mean_inferior_mass_all_ordinary": 0.19373567327303207,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.12711644195609864,
+              "fraction_of_all_inferior_mass": 0.6561333790961316,
+              "fraction_of_adjudicable_inferior_mass": 0.77566666009866
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0267801073321357,
+              "fraction_of_all_inferior_mass": 0.13823013015467955,
+              "fraction_of_adjudicable_inferior_mass": 0.16341266394614293
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.009983695274461461,
+              "fraction_of_all_inferior_mass": 0.051532560347785916,
+              "fraction_of_adjudicable_inferior_mass": 0.06092067595519072
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.029855428710335228,
+              "fraction_of_all_inferior_mass": 0.15410393040139753,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "300": {
+          "mean_inferior_mass_all_ordinary": 0.095399610469314,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.056441568176116494,
+              "fraction_of_all_inferior_mass": 0.591633109385403,
+              "fraction_of_adjudicable_inferior_mass": 0.7568148030977361
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.010787178366807716,
+              "fraction_of_all_inferior_mass": 0.11307361019338222,
+              "fraction_of_adjudicable_inferior_mass": 0.14464332823251233
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0073490338401949245,
+              "fraction_of_all_inferior_mass": 0.07703421223673441,
+              "fraction_of_adjudicable_inferior_mass": 0.09854186866975193
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.02082183008619489,
+              "fraction_of_all_inferior_mass": 0.21825906818448057,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "500": {
+          "mean_inferior_mass_all_ordinary": 0.07274007709325146,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.040105718325716626,
+              "fraction_of_all_inferior_mass": 0.5513565551257503,
+              "fraction_of_adjudicable_inferior_mass": 0.7381520776899089
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.007546195724337256,
+              "fraction_of_all_inferior_mass": 0.10374192640273353,
+              "fraction_of_adjudicable_inferior_mass": 0.138888923702496
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0066806815462761605,
+              "fraction_of_all_inferior_mass": 0.09184320134431047,
+              "fraction_of_adjudicable_inferior_mass": 0.12295899860759481
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.018407481496921407,
+              "fraction_of_all_inferior_mass": 0.2530583171272055,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "1000": {
+          "mean_inferior_mass_all_ordinary": 0.06235227864062908,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.03262545731774592,
+              "fraction_of_all_inferior_mass": 0.5232440261852275,
+              "fraction_of_adjudicable_inferior_mass": 0.7198207487938291
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0065535061693979815,
+              "fraction_of_all_inferior_mass": 0.10510451762588321,
+              "fraction_of_adjudicable_inferior_mass": 0.14459106801593033
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.006145455644167263,
+              "fraction_of_all_inferior_mass": 0.0985602415524691,
+              "fraction_of_adjudicable_inferior_mass": 0.13558818319023544
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.017027859509317685,
+              "fraction_of_all_inferior_mass": 0.2730912146364165,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        }
+      },
+      "gap_discrepancy_fraction_comparable": 0.7767529368575624,
+      "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.04244183669297134,
+      "t300_vs_bt4": {
+        "ordinary_rows": 24457,
+        "changed_rows": 3039,
+        "mean_moved_mass_all_ordinary": 0.019137574473335875,
+        "mean_moved_mass_changed": 0.15401370809291726,
+        "mean_regret_delta_common_valid": -96.25271941906085,
+        "mean_coverage_delta_common_final_valid": 0.0018661350208929119,
+        "mean_regret_delta_changed_common_valid": -786.5695008113512,
+        "mean_coverage_delta_changed_common_final_valid": 0.015249905672167859
+      }
+    },
+    "in_check": {
+      "sums": {
+        "rows": 16808,
+        "ordinary": 11688,
+        "mate_excluded": 5120,
+        "reversal_adjudicable": 10915,
+        "reversal": 2070,
+        "inferior_mass_100": 1425.794048057866,
+        "confirmed_mass_100": 1206.2728185436154,
+        "contradicted_mass_100": 126.656177668151,
+        "ties_mass_100": 26.804938209091524,
+        "unscored_mass_100": 66.06011363700627,
+        "inferior_mass_300": 465.27381790910226,
+        "confirmed_mass_300": 384.54851315913436,
+        "contradicted_mass_300": 25.008443321993596,
+        "ties_mass_300": 20.016260376934625,
+        "unscored_mass_300": 35.70060105103919,
+        "inferior_mass_500": 305.7212758045178,
+        "confirmed_mass_500": 238.85797931041748,
+        "contradicted_mass_500": 17.64800810076422,
+        "ties_mass_500": 18.414494912019787,
+        "unscored_mass_500": 30.80079348131607,
+        "inferior_mass_1000": 235.3991496437071,
+        "confirmed_mass_1000": 173.39563444455223,
+        "contradicted_mass_1000": 15.76387002089566,
+        "ties_mass_1000": 17.516350100637563,
+        "unscored_mass_1000": 28.72329507762153,
+        "gap_comparable_rows": 10550,
+        "gap_discrepant_rows": 8431,
+        "bt4_top_gt300_next_lower_le300": 154,
+        "moved_mass": 121.02728700152859,
+        "changed_rows": 1711,
+        "recorded_l1_mass": 121.02728700152859,
+        "bit_level_changed_rows": 2658,
+        "nontriggered_l1_mass": 8.626889727381744e-14,
+        "nontriggered_bit_level_changed_rows": 947,
+        "bt4_invalid_final_rows": 481,
+        "bt4_coverage_rows": 11207,
+        "bt4_zero_coverage_rows": 0,
+        "bt4_regret_rows": 11207,
+        "t300_invalid_final_rows": 481,
+        "t300_coverage_rows": 11207,
+        "t300_zero_coverage_rows": 0,
+        "t300_regret_rows": 11207,
+        "pair_coverage_rows": 11207,
+        "pair_coverage_delta": 4.025762690424314,
+        "pair_regret_rows": 11207,
+        "pair_regret_delta": -601875.273543028,
+        "changed_pair_coverage_rows": 1603,
+        "changed_pair_coverage_delta": 4.025762690424273,
+        "changed_pair_regret_rows": 1603,
+        "changed_pair_regret_delta": -601875.273543028
+      },
+      "thresholds": {
+        "100": {
+          "mean_inferior_mass_all_ordinary": 0.12198785489885916,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.10320609330455299,
+              "fraction_of_all_inferior_mass": 0.8460358073360807,
+              "fraction_of_adjudicable_inferior_mass": 0.8871388644554151
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.010836428616371577,
+              "fraction_of_all_inferior_mass": 0.08883202860937364,
+              "fraction_of_adjudicable_inferior_mass": 0.09314776550170945
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0022933725367121427,
+              "fraction_of_all_inferior_mass": 0.018800007087702224,
+              "fraction_of_adjudicable_inferior_mass": 0.01971337004287411
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.005651960441222302,
+              "fraction_of_all_inferior_mass": 0.04633215696684211,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "300": {
+          "mean_inferior_mass_all_ordinary": 0.0398078215185748,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.032901139045100475,
+              "fraction_of_all_inferior_mass": 0.8264993609295704,
+              "fraction_of_adjudicable_inferior_mass": 0.8951873582151061
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0021396683198146474,
+              "fraction_of_all_inferior_mass": 0.053749947577921404,
+              "fraction_of_adjudicable_inferior_mass": 0.05821695194339067
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.001712547944638486,
+              "fraction_of_all_inferior_mass": 0.043020388438975266,
+              "fraction_of_adjudicable_inferior_mass": 0.04659568984150209
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.0030544662090211494,
+              "fraction_of_all_inferior_mass": 0.07673030305353182,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "500": {
+          "mean_inferior_mass_all_ordinary": 0.026156851112638414,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.02043617208336905,
+              "fraction_of_all_inferior_mass": 0.781293283177146,
+              "fraction_of_adjudicable_inferior_mass": 0.8688256956773832
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0015099254021872194,
+              "fraction_of_all_inferior_mass": 0.05772580941356724,
+              "fraction_of_adjudicable_inferior_mass": 0.06419313669040085
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0015755043559222952,
+              "fraction_of_all_inferior_mass": 0.060232951938203536,
+              "fraction_of_adjudicable_inferior_mass": 0.06698116763221504
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.002635249271159828,
+              "fraction_of_all_inferior_mass": 0.10074795547108244,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "1000": {
+          "mean_inferior_mass_all_ordinary": 0.020140242098195336,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.014835355445290231,
+              "fraction_of_all_inferior_mass": 0.7366026372949882,
+              "fraction_of_adjudicable_inferior_mass": 0.8389738356645245
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.001348722623279916,
+              "fraction_of_all_inferior_mass": 0.06696655465729323,
+              "fraction_of_adjudicable_inferior_mass": 0.0762733994930941
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0014986610284597505,
+              "fraction_of_all_inferior_mass": 0.07441127177880537,
+              "fraction_of_adjudicable_inferior_mass": 0.0847527648423809
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.0024575030011654286,
+              "fraction_of_all_inferior_mass": 0.12201953626891271,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        }
+      },
+      "gap_discrepancy_fraction_comparable": 0.7991469194312796,
+      "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.013175906913073238,
+      "t300_vs_bt4": {
+        "ordinary_rows": 11688,
+        "changed_rows": 1711,
+        "mean_moved_mass_all_ordinary": 0.01035483290567493,
+        "mean_moved_mass_changed": 0.07073482583373968,
+        "mean_regret_delta_common_valid": -53.705297898012674,
+        "mean_coverage_delta_common_final_valid": 0.0003592185857432242,
+        "mean_regret_delta_changed_common_valid": -375.4680433830493,
+        "mean_coverage_delta_changed_common_final_valid": 0.0025113928199777123
+      }
+    },
+    "score_balanced": {
+      "sums": {
+        "rows": 17031,
+        "ordinary": 17031,
+        "mate_excluded": 0,
+        "reversal_adjudicable": 15067,
+        "reversal": 2720,
+        "inferior_mass_100": 362.35745188652,
+        "confirmed_mass_100": 221.2030339722309,
+        "contradicted_mass_100": 4.686344627712722,
+        "ties_mass_100": 0.17400470980889857,
+        "unscored_mass_100": 136.29406857676744,
+        "inferior_mass_300": 77.09273988405484,
+        "confirmed_mass_300": 28.16697170767822,
+        "contradicted_mass_300": 0.6841238522235058,
+        "ties_mass_300": 0.0015743089825848305,
+        "unscored_mass_300": 48.24007001517087,
+        "inferior_mass_500": 23.41228553862357,
+        "confirmed_mass_500": 6.488063811558018,
+        "contradicted_mass_500": 0.0,
+        "ties_mass_500": 0.0,
+        "unscored_mass_500": 16.924221727065607,
+        "inferior_mass_1000": 8.793963268775453,
+        "confirmed_mass_1000": 1.3195511919386878,
+        "contradicted_mass_1000": 0.0,
+        "ties_mass_1000": 0.0,
+        "unscored_mass_1000": 7.474412076836769,
+        "gap_comparable_rows": 16645,
+        "gap_discrepant_rows": 13773,
+        "bt4_top_gt300_next_lower_le300": 40,
+        "moved_mass": 8.021168145132489,
+        "changed_rows": 1525,
+        "recorded_l1_mass": 8.021168145132547,
+        "bit_level_changed_rows": 4166,
+        "nontriggered_l1_mass": 2.3108824075992906e-13,
+        "nontriggered_bit_level_changed_rows": 2641,
+        "bt4_invalid_final_rows": 19,
+        "bt4_coverage_rows": 17012,
+        "bt4_zero_coverage_rows": 0,
+        "bt4_regret_rows": 17012,
+        "t300_invalid_final_rows": 19,
+        "t300_coverage_rows": 17012,
+        "t300_zero_coverage_rows": 0,
+        "t300_regret_rows": 17012,
+        "pair_coverage_rows": 17012,
+        "pair_coverage_delta": 2.3851274493600885,
+        "pair_regret_rows": 17012,
+        "pair_regret_delta": -16518.308857620108,
+        "changed_pair_coverage_rows": 1519,
+        "changed_pair_coverage_delta": 2.385127449360077,
+        "changed_pair_regret_rows": 1519,
+        "changed_pair_regret_delta": -16518.308857620108
+      },
+      "thresholds": {
+        "100": {
+          "mean_inferior_mass_all_ordinary": 0.02127634618557454,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.012988258703084428,
+              "fraction_of_all_inferior_mass": 0.6104553192451121,
+              "fraction_of_adjudicable_inferior_mass": 0.9785000592915043
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.00027516555855279913,
+              "fraction_of_all_inferior_mass": 0.012932932945947394,
+              "fraction_of_adjudicable_inferior_mass": 0.020730224236675615
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 1.0216940274141188e-05,
+              "fraction_of_all_inferior_mass": 0.00048020182530533935,
+              "fraction_of_adjudicable_inferior_mass": 0.0007697164718201043
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.00800270498366317,
+              "fraction_of_all_inferior_mass": 0.37613154598363513,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "300": {
+          "mean_inferior_mass_all_ordinary": 0.004526612640717212,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.0016538648175490704,
+              "fraction_of_all_inferior_mass": 0.3653647768913194,
+              "fraction_of_adjudicable_inferior_mass": 0.9762344987718022
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 4.0169329588603474e-05,
+              "fraction_of_all_inferior_mass": 0.008874037338047753,
+              "fraction_of_adjudicable_inferior_mass": 0.023710937508812528
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 9.243784760641364e-08,
+              "fraction_of_all_inferior_mass": 2.0420975891537178e-05,
+              "fraction_of_adjudicable_inferior_mass": 5.456371939716529e-05
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.002832486055731952,
+              "fraction_of_all_inferior_mass": 0.6257407647947457,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "500": {
+          "mean_inferior_mass_all_ordinary": 0.0013746864857391563,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 0.00038095612774106144,
+              "fraction_of_all_inferior_mass": 0.277122188726708,
+              "fraction_of_adjudicable_inferior_mass": 1.0000000000000082
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0,
+              "fraction_of_all_inferior_mass": 0.0,
+              "fraction_of_adjudicable_inferior_mass": 0.0
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0,
+              "fraction_of_all_inferior_mass": 0.0,
+              "fraction_of_adjudicable_inferior_mass": 0.0
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.000993730357998098,
+              "fraction_of_all_inferior_mass": 0.7228778112732943,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        },
+        "1000": {
+          "mean_inferior_mass_all_ordinary": 0.0005163503768877607,
+          "outcomes": {
+            "confirmed": {
+              "mean_mass_all_ordinary": 7.747937243489447e-05,
+              "fraction_of_all_inferior_mass": 0.15005193353763385,
+              "fraction_of_adjudicable_inferior_mass": 1.0000000000000027
+            },
+            "contradicted": {
+              "mean_mass_all_ordinary": 0.0,
+              "fraction_of_all_inferior_mass": 0.0,
+              "fraction_of_adjudicable_inferior_mass": 0.0
+            },
+            "ties": {
+              "mean_mass_all_ordinary": 0.0,
+              "fraction_of_all_inferior_mass": 0.0,
+              "fraction_of_adjudicable_inferior_mass": 0.0
+            },
+            "unscored": {
+              "mean_mass_all_ordinary": 0.0004388710044528665,
+              "fraction_of_all_inferior_mass": 0.8499480664623665,
+              "fraction_of_adjudicable_inferior_mass": null
+            }
+          }
+        }
+      },
+      "gap_discrepancy_fraction_comparable": 0.8274556924001202,
+      "bt4_top_gt300_next_lower_le300_fraction_ordinary": 0.002348658328929599,
+      "t300_vs_bt4": {
+        "ordinary_rows": 17031,
+        "changed_rows": 1525,
+        "mean_moved_mass_all_ordinary": 0.00047097458429525506,
+        "mean_moved_mass_changed": 0.005259782390250812,
+        "mean_regret_delta_common_valid": -0.9709798293922001,
+        "mean_coverage_delta_common_final_valid": 0.00014020264809311595,
+        "mean_regret_delta_changed_common_valid": -10.874462710743982,
+        "mean_coverage_delta_changed_common_final_valid": 0.0015701958191968906
+      }
+    }
+  },
+  "cluster_bootstrap": {
+    "seed": 20260911,
+    "resamples": 1000,
+    "estimates": {
+      "inferior_mass_300/ordinary": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          0.05849776389807016,
+          0.06350804933320403
+        ]
+      },
+      "confirmed_mass_300/ordinary": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          0.01962198178387582,
+          0.02143998617188993
+        ]
+      },
+      "contradicted_mass_300/ordinary": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          0.0025840383931632644,
+          0.0033181636131859025
+        ]
+      },
+      "unscored_mass_300/ordinary": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          0.034542249255545734,
+          0.03748488389460752
+        ]
+      },
+      "pair_regret_delta/pair_regret_rows": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          -52.69819238506595,
+          -43.6349517642831
+        ]
+      },
+      "changed_pair_regret_delta/changed_pair_regret_rows": {
+        "valid_resamples": 1000,
+        "percentile_95": [
+          -755.7952879702377,
+          -634.481471977214
+        ]
+      }
+    }
+  },
+  "sufficient_statistics": {
+    "path": "game_cluster_sufficient_statistics.jsonl",
+    "sha256": "6c5f37cc505006f46177e7667b6436c0b376c1bc74eb58206db72f3fb2cc9213"
+  },
+  "limitations": [
+    "Intervals resample source-qualified games conditional on frozen teacher/checkpoint/data and observed narrowed rosters; not training-seed uncertainty or Elo.",
+    "Unscored inferior mass is unknown, not safe or harmful. Regret is equal-row conditional on covered policy mass and comparison uses common valid rows.",
+    "Strata overlap and are descriptive; no threshold selection or tuning performed.",
+    "Mate-domain d9 rows are excluded from ordinary policy metrics; malformed baseline would have made source audit fail, not disappeared from this union."
+  ]
+}
