@@ -695,11 +695,16 @@ def verify_schedule(report, *, prospective, m=None):
                       f'{role}: ordered source/game schedule differs')
 
 
+def epoch_workers(m):
+    """Execution concurrency only; the frozen trainer still determines the schedule."""
+    return 2 if m.get('profile') == DOWNSIDE_PROFILE else 16
+
+
 def train_command(m):
     python = arena.read(m['runtime_manifest']['path'])['runtime']['executable']
     return [python, 'scripts/lc0_control_train.py', '--config', 'configs/lc0_positive_control.yaml',
             '--shards', str(corpus_for(m)), '--out-dir', m['run'], '--steps', '0', '--batch-size', '512',
-            '--sampling-mode', 'game_epoch', '--epoch-plan-workers', '16', '--epoch-load-workers', '16',
+            '--sampling-mode', 'game_epoch', '--epoch-plan-workers', str(epoch_workers(m)), '--epoch-load-workers', str(epoch_workers(m)),
             '--seed', '0', '--device', 'cuda', '--train-window-steps', '88', '--allow-invalid-control']
 
 
@@ -713,8 +718,8 @@ def completed_training(m, schedule_path):
     sampling = summary['sampling']
     expected = {'mode': 'game_epoch', 'complete': True, 'seed': 0, 'batch_size': 512,
                 'rows_planned': 18910484, 'rows_realized': 18910484, 'batches_planned': 36935,
-                'batches_realized': 36935, 'shards': 2309, 'games': 97968, 'plan_workers': 16,
-                'load_workers': 16, 'same_game_repeats_max': 0, 'decoded_rows_resident': 0}
+                'batches_realized': 36935, 'shards': 2309, 'games': 97968, 'plan_workers': epoch_workers(m),
+                'load_workers': epoch_workers(m), 'same_game_repeats_max': 0, 'decoded_rows_resident': 0}
     arena.require(all(sampling.get(k) == v for k, v in expected.items()), 'incomplete/mismatched exact epoch')
     arena.require(sampling['plan_sha256'] == sampling['realized_sha256'] == arm['physical_plan_sha256'],
                   'actual staging and realized training schedule differ')

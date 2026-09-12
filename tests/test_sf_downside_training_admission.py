@@ -87,4 +87,32 @@ def test_downside_registered_training_only_contract(tmp_path, monkeypatch, defec
     actual = epoch.train_command(m)
     original = epoch.train_command(training_only_manifest(tmp_path))
     actual[actual.index("--shards") + 1] = original[original.index("--shards") + 1]
+    for flag in ('--epoch-plan-workers', '--epoch-load-workers'):
+        assert actual[actual.index(flag) + 1] == '2'
+        assert original[original.index(flag) + 1] == '16'
+        actual[actual.index(flag) + 1] = '16'
     assert actual == original
+
+
+@pytest.mark.parametrize('workers', [2, 16])
+def test_downside_completion_requires_actual_selected_worker_settings(tmp_path, workers):
+    import json
+    from tests.test_bt4_one_epoch_screen import training_fixture
+    m = training_only_manifest(tmp_path)
+    m['profile'] = epoch.DOWNSIDE_PROFILE
+    run, summary, report = training_fixture(tmp_path)
+    corpus = epoch.corpus_for(m)
+    summary['corpus']['shard_dirs'] = [str(corpus)]
+    summary['sampling'].update(plan_workers=workers, load_workers=workers)
+    report['arms'][epoch.DOWNSIDE_PROFILE] = report['arms'].pop('E0T05')
+    arm = report['arms'][epoch.DOWNSIDE_PROFILE]
+    arm['corpus'] = str(corpus)
+    (run / 'summary.json').write_text(json.dumps(summary))
+    arm['summary_sha256'] = epoch.arena.sha(run / 'summary.json')
+    path = tmp_path / 'schedule.json'
+    path.write_text(json.dumps(report))
+    if workers == 16:
+        with pytest.raises(ValueError, match='incomplete/mismatched exact epoch'):
+            epoch.completed_training(m, path)
+    else:
+        assert epoch.completed_training(m, path)['complete'] is True
