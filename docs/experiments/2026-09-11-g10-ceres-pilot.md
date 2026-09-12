@@ -166,8 +166,8 @@ The actual diagnostic completed in 509.61 seconds with 1,999,496 KiB peak RSS; r
 
 Full WDL losses do not isolate the search quantity `Q = W − L`: draw-probability
 errors also contribute. This readout therefore does not rank heads by search
-value quality. A possible Q-versus-draw decomposition is being assessed separately;
-it is not a completed result or new fitted recipe in this publication.
+value quality. The subsequent Q-versus-draw decomposition below addresses this distinction;
+it remains agreement with the SF ruler and does not fit a new recipe.
 
 The [full value readout](evidence/g10-ceres-value-readout-20260912.json) preserves
 all fixed strata, common paired differences and the near-zero tolerance. The
@@ -183,3 +183,42 @@ independent source reviews supported the bounded research run. Whole-repository
 type checks timed out and remain unresolved; a completed data diagnostic does
 not turn those checks into a passing upstream validation. The existing source,
 failed collection evidence and current CPU materialization are unchanged.
+
+## Completed Q/draw decomposition, September 12
+
+The decomposition confirms that most neural-versus-SF WDL Brier disagreement is draw-mass disagreement on this sample. MCTS consumes Q=W-L; WDL Brier by itself does not quantify scalar-Q error. This remains agreement with the same SF-derived ruler, not independent Q accuracy or Elo.
+
+All 23,993 included rows reproduce all six prior banked losses. The 8,775 d9 mate-domain rows remain excluded and retain their original identities with null unavailable d9 scores in the new bank. The fixed balanced stratum contains 2,250 included rows.
+
+For normalized WDL, Brier = 0.5*(Qprediction-Qruler)^2 + 1.5*(Dprediction-Druler)^2. The draw share below is the share of summed Brier, not an average of per-row ratios.
+
+| Fixed prediction | Q MSE, all | Draw share of Brier, all | Q MSE, balanced | Draw share, balanced |
+| --- | ---: | ---: | ---: | ---: |
+| Saved SF | 0.000405 | 35.88% | 0.000835 | 9.77% |
+| Native BT4 | 0.014579 | 78.70% | 0.038686 | 92.51% |
+| Ceres primary T0.55 | 0.023565 | 76.06% | 0.063453 | 91.10% |
+| Ceres secondary T1.5 | 0.019216 | 73.14% | 0.067674 | 87.08% |
+| Ceres dual 60/40 | 0.021567 | 74.97% | 0.064021 | 89.75% |
+| Registered SF50/BT425/Ceres25 | 0.004344 | 76.85% | 0.011858 | 91.49% |
+
+In the balanced stratum, the ruler's mean draw probability is 0.339029; native BT4 predicts 0.657477, Ceres primary 0.725489, secondary 0.623582 and dual 0.684727. These probabilities differ materially under the fixed teacher mappings; game-outcome calibration was not measured. Draw disagreement contributes 92.51% of BT4's balanced Brier, 91.10% of primary's, 87.08% of secondary's and 89.75% of dual's.
+
+The earlier lower cross-entropy of secondary versus primary does not translate into uniformly better scalar agreement: on balanced rows primary Q MSE is 0.063453 versus secondary 0.067674. Across all included rows secondary instead has lower Q MSE, 0.019216 versus primary 0.023565. Native BT4 has lower Q MSE than either on both fixed cohorts. This is descriptive evidence about these fixed temperatures and the SF ruler; it selects no new head, mixture or temperature and does not displace registered training anchors.
+
+The machine readout retains signed Q/draw errors, prediction means and p05/p25/p50/p75/p95 quantiles for all prior fixed strata. A compact bank preserves original source-qualified identities, inclusion, strata, ruler Q/D and the six actual prediction Q/D pairs, so future decompositions need not reread arrays.
+
+Authentication and limits: original SF search_wdl hashes were witnessed now under unchanged storage stamps from the completed value audit. They are explicitly not historical payload hashes. Native BT4 and both Ceres heads matched their existing accepted decoded hashes and attributes. All six per-row Brier/CE losses matched the prior bank within maximum absolute difference 1.78e-15; the Brier decomposition residual was at most 5.01e-16. No raw FEN, history, feature/legal arrays, policy payloads, model or engine was read.
+
+One initial attempt stopped after 6.07 seconds because the reader incorrectly required float16 for native WDL; actual accepted native WDL is float32. That attempt read the first SF value array but no native payload or retained bank. The corrected, independently reviewed attempt read 983,040 decoded value bytes plus one retained-bank pass, completed in 42.27 seconds at 395,704 KiB peak RSS, and exited zero (session16452). Total execution was 48.34 seconds, within the original 120-second budget. Both attempts are retained. No inference, fit, bootstrap or raw-source join ran.
+
+The [full Q/draw readout](evidence/g10-value-q-draw-readout-20260912.json)
+is a byte-identical copy of the reviewed machine result, retaining all fixed
+strata and quantiles. [Compact provenance and execution receipts](evidence/g10-value-q-draw-progress-20260912.json)
+pin both attempts, the reviewed corrected plan, actual terminal and local Q/draw
+bank. Publication did not reread arrays or either row bank.
+
+A possible later controlled question is whether changing draw supervision while
+holding each target's Q fixed improves training. That would distinguish changes
+in draw supervision and shared-network learning from changes in scalar value
+targets. It is a hypothesis, not a queued experiment or validated improvement.
+The registered training anchors retain priority.
