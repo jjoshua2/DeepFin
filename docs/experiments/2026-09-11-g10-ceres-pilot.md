@@ -222,3 +222,75 @@ holding each target's Q fixed improves training. That would distinguish changes
 in draw supervision and shared-network learning from changes in scalar value
 targets. It is a hypothesis, not a queued experiment or validated improvement.
 The registered training anchors retain priority.
+
+
+## Completed same-move policy complementarity, September 12
+
+Ceres reduces mean probability on deeper-confirmed SF-flagged moves from
+**0.22032% to 0.13675% in balanced positions**, but increases it from **2.17833%
+to 2.30303% across all ordinary positions**. This measures teacher allocations
+relative to saved SF scores, not verified mistakes or Elo. About 60% of flagged
+mass cannot be adjudicated under the conservative criterion, and this four-shard
+prefix is not a representative sample of G10.
+
+The fixed comparison uses moves more than 300 cp below the d9 maximum, with BT4
+T0.5, Ceres T0.5 and their arithmetic 50/50 mixture measured on exactly the same
+sets. A constraint is confirmed only if every d9 winner still outranks that move
+in the saved final roster. Outranking any prior winner contradicts that conservative
+constraint; equality with the lowest winner is a tie. Missing the flagged move or
+any prior winner makes the outcome unavailable. Final mate-domain scores retain
+the existing ranking semantics and explicit flags.
+
+All 32,768 source rows were banked: 23,993 ordinary rows, 8,775 excluded d9
+mate-domain rows, and 167 source-qualified game groups. All earlier aggregate
+policy/value metrics match exactly. Included ordinary rows retain move indices,
+scores, availability, both teacher probabilities and existing row identities;
+future interpretation can reuse these observations without another raw join.
+
+| Fixed stratum | Rows | Mean flagged mass, BT4 / Ceres / arithmetic50 | Mean confirmed flagged mass, BT4 / Ceres / arithmetic50 |
+| --- | ---: | --- | --- |
+| All ordinary | 23,993 | 6.42126% / 6.84613% / 6.63369% | 2.17833% / 2.30303% / 2.24068% |
+| Balanced, abs(d9 best) <=100 cp | 2,250 | 0.49096% / 0.31315% / 0.40205% | 0.22032% / 0.13675% / 0.17854% |
+| Outside balanced | 21,743 | 7.03494% / 7.52217% / 7.27855% | 2.38095% / 2.52720% / 2.45407% |
+| Outside T300's gap gate | 22,247 | 4.65956% / 4.96639% / 4.81298% | 1.16181% / 1.21746% / 1.18963% |
+| Balanced, outside that gate | 2,006 | 0.47076% / 0.32313% / 0.39694% | 0.19344% / 0.14206% / 0.16775% |
+| Inside T300's gap gate | 1,746 | 28.86835% / 30.79710% / 29.83272% | 15.13056% / 16.13506% / 15.63281% |
+
+Each mean uses all ordinary rows in its stratum, including zero-flag rows; no
+renormalization over the final roster is applied. Arithmetic50 is necessarily
+halfway and supplies no independent evidence. On all ordinary rows, summed
+confirmed flagged mass changes from 522.6475 to 552.5655: Ceres removes 66.0001
+from the same moves but adds 95.9182 elsewhere within that confirmed set. Those
+sums are probability across positions, not counts of errors or games. In balanced
+rows, the corresponding mass falls from 4.9573 to 3.0769, with 2.7536 removed and
+0.8732 added: a 37.93% net reduction. One balanced contradicted constraint carries
+only 7.9434e-6 BT4 mass and 5.9301e-6 Ceres mass; there are no balanced tied constraints.
+
+Unavailable mass remains explicit: 915.0908 BT4 and 988.1030 Ceres summed across
+ordinary rows. Ceres therefore does not globally make an SF constraint redundant,
+while the balanced result shows complementary teacher allocations relative to the
+saved SF ruler. The gate-complement result establishes a distinct mechanism to
+consider: an all-move veto can act when several SF good moves are nearly tied,
+whereas T300 requires an isolated best-next-lower gap. Neither result establishes
+that applying a veto improves training. Keep the registered strength anchors;
+no threshold sweep, new training recipe or teacher promotion follows this readout.
+
+The independently reviewed, pinned source pass exited zero in 336.412 seconds
+(child 336.12 seconds, peak RSS 2,001,572 KiB), within the 900-second CPU-only
+budget. Its inherited terminal label still says VALUE_DIAGNOSTIC; the exact plan
+identifies complementarity, and the six value metrics were retained for consistency.
+One bank-only readout exited zero in 9.50 seconds at 36,900 KiB, verified the bank
+hash, row uniqueness, exact four-shard layout and arithmetic reconstruction within
+3.33e-16. It performed no inference, source-array reread, bootstrap or training.
+
+The [full fixed-stratum readout](evidence/g10-policy-complementarity-readout-20260912.json)
+and [original audit summary](evidence/g10-policy-complementarity-summary-20260912.json)
+are byte-identical copies of the completed artifacts. [Execution, validation and
+review evidence](evidence/g10-policy-complementarity-progress-20260912.json)
+pins the plan, runtime and local move bank. Runtime `5375064b56714b6b16f3a6c552efe75c7855386d`
+is on open [PR #659](https://github.com/jjoshua2/DeepFin/pull/659), stacked on
+[PR #655](https://github.com/jjoshua2/DeepFin/pull/655). Sixteen focused tests,
+scoped host types with zero findings, configured whole Ruff/Vulture and independent
+source/plan review passed. Related whole-project type timeouts remain unresolved;
+this main documentation publication does not merge that code stack or imply a
+whole-type pass. No active runtime was replaced.
