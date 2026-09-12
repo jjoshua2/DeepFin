@@ -1,0 +1,295 @@
+{
+  "schema": 1,
+  "scope": "Completed Downside300 production, dedicated corpus qualification and prospective schedule only; no training launch or playing result.",
+  "artifacts": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/execution/status.json",
+      "sha256": "cee8d30a217fbbedbbbc7a0b8db10914a030936651475c075227ad2c86af8897"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/execution/producer.resources",
+      "sha256": "f4fd256b15870cda363dcc154441f8af9fac24d794f73e0f397df1e93f9a251a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/independent_completed_review.json",
+      "sha256": "d58b43417016b97834d2e34015050be395a179dbcf92162b00f86d75f4f7a879"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/B100Downside300.dataset_qualification.json",
+      "sha256": "90f5fc130267d286aae42766f287d914df206be0c581617d875540734f9794e8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/corpus_qualification_v1/parent_terminal_observation.json",
+      "sha256": "6a77dc3759e933c35a8cc46fcb059b30c5b583baaa4271e83986b6e035b82990"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/prospective_schedule_v1/completed.json",
+      "sha256": "3db60423f4d85f447d782b8ec27643c54eb4e3cec6c4a53c7042655ade6885b7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/B100Downside300.prospective_schedule.json",
+      "sha256": "f56b5a7cccf87a0512ccaa08aeed30ace50cbf883d6b79f206989749306c9987"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/prospective_schedule_v1/resources.txt",
+      "sha256": "18a24558fc8d590734c8e538a922f586980f036706460d97712661dc616b0c53"
+    }
+  ],
+  "full_producer": {
+    "status": "PASS_FULL_PRODUCER_AND_METADATA_QUALIFICATION_NOT_TRAINING",
+    "started_unix": 1789238278.0829563,
+    "plan_sha256": "b943ff3b4c25ee176f92c82c117c0cc79b13a1c3a0573ed9f823b423881efedf",
+    "pid": 7761,
+    "argv": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "41370s",
+      "/usr/bin/time",
+      "-o",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/execution/producer.resources",
+      "-f",
+      "seconds=%e max_rss_kib=%M exit_code=%x",
+      "/tmp/deepfin-sf-allmove-downside/.venv/bin/python",
+      "/tmp/deepfin-sf-allmove-downside/scripts/sf_policy_rewrite.py",
+      "--raw",
+      "/home/josh/projects/chess/data/nnue_bootstrap/run03_s3",
+      "--source",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+      "--out",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1",
+      "--expected-source-summary-sha256",
+      "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "--tactical-bt4-source",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05",
+      "--expected-bt4-summary-sha256",
+      "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+      "--expected-bt4-mix-sha256",
+      "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+      "--tactical-recipe",
+      "allmove-downside300",
+      "--minimum-free-gib",
+      "150"
+    ],
+    "returncode": 0,
+    "rows": 18910484,
+    "raw_rows": 20000000,
+    "changed_rows": 11027097,
+    "summary_sha256": "bd523ea8efb37569ae3a308defb207896ba6087a686b553f7e6a4f7d4c252380",
+    "derive_summary_sha256": "ce1ce9dfb3637efee77bb4b8b56be3cba53158cd3675a46a20dce7430b6c3a1b",
+    "inherited_copied_file_proofs": 630213,
+    "qualification_scope": "Metadata and complete producer proofs; no repeated source/output payload scan",
+    "elapsed_seconds": 13298.722023248672
+  },
+  "independent_completed_review": {
+    "schema": 1,
+    "status": "PASS_COMPLETED_PRODUCER_METADATA_REVIEW_NOT_TRAINING_ADMISSION",
+    "reviewer": "sf_worker_concurrency",
+    "reviewed_utc": "2026-09-12T23:05:04.123471+00:00",
+    "scope": "Complete compact status/resource receipts and saved summary/proof metadata only. No source/output arrays or storage-tree proofs rehashed; no jobs launched or polled. Dedicated corpus qualifier is outside this review.",
+    "pins": {
+      "scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/plan.json": "b943ff3b4c25ee176f92c82c117c0cc79b13a1c3a0573ed9f823b423881efedf",
+      "scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/run.py": "6ab95def4cf5a79b35c9cb918ae3615543049b5d4501c0c1839c82998fe6e1b9",
+      "scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/execution/status.json": "cee8d30a217fbbedbbbc7a0b8db10914a030936651475c075227ad2c86af8897",
+      "scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/execution/producer.resources": "f4fd256b15870cda363dcc154441f8af9fac24d794f73e0f397df1e93f9a251a",
+      "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1/bt4_sf_downside_policy_summary.json": "bd523ea8efb37569ae3a308defb207896ba6087a686b553f7e6a4f7d4c252380",
+      "data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1/derive_targets_summary.json": "ce1ce9dfb3637efee77bb4b8b56be3cba53158cd3675a46a20dce7430b6c3a1b"
+    },
+    "counts": {
+      "rows": 18910484,
+      "shards": 2309,
+      "raw_limit": 20000000,
+      "rows_dropped_no_result": 1089516,
+      "changed_rows": 11027097,
+      "categories": {
+        "mate_domain_unchanged": 5172404,
+        "ordinary_downside": 13738080
+      }
+    },
+    "raw_file_proofs": 2410,
+    "copied_file_proofs_excluding_per_shard_attrs": 630213,
+    "recipe": {
+      "base": "normalized stored B100 float16 policy",
+      "cp_domain": [
+        -32000.0,
+        32000.0
+      ],
+      "flagged_relative_weight": 0.5,
+      "gap_cp_strictly_greater_than": 300.0,
+      "mate_handling": "any-mate-domain-row-unchanged",
+      "roster": "all original legal d9 moves; no next-best gate",
+      "storage": "float64 weighting -> float32 -> float16; zero flagged mass preserves bytes"
+    },
+    "algorithm": "stored-b100-allmove-sf-gapgt300-weight0.5-ordinary-v1",
+    "sources": {
+      "raw_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run03_s3",
+      "sf_source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+      "source_dir": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05",
+      "sf_derive_summary_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "source_derive_summary_sha256": "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+      "source_policy_summary_sha256": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+      "raw_history_keys_sha256_in_emitted_order": "f3bd50a6d75cb8202d338e2ce54aff5a3dc9a678722d47f6b0a5875e83c4bb63"
+    },
+    "storage_diagnostics": {
+      "stored_support_losses": 3,
+      "stored_relative_error_max": 1.0,
+      "stored_TV_error_max": 0.00022233094886907535,
+      "stored_mass_error_max": 0.00045037269592285156
+    },
+    "producer_resource_receipt": "seconds=13278.11 max_rss_kib=698756 exit_code=0",
+    "operator_elapsed_seconds": 13298.722023248672,
+    "producer_internal_elapsed_seconds": 13193.037562591,
+    "checks": [
+      "Recipe, source summary pins, full counts, all 2309 ordered shard summaries and canonical original layout agree.",
+      "All 630213 copied-file proof hashes have expected sixteen nonpolicy columns; both original SF and B100 source storage witness digests and output/source policy digests are present.",
+      "Raw proofs consume exactly 20M physical rows; retained/drop accounting and category totals agree.",
+      "Derive summary binds the exact full policy postprocess metadata; only policy_target declared mutated.",
+      "Actual return code zero and elapsed time satisfy producer/operator bounds.",
+      "Frozen producer and published pilot/full registration do not require zero support loss; producer requires finite stored policy mass error <= 2^-10."
+    ],
+    "limitations": [
+      "Three positive move entries rounded to zero after float32/float16 storage, not necessarily three distinct rows. Therefore full-corpus support is not exactly preserved. Maximum relative storage error is 1.0; maximum normalized total variation error is 0.00022233094886907535. Pilot zero-loss result must not be generalized.",
+      "Peak 698756 KiB RSS is the timed producer only; it does not establish aggregate host peak or the earlier reboot cause.",
+      "Source historical-control and score-bound limitations remain; original value targets and nonpolicy proof identity are retained. No strength, new value target or training admission claim."
+    ],
+    "findings": []
+  },
+  "dataset_qualification": {
+    "schema": 1,
+    "status": "PASS_REGISTERED_CORPUS_QUALIFICATION",
+    "profile": "B100Downside300",
+    "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1",
+    "rows": 18910484,
+    "shards": 2309,
+    "source": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+      "derive_sha256": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef"
+    },
+    "derive_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1/derive_targets_summary.json",
+      "sha256": "ce1ce9dfb3637efee77bb4b8b56be3cba53158cd3675a46a20dce7430b6c3a1b"
+    },
+    "rewrite_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1/bt4_sf_downside_policy_summary.json",
+      "sha256": "bd523ea8efb37569ae3a308defb207896ba6087a686b553f7e6a4f7d4c252380"
+    },
+    "materialization_status": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/execution/status.json",
+      "sha256": "cee8d30a217fbbedbbbc7a0b8db10914a030936651475c075227ad2c86af8897"
+    },
+    "plan_sha256": "6c8f9196f755dff4f7d506b4e19d80c126549e53e3a6bc7c07561344c9622352",
+    "inspector_sha256": "2163b77d8b684f5b11e315124182c72983ecbbb3a0e48d225a70a5a4b88cc31d",
+    "metadata": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/corpus_qualification_v1/completed_metadata.jsonl",
+      "sha256": "2aaa70cabd9e87b5c39db6abf33bdc5baf6327ebaaf12443d2292144dfbae2a5",
+      "bytes": 7280277
+    },
+    "completed_unix": 1789254156.8032253,
+    "elapsed_seconds": 25.590795278549194,
+    "scope": "Actual merged recipe admission plus final metadata/layout/stat stability; relies on completed producer all-row legal joins and16 nonpolicy byte-copy proofs, no repeated payload read/history re-encoding. Prospective original-runtime schedule and training manifest remain separate."
+  },
+  "prospective_schedule_completion": {
+    "status": "PASS_PROSPECTIVE_B100Downside300_SCHEDULE",
+    "started_unix": 1789254355.6682212,
+    "ended_unix": 1789254657.1882765,
+    "wall_seconds": 301.43800592422485,
+    "exit_code": 0,
+    "report": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/B100Downside300.prospective_schedule.json",
+      "sha256": "f56b5a7cccf87a0512ccaa08aeed30ace50cbf883d6b79f206989749306c9987"
+    },
+    "plan_sha256": "2e577955456f272c946f00e76dac2d959dd618e66520890fd58286b8938a400c",
+    "all_input_pins_unchanged": true,
+    "canonical": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+    "source_plan": {
+      "batch_size": 512,
+      "batches_planned": 36935,
+      "full_batches_planned": 36699,
+      "game_identity": "resolved_shard_parent+game_id",
+      "games": 97968,
+      "min_batch_rows_planned": 511,
+      "mode": "game_epoch",
+      "plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+      "ragged_batches_planned": 236,
+      "row_order": "seeded_shuffle_within_shard_game_segments",
+      "rows_planned": 18910484,
+      "seed": 0,
+      "shards": 2309,
+      "sources": 1
+    },
+    "arms": {
+      "B100Downside300": {
+        "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+        "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1",
+        "metadata_matches_source": true,
+        "physical_plan_sha256": "24248a049c5ac8e76bfaa3a643a12e2fccaa0cb1853edb59e19be39651dfb25f",
+        "staging": "prospective only",
+        "training_completion_verified": false
+      },
+      "C": {
+        "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+        "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05",
+        "metadata_matches_source": true,
+        "physical_plan_sha256": "70063ded8e105f34bd8012001a49f506d256eaebefa1261345feae0983b5dd34",
+        "staging": "verified actual",
+        "summary_sha256": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+        "training_completion_verified": true
+      }
+    },
+    "runtime": {
+      "numpy": "1.26.2",
+      "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+      "torch": "2.11.0+cu128"
+    },
+    "gpu_used": false,
+    "limits": [
+      "No feature/target decoding or identity check; unchanged non-policy rows require separate mixer provenance.",
+      "Plan hashes cover game choices and shard paths, not per-row offsets; row-order equality is a code-backed inference.",
+      "Historical NumPy version without a banked runtime stamp remains unknown.",
+      "An unfinished run or prospective corpus is not realized training evidence."
+    ]
+  },
+  "prospective_schedule_report_omissions": "Ordered source column digests and physical paths remain in the externally pinned full report; compact completion retains canonical schedule, arms, runtime and limitations.",
+  "stage_terminal_observations": {
+    "producer": {
+      "schema": 1,
+      "kind": "PARENT_REPORTED_CAPTURED_TOOL_TERMINAL_OBSERVATION",
+      "exit_code": 0,
+      "root_exec_session": 99948,
+      "sole_observer": 21,
+      "observer_closed": true,
+      "reported_tool_wall_time_seconds": 47.020979599,
+      "reported_tool_output": "",
+      "recorded_unix": 1789254014.7460098,
+      "evidence_origin": "Parent /root explicitly reported captured tool result in current task message. This is an assistant-recorded parent observation, not a machine-generated producer terminal receipt.",
+      "producer_status": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/execution/status.json",
+        "sha256": "cee8d30a217fbbedbbbc7a0b8db10914a030936651475c075227ad2c86af8897"
+      },
+      "producer_end_unix_from_status": 1789251576.8049796,
+      "limitation": "Tool return observation time differs from actual producer completion time; status provides start and elapsed duration."
+    },
+    "dedicated_qualifier": {
+      "owner_root": 18111,
+      "sole_cell": 194,
+      "terminal_exit_code": 0,
+      "source": "Parent observed owner terminal; actual dedicated qualification receipt independently read. The parent_terminal_observation.json stored in the qualifier directory instead describes the earlier producer terminal."
+    },
+    "schedule": {
+      "owner_root": 71490,
+      "sole_cell": 200,
+      "terminal_exit_code": 0,
+      "source": "Parent observed owner terminal; actual completed receipt and report binding independently read."
+    }
+  },
+  "interpretation": {
+    "training_launched": false,
+    "selected_training_plan_workers": 2,
+    "selected_training_load_workers": 2,
+    "next": "Finish frozen training runtime/manifest and host readiness; separately launch the registered one-epoch comparison.",
+    "support_loss_unit": "Three positive legal move entries, not necessarily three rows. Storage rounding prevents exact support preservation.",
+    "unchanged_nonpolicy": "Sixteen arrays, including original SF value targets, backed by complete producer copy proofs.",
+    "memory": "Producer maximum RSS 698756 KiB and schedule maximum RSS 715416 KiB are individual timed process observations, not aggregate host peaks.",
+    "strength": "No new training, value blend, playing-strength or promotion evidence."
+  }
+}

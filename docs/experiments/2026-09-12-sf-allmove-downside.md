@@ -1,6 +1,6 @@
 # One all-move SF downside candidate
 
-Status: the pilot passed. A host reboot interrupted the first full preparation; a fresh unchanged-producer rebuild launched September 12 at 18:37:58 UTC with lower memory limits. Completion and training admission remain pending; no new playing result.
+Status: the complete 18,910,484-row rebuild, dedicated corpus qualification and prospective original-runtime schedule passed. The selected 2/2-worker training launch is being prepared; no Downside checkpoint or playing result yet.
 
 For normalized stored B100 policy (BT4 temperature 0.5), multiply each legal move
 with a raw d9 deficit strictly greater than 300 cp by 0.5, leave the others at 1,
@@ -224,3 +224,58 @@ runtime or training job is changed by this amendment.
 [Memory observations and frozen-sampler fixture evidence](evidence/downside-training-memory-20260912.json)
 retain the completed RSS receipts and the synthetic 16/16 versus 2/2 ordered-row
 comparison. These checks do not measure full-training memory savings.
+
+
+## Completed rebuild and prospective schedule
+
+The unchanged-producer `full_v2` rebuild completed successfully after 13,298.722
+seconds (about 3 hours 42 minutes), within its 12-hour allocation. It retained
+18,910,484 rows in 2,309 shards from 20,000,000 physical rows, with the original
+1,089,516 no-result omissions. It changed 11,027,097 stored policies. The recipe
+classified 13,738,080 rows as ordinary and left all 5,172,404 mate-domain rows
+unchanged. This is the registered >300 cp half-weight intervention, without a new
+threshold, dose or value blend.
+
+All sixteen nonpolicy arrays, including the original SF value targets, retained
+their producer byte-copy proofs: 630,213 copied-file hashes excluding per-shard
+attributes. The original canonical shard layout and the full policy postprocess
+binding agree. The completed summary is `bd523ea8…`; its derived-corpus summary is
+`ce1ce9df…`. The independent completion review checked saved metadata and complete
+proof counts; it did not repeat raw joins or payload scans.
+
+Float16 storage lost **three positive move entries**, not necessarily three rows.
+Maximum relative storage error was 1.0, maximum normalized total variation error
+was 0.000222331, and maximum stored mass error was 0.000450373. The frozen producer's
+finite/mass check passed; the registration did not require zero support loss.
+The first-shard pilot's zero-loss result therefore does not extend to the full
+corpus. Within-set odds and support describe the ideal recipe, subject to these
+recorded storage effects.
+
+The dedicated registered-corpus qualifier subsequently passed in 25.591 seconds
+(receipt `90f5fc13…`). It bound the actual completed summaries, admitted the exact
+recipe, and checked final metadata, layout and storage-stat stability. It relies
+on the producer's complete legal-move joins and nonpolicy copy proofs, with no
+second payload scan or history re-encoding.
+
+The prospective schedule then passed in 301.438 seconds, with report
+`f56b5a7c…` and canonical schedule `dc687fc3…`: seed zero, batch size 512,
+18,910,484 rows, 97,968 games and 36,935 batches (36,699 full and 236 ragged).
+The candidate matches the original canonical plan and the already completed C
+reference's canonical schedule; different physical corpus paths have different
+physical plan hashes. C is a schedule witness, while B100 remains the registered
+playing control. Ordered source game columns and the pinned scheduler support the
+row-order inference; the plan digest does not directly hash every row offset.
+The historical unstamped NumPy version remains unknown, and this prospective
+receipt is not realized Downside training evidence.
+
+The timed producer reported 698,756 KiB maximum RSS; the schedule verifier reported
+715,416 KiB. These individual measurements do not establish aggregate host peaks
+or explain the earlier reboot. The interrupted first preparation remains preserved
+and unused. The next step is the already registered one-epoch comparison using two
+planner and two loader workers, after final frozen runtime/manifest and host
+readiness checks. Training has not launched in this record.
+
+[Compact completion, qualification and schedule evidence](evidence/sf-allmove-downside-completed-20260912.json)
+includes exact external artifact pins, complete small receipts, the independent
+readout and scope limitations. No new playing-strength conclusion follows from
+successful data preparation.
