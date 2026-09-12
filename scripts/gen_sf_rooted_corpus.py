@@ -250,7 +250,7 @@ import time
 from collections import Counter, OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -845,9 +845,12 @@ class PhaseResult:
     depth_requested: int
     searchmoves: tuple[str, ...] | None
     parse: StreamParse
+    extension_stop_reason: str | None = None
 
     def as_row(self) -> dict[str, Any]:
         return {
+            **({"extension_stop_reason": self.extension_stop_reason}
+               if self.extension_stop_reason is not None else {}),
             "index": self.index,
             "width_requested": self.width_requested,
             "width_realized": self.width_realized,
@@ -1405,6 +1408,34 @@ class StaircaseSearcher:
         candidates: list[str] = legal
         gate_decision: StaircaseGateDecision | None = None
         for index, phase in enumerate(self.staircase):
+            if index:
+                previous = results[-1]
+                previous_block, _ = deepest_block_with_width(
+                    previous.parse.blocks, want=previous.width_realized,
+                )
+                expected = set(legal if previous.searchmoves is None else previous.searchmoves)
+                moves = [pv.move for pv in previous_block.lines]
+                valid_roster = (
+                    previous_block.complete
+                    and len(moves) == previous.width_realized
+                    and len(set(moves)) == len(moves)
+                    and set(moves) <= expected
+                    and (previous.searchmoves is None or set(moves) == expected)
+                    and expected <= set(legal)
+                    and [pv.rank for pv in previous_block.lines] == list(range(1, len(moves) + 1))
+                    and all(math.isfinite(pv.effective_cp) for pv in previous_block.lines)
+                )
+                if not valid_roster:
+                    # Keep the observed phase and anomalies; never turn duplicate
+                    # rank snapshots into a deduplicated or repaired search request.
+                    results[-1] = replace(previous, extension_stop_reason="invalid_candidate_roster")
+                    if self.staircase_policy == STAIRCASE_POLICY_G10 and index == len(self.staircase) - 1:
+                        gate_decision = StaircaseGateDecision(
+                            margin_cp=None, extended=False, reason="invalid_candidate_roster",
+                            decision_depth_observed=previous_block.depth,
+                        )
+                    break
+                candidates = moves
             if (
                 self.staircase_policy == STAIRCASE_POLICY_G10
                 and index == len(self.staircase) - 1
@@ -1472,7 +1503,6 @@ class StaircaseSearcher:
             )
             results.append(result)
             self.stats.add_phase(result)
-            candidates = [pv.move for pv in block.lines]
         self.stats.search_s += time.perf_counter() - started
         self.stats.positions += 1
         if gate_decision is not None:
