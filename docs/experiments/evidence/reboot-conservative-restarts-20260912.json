@@ -1,0 +1,119 @@
+{
+  "status": "RESTART_LAUNCH_OBSERVATIONS_NOT_COMPLETION",
+  "refs": {
+    "old_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v1/plan.json",
+      "sha256": "da95a02d5e3f5a0bc53573d3f25622496b1804889b11f06569f6d1c97715001e"
+    },
+    "old_status": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v1/execution/status.json",
+      "sha256": "10d7604ecda8c45c0c404818c57636d239de426929f4f64d18f6d7e6ef19722e",
+      "snapshot_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/reboot_recovery_20260912_v1/old_status_snapshot.json"
+    },
+    "new_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/plan.json",
+      "sha256": "b943ff3b4c25ee176f92c82c117c0cc79b13a1c3a0573ed9f823b423881efedf"
+    },
+    "new_operator": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/run.py",
+      "sha256": "6ab95def4cf5a79b35c9cb918ae3615543049b5d4501c0c1839c82998fe6e1b9"
+    },
+    "new_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/independent_review.json",
+      "sha256": "caa36bd2ede0c75622c8d15f437ec085a04562a2d388ba3177a96d7921b5b431"
+    },
+    "new_status": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/execution/status.json",
+      "sha256": "ced9440cef0de247611e4025f152b024d0e7ff4c25671ce619d18ca25e7cc7f5",
+      "snapshot_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/reboot_recovery_20260912_v1/new_status_snapshot.json"
+    },
+    "label_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_wdl_reboot_20260912/preparation.json",
+      "sha256": "82691cb913e6c096f700aa92ee209a7eddc4a9a273859d530a904614de61e519"
+    },
+    "label_driver": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_wdl_reboot_20260912/driver.sh",
+      "sha256": "d0b5a767fd988293e3f25722fc84de8dfcfaf7896e318763bfa7ac09a0647adb"
+    },
+    "label_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_wdl_reboot_20260912/independent_review.json",
+      "sha256": "aee276b7aecc36c2fe0ee9ee268ff28da8568def245fea699283f653acfe2628"
+    },
+    "label_launch": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_g10_raw_wdl_reboot_20260912/launch.json",
+      "sha256": "8793d79b75d1cf55fa48318bfd46785340881d5a0b44f771ee5493f7fb007355"
+    }
+  },
+  "reboot_utc": "2026-09-12T18:21:05Z",
+  "cause": "unconfirmed; user suspected memory exhaustion",
+  "preserved_partial": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1.writing.interrupted-20260912T182105Z",
+  "partial_directories_parent_observed": 2058,
+  "expected_shards": 2309,
+  "partial_scope": "Directory count only; no complete producer summary or qualification. Parent preserved old partial; no old work admitted.",
+  "new_started_unix": 1789238278.0829563,
+  "new_status_snapshot": {
+    "status": "RUNNING",
+    "started_unix": 1789238278.0829563,
+    "plan_sha256": "b943ff3b4c25ee176f92c82c117c0cc79b13a1c3a0573ed9f823b423881efedf",
+    "pid": 7761,
+    "argv": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "41370s",
+      "/usr/bin/time",
+      "-o",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/full_v2/execution/producer.resources",
+      "-f",
+      "seconds=%e max_rss_kib=%M exit_code=%x",
+      "/tmp/deepfin-sf-allmove-downside/.venv/bin/python",
+      "/tmp/deepfin-sf-allmove-downside/scripts/sf_policy_rewrite.py",
+      "--raw",
+      "/home/josh/projects/chess/data/nnue_bootstrap/run03_s3",
+      "--source",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m",
+      "--out",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1",
+      "--expected-source-summary-sha256",
+      "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+      "--tactical-bt4-source",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05",
+      "--expected-bt4-summary-sha256",
+      "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+      "--expected-bt4-mix-sha256",
+      "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+      "--tactical-recipe",
+      "allmove-downside300",
+      "--minimum-free-gib",
+      "150"
+    ]
+  },
+  "label_launch": {
+    "pid": 7840,
+    "started_unix": 1789238292.7901332,
+    "command": [
+      "/bin/bash",
+      "/home/josh/projects/chess/scratchpad/bt4_g10_raw_wdl_reboot_20260912/driver.sh"
+    ],
+    "scope": "Conservative reboot recovery; batch128 threads2 GPU allowance8GiB"
+  },
+  "parent_initial_observation": {
+    "utc_approx": "2026-09-12T18:38:50Z",
+    "producer_rss_kib": 270240,
+    "label_coordinator_rss_kib": 620740,
+    "wsl_available_gib_approx": 94,
+    "swap_used": 0,
+    "gpu_used_mib": 3003,
+    "gpu_utilization_percent": 3,
+    "limitation": "Initial samples, not peaks; inference not yet observed."
+  },
+  "label_pause": {
+    "observed": true,
+    "marker_mtime_unix": 1789238421.5467107,
+    "pause_requested_by": "parent",
+    "driver_fail_present": false,
+    "log_tail": "[bt4-raw] caught up: 6957 closed shards across 2 sources; [bt4-g10 2026-09-12T18:40:21Z] paused cleanly",
+    "backfill": false,
+    "existing_policy_only_rows": 35436868
+  }
+}

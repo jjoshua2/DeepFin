@@ -1,6 +1,6 @@
 # One all-move SF downside candidate
 
-Status: the 8,192-row pilot passed, and full CPU corpus preparation launched September 12 at 12:32:49 UTC. Full completion and training admission are pending; no new playing result. The registered Ceres value comparisons retain priority.
+Status: the pilot passed. A host reboot interrupted the first full preparation; a fresh unchanged-producer rebuild launched September 12 at 18:37:58 UTC with lower memory limits. Completion and training admission remain pending; no new playing result.
 
 For normalized stored B100 policy (BT4 temperature 0.5), multiply each legal move
 with a raw d9 deficit strictly greater than 300 cp by 0.5, leave the others at 1,
@@ -150,3 +150,47 @@ extension, threshold/dose fit, promotion or seed replication follows. A positive
 estimate alone does not establish a gain, and one reused development panel cannot
 resolve training-seed variance. Preserve failed runs; invalid qualification or
 incomplete training/matches do not provide a negative scientific verdict.
+
+## September 12 reboot and conservative restart
+
+The host rebooted around 18:21:05 UTC, interrupting the first full preparation
+after roughly 5 hours 48 minutes. Memory exhaustion was suspected by the user;
+the cause is unconfirmed. The stale RUNNING receipt is retained, not a completion.
+The parent preserved 2,058 partial directories out of the expected 2,309 at
+`data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1.writing.interrupted-20260912T182105Z`.
+Directory counts do not qualify those shards; there is no completed producer
+summary. They are not reused or admitted to training.
+
+The fresh `full_v2` attempt launched at 18:37:58 UTC with unchanged producer
+`b39a5d589…` and recipe, plan `b943ff3b…`. Its new 12-hour allocation is explicit,
+not a continuation hiding the interrupted work. CPU affinity remains 4,5 with two
+numerical threads and no GPU; address space is reduced from 8 to 4 GiB. The owned
+supervisor checks at least 32 GiB Linux MemAvailable before launch and every two
+seconds while the producer runs. Existing STOP, process-group cleanup, 150 GiB
+disk reserve and 64 GiB sampled output bounds remain. Address space is a hard
+virtual-memory bound, not an RSS measurement or proof that the full run fits.
+
+The existing raw BT4 policy/WDL labeling controller was separately restarted at
+18:38:12 UTC in a fresh namespace. Its frozen PR580-overlay runtime, original
+source/output identities, registry, driver lock and shared GPU lease remain.
+Batch size/ORT threads/GPU allocator allowance change from 1,024/16/24 GiB to
+128/2/8 GiB. At least 32 GiB available RAM is required before each group of at
+most 16 shards and before final verification. This is a group-boundary check,
+not continuous RSS enforcement; the GPU allowance caps neither CPU RAM nor total
+device use. Different inference batch sizes are not claimed bitwise identical.
+CPU Stockfish generators remain stopped pending separate safe recovery.
+
+An initial parent observation around 18:38:50 UTC saw producer RSS 270,240 KiB,
+label coordinator RSS 620,740 KiB, about 94 GiB WSL memory available, no swap use
+and GPU usage 3,003 MiB / 3%. These are startup samples, not peaks; collector
+inference had not yet been observed. Neither launch proves completed labels or
+a completed corpus. [Compact launch evidence and receipt pins](evidence/reboot-conservative-restarts-20260912.json)
+preserve the interruption and independent static reviews.
+
+The restarted label controller found all 6,957 closed shards already caught up.
+With SF generation held, the parent requested a clean boundary pause rather than
+repeat idle inventory scans. `driver.paused` appeared at 18:40:21 UTC, the log
+reported “paused cleanly,” and no failure marker was present. This restart produced
+no claimed new labels: backfill was false and 35,436,868 existing policy-only rows
+remain without native WDL. Generation stays held pending safe preservation of
+open tails and a reduced-worker recovery plan.
