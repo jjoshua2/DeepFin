@@ -93,3 +93,34 @@ All three existing producers exited zero. B100 policy materialization took 104.0
 Both value writers consumed the same actual post-publication B100 derive/policy hashes and original teacher metadata. Their source, native feed/content, provenance, nonvalue preservation and publication checks passed. All 32 paired output-shard WDL digests differ, confirming that the adaptive SF input reached the real output. This does **not** establish that every row differs: each writer's `changed_rows=262079` counter is relative to original B100, not to the other value product. Maximum stored WDL mass error was 0.0003662109375 for each product.
 
 Independent completed-receipt review passed without repeating payload checks. [Compact materialization evidence](evidence/g10-value-readiness-20260911/value-materialization-run06.json) records all source/output summary pins and timings. The products remain integration artifacts, not a qualified training comparison or evidence of stronger values. Further G10 expansion or donor-mode implementation is deferred until its expected value warrants compute; Ceres collection and its registered policy/value comparisons retain priority.
+
+## Original run06 large native BT4 WDL coverage completed, September 12
+
+Native BT4 WDL labels now cover all **2,013,019 original run06 common-large rows
+in 246 shards**. Four disjoint saved-output units cover shards 0–63, 64–127,
+128–191 and 192–245. Together with the two earlier common increments
+(526,376 rows), direct native-WDL coverage is **2,539,395 rows**. These counts
+describe native teacher labels; matched adaptive-SF coverage remains the separate
+1,574,952-row result above.
+
+The final 54-shard unit contains 440,155 rows, including a final 5,979-row shard.
+Collection exited zero in 317.01 seconds within the 600-second enclosing budget.
+Its unchanged qualified producer retained batch 128, two threads and native
+W/D/L probabilities. A terminal-only saved-output qualification exited zero in
+7.13 seconds, checking all five arrays (28,169,920 decoded bytes), exact row and
+teacher/source bindings, hashes and finite float32 probability mass. Maximum
+unit-mass error was 1.4804e-7. Independent receipt review passed without another
+array scan. No further GPU unit was launched.
+
+The [consolidated readiness inventory](evidence/g10-value-readiness-20260911/native-wdl-run06-complete.json)
+pins all four completions and saved-output qualifications and matches their
+ordered union to the original source summary. This is not a consumer admission
+manifest: the existing historical native-WDL reader requires one complete cohort
+in one output directory, while these four units retain distinct invocation/output
+namespaces. No files were moved or rebound to manufacture a merged lineage.
+The inventory reuses prior qualified receipts without rereading their arrays.
+
+This completes one source's native labels, not all G10 data, a new value target
+corpus, or training admission. It does not repair the malformed adaptive-SF
+baseline encountered outside the previously qualified prefix. Registered Ceres
+strength comparisons retain priority; there is no new playing-strength result.
