@@ -244,3 +244,11 @@ def test_explicit_preexec_recovery_retains_command_and_complete_bank_checks(pack
     else:
         with pytest.raises(ValueError, match=r'preexec|complete fixed paired bank'):
             tool.read_contract(path, allow_timeout_preexec=True)
+
+
+def test_explicit_null_observed_command_is_not_missing() -> None:
+    process: dict[str, Any] = {'command': ['python', 'arena.py']}
+    assert tool.command_observation(process, {}, allow_timeout_preexec=False) == 'not_recorded'
+    process['arena_cmdline'] = None
+    with pytest.raises(ValueError, match='observed arena command differs'):
+        tool.command_observation(process, {}, allow_timeout_preexec=False)

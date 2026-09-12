@@ -144,9 +144,11 @@ def command_check(command: Any, contract: dict[str, Any]) -> None:
 
 
 def command_observation(process: dict[str, Any], contract: dict[str, Any], *, allow_timeout_preexec: bool) -> str:
-    observed = process.get('arena_cmdline')
-    if observed is None or observed == process['command']:
-        return 'not_recorded' if observed is None else 'actual_command'
+    if 'arena_cmdline' not in process:
+        return 'not_recorded'
+    observed = process['arena_cmdline']
+    if observed == process['command']:
+        return 'actual_command'
     require(allow_timeout_preexec, 'observed arena command differs')
     seconds = process.get('hard_seconds')
     require(type(seconds) is int and seconds > 30
