@@ -143,7 +143,31 @@ def command_check(command: Any, contract: dict[str, Any]) -> None:
     require(args['device'] in (None, ['cuda']), 'command device')
 
 
-def read_contract(path: Path) -> dict[str, Any]:
+def command_observation(process: dict[str, Any], contract: dict[str, Any], *, allow_timeout_preexec: bool) -> str:
+    if 'arena_cmdline' not in process:
+        return 'not_recorded'
+    observed = process['arena_cmdline']
+    if observed == process['command']:
+        return 'actual_command'
+    require(allow_timeout_preexec, 'observed arena command differs')
+    seconds = process.get('hard_seconds')
+    require(type(seconds) is int and seconds > 30
+            and seconds == contract['execution']['max_seconds'] + 60, 'preexec hard budget')
+    seconds = cast(int, seconds)
+    expected = ['/usr/bin/timeout', '--signal=TERM', '--kill-after=30s', f'{seconds - 30}s',
+                *process['command']]
+    same(process.get('supervisor_command'), expected, 'preexec supervisor command')
+    same(observed, expected, 'preexec observed command')
+    pids = [process.get(k) for k in ('owner_pid', 'supervisor_pid', 'arena_pid')]
+    require(all(type(pid) is int and pid > 0 for pid in pids) and len(set(pids)) == 3,
+            'preexec supervisor/child identity')
+    start, end = process.get('started_unix'), process.get('ended_unix')
+    require(positive(start) and positive(end), 'preexec timestamps')
+    require(0 < cast(float, end) - cast(float, start) <= seconds, 'preexec elapsed budget')
+    return 'exact_supervised_timeout_preexec_snapshot'
+
+
+def read_contract(path: Path, *, allow_timeout_preexec: bool = False) -> dict[str, Any]:
     raw = path.read_bytes()
     contract = json.loads(raw)
     validate(contract)
@@ -156,8 +180,7 @@ def read_contract(path: Path) -> dict[str, Any]:
     same(process.get('exit_code'), 0, 'process exit')
     same(process.get('process_complete'), True, 'process completion')
     command_check(process['command'], contract)
-    if 'arena_cmdline' in process:
-        same(process['arena_cmdline'], process['command'], 'observed arena command')
+    observation = command_observation(process, contract, allow_timeout_preexec=allow_timeout_preexec)
     bank = pinned(contract['bank'])
     log = read_game_log(bank)
     require(not log.truncated_tail, 'torn game bank')
@@ -198,6 +221,7 @@ def read_contract(path: Path) -> dict[str, Any]:
         'sims': contract['sims'], 'seed': contract['seed'], 'execution': contract['execution'],
         'bank': contract['bank'], 'opening_panel': contract['opening_panel'], 'process': contract['process'],
         'pair_scores': [s/2 for s in totals], 'result': summary(totals),
+        'command_observation': observation,
         'checkpoint_content_verified_now': True, 'launch_qualification_verified': False,
         'limitations': ['Fixed-N nominal paired interval for these packages; not optimal temperature or training-seed uncertainty.',
             'Pinned process record and command checked; runtime provenance, checkpoint/book bytes and full history consumed at launch require external evidence.',
@@ -207,9 +231,11 @@ def read_contract(path: Path) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--contract', type=Path, action='append', required=True)
+    parser.add_argument('--allow-timeout-preexec-capture', action='store_true',
+                        help='Admit only the exact recorded timeout fork/exec snapshot; retain all bank checks')
     args = parser.parse_args()
     require(len(args.contract) == 1, 'exactly one contract required')
-    print(json.dumps(read_contract(args.contract[0]), indent=2))
+    print(json.dumps(read_contract(args.contract[0], allow_timeout_preexec=args.allow_timeout_preexec_capture), indent=2))
 
 
 if __name__ == '__main__':

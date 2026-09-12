@@ -206,3 +206,49 @@ def test_null_history_refused_even_with_matching_valid_endpoint_and_bank(package
     save_package(path, contract, rows)
     with pytest.raises(ValueError, match='illegal opening move'):
         tool.read_contract(path)
+
+
+@pytest.mark.parametrize('defect', ['none', 'prefix', 'supervisor', 'suffix', 'pid', 'budget', 'elapsed', 'bank'])
+def test_explicit_preexec_recovery_retains_command_and_complete_bank_checks(package: Any, defect: str) -> None:
+    path, contract, rows = package
+    process = Path(contract['process']['path'])
+    data = json.loads(process.read_text())
+    hard = contract['execution']['max_seconds'] + 60
+    wrapped = ['/usr/bin/timeout', '--signal=TERM', '--kill-after=30s', f'{hard-30}s', *data['command']]
+    data.update(arena_cmdline=list(wrapped), supervisor_command=list(wrapped), hard_seconds=hard,
+                owner_pid=100, supervisor_pid=101, arena_pid=102, started_unix=1000., ended_unix=1100.)
+    if defect == 'prefix':
+        data['arena_cmdline'][0] = '/unqualified/timeout'
+    elif defect == 'supervisor':
+        data['supervisor_command'][3] = '1s'
+    elif defect == 'suffix':
+        data['arena_cmdline'].append('--resume')
+    elif defect == 'pid':
+        data['arena_pid'] = data['supervisor_pid']
+    elif defect == 'budget':
+        data['hard_seconds'] += 1
+    elif defect == 'elapsed':
+        data['ended_unix'] = data['started_unix'] + hard + 1
+    elif defect == 'bank':
+        rows = rows[:-1]
+    process.write_text(json.dumps(data))
+    contract['process'] = pin(process)
+    save_package(path, contract, rows)
+    with pytest.raises(ValueError, match='observed arena command'):
+        tool.read_contract(path)
+    if defect == 'none':
+        result = tool.read_contract(path, allow_timeout_preexec=True)
+        assert result['command_observation'] == 'exact_supervised_timeout_preexec_snapshot'
+        assert result['bank_complete']
+        assert result['result']['score'] == .375
+    else:
+        with pytest.raises(ValueError, match=r'preexec|complete fixed paired bank'):
+            tool.read_contract(path, allow_timeout_preexec=True)
+
+
+def test_explicit_null_observed_command_is_not_missing() -> None:
+    process: dict[str, Any] = {'command': ['python', 'arena.py']}
+    assert tool.command_observation(process, {}, allow_timeout_preexec=False) == 'not_recorded'
+    process['arena_cmdline'] = None
+    with pytest.raises(ValueError, match='observed arena command differs'):
+        tool.command_observation(process, {}, allow_timeout_preexec=False)

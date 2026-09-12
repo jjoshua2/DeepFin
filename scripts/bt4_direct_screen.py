@@ -325,7 +325,7 @@ def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, s
             receipt['supervisor_pid'] = child.pid
             write(out / 'process.json', receipt)
             while child.poll() is None:
-                if f'{stage}_pid' not in receipt:
+                if f'{stage}_pid' not in receipt and time.monotonic() - started < 10:
                     children = Path(f'/proc/{child.pid}/task/{child.pid}/children')
                     ids = children.read_text().split() if children.exists() else []
                     if ids:
@@ -334,9 +334,17 @@ def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, s
                         except FileNotFoundError:
                             pass
                         else:
-                            receipt[f'{stage}_pid'] = int(ids[0])
-                            receipt[f'{stage}_cmdline'] = cmdline
-                            write(out / 'process.json', receipt)
+                            if cmdline != wrapped:
+                                receipt[f'{stage}_pid'] = int(ids[0])
+                                receipt[f'{stage}_cmdline'] = cmdline
+                                write(out / 'process.json', receipt)
+                            elif cmdline == wrapped and f'{stage}_preexec_cmdline' not in receipt:
+                                # A forked timeout child can still expose its parent's
+                                # argv before exec. Preserve it without calling it the
+                                # observed workload; sample again within the window.
+                                receipt[f'{stage}_preexec_cmdline'] = cmdline
+                                receipt[f'{stage}_preexec_pid'] = int(ids[0])
+                                write(out / 'process.json', receipt)
                 disk_guard(out)
                 require(not any(p.exists() for p in (out / 'STOP', *stop_paths)), 'stop requested')
                 time.sleep(1)
