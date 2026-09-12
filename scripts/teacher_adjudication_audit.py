@@ -35,6 +35,8 @@ from chess_anti_engine.moves.leela_index import compact_index_for_move
 from chess_anti_engine.stockfish import wdl as sf_wdl
 from scripts import adapt_raw_bt4_sidecars as adapter
 from scripts import adaptive_sf_value as adaptive
+from scripts import bt4_derived_wdl_sidecar as native_wdl
+from scripts import g10_native_wdl_reuse as native_reuse
 from scripts import bt4_policy_mix as bt4_mix
 from scripts import bt4_raw_corpus_sidecar as raw
 from scripts import ceres_derived_sidecar as ceres
@@ -49,6 +51,7 @@ SUMMARY = "teacher_adjudication_audit.json"
 SELECTION = "teacher_adjudication_ceres_selection.json"
 SCHEMA = 2
 ROW_BANK = "teacher_adjudication_rows.jsonl"
+NATIVE_WDL_HEAD = "/output/wdl"
 BT4_TEMPERATURE = 0.5
 CERES_POLICY_TEMPERATURE = 0.5
 RANK_GAPS = (100.0, 300.0, 500.0, 1000.0)
@@ -538,6 +541,80 @@ class Selector:
         return sorted(result, key=lambda item: (item["stratum"], item["priority_sha256"]))
 
 
+class NativeWDLManifest:
+    """Original complete G10 admission, with payload checks only for audit shards."""
+
+    def __init__(self, path: Path, digest: str, source: Path, summary_sha: str,
+                 model_sha: str) -> None:
+        self.path, self.digest = path, digest
+        self.pins: dict[Path, str] = {}
+        _, body = native_reuse.read({'path': str(path), 'sha256': digest}, self.pins)
+        require(body['wdl_output'] == NATIVE_WDL_HEAD
+                and body['source_dir'] == str(source)
+                and body['source_summary_sha256'] == summary_sha
+                and body['onnx_sha256'] == model_sha, 'native WDL source/model/head differs')
+        first = body['invocations'][0]
+        _, completed = native_reuse.read(first['completed'], self.pins)
+        qualification = completed['g10_common_admission']['qualification']
+        native_reuse.pinned(qualification, self.pins)
+        inventory = argparse.Namespace(
+            source=str(source), expected_source_summary_sha256=summary_sha,
+            start_shard=0, max_shards=2**31,
+            g10_common_qualification=qualification['path'],
+            expected_g10_common_qualification_sha256=qualification['sha256'])
+        self.summary, specs = native_wdl.source_inventory(inventory)
+        admission = inventory.g10_admission
+        self.pins.update({Path(k): v for k, v in admission['summary_pins'].items()})
+        self.root = Path(body['wdl_dir']).resolve()
+        self.source = source
+        self.bindings = native_reuse.admit(
+            path, digest, source=source, sidecar=self.root, summary_sha=summary_sha,
+            model_sha=model_sha, head=NATIVE_WDL_HEAD, admission=admission,
+            specs=specs, pins=self.pins)
+        self.states: dict[Path, str] = {}
+
+    def load(self, shard: str, group: Any, x: np.ndarray) -> np.ndarray:
+        side = self.root / shard
+        original = self.source / shard
+        binding = self.bindings[shard]
+        rows = len(x)
+        require(binding['rows'] == rows
+                and native_wdl.storage_identity(original) == binding['source_storage_identity'],
+                'native WDL original storage differs')
+        state = native_wdl.storage_identity(side)
+        attrs = native_wdl.verify_cached(side, binding, 128)
+        original_group = native_wdl.source_arrays(original, self.summary, rows)
+        bank: Any = zarr.open_group(str(side), mode='r')
+        hashes = {k: hashlib.sha256() for k in native_wdl.COLUMNS}
+        for start in range(0, rows, 128):
+            end = min(start + 128, rows)
+            batch = {k: (x[start:end] if k == 'x' else np.asarray(original_group[k][start:end]))
+                     for k in native_wdl.COLUMNS}
+            for k, h in hashes.items():
+                h.update(batch[k].tobytes(order='C'))
+            require(bool((batch['has_game_id'] == 1).all() and (batch['has_ply_index'] == 1).all()),
+                    'native WDL source identity absent')
+            for key in ('game_id', 'ply_index'):
+                require(np.array_equal(bank[key][start:end], batch[key]), 'native WDL row identity differs')
+            feed = native_wdl.stored_feed(batch['x']).astype(attrs['input']['dtype'])
+            require(np.array_equal(native_wdl.row_digests(feed), bank['lc0_feed_sha256'][start:end]),
+                    'native WDL feed identity differs')
+        require({k: h.hexdigest() for k, h in hashes.items()} == attrs['source_array_sha256'],
+                'native WDL source column digest differs')
+        require(bool((np.asarray(group['has_search_wdl'][:]) == 1).all()), 'missing SF value coverage')
+        values = np.asarray(bank['bt4_wdl_raw'][:])
+        require(native_wdl.storage_identity(side) == state, 'native WDL changed during read')
+        self.states[side] = state
+        self.states[original] = binding['source_storage_identity']
+        return values
+
+    def guard(self) -> None:
+        for path, digest in self.pins.items():
+            require(file_sha256(path) == digest, 'native WDL evidence changed')
+        require(all(native_wdl.storage_identity(path) == state for path, state in self.states.items()),
+                'native WDL/source changed before publication')
+
+
 class CeresManifest:
     """Optional exact row-aligned completed Ceres bank for the same derived G10 source."""
 
@@ -602,6 +679,7 @@ def analyze_row(
     derived_wdl: np.ndarray,
     raw_bt4_wdl: np.ndarray | None = None,
     ceres_bank: Any | None = None,
+    bank_value_details: bool = False,
 ) -> dict[str, Any]:
     board = chess.Board(str(raw_row["fen"]))
     mapping, legal = _legal_map(board)
@@ -636,6 +714,8 @@ def analyze_row(
                             'bt4_top_probability': bt4_top_probability, 'bt4_entropy': entropy(bt4),
                             'ceres_present': ceres_bank is not None, 'policy': {}, 'paired_regret_delta_cp': {},
                             'position_strata': _position_strata(board, raw_row)}
+    if bank_value_details:
+        bank['value_inclusion'] = 'mate_domain_d9'
     ordinary = not any(abs(score) > sf_wdl.SF_CP_CLAMP_CP for score in d9.values())
     bank["ordinary_d9"] = ordinary
     if not ordinary:
@@ -685,6 +765,8 @@ def analyze_row(
     )
 
     if ceres_bank is None:
+        if bank_value_details:
+            bank['value_inclusion'] = 'missing_ceres'
         for name in ('ceres', 'arithmetic50', 'geometric50'):
             add_policy(name, None)
         return bank
@@ -723,6 +805,9 @@ def analyze_row(
 
     target = _deeper_wdl(final)
     if target is None or raw_bt4_wdl is None or "value2_logits" not in ceres_bank:
+        if bank_value_details:
+            bank['value_inclusion'] = ('missing_final_ruler' if target is None else
+                                       'missing_bt4_wdl' if raw_bt4_wdl is None else 'missing_ceres_value2')
         return bank
     primary = _softmax3(np.asarray(ceres_bank["value_logits"][derived_row]), 0.55)
     secondary = _softmax3(np.asarray(ceres_bank["value2_logits"][derived_row]), 1.5)
@@ -740,6 +825,14 @@ def analyze_row(
     ):
         _update_value(aggregate, name, prediction, target)
     bank["value_losses"] = {name: {"brier": _wdl_loss(prediction, target)[0], "cross_entropy": _wdl_loss(prediction, target)[1]} for name, prediction in [("sf_saved", sf_saved), ("bt4_native", bt4_value), ("ceres_dual", dual)]}
+    if bank_value_details:
+        bank['value_inclusion'] = 'included'
+        bank['value_ruler_wdl'] = target.tolist()
+        bank['value_losses'] = {
+            name: {'brier': _wdl_loss(prediction, target)[0], 'cross_entropy': _wdl_loss(prediction, target)[1]}
+            for name, prediction in [('sf_saved', sf_saved), ('bt4_native', bt4_value),
+                                     ('ceres_primary', primary), ('ceres_secondary', secondary),
+                                     ('ceres_dual', dual), ('registered_sf50_bt425_ceres25', registered)]}
     return bank
 
 
@@ -793,6 +886,8 @@ def audit(
     out: Path,
     ceres_manifest_path: Path | None = None,
     expected_ceres_manifest_sha256: str | None = None,
+    native_wdl_manifest_path: Path | None = None,
+    expected_native_wdl_manifest_sha256: str | None = None,
     start_shard: int = 0,
     max_shards: int | None = None,
     max_raw_rows: int = 100000,
@@ -840,12 +935,22 @@ def audit(
             manifest["derived_summary"]["sha256"],
         )
 
+    optional_native: NativeWDLManifest | None = None
+    if native_wdl_manifest_path is not None or expected_native_wdl_manifest_sha256 is not None:
+        if native_wdl_manifest_path is None or expected_native_wdl_manifest_sha256 is None:
+            raise ValueError('native WDL manifest and SHA256 are both required')
+        optional_native = NativeWDLManifest(
+            native_wdl_manifest_path.resolve(), expected_native_wdl_manifest_sha256,
+            source, manifest['derived_summary']['sha256'], manifest['teacher']['onnx']['sha256'])
+
     out = out.resolve()
     writing = out.with_name(out.name + ".writing")
     protected = [source, manifest_path, *[Path(value) for value in inputs.sources]]
     protected += [spec.out_dir for spec, _receipts in inputs.sources.values()]
     if optional_ceres is not None:
         protected.append(optional_ceres.path)
+    if optional_native is not None:
+        protected += [optional_native.path, optional_native.root, *optional_native.pins]
     require(
         all(
             out != path and out not in path.parents and path not in out.parents
@@ -899,6 +1004,7 @@ def audit(
                 if optional_ceres is not None
                 else None
             )
+            native_values = optional_native.load(path.name, group, x) if optional_native is not None else None
             grouped: dict[tuple[str, str], list[tuple[int, dict[str, Any]]]] = {}
             seen: set[tuple[str, str, int]] = set()
             for index, ref in enumerate(refs):
@@ -936,6 +1042,7 @@ def audit(
                     if raw.WDL_FIELD in raw_group
                     else None
                 )
+                require(native_values is None or values is None, 'ambiguous raw/native BT4 WDL authorities')
                 for request_index, (derived_index, ref) in enumerate(requests):
                     offset = int(ref["source_row"])
                     require(
@@ -985,9 +1092,11 @@ def audit(
                         derived_row=derived_index,
                         derived_wdl=sf_values[derived_index],
                         raw_bt4_wdl=(
-                            None if values is None else values[request_index]
+                            native_values[derived_index] if native_values is not None
+                            else None if values is None else values[request_index]
                         ),
                         ceres_bank=cbank,
+                        bank_value_details=optional_native is not None,
                     )
                     row_stream.write(json.dumps(row_metric, separators=(",", ":"), allow_nan=False) + "\n")
                     rows_analyzed += 1
@@ -1022,6 +1131,8 @@ def audit(
             adapter.pin(item)
         if optional_ceres is not None:
             optional_ceres.guard()
+        if optional_native is not None:
+            optional_native.guard()
 
         row_stream.close()
         selected_rows = selector.selected()
@@ -1049,6 +1160,8 @@ def audit(
                 if optional_ceres is None
                 else {"path": str(optional_ceres.path), "sha256": optional_ceres.digest}
             ),
+            **({'native_wdl_manifest': {'path': str(optional_native.path), 'sha256': optional_native.digest}}
+               if optional_native is not None else {}),
             "rows": rows_analyzed,
             "shards": len(selected),
             "slice": {"start_shard": start_shard, "max_shards": max_shards},
@@ -1094,6 +1207,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--expected-manifest-sha256", required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--native-wdl-manifest", type=Path)
+    parser.add_argument("--expected-native-wdl-manifest-sha256")
     parser.add_argument("--ceres-manifest", type=Path)
     parser.add_argument("--expected-ceres-manifest-sha256")
     parser.add_argument("--start-shard", type=int, default=0)
@@ -1111,6 +1226,8 @@ def main(argv: list[str] | None = None) -> int:
         out=args.out,
         ceres_manifest_path=args.ceres_manifest,
         expected_ceres_manifest_sha256=args.expected_ceres_manifest_sha256,
+        native_wdl_manifest_path=args.native_wdl_manifest,
+        expected_native_wdl_manifest_sha256=args.expected_native_wdl_manifest_sha256,
         start_shard=args.start_shard,
         max_shards=args.max_shards,
         max_raw_rows=args.max_raw_rows,
