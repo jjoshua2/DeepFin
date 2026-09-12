@@ -58,7 +58,8 @@
       },
       "supervisor.actual.json": {
         "path": "/home/josh/projects/chess/scratchpad/reboot_recovery_20260912/g10_reduced_preparation_v1/supervisor.actual.json",
-        "sha256": "d704542923e1e33182fd52be42110b8d679e69c904604fa3f68abc81f56ad686"
+        "sha256": "d704542923e1e33182fd52be42110b8d679e69c904604fa3f68abc81f56ad686",
+        "snapshot_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/reboot_recovery_20260912_v1/sf_guarded_launch_snapshot.json"
       },
       "monitor_launch.json": {
         "path": "/home/josh/projects/chess/scratchpad/reboot_recovery_20260912/g10_reduced_preparation_v1/monitor_launch.json",
