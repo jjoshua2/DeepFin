@@ -9,10 +9,10 @@ measurements support which claims.
 | Record | Scope |
 | --- | --- |
 | [Ceres source-read cache](2026-09-12-ceres-source-block-cache.md) | CPU component benchmark: identical batches,1.74s→0.12s reads; future collector cache/timers, no GPU throughput claim |
-| [Small G10 Ceres pilot](2026-09-11-g10-ceres-pilot.md) | Reviewed 32,768-row policy/dual-value collection prepared for a gap after original-corpus collection; not launched |
+| [Small G10 Ceres pilot](2026-09-11-g10-ceres-pilot.md) | 32,768-row policy/dual-value collection and saved qualification complete in four shards; policy diagnostic pending, no strength claim |
 | [Saved SF negative constraints](2026-09-11-sf-negative-constraints-screen.md) | Completed 262,079-row SF/BT4 diagnostic: >300cp flagged mass mostly unscored; no blanket T300 promotion or Ceres strength claim |
 | [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | 1,574,952 matched saved-SF rows; real 262,079-row fixed-policy SF/BT4 value pair materialized in 4m32s; no training/strength result |
-| [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | 16.91M/18.91M Ceres labels qualified (89.43%) at September 11 23:12 UTC; collection continues, policy/value screens prepared, no Ceres playing result |
+| [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | Full 18,910,484-row Ceres bank qualified at September 12 01:41 UTC; collection complete, policy materialization launched, training pending, no playing result |
 | [SF tactical guidance for BT4 policy](2026-09-10-bt4-sf-tactical-training.md) | Completed 400-simulation match: tactical recipe −13.6 Elo [−52.4,+24.9]; unresolved, retain B100 |
 | [Deeper SF value census](2026-09-11-deeper-sf-value-census.md) | Complete: saved SF values pass label-change thresholds; 3,247 single-move exclusions and two malformed rosters explained; opt-in selector selected, no strength claim |
 | [Saved adaptive SF value selector](2026-09-11-adaptive-sf-value-selector.md) | Opt-in deriver implementation and independent review passed; no real-corpus rewrite or training result |

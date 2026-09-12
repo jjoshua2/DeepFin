@@ -1,6 +1,6 @@
 # Weighted Ceres bootstrap preparation
 
-Status: 14,290,196 of 18,910,484 Ceres labels are qualified (75.6%) at September 11 19:54 UTC. The reviewed recovery collection is running. Policy/value producers and pilots are ready; no Ceres-mixture training or playing-strength result is claimed.
+Status: all 18,910,484 original-corpus Ceres labels are qualified across 2,309 shards as of September 12 at 01:41 UTC. Collection is complete. Both complete producer manifests are assembled; CeresB50 policy materialization is launched; the value recipe is prepared. Neither completed materialization, training nor playing-strength results are claimed.
 
 ## Selected question
 
@@ -72,6 +72,50 @@ Collection continues. The last host process observation at 23:00 UTC found drive
 qualified snapshot. This observation is not a continuous liveness claim. No
 collector restart or inference was added by the audit. The next substantive work
 remains full-bank materialization and the registered policy/value comparisons below.
+
+## Full original-corpus saved bank, September 12 at 01:41 UTC
+
+Snapshot 16 completes recovery coverage: **18,513,920 rows in 2,260 shards**
+(48–2307), across 142 completed chunks. Adding the previously accepted 396,564
+rows in shards 0–47 and final partial shard 2308 yields **18,910,484 distinct rows
+in 2,309 shards: 100% of the original corpus**. Sixteen newly completed chunks
+received saved-array verification; 126 retained their unchanged pinned prior
+qualification. Audit session 37900 exited zero. The publication check matched all
+142 terminal receipt hashes, the reused review records and exact recovery coverage
+without repeating the payload audit.
+
+The recovery driver completed in 81,733.77 seconds (22 hours 42 minutes), within
+its remaining allocation. This elapsed time includes inter-chunk pauses and other
+execution overhead; it is neither GPU kernel time nor a fresh throughput benchmark.
+The failed earlier invocation remains excluded. The original collection driver recorded `COMPLETE`; its observer closed and the
+host process was gone. Root session 47292 returned no captured exit code, so the
+completion claim rests on the driver receipt. Collection has ended.
+
+[Compact final coverage evidence](evidence/ceres-full-coverage-20260912.json)
+pins snapshot 16 (`a156bef0bb4d997cffde3d9b06e49c23c0d1c45274c76d7363d2e21fbf9430a0`),
+the terminal driver, unchanged auditors and snapshot 15 ancestry. Bulk per-shard
+records remain at the pinned host paths. Earlier progress snapshots above are
+historical observations, superseded by this completed coverage.
+
+This completes the saved teacher bank, **not training-corpus admission or a strength
+result**. Raw policy and both value heads are available under the existing qualified
+approximate backend. Both complete producer manifests subsequently passed their actual producers’
+manifest readers (assembly session 51620 exited zero). Their hashes and the
+`COMPLETE_MANIFEST_ASSEMBLY_NOT_CORPUS_ADMISSION` receipt are included in the
+compact evidence. This was metadata assembly, not target rewriting. The next work
+is materializing the registered policy and value mixtures, followed by their existing
+training and match allocation. No target weights or scientific promotion criteria
+change because collection finished.
+
+After plan and command review, the CeresB50 full-corpus materializer launched in
+root session 61364 under the existing eight-hour bound, on CPU cores 0,1 with
+the GPU hidden. Its plan SHA256 is
+`1bc2189980f8551c765cbe9d97669d6c362be56a37e17af97395365175090011`.
+This is a launch observation, not a completed corpus. The B100CeresV25 value
+materialization plan is prepared and has not launched. Both plan identities are
+in the compact evidence; training admission remains a later step. A separate [G10 convenience pilot](2026-09-11-g10-ceres-pilot.md)
+also completed collection and saved-output qualification; its diagnostic remains
+separate from the original-corpus training anchors.
 
 ## Real-teacher policy pilot
 
