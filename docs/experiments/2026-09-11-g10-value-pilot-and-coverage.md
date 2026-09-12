@@ -274,3 +274,47 @@ preparation review, per-cohort mapping and an immutable small launch snapshot.
 This is **policy target building in progress**, not a completed corpus, new value
 mixture, training admission or playing-strength result. No further job was
 launched for this publication.
+
+
+## All original B100 policy products complete
+
+The remaining-19 batch completed at **2026-09-12T22:47:22.095072+00:00**,
+with exit zero after **4,338.6108 seconds** (72.31 minutes). All **19 cohorts,
+16,142,014 rows and 1,980 shards** completed within the four-hour allocation;
+this is a full completion, not a budget-stopped prefix. Together with the
+previously completed and retained **262,079-row / 32-shard** run06 increment
+product, original-source B100 policy targets now cover all **20 common G10
+cohorts: 16,404,093 rows / 2,012 shards**.
+
+Each new product has the unchanged global recipe **alpha 1, BT4 temperature
+0.5**, with `policy_target` as its only mutated array. Original SF value
+columns, history and cohort lineage remain unchanged. Independent completion
+review checked all 19 small recipe/derive summaries, ordered layouts, source
+lineage, timing receipts and final proof metadata. Every stage returned zero;
+the supervisor's terminal path rechecked input/output storage identities and
+pinned evidence before declaring full completion. The reviewer did not repeat
+array or storage-tree audits.
+
+The largest individual producer peak reported by `/usr/bin/time` was
+**1,011,244 KiB** (about 988 MiB). This measures one producer, not simultaneous
+whole-host use. CPUs 6–7, two numerical-library threads, GPU hidden, the 4 GiB
+address-space cap, 32 GiB host-memory floor, 150 GiB disk reserve and 32 GiB
+sampled output cap stayed in the executed plan. No resource limit was expanded
+to obtain this result.
+
+The exact terminal status is
+`COMPLETE_ALL19_B100_POLICY_NOT_VALUE_OR_TRAINING_ADMISSION`. This closes the
+original B100 policy-product prerequisite for the full-cohort value writer.
+It does **not** create a new SF/BT4 value blend, qualify a training corpus or
+establish playing strength. The follow-on value writer must still verify
+native cached contents, actual stored feeds and original SF/B100 lineage;
+no follow-on launch is claimed in this record.
+
+[Compact completion evidence](evidence/g10-b100-all20-completed-20260912.json)
+contains per-cohort source/output mappings, recipe and summary hashes, timings,
+resource limits and independent review. Local terminal state and the 19 new
+products are under
+`scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/`;
+the retained run06 increment product remains at
+`scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/B100`.
+The parent's root session 99876 exited zero and sole observer 141 is closed.
