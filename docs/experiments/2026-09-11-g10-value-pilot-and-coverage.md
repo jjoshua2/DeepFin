@@ -240,3 +240,37 @@ full value rewrite. The original 18.91M B100 corpus belongs to another source an
 cannot substitute; the existing value-modified control/adaptive products cannot
 substitute for the original B100 input either. No new mixture weight, target
 materialization, training admission or strength claim is selected here.
+
+
+## Remaining original B100 policy products launched
+
+After the completed all-20-cohort native-WDL metadata admission, one sequential
+CPU batch launched at **21:35:03 UTC on September 12** to build the remaining
+**19 original-source B100 T0.5 policy products: 16,142,014 rows across 1,980
+shards**. The previously completed 262,079-row run06 increment product is
+preserved and excluded. Each cohort keeps its own original source and complete
+output namespace; only one producer runs at a time. The recipe is unchanged
+global B100 alpha 1, BT4 temperature 0.5, with original SF values and history.
+
+The prior real 262,079-row B100 build took 104.01 seconds. Linear scaling suggests
+**about 107 minutes**, with roughly 10.4 GiB logical / 12.3 GiB allocated output.
+Those are one-cohort estimates, not a full-batch benchmark or guarantee. The
+accepted allocation is **four hours inclusive**, with 300 seconds reserved for
+final metadata checks and cleanup. The supervisor stops between cohorts if the
+next complete cohort cannot fit; it reports only a completed prefix and does not
+extend the budget or retry a failed producer automatically.
+
+The actual launch uses CPUs **6–7**, two numerical-library threads, GPU hidden,
+**4 GiB address space**, at least **32 GiB Linux available memory**, a **150 GiB
+disk reserve**, and a **32 GiB sampled output cap**. Parent preflight reported
+about 83 GiB available memory, zero swap use and 242 GiB free disk. These are
+launch observations, not peaks. The independent input/output namespace permits
+this one CPU producer alongside the existing downside and Ceres jobs; its guards
+and cleanup affect only its owned process group.
+
+The [compact launch evidence](evidence/g10-b100-remaining19-launch-20260912.json)
+contains the exact plan, unchanged qualified producer runtime, independent
+preparation review, per-cohort mapping and an immutable small launch snapshot.
+This is **policy target building in progress**, not a completed corpus, new value
+mixture, training admission or playing-strength result. No further job was
+launched for this publication.
