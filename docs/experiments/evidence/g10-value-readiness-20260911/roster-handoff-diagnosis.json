@@ -1,0 +1,40 @@
+{
+  "scope": "One preserved malformed later-phase roster; no prevalence estimate or historical repair",
+  "artifact_pins": {
+    "diagnosis.json": "fe923c52dc3fa7e64ff077cfe8f53f24b4de0058f0ec15de2e39be9205adf4a8",
+    "exact_source_row.json": "c1f8026ba9360646d84be09649993111bfa0f99b43bf157bda6a68c1566af95f",
+    "followup_source_assessment_v1/readout.md": "65be0262309106f2d6611192b95c3b27ad4f455c700a74f658b9253d23ddbefc",
+    "followup_source_assessment_v1/evidence.json": "b350fe1672a53e1fa5251b6233d74351c593b812bba569738d039e1554160f8a"
+  },
+  "reference": {
+    "source_config_sha256": "eda5eacfc84a5b9276d8822261a70eba67b4636a7886f49e0af67b72183a8187",
+    "source_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+    "source_namespace": "4ac6eb7c25aea1283d406af72f94a1e11427b837c1140ca10881c246c629793a",
+    "source_shard": "w02-00196.jsonl.zst",
+    "source_row": 3541,
+    "worker_id": 2,
+    "game_id": 99518,
+    "ply": 318,
+    "input_key": "a78fbdbdb9ee63fd1d47fcff58b81f59",
+    "stored_input_key": "00e9bb55f198a2bdeb310749f17dcbd3",
+    "derived_shard": "shard_000197.zarr",
+    "derived_row": 5084,
+    "provenance_sha256": "70e489f9390a6aefd498a226728e9789fada261c622655c5434a9772fa55052f",
+    "within_first128_native_wdl_shards": false
+  },
+  "raw_source": {
+    "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w02-00196.jsonl.zst",
+    "sha256": "2e05a609205faec041dc30f4638840e36b2603dc0f25ff9675cc499da009071d"
+  },
+  "actual_adaptive_exception": "game 99518 ply 318: invalid adaptive SF baseline/identity: invalid_roster",
+  "diagnosis": [
+    "Frozen source bytes match accepted raw shard SHA; original row provenance and full-history input_key match. Actual original deriver accepts this row, so this is not namespace/history/parser mismatch.",
+    "Phase0 d9 has complete unique legal support; the row is retained by historical policy and is not among policy-support exclusions.",
+    "Phase2 d9 is consumed first by latest-phase baseline. It repeats d2d3 three times (-753,0,0); RowBank dict construction keeps the last zero. Phase1 d9 also has duplicated moves and missing requested moves.",
+    "The stricter adaptive baseline validator correctly refuses these consumed ambiguous rosters. Deeper phase1/phase2 records are also malformed; this is not merely a single-move case.",
+    "Matched source is original derived shard197 row5084, beyond requested native-WDL shards0..127. This row need not be admitted to that WDL experiment, but the current full-batch derivation traverses it. No claim that the requested prefix is otherwise free of faults."
+  ],
+  "phase0_best_cp": -625.0,
+  "historical_composite_best_cp": 0.0,
+  "future_guard": "Stop extension before passing malformed ranked candidates to searchmoves; retain observed phase and anomalies. Parser completeness and historical consumers unchanged."
+}
