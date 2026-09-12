@@ -417,3 +417,60 @@ correction are recorded without implying data execution.
 pins the actual driver receipt, reviewed plans and exact command. Local state is
 `scratchpad/bt4_joint20/g10_ceres_run06_next96_v1/`; fresh outputs are under
 `data/lc0/ceres_compact_sidecars/g10_run06_next96_v1/`.
+
+
+## September 12: run06 next96 qualified; matching run07 collection launched
+
+The run06 collection above completed at **2026-09-12T21:43:51.658683+00:00**
+in **2,265.6635 seconds** (37.76 minutes), within its 6,600-second allocation.
+All seven chunks exited zero. The saved-output qualifier passed, and the parent
+observed exit zero for the complete collection-plus-qualification command.
+The complete bank adds **790,282 rows / 97 shards**, bringing qualified G10 Ceres
+coverage to **1,052,361 rows**, including the earlier 262,079. The original
+18,910,484-row Ceres corpus remains separate.
+
+The saved audit covers **873 arrays**, nine per shard, including compact policy
+and both raw value-logit heads. Every chunk retains its first/final mapped-library
+observations for 13 libraries, 403 CUDA neural-kernel events and four allowed CPU
+shape events, with no missing final evidence or partial directories. The observed
+24,697 fixed32 calls processed 790,304 input rows: 790,282 real and 22 padding.
+Independent completion review checked the actual terminal records, manifest order,
+head identities and saved proof summaries without repeating array audits or
+reading source/model/library payloads.
+
+The accepted policy-consumer manifest is
+`scratchpad/bt4_joint20/g10_ceres_run06_next96_v1/post_collection/completed/ceres_policy_manifest.json`,
+SHA-256 `a49e03dd01e53d1322f9d500e871591ffeed95b9442cc7673a1584daa67107fc`.
+It identifies the qualified teacher bank; target materialization and training
+admission remain separate. This completion adds no playing-strength result and
+does not expand the earlier first4 diagnostic conclusions.
+
+The matching run07 next96 collection launched at **2026-09-12T21:57:30.926921+00:00**
+for **792,643 rows / 97 shards**. Six full 16-shard chunks plus one 6,211-row shard
+require 29 padding rows: 792,672 fixed32 inputs and 24,771 calls. Its qualifier
+selects the exact run07 cohort from the previously accepted 15-cohort native-BT4
+qualification, preserving original row/source proofs and the same nine-array
+Ceres audit. One copied run06 label in the prepared result limitations was
+corrected to run07 before launch.
+
+Runtime `e9c1b74bc44c45f9ac6d70195f1422c6d24a65f9`, model, approximate fixed32
+backend, heads and settings remain unchanged. The same 7,200-second total bound
+applies: at most 6,600 for collection/cleanup and 600 for saved qualification,
+with the original absolute deadline enforced. CPUs 2–3, two numeric threads,
+8 GiB ORT allowance, 12 GiB sampled device/process guards, 32 GiB host-memory
+floor and 150 GiB SSD reserve remain in force. These sampled guards are not
+hard RAM quotas. The parent reported 83 GiB available RAM, zero swap use,
+236 GiB free SSD and GPU 2,886 MiB/3% at preflight.
+
+Run07's immutable driver start receipt records PID 70553. Parent exec session
+46827 has sole completion observer 160; this publication reads its launch
+receipt, not its evolving outcome. **Run07 is not yet included in qualified
+coverage here.** Only successful completion and saved-output qualification
+would raise G10 Ceres coverage to **1,845,004 rows**. No active observer was
+polled for this publication.
+
+[Compact completion and launch evidence](evidence/g10-ceres-run06-completed-run07-launched-20260912.json)
+contains exact terminal/start records, per-chunk proof summaries, resource bounds
+and artifact identities. Run07 state is
+`scratchpad/bt4_joint20/g10_ceres_run07_next96_v1/`; outputs are under
+`data/lc0/ceres_compact_sidecars/g10_run07_next96_v1/`.
