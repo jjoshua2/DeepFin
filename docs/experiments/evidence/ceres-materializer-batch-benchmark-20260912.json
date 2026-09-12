@@ -1,0 +1,299 @@
+{
+  "schema": 1,
+  "result": {
+    "status": "COMPLETE_ONE_SHARD_BATCH_BENCHMARK_NOT_CORPUS_ADMISSION",
+    "plan_sha256": "6cd4f893de098db273b79f1068a87b8dbcd847ce391ed39c64b1d525add6dd27",
+    "rows": 8192,
+    "arms": [
+      {
+        "batch": 128,
+        "admission_seconds": 1.674268368020421,
+        "shard_seconds": 10.482849920983426,
+        "component_seconds": {
+          "source_BT4_identity": 4.002043998974841,
+          "BT4_payload_validation": 0.1094471020041965,
+          "Ceres_cached_validation": 0.5500876920123119,
+          "Ceres_source_TPG_alignment": 2.9838534530135803,
+          "compressed_file_integrity": 0.17452755197882652,
+          "copy": 0.0650942619831767,
+          "policy_math": 0.7360666910535656
+        },
+        "component_calls": {
+          "source_BT4_identity": 1,
+          "BT4_payload_validation": 1,
+          "Ceres_cached_validation": 1,
+          "Ceres_source_TPG_alignment": 1,
+          "compressed_file_integrity": 3,
+          "copy": 1,
+          "policy_math": 64
+        },
+        "unattributed_shard_seconds": 1.8617291699629277,
+        "total_arm_seconds": 12.262452408001991,
+        "proof": {
+          "path": "shard_000000.zarr",
+          "rows": 8192,
+          "changed_rows": 8138,
+          "source_storage_identity": "1c474506ce80b4bfd39b9321fa5515395b28bbd04f83be7a09b06745f55c9b24",
+          "bt4_storage_identity": "d756efb5f021e4a21a13ee5c15fdc81b345fa7f1165969990697a3e3bb19693c",
+          "ceres_storage_identity": "3094f7caac749a7c735a7489630d6626bfcd7b7826be728499ad617e559f5fa1",
+          "policy_target_sha256": "9e09fc9d10c310ac9cd4f4db74b50542b17d11526281c15d1151234c7aa19c4d",
+          "files_manifest_sha256": "1b0ede1f391c756c0dc91af787bf17383e15dcc89f02ba9403c9976a6ec57fbe",
+          "attrs_sha256": "efc9ee75456726d08a7554b0891d5d4b408de85432284df8e23cff0863fede97",
+          "output_storage_identity": "b5fe7f9fd6db831a07ebd7321af01e70c471ea9c7e5794582af20a18c7f0fccc"
+        },
+        "metrics": {
+          "max_mass_error": 0.00036019086837768555,
+          "max_tv": 0.00017606134688884787,
+          "support_lost": 0,
+          "full_input_digest_verified_shards": 0
+        },
+        "lineage_mode": "legacy-root-position-v1"
+      },
+      {
+        "batch": 512,
+        "admission_seconds": 1.5097290929988958,
+        "shard_seconds": 6.744559829006903,
+        "component_seconds": {
+          "source_BT4_identity": 1.6074208180070855,
+          "BT4_payload_validation": 0.08193380601005629,
+          "Ceres_cached_validation": 0.2848133659863379,
+          "Ceres_source_TPG_alignment": 2.707464767008787,
+          "compressed_file_integrity": 0.1531926039897371,
+          "copy": 0.08128272599424236,
+          "policy_math": 0.8774286368570756
+        },
+        "component_calls": {
+          "source_BT4_identity": 1,
+          "BT4_payload_validation": 1,
+          "Ceres_cached_validation": 1,
+          "Ceres_source_TPG_alignment": 1,
+          "compressed_file_integrity": 3,
+          "copy": 1,
+          "policy_math": 16
+        },
+        "unattributed_shard_seconds": 0.9510231051535811,
+        "total_arm_seconds": 8.32890374600538,
+        "proof": {
+          "path": "shard_000000.zarr",
+          "rows": 8192,
+          "changed_rows": 8138,
+          "source_storage_identity": "1c474506ce80b4bfd39b9321fa5515395b28bbd04f83be7a09b06745f55c9b24",
+          "bt4_storage_identity": "d756efb5f021e4a21a13ee5c15fdc81b345fa7f1165969990697a3e3bb19693c",
+          "ceres_storage_identity": "3094f7caac749a7c735a7489630d6626bfcd7b7826be728499ad617e559f5fa1",
+          "policy_target_sha256": "9e09fc9d10c310ac9cd4f4db74b50542b17d11526281c15d1151234c7aa19c4d",
+          "files_manifest_sha256": "8a898f509e11164caf162eed611eee6b91313fd5e41261b1f9bc4eb19f0a3f5f",
+          "attrs_sha256": "efc9ee75456726d08a7554b0891d5d4b408de85432284df8e23cff0863fede97",
+          "output_storage_identity": "7ef01e1ca52acf6bf8a901d3013c10d0c24ce37afdfaa20df6c41fdbedb92d83"
+        },
+        "metrics": {
+          "max_mass_error": 0.00036019086837768555,
+          "max_tv": 0.00017606134688884787,
+          "support_lost": 0,
+          "full_input_digest_verified_shards": 0
+        },
+        "lineage_mode": "legacy-root-position-v1"
+      }
+    ],
+    "equal_arrays": {
+      "game_id": {
+        "shape": [
+          8192
+        ],
+        "dtype": "int64",
+        "decoded_sha256": "1d6ef4cbc8e74231893537d113c181d98a5c4d166db40d32be79ad0903b547f1"
+      },
+      "has_game_id": {
+        "shape": [
+          8192
+        ],
+        "dtype": "uint8",
+        "decoded_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+      },
+      "has_is_network_turn": {
+        "shape": [
+          8192
+        ],
+        "dtype": "uint8",
+        "decoded_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+      },
+      "has_is_selfplay": {
+        "shape": [
+          8192
+        ],
+        "dtype": "uint8",
+        "decoded_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+      },
+      "has_legal_mask": {
+        "shape": [
+          8192
+        ],
+        "dtype": "uint8",
+        "decoded_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+      },
+      "has_ply_index": {
+        "shape": [
+          8192
+        ],
+        "dtype": "uint8",
+        "decoded_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+      },
+      "has_policy": {
+        "shape": [
+          8192
+        ],
+        "dtype": "uint8",
+        "decoded_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+      },
+      "has_search_wdl": {
+        "shape": [
+          8192
+        ],
+        "dtype": "uint8",
+        "decoded_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+      },
+      "is_network_turn": {
+        "shape": [
+          8192
+        ],
+        "dtype": "uint8",
+        "decoded_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+      },
+      "is_selfplay": {
+        "shape": [
+          8192
+        ],
+        "dtype": "uint8",
+        "decoded_sha256": "6ba042a6672c64272ce75901468fd210026cd674fe9f1e11b46c9302e47e2136"
+      },
+      "legal_mask": {
+        "shape": [
+          8192,
+          1858
+        ],
+        "dtype": "uint8",
+        "decoded_sha256": "c484b1c82dcebe944a436b37bdacd5accace747d5d9190ce269252b6a021ed8f"
+      },
+      "ply_index": {
+        "shape": [
+          8192
+        ],
+        "dtype": "int32",
+        "decoded_sha256": "5b422afe3175a19048056aeb1a5fbaea91e3d0b7452f662551fc84afef11815f"
+      },
+      "policy_target": {
+        "shape": [
+          8192,
+          1858
+        ],
+        "dtype": "float16",
+        "decoded_sha256": "9e09fc9d10c310ac9cd4f4db74b50542b17d11526281c15d1151234c7aa19c4d"
+      },
+      "priority": {
+        "shape": [
+          8192
+        ],
+        "dtype": "float32",
+        "decoded_sha256": "46ac448298521650c9dfcc1d8dad9f941244e7bb071dc84c6841750d864015a9"
+      },
+      "search_wdl": {
+        "shape": [
+          8192,
+          3
+        ],
+        "dtype": "float16",
+        "decoded_sha256": "3951c87de96611608cdb39ab4b743a9f74ea66fe368d92e44cf39f445bab8d9b"
+      },
+      "wdl_target": {
+        "shape": [
+          8192
+        ],
+        "dtype": "int8",
+        "decoded_sha256": "3fa6132238f5f6084e8fce2b16358d041d6dad0fe391bc476176a82398813878"
+      },
+      "x": {
+        "shape": [
+          8192,
+          175,
+          8,
+          8
+        ],
+        "dtype": "float16",
+        "decoded_sha256": "fab1a1a060b0b20b0be217edeca0cb6008e4adf63ad1a019ff680cb9ffb4f7be"
+      }
+    },
+    "attrs_semantically_identical": true,
+    "comparison_seconds": 2.078170583001338,
+    "elapsed_seconds": 25.12861394099309,
+    "peak_rss_kib": 960512,
+    "limitations": [
+      "Baseline128 first; page/cache warming favors later512, no repeated order reversal.",
+      "Batch changes policy-loop reads/writes; TPG alignment still hardcodes128 in both arms.",
+      "Component times instrument unchanged calls; residual includes policy assembly, Zarr IO/readback, guards and remaining checks. No pure-kernel claim.",
+      "One real shard only; outputs are incomplete corpus fragments and cannot be used as qualified training corpora."
+    ]
+  },
+  "terminal": {
+    "session": 15337,
+    "exit_code": 0,
+    "wall_seconds": 26.0,
+    "peak_rss_kib": 960512
+  },
+  "artifacts": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_materializer_batch_benchmark_v1/execution/completed.json",
+      "sha256": "0a510d165158341557b812ec6e7fbcba22d21890e66670d13babfa231e905337"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_materializer_batch_benchmark_v1/plan.json",
+      "sha256": "6cd4f893de098db273b79f1068a87b8dbcd847ce391ed39c64b1d525add6dd27"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_materializer_batch_benchmark_v1/benchmark.py",
+      "sha256": "b5216c82be17a3cb5235d44b74b8ad48c3e4cc6f716f7c7bc33706b78aeadac3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_materializer_batch_benchmark_v1/independent_review.json",
+      "sha256": "b8c5690b99bf09f15b026ca47bfa4a6b745ce284c372198fb2f73ee9b64d9b58"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_shard_materialization_review_v1/independent_review.json",
+      "sha256": "c50db30eaacd42d965ed906f2316f29ee869f138de3fb648e1eea63dbf24636b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_shard_materialization_review_v1/implementation_validation.json",
+      "sha256": "69d91ae707baf92c6b40acc6ee8135fddf35ed4f6e6f6278520c9fa499a6b66e"
+    }
+  ],
+  "validation": {
+    "status": "EXTRACTION_SCOPED_VALIDATION_PASS",
+    "base": "7d60d9ecdb9f08b381d37073c7675ebb0d8374dd",
+    "worktree": "/tmp/deepfin-ceres-shard-materialization",
+    "source_sha256": "44de843884d37fc2709a8ebc95944299ec6412b8e97179db4eddeaf637a60e3d",
+    "test_sha256": "4fd2183c7bb2ebca711beb912a3c8e1bb2296d63f14c58e3247104513f0e0ca6",
+    "tests": {
+      "session": 13077,
+      "exit_code": 0,
+      "passed": 16,
+      "log": "/tmp/ceres-shard-extraction-tests.log",
+      "later_changes": "Assertion split and comment clarification only; same comparisons"
+    },
+    "scoped_types": {
+      "session": 59455,
+      "exit_code": 0,
+      "errors": 0,
+      "warnings": 0,
+      "log": "/tmp/ceres-shard-extraction-types.log"
+    },
+    "whole_ruff_vulture": {
+      "session": 61413,
+      "exit_code": 0,
+      "logs": [
+        "/tmp/ceres-shard-extraction-ruff.log",
+        "/tmp/ceres-shard-extraction-vulture.log"
+      ]
+    },
+    "whole_types": "Not attempted again absent evidence prior broad-scope timeout is resolved; no whole-type gate pass claimed.",
+    "diff_check": "PASS",
+    "real_benchmark": "COMPLETE; see result and terminal in this record"
+  }
+}

@@ -17,6 +17,7 @@ from pathlib import Path
 import shutil
 import sys
 import time
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -176,6 +177,107 @@ def read_manifest(path: Path, digest: str) -> tuple[dict[str, Any], dict[str, An
     return manifest, summary, specs
 
 
+def rewrite_shard(args: argparse.Namespace, *, manifest: dict[str, Any],
+                  original: dict[str, Any], spec: dict[str, Any], entry: dict[str, Any],
+                  writing: Path, weight: float, temperatures: dict[str, float],
+                  guard: Callable[[], None]
+                  ) -> tuple[dict[str, Any], dict[Path, str], dict[str, Any]]:
+    """Materialize one shard after the caller validates the complete manifest.
+
+    This returns a shard receipt, not full-corpus admission. The caller owns fresh
+    output/input separation, recipe validation, producer pins, and final publication.
+    """
+    source = Path(manifest['source']).resolve()
+    max_mass_error = max_tv = 0.0
+    support_lost = 0
+    guard()
+    src = source / spec['path']
+    bpath, cpath = Path(entry['bt4']).resolve(), Path(entry['ceres']).resolve()
+    states = {p: shared.storage_identity(p) for p in (src, bpath, cpath)}
+    require(states[src] == entry['ceres_binding']['source_storage_identity'],
+            'Ceres source storage identity differs')
+    require(states[bpath] == entry['bt4_storage_identity'], 'BT4 storage identity differs')
+    group = shared.source_arrays(src, original, spec['rows'])
+    require(set(group.array_keys()) == set(ARRAYS), 'source array inventory differs')
+    for name in ARRAYS:
+        shared.complete_chunks(group[name])
+    require(bool(group['policy_target'].shape == (spec['rows'], 1858)
+            and group['policy_target'].dtype == np.dtype('float16')
+            and np.all(group['has_policy'][:] == 1)), 'source policy contract differs')
+    encoding, keys, key_sha, policy_sha = bt4._sidecar_identity(group, src)
+    teacher = manifest['teachers']['bt4']
+    battrs = bt4._validate_sidecar(bpath, source_path=src, source_keys=keys,
+        source_key_sha=key_sha, source_policy_sha=policy_sha,
+        onnx_sha=teacher['model_sha256'], providers=teacher['providers'],
+        policy_output=teacher['policy_output'])
+    require(battrs.get('input_history_encoding') == encoding
+            and battrs.get('source_dir') == str(source), 'BT4 source/history differs')
+    full_input_verified = int(verify_bt4_full_input(group, battrs, manifest))
+    bg: Any = zarr.open_group(str(bpath), mode='r')
+    for name in (bt4.SIDECAR_KEY_FIELD, bt4.SIDECAR_POLICY_FIELD):
+        shared.complete_chunks(bg[name])
+    if 'bt4_policy_sha256' in battrs:
+        require(bool(shared.raw.sha_array(np.asarray(bg[bt4.SIDECAR_POLICY_FIELD][:]))
+                == battrs['bt4_policy_sha256']), 'BT4 policy digest differs')
+    cattrs = ceres.verify_cached(cpath, entry['ceres_binding'])
+    cg: Any = zarr.open_group(str(cpath), mode='r')
+    check_ceres_alignment(group, cg, cattrs, spec['rows'])
+    before = copies.file_map(src)
+    dest_path = writing / spec['path']
+    shutil.copytree(src, dest_path)
+    require(copies.file_map(dest_path) == before, 'copied bytes differ')
+    dest: Any = zarr.open_group(str(dest_path), mode='a')
+    policy_hash = hashlib.sha256()
+    changed = 0
+    for start in range(0, spec['rows'], args.batch_size):
+        guard()
+        end = min(start + args.batch_size, spec['rows'])
+        legal = group['legal_mask'][start:end]
+        logits = np.zeros(legal.shape, dtype=np.float64)
+        offsets = cg['legal_offsets'][start:end + 1]
+        indices = cg['legal_indices'][int(offsets[0]):int(offsets[-1])]
+        raw_logits = cg['policy_logits'][int(offsets[0]):int(offsets[-1])]
+        for row in range(end - start):
+            lo, hi = int(offsets[row] - offsets[0]), int(offsets[row + 1] - offsets[0])
+            logits[row, indices[lo:hi]] = raw_logits[lo:hi]
+        ideal = policy_target(bg[bt4.SIDECAR_POLICY_FIELD][start:end], logits, legal,
+            bt4_weight=weight, bt4_temperature=temperatures['bt4'],
+            ceres_temperature=temperatures['ceres'])
+        stored = ideal.astype(np.float16)
+        mass = stored.astype(np.float64).sum(axis=1, keepdims=True)
+        require(bool(np.all(mass > 0)), 'stored policy lost all mass')
+        error = float(np.max(np.abs(mass - 1)))
+        require(error <= 2**-10, 'stored policy mass differs')
+        max_mass_error = max(max_mass_error, error)
+        max_tv = max(max_tv, float(np.max(np.abs(ideal - stored / mass).sum(axis=1) / 2)))
+        support_lost += int(np.count_nonzero((ideal > 0) & (stored == 0)))
+        changed += int(np.count_nonzero(np.any(stored != group['policy_target'][start:end], axis=1)))
+        dest['policy_target'][start:end] = stored
+        require(bool(np.array_equal(dest['policy_target'][start:end], stored)), 'policy readback differs')
+        policy_hash.update(stored.tobytes(order='C'))
+    stamp = {'schema': 1, 'kind': 'bt4-ceres-policy', 'algorithm': ALGORITHM,
+             'weights': {'bt4': weight, 'ceres': 1 - weight}, 'temperatures': temperatures,
+             'manifest_sha256': args.expected_manifest_sha256,
+             'source_storage_identity': states[src]}
+    dest.attrs['ceres_policy_postprocess'] = stamp
+    after = copies.file_map(dest_path)
+    def unchanged(files: dict[str, str]) -> dict[str, str]:
+        return {k: v for k, v in files.items()
+                if k != '.zattrs' and k.split('/')[0] != 'policy_target'}
+    require(unchanged(before) == unchanged(after), 'nonpolicy arrays changed')
+    require(all(shared.storage_identity(p) == state for p, state in states.items()),
+            'input changed during rewrite')
+    proof = {'path': spec['path'], 'rows': spec['rows'], 'changed_rows': changed,
+        'source_storage_identity': states[src], 'bt4_storage_identity': states[bpath],
+        'ceres_storage_identity': states[cpath], 'policy_target_sha256': policy_hash.hexdigest(),
+        'files_manifest_sha256': hashlib.sha256(json.dumps(after, sort_keys=True).encode()).hexdigest(),
+        'attrs_sha256': shared.file_sha256(dest_path / '.zattrs'),
+        'output_storage_identity': shared.storage_identity(dest_path)}
+    return proof, states, {'max_mass_error': max_mass_error, 'max_tv': max_tv,
+                           'support_lost': support_lost,
+                           'full_input_digest_verified_shards': full_input_verified}
+
+
 def rewrite(args: argparse.Namespace) -> dict[str, Any]:
     shared.set_nthreads(2)
     require(type(args.batch_size) is int and 0 < args.batch_size <= 4096, 'invalid batch size')
@@ -215,90 +317,15 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
     max_mass_error = max_tv = 0.0
     support_lost = 0
     for spec, entry in zip(specs, manifest['entries'], strict=True):
-        guard()
-        src = source / spec['path']
-        bpath, cpath = Path(entry['bt4']).resolve(), Path(entry['ceres']).resolve()
-        states = {p: shared.storage_identity(p) for p in (src, bpath, cpath)}
-        require(states[src] == entry['ceres_binding']['source_storage_identity'],
-                'Ceres source storage identity differs')
-        require(states[bpath] == entry['bt4_storage_identity'], 'BT4 storage identity differs')
-        group = shared.source_arrays(src, original, spec['rows'])
-        require(set(group.array_keys()) == set(ARRAYS), 'source array inventory differs')
-        for name in ARRAYS:
-            shared.complete_chunks(group[name])
-        require(bool(group['policy_target'].shape == (spec['rows'], 1858)
-                and group['policy_target'].dtype == np.dtype('float16')
-                and np.all(group['has_policy'][:] == 1)), 'source policy contract differs')
-        encoding, keys, key_sha, policy_sha = bt4._sidecar_identity(group, src)
-        teacher = manifest['teachers']['bt4']
-        battrs = bt4._validate_sidecar(bpath, source_path=src, source_keys=keys,
-            source_key_sha=key_sha, source_policy_sha=policy_sha,
-            onnx_sha=teacher['model_sha256'], providers=teacher['providers'],
-            policy_output=teacher['policy_output'])
-        require(battrs.get('input_history_encoding') == encoding
-                and battrs.get('source_dir') == str(source), 'BT4 source/history differs')
-        lineage['full_input_digest_verified_shards'] += int(verify_bt4_full_input(group, battrs, manifest))
-        bg: Any = zarr.open_group(str(bpath), mode='r')
-        for name in (bt4.SIDECAR_KEY_FIELD, bt4.SIDECAR_POLICY_FIELD):
-            shared.complete_chunks(bg[name])
-        if 'bt4_policy_sha256' in battrs:
-            require(bool(shared.raw.sha_array(np.asarray(bg[bt4.SIDECAR_POLICY_FIELD][:]))
-                    == battrs['bt4_policy_sha256']), 'BT4 policy digest differs')
-        cattrs = ceres.verify_cached(cpath, entry['ceres_binding'])
-        cg: Any = zarr.open_group(str(cpath), mode='r')
-        check_ceres_alignment(group, cg, cattrs, spec['rows'])
-        before = copies.file_map(src)
-        dest_path = writing / spec['path']
-        shutil.copytree(src, dest_path)
-        require(copies.file_map(dest_path) == before, 'copied bytes differ')
-        dest: Any = zarr.open_group(str(dest_path), mode='a')
-        policy_hash = hashlib.sha256()
-        changed = 0
-        for start in range(0, spec['rows'], args.batch_size):
-            guard()
-            end = min(start + args.batch_size, spec['rows'])
-            legal = group['legal_mask'][start:end]
-            logits = np.zeros(legal.shape, dtype=np.float64)
-            offsets = cg['legal_offsets'][start:end + 1]
-            indices = cg['legal_indices'][int(offsets[0]):int(offsets[-1])]
-            raw_logits = cg['policy_logits'][int(offsets[0]):int(offsets[-1])]
-            for row in range(end - start):
-                lo, hi = int(offsets[row] - offsets[0]), int(offsets[row + 1] - offsets[0])
-                logits[row, indices[lo:hi]] = raw_logits[lo:hi]
-            ideal = policy_target(bg[bt4.SIDECAR_POLICY_FIELD][start:end], logits, legal,
-                bt4_weight=weight, bt4_temperature=temperatures['bt4'],
-                ceres_temperature=temperatures['ceres'])
-            stored = ideal.astype(np.float16)
-            mass = stored.astype(np.float64).sum(axis=1, keepdims=True)
-            require(bool(np.all(mass > 0)), 'stored policy lost all mass')
-            error = float(np.max(np.abs(mass - 1)))
-            require(error <= 2**-10, 'stored policy mass differs')
-            max_mass_error = max(max_mass_error, error)
-            max_tv = max(max_tv, float(np.max(np.abs(ideal - stored / mass).sum(axis=1) / 2)))
-            support_lost += int(np.count_nonzero((ideal > 0) & (stored == 0)))
-            changed += int(np.count_nonzero(np.any(stored != group['policy_target'][start:end], axis=1)))
-            dest['policy_target'][start:end] = stored
-            require(bool(np.array_equal(dest['policy_target'][start:end], stored)), 'policy readback differs')
-            policy_hash.update(stored.tobytes(order='C'))
-        stamp = {'schema': 1, 'kind': 'bt4-ceres-policy', 'algorithm': ALGORITHM,
-                 'weights': {'bt4': weight, 'ceres': 1 - weight}, 'temperatures': temperatures,
-                 'manifest_sha256': args.expected_manifest_sha256,
-                 'source_storage_identity': states[src]}
-        dest.attrs['ceres_policy_postprocess'] = stamp
-        after = copies.file_map(dest_path)
-        def unchanged(files: dict[str, str]) -> dict[str, str]:
-            return {k: v for k, v in files.items()
-                    if k != '.zattrs' and k.split('/')[0] != 'policy_target'}
-        require(unchanged(before) == unchanged(after), 'nonpolicy arrays changed')
-        require(all(shared.storage_identity(p) == state for p, state in states.items()),
-                'input changed during rewrite')
+        proof, states, metrics = rewrite_shard(
+            args, manifest=manifest, original=original, spec=spec, entry=entry,
+            writing=writing, weight=weight, temperatures=temperatures, guard=guard)
+        outputs.append(proof)
         verified_states.update(states)
-        outputs.append({'path': spec['path'], 'rows': spec['rows'], 'changed_rows': changed,
-            'source_storage_identity': states[src], 'bt4_storage_identity': states[bpath],
-            'ceres_storage_identity': states[cpath], 'policy_target_sha256': policy_hash.hexdigest(),
-            'files_manifest_sha256': hashlib.sha256(json.dumps(after, sort_keys=True).encode()).hexdigest(),
-            'attrs_sha256': shared.file_sha256(dest_path / '.zattrs'),
-            'output_storage_identity': shared.storage_identity(dest_path)})
+        max_mass_error = max(max_mass_error, metrics['max_mass_error'])
+        max_tv = max(max_tv, metrics['max_tv'])
+        support_lost += metrics['support_lost']
+        lineage['full_input_digest_verified_shards'] += metrics['full_input_digest_verified_shards']
     guard()
     require(shared.file_sha256(manifest_path) == args.expected_manifest_sha256
             and shared.file_sha256(source / DERIVE_SUMMARY) == manifest['source_summary_sha256']
