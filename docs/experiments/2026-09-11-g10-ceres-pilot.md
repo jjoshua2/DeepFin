@@ -90,7 +90,7 @@ Neural top sets overlap on 20,182/23,993 ordinary positions (84.12%). Mean JS di
 
 Next decision: retain the already registered arithmetic policy and separate value training anchors. Do not tune temperatures/thresholds on these four shards or infer that Ceres is globally inferior from SF self-agreement. The balanced geometric result justifies retaining geometric mixing as one distinct later candidate if the actual trained anchors warrant it. Additional G10 collection was stopped by the existing GPU memory guard before inference; preserve the user's graphics workload and failed receipt rather than retry automatically. A future wider saved cohort should check whether the balanced/global pattern survives, without making it a prerequisite for the registered original-corpus training.
 
-There is **no value result**: every value comparison has zero rows and null loss means because the native-BT4 value join is absent. Both Ceres heads being stored does not resolve that missing input.
+That policy-only invocation had **no value result**: every value comparison had zero rows and null loss means because the native-BT4 value join was absent. The later authenticated value pass below fills that missing input without changing these historical policy results.
 
 
 The diagnostic completed in 376.82 seconds with 2,000,152 KiB peak RSS; root
@@ -133,3 +133,53 @@ zero qualified rows. Further collection is deferred while the existing CPU
 materialization continues; the full original-corpus registered training anchors
 retain priority. Completing this convenience cohort would still require saved
 qualification of its final partial shard and does not replace those anchors.
+
+## Completed authenticated value diagnostic, September 12
+
+The native BT4 join works on the actual saved G10 bank, and it fills the previously missing six-way value comparison. The scientific result mainly exposes how closely the evaluation ruler follows the original SF labels. It does not establish that keeping pure SF values is best for training or that Ceres/BT4 value mixing is harmful.
+
+The run banked all 32,768 original rows. Exactly 23,993 rows are common to all six value predictions; 8,775 rows are excluded because the d9 roster contains mate-domain scores. There are no other value exclusions. The included set has 16,745 d10 final rulers (including 86 single-move cases) and 7,248 d12 rulers.
+
+This value denominator is **618 rows larger than the policy denominator**. The value code maps the maximum saved final SF score through the original fixed CP-to-WDL conversion even when the final roster contains a mate-coded score. Policy regret instead excludes any mate-domain final roster. The 618 included value rows with such rosters are reported separately; this does not imply that each roster's maximizing move is itself mate-coded.
+
+All results below use the same 23,993 included rows. Brier is the sum of squared errors over win/draw/loss; cross-entropy uses natural logs. Lower means closer agreement with this fixed SF-derived ruler.
+
+| Fixed prediction | Mean Brier | Mean cross-entropy |
+| --- | ---: | ---: |
+| Saved SF | 0.000316 | 0.292345 |
+| Native BT4 | 0.034222 | 0.473302 |
+| Ceres primary T0.55 | 0.049225 | 0.792925 |
+| Ceres secondary T1.5 | 0.035772 | 0.420418 |
+| Ceres dual, 60/40 | 0.043075 | 0.483361 |
+| Registered SF50/BT425/Ceres-dual25 | 0.009383 | 0.309598 |
+
+The low saved-SF error is not an independent validation. The ruler reuses SF, saved adaptive search and the original source's CP-to-WDL mapping. At a declared descriptive tolerance of Brier <=1e-6 (WDL L2 distance <=0.001), 8,865/23,993 rows (36.95%) are almost unchanged from the saved SF prediction; 2,427 have exactly zero banked SF Brier. No SF prediction was reconstructed or invented: these counts use its actual banked loss. The mean ruler entropy is 0.291207 nats, so saved SF cross-entropy exceeds it by only about 0.001139 nats. Closeness across the cohort is much stronger than the near-zero count alone conveys.
+
+The fixed balanced stratum, absolute phase-zero d9 best score <=100 cp, has 2,250 included rows. Mean Brier/CE are SF 0.000463/1.086962, BT4 0.258230/2.010652, primary 0.356411/3.136971, secondary 0.261855/1.823039, dual 0.312337/2.111680, and registered blend 0.069701/1.187164. Its ruler entropy is 1.086276 nats, close to the maximum ln(3), while the actual game-outcome calibration of these predictions is not measured. Saved-SF closeness also persists here: 741/2,250 losses meet the same tolerance. All other fixed score and position strata are retained in the machine readout.
+
+Ceres secondary has lower cross-entropy than native BT4 by 0.052884 nats on the common cohort, but slightly higher Brier by 0.001550. The registered dual has higher Brier by 0.008854 and higher CE by 0.010060 than BT4. Primary has substantially higher CE against this particular ruler. These different metric rankings are reasons to keep head/calibration questions explicit, not to fit a new temperature or declare one teacher universally superior. The SF-containing registered blend is naturally closer to an SF ruler; that does not isolate Ceres's incremental value.
+
+Next decision: retain the registered value training and its comparisons against B100 and B100V50. Those comparisons are more discriminating about whether Ceres adds useful training supervision than further optimizing agreement with nearly the same SF labels. If playing evidence later motivates a different Ceres value-head combination, this bank can describe its failure pattern, but the current pass selects no new weights, temperatures or teacher. No independent value accuracy, game calibration or Elo result is established.
+
+The actual diagnostic completed in 509.61 seconds with 1,999,496 KiB peak RSS; root session 48260 exited zero. A single bounded readout pass took 15.08 seconds and 64,712 KiB, with two CPU cores and the GPU hidden. It verified the exact bank hash, unique source/derived identities, four-shard layout, shared six-way inclusion, and every aggregate loss against the original summary. All nonvalue metrics exactly match the previous policy-only summary; the old policy bank was not reread. Source-qualified statistics for 167 included game groups are retained. No inference, source scan, bootstrap, repeated bank pass or calibration fitting was performed.
+
+
+Full WDL losses do not isolate the search quantity `Q = W − L`: draw-probability
+errors also contribute. This readout therefore does not rank heads by search
+value quality. A possible Q-versus-draw decomposition is being assessed separately;
+it is not a completed result or new fitted recipe in this publication.
+
+The [full value readout](evidence/g10-ceres-value-readout-20260912.json) preserves
+all fixed strata, common paired differences and the near-zero tolerance. The
+[original machine summary](evidence/g10-ceres-value-summary-20260912.json) and
+readout are byte-identical host artifacts. [Compact execution and validation evidence](evidence/g10-ceres-value-progress-20260912.json)
+pins the actual bank, terminal, runtime and independent scientific review.
+
+The runtime is commit `21aec39249c17a44145a4435f2ca9abbcf93cb4e` on
+[PR #655](https://github.com/jjoshua2/DeepFin/pull/655), an open stack based on
+`fix/teacher-adjudication-coverage`, not merged into main by this publication.
+Fourteen focused tests, scoped types with zero findings, whole Ruff/Vulture and
+independent source reviews supported the bounded research run. Whole-repository
+type checks timed out and remain unresolved; a completed data diagnostic does
+not turn those checks into a passing upstream validation. The existing source,
+failed collection evidence and current CPU materialization are unchanged.

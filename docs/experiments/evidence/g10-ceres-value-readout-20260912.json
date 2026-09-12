@@ -1,0 +1,2348 @@
+{
+  "status": "PASS_DESCRIPTIVE_NATIVE_VALUE_READOUT",
+  "rows": 32768,
+  "inclusion_counts": {
+    "included": 23993,
+    "mate_domain_d9": 8775
+  },
+  "included_final_reason_counts": {
+    "selected_d10": 16659,
+    "selected_d12": 7248,
+    "selected_single_move_d10": 86
+  },
+  "included_final_depth_counts": {
+    "10": 16745,
+    "12": 7248
+  },
+  "source_qualified_included_game_clusters": 167,
+  "strata": {
+    "all_included": {
+      "rows": 23993,
+      "final_mate_roster_rows": 618,
+      "sf_brier_exact_zero": 2427,
+      "sf_brier_le_1e_minus6": 8865,
+      "target_entropy_sum": 6986.926458220242,
+      "losses": {
+        "bt4_native": {
+          "brier": 821.0776884609393,
+          "cross_entropy": 11355.926766630859
+        },
+        "ceres_dual": {
+          "brier": 1033.5079463255545,
+          "cross_entropy": 11597.291973235615
+        },
+        "ceres_primary": {
+          "brier": 1181.0614205130846,
+          "cross_entropy": 19024.649056492115
+        },
+        "ceres_secondary": {
+          "brier": 858.2673802062408,
+          "cross_entropy": 10087.086054236033
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 225.12897267629728,
+          "cross_entropy": 7428.190784501079
+        },
+        "sf_saved": {
+          "brier": 7.576007905454122,
+          "cross_entropy": 7014.242526979458
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 813.5016805554861,
+          "cross_entropy": 4341.684239651364
+        },
+        "ceres_dual": {
+          "brier": 1025.9319384201015,
+          "cross_entropy": 4583.049446256198
+        },
+        "ceres_primary": {
+          "brier": 1173.4854126076373,
+          "cross_entropy": 12010.406529512527
+        },
+        "ceres_secondary": {
+          "brier": 850.6913723007908,
+          "cross_entropy": 3072.843527256505
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 217.5529647708449,
+          "cross_entropy": 413.9482575215649
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 212.43025786460962,
+          "cross_entropy": 241.36520660481082
+        },
+        "ceres_primary": {
+          "brier": 359.98373205215563,
+          "cross_entropy": 7668.7222898611935
+        },
+        "ceres_secondary": {
+          "brier": 37.18969174530437,
+          "cross_entropy": -1268.8407123948614
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -595.9487157846412,
+          "cross_entropy": -3927.7359821297823
+        },
+        "sf_saved": {
+          "brier": -813.5016805554861,
+          "cross_entropy": -4341.684239651364
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.03422155163843368,
+          "cross_entropy": 0.47330166159425074
+        },
+        "ceres_dual": {
+          "brier": 0.043075394753701264,
+          "cross_entropy": 0.48336147931628454
+        },
+        "ceres_primary": {
+          "brier": 0.049225249885928586,
+          "cross_entropy": 0.7929249804731427
+        },
+        "ceres_secondary": {
+          "brier": 0.03577157421774021,
+          "cross_entropy": 0.42041787413979215
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.009383110602104667,
+          "cross_entropy": 0.30959824884345766
+        },
+        "sf_saved": {
+          "brier": 0.0003157590924625567,
+          "cross_entropy": 0.292345372691179
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.03390579254597116,
+          "cross_entropy": 0.18095628890307022
+        },
+        "ceres_dual": {
+          "brier": 0.042759635661238755,
+          "cross_entropy": 0.19101610662510726
+        },
+        "ceres_primary": {
+          "brier": 0.04890949079346631,
+          "cross_entropy": 0.5005796077819584
+        },
+        "ceres_secondary": {
+          "brier": 0.035455815125277824,
+          "cross_entropy": 0.1280725014486102
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.009067351509642184,
+          "cross_entropy": 0.017252876152276286
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.008853843115267353,
+          "cross_entropy": 0.010059817722036044
+        },
+        "ceres_primary": {
+          "brier": 0.015003698247495338,
+          "cross_entropy": 0.3196233188788894
+        },
+        "ceres_secondary": {
+          "brier": 0.0015500225793066466,
+          "cross_entropy": -0.05288378745446011
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.02483844103632898,
+          "cross_entropy": -0.16370341275079325
+        },
+        "sf_saved": {
+          "brier": -0.03390579254597116,
+          "cross_entropy": -0.18095628890307022
+        }
+      },
+      "sf_near_zero_fraction": 0.3694827658066936,
+      "mean_target_entropy": 0.29120687109657994
+    },
+    "positive_d9_best_gt100": {
+      "rows": 12290,
+      "final_mate_roster_rows": 360,
+      "sf_brier_exact_zero": 1659,
+      "sf_brier_le_1e_minus6": 5645,
+      "target_entropy_sum": 1902.8931719215186,
+      "losses": {
+        "bt4_native": {
+          "brier": 87.35553603051272,
+          "cross_entropy": 2750.8964217157413
+        },
+        "ceres_dual": {
+          "brier": 130.8407817367838,
+          "cross_entropy": 2780.8997876420367
+        },
+        "ceres_primary": {
+          "brier": 150.624366002058,
+          "cross_entropy": 4937.910154921321
+        },
+        "ceres_secondary": {
+          "brier": 105.86488526388037,
+          "cross_entropy": 2447.3839591127416
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 25.861524153443128,
+          "cross_entropy": 1985.8748735595675
+        },
+        "sf_saved": {
+          "brier": 1.8976861154032765,
+          "cross_entropy": 1912.3837729775455
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 85.45784991510874,
+          "cross_entropy": 838.5126487381899
+        },
+        "ceres_dual": {
+          "brier": 128.9430956213803,
+          "cross_entropy": 868.5160146645004
+        },
+        "ceres_primary": {
+          "brier": 148.72667988665464,
+          "cross_entropy": 3025.526381943777
+        },
+        "ceres_secondary": {
+          "brier": 103.96719914847692,
+          "cross_entropy": 535.0001861352049
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 23.96383803803974,
+          "cross_entropy": 73.49110058203325
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 43.48524570627158,
+          "cross_entropy": 30.003365926305566
+        },
+        "ceres_primary": {
+          "brier": 63.26882997154754,
+          "cross_entropy": 2187.013733205576
+        },
+        "ceres_secondary": {
+          "brier": 18.5093492333688,
+          "cross_entropy": -303.5124626029897
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -61.494011877068814,
+          "cross_entropy": -765.0215481561595
+        },
+        "sf_saved": {
+          "brier": -85.45784991510874,
+          "cross_entropy": -838.5126487381899
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.007107854843817146,
+          "cross_entropy": 0.22383209289794478
+        },
+        "ceres_dual": {
+          "brier": 0.010646117309746446,
+          "cross_entropy": 0.22627337572351805
+        },
+        "ceres_primary": {
+          "brier": 0.01225584751847502,
+          "cross_entropy": 0.40178276280889513
+        },
+        "ceres_secondary": {
+          "brier": 0.008613904415287255,
+          "cross_entropy": 0.19913620497255832
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.0021042737309555025,
+          "cross_entropy": 0.16158461135553845
+        },
+        "sf_saved": {
+          "brier": 0.0001544089597561657,
+          "cross_entropy": 0.15560486354577263
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.0069534458840609225,
+          "cross_entropy": 0.06822722935217168
+        },
+        "ceres_dual": {
+          "brier": 0.010491708349990261,
+          "cross_entropy": 0.07066851217774617
+        },
+        "ceres_primary": {
+          "brier": 0.012101438558718848,
+          "cross_entropy": 0.2461778992631226
+        },
+        "ceres_secondary": {
+          "brier": 0.008459495455531076,
+          "cross_entropy": 0.043531341426786406
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.0019498647711993279,
+          "cross_entropy": 0.005979747809766742
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.003538262465929339,
+          "cross_entropy": 0.00244128282557409
+        },
+        "ceres_primary": {
+          "brier": 0.005147992674658058,
+          "cross_entropy": 0.17795066991095004
+        },
+        "ceres_secondary": {
+          "brier": 0.0015060495714702034,
+          "cross_entropy": -0.024695887925385653
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.0050035811128615795,
+          "cross_entropy": -0.06224748154240517
+        },
+        "sf_saved": {
+          "brier": -0.0069534458840609225,
+          "cross_entropy": -0.06822722935217168
+        }
+      },
+      "sf_near_zero_fraction": 0.45931651749389746,
+      "mean_target_entropy": 0.1548326421417021
+    },
+    "final_roster_all_nonmate": {
+      "rows": 23375,
+      "final_mate_roster_rows": 0,
+      "sf_brier_exact_zero": 2131,
+      "sf_brier_le_1e_minus6": 8397,
+      "target_entropy_sum": 6965.512997287386,
+      "losses": {
+        "bt4_native": {
+          "brier": 819.1061565587681,
+          "cross_entropy": 11319.236032434379
+        },
+        "ceres_dual": {
+          "brier": 1031.483290717342,
+          "cross_entropy": 11564.241729188923
+        },
+        "ceres_primary": {
+          "brier": 1178.6612926434366,
+          "cross_entropy": 18964.338089817767
+        },
+        "ceres_secondary": {
+          "brier": 856.7071971900265,
+          "cross_entropy": 10057.162298176632
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 224.61738621124513,
+          "cross_entropy": 7405.181911191249
+        },
+        "sf_saved": {
+          "brier": 7.5129920016261496,
+          "cross_entropy": 6992.264224246804
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 811.5931645571422,
+          "cross_entropy": 4326.97180818755
+        },
+        "ceres_dual": {
+          "brier": 1023.9702987157157,
+          "cross_entropy": 4571.977504942158
+        },
+        "ceres_primary": {
+          "brier": 1171.1483006418168,
+          "cross_entropy": 11972.073865570892
+        },
+        "ceres_secondary": {
+          "brier": 849.1942051884048,
+          "cross_entropy": 3064.8980739297704
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 217.10439420962084,
+          "cross_entropy": 412.917686944395
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 212.37713415856734,
+          "cross_entropy": 245.00569675458442
+        },
+        "ceres_primary": {
+          "brier": 359.55513608467766,
+          "cross_entropy": 7645.102057383362
+        },
+        "ceres_secondary": {
+          "brier": 37.601040631260794,
+          "cross_entropy": -1262.0737342577888
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -594.4887703475218,
+          "cross_entropy": -3914.0541212431426
+        },
+        "sf_saved": {
+          "brier": -811.5931645571422,
+          "cross_entropy": -4326.97180818755
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.035041974612139815,
+          "cross_entropy": 0.48424539176189857
+        },
+        "ceres_dual": {
+          "brier": 0.044127627410367576,
+          "cross_entropy": 0.4947269188957828
+        },
+        "ceres_primary": {
+          "brier": 0.05042401251950531,
+          "cross_entropy": 0.8113085813825783
+        },
+        "ceres_secondary": {
+          "brier": 0.036650575280856745,
+          "cross_entropy": 0.43025293254231584
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.009609299944866102,
+          "cross_entropy": 0.3167992261472192
+        },
+        "sf_saved": {
+          "brier": 0.0003214114225294609,
+          "cross_entropy": 0.29913429836349964
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.034720563189610365,
+          "cross_entropy": 0.18511109339839785
+        },
+        "ceres_dual": {
+          "brier": 0.043806215987838105,
+          "cross_entropy": 0.19559262053228482
+        },
+        "ceres_primary": {
+          "brier": 0.05010260109697612,
+          "cross_entropy": 0.5121742830190756
+        },
+        "ceres_secondary": {
+          "brier": 0.036329163858327476,
+          "cross_entropy": 0.1311186341788137
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.00928788852233672,
+          "cross_entropy": 0.01766492778371743
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.00908565279822748,
+          "cross_entropy": 0.010481527133885964
+        },
+        "ceres_primary": {
+          "brier": 0.015382037907365888,
+          "cross_entropy": 0.3270631896206786
+        },
+        "ceres_secondary": {
+          "brier": 0.0016086006687170394,
+          "cross_entropy": -0.05399245921958455
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.025432674667273662,
+          "cross_entropy": -0.1674461656146799
+        },
+        "sf_saved": {
+          "brier": -0.034720563189610365,
+          "cross_entropy": -0.18511109339839785
+        }
+      },
+      "sf_near_zero_fraction": 0.35922994652406415,
+      "mean_target_entropy": 0.2979898608465192
+    },
+    "not_in_check": {
+      "rows": 22501,
+      "final_mate_roster_rows": 552,
+      "sf_brier_exact_zero": 2236,
+      "sf_brier_le_1e_minus6": 8191,
+      "target_entropy_sum": 6584.238911397206,
+      "losses": {
+        "bt4_native": {
+          "brier": 751.8391953052693,
+          "cross_entropy": 10594.617944627378
+        },
+        "ceres_dual": {
+          "brier": 959.0147576275285,
+          "cross_entropy": 10866.62582989019
+        },
+        "ceres_primary": {
+          "brier": 1097.8197187472972,
+          "cross_entropy": 17791.93427597355
+        },
+        "ceres_secondary": {
+          "brier": 794.3153637840011,
+          "cross_entropy": 9457.321140975708
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 207.4807454101287,
+          "cross_entropy": 6993.124117150502
+        },
+        "sf_saved": {
+          "brier": 6.851581567242745,
+          "cross_entropy": 6609.264543764183
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 744.9876137380262,
+          "cross_entropy": 3985.3534008631777
+        },
+        "ceres_dual": {
+          "brier": 952.1631760602838,
+          "cross_entropy": 4257.361286126029
+        },
+        "ceres_primary": {
+          "brier": 1090.968137180062,
+          "cross_entropy": 11182.669732209373
+        },
+        "ceres_secondary": {
+          "brier": 787.4637822167615,
+          "cross_entropy": 2848.05659721147
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 200.62916384288815,
+          "cross_entropy": 383.8595733862495
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 207.17556232225522,
+          "cross_entropy": 272.0078852628293
+        },
+        "ceres_primary": {
+          "brier": 345.98052344203955,
+          "cross_entropy": 7197.316331346208
+        },
+        "ceres_secondary": {
+          "brier": 42.4761684787341,
+          "cross_entropy": -1137.2968036517059
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -544.3584498951358,
+          "cross_entropy": -3601.4938274769243
+        },
+        "sf_saved": {
+          "brier": -744.9876137380262,
+          "cross_entropy": -3985.3534008631777
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.03341359029844315,
+          "cross_entropy": 0.47085098193979724
+        },
+        "ceres_dual": {
+          "brier": 0.04262098385083012,
+          "cross_entropy": 0.4829396840091636
+        },
+        "ceres_primary": {
+          "brier": 0.048789819063477055,
+          "cross_entropy": 0.7907174914880916
+        },
+        "ceres_secondary": {
+          "brier": 0.03530133610879521,
+          "cross_entropy": 0.42030670374542056
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.00922095664237717,
+          "cross_entropy": 0.3107917033532066
+        },
+        "sf_saved": {
+          "brier": 0.00030450120293510263,
+          "cross_entropy": 0.2937320360768047
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.03310908909550803,
+          "cross_entropy": 0.17711894586299176
+        },
+        "ceres_dual": {
+          "brier": 0.04231648264789493,
+          "cross_entropy": 0.18920764793235986
+        },
+        "ceres_primary": {
+          "brier": 0.04848531786054229,
+          "cross_entropy": 0.4969854554112872
+        },
+        "ceres_secondary": {
+          "brier": 0.03499683490586025,
+          "cross_entropy": 0.1265746676686134
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.008916455439442165,
+          "cross_entropy": 0.017059667276398804
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.009207393552386792,
+          "cross_entropy": 0.012088702069367107
+        },
+        "ceres_primary": {
+          "brier": 0.015376228765034423,
+          "cross_entropy": 0.319866509548296
+        },
+        "ceres_secondary": {
+          "brier": 0.0018877458103521666,
+          "cross_entropy": -0.05054427819437829
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.024192633656065766,
+          "cross_entropy": -0.16005927858659277
+        },
+        "sf_saved": {
+          "brier": -0.03310908909550803,
+          "cross_entropy": -0.17711894586299176
+        }
+      },
+      "sf_near_zero_fraction": 0.3640282654104262,
+      "mean_target_entropy": 0.29261983518053447
+    },
+    "legal_gt_30": {
+      "rows": 9472,
+      "final_mate_roster_rows": 211,
+      "sf_brier_exact_zero": 326,
+      "sf_brier_le_1e_minus6": 3316,
+      "target_entropy_sum": 3059.9557693459587,
+      "losses": {
+        "bt4_native": {
+          "brier": 193.99823372150175,
+          "cross_entropy": 4050.163384881256
+        },
+        "ceres_dual": {
+          "brier": 322.222094701275,
+          "cross_entropy": 4345.028902724089
+        },
+        "ceres_primary": {
+          "brier": 390.88107331413556,
+          "cross_entropy": 6399.80040301298
+        },
+        "ceres_secondary": {
+          "brier": 244.47470536963152,
+          "cross_entropy": 3837.3858051392513
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 61.25431083027079,
+          "cross_entropy": 3194.575511775086
+        },
+        "sf_saved": {
+          "brier": 3.021961940911703,
+          "cross_entropy": 3067.909571473215
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 190.97627178059037,
+          "cross_entropy": 982.253813408037
+        },
+        "ceres_dual": {
+          "brier": 319.20013276036383,
+          "cross_entropy": 1277.1193312509097
+        },
+        "ceres_primary": {
+          "brier": 387.85911137322455,
+          "cross_entropy": 3331.89083153977
+        },
+        "ceres_secondary": {
+          "brier": 241.45274342872028,
+          "cross_entropy": 769.4762336660385
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 58.23234888935919,
+          "cross_entropy": 126.66594030188385
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 128.2238609797737,
+          "cross_entropy": 294.86551784286934
+        },
+        "ceres_primary": {
+          "brier": 196.88283959263418,
+          "cross_entropy": 2349.637018131726
+        },
+        "ceres_secondary": {
+          "brier": 50.476471648129404,
+          "cross_entropy": -212.77757974199835
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -132.74392289123134,
+          "cross_entropy": -855.5878731061541
+        },
+        "sf_saved": {
+          "brier": -190.97627178059037,
+          "cross_entropy": -982.253813408037
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.020481232445259897,
+          "cross_entropy": 0.42759326276195697
+        },
+        "ceres_dual": {
+          "brier": 0.034018379930455554,
+          "cross_entropy": 0.458723490574756
+        },
+        "ceres_primary": {
+          "brier": 0.041267005206306544,
+          "cross_entropy": 0.6756546033586338
+        },
+        "ceres_secondary": {
+          "brier": 0.02581025183378711,
+          "cross_entropy": 0.40512941354932974
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.00646688247785798,
+          "cross_entropy": 0.33726515115868727
+        },
+        "sf_saved": {
+          "brier": 0.00031904159004557674,
+          "cross_entropy": 0.323892480096412
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.020162190855214354,
+          "cross_entropy": 0.10370078266554444
+        },
+        "ceres_dual": {
+          "brier": 0.033699338340410036,
+          "cross_entropy": 0.13483101047834772
+        },
+        "ceres_primary": {
+          "brier": 0.04094796361626104,
+          "cross_entropy": 0.35176212326222234
+        },
+        "ceres_secondary": {
+          "brier": 0.025491210243741583,
+          "cross_entropy": 0.08123693345291792
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.006147840887812414,
+          "cross_entropy": 0.01337267106227659
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.013537147485195702,
+          "cross_entropy": 0.03113022781280293
+        },
+        "ceres_primary": {
+          "brier": 0.020785772761046685,
+          "cross_entropy": 0.24806134059667717
+        },
+        "ceres_secondary": {
+          "brier": 0.005329019388527176,
+          "cross_entropy": -0.022463849212626515
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.014014349967401956,
+          "cross_entropy": -0.09032811160326797
+        },
+        "sf_saved": {
+          "brier": -0.020162190855214354,
+          "cross_entropy": -0.10370078266554444
+        }
+      },
+      "sf_near_zero_fraction": 0.3500844594594595,
+      "mean_target_entropy": 0.3230527628110176
+    },
+    "ply_40_79": {
+      "rows": 4838,
+      "final_mate_roster_rows": 63,
+      "sf_brier_exact_zero": 26,
+      "sf_brier_le_1e_minus6": 1586,
+      "target_entropy_sum": 1274.5649683012123,
+      "losses": {
+        "bt4_native": {
+          "brier": 91.1687761914036,
+          "cross_entropy": 1913.8026584701818
+        },
+        "ceres_dual": {
+          "brier": 119.70583208960339,
+          "cross_entropy": 1928.3937161671488
+        },
+        "ceres_primary": {
+          "brier": 140.6697591399029,
+          "cross_entropy": 3206.0389247409944
+        },
+        "ceres_secondary": {
+          "brier": 93.75644359062157,
+          "cross_entropy": 1679.0942815788305
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 25.45930280830199,
+          "cross_entropy": 1339.1649213626793
+        },
+        "sf_saved": {
+          "brier": 1.5361351686676037,
+          "cross_entropy": 1278.8550875053688
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 89.6326410227362,
+          "cross_entropy": 634.9475709648144
+        },
+        "ceres_dual": {
+          "brier": 118.16969692093562,
+          "cross_entropy": 649.5386286617795
+        },
+        "ceres_primary": {
+          "brier": 139.13362397123475,
+          "cross_entropy": 1927.1838372356174
+        },
+        "ceres_secondary": {
+          "brier": 92.22030842195423,
+          "cross_entropy": 400.23919407345835
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 23.92316763963441,
+          "cross_entropy": 60.30983385731225
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 28.537055898199732,
+          "cross_entropy": 14.591057696964672
+        },
+        "ceres_primary": {
+          "brier": 49.50098294849911,
+          "cross_entropy": 1292.236266270797
+        },
+        "ceres_secondary": {
+          "brier": 2.5876673992183292,
+          "cross_entropy": -234.70837689135647
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -65.70947338310133,
+          "cross_entropy": -574.637737107503
+        },
+        "sf_saved": {
+          "brier": -89.6326410227362,
+          "cross_entropy": -634.9475709648144
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.01884431091182381,
+          "cross_entropy": 0.395577234078169
+        },
+        "ceres_dual": {
+          "brier": 0.024742834247541007,
+          "cross_entropy": 0.39859316167158926
+        },
+        "ceres_primary": {
+          "brier": 0.029076014704403248,
+          "cross_entropy": 0.6626785706368322
+        },
+        "ceres_secondary": {
+          "brier": 0.019379173954241748,
+          "cross_entropy": 0.34706372087201953
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.005262361060004546,
+          "cross_entropy": 0.27680134794598577
+        },
+        "sf_saved": {
+          "brier": 0.00031751450365184036,
+          "cross_entropy": 0.26433548728924533
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.01852679640817201,
+          "cross_entropy": 0.13124174678892403
+        },
+        "ceres_dual": {
+          "brier": 0.024425319743889132,
+          "cross_entropy": 0.13425767438234384
+        },
+        "ceres_primary": {
+          "brier": 0.028758500200751293,
+          "cross_entropy": 0.3983430833475852
+        },
+        "ceres_secondary": {
+          "brier": 0.01906165945058996,
+          "cross_entropy": 0.08272823358277354
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.00494484655635271,
+          "cross_entropy": 0.012465860656740853
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.005898523335717183,
+          "cross_entropy": 0.0030159275934197338
+        },
+        "ceres_primary": {
+          "brier": 0.010231703792579394,
+          "cross_entropy": 0.26710133655866
+        },
+        "ceres_secondary": {
+          "brier": 0.0005348630424180093,
+          "cross_entropy": -0.04851351320615057
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.013581949851819208,
+          "cross_entropy": -0.11877588613218333
+        },
+        "sf_saved": {
+          "brier": -0.01852679640817201,
+          "cross_entropy": -0.13124174678892403
+        }
+      },
+      "sf_near_zero_fraction": 0.3278214138073584,
+      "mean_target_entropy": 0.26344873259636464
+    },
+    "ply_lt_40": {
+      "rows": 6038,
+      "final_mate_roster_rows": 16,
+      "sf_brier_exact_zero": 4,
+      "sf_brier_le_1e_minus6": 1310,
+      "target_entropy_sum": 2898.70184048326,
+      "losses": {
+        "bt4_native": {
+          "brier": 173.67731522525813,
+          "cross_entropy": 3661.98045004689
+        },
+        "ceres_dual": {
+          "brier": 313.0794571287446,
+          "cross_entropy": 4036.432425756952
+        },
+        "ceres_primary": {
+          "brier": 383.71263754298286,
+          "cross_entropy": 5628.305938597971
+        },
+        "ceres_secondary": {
+          "brier": 235.06674162330887,
+          "cross_entropy": 3577.5469515669097
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 57.682638873665034,
+          "cross_entropy": 3020.6411980567336
+        },
+        "sf_saved": {
+          "brier": 2.2519077565108203,
+          "cross_entropy": 2904.2054965872353
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 171.4254074687473,
+          "cross_entropy": 757.774953459663
+        },
+        "ceres_dual": {
+          "brier": 310.8275493722327,
+          "cross_entropy": 1132.226929169717
+        },
+        "ceres_primary": {
+          "brier": 381.4607297864715,
+          "cross_entropy": 2724.10044201073
+        },
+        "ceres_secondary": {
+          "brier": 232.81483386679875,
+          "cross_entropy": 673.3414549796777
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 55.430731117154274,
+          "cross_entropy": 116.43570146950987
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 139.40214190348573,
+          "cross_entropy": 374.4519757100545
+        },
+        "ceres_primary": {
+          "brier": 210.03532231772417,
+          "cross_entropy": 1966.3254885510696
+        },
+        "ceres_secondary": {
+          "brier": 61.38942639805107,
+          "cross_entropy": -84.43349847998405
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -115.9946763515931,
+          "cross_entropy": -641.3392519901516
+        },
+        "sf_saved": {
+          "brier": -171.4254074687473,
+          "cross_entropy": -757.774953459663
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.02876404690713119,
+          "cross_entropy": 0.6064889781462223
+        },
+        "ceres_dual": {
+          "brier": 0.05185151658309781,
+          "cross_entropy": 0.6685048734277828
+        },
+        "ceres_primary": {
+          "brier": 0.0635496252969498,
+          "cross_entropy": 0.9321473896319926
+        },
+        "ceres_secondary": {
+          "brier": 0.038931225840230024,
+          "cross_entropy": 0.5925052917467555
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.009553269107927299,
+          "cross_entropy": 0.5002718115363918
+        },
+        "sf_saved": {
+          "brier": 0.0003729559053512455,
+          "cross_entropy": 0.4809879921476044
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.028391091001779944,
+          "cross_entropy": 0.12550098599861925
+        },
+        "ceres_dual": {
+          "brier": 0.051478560677746386,
+          "cross_entropy": 0.18751688128017838
+        },
+        "ceres_primary": {
+          "brier": 0.06317666939159847,
+          "cross_entropy": 0.4511593974843872
+        },
+        "ceres_secondary": {
+          "brier": 0.03855826993487889,
+          "cross_entropy": 0.11151729959915166
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.009180313202576064,
+          "cross_entropy": 0.01928381938878931
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.0230874696759665,
+          "cross_entropy": 0.06201589528155921
+        },
+        "ceres_primary": {
+          "brier": 0.03478557838981851,
+          "cross_entropy": 0.3256584114857684
+        },
+        "ceres_secondary": {
+          "brier": 0.010167178933098885,
+          "cross_entropy": -0.013983686399467381
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.019210777799203892,
+          "cross_entropy": -0.10621716660982969
+        },
+        "sf_saved": {
+          "brier": -0.028391091001779944,
+          "cross_entropy": -0.12550098599861925
+        }
+      },
+      "sf_near_zero_fraction": 0.21695925803246108,
+      "mean_target_entropy": 0.4800764889836469
+    },
+    "legal_11_30": {
+      "rows": 11300,
+      "final_mate_roster_rows": 196,
+      "sf_brier_exact_zero": 1357,
+      "sf_brier_le_1e_minus6": 4010,
+      "target_entropy_sum": 3320.5653307275284,
+      "losses": {
+        "bt4_native": {
+          "brier": 526.5125291586806,
+          "cross_entropy": 6130.418134815828
+        },
+        "ceres_dual": {
+          "brier": 601.1989921136175,
+          "cross_entropy": 6124.834824207151
+        },
+        "ceres_primary": {
+          "brier": 668.8098769033585,
+          "cross_entropy": 10625.605512388536
+        },
+        "ceres_secondary": {
+          "brier": 517.4612710096494,
+          "cross_entropy": 5273.795688280223
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 138.58620712305097,
+          "cross_entropy": 3577.8613201891912
+        },
+        "sf_saved": {
+          "brier": 3.586746189200607,
+          "cross_entropy": 3333.946687890221
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 522.9257829694799,
+          "cross_entropy": 2796.471446925611
+        },
+        "ceres_dual": {
+          "brier": 597.6122459244128,
+          "cross_entropy": 2790.888136316968
+        },
+        "ceres_primary": {
+          "brier": 665.2231307141587,
+          "cross_entropy": 7291.658824498381
+        },
+        "ceres_secondary": {
+          "brier": 513.8745248204475,
+          "cross_entropy": 1939.8490003900265
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 134.99946093384986,
+          "cross_entropy": 243.9146322989992
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 74.68646295493474,
+          "cross_entropy": -5.583310608653506
+        },
+        "ceres_primary": {
+          "brier": 142.2973477446769,
+          "cross_entropy": 4495.1873775727945
+        },
+        "ceres_secondary": {
+          "brier": -9.0512581490317,
+          "cross_entropy": -856.6224465355849
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -387.9263220356314,
+          "cross_entropy": -2552.556814626614
+        },
+        "sf_saved": {
+          "brier": -522.9257829694799,
+          "cross_entropy": -2796.471446925611
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.046594029129086785,
+          "cross_entropy": 0.5425148791872414
+        },
+        "ceres_dual": {
+          "brier": 0.05320345062952367,
+          "cross_entropy": 0.5420207809032876
+        },
+        "ceres_primary": {
+          "brier": 0.05918671477020872,
+          "cross_entropy": 0.9403190718927908
+        },
+        "ceres_secondary": {
+          "brier": 0.045793032832712334,
+          "cross_entropy": 0.466707583033648
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.012264266117084156,
+          "cross_entropy": 0.31662489559196383
+        },
+        "sf_saved": {
+          "brier": 0.00031741116718589444,
+          "cross_entropy": 0.29503952990178944
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.04627661796190088,
+          "cross_entropy": 0.24747534928545228
+        },
+        "ceres_dual": {
+          "brier": 0.05288603946233742,
+          "cross_entropy": 0.2469812510015016
+        },
+        "ceres_primary": {
+          "brier": 0.0588693036030229,
+          "cross_entropy": 0.6452795419910072
+        },
+        "ceres_secondary": {
+          "brier": 0.04547562166552633,
+          "cross_entropy": 0.17166805313186076
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.011946854949898217,
+          "cross_entropy": 0.02158536569017692
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.006609421500436702,
+          "cross_entropy": -0.0004940982839516377
+        },
+        "ceres_primary": {
+          "brier": 0.01259268564112185,
+          "cross_entropy": 0.39780419270555706
+        },
+        "ceres_secondary": {
+          "brier": -0.0008009962963744867,
+          "cross_entropy": -0.07580729615359158
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.03432976301200278,
+          "cross_entropy": -0.2258899835952756
+        },
+        "sf_saved": {
+          "brier": -0.04627661796190088,
+          "cross_entropy": -0.24747534928545228
+        }
+      },
+      "sf_near_zero_fraction": 0.3548672566371681,
+      "mean_target_entropy": 0.29385533900243616
+    },
+    "ply_ge_80": {
+      "rows": 13117,
+      "final_mate_roster_rows": 539,
+      "sf_brier_exact_zero": 2397,
+      "sf_brier_le_1e_minus6": 5969,
+      "target_entropy_sum": 2813.659649435662,
+      "losses": {
+        "bt4_native": {
+          "brier": 556.2315970442788,
+          "cross_entropy": 5780.1436581138405
+        },
+        "ceres_dual": {
+          "brier": 600.7226571072024,
+          "cross_entropy": 5632.465831311609
+        },
+        "ceres_primary": {
+          "brier": 656.6790238302071,
+          "cross_entropy": 10190.304193153144
+        },
+        "ceres_secondary": {
+          "brier": 529.4441949923128,
+          "cross_entropy": 4830.444821090308
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 141.9870309943307,
+          "cross_entropy": 3068.384665081659
+        },
+        "sf_saved": {
+          "brier": 3.787964980275625,
+          "cross_entropy": 2831.181942886936
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 552.4436320640023,
+          "cross_entropy": 2948.9617152269043
+        },
+        "ceres_dual": {
+          "brier": 596.9346921269249,
+          "cross_entropy": 2801.283888424691
+        },
+        "ceres_primary": {
+          "brier": 652.8910588499295,
+          "cross_entropy": 7359.122250266218
+        },
+        "ceres_secondary": {
+          "brier": 525.6562300120363,
+          "cross_entropy": 1999.2628782033755
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 138.1990660140547,
+          "cross_entropy": 237.2027221947441
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 44.49106006292521,
+          "cross_entropy": -147.67782680220972
+        },
+        "ceres_primary": {
+          "brier": 100.44742678593184,
+          "cross_entropy": 4410.1605350393465
+        },
+        "ceres_secondary": {
+          "brier": -26.78740205196505,
+          "cross_entropy": -949.698837023519
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -414.24456604994725,
+          "cross_entropy": -2711.7589930321496
+        },
+        "sf_saved": {
+          "brier": -552.4436320640023,
+          "cross_entropy": -2948.9617152269043
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.04240539735033002,
+          "cross_entropy": 0.44066049082212705
+        },
+        "ceres_dual": {
+          "brier": 0.045797259823679375,
+          "cross_entropy": 0.4294019845476564
+        },
+        "ceres_primary": {
+          "brier": 0.050063202243669065,
+          "cross_entropy": 0.7768776544296062
+        },
+        "ceres_secondary": {
+          "brier": 0.040363207668850556,
+          "cross_entropy": 0.36825835336512225
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.010824657390739552,
+          "cross_entropy": 0.23392427118103676
+        },
+        "sf_saved": {
+          "brier": 0.00028878287567855643,
+          "cross_entropy": 0.2158406604320299
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.04211661447465139,
+          "cross_entropy": 0.22481983039009715
+        },
+        "ceres_dual": {
+          "brier": 0.04550847694800068,
+          "cross_entropy": 0.2135613241156279
+        },
+        "ceres_primary": {
+          "brier": 0.04977441936799036,
+          "cross_entropy": 0.561036993997577
+        },
+        "ceres_secondary": {
+          "brier": 0.040074424793171935,
+          "cross_entropy": 0.1524176929330926
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.010535874515060967,
+          "cross_entropy": 0.01808361074900847
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.003391862473349486,
+          "cross_entropy": -0.011258506274468989
+        },
+        "ceres_primary": {
+          "brier": 0.007657804893339318,
+          "cross_entropy": 0.3362171636074824
+        },
+        "ceres_secondary": {
+          "brier": -0.002042189681479382,
+          "cross_entropy": -0.07240213745700382
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.0315807399595904,
+          "cross_entropy": -0.20673621964108788
+        },
+        "sf_saved": {
+          "brier": -0.04211661447465139,
+          "cross_entropy": -0.22481983039009715
+        }
+      },
+      "sf_near_zero_fraction": 0.4550583212624838,
+      "mean_target_entropy": 0.21450481432001692
+    },
+    "negative_d9_best_lt_minus100": {
+      "rows": 9453,
+      "final_mate_roster_rows": 255,
+      "sf_brier_exact_zero": 768,
+      "sf_brier_le_1e_minus6": 2479,
+      "target_entropy_sum": 2639.9129319500157,
+      "losses": {
+        "bt4_native": {
+          "brier": 152.705371385327,
+          "cross_entropy": 4081.063396919464
+        },
+        "ceres_dual": {
+          "brier": 199.90810388587911,
+          "cross_entropy": 4065.1113989029545
+        },
+        "ceres_primary": {
+          "brier": 228.51244546378015,
+          "cross_entropy": 7028.553692157425
+        },
+        "ceres_secondary": {
+          "brier": 163.22910600916578,
+          "cross_entropy": 3537.8638823862916
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 42.43918260578616,
+          "cross_entropy": 2771.1979581134074
+        },
+        "sf_saved": {
+          "brier": 4.637291759527058,
+          "cross_entropy": 2656.1941923362983
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 148.0680796258004,
+          "cross_entropy": 1424.8692045831708
+        },
+        "ceres_dual": {
+          "brier": 195.27081212635323,
+          "cross_entropy": 1408.9172065666535
+        },
+        "ceres_primary": {
+          "brier": 223.8751537042522,
+          "cross_entropy": 4372.35949982113
+        },
+        "ceres_secondary": {
+          "brier": 158.59181424963995,
+          "cross_entropy": 881.6696900499741
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 37.801890846259035,
+          "cross_entropy": 115.00376577710024
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 47.2027325005533,
+          "cross_entropy": -15.951998016511943
+        },
+        "ceres_primary": {
+          "brier": 75.80707407845424,
+          "cross_entropy": 2947.4902952379534
+        },
+        "ceres_secondary": {
+          "brier": 10.523734623838969,
+          "cross_entropy": -543.1995145331847
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -110.26618877954147,
+          "cross_entropy": -1309.8654388060602
+        },
+        "sf_saved": {
+          "brier": -148.0680796258004,
+          "cross_entropy": -1424.8692045831708
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.016154170251277584,
+          "cross_entropy": 0.43172150607420545
+        },
+        "ceres_dual": {
+          "brier": 0.02114758318902773,
+          "cross_entropy": 0.4300339996723743
+        },
+        "ceres_primary": {
+          "brier": 0.02417353702145141,
+          "cross_entropy": 0.7435262553853195
+        },
+        "ceres_secondary": {
+          "brier": 0.017267439543971835,
+          "cross_entropy": 0.374258318246725
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.004489493558212859,
+          "cross_entropy": 0.2931553959709518
+        },
+        "sf_saved": {
+          "brier": 0.0004905629704355293,
+          "cross_entropy": 0.2809895474808313
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.015663607280842103,
+          "cross_entropy": 0.15073195859337468
+        },
+        "ceres_dual": {
+          "brier": 0.020657020218592323,
+          "cross_entropy": 0.14904445219154275
+        },
+        "ceres_primary": {
+          "brier": 0.023682974051015784,
+          "cross_entropy": 0.46253670790448853
+        },
+        "ceres_secondary": {
+          "brier": 0.01677687657353644,
+          "cross_entropy": 0.09326877076589168
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.003998930587777323,
+          "cross_entropy": 0.012165848490119565
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.00499341293775027,
+          "cross_entropy": -0.0016875064018313703
+        },
+        "ceres_primary": {
+          "brier": 0.008019366770173939,
+          "cross_entropy": 0.31180474931111324
+        },
+        "ceres_secondary": {
+          "brier": 0.0011132692926942736,
+          "cross_entropy": -0.05746318782748172
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.01166467669306479,
+          "cross_entropy": -0.138566110103254
+        },
+        "sf_saved": {
+          "brier": -0.015663607280842103,
+          "cross_entropy": -0.15073195859337468
+        }
+      },
+      "sf_near_zero_fraction": 0.2622447900137522,
+      "mean_target_entropy": 0.279267209557814
+    },
+    "legal_le_10": {
+      "rows": 3221,
+      "final_mate_roster_rows": 211,
+      "sf_brier_exact_zero": 744,
+      "sf_brier_le_1e_minus6": 1539,
+      "target_entropy_sum": 606.405358146632,
+      "losses": {
+        "bt4_native": {
+          "brier": 100.56692558075467,
+          "cross_entropy": 1175.3452469338451
+        },
+        "ceres_dual": {
+          "brier": 110.08685951065749,
+          "cross_entropy": 1127.4282463044349
+        },
+        "ceres_primary": {
+          "brier": 121.37047029559751,
+          "cross_entropy": 1999.2431410905392
+        },
+        "ceres_secondary": {
+          "brier": 96.33140382696153,
+          "cross_entropy": 975.9045608165638
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 25.288454722976244,
+          "cross_entropy": 655.753952536808
+        },
+        "sf_saved": {
+          "brier": 0.9672997753417371,
+          "cross_entropy": 612.3862676161197
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 99.59962580541325,
+          "cross_entropy": 562.9589793177181
+        },
+        "ceres_dual": {
+          "brier": 109.11955973531605,
+          "cross_entropy": 515.0419786883143
+        },
+        "ceres_primary": {
+          "brier": 120.40317052025587,
+          "cross_entropy": 1386.8568734744135
+        },
+        "ceres_secondary": {
+          "brier": 95.36410405161945,
+          "cross_entropy": 363.5182932004433
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 24.32115494763449,
+          "cross_entropy": 43.367684920683594
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 9.51993392990262,
+          "cross_entropy": -47.91700062940577
+        },
+        "ceres_primary": {
+          "brier": 20.803544714842985,
+          "cross_entropy": 823.897894156698
+        },
+        "ceres_secondary": {
+          "brier": -4.235521753793306,
+          "cross_entropy": -199.44068611727664
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -75.2784708577786,
+          "cross_entropy": -519.5912943970367
+        },
+        "sf_saved": {
+          "brier": -99.59962580541325,
+          "cross_entropy": -562.9589793177181
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.03122226810951713,
+          "cross_entropy": 0.3649007286351584
+        },
+        "ceres_dual": {
+          "brier": 0.03417785144695979,
+          "cross_entropy": 0.35002429255027473
+        },
+        "ceres_primary": {
+          "brier": 0.0376809904674317,
+          "cross_entropy": 0.6206902021392546
+        },
+        "ceres_secondary": {
+          "brier": 0.02990729705897595,
+          "cross_entropy": 0.3029818568197963
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.007851119131628762,
+          "cross_entropy": 0.2035870700207414
+        },
+        "sf_saved": {
+          "brier": 0.00030031039284127197,
+          "cross_entropy": 0.1901230262701396
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.030921957716675955,
+          "cross_entropy": 0.1747777023650165
+        },
+        "ceres_dual": {
+          "brier": 0.03387754105411861,
+          "cross_entropy": 0.15990126628013485
+        },
+        "ceres_primary": {
+          "brier": 0.03738068007459046,
+          "cross_entropy": 0.4305671758691132
+        },
+        "ceres_secondary": {
+          "brier": 0.02960698666613457,
+          "cross_entropy": 0.11285883054965641
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.007550808738787485,
+          "cross_entropy": 0.013464043750600308
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.002955583337442602,
+          "cross_entropy": -0.014876436084882263
+        },
+        "ceres_primary": {
+          "brier": 0.006458722357914618,
+          "cross_entropy": 0.2557894735040975
+        },
+        "ceres_secondary": {
+          "brier": -0.0013149710505412314,
+          "cross_entropy": -0.06191887181536065
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.02337114897788842,
+          "cross_entropy": -0.16131365861441685
+        },
+        "sf_saved": {
+          "brier": -0.030921957716675955,
+          "cross_entropy": -0.1747777023650165
+        }
+      },
+      "sf_near_zero_fraction": 0.4778019248680534,
+      "mean_target_entropy": 0.18826617763012482
+    },
+    "in_check": {
+      "rows": 1492,
+      "final_mate_roster_rows": 66,
+      "sf_brier_exact_zero": 191,
+      "sf_brier_le_1e_minus6": 674,
+      "target_entropy_sum": 402.687546823011,
+      "losses": {
+        "bt4_native": {
+          "brier": 69.23849315567116,
+          "cross_entropy": 761.3088220034655
+        },
+        "ceres_dual": {
+          "brier": 74.49318869802582,
+          "cross_entropy": 730.6661433454483
+        },
+        "ceres_primary": {
+          "brier": 83.24170176578775,
+          "cross_entropy": 1232.714780518456
+        },
+        "ceres_secondary": {
+          "brier": 63.95201642224154,
+          "cross_entropy": 629.7649132603136
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 17.648227266168387,
+          "cross_entropy": 435.0666673505939
+        },
+        "sf_saved": {
+          "brier": 0.7244263382113237,
+          "cross_entropy": 404.97798321527773
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 68.5140668174598,
+          "cross_entropy": 356.3308387881874
+        },
+        "ceres_dual": {
+          "brier": 73.76876235981445,
+          "cross_entropy": 325.6881601301686
+        },
+        "ceres_primary": {
+          "brier": 82.51727542757655,
+          "cross_entropy": 827.7367973031754
+        },
+        "ceres_secondary": {
+          "brier": 63.22759008403025,
+          "cross_entropy": 224.78693004503597
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 16.923800927957096,
+          "cross_entropy": 30.088684135315624
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 5.254695542354499,
+          "cross_entropy": -30.64267865801911
+        },
+        "ceres_primary": {
+          "brier": 14.003208610116586,
+          "cross_entropy": 471.4059585149893
+        },
+        "ceres_secondary": {
+          "brier": -5.286476733429605,
+          "cross_entropy": -131.54390874315126
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -51.5902658895028,
+          "cross_entropy": -326.24215465287256
+        },
+        "sf_saved": {
+          "brier": -68.5140668174598,
+          "cross_entropy": -356.3308387881874
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.046406496753130806,
+          "cross_entropy": 0.5102606045599635
+        },
+        "ceres_dual": {
+          "brier": 0.04992841065551328,
+          "cross_entropy": 0.48972261618327634
+        },
+        "ceres_primary": {
+          "brier": 0.055792025312190185,
+          "cross_entropy": 0.8262163408300645
+        },
+        "ceres_secondary": {
+          "brier": 0.0428632817843442,
+          "cross_entropy": 0.4220944458849287
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.011828570553732163,
+          "cross_entropy": 0.2915996429963766
+        },
+        "sf_saved": {
+          "brier": 0.00048554044116040466,
+          "cross_entropy": 0.2714329646214998
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.04592095631197038,
+          "cross_entropy": 0.2388276399384634
+        },
+        "ceres_dual": {
+          "brier": 0.04944287021435285,
+          "cross_entropy": 0.2182896515617752
+        },
+        "ceres_primary": {
+          "brier": 0.05530648487102986,
+          "cross_entropy": 0.5547833762085627
+        },
+        "ceres_secondary": {
+          "brier": 0.04237774134318381,
+          "cross_entropy": 0.15066148126342893
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.01134303011257178,
+          "cross_entropy": 0.020166678374876425
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.003521913902382372,
+          "cross_entropy": -0.020537988376688413
+        },
+        "ceres_primary": {
+          "brier": 0.009385528559059374,
+          "cross_entropy": 0.3159557362701001
+        },
+        "ceres_secondary": {
+          "brier": -0.003543214968786598,
+          "cross_entropy": -0.08816615867503436
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.03457792619939866,
+          "cross_entropy": -0.2186609615635875
+        },
+        "sf_saved": {
+          "brier": -0.04592095631197038,
+          "cross_entropy": -0.2388276399384634
+        }
+      },
+      "sf_near_zero_fraction": 0.4517426273458445,
+      "mean_target_entropy": 0.2698978195864685
+    },
+    "balanced_abs_d9_best_le100": {
+      "rows": 2250,
+      "final_mate_roster_rows": 3,
+      "sf_brier_exact_zero": 0,
+      "sf_brier_le_1e_minus6": 741,
+      "target_entropy_sum": 2444.1203543486035,
+      "losses": {
+        "bt4_native": {
+          "brier": 581.0167810450987,
+          "cross_entropy": 4523.9669479956865
+        },
+        "ceres_dual": {
+          "brier": 702.7590607028851,
+          "cross_entropy": 4751.28078669069
+        },
+        "ceres_primary": {
+          "brier": 801.9246090472528,
+          "cross_entropy": 7058.185209413342
+        },
+        "ceres_secondary": {
+          "brier": 589.1733889331957,
+          "cross_entropy": 4101.838212737
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 156.8282659170686,
+          "cross_entropy": 2671.1179528281023
+        },
+        "sf_saved": {
+          "brier": 1.0410300305237272,
+          "cross_entropy": 2445.6645616656792
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 579.9757510145758,
+          "cross_entropy": 2078.302386330013
+        },
+        "ceres_dual": {
+          "brier": 701.7180306723611,
+          "cross_entropy": 2305.6162250250295
+        },
+        "ceres_primary": {
+          "brier": 800.8835790167293,
+          "cross_entropy": 4612.520647747676
+        },
+        "ceres_secondary": {
+          "brier": 588.1323589026724,
+          "cross_entropy": 1656.1736510713247
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 155.7872358865453,
+          "cross_entropy": 225.45339116243196
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 121.74227965778591,
+          "cross_entropy": 227.313838695016
+        },
+        "ceres_primary": {
+          "brier": 220.90782800215385,
+          "cross_entropy": 2534.218261417658
+        },
+        "ceres_secondary": {
+          "brier": 8.15660788809665,
+          "cross_entropy": -422.12873525868616
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -424.1885151280309,
+          "cross_entropy": -1852.8489951675767
+        },
+        "sf_saved": {
+          "brier": -579.9757510145758,
+          "cross_entropy": -2078.302386330013
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.2582296804644883,
+          "cross_entropy": 2.010651976886972
+        },
+        "ceres_dual": {
+          "brier": 0.3123373603123934,
+          "cross_entropy": 2.1116803496403067
+        },
+        "ceres_primary": {
+          "brier": 0.3564109373543346,
+          "cross_entropy": 3.1369712041837077
+        },
+        "ceres_secondary": {
+          "brier": 0.26185483952586475,
+          "cross_entropy": 1.8230392056608886
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.06970145151869715,
+          "cross_entropy": 1.1871635345902676
+        },
+        "sf_saved": {
+          "brier": 0.00046268001356610097,
+          "cross_entropy": 1.0869620274069685
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.2577670004509226,
+          "cross_entropy": 0.9236899494800058
+        },
+        "ceres_dual": {
+          "brier": 0.31187468029882714,
+          "cross_entropy": 1.0247183222333465
+        },
+        "ceres_primary": {
+          "brier": 0.35594825734076857,
+          "cross_entropy": 2.050009176776745
+        },
+        "ceres_secondary": {
+          "brier": 0.2613921595122988,
+          "cross_entropy": 0.736077178253922
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.06923877150513123,
+          "cross_entropy": 0.10020150718330309
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.05410767984790485,
+          "cross_entropy": 0.10102837275334044
+        },
+        "ceres_primary": {
+          "brier": 0.09818125688984615,
+          "cross_entropy": 1.126319227296737
+        },
+        "ceres_secondary": {
+          "brier": 0.003625159061376289,
+          "cross_entropy": -0.18761277122608275
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.1885282289457915,
+          "cross_entropy": -0.8234884422967008
+        },
+        "sf_saved": {
+          "brier": -0.2577670004509226,
+          "cross_entropy": -0.9236899494800058
+        }
+      },
+      "sf_near_zero_fraction": 0.3293333333333333,
+      "mean_target_entropy": 1.0862757130438239
+    },
+    "final_roster_contains_mate_score": {
+      "rows": 618,
+      "final_mate_roster_rows": 618,
+      "sf_brier_exact_zero": 296,
+      "sf_brier_le_1e_minus6": 468,
+      "target_entropy_sum": 21.41346093285606,
+      "losses": {
+        "bt4_native": {
+          "brier": 1.9715319021712792,
+          "cross_entropy": 36.690734196475255
+        },
+        "ceres_dual": {
+          "brier": 2.02465560821347,
+          "cross_entropy": 33.05024404670164
+        },
+        "ceres_primary": {
+          "brier": 2.4001278696491837,
+          "cross_entropy": 60.310966674311324
+        },
+        "ceres_secondary": {
+          "brier": 1.5601830162149108,
+          "cross_entropy": 29.923756059402205
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.5115864650520507,
+          "cross_entropy": 23.008873309833444
+        },
+        "sf_saved": {
+          "brier": 0.06301590382796532,
+          "cross_entropy": 21.978302732663774
+        }
+      },
+      "paired_vs_sf": {
+        "bt4_native": {
+          "brier": 1.9085159983433153,
+          "cross_entropy": 14.712431463811459
+        },
+        "ceres_dual": {
+          "brier": 1.961639704385505,
+          "cross_entropy": 11.071941314037845
+        },
+        "ceres_primary": {
+          "brier": 2.3371119658212196,
+          "cross_entropy": 38.332663941647475
+        },
+        "ceres_secondary": {
+          "brier": 1.4971671123869443,
+          "cross_entropy": 7.945453326738405
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.44857056122408445,
+          "cross_entropy": 1.0305705771696787
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 0.05312370604218913,
+          "cross_entropy": -3.640490149773629
+        },
+        "ceres_primary": {
+          "brier": 0.42859596747790474,
+          "cross_entropy": 23.620232477836055
+        },
+        "ceres_secondary": {
+          "brier": -0.411348885956372,
+          "cross_entropy": -6.766978137073072
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -1.4599454371192309,
+          "cross_entropy": -13.681860886641797
+        },
+        "sf_saved": {
+          "brier": -1.9085159983433153,
+          "cross_entropy": -14.712431463811459
+        }
+      },
+      "mean_losses": {
+        "bt4_native": {
+          "brier": 0.0031901810714745618,
+          "cross_entropy": 0.059370120059021446
+        },
+        "ceres_dual": {
+          "brier": 0.00327614176086322,
+          "cross_entropy": 0.053479359298869975
+        },
+        "ceres_primary": {
+          "brier": 0.0038837020544485175,
+          "cross_entropy": 0.0975905609616688
+        },
+        "ceres_secondary": {
+          "brier": 0.002524567987402768,
+          "cross_entropy": 0.048420317248223634
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.0008278098140000821,
+          "cross_entropy": 0.03723118658549101
+        },
+        "sf_saved": {
+          "brier": 0.00010196748192227397,
+          "cross_entropy": 0.03556359665479575
+        }
+      },
+      "mean_paired_vs_sf": {
+        "bt4_native": {
+          "brier": 0.00308821358955229,
+          "cross_entropy": 0.023806523404225663
+        },
+        "ceres_dual": {
+          "brier": 0.0031741742789409464,
+          "cross_entropy": 0.017915762644074185
+        },
+        "ceres_primary": {
+          "brier": 0.0037817345725262453,
+          "cross_entropy": 0.062026964306872934
+        },
+        "ceres_secondary": {
+          "brier": 0.0024226005054804925,
+          "cross_entropy": 0.01285672059342784
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": 0.0007258423320778065,
+          "cross_entropy": 0.001667589930695273
+        },
+        "sf_saved": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        }
+      },
+      "mean_paired_vs_bt4": {
+        "bt4_native": {
+          "brier": 0.0,
+          "cross_entropy": 0.0
+        },
+        "ceres_dual": {
+          "brier": 8.596068938865555e-05,
+          "cross_entropy": -0.005890760760151503
+        },
+        "ceres_primary": {
+          "brier": 0.0006935209829739559,
+          "cross_entropy": 0.03822044090264734
+        },
+        "ceres_secondary": {
+          "brier": -0.0006656130840717993,
+          "cross_entropy": -0.01094980281079785
+        },
+        "registered_sf50_bt425_ceres25": {
+          "brier": -0.0023623712574744834,
+          "cross_entropy": -0.022138933473530416
+        },
+        "sf_saved": {
+          "brier": -0.00308821358955229,
+          "cross_entropy": -0.023806523404225663
+        }
+      },
+      "sf_near_zero_fraction": 0.7572815533980582,
+      "mean_target_entropy": 0.03464961315996126
+    }
+  },
+  "summary_sha256": "18254129fc13ff97cb795ca597530908863bccf462aae3b8b12a36a7a133c8a0",
+  "row_bank_sha256": "09d8e43676ec9e0c91218081a41da07d86583ef71411b3b112a329c820adef54",
+  "policy_metrics_exactly_match_prior": true,
+  "sf_near_zero_tolerance": {
+    "brier_le": 1e-06,
+    "meaning": "Prespecified descriptive numerical closeness, L2 WDL distance at most0.001; not an optimized teacher-selection cutoff. Only actual banked SF loss used, no reconstructed prediction."
+  },
+  "ruler_semantics": "cp_to_wdl(max(saved final SF scores), fixed original source slope/draw_width); final mate-coded scores allowed, while any mate-domain d9 row is excluded. This shares SF teacher/calibration with the saved baseline.",
+  "cluster_stats": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/readout/cluster_sufficient_stats.json",
+    "sha256": "24e96e6eab565d05880a96c4aecebf9158fc10181aadc73dd4ef25e69b112654"
+  },
+  "elapsed_seconds": 14.787113271013368,
+  "limitations": [
+    "Same23993included rows for allsix fixed predictions;618more than nonmate policy ruler due finalmate inclusion.",
+    "Convenience prefix; no bootstrap/temperature fitting/strength claim.",
+    "Low savedSF loss quantifies ruler dependence, not proof neural mixing is worse."
+  ]
+}

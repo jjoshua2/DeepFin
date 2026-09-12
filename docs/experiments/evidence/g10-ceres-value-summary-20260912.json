@@ -1,0 +1,469 @@
+{
+  "adapter_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/adapter_manifest.json",
+    "sha256": "8b81f9633050f8e2f286259671e3cefb39bfb30dffa29c7d76608723d36505c8"
+  },
+  "ceres_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/post_collection/completed/ceres_policy_manifest.json",
+    "sha256": "972da2fabb2d1c721c6ca6b737d7404064147ecf92944ebf98392aeeaf87755e"
+  },
+  "ceres_selection": {
+    "path": "teacher_adjudication_ceres_selection.json",
+    "rows": 3356,
+    "sha256": "9c2b6126d8fbef1b37170b3692c376ce795b4ee5791c77335e6434ff5042f67f"
+  },
+  "derived_summary": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived/derive_targets_summary.json",
+    "sha256": "ab214d52665ee4ad6ccf756c0515344dc9653c3b51de15965fc74323198b7fd9"
+  },
+  "elapsed_seconds": 500.61766243499005,
+  "kind": "sf-bt4-ceres-teacher-adjudication-audit",
+  "limitations": [
+    "Saved d10/d12 rosters are narrowed/adaptive and are calibration evidence, not ground truth.",
+    "Coverage includes zero-mass rows; regret is an equal-row mean conditional on positive scored mass. Paired differences in row bank use common valid rows.",
+    "Ranking flat counts describe existential best-set constraints; all_winner requires every old tied winner to beat the inferior move. Unscored moves remain unknown.",
+    "Routing search_fraction is conditional on adjudicability; selection_fraction_all_ordinary is separate. Neither estimates prospective cost savings.",
+    "Selection large-conflict stratum retains Tactical300 best-minus-next-lower gap; both BT4-top gap endpoints are banked separately.",
+    "Ceres metrics exist only on exact row-aligned completed Ceres shards explicitly supplied.",
+    "The bounded Ceres selection is not a qualified selected bank and launches no inference."
+  ],
+  "metrics": {
+    "excluded_mate_d9_rows": 8775,
+    "final_reason_counts": {
+      "selected_d10": 23029,
+      "selected_d12": 9576,
+      "selected_single_move_d10": 163
+    },
+    "neural_pair": {
+      "adjudicable_disagreements": 2573,
+      "bt4_entropy_sum": 29460.114787425442,
+      "ceres_entropy_sum": 32419.477374793227,
+      "deeper_bt4": 1308,
+      "deeper_ceres": 1099,
+      "deeper_third": 38,
+      "deeper_tie": 128,
+      "js_sum": 519.4828408417753,
+      "mean_bt4_entropy": 1.2278629094913285,
+      "mean_ceres_entropy": 1.3512056589335735,
+      "mean_js": 0.021651433369806832,
+      "rows": 23993,
+      "top_agree": 20182,
+      "top_disagree": 3811
+    },
+    "ordinary_rows": 23993,
+    "policy": {
+      "arithmetic50": {
+        "best_mass_sum": 12684.99848363292,
+        "coverage_rows": 23375,
+        "invalid_final_rows": 618,
+        "mean_conditional_best_mass": 0.5426737319201249,
+        "mean_conditional_regret_cp": 381.63596271541604,
+        "mean_scored_mass": 0.8108834768714521,
+        "missing_policy_rows": 0,
+        "regret_rows": 23375,
+        "regret_sum_cp": 8920740.62847285,
+        "rows": 23993,
+        "scored_mass_sum": 18954.401271870192,
+        "zero_coverage_rows": 0
+      },
+      "bt4": {
+        "best_mass_sum": 12857.66476292253,
+        "coverage_rows": 23375,
+        "invalid_final_rows": 618,
+        "mean_conditional_best_mass": 0.5500605246170066,
+        "mean_conditional_regret_cp": 375.5225057419709,
+        "mean_scored_mass": 0.8188684052120659,
+        "missing_policy_rows": 0,
+        "regret_rows": 23375,
+        "regret_sum_cp": 8777838.57171857,
+        "rows": 23993,
+        "scored_mass_sum": 19141.048971832042,
+        "zero_coverage_rows": 0
+      },
+      "ceres": {
+        "best_mass_sum": 12487.485883396386,
+        "coverage_rows": 23375,
+        "invalid_final_rows": 618,
+        "mean_conditional_best_mass": 0.5342239950116101,
+        "mean_conditional_regret_cp": 388.7648210013041,
+        "mean_scored_mass": 0.8028985485308476,
+        "missing_policy_rows": 0,
+        "regret_rows": 23375,
+        "regret_sum_cp": 9087377.690905483,
+        "rows": 23993,
+        "scored_mass_sum": 18767.753571908564,
+        "zero_coverage_rows": 0
+      },
+      "geometric50": {
+        "best_mass_sum": 12739.820228095341,
+        "coverage_rows": 23375,
+        "invalid_final_rows": 618,
+        "mean_conditional_best_mass": 0.5450190471912445,
+        "mean_conditional_regret_cp": 380.1650582618248,
+        "mean_scored_mass": 0.812730946454843,
+        "missing_policy_rows": 0,
+        "regret_rows": 23375,
+        "regret_sum_cp": 8886358.236870155,
+        "rows": 23993,
+        "scored_mass_sum": 18997.585873381955,
+        "zero_coverage_rows": 0
+      },
+      "tactical300_preview": {
+        "best_mass_sum": 13002.24922541977,
+        "coverage_rows": 23375,
+        "invalid_final_rows": 618,
+        "mean_conditional_best_mass": 0.5562459561676907,
+        "mean_conditional_regret_cp": 315.3314436994989,
+        "mean_scored_mass": 0.8221133880931976,
+        "missing_policy_rows": 0,
+        "regret_rows": 23375,
+        "regret_sum_cp": 7370872.496475786,
+        "rows": 23993,
+        "scored_mass_sum": 19216.900446678494,
+        "zero_coverage_rows": 0
+      }
+    },
+    "position_strata": {
+      "in_check": {
+        "adjudicable_rows": 1386,
+        "bt4_regret_sum_cp": 590444.4614037531,
+        "mean_bt4_regret_cp": 414.05642454681146,
+        "regret_rows": 1426,
+        "reversal_rate": 0.18759018759018758,
+        "reversals": 260,
+        "rows": 1492,
+        "unscored_rows": 106
+      },
+      "legal_11_30": {
+        "adjudicable_rows": 10424,
+        "bt4_regret_sum_cp": 5016167.1917157145,
+        "mean_bt4_regret_cp": 451.7441635190665,
+        "regret_rows": 11104,
+        "reversal_rate": 0.3117805065234075,
+        "reversals": 3250,
+        "rows": 11300,
+        "unscored_rows": 876
+      },
+      "legal_gt_30": {
+        "adjudicable_rows": 9070,
+        "bt4_regret_sum_cp": 746189.7262538525,
+        "mean_bt4_regret_cp": 80.57334264699843,
+        "regret_rows": 9261,
+        "reversal_rate": 0.30165380374862183,
+        "reversals": 2736,
+        "rows": 9472,
+        "unscored_rows": 402
+      },
+      "legal_le_10": {
+        "adjudicable_rows": 2773,
+        "bt4_regret_sum_cp": 3015481.653749041,
+        "mean_bt4_regret_cp": 1001.8211474249305,
+        "regret_rows": 3010,
+        "reversal_rate": 0.24846736386584925,
+        "reversals": 689,
+        "rows": 3221,
+        "unscored_rows": 448
+      },
+      "not_in_check": {
+        "adjudicable_rows": 20881,
+        "bt4_regret_sum_cp": 8187394.1103148125,
+        "mean_bt4_regret_cp": 373.0190036135957,
+        "regret_rows": 21949,
+        "reversal_rate": 0.3072170873042479,
+        "reversals": 6415,
+        "rows": 22501,
+        "unscored_rows": 1620
+      },
+      "ply_40_79": {
+        "adjudicable_rows": 4676,
+        "bt4_regret_sum_cp": 177742.9399414306,
+        "mean_bt4_regret_cp": 37.2236523437551,
+        "regret_rows": 4775,
+        "reversal_rate": 0.32570573139435416,
+        "reversals": 1523,
+        "rows": 4838,
+        "unscored_rows": 162
+      },
+      "ply_ge_80": {
+        "adjudicable_rows": 11696,
+        "bt4_regret_sum_cp": 8474909.31580408,
+        "mean_bt4_regret_cp": 673.7883062334297,
+        "regret_rows": 12578,
+        "reversal_rate": 0.3024965800273598,
+        "reversals": 3538,
+        "rows": 13117,
+        "unscored_rows": 1421
+      },
+      "ply_lt_40": {
+        "adjudicable_rows": 5895,
+        "bt4_regret_sum_cp": 125186.3159730628,
+        "mean_bt4_regret_cp": 20.788162732159215,
+        "regret_rows": 6022,
+        "reversal_rate": 0.2737913486005089,
+        "reversals": 1614,
+        "rows": 6038,
+        "unscored_rows": 143
+      }
+    },
+    "ranking": {
+      "100": {
+        "adjudicable_constraint_rows": 14804,
+        "all_winner": {
+          "confirmed": 66552,
+          "confirmed_bt4_mass": 1835.0465235710712,
+          "constraints": 478938,
+          "contradicted": 2154,
+          "contradicted_bt4_mass": 271.7947654619981,
+          "ties": 415,
+          "ties_bt4_mass": 52.01829636751668,
+          "unscored": 409817,
+          "unscored_bt4_mass": 2419.9203123928
+        },
+        "confirmed": 66632,
+        "constraint_rows": 22569,
+        "constraints": 478938,
+        "contradicted": 2084,
+        "inferior_bt4_mass": 4578.7798977933735,
+        "ordinary_rows": 23993,
+        "ties": 405,
+        "unscored": 409817
+      },
+      "1000": {
+        "adjudicable_constraint_rows": 1510,
+        "all_winner": {
+          "confirmed": 4713,
+          "confirmed_bt4_mass": 253.18599498943843,
+          "constraints": 53751,
+          "contradicted": 297,
+          "contradicted_bt4_mass": 36.66487882145964,
+          "ties": 253,
+          "ties_bt4_mass": 32.183417973545076,
+          "unscored": 48488,
+          "unscored_bt4_mass": 519.4739278812766
+        },
+        "confirmed": 4737,
+        "constraint_rows": 7569,
+        "constraints": 53751,
+        "contradicted": 279,
+        "inferior_bt4_mass": 841.5082196657246,
+        "ordinary_rows": 23993,
+        "ties": 247,
+        "unscored": 48488
+      },
+      "300": {
+        "adjudicable_constraint_rows": 5991,
+        "all_winner": {
+          "confirmed": 23056,
+          "confirmed_bt4_mass": 522.6474612720547,
+          "constraints": 263771,
+          "contradicted": 525,
+          "contradicted_bt4_mass": 67.04166894421364,
+          "ties": 286,
+          "ties_bt4_mass": 35.872980287856365,
+          "unscored": 239904,
+          "unscored_bt4_mass": 915.0907604344987
+        },
+        "confirmed": 23090,
+        "constraint_rows": 19484,
+        "constraints": 263771,
+        "contradicted": 501,
+        "inferior_bt4_mass": 1540.6528709386191,
+        "ordinary_rows": 23993,
+        "ties": 276,
+        "unscored": 239904
+      },
+      "500": {
+        "adjudicable_constraint_rows": 3161,
+        "all_winner": {
+          "confirmed": 11033,
+          "confirmed_bt4_mass": 334.4098152655108,
+          "constraints": 154163,
+          "contradicted": 362,
+          "contradicted_bt4_mass": 45.79115640934767,
+          "ties": 263,
+          "ties_bt4_mass": 33.616754023835085,
+          "unscored": 142505,
+          "unscored_bt4_mass": 639.9355431329798
+        },
+        "confirmed": 11058,
+        "constraint_rows": 15503,
+        "constraints": 154163,
+        "contradicted": 343,
+        "inferior_bt4_mass": 1053.753268831675,
+        "ordinary_rows": 23993,
+        "ties": 257,
+        "unscored": 142505
+      }
+    },
+    "routing": {
+      "all": {
+        "eligible": 22267,
+        "ordinary_rows": 23993,
+        "reversal_capture_rate": 1.0,
+        "reversals": 6675,
+        "reversals_captured": 6675,
+        "search_fraction": 1.0,
+        "selected": 22267,
+        "selected_ordinary": 23993,
+        "selection_fraction_all_ordinary": 1.0,
+        "unscored": 1726
+      },
+      "bt4_disagrees_d9": {
+        "eligible": 22267,
+        "ordinary_rows": 23993,
+        "reversal_capture_rate": 0.7429213483146068,
+        "reversals": 6675,
+        "reversals_captured": 4959,
+        "search_fraction": 0.44545740333228545,
+        "selected": 9919,
+        "selected_ordinary": 10883,
+        "selection_fraction_all_ordinary": 0.45359063060059185,
+        "unscored": 1726
+      },
+      "bt4_top_lt_0.50": {
+        "eligible": 22267,
+        "ordinary_rows": 23993,
+        "reversal_capture_rate": 0.5379775280898876,
+        "reversals": 6675,
+        "reversals_captured": 3591,
+        "search_fraction": 0.36888669331297436,
+        "selected": 8214,
+        "selected_ordinary": 9383,
+        "selection_fraction_all_ordinary": 0.3910723961155337,
+        "unscored": 1726
+      },
+      "conflict_or_low_confidence": {
+        "eligible": 22267,
+        "ordinary_rows": 23993,
+        "reversal_capture_rate": 0.8575280898876404,
+        "reversals": 6675,
+        "reversals_captured": 5724,
+        "search_fraction": 0.5694525531054925,
+        "selected": 12680,
+        "selected_ordinary": 14112,
+        "selection_fraction_all_ordinary": 0.588171550035427,
+        "unscored": 1726
+      },
+      "conflict_or_low_margin": {
+        "eligible": 22267,
+        "ordinary_rows": 23993,
+        "reversal_capture_rate": 0.9821722846441947,
+        "reversals": 6675,
+        "reversals_captured": 6556,
+        "search_fraction": 0.8079669466025957,
+        "selected": 17991,
+        "selected_ordinary": 19322,
+        "selection_fraction_all_ordinary": 0.805318217813529,
+        "unscored": 1726
+      },
+      "d9_gap_le_100": {
+        "eligible": 22267,
+        "ordinary_rows": 23993,
+        "reversal_capture_rate": 0.942621722846442,
+        "reversals": 6675,
+        "reversals_captured": 6292,
+        "search_fraction": 0.7649885480756277,
+        "selected": 17034,
+        "selected_ordinary": 18252,
+        "selection_fraction_all_ordinary": 0.7607218772141875,
+        "unscored": 1726
+      }
+    },
+    "rows": 32768,
+    "value": {
+      "bt4_native": {
+        "brier_sum": 821.0776884609393,
+        "cross_entropy_sum": 11355.926766630859,
+        "mean_brier": 0.03422155163843368,
+        "mean_cross_entropy": 0.47330166159425074,
+        "rows": 23993
+      },
+      "ceres_dual": {
+        "brier_sum": 1033.5079463255545,
+        "cross_entropy_sum": 11597.291973235615,
+        "mean_brier": 0.043075394753701264,
+        "mean_cross_entropy": 0.48336147931628454,
+        "rows": 23993
+      },
+      "ceres_primary": {
+        "brier_sum": 1181.0614205130846,
+        "cross_entropy_sum": 19024.649056492115,
+        "mean_brier": 0.049225249885928586,
+        "mean_cross_entropy": 0.7929249804731427,
+        "rows": 23993
+      },
+      "ceres_secondary": {
+        "brier_sum": 858.2673802062408,
+        "cross_entropy_sum": 10087.086054236033,
+        "mean_brier": 0.03577157421774021,
+        "mean_cross_entropy": 0.42041787413979215,
+        "rows": 23993
+      },
+      "registered_sf50_bt425_ceres25": {
+        "brier_sum": 225.12897267629728,
+        "cross_entropy_sum": 7428.190784501079,
+        "mean_brier": 0.009383110602104667,
+        "mean_cross_entropy": 0.30959824884345766,
+        "rows": 23993
+      },
+      "sf_saved": {
+        "brier_sum": 7.576007905454122,
+        "cross_entropy_sum": 7014.242526979458,
+        "mean_brier": 0.0003157590924625567,
+        "mean_cross_entropy": 0.292345372691179,
+        "rows": 23993
+      }
+    }
+  },
+  "native_wdl_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_native_wdl_manifest_v1/manifest.json",
+    "sha256": "23fcb56ba8b975f0659085523bc19eacf5fe8edb73d12dc59cfbbbcf0aae0946"
+  },
+  "new_stockfish_search": 0,
+  "new_teacher_inference": 0,
+  "playing_strength_result": false,
+  "row_bank": {
+    "path": "teacher_adjudication_rows.jsonl",
+    "rows": 32768,
+    "sha256": "09d8e43676ec9e0c91218081a41da07d86583ef71411b3b112a329c820adef54"
+  },
+  "rows": 32768,
+  "schema": 2,
+  "shard_receipts": [
+    {
+      "ceres_present": true,
+      "path": "shard_000000.zarr",
+      "row_provenance_sha256": "19bfb3923ff4411995e887280556486a823379d3fea0d904b7fb834658df9382",
+      "rows": 8192,
+      "source_storage_identity": "feb04d95613b35da8e8ac185f32ac739fc1f163121d6faa84d3e0c26e5bd813f"
+    },
+    {
+      "ceres_present": true,
+      "path": "shard_000001.zarr",
+      "row_provenance_sha256": "493724dfdfa88fc9b84bb62b30d79af6c1dfcc3ac5873a5b50ffa6a02df269e2",
+      "rows": 8192,
+      "source_storage_identity": "974dbd333a6cf05b2ecbe064a0dea89d844bc0a3d1b8fa6b8f18002ada939400"
+    },
+    {
+      "ceres_present": true,
+      "path": "shard_000002.zarr",
+      "row_provenance_sha256": "dfd18384a225a343f8b52c8d66eb55122e3aa214e9a90f104c7e8289d21cb5b6",
+      "rows": 8192,
+      "source_storage_identity": "13dfab696d842f100a16d99e78c2a92cb318b864e42d1ae1610bb1dddedc27c9"
+    },
+    {
+      "ceres_present": true,
+      "path": "shard_000003.zarr",
+      "row_provenance_sha256": "ed955b5201b08b222437ffee07ba9d5eca3ddcf8e3f34d94b0db825aba2a87d4",
+      "rows": 8192,
+      "source_storage_identity": "98ca5e72719cf7bb8a99c5a8373a2bcdbe8a235d06beafb97a8a08291b14ee2d"
+    }
+  ],
+  "shards": 4,
+  "slice": {
+    "max_shards": 4,
+    "start_shard": 0
+  },
+  "status": "COMPLETE_DIAGNOSTIC_NOT_TRAINING_ADMISSION",
+  "training_admission": false
+}
