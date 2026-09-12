@@ -1,6 +1,6 @@
 # Weighted Ceres bootstrap preparation
 
-Status: B100CeresV25 completed its registered seed-zero epoch. Its first fixed-400 match against B100 launched September 12 at 14:56:36 UTC after waiting for the shared GPU lease; no value playing result is available. The B100V50 comparison is also prepared and remains required. The CeresB50 policy result remains unresolved at +12.22 Elo [-22.88, +47.57].
+Status: both registered B100CeresV25 fixed-400 comparisons completed: +6.79 Elo [-32.26, +46.01] versus B100 and +25.83 [-10.06, +62.29] versus B100V50. Both remain unresolved. Keep B100 with original SF values as incumbent and retain CeresV25 as a competitive alternative. No automatic extra games or dose sweep.
 
 ## Selected question
 
@@ -363,3 +363,18 @@ The same three historical `valid_control=false` limitations remain: no held-out 
 Both registered controls remain B100 and B100V50, each over 128 swapped opening pairs (256 games), 400 simulations and prior temperature 1.0. Both comparisons remain required regardless of the first result. Bounded CPU preparation uses CPUs 2–3 to avoid the active downside producer on 4–5; no training or arena algorithm changes follow from that scheduling choice. Both actual CPU packages passed: candidate and controls each have 61,444,448 parameters and matching architecture, with CUDA uninitialized during preparation. Their stages took 127.598 and 118.547 seconds. No value result has been read.
 
 The first standalone launch preflight stopped before invoking the launcher because an existing raw BT4 labeling job was using the GPU (8,883 MiB and 96% utilization observed). Both jobs use the same advisory lease. No process was interrupted or resource cap raised: the unchanged reviewed launcher entered its existing bounded lease wait instead. The match operator started at 14:52:30 UTC, acquired the lease after 246.688 seconds, and launched its actual arena stage at 14:56:36 UTC. This time the recorded child argv matches the requested arena command; the narrowly adopted future capture fix does not change arena code or search settings. The parent owns the sole match completion observer. The second B100V50 match is prepared for its slot after the first terminal, independently of the first result; the ongoing downside CPU preparation is preserved.
+
+## Both registered value comparisons completed
+
+The same completed B100CeresV25 checkpoint played both registered controls, regardless of the first outcome. Each match used 400 simulations, search-prior temperature 1.0 for both players, and the same 128 swapped opening pairs (256 games).
+
+| Reference | Candidate score | Elo estimate | Nominal 95% paired interval | Pentanomial WW / WD+DW / DD+WL / LD+DL / LL |
+| --- | --- | --- | --- | --- |
+| B100: original SF values | 50.977% | +6.79 | [-32.26, +46.01] | 23 / 21 / 41 / 24 / 19 |
+| B100V50: 50% SF / 50% BT4 values | 53.711% | +25.83 | [-10.06, +62.29] | 19 / 28 / 50 / 15 / 16 |
+
+Both stages and strict finalizers exited successfully. Arena wall times were 1,467.783 and 1,481.827 seconds. Actual child command observations matched the requested commands; no saved-receipt exception or game rerun was needed. Independent reviews checked completed receipt bindings and all retained pair-score arithmetic without repeating model or game-bank reads. [Combined evidence](evidence/ceres-value-fixed400-results-20260912.json) includes both complete readouts, identities and reviews.
+
+The positive estimates do not establish a gain or equivalence. The B100 comparison tests replacing half of the original SF value supervision with the registered BT4/Ceres mixture. The B100V50 comparison replaces half its BT4 contribution with the fixed Ceres dual-head contribution, holding the 50% SF share and B100 policy fixed. Neither result alone establishes the best teacher weighting. These share a candidate checkpoint and reused development panel; they are not independent seed replications, and results against different opponents are not pooled into one Elo. The historical-control limitations recorded at epoch completion remain.
+
+Keep B100 with original SF values as incumbent; retain CeresV25 as a competitive alternative. Do not automatically extend either match or start a fine value-dose sweep. The next substantive policy candidate is the already preparing moderate SFDownside300w.5 recipe. It is gentler than the previously tested all-move Tactical100 attenuation and leaves mate rows unchanged; it is not the first all-move SF method. Its corpus preparation is not training admission or a strength result. Existing raw BT4 labeling may use available GPU time while preparation continues; no running labeling job is stopped for this decision.
