@@ -1,0 +1,190 @@
+{
+  "status": "CERESB50_TRAINING_STARTED_NOT_COMPLETE",
+  "profile": "CeresB50",
+  "rows": 18910484,
+  "shards": 2309,
+  "materialization": {
+    "status": "COMPLETE",
+    "returncode": 0,
+    "started_unix": 1789177891.3571887,
+    "completed_unix": 1789197935.7803538,
+    "seconds": 20044.42316508293,
+    "parent_session": 61364,
+    "parent_observer": 2603
+  },
+  "qualification": {
+    "status": "PASS_REGISTERED_CORPUS_QUALIFICATION",
+    "session": 96330,
+    "exit_code": 0,
+    "wall_seconds": 529.91,
+    "max_rss_kib": 381260,
+    "scope": "Actual attrs/layouts and stable producer-bound storage identities. Payload and history checks inherited from pinned completed producer; no payload reread."
+  },
+  "pins": {
+    "materialization_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/materialization_snapshot16_v1/CeresB50.plan.json",
+      "sha256": "1bc2189980f8551c765cbe9d97669d6c362be56a37e17af97395365175090011"
+    },
+    "materialization_status": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/materialization_snapshot16_v1/CeresB50_execution/status.json",
+      "sha256": "b9055bc5409cbba066aaaaaf469522aee4c44455153bf86a6f1842b146a0d8fb"
+    },
+    "derive_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_ceres_policy_B50T05/derive_targets_summary.json",
+      "sha256": "fdee83d5116bbd2b95f97a8700c73df7a7da4b22d1724432a06465b8ce39991f"
+    },
+    "rewrite_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_ceres_policy_B50T05/ceres_target_mix_summary.json",
+      "sha256": "bb505d76a901354b07445b2a4229856291e532dbe78d37a0f6a4f1cf94c3b37f"
+    },
+    "qualification_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/corpus_qualification_v1/plan.json",
+      "sha256": "5addb3ea5780e409cca66c92593b234b0a5b32996191bbba29abe1c2869898f9"
+    },
+    "qualification_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/corpus_qualification_v1/independent_review.json",
+      "sha256": "a19fd40b529300c7c99557dfe7ff2e8ff208b7421967953038156396afff688a"
+    },
+    "qualification_terminal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/corpus_qualification_v1/terminal.json",
+      "sha256": "e801d0c130379eba73d92def391b2154b6531b13a41df075bc36d8fa12423565"
+    },
+    "dataset_qualification": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/dataset_qualification.json",
+      "sha256": "e33778926da332ef6910721f1f1f04fb565a2e49d89b607cf6feb25ee2426d0e"
+    },
+    "prospective_report": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/prospective_schedule.json",
+      "sha256": "9178f38c9c42eb3b62db63d04e1b2ea5c7838ee4e008c3ffecf3d6f52fca9d79"
+    },
+    "prospective_completion": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/prospective_schedule_v1/completed.json",
+      "sha256": "7a2068491d5d986a6d7a9380167c3f12faf966cdbef9ca9d6c5db82f2c0f2f03"
+    },
+    "prospective_terminal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/prospective_schedule_v1/terminal.json",
+      "sha256": "65df5ccb45a1aed750b2d93bdbeb3ae534ac6b956a502809d18eddd888c874cb"
+    },
+    "training_manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/training_manifest.json",
+      "sha256": "3ee966aeac1a424b98d314b1c5f7f38c26fb750bf7e2fcbd70e5bbf453a19948"
+    },
+    "training_manifest_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/training_manifest_independent_review.json",
+      "sha256": "b428c690ed42820c6ec00727bab3829ae93d3aed8db17b41d78b946ae44cb94d"
+    },
+    "host_operator": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/host_operator_v1/run.py",
+      "sha256": "c02d79e335506e3debb4b3c10b244afab8d60971ef90083425e0152ec8e66a0b"
+    },
+    "host_operator_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/host_operator_v1/plan.json",
+      "sha256": "107a15f7fcc733b97340ed9795b27313e9599220dad932b5ff75b8f2692deeb7"
+    },
+    "operator_started": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/host_operator_v1/started.json",
+      "sha256": "e423c4ae4a5e2fd3113ad6a7c1b29331ebcf6a034bdd5ca4a1af10ba3a259573"
+    }
+  },
+  "training": {
+    "coordinator_root_session": 23746,
+    "parent_observer": 2742,
+    "started_unix": 1789199766.4780672,
+    "started_utc": "2026-09-12T07:56:06.478067+00:00",
+    "operator_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31
+    ],
+    "manifest_sha256": "3ee966aeac1a424b98d314b1c5f7f38c26fb750bf7e2fcbd70e5bbf453a19948",
+    "operator_plan_sha256": "107a15f7fcc733b97340ed9795b27313e9599220dad932b5ff75b8f2692deeb7",
+    "actual_stage_started_unix": 1789199769.6201165,
+    "training_command": [
+      "/usr/bin/python3",
+      "scripts/lc0_control_train.py",
+      "--config",
+      "configs/lc0_positive_control.yaml",
+      "--shards",
+      "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_ceres_policy_B50T05",
+      "--out-dir",
+      "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_ceres_policy_B50T05_epoch_v1",
+      "--steps",
+      "0",
+      "--batch-size",
+      "512",
+      "--sampling-mode",
+      "game_epoch",
+      "--epoch-plan-workers",
+      "16",
+      "--epoch-load-workers",
+      "16",
+      "--seed",
+      "0",
+      "--device",
+      "cuda",
+      "--train-window-steps",
+      "88",
+      "--allow-invalid-control"
+    ],
+    "training_pid": 695031,
+    "hard_seconds": 16200,
+    "outer_inclusive_seconds": 21630,
+    "launch_snapshot_stage_complete": false,
+    "actual_progress_observed": "[train] window 2/420 (88 steps) done, 176 of 36935",
+    "scope": "Launch snapshot only. Training process/log advance; no completion or playing result."
+  },
+  "limits": [
+    "No training completion or playing result.",
+    "Metadata qualification inherits completed producer payload checks and verifies stable source/teacher/output witnesses; no repeated payload scan."
+  ],
+  "prospective_schedule": {
+    "session": 45612,
+    "exit_code": 0,
+    "wall_seconds": 421.83,
+    "rows": 18910484,
+    "batches": 36935,
+    "canonical": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+    "runtime": {
+      "python": "3.10.12",
+      "numpy": "1.26.2",
+      "torch": "2.11.0+cu128"
+    }
+  },
+  "launch_preflight": {
+    "source": "parent host check before launch",
+    "gpu_used_MiB": 3316,
+    "gpu_utilization_percent": 4,
+    "compute_apps": [],
+    "disk_free_GiB_rounded": 275,
+    "mem_available_KiB": 59075208
+  }
+}
