@@ -4425,7 +4425,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "must sit INSIDE the outer read deadline, or the stamp would name "
             "a bound the engine never enforces",
         )
+    worker_concurrency = args.worker_concurrency
+    if worker_concurrency is not None and int(worker_concurrency) < 1:
+        raise ValueError("--worker-concurrency must be positive")
     buckets = split_games(int(args.games), int(args.workers))
+    effective_concurrency = min(
+        len(buckets),
+        len(buckets) if worker_concurrency is None else int(worker_concurrency),
+    )
     out_dir = Path(args.out_dir)
     resume = bool(args.resume)
     # Both refusals happen HERE, before the engine handshake and before a
@@ -4510,6 +4517,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     ]
 
     started_utc = datetime.now(timezone.utc).isoformat()
+    execution = {
+        "started_utc": started_utc,
+        "resume": resume,
+        "worker_concurrency_requested": worker_concurrency,
+        "worker_concurrency_effective": effective_concurrency,
+        "logical_workers": len(specs),
+        "config_sha256": config_sha,
+    }
+    # Append per invocation: a resume keeps the scientific manifest untouched.
+    with open(out_dir / "execution_invocations.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(execution, sort_keys=True) + "\n")
     started = time.perf_counter()
     results: list[dict[str, Any]]
     if len(specs) == 1:
@@ -4520,7 +4538,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     else:
         ctx = multiprocessing.get_context("spawn")
         results = []
-        with ProcessPoolExecutor(max_workers=len(specs), mp_context=ctx) as pool:
+        with ProcessPoolExecutor(max_workers=effective_concurrency, mp_context=ctx) as pool:
             futures = {pool.submit(run_worker, spec): spec for spec in specs}
             for future in as_completed(futures):
                 spec = futures[future]
@@ -4548,6 +4566,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         engine_record=engine_record, engine_id_name=engine_id_name,
         staircase=staircase, started_utc=started_utc, wall_s=wall_s,
     )
+    summary["execution"] = execution
     with open(out_dir / SUMMARY_NAME, "x", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2, sort_keys=True, default=_json_default)
         fh.write("\n")
@@ -4594,6 +4613,12 @@ def build_parser() -> argparse.ArgumentParser:
              "the run's cost invisible in the command that produced it.",
     )
     p.add_argument("--workers", type=int, default=1)
+    p.add_argument(
+        "--worker-concurrency", type=int, default=None,
+        help="Maximum concurrent logical workers (positive; default: all). "
+             "Limits resident processes without changing worker IDs, game "
+             "partitions or resume configuration. Not a RAM byte limit.",
+    )
     p.add_argument(
         "--staircase", default=DEFAULT_STAIRCASE,
         help=f"narrowing rungs as '<width>:<depth>,...' (default "

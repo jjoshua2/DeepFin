@@ -4841,8 +4841,14 @@ def test_a_crashed_run_resumes_and_its_crash_record_survives(
     assert crashed["games"] == 1, "worker 0's game is banked, worker 1's is not"
     assert "RUN DID NOT FINISH" in corpus.format_summary(crashed)
 
-    oom_kills.clear()  # the OOM is over; the same corpus, resumed
-    assert corpus.main([*argv, "--resume"]) == 0
+    manifest_before = (out_dir / corpus.MANIFEST_NAME).read_bytes()
+    oom_kills.clear()  # the OOM is over; resume with fewer resident workers
+    assert corpus.main([*argv, "--resume", "--worker-concurrency", "1"]) == 0
+    assert (out_dir / corpus.MANIFEST_NAME).read_bytes() == manifest_before
+    invocations = [json.loads(line) for line in
+                   (out_dir / "execution_invocations.jsonl").read_text().splitlines()]
+    assert [item["worker_concurrency_effective"] for item in invocations] == [2, 1]
+    assert invocations[0]["config_sha256"] == invocations[1]["config_sha256"]
 
     resumed = json.loads((out_dir / corpus.SUMMARY_NAME).read_text("utf-8"))
     assert resumed["run_finished"] is True
@@ -5181,3 +5187,61 @@ def test_real_stockfish_emits_exactly_one_line_per_rank_per_depth() -> None:
         )
     assert search.value_full_width is True
     assert len(search.values) == 20
+
+
+@pytest.mark.parametrize(("limit", "effective"), [(None, 3), (1, 1), (2, 2), (9, 3)])
+def test_worker_concurrency_preserves_all_logical_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    limit: int | None, effective: int,
+) -> None:
+    limits: list[int] = []
+    specs: list[corpus.WorkerSpec] = []
+
+    class RecordingExecutor(InlineExecutor):
+        def __init__(self, *, max_workers: int, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            limits.append(max_workers)
+
+    def record_worker(spec: corpus.WorkerSpec) -> dict[str, Any]:
+        specs.append(spec)
+        return corpus.failed_worker_slot(spec, corpus.worker_failure(
+            RuntimeError("no engine needed"), progress=corpus.WorkerProgress(),
+            games_completed=0,
+        ))
+
+    monkeypatch.setattr(corpus, "ProcessPoolExecutor", RecordingExecutor)
+    monkeypatch.setattr(corpus, "run_worker", record_worker)
+    monkeypatch.setattr(corpus, "refuse_unopenable_syzygy", lambda _path: ())
+    monkeypatch.setattr(corpus.audit_targets, "engine_identity", lambda _path: "test")
+    args = corpus.build_parser().parse_args([
+        "--out-dir", str(tmp_path / "run"), "--games", "8", "--workers", "3",
+        "--seed", "42", "--stockfish", "/bin/true",
+    ])
+    original_stamp = corpus.config_stamp(args, sf_binary=str(args.stockfish))
+    args.worker_concurrency = limit
+    summary = corpus.run(args)
+    assert limits == [effective]
+    assert [(s.worker_id, s.game_ids, s.seed) for s in specs] == [
+        (0, (0, 3, 6), 42), (1, (1, 4, 7), 42), (2, (2, 5), 42),
+    ]
+    assert summary["config_requested"] == original_stamp
+    assert {s.config_sha256 for s in specs} == {corpus.stamp_sha256(original_stamp)}
+    assert summary["execution"]["worker_concurrency_effective"] == effective
+    invocation = json.loads((tmp_path / "run" / "execution_invocations.jsonl").read_text())
+    assert invocation == summary["execution"]
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_invalid_worker_concurrency_leaves_output_untouched(tmp_path: Path, limit: int) -> None:
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    sentinel = out_dir / "summary.json"
+    sentinel.write_text('{"run_finished": false}')
+    args = corpus.build_parser().parse_args([
+        "--out-dir", str(out_dir), "--games", "2", "--resume",
+        "--worker-concurrency", str(limit),
+    ])
+    with pytest.raises(ValueError, match="worker-concurrency must be positive"):
+        corpus.run(args)
+    assert list(out_dir.iterdir()) == [sentinel]
+    assert sentinel.read_text() == '{"run_finished": false}'
