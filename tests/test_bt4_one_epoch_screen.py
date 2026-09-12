@@ -637,3 +637,35 @@ def test_softsf_completed_epoch_uses_shared_schedule_and_retains_history_limits(
     assert receipt['complete'] is True
     assert receipt['historical_valid_control'] is False
     assert receipt['historical_validity_problems'] == ['historical purity limitation']
+
+
+@pytest.mark.parametrize('unexpected', [False, True])
+def test_owned_stage_rechecks_preexec_snapshot_before_stamping_workload(tmp_path, monkeypatch, unexpected):
+    monkeypatch.setattr(arena, 'RUNTIME', tmp_path)
+    monkeypatch.setattr(arena, 'disk_guard', lambda _path: None)
+    monkeypatch.setattr(arena, 'environment', lambda _gpu=False: {'CUDA_VISIBLE_DEVICES': ''})
+    command = [sys.executable, '-c', 'import time; time.sleep(2); print("exec confirmed")']
+    wrapped = arena.timeout_command(command, 35)
+    original_read = Path.read_bytes
+    injected = []
+
+    def first_preexec_snapshot(path):
+        if str(path).startswith('/proc/') and path.name == 'cmdline' and not injected:
+            injected.append(str(path))
+            snapshot = [*command, '--unexpected'] if unexpected else wrapped
+            return ('\0'.join(snapshot) + '\0').encode()
+        return original_read(path)
+
+    monkeypatch.setattr(Path, 'read_bytes', first_preexec_snapshot)
+    receipt = arena.run_owned_stage(command, tmp_path / 'stage', 35, None, 'arena', {}, manifest={})
+    assert injected
+    if unexpected:
+        assert receipt['arena_cmdline'] == [*command, '--unexpected']
+        assert 'arena_preexec_cmdline' not in receipt
+    else:
+        assert receipt['arena_preexec_cmdline'] == wrapped
+        assert receipt['arena_cmdline'] == command
+        assert receipt['arena_pid'] == receipt['arena_preexec_pid']
+    assert receipt['process_complete']
+    assert receipt['exit_code'] == 0
+    assert 'exec confirmed' in (tmp_path / 'stage/arena.log').read_text()
