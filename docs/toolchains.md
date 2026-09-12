@@ -35,6 +35,17 @@ The generator also supports the validated G10 staircase policy, with its decisio
 rule stamped through generation, derivation and repair. A policy flag must not change
 an existing corpus identity during resume.
 
+For lower resident memory, keep the original logical `--workers` and add
+`--worker-concurrency 2` (or another positive process limit). All original worker
+IDs, game partitions, seeds and dedup capacities remain unchanged; queued workers
+start as slots free. The default runs all logical workers concurrently. The
+effective limit is recorded separately in `execution_invocations.jsonl` and
+`summary.json` under `execution`, so it can change on resume without changing the
+scientific manifest. It bounds active workers, not RAM bytes; a worker can still
+hold its full dedup cache. Uneven progress across workers is expected until all
+finish. Preserve unlisted tails before recovery: existing resume cleanup removes
+them. Merging this option does not update a running generator.
+
 Repair is conditional on a known corpus defect; it is not an obligatory stage for a
 new healthy corpus. Never mutate a populated corpus to reuse its identity for different
 worker or teacher settings. Keep a companion corpus separate when scaling changes the
