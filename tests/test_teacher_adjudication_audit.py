@@ -315,6 +315,11 @@ def test_optional_native_values_reach_real_audit_bank_without_policy_changes(tmp
     assert all(v['rows'] == 0 for v in baseline['metrics']['value'].values())
     assert all(v['rows'] == changed['rows'] == 3 for v in changed['metrics']['value'].values())
     rows = [json.loads(line) for line in (tmp_path / 'audit_native' / audit.ROW_BANK).read_text().splitlines()]
+    assert all(r['policy_complementarity_gt300'] is not None for r in rows)
+    for r in rows:
+        detail = r['policy_complementarity_gt300']
+        assert detail['flagged_mass']['bt4'] == pytest.approx(r['ranking_best_set_and_all_winner']['300']['inferior_bt4_mass'])
+        assert len(detail['move_observations']) > 0
     assert all(r['value_inclusion'] == 'included' and len(r['value_losses']) == 6 for r in rows)
     assert all(sum(r['value_ruler_wdl']) == pytest.approx(1) for r in rows)
     expected = set(changed['metrics']['value'])
@@ -326,3 +331,43 @@ def test_optional_native_values_reach_real_audit_bank_without_policy_changes(tmp
             audit._wdl_loss(prediction, np.asarray(row['value_ruler_wdl']))[0])
     for name, cell in changed['metrics']['value'].items():
         assert cell['brier_sum'] == pytest.approx(sum(r['value_losses'][name]['brier'] for r in rows))
+
+
+def test_complementarity_tracks_same_moves_not_just_top_agreement() -> None:
+    d9 = {'a': 50.0, 'b': 45.0, 'c': -400.0, 'd': -500.0}
+    mapping = {m: i for i, m in enumerate(d9)}
+    bt4 = np.pad([.1, .1, .7, .1], (0, COMPACT_POLICY_SIZE - 4))
+    final = {'a': 40.0, 'b': 45.0, 'c': -300.0, 'd': -400.0}
+    removed = audit.policy_complementarity(d9, {'a'}, final, mapping, bt4,
+                                           np.pad([.1, .7, .1, .1], (0, COMPACT_POLICY_SIZE - 4)))
+    shifted = audit.policy_complementarity(d9, {'a'}, final, mapping, bt4,
+                                           np.pad([.1, .1, .1, .7], (0, COMPACT_POLICY_SIZE - 4)))
+    assert removed['flagged_mass']['ceres'] == pytest.approx(.2)
+    assert shifted['flagged_mass']['ceres'] == pytest.approx(.8)
+    for bank in (removed, shifted):
+        for cell in [bank['flagged_mass'], *bank['partitions'].values()]:
+            assert cell['arithmetic50'] == pytest.approx((cell['bt4'] + cell['ceres']) / 2)
+        assert sum(c['moves'] for c in bank['partitions'].values()) == 2
+    assert removed['partitions']['confirmed']['bt4'] == pytest.approx(.8)
+    assert removed['move_observations'][2]['policy_index'] == 2
+    # SF's best-next gap is only 5cp: these constraints are distinct from T300's gate.
+    assert audit.tactical._ordinary_d9_best(d9)[1] == 5
+
+
+def test_complementarity_conservative_ties_and_narrowed_missing_scores() -> None:
+    d9 = {'a': 500.0, 'b': 500.0, 'c': 0.0, 'd': -100.0, 'e': -200.0}
+    mapping = {m: i for i, m in enumerate(d9)}
+    p = np.pad([.1, .1, .2, .3, .3], (0, COMPACT_POLICY_SIZE - 5))
+    bank = audit.policy_complementarity(d9, {'a', 'b'},
+        {'a': 100.0, 'b': -100.0, 'c': 0.0, 'd': -100.0}, mapping, p, p)
+    assert bank['partitions']['contradicted']['bt4'] == .2
+    assert bank['partitions']['ties']['bt4'] == .3
+    assert bank['partitions']['unavailable']['bt4'] == .3
+    assert bank['move_observations'][-1]['final_effective_cp'] is None
+    missing_winner = audit.policy_complementarity(d9, {'a', 'b'},
+        {'a': 100.0, 'c': 0.0, 'd': -100.0}, mapping, p, p)
+    assert missing_winner['partitions']['unavailable']['bt4'] == pytest.approx(.8)
+    old = audit._update_ranking(audit.new_aggregate(), d9, {'a', 'b'},
+        {'a': 100.0, 'b': -100.0, 'c': 0.0, 'd': -100.0}, {m: float(p[i]) for m, i in mapping.items()})['300']['all_winner']
+    for name, cell in bank['partitions'].items():
+        assert cell['bt4'] == pytest.approx(old[('unscored' if name == 'unavailable' else name) + '_bt4_mass'])

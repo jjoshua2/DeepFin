@@ -258,3 +258,31 @@ lineage failure retains failed output and does not trigger an automatic retry
 or expanded budget. Only a terminal-success summary authenticates the new bank.
 The concrete plan is `scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/plan.json`;
 its final runtime commit and plan SHA must be frozen before validation or launch.
+
+## Fixed >300 cp teacher complementarity diagnostic
+
+The additive `policy_complementarity_gt300` row field compares BT4 T0.5,
+Ceres T0.5 and their arithmetic 50/50 mixture on exactly the same moves whose
+d9 score is more than 300 cp below the d9 maximum. It records unrenormalized
+probability mass, partitioned by the existing conservative all-winner criterion:
+confirmed, contradicted, tied or unavailable. Missing any d9 winner or the
+flagged move from the final roster makes its outcome unavailable. Contradiction
+means the move outranks at least one prior winner, not necessarily every winner.
+Mate-encoded final scores retain the existing ranking semantics and explicit flags.
+
+This field is null for excluded d9 mate-domain rows or missing Ceres; those rows
+remain explicitly distinguishable through existing eligibility fields. Included
+rows retain each legal move's policy index, UCI move, d9 and available final score,
+mate-domain flags, both teacher probabilities and constraint outcome. Existing
+source-qualified row/game identities apply; no feature or history copy is added.
+The arithmetic mass is the mean of constituent masses up to floating-point
+normalization. No conditional roster renormalization is performed.
+
+The fixed question is whether Ceres removes probability from SF-flagged moves or
+merely transfers it to other flagged moves, including within the existing balanced
+`abs(d9_best_cp) <= 100` stratum. The per-move cutoff is distinct from Tactical300's
+best-minus-next-lower d9 gap gate. Preserve unavailable mass, all-winner ties and
+SF ruler dependence in the readout; this measurement cannot establish Elo.
+A bounded first-four-shard saved-source run is prepared separately, retaining the
+same original/native/Ceres bindings and all prior policy/value metrics. No new
+inference, target rewriting, training promotion or threshold sweep is included.
