@@ -1,0 +1,93 @@
+{
+  "status": "COMPLETE_RESEARCH_NATIVE_VALUE_DIAGNOSTIC_NOT_MAIN_VALIDATION",
+  "runtime_commit": "21aec39249c17a44145a4435f2ca9abbcf93cb4e",
+  "code_pr": {
+    "url": "https://github.com/jjoshua2/DeepFin/pull/655",
+    "state_at_publication": "OPEN",
+    "base": "fix/teacher-adjudication-coverage",
+    "main_merge": false,
+    "validation": {
+      "focused_tests": {
+        "session": 45164,
+        "passed": 14,
+        "exit_code": 0
+      },
+      "scoped_types": {
+        "session": 64361,
+        "exit_code": 0,
+        "errors": 0,
+        "warnings": 0
+      },
+      "whole_ruff_vulture": {
+        "session": 5719,
+        "exit_code": 0
+      },
+      "whole_types": "UNRESOLVED: wrapper19830 timeout300s; explicit8598 timeout180s; no passing whole-type gate claimed",
+      "qualification_decision": "Parent authorized this bounded reversible CPU saved-data diagnostic after focused tests, scoped types and independent source reviews; not approval to merge upstream/main."
+    }
+  },
+  "terminal": {
+    "status": "COMPLETE_VALUE_DIAGNOSTIC_QUALIFICATION_NOT_TRAINING",
+    "plan_sha256": "bbd81fb9d74787b524bf7c87cca799387af2f4ed6f97e5f624bcec60efaa411b",
+    "started_unix": 1789181777.7400384,
+    "returncode": 0,
+    "rows": 32768,
+    "summary_sha256": "18254129fc13ff97cb795ca597530908863bccf462aae3b8b12a36a7a133c8a0",
+    "row_bank_sha256": "09d8e43676ec9e0c91218081a41da07d86583ef71411b3b112a329c820adef54",
+    "time_receipt": {
+      "seconds": 509.38,
+      "max_rss_kib": 1999496,
+      "exit_code": 0
+    },
+    "elapsed_seconds": 509.6125279479893,
+    "completed_unix": 1789182287.287149
+  },
+  "root_observation": {
+    "session": 48260,
+    "exit_code": 0,
+    "observer_closed": 2639,
+    "basis": "Parent captured actual terminal 0"
+  },
+  "readout": {
+    "session": 24706,
+    "exit_code": 0,
+    "seconds": 15.08,
+    "max_rss_kib": 64712,
+    "bank_passes": 1,
+    "old_policy_bank_rereads": 0,
+    "all_nonvalue_metrics_equal_previous_summary": true
+  },
+  "bank": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/execution/audit/teacher_adjudication_rows.jsonl",
+    "sha256": "09d8e43676ec9e0c91218081a41da07d86583ef71411b3b112a329c820adef54",
+    "rows": 32768
+  },
+  "pins": {
+    "plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/plan.json",
+      "sha256": "bbd81fb9d74787b524bf7c87cca799387af2f4ed6f97e5f624bcec60efaa411b"
+    },
+    "independent_final_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/independent_final_review.json",
+      "sha256": "13fa01864ebf9d82bcef9ea21d32d47c6bd6d630cacc63ea393d2acbb5e447dc"
+    },
+    "execution/status.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/execution/status.json",
+      "sha256": "cad05483faf2aaa4e906f9bc769113e97409fdc51f9ae5c0e7949cccdb2059d9"
+    },
+    "execution/audit/teacher_adjudication_audit.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/execution/audit/teacher_adjudication_audit.json",
+      "sha256": "18254129fc13ff97cb795ca597530908863bccf462aae3b8b12a36a7a133c8a0"
+    },
+    "readout/readout.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/readout/readout.json",
+      "sha256": "7b878a2af1ae69cd7c25ab18295f19ab34072c30d4a316d84bbcc76764a8d5c1"
+    },
+    "readout/scientific_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/readout/scientific_review.json",
+      "sha256": "86fc7ef929c9b93b06e92a839a433d649a7a2c633d0567b4d2f9e5630c0ec78d"
+    }
+  },
+  "next_decision": "Retain registered trained value contrasts versus B100 and B100V50; no new temperatures or weights. Full WDL losses do not isolate search Q=W-L; any Q/draw decomposition is separate and no new result is claimed here.",
+  "strength_or_independent_value_accuracy_claim": false
+}
