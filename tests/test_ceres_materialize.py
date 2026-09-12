@@ -20,7 +20,7 @@ from pathlib import Path
 p=argparse.ArgumentParser();p.add_argument('--manifest');p.add_argument('--out');p.add_argument('--stop');a,_=p.parse_known_args()
 m=json.loads(Path(a.manifest).read_text())
 Path(m['pid_file']).write_text(str(os.getpid()))
-Path(m['environment_file']).write_text(json.dumps({k:os.environ.get(k) for k in ['CUDA_VISIBLE_DEVICES','OMP_NUM_THREADS','MKL_NUM_THREADS']}))
+Path(m['environment_file']).write_text(json.dumps({**{k:os.environ.get(k) for k in ['CUDA_VISIBLE_DEVICES','OMP_NUM_THREADS','MKL_NUM_THREADS']},'cpu_affinity':sorted(os.sched_getaffinity(0))}))
 if m['mode']=='failure':raise SystemExit(7)
 if m['mode']=='stop':
  signal.signal(signal.SIGTERM,signal.SIG_IGN);Path(a.stop).touch()
@@ -156,6 +156,7 @@ def test_success_has_actual_publication_and_terminal_admission_receipt(prepared)
         "CUDA_VISIBLE_DEVICES": "",
         "OMP_NUM_THREADS": "2",
         "MKL_NUM_THREADS": "2",
+        "cpu_affinity": sorted(os.sched_getaffinity(0)),
     }
     assert json.loads((Path(p["state"]) / "status.json").read_text()) == result
     with pytest.raises(ValueError, match="reuse"):
@@ -330,3 +331,66 @@ def test_preparation_lock_contention_does_not_start_attempt(prepared):
             tool.execute(p, "f" * 64, time.time() + 120)
     assert not Path(p["state"]).exists()
     assert not Path(p["corpus"]).exists()
+
+
+def test_explicit_lane_reaches_child_while_shared_lock_is_held(prepared):
+    import fcntl
+
+    p, _, _, _ = prepared
+    original = os.sched_getaffinity(0)
+    p['cpu_affinity'] = [min(original)]
+    p['preparation_lock'] = str(tool.BASE / "CeresB50.preparation.lock")
+    plan = Path(p['state']).parent / 'plan.json'
+    plan.write_text(json.dumps(p))
+    try:
+        with tool.LOCK.open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            assert tool.main(['--plan', str(plan), '--expected-plan-sha256', tool.sha(plan),
+                              '--deadline', str(time.time() + 120), '--execute']) == 0
+    finally:
+        os.sched_setaffinity(0, original)
+    env = json.loads((Path(p['state']).parent / 'environment.json').read_text())
+    receipt = json.loads((Path(p['state']) / 'status.json').read_text())
+    assert env['cpu_affinity'] == receipt['cpu_affinity'] == p['cpu_affinity']
+    assert receipt['preparation_lock'] == p['preparation_lock']
+    assert receipt['status'] == 'COMPLETE'
+
+
+def test_explicit_lane_still_contends_on_its_fixed_lock(prepared):
+    import fcntl
+
+    p, _, _, _ = prepared
+    p['preparation_lock'] = str(tool.BASE / "CeresB50.preparation.lock")
+    with Path(p['preparation_lock']).open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(BlockingIOError):
+            tool.execute(p, 'f' * 64, time.time() + 120)
+    assert not Path(p['state']).exists()
+
+
+@pytest.mark.parametrize('affinity', [[], [True], [-1], [0, 0], '0,1'])
+def test_invalid_lane_affinity_rejected(prepared, affinity):
+    p, _, _, _ = prepared
+    p['cpu_affinity'] = affinity
+    with pytest.raises(ValueError, match='cpu_affinity'):
+        tool.validate(p)
+
+
+def test_unavailable_cpu_and_arbitrary_or_symlink_lock_rejected(prepared):
+    p, _, _, _ = prepared
+    p['cpu_affinity'] = [max(os.sched_getaffinity(0)) + 1]
+    with pytest.raises(ValueError, match='unavailable'):
+        tool.validate(p)
+    del p['cpu_affinity']
+    p['preparation_lock'] = str(tool.BASE / 'unrelated.lock')
+    with pytest.raises(ValueError, match='fixed profile lock'):
+        tool.validate(p)
+    p['preparation_lock'] = str(tool.BASE / 'CeresB50.preparation.lock')
+    Path(p['preparation_lock']).symlink_to(tool.LOCK)
+    with pytest.raises(ValueError, match='canonical'):
+        tool.validate(p)
+
+
+def test_legacy_plan_retains_fixed_defaults(prepared):
+    p, _, _, _ = prepared
+    assert tool.execution_settings(p) == ([0, 1], tool.LOCK)
