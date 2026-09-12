@@ -1,0 +1,198 @@
+{
+  "status": "COMPLETE_COPY_AND_EXACT_RECLAMATION",
+  "refs": {
+    "plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/plan.json",
+      "sha256": "86fd91e95d11f0571fc3fd01c3a7790e3ebb9161ab6dca54f62b3f315932f46e"
+    },
+    "outer_launch.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/outer_launch.json",
+      "sha256": "e5ee94c90f2fe21f246672ceea699098a0bd548d585a3a3a584f8e8708bb3a3c"
+    },
+    "run/started.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/run/started.json",
+      "sha256": "397a6102e0598dcce4662c409f046e1b93e0f3adc16b08d2075b1634c7369915"
+    },
+    "run/resources.txt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/run/resources.txt",
+      "sha256": "2e4a95098ca52ec507e168d6712fb091715bc2723093ee1021e4e3da6f32d4ba"
+    },
+    "staging/qtemp_0.0005_hist_20m_bt4_toptie_a100/verified.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_toptie_a100/verified.json",
+      "sha256": "0ffdbbbaedc7575bdf44ad1fa8f2a07389662aee90ba7e1ea821343fea9a1951"
+    },
+    "independent_completed_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/independent_completed_review.json",
+      "sha256": "7ddf8f72eec7b7dc3810cce4fbfe32924075822ecd5b8d161505860056193ba6"
+    },
+    "reclamation_preparation_v1/metadata_comparison.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/reclamation_preparation_v1/metadata_comparison.json",
+      "sha256": "bd1d8103f9f962554691b9d78ea2c8199c2e9e2f8cebd386e2253b246a1f0baf"
+    },
+    "reclamation_preparation_v1/consumer_observation.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/reclamation_preparation_v1/consumer_observation.json",
+      "sha256": "c4c5ebccf350e6842ecb1cfb603a076ec7816c08cf0b929a09ff709941dc6af4"
+    },
+    "reclamation_preparation_v1/opaque_process_roles.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/reclamation_preparation_v1/opaque_process_roles.json",
+      "sha256": "c234743b363715e965fd824bda5dc758802ff0c942690f1202a2eed729fa5305"
+    },
+    "reclamation_preparation_v1/readiness_receipt.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/reclamation_preparation_v1/readiness_receipt.json",
+      "sha256": "9cca4d78250fa076ac0d33e610fea8f978e5559400abd80bdd413616fea4fc7c"
+    },
+    "reclamation_preparation_v1/independent_removal_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/reclamation_preparation_v1/independent_removal_review.json",
+      "sha256": "7bdd755d726511eabaf90aab8f96b4e1e0de84ef5b0e803ac289688a403ae7d1"
+    },
+    "reclamation_execution_v1/completed.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/reclamation_execution_v1/completed.json",
+      "sha256": "362f262251ab237ad4bfaf21f2f433ba035a82c94120009db745bd469ef19980"
+    },
+    "independent_reclamation_completed_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/independent_reclamation_completed_review.json",
+      "sha256": "fa4a3eb8da82e05e0102af20efabb08ffe0c3ae60f19b298cbac523350d56aa9"
+    }
+  },
+  "copy_receipt": {
+    "pool": "qtemp_0.0005_hist_20m_bt4_toptie_a100",
+    "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100",
+    "source_deleted": false,
+    "plan_sha256": "86fd91e95d11f0571fc3fd01c3a7790e3ebb9161ab6dca54f62b3f315932f46e",
+    "started_unix": 1789240385.1037898,
+    "mount": {
+      "target": "/mnt/e",
+      "source": "E:\\",
+      "fstype": "9p",
+      "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+    },
+    "resources": {
+      "local_free_bytes": 260356448256,
+      "available_RAM_bytes": 92382232576
+    },
+    "references": {
+      "observed_source_references": [],
+      "other_user_processes_not_inspected": [
+        1,
+        9,
+        12,
+        13,
+        33,
+        34,
+        894,
+        895,
+        1939,
+        1940
+      ],
+      "same_user_processes_not_inspected": [
+        30
+      ],
+      "complete_process_visibility": false,
+      "scope": "Copy only; source retained and stability independently checked. Not source-removal qualification."
+    },
+    "inventory": {
+      "entries": 713331,
+      "logical_file_bytes": 9658007914
+    },
+    "tar_bytes": 11016949760,
+    "verified_members": 713331,
+    "tar_sha256": "88008399652e742796eca2ede6eac4e4db3c4de111529b173e0754a7713c2bae",
+    "source_manifest_sha256": "4331ace78c550937a6a77fe70360ba6030cbf447cbe7528eebc3fb5dc2dc0305",
+    "rsync_command": [
+      "/usr/bin/rsync",
+      "--no-whole-file",
+      "--partial-dir=.qtemp_0.0005_hist_20m_bt4_toptie_a100.partial",
+      "--bwlimit=16384",
+      "--fsync",
+      "--",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_toptie_a100/qtemp_0.0005_hist_20m_bt4_toptie_a100.tar",
+      "/mnt/e/chess_derived_archive_20260908/E0Legacy_v1/qtemp_0.0005_hist_20m_bt4_toptie_a100.tar"
+    ],
+    "rsync_exit_code": 0,
+    "external_tar_sha256": "88008399652e742796eca2ede6eac4e4db3c4de111529b173e0754a7713c2bae",
+    "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+    "finished_unix": 1789242771.9335158,
+    "external_archive": "/mnt/e/chess_derived_archive_20260908/E0Legacy_v1/qtemp_0.0005_hist_20m_bt4_toptie_a100.tar",
+    "external_size": 11016949760,
+    "external_mtime_ns": 1789242430899667700,
+    "limitations": [
+      "Source retained; removal requires separate parent verification.",
+      "Observed fd/cwd consumers rejected; inaccessible process IDs disclosed. Not deletion qualification.",
+      "File mode/uid/gid/mtime and all contents verified; GNU tar captures ACL/xattrs but these are not independently compared."
+    ]
+  },
+  "reclamation_receipt": {
+    "status": "COMPLETE_EXACT_SHARD_RECLAMATION_SUMMARIES_RETAINED",
+    "started_unix": 1789244501.1413736,
+    "ended_unix": 1789244538.8992438,
+    "deadline_unix": 1789246301.1028404,
+    "removed_shards": 2309,
+    "list_sha256": "1050e94ec2aeef940e8b473c60fde723e3f0c6d9a0892d9ff39776e56356fb98",
+    "script_sha256": "6468ed67fec33b9bde219148a3195628a15d209445d43a05c44a8523e7906027",
+    "archive_current_stat": {
+      "st_dev": 75,
+      "st_ino": 281474978208066,
+      "st_mode": 33279,
+      "st_uid": 1000,
+      "st_gid": 1000,
+      "st_size": 11016949760,
+      "st_mtime_ns": 1789242430899667700,
+      "st_ctime_ns": 1789242432311932000
+    },
+    "retained_summaries": [
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100/bt4_policy_mix_summary.json",
+        "sha256": "7bbb7df4e42cbb61fc937fd210bb7f3c6ed66a04644d02fd85b8a32f64c55222",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 11027628,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 1616,
+          "st_mtime_ns": 1788465069764710271,
+          "st_ctime_ns": 1788465069764710271
+        }
+      },
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_toptie_a100/derive_targets_summary.json",
+        "sha256": "a1f34cf5f36a659de6b64101f83475940637c30c7d91d3f2ee2624341e73fd4d",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 10528466,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 164334,
+          "st_mtime_ns": 1788465069762970994,
+          "st_ctime_ns": 1788465069762970994
+        }
+      }
+    ],
+    "filesystem_free_before_bytes": 253796356096,
+    "filesystem_free_after_bytes": 265960140800,
+    "filesystem_free_delta_bytes": 12163784704,
+    "prior_allocated_shard_bytes": 12217753600,
+    "space_limit": "Free-space delta is a concurrent whole-filesystem observation, not isolated attribution to this removal. Prior allocated sum is separate.",
+    "no_resume": true
+  },
+  "source_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_toptie_a100/source.jsonl",
+    "sha256": "4331ace78c550937a6a77fe70360ba6030cbf447cbe7528eebc3fb5dc2dc0305",
+    "verification": "Digest checked during713331member currentmetadata comparison; not reread forpublication."
+  },
+  "parent_terminal_observations": {
+    "copy": {
+      "root": 59771,
+      "observer": 80,
+      "exit_code": 0
+    },
+    "reclaim": {
+      "root": 95851,
+      "observer": 92,
+      "exit_code": 0
+    }
+  },
+  "independent_completed_review_sha256": "fa4a3eb8da82e05e0102af20efabb08ffe0c3ae60f19b298cbac523350d56aa9",
+  "restore": "Restore complete archived root into a fresh directory, verify manifest/member/content identities, then renew physical/source admission; retained original summaries alone do not make deleted shard paths usable."
+}
