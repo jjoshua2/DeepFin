@@ -1,6 +1,6 @@
 # Saved G10 values and neural-teacher coverage
 
-Status: matched saved-SF derivations now cover all 1,574,952 rows with existing native-BT4 WDL. The exact prefix succeeded after the full-large attempt failed outside that subset. A real 262,079-row fixed-policy value pair passed materialization. Direct G10 native-WDL coverage now includes all 16,404,093 accepted common positions after the remaining 15-cohort batch; no new training or strength result.
+Status: original B100 T0.5 policy and fixed 50% original-SF / 50% native-BT4 WDL value products now cover all 20 accepted common G10 cohorts: 16,404,093 rows. The remaining 19 value writers completed, including the four-root run06-large mapping. Matched saved-SF derivations remain a separate 1,574,952-row subset. Training admission and playing strength remain unresolved.
 
 The next SF value comparison reuses the recorded adaptive d10/d12 observations. It does not increase search depth or launch additional Stockfish inference over the future 100M-position corpus. The opt-in selector is implemented in [PR #633](https://github.com/jjoshua2/DeepFin/pull/633). The existing [census](2026-09-11-deeper-sf-value-census.md) establishes target differences, not improved accuracy.
 
@@ -360,3 +360,48 @@ Parent root session **39995**, sole observer **184**, owns completion. This is
 **target materialization in progress**, not completed full-cohort value targets,
 training admission or a playing-strength result. No job was launched or polled
 for this publication beyond the single small launch-state snapshot.
+
+
+## All original-SF/native-BT4 value products completed
+
+The remaining **19 cohorts / 16,142,014 rows / 1,980 shards** completed on
+September 12 at **23:52:17 UTC**, in **3,458.751 seconds** (about 57.65 minutes).
+All nineteen timed writers and the enclosing operator exited zero. Together with
+the preserved, previously qualified 262,079-row / 32-shard control, fixed
+**50% original SF + 50% native BT4 WDL** targets now cover **all 20 cohorts /
+16,404,093 rows / 2,012 shards**. No existing control was regenerated.
+
+Every new row's stored `search_wdl` changed. The writer normalized the two WDL
+probability distributions, averaged them at equal weight and stored float16
+results. The maximum recorded mass error was **0.000366211**. Only `search_wdl`
+changed: sixteen other arrays, including B100 T0.5 policy, `wdl_target`, features
+and row identities, passed the producer's unchanged-file checks. This retains
+the original SF anchor; the adaptive d10/d12 selector is not enabled in this
+recipe. It does not add a Ceres component.
+
+The actual writer also completed the **2,013,019-row / 246-shard run06-large**
+cohort through its schema-2 **four-root native-WDL mapping**. This advances beyond
+metadata admission: the frozen writer checked native cached contents, actual
+stored-feed digests, game/ply alignment and original source-array proofs while
+writing. All 1,980 new shards have saved output-file-manifest, attribute,
+source/sidecar storage and stored-value digests. Existing native predictions were
+reused with **zero new teacher evaluations**. The independent readout verified
+complete saved recipe, layout, native-manifest and proof metadata; it did not
+repeat feature/target decoding or storage-tree scans.
+
+The largest individual timed producer RSS was **402,160 KiB** (about 393 MiB).
+The executed four-hour allocation, sequential CPU producers, CPUs 6–7, two
+threads, hidden GPU, 4 GiB address-space limit, 32 GiB available-memory floor,
+150 GiB disk reserve and 32 GiB sampled output cap were unchanged. An individual
+process peak does not establish aggregate host memory usage.
+
+Terminal status is
+`COMPLETE_ALL19_SF50_NATIVE50_VALUE_NOT_TRAINING_ADMISSION`; parent root 39995
+and sole observer 184 are closed with exit zero. The
+[compact completion evidence](evidence/g10-native-value50-all20-completed-20260912.json)
+contains per-cohort output locations, summary/native-manifest hashes, timings,
+resource limits and independent review. It supersedes the preceding launch
+snapshot for completion status. These are materialized targets, not an admitted
+training corpus, trained checkpoint or demonstration that V50 improves playing
+strength on G10. The next stage can qualify and schedule a matched comparison;
+it need not regenerate these teachers or targets.
