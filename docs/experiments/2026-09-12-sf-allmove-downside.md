@@ -1,8 +1,6 @@
 # One all-move SF downside candidate
 
-Status: the one-shard saved-source producer pilot passed (8,192 rows). No full
-corpus rewrite, inference, training or playing result. The registered Ceres value comparisons retain
-priority.
+Status: the 8,192-row pilot passed, and full CPU corpus preparation launched September 12 at 12:32:49 UTC. Full completion and training admission are pending; no new playing result. The registered Ceres value comparisons retain priority.
 
 For normalized stored B100 policy (BT4 temperature 0.5), multiply each legal move
 with a raw d9 deficit strictly greater than 300 cp by 0.5, leave the others at 1,
@@ -93,3 +91,13 @@ This establishes a working bounded producer on the selected original prefix. It
 neither estimates playing strength nor proves whole-corpus throughput or validity.
 The output remains explicitly pilot-only and has no trainable corpus summary.
 No full rewrite or training is automatically launched from this result.
+
+## Full CPU preparation registered and launched
+
+Following the qualified pilot, the parent selected one complete preparation of this fixed recipe. The producer launched at 2026-09-12 12:32:49 UTC from isolated runtime `b39a5d589…`, with the same reviewed producer bytes `9c396c63…`. Only the pilot limits are removed from the target invocation. The intended corpus retains all 18,910,484 original rows across 2,309 shards, reconstructed from the original 20,000,000 physical rows with 1,089,516 no-result omissions. Row order, source identities, value targets and the sixteen nonpolicy arrays retain the original contract.
+
+The allocation is 43,200 seconds inclusive: the enclosing timeout sends TERM at 43,170 seconds and KILL after a 30-second grace. The child receives TERM at 41,370 seconds with the same grace, leaving time for final qualification. It uses CPUs 4–5, two numeric threads, CUDA hidden, an 8 GiB address-space cap, a 150 GiB free-space reserve, and a 64 GiB output limit sampled every 60 seconds. The existing shared preparation lock, STOP checks and owned-process cleanup remain. Fresh launch preflight matched all ten small pins and observed 265.503 GiB free; the parent owns the sole completion observer.
+
+The pilot's inner-producer and process-wall extrapolations suggested roughly 6.16–8.70 hours, but startup, raw-row mix, compression and I/O differ across the corpus. Twelve hours is an allocation, not a throughput guarantee. Stop on the first integrity or resource failure, preserve partial output, and do not automatically restart or extend the budget.
+
+On successful producer exit, a bounded final check verifies complete counts, the original full layout, published recipe metadata and producer proof coverage. It inherits the producer's raw/q-policy, source-state and copied-byte verification rather than rescanning every payload. [Compact launch evidence](evidence/sf-allmove-downside-full-launch-20260912.json) retains the exact preregistration, command, plan, source review and actual launch snapshot. Full completion has not been observed for this record; a prepared corpus would still require a separately selected training comparison. The active Ceres value training is unchanged.
