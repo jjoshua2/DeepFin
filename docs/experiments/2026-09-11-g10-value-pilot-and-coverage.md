@@ -202,4 +202,41 @@ consumer route in principle; its provenance-manifest admission and writer checks
 have not been run. No new target, training admission, playing-strength result or
 automatic further GPU cohort follows from this coverage milestone.
 
-The [completed common-pool native-WDL batch](2026-09-12-conservative-research-recovery.md#completed-native-wdl-for-all-accepted-common-g10-positions) now supplies all 16,404,093 accepted positions. Consumer provenance admission remains separate, including the older four-output run06 large cohort. No new training or strength result follows from this coverage.
+The [completed common-pool native-WDL batch](2026-09-12-conservative-research-recovery.md#completed-native-wdl-for-all-accepted-common-g10-positions) now supplies all 16,404,093 accepted positions. The completed consumer provenance admission is recorded below, including the older four-output run06 large cohort. No new training or strength result follows from this coverage.
+
+
+## All 20 common-cohort native-WDL manifests admitted
+
+The existing native-WDL consumer admitted all **16,404,093 positions across 20
+cohorts and 2,012 derived shards** in one metadata-only pass. Nineteen cohorts use
+the original single-directory route. The 2,013,019-row run06 large cohort uses
+[PR #682](https://github.com/jjoshua2/DeepFin/pull/682)'s explicit four-directory
+route, preserving each original invocation and output namespace. No labels were
+moved, generated or rewritten.
+
+The actual run finished successfully in **58.71 seconds**, with maximum recorded
+RSS **263,156 KiB**, within a 600-second allocation on CPUs 6–7. GPU visibility was
+disabled, numerical-library threads were limited to two, address space to 4 GiB,
+and guards required 32 GiB available Linux memory and 150 GiB free disk. These
+limits do not assert an aggregate Windows/GPU memory bound.
+
+Each cohort made exactly one existing source-inventory call and one historical
+native-WDL admission call. The 25 original invocation entries retain complete,
+disjoint shard coverage, source qualification, native teacher/head identity,
+separately pinned historical producers and accepted attribute hashes. The two
+early pilot shards also matched their preserved storage fingerprints. A compact
+completed review checked all 20 actual manifests, routing maps and admission
+receipts without repeating the admission or reading array payloads. The
+[complete compact evidence and per-cohort manifest map](evidence/g10-native-wdl-all20-admission-20260912.json)
+pin the actual results and local artifacts.
+
+This closes the historical manifest-admission gap. It does **not** create B100
+policy products, blended-value targets or a training corpus. The full value writer
+still checks cached contents, actual stored feeds and original SF/B100 lineage.
+A targeted completed-product metadata inventory found the previously qualified
+**262,079-row run06 increment B100 T0.5 product**. The other **19 cohorts,
+16,142,014 rows**, still need their original-source B100 policy products before a
+full value rewrite. The original 18.91M B100 corpus belongs to another source and
+cannot substitute; the existing value-modified control/adaptive products cannot
+substitute for the original B100 input either. No new mixture weight, target
+materialization, training admission or strength claim is selected here.
