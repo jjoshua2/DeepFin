@@ -1,6 +1,6 @@
 # Saved G10 values and neural-teacher coverage
 
-Status: matched saved-SF derivations now cover all 1,574,952 rows with existing native-BT4 WDL. The exact prefix succeeded after the full-large attempt failed outside that subset. A real 262,079-row fixed-policy value pair passed materialization; no new training or strength result.
+Status: matched saved-SF derivations now cover all 1,574,952 rows with existing native-BT4 WDL. The exact prefix succeeded after the full-large attempt failed outside that subset. A real 262,079-row fixed-policy value pair passed materialization. Direct G10 native-WDL coverage is now 5,338,629 rows after a disjoint 790,282-row next96 cohort; no new training or strength result.
 
 The next SF value comparison reuses the recorded adaptive d10/d12 observations. It does not increase search depth or launch additional Stockfish inference over the future 100M-position corpus. The opt-in selector is implemented in [PR #633](https://github.com/jjoshua2/DeepFin/pull/633). The existing [census](2026-09-11-deeper-sf-value-census.md) establishes target differences, not improved accuracy.
 
@@ -166,3 +166,38 @@ writer content/feed checks have not been run for this cohort. This is completed
 label readiness, not a new value target, training admission or scientific strength
 result. The separate run06 adaptive-SF failure remains unchanged. No additional
 GPU cohort was queued, and registered Ceres comparisons retain priority.
+
+## September 12: complete next96 native-WDL cohort
+
+The original run06 `G10_common_next96_v1` cohort now has native BT4 WDL for all
+790,282 retained positions in 97 derived shards (last shard: 3,850 rows). Its 96
+raw shards, `w03-00043` through `w03-00138`, contain 795,926 physical rows; the
+existing qualification excludes 5,629 no-result rows and 15 policy-support misses.
+Saved source selectors establish no raw-shard overlap with the already labeled
+run06 large/increment cohorts; run07 has a separate source namespace. Direct G10
+native-WDL coverage rises from 4,548,347 to **5,338,629 positions**. This count does
+not include the separate original 18.91M native-WDL bank.
+
+The unchanged collector completed in 382.22 seconds (382.35 seconds for its
+operator). It used batch 128, two threads on CPUs 2–3, the same native probability
+teacher and mandatory GPU lease. The 900-second inclusive allocation included an
+800-second child bound and residual time for saved-output qualification. A 32 GiB
+Linux available-memory guard and 150 GiB disk reserve remained active; the 8 GiB
+ORT allowance is not a total-device or CPU RSS cap. The downside CPU rebuild on
+CPUs 4–5 was preserved.
+
+The terminal-only qualifier then passed in 3.11 seconds, within the original
+deadline. All five arrays across all 97 shards—50,578,048 decoded bytes—passed
+stored hashes, exact source/teacher/row bindings and finite float32 probability
+checks. Maximum unit-mass error was 1.474e-7. A compact completion review checked
+the retained proof records without reading arrays again. The initial metadata
+attempt failed before admission because its working directory selected the wrong
+Python package; the corrected working directory yielded one successful metadata
+admission, with no inference or target changes.
+
+[Compact completed evidence](evidence/g10-native-wdl-next96-20260912.json) pins the
+original qualification through the collector plan, complete output, saved checks
+and terminal handles. The single complete output directory supports the existing
+consumer route in principle; its provenance-manifest admission and writer checks
+have not been run. No new target, training admission, playing-strength result or
+automatic further GPU cohort follows from this coverage milestone.
