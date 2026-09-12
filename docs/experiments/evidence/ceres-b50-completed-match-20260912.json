@@ -1,0 +1,109 @@
+{
+  "status": "POLICY_TRAINING_COMPLETE_FIXED_MATCH_LAUNCHED_NO_RESULT",
+  "profile": "CeresB50",
+  "checkpoint": {
+    "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_ceres_policy_B50T05_epoch_v1/checkpoint.pt",
+    "role": "CeresB50",
+    "sha256": "5d7e1e81931073002e0a792441e787d8c8dd275d06b5b0c33be69104ca483cbc"
+  },
+  "training_charge_seconds": 11055.006151670997,
+  "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+  "physical_plan_sha256": "e6a45bfad8af9e92150715abfa1929ab441f6b1a9dc857d020a6f09f688fcc3f",
+  "rows": 18910484,
+  "updates": 36935,
+  "windows": 420,
+  "batch_size": 512,
+  "seed": 0,
+  "historical_valid_control": false,
+  "historical_validity_problems": [
+    "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+    "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+    "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+  ],
+  "pins": {
+    "coordinator_completion": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/training/complete.json",
+      "sha256": "2fd74ed1f224ac8e21bfc08152b1fdfce35f19b053c7fb4634349e1233548c56"
+    },
+    "training_completion": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/training/training.complete.json",
+      "sha256": "319a79e145ea8b663d7e3e164447ce334395f655bcda1c61d2cfcd21c023282b"
+    },
+    "operator_terminal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/host_operator_v1/terminal.json",
+      "sha256": "c24b6c536befd25ccefa686adb8f87ea95bb6aef62b09684abd2ab70666ae21a"
+    },
+    "summary": {
+      "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_ceres_policy_B50T05_epoch_v1/summary.json",
+      "sha256": "b08f37960267c3572e96bb82af3a433634e323cc839485392d1a49f31b73fbe7"
+    },
+    "realized_schedule": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/training/realized_schedule.json",
+      "sha256": "3e1d704470a733163b036031e5632a0b0ce1f44731bce3002c6ed4bf2aec0b64"
+    },
+    "training_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/training_completion_independent_review.json",
+      "sha256": "9593261b7252c4c4ec0c2641af02c7515811d22b5c2a0be3974ab1f236188a9c"
+    },
+    "match_registration": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/match_handoff_v1/registration.json",
+      "sha256": "0f5a0bc644be5d98d0864a6c75ce3c4a46ebbee21a1b25696b7d162b6686d5ab"
+    },
+    "match_cpu_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/match_handoff_v1/cpu_operator.json",
+      "sha256": "5333071e68173eb20e67e08f75903d24d03c5803a9467d22ce5972cba38129f5"
+    },
+    "match_cpu_plan_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/match_handoff_v1/cpu_operator_independent_review.json",
+      "sha256": "dca56b9f651acdc20ab1b48ce4c2b26977e36e49dae1dd4cdf9520fe0a6bf87c"
+    },
+    "match_prepared": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/match_handoff_v1/prepared.json",
+      "sha256": "5e72a26777db5219ca906e0f27fee43d33a306b05a00f840d5849ecd5a82a38d"
+    },
+    "match_prepared_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/match_handoff_v1/prepared_independent_review.json",
+      "sha256": "5e6ded1574992c82b3fcf5d06ca7d0e6930a28d22baea07350ac87eade40c869"
+    },
+    "match_cpu_terminal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/match_handoff_v1/cpu_operator_terminal.json",
+      "sha256": "4816fc23e19b9a1a91fab9484ae039e1712bc2a9109bf85cf3888e521aedbc44"
+    },
+    "match_operator": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/match_handoff_v1/arena_operator.json",
+      "sha256": "87aec4a867f90a36855ad450450fb2d439699f45b2bfc56e256e204c2574c557"
+    },
+    "match_operator_started": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/match_handoff_v1/arena_operator/started.json",
+      "sha256": "57e0778691476c3b62f501a0c88cafcebe5773c94794967e69497a77c5a17710"
+    },
+    "match_lease_acquired": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/CeresB50/match_handoff_v1/arena_operator/lease_acquired.json",
+      "sha256": "9071a8db6809d65076f680e9e4cc1390b9353bca7c9e5ce84f4ee30a9784bff6"
+    }
+  },
+  "match": {
+    "root_session": 10475,
+    "parent_observer": 2772,
+    "operator_started_unix": 1789211791.564627,
+    "deadline_unix": 1789221988.253606,
+    "lease_acquired_unix": 1789211810.734722,
+    "lease_wait_seconds": 19.168275347998133,
+    "stage_started_unix": 1789211810.7364671,
+    "stage_started_utc": "2026-09-12 11:16:50 UTC",
+    "simulations_each": 400,
+    "pairs": 128,
+    "games": 256,
+    "priors_each": 1.0,
+    "stage_hard_seconds": 5400,
+    "outer_inclusive_seconds": 10230,
+    "concurrent_games": 128,
+    "eval_max_batch": 4096,
+    "scope": "Actual owned match stage launched after GPU lease; no game outcomes read for this publication. No completed comparison yet."
+  },
+  "limits": [
+    "No completed playing-strength comparison.",
+    "Historical valid_control=false retained: no purity receipt, committed rather than live premise, game_epoch sampler intervention.",
+    "Existing CPU package preparation verified/loaded actual checkpoint once; independent review used compact receipts only."
+  ]
+}
