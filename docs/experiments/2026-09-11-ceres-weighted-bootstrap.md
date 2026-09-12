@@ -1,6 +1,6 @@
 # Weighted Ceres bootstrap preparation
 
-Status: the complete CeresB50 policy corpus is materialized and qualified: 18,910,484 rows across 2,309 shards. Its prospective exact-epoch schedule passed and training started on September 12 at 07:56:06 UTC. The separate B100CeresV25 value corpus is also materialized and qualified; its prospective schedule passed and training inputs are ready, with no value training launched. No training completion or playing-strength result is claimed.
+Status: CeresB50 completed its registered seed-zero epoch: 18,910,484 rows, 36,935 updates, and 420 windows. The fixed comparison against B100 launched on September 12 at 11:16:50 UTC; no playing result is available. The separate B100CeresV25 corpus and prospective schedule are qualified, with value training unlaunched.
 
 ## Selected question
 
@@ -334,4 +334,12 @@ The prospective schedule passed in 421.83 seconds: 18,910,484 rows and 36,935 ba
 
 B100CeresV25 materialization completed at 2026-09-12 09:19:35.364403 UTC, after 4.39 hours. The full 18,910,484-row, 2,309-shard corpus passed the existing qualifier in 722.56 seconds with 384,284 KiB peak RSS. The actual value-lane producer map and original SF/B100/BT4/Ceres lineage are retained in [compact evidence](evidence/ceres-value-training-readiness-20260912.json).
 
-This prepares the registered 50% SF / 25% BT4 / 25% Ceres value mixture with unchanged B100 policy. Its prospective schedule passed in 463.960 seconds, matching all 18,910,484 rows and 36,935 batches of the canonical epoch. The final schema-3 manifest binds the actual 17-entry value-lane producer map, completed qualification, and schedule; the reviewed host operator preserves the 16,200-second training budget and 21,630-second outer bound. Value training has not launched, and no playing result is claimed. The earlier CeresB50 training launch remains the last policy-training observation in this publication.
+This prepares the registered 50% SF / 25% BT4 / 25% Ceres value mixture with unchanged B100 policy. Its prospective schedule passed in 463.960 seconds, matching all 18,910,484 rows and 36,935 batches of the canonical epoch. The final schema-3 manifest binds the actual 17-entry value-lane producer map, completed qualification, and schedule; the reviewed host operator preserves the 16,200-second training budget and 21,630-second outer bound. Value training has not launched, and no playing result is claimed. At that value-readiness snapshot, the earlier CeresB50 training launch remained the latest policy-training observation.
+
+## Policy epoch completed
+
+CeresB50 completed the registered epoch with 11,055.006 seconds of charged training-stage time. Its realized schedule matches canonical `dc687fc3…`; checkpoint `5d7e1e81…` is bound to the completed training receipt and summary. [Compact completion evidence](evidence/ceres-b50-completed-match-20260912.json) retains the actual operator terminal, realized schedule, and independent review.
+
+The historical `valid_control=false` flag remains: there is no held-out purity receipt, architecture/trainer assumptions use committed pins rather than a fresh live-file comparison, and game-epoch sampling differs from the replacement-sampled historical control. This qualifies the registered matched-epoch comparison, not a continuation of that older control protocol.
+
+The next match is the registered 400-simulation comparison with B100 over 128 swapped opening pairs (256 games), at search-prior temperature 1.0 for both. Actual CPU package preparation passed: both models have 61,444,448 parameters and matching architecture, and the registered opening panel and search settings match the final contract. The match operator acquired the GPU lease after 19.168 seconds and launched its owned stage at 11:16:50 UTC. It uses rolling concurrency 128 and evaluation batch cap 4,096, with a 5,400-second stage cap and 10,230-second enclosing allocation. No game outcomes were read for this launch record; a completed paired bank is required before interpreting playing strength.
