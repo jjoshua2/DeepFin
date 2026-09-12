@@ -48,6 +48,7 @@ CORPORA = {
     'SoftSF10': SOURCE.with_name(SOURCE.name + '_softsf_cp10'),
     'B100V10': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_value10'),
     'B100V50': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_value50'),
+    'B100Downside300': SOURCE.with_name(SOURCE.name + '_bt4_sf_downside300w05_v1'),
     'B100Tactical100': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_tactical100'),
     'CeresB50': SOURCE.with_name(SOURCE.name + '_bt4_ceres_policy_B50T05'),
     'B100CeresV25': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_ceres_value25'),
@@ -97,6 +98,8 @@ CERES_BACKEND = {
     'value_interpretation': 'primary raw logits; optional secondary raw logits; no native blend',
     'value_order': ['win', 'draw', 'loss'], 'value_pov': 'side_to_move',
 }
+DOWNSIDE_PROFILE = 'B100Downside300'
+DOWNSIDE_PRODUCER_PINS = {'scripts/sf_policy_rewrite.py': '9c396c63c0348bae0f84e05336fef09a01a448c792dc620e4a7c9c0d28e0bb38', 'scripts/derive_corpus_targets.py': '2328f5729a887c52674d10107add06a1b51de590a9f1cd2ada17bd16d47f721e', 'scripts/sf_d9_rank_sidecar.py': '53c2d1d1638c9e0646e68430c56a413c2b0b78a5ca815996eda770eecd8d3def', 'chess_anti_engine/stockfish/wdl.py': '11b80c842254e825272d2e84bff473fb12cd3cb5d61c98d5f0bd9f743af43b98'}
 TACTICAL_PROFILE = 'B100Tactical100'
 TACTICAL_PRODUCER_PINS = {
     'scripts/sf_policy_rewrite.py': 'f2926d10ca695d2cbbcd12f03a26cee23529f6e798e9a3585148392858fda176',
@@ -111,6 +114,8 @@ def recipe_summary_name(m):
         return 'ceres_value_mix_summary.json'
     if role_for(m) == CERES_PROFILE:
         return 'ceres_target_mix_summary.json'
+    if role_for(m) == DOWNSIDE_PROFILE:
+        return 'bt4_sf_downside_policy_summary.json'
     if role_for(m) == TACTICAL_PROFILE:
         return 'bt4_sf_tactical_policy_summary.json'
     if role_for(m) in VALUE_ALPHAS:
@@ -229,7 +234,8 @@ def verify_value_recipe(m, rewritten, derived):
 
 
 def verify_tactical_recipe(m, rewritten, derived):
-    """Fixed B100 tactical policy only; original SF value/history stay identical."""
+    """Fixed B100 attenuation recipes; original SF value/history stay identical."""
+    downside = role_for(m) == DOWNSIDE_PROFILE
     corpus = corpus_for(m)
     arena.require(corpus.is_dir() and not corpus.is_symlink()
                   and not corpus.with_name(corpus.name + '.writing').exists()
@@ -267,6 +273,16 @@ def verify_tactical_recipe(m, rewritten, derived):
                            'mate_handling': 'categorical-v1', 'cp_domain': [-32000.0, 32000.0],
                            'base': 'normalized stored B100 float16 policy',
                            'storage': 'float64 attenuation -> float32 -> float16; all-one weights preserve bytes'}}
+    if downside:
+        expected.update(kind='bt4_sf_allmove_downside',
+                        algorithm='stored-b100-allmove-sf-gapgt300-weight0.5-ordinary-v1',
+                        recipe={'gap_cp_strictly_greater_than': 300.0, 'flagged_relative_weight': .5,
+                                'mate_handling': 'any-mate-domain-row-unchanged',
+                                'cp_domain': [-32000.0, 32000.0],
+                                'base': 'normalized stored B100 float16 policy',
+                                'storage': 'float64 weighting -> float32 -> float16; zero flagged mass preserves bytes',
+                                'roster': 'all original legal d9 moves; no next-best gate'})
+        arena.require(not rewritten.get('pilot_only', False), 'downside pilot cannot train')
     arena.require(equal_json({k: rewritten.get(k) for k in expected}, expected),
                   'tactical fixed policy/source recipe differs')
     wanted = {**sf, 'policy_target_postprocess': {k: v for k, v in rewritten.items() if k != 'outputs'}}
@@ -276,12 +292,13 @@ def verify_tactical_recipe(m, rewritten, derived):
                   and type(error) in (int, float) and math.isfinite(error) and 0 <= error <= 2**-10,
                   'inert or invalid tactical rewrite')
     categories = rewritten.get('categories', {})
-    arena.require(isinstance(categories, dict) and set(categories) <= {
-                      'no_mate', 'losing_mate_alternatives', 'winning_mate_available', 'all_forced_losses'}
+    allowed_categories = ({'ordinary_downside', 'mate_domain_unchanged'} if downside else {
+        'no_mate', 'losing_mate_alternatives', 'winning_mate_available', 'all_forced_losses'})
+    arena.require(isinstance(categories, dict) and set(categories) <= allowed_categories
                   and all(type(v) is int and v >= 0 for v in categories.values())
                   and sum(categories.values()) == 18910484, 'tactical mate coverage differs')
     zeros, losses = rewritten.get('winning_mate_zero_base_mass_rows'), rewritten.get('stored_support_losses')
-    arena.require(type(zeros) is int and 0 <= zeros <= categories.get('winning_mate_available', 0)
+    arena.require(type(zeros) is int and 0 <= zeros <= categories.get('mate_domain_unchanged' if downside else 'winning_mate_available', 0)
                   and type(losses) is int and 0 <= losses <= 18910484 * 1858,
                   'tactical support diagnostics differ')
     for key in ('stored_relative_error_max', 'stored_TV_error_max'):
@@ -289,8 +306,9 @@ def verify_tactical_recipe(m, rewritten, derived):
         arena.require(type(value) in (int, float) and math.isfinite(value) and value >= 0,
                       'tactical storage diagnostics differ')
     producers = rewritten.get('producer_sha256', {})
-    arena.require(len(producers) == len(TACTICAL_PRODUCER_PINS), 'tactical producer identities differ')
-    for suffix, digest in TACTICAL_PRODUCER_PINS.items():
+    expected_producers = DOWNSIDE_PRODUCER_PINS if downside else TACTICAL_PRODUCER_PINS
+    arena.require(len(producers) == len(expected_producers), 'tactical producer identities differ')
+    for suffix, digest in expected_producers.items():
         matches = [v for k, v in producers.items() if Path(k).is_absolute() and k.endswith('/' + suffix)]
         arena.require(matches == [digest], 'tactical producer identities differ')
     metadata = rewritten.get('metadata_sha256', {})
@@ -509,7 +527,7 @@ def validate(m):
                               and all(c in '0123456789abcdef' for c in v)
                               for k, v in pins.items()), 'invalid Ceres producer pins')
         arena.require(m['schema'] in (2, 3) and role_for(m) in CORPORA, 'unsupported registered profile')
-        arena.require(role_for(m) not in {'SoftSF10', TACTICAL_PROFILE, CERES_PROFILE, CERES_VALUE_PROFILE, *VALUE_ALPHAS} or only, f'{role_for(m)} requires schema3 training_only')
+        arena.require(role_for(m) not in {'SoftSF10', TACTICAL_PROFILE, DOWNSIDE_PROFILE, CERES_PROFILE, CERES_VALUE_PROFILE, *VALUE_ALPHAS} or only, f'{role_for(m)} requires schema3 training_only')
         if not only:
             keys |= {'reader', 'comparisons'}
             arena.require(m['comparisons'] == [list(cell) for cell in comparisons(m)], 'registered comparison order differs')
@@ -555,7 +573,7 @@ def verify_data_qualification(m):
         'source': {'path': str(SOURCE), 'derive_sha256': COMMON_PINS[str(SOURCE / 'derive_targets_summary.json')]},
         'derive_summary': {'path': str(corpus / 'derive_targets_summary.json'),
                            'sha256': input_pins(m)[str(corpus / 'derive_targets_summary.json')]},
-        ('rewrite_summary' if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, CERES_PROFILE, CERES_VALUE_PROFILE, *VALUE_ALPHAS} else 'mix_summary'): {
+        ('rewrite_summary' if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, DOWNSIDE_PROFILE, CERES_PROFILE, CERES_VALUE_PROFILE, *VALUE_ALPHAS} else 'mix_summary'): {
             'path': str(corpus / recipe_summary_name(m)),
             'sha256': input_pins(m)[str(corpus / recipe_summary_name(m))]},
     }
@@ -599,7 +617,7 @@ def check_pins(m):
     corpus = corpus_for(m)
     mix = arena.read(corpus / recipe_summary_name(m))
     derived = arena.read(corpus / 'derive_targets_summary.json')
-    expected_postprocess = {k: v for k, v in mix.items() if k != 'outputs'} if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, CERES_PROFILE} else mix
+    expected_postprocess = {k: v for k, v in mix.items() if k != 'outputs'} if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, DOWNSIDE_PROFILE, CERES_PROFILE} else mix
     if role_for(m) == CERES_VALUE_PROFILE:
         verify_ceres_value_recipe(m, mix, derived)
     elif role_for(m) in VALUE_ALPHAS:
@@ -610,7 +628,7 @@ def check_pins(m):
         pass
     elif role_for(m) == CERES_PROFILE:
         verify_ceres_recipe(m, mix, derived)
-    elif role_for(m) == TACTICAL_PROFILE:
+    elif role_for(m) in {TACTICAL_PROFILE, DOWNSIDE_PROFILE}:
         verify_tactical_recipe(m, mix, derived)
     elif role_for(m) == 'SoftSF10':
         verify_softsf_recipe(m, mix, derived)
