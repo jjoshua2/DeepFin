@@ -1,0 +1,4609 @@
+{
+  "status": "COMPLETE_FIXED_RECIPE_Q_DRAW_DIAGNOSTIC",
+  "plan_sha256": "56fffd4df9c1729c1475bf8599855bc43d4d32848336cfbde0aaf69325321d8f",
+  "rows": 32768,
+  "inclusion_counts": {
+    "included": 23993,
+    "mate_domain_d9": 8775
+  },
+  "current_value_witnesses": [
+    {
+      "shard": "shard_000000.zarr",
+      "SF_digest_provenance": "CURRENT_READ_UNDER_COMPLETED_STORAGE_STAMP_NOT_HISTORICAL_DIGEST",
+      "sf": {
+        "array": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived/shard_000000.zarr/search_wdl",
+        "decoded_sha256": "745f5eb9608488ee24d05a3ced3d45b04893a8a6c26849ab96da7a2e910f67b7",
+        "prior_expected_sha256": null
+      },
+      "bt4": {
+        "array": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_increment_slice_v1/run06_g10/shard_000000.zarr/bt4_wdl_raw",
+        "decoded_sha256": "9fec75503425d993e4f96c46e808d45ed462bf39254a78fcbcf4e9ea775b5e8d",
+        "prior_expected_sha256": "9fec75503425d993e4f96c46e808d45ed462bf39254a78fcbcf4e9ea775b5e8d"
+      },
+      "primary": {
+        "array": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000000.zarr/value_logits",
+        "decoded_sha256": "14241463b3a034c6b9da0608d808cc07bc3e1e352c8f8e2a83ec25a7828ed1fd",
+        "prior_expected_sha256": "14241463b3a034c6b9da0608d808cc07bc3e1e352c8f8e2a83ec25a7828ed1fd"
+      },
+      "secondary": {
+        "array": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000000.zarr/value2_logits",
+        "decoded_sha256": "4aaaaed89fd925ac6de65fe3ba8f59352e3a6b95c033d83231154a90a3d804fd",
+        "prior_expected_sha256": "4aaaaed89fd925ac6de65fe3ba8f59352e3a6b95c033d83231154a90a3d804fd"
+      }
+    },
+    {
+      "shard": "shard_000001.zarr",
+      "SF_digest_provenance": "CURRENT_READ_UNDER_COMPLETED_STORAGE_STAMP_NOT_HISTORICAL_DIGEST",
+      "sf": {
+        "array": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived/shard_000001.zarr/search_wdl",
+        "decoded_sha256": "4cd97742968a8f1048a49689c2c4c130bef37bb6ee57f49ca6718c1df5692d81",
+        "prior_expected_sha256": null
+      },
+      "bt4": {
+        "array": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_increment_slice_v1/run06_g10/shard_000001.zarr/bt4_wdl_raw",
+        "decoded_sha256": "095ec1a509ebe5deb8515501805a6016297b2fb36a7564c3c59cd6154e0bdd98",
+        "prior_expected_sha256": "095ec1a509ebe5deb8515501805a6016297b2fb36a7564c3c59cd6154e0bdd98"
+      },
+      "primary": {
+        "array": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000001.zarr/value_logits",
+        "decoded_sha256": "e1aac4691e9a08ebff4c7df067203e443da82a1bcaca1524b5d26ce4423181fe",
+        "prior_expected_sha256": "e1aac4691e9a08ebff4c7df067203e443da82a1bcaca1524b5d26ce4423181fe"
+      },
+      "secondary": {
+        "array": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000001.zarr/value2_logits",
+        "decoded_sha256": "b1abd69543e39f1d9df79f59c40b087acddc247dade0641a560754f949c2381c",
+        "prior_expected_sha256": "b1abd69543e39f1d9df79f59c40b087acddc247dade0641a560754f949c2381c"
+      }
+    },
+    {
+      "shard": "shard_000002.zarr",
+      "SF_digest_provenance": "CURRENT_READ_UNDER_COMPLETED_STORAGE_STAMP_NOT_HISTORICAL_DIGEST",
+      "sf": {
+        "array": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived/shard_000002.zarr/search_wdl",
+        "decoded_sha256": "96673ccbc4b53d95a33e3109d63397f702165a3bc688640d0fee25e1956b9986",
+        "prior_expected_sha256": null
+      },
+      "bt4": {
+        "array": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_increment_slice_v1/run06_g10/shard_000002.zarr/bt4_wdl_raw",
+        "decoded_sha256": "2140de037bf594c51a9bd3ac87f477d5953abb0f66bfb035f09875545dec6d6b",
+        "prior_expected_sha256": "2140de037bf594c51a9bd3ac87f477d5953abb0f66bfb035f09875545dec6d6b"
+      },
+      "primary": {
+        "array": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000002.zarr/value_logits",
+        "decoded_sha256": "6980d58f39c8fbe92743364063cdfe40ee78f8e8f6daef44969c89475ce80380",
+        "prior_expected_sha256": "6980d58f39c8fbe92743364063cdfe40ee78f8e8f6daef44969c89475ce80380"
+      },
+      "secondary": {
+        "array": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000002.zarr/value2_logits",
+        "decoded_sha256": "12f29d39e8def65f0bfd61f7d847abce99fd3519ba138a54f6c7f84430fb5e7e",
+        "prior_expected_sha256": "12f29d39e8def65f0bfd61f7d847abce99fd3519ba138a54f6c7f84430fb5e7e"
+      }
+    },
+    {
+      "shard": "shard_000003.zarr",
+      "SF_digest_provenance": "CURRENT_READ_UNDER_COMPLETED_STORAGE_STAMP_NOT_HISTORICAL_DIGEST",
+      "sf": {
+        "array": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived/shard_000003.zarr/search_wdl",
+        "decoded_sha256": "5220c590663888987916f455c4a4a472e4f47061e0ef0d8c2cbb59e0179f28e6",
+        "prior_expected_sha256": null
+      },
+      "bt4": {
+        "array": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_increment_slice_v1/run06_g10/shard_000003.zarr/bt4_wdl_raw",
+        "decoded_sha256": "977358c1a1cbd480da7990fe5ee3265afb11a790334f68fe0889e12905387842",
+        "prior_expected_sha256": "977358c1a1cbd480da7990fe5ee3265afb11a790334f68fe0889e12905387842"
+      },
+      "primary": {
+        "array": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000003.zarr/value_logits",
+        "decoded_sha256": "8abf5e1f4f91a658e4d163c28299e1e61687ddd35d4e64313747ea96d0572a35",
+        "prior_expected_sha256": "8abf5e1f4f91a658e4d163c28299e1e61687ddd35d4e64313747ea96d0572a35"
+      },
+      "secondary": {
+        "array": "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000003.zarr/value2_logits",
+        "decoded_sha256": "5aa1d31b1faf8ceaa921b7e85e2bc7a33050055814632007152e8d7275f3366f",
+        "prior_expected_sha256": "5aa1d31b1faf8ceaa921b7e85e2bc7a33050055814632007152e8d7275f3366f"
+      }
+    }
+  ],
+  "verified_source_storage": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived/shard_000000.zarr": "feb04d95613b35da8e8ac185f32ac739fc1f163121d6faa84d3e0c26e5bd813f",
+    "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_increment_slice_v1/run06_g10/shard_000000.zarr": "255601271c2e97da932c1d44d2220d5507ca6eb87611f93a3e5e28c5b5c64c49",
+    "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000000.zarr": "0d98fa327496cbc6a1efec147dbb9729a2fd1e829a25af34b42305b48e85eb47",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived/shard_000001.zarr": "974dbd333a6cf05b2ecbe064a0dea89d844bc0a3d1b8fa6b8f18002ada939400",
+    "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_increment_slice_v1/run06_g10/shard_000001.zarr": "9dc956ae64f6a4b26c6afa66253be4a78cd329b61dd818c72b8198dde5c1b869",
+    "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000001.zarr": "1006bf71b1ff687e368336e1d53397057f94732c75b52dafee02956ef5635652",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived/shard_000002.zarr": "13dfab696d842f100a16d99e78c2a92cb318b864e42d1ae1610bb1dddedc27c9",
+    "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_increment_slice_v1/run06_g10/shard_000002.zarr": "5b05697d26caf3ce9de1e35fdd29c5f36b11637bf0b5d17818baab4dd3612c6b",
+    "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000002.zarr": "f7bc890ee660a020e0115898f48c11f6ffcb6e1e02dd47b0c6ddfbe0ff214d6b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived/shard_000003.zarr": "98ca5e72719cf7bb8a99c5a8373a2bcdbe8a235d06beafb97a8a08291b14ee2d",
+    "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_common_increment_slice_v1/run06_g10/shard_000003.zarr": "c325fa055b6fe3b22f49ef6bc29491aab1abba1274c8eb3a6cc39cf21d3f3111",
+    "/home/josh/projects/chess/data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/shard_000003.zarr": "d2818a4c30a2f65033d5626167b0869ac91a0b006076fd0ba0f04b0dcb4556b3"
+  },
+  "input_bank_sha256": "09d8e43676ec9e0c91218081a41da07d86583ef71411b3b112a329c820adef54",
+  "row_q_draw_sha256": "7e3138ed02ccbf934520f664da23a35800d7de0348139d9d7f22982b9b9c3be6",
+  "max_reproduced_loss_abs_delta": 1.7763568394002505e-15,
+  "max_brier_identity_abs_delta": 5.003593026020603e-16,
+  "strata": {
+    "all_included": {
+      "sf_saved": {
+        "rows": 23993,
+        "q_mse": 0.00040495567052970487,
+        "draw_mse": 7.55208381318016e-05,
+        "q_brier_component": 0.00020247783526485243,
+        "draw_brier_component": 0.0001132812571977024,
+        "brier": 0.0003157590924625548,
+        "q_brier_fraction": 0.6412415037228544,
+        "draw_brier_fraction": 0.3587584962771458,
+        "cross_entropy": 0.2923453726911814,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.1322875213156369,
+            "quantiles": {
+              "p05": -0.9929071672489878,
+              "p25": -0.9129174043098711,
+              "p50": 0.41831501831501827,
+              "p75": 0.9832395094323065,
+              "p95": 1.0
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07258616186171996,
+            "quantiles": {
+              "p05": 0.0,
+              "p25": 0.005584674189192282,
+              "p50": 0.023166995425357786,
+              "p75": 0.07518728163190577,
+              "p95": 0.3427734375
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.00011943843729290033,
+            "quantiles": {
+              "p05": -0.02331067079467275,
+              "p25": -0.002550233106573596,
+              "p50": 0.0,
+              "p75": 0.00242193313517447,
+              "p95": 0.022801408776954017
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0009626768442515713,
+            "quantiles": {
+              "p05": -0.008441967669311231,
+              "p25": -0.0005660176640064091,
+              "p50": 8.149508842203446e-07,
+              "p75": 0.0018510659276726772,
+              "p95": 0.012553941043587808
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 23993,
+        "q_mse": 0.01457921451551512,
+        "draw_mse": 0.017954629587117396,
+        "q_brier_component": 0.00728960725775756,
+        "draw_brier_component": 0.026931944380676094,
+        "brier": 0.034221551638433656,
+        "q_brier_fraction": 0.21301217825467397,
+        "draw_brier_fraction": 0.786987821745326,
+        "cross_entropy": 0.4733016615942519,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.1232844204223505,
+            "quantiles": {
+              "p05": -0.9997690953234029,
+              "p25": -0.9970506103489319,
+              "p50": 0.7538771863715369,
+              "p75": 0.9993503661131111,
+              "p95": 0.9999106429866894
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07575962844227231,
+            "quantiles": {
+              "p05": 1.6054321810112323e-05,
+              "p25": 9.167254289172871e-05,
+              "p50": 0.00033281610258102093,
+              "p75": 0.003113925844360145,
+              "p95": 0.5840397174398726
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.008883662455993466,
+            "quantiles": {
+              "p05": -0.2130278689528453,
+              "p25": -0.0426979144983215,
+              "p50": 0.00014598186227987586,
+              "p75": 0.023576467370067133,
+              "p95": 0.1778648505648522
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.004136143424803929,
+            "quantiles": {
+              "p05": -0.11857131463498177,
+              "p25": -0.03890226626073566,
+              "p50": -0.013457532064061247,
+              "p75": -0.0003696840689572029,
+              "p95": 0.25102483862957725
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 23993,
+        "q_mse": 0.023564798110588408,
+        "draw_mse": 0.024961900553756505,
+        "q_brier_component": 0.011782399055294204,
+        "draw_brier_component": 0.037442850830634755,
+        "brier": 0.04922524988592897,
+        "q_brier_fraction": 0.23935681550825813,
+        "draw_brier_fraction": 0.7606431844917417,
+        "cross_entropy": 0.7929249804731423,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.123769940211939,
+            "quantiles": {
+              "p05": -0.9999999357920747,
+              "p25": -0.9999843496401234,
+              "p50": 0.9314639610264374,
+              "p75": 0.9999998126745204,
+              "p95": 0.9999999822728278
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.0757068256524187,
+            "quantiles": {
+              "p05": 1.3778698016730784e-08,
+              "p25": 8.533905675088425e-08,
+              "p50": 8.401355552248957e-07,
+              "p75": 8.405935151446045e-05,
+              "p95": 0.7524829913566492
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.008398142666404946,
+            "quantiles": {
+              "p05": -0.2542020758496253,
+              "p25": -0.043977352657533,
+              "p50": 9.950595274421659e-07,
+              "p75": 0.024181438468531935,
+              "p95": 0.22133082709543994
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.004083340634950308,
+            "quantiles": {
+              "p05": -0.16333591190293065,
+              "p25": -0.04349578323270914,
+              "p50": -0.014803256807286279,
+              "p75": -0.0007818335357516341,
+              "p95": 0.4151172367739726
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 23993,
+        "q_mse": 0.019215528214327354,
+        "draw_mse": 0.01744254007371775,
+        "q_brier_component": 0.009607764107163677,
+        "draw_brier_component": 0.026163810110576627,
+        "brier": 0.0357715742177403,
+        "q_brier_fraction": 0.2685865611807174,
+        "draw_brier_fraction": 0.7314134388192828,
+        "cross_entropy": 0.42041787413979176,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.1253694091612635,
+            "quantiles": {
+              "p05": -0.9967102105481427,
+              "p25": -0.988997808734543,
+              "p50": 0.842356455881,
+              "p75": 0.9952763455854685,
+              "p95": 0.9972754243962241
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07273422448695266,
+            "quantiles": {
+              "p05": 0.0021878692481248404,
+              "p25": 0.0033626305083911652,
+              "p50": 0.005197508435626383,
+              "p75": 0.01283930664928074,
+              "p95": 0.5977690995337328
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.006798673717080478,
+            "quantiles": {
+              "p05": -0.2258040569804249,
+              "p25": -0.03776658285624057,
+              "p50": -0.0020647396780673066,
+              "p75": 0.02081345871382445,
+              "p95": 0.21155002404745288
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0011107394694842756,
+            "quantiles": {
+              "p05": -0.13886626266442417,
+              "p25": -0.03749659052743852,
+              "p50": -0.011126882402038359,
+              "p75": 0.00201209356056349,
+              "p95": 0.2611052511344434
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 23993,
+        "q_mse": 0.02156745252610134,
+        "draw_mse": 0.021527778993766924,
+        "q_brier_component": 0.01078372626305067,
+        "draw_brier_component": 0.032291668490650384,
+        "brier": 0.04307539475370105,
+        "q_brier_fraction": 0.25034538452196375,
+        "draw_brier_fraction": 0.7496546154780364,
+        "cross_entropy": 0.48336147931628787,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.12440972779166881,
+            "quantiles": {
+              "p05": -0.998684044133809,
+              "p25": -0.9955887583871461,
+              "p50": 0.8971001145394317,
+              "p75": 0.9981103606517336,
+              "p95": 0.9989101227931492
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07451778518623228,
+            "quantiles": {
+              "p05": 0.0008751749638839152,
+              "p25": 0.001345146398713052,
+              "p50": 0.002079546079500641,
+              "p75": 0.005188551332817876,
+              "p95": 0.6869410611873302
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.0077583550866751555,
+            "quantiles": {
+              "p05": -0.243534984708152,
+              "p25": -0.04175547929410128,
+              "p50": -0.0006263764453480203,
+              "p75": 0.02267724963601958,
+              "p95": 0.21991513744654728
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0028943001687638946,
+            "quantiles": {
+              "p05": -0.15269542345389367,
+              "p25": -0.0408813615163819,
+              "p50": -0.013213646528988474,
+              "p75": 0.00040703502774348615,
+              "p95": 0.3519918509786219
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 23993,
+        "q_mse": 0.004344161396888828,
+        "draw_mse": 0.004807353269106857,
+        "q_brier_component": 0.002172080698444414,
+        "draw_brier_component": 0.007211029903660285,
+        "brier": 0.009383110602104698,
+        "q_brier_fraction": 0.23148834012008782,
+        "draw_brier_fraction": 0.7685116598799124,
+        "cross_entropy": 0.30959824884345766,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.12806729771132325,
+            "quantiles": {
+              "p05": -0.9957301943578128,
+              "p25": -0.954005641218077,
+              "p50": 0.6114544768165553,
+              "p75": 0.9909459913165889,
+              "p95": 0.9994396780525971
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07386243433798613,
+            "quantiles": {
+              "p05": 0.0004117407308826936,
+              "p25": 0.0032368109135276486,
+              "p50": 0.012264307074701592,
+              "p75": 0.040284672773050624,
+              "p95": 0.48619886222885633
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.004100785167020708,
+            "quantiles": {
+              "p05": -0.11362910830529227,
+              "p25": -0.019568404025010144,
+              "p50": -0.00016306349572114964,
+              "p75": 0.011197061330186608,
+              "p95": 0.09800114811332258
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.002238949320517742,
+            "quantiles": {
+              "p05": -0.06630071551685246,
+              "p25": -0.019131600740823013,
+              "p50": -0.005990542509411935,
+              "p75": 0.00020857550984952123,
+              "p95": 0.1498382952014075
+            }
+          }
+        }
+      }
+    },
+    "positive_d9_best_gt100": {
+      "sf_saved": {
+        "rows": 12290,
+        "q_mse": 0.00018778681442022755,
+        "draw_mse": 4.034370169736812e-05,
+        "q_brier_component": 9.389340721011378e-05,
+        "draw_brier_component": 6.051555254605218e-05,
+        "brier": 0.00015440895975616598,
+        "q_brier_fraction": 0.6080826356086138,
+        "draw_brier_fraction": 0.39191736439138614,
+        "cross_entropy": 0.1556048635457725,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.939126049650111,
+            "quantiles": {
+              "p05": 0.6448541081675009,
+              "p25": 0.9522752073746786,
+              "p50": 0.9824297724949265,
+              "p75": 0.9976904777630395,
+              "p95": 1.0
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.032742156153538045,
+            "quantiles": {
+              "p05": 0.0,
+              "p25": 0.001423958992270039,
+              "p50": 0.010780169980316463,
+              "p75": 0.028998115122517036,
+              "p95": 0.19155170308875596
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.0014212938685074037,
+            "quantiles": {
+              "p05": -0.016942128023254437,
+              "p25": -0.0021046499578264155,
+              "p50": -6.765973120659297e-08,
+              "p75": 0.0004920804484624675,
+              "p95": 0.010043504344904013
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0007488313631540585,
+            "quantiles": {
+              "p05": -0.005569677544355574,
+              "p25": -0.0003010473914416231,
+              "p50": 1.831295573739976e-08,
+              "p75": 0.0012499709728393755,
+              "p95": 0.008827746107860772
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 12290,
+        "q_mse": 0.008276374723733377,
+        "draw_mse": 0.0019797783213002657,
+        "q_brier_component": 0.004138187361866688,
+        "draw_brier_component": 0.0029696674819503985,
+        "brier": 0.007107854843817087,
+        "q_brier_fraction": 0.5821991941023353,
+        "draw_brier_fraction": 0.4178008058976647,
+        "cross_entropy": 0.2238320928979445,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.9824742835503167,
+            "quantiles": {
+              "p05": 0.9262923294227995,
+              "p25": 0.9977251123851538,
+              "p50": 0.9993114628317964,
+              "p75": 0.9997682383167942,
+              "p95": 0.9999436177117156
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.012236664482471913,
+            "quantiles": {
+              "p05": 9.897569052783072e-06,
+              "p25": 4.874200748964829e-05,
+              "p50": 0.00017311594316900177,
+              "p75": 0.0006974338820553675,
+              "p95": 0.054839167386356164
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.041926940031698084,
+            "quantiles": {
+              "p05": -0.0005500131188162171,
+              "p25": 0.0014060410215912256,
+              "p50": 0.015444938825191934,
+              "p75": 0.042801143827763455,
+              "p95": 0.215973602017806
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.01975666030791207,
+            "quantiles": {
+              "p05": -0.09723299255187978,
+              "p25": -0.02532909867034327,
+              "p50": -0.009224398097911202,
+              "p75": -0.0007868053524210834,
+              "p95": 0.0001657925588630037
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 12290,
+        "q_mse": 0.014011719171635737,
+        "draw_mse": 0.003499991955104846,
+        "q_brier_component": 0.007005859585817869,
+        "draw_brier_component": 0.0052499879326572685,
+        "brier": 0.012255847518475138,
+        "q_brier_fraction": 0.5716340363452508,
+        "draw_brier_fraction": 0.42836596365474916,
+        "cross_entropy": 0.40178276280889524,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.9923668610372308,
+            "quantiles": {
+              "p05": 0.9913295107577789,
+              "p25": 0.9999978504681456,
+              "p50": 0.9999997983260949,
+              "p75": 0.9999999539373987,
+              "p95": 0.9999999884345329
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.006844224915300899,
+            "quantiles": {
+              "p05": 1.1114827528584613e-08,
+              "p25": 4.42418884082487e-08,
+              "p50": 1.934790132739801e-07,
+              "p75": 2.0259626616424526e-06,
+              "p95": 0.00819713927237034
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.051819517518612246,
+            "quantiles": {
+              "p05": -1.7238090458948637e-07,
+              "p25": 0.0017008536559383058,
+              "p50": 0.01636318501998202,
+              "p75": 0.045275185323795986,
+              "p95": 0.29395739317232755
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.025149099875083084,
+            "quantiles": {
+              "p05": -0.13906005683777428,
+              "p25": -0.02706124253558705,
+              "p50": -0.00980877762901342,
+              "p75": -0.0009716737818731854,
+              "p95": 2.0200067825207815e-07
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 12290,
+        "q_mse": 0.01013076448568633,
+        "draw_mse": 0.002365681448296082,
+        "q_brier_component": 0.005065382242843165,
+        "draw_brier_component": 0.0035485221724441225,
+        "brier": 0.008613904415287288,
+        "q_brier_fraction": 0.588047184950592,
+        "draw_brier_fraction": 0.41195281504940795,
+        "cross_entropy": 0.1991362049725589,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.9818214495565285,
+            "quantiles": {
+              "p05": 0.9185952627599628,
+              "p25": 0.9921356978385963,
+              "p50": 0.995200700744078,
+              "p75": 0.9965397970886412,
+              "p95": 0.9975874650031926
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.01287422058019774,
+            "quantiles": {
+              "p05": 0.0021068268340047117,
+              "p25": 0.003028121415229703,
+              "p50": 0.00413051438062109,
+              "p75": 0.0065141763005191035,
+              "p95": 0.04747184435174486
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.041274106037909916,
+            "quantiles": {
+              "p05": -0.006411208032143146,
+              "p25": -0.0018102374732635873,
+              "p50": 0.011879108847527908,
+              "p75": 0.0385695889605821,
+              "p95": 0.2393359532547985
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.019119104210186245,
+            "quantiles": {
+              "p05": -0.1160946072173303,
+              "p25": -0.021911415505180276,
+              "p50": -0.00620279389533647,
+              "p75": 0.0019757641212466565,
+              "p95": 0.0062641925341120905
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 12290,
+        "q_mse": 0.012330851233253897,
+        "draw_mse": 0.0029871277954129885,
+        "q_brier_component": 0.006165425616626949,
+        "draw_brier_component": 0.004480691693119483,
+        "brier": 0.010646117309746432,
+        "q_brier_fraction": 0.5791243358724362,
+        "draw_brier_fraction": 0.4208756641275639,
+        "cross_entropy": 0.22627337572351855,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.98814869644495,
+            "quantiles": {
+              "p05": 0.961462729541502,
+              "p25": 0.9968532203481006,
+              "p50": 0.998080124352912,
+              "p75": 0.9986159077124199,
+              "p95": 0.9990349700120922
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.009256223181259635,
+            "quantiles": {
+              "p05": 0.0008428422242031673,
+              "p25": 0.001211298487140909,
+              "p50": 0.001652348443702599,
+              "p75": 0.002606785702810699,
+              "p95": 0.02419084895962117
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.04760135292633131,
+            "quantiles": {
+              "p05": -0.0025028898535403906,
+              "p25": 0.00025526219450730525,
+              "p50": 0.014540985083141889,
+              "p75": 0.04276132011581796,
+              "p95": 0.27135310938286517
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.022737101609124347,
+            "quantiles": {
+              "p05": -0.12913215367975406,
+              "p25": -0.025003019652520053,
+              "p50": -0.008338943672141259,
+              "p75": 0.0002839367130498497,
+              "p95": 0.002457927283939056
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 12290,
+        "q_mse": 0.0024852117005688705,
+        "draw_mse": 0.0005744452537807075,
+        "q_brier_component": 0.0012426058502844352,
+        "draw_brier_component": 0.0008616678806710612,
+        "brier": 0.002104273730955497,
+        "q_brier_fraction": 0.5905153079681319,
+        "draw_brier_fraction": 0.4094846920318679,
+        "cross_entropy": 0.1615846113555392,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.9622187698238722,
+            "quantiles": {
+              "p05": 0.7878633263494108,
+              "p25": 0.9749675734138384,
+              "p50": 0.9905014643959615,
+              "p75": 0.9983138429753761,
+              "p95": 0.999576284237936
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.02174429999270191,
+            "quantiles": {
+              "p05": 0.0003456472027681194,
+              "p25": 0.0011524666322403415,
+              "p50": 0.005870223456847449,
+              "p75": 0.015164621684413182,
+              "p95": 0.11809486624392244
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.02167142630525365,
+            "quantiles": {
+              "p05": -0.0009786169871134232,
+              "p25": 9.319655544359762e-05,
+              "p50": 0.0067835506721160566,
+              "p75": 0.02069764415403444,
+              "p95": 0.12056061686498368
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.010249024797682076,
+            "quantiles": {
+              "p05": -0.05505063320953565,
+              "p25": -0.012229651839532448,
+              "p50": -0.003989426711522026,
+              "p75": 5.4081772580736446e-05,
+              "p95": 0.0008235154784297635
+            }
+          }
+        }
+      }
+    },
+    "final_roster_all_nonmate": {
+      "sf_saved": {
+        "rows": 23375,
+        "q_mse": 0.0004121625903878958,
+        "draw_mse": 7.688675155700764e-05,
+        "q_brier_component": 0.0002060812951939479,
+        "draw_brier_component": 0.00011533012733551146,
+        "brier": 0.0003214114225294594,
+        "q_brier_fraction": 0.6411760153765513,
+        "draw_brier_fraction": 0.35882398462344856,
+        "cross_entropy": 0.29913429836350164,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.13106565751538163,
+            "quantiles": {
+              "p05": -0.9910271303412322,
+              "p25": -0.9099192600619668,
+              "p50": 0.3866438774264437,
+              "p75": 0.982003704558591,
+              "p95": 1.0
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07431618680344255,
+            "quantiles": {
+              "p05": 0.0,
+              "p25": 0.006404180453708913,
+              "p50": 0.02426591783163421,
+              "p75": 0.07841581741624458,
+              "p95": 0.3427734375
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.00010825997951477862,
+            "quantiles": {
+              "p05": -0.023680649843645672,
+              "p25": -0.0026424825191497803,
+              "p50": 0.0,
+              "p75": 0.0025285949509734063,
+              "p95": 0.023142991405419595
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0009724584740330653,
+            "quantiles": {
+              "p05": -0.008623356030354537,
+              "p25": -0.0006202486949905405,
+              "p50": 8.149508842203446e-07,
+              "p75": 0.0019200502616471922,
+              "p95": 0.012732216125024924
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 23375,
+        "q_mse": 0.014948832995880481,
+        "draw_mse": 0.018378372076133027,
+        "q_brier_component": 0.0074744164979402405,
+        "draw_brier_component": 0.02756755811419954,
+        "brier": 0.03504197461213979,
+        "q_brier_fraction": 0.21329895306044874,
+        "draw_brier_fraction": 0.7867010469395511,
+        "cross_entropy": 0.4842453917618999,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.12201746565197552,
+            "quantiles": {
+              "p05": -0.9997507577405716,
+              "p25": -0.9968741618941954,
+              "p50": 0.720765218954501,
+              "p75": 0.9992990965062172,
+              "p95": 0.999899922057247
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07760804328556396,
+            "quantiles": {
+              "p05": 1.845229965787314e-05,
+              "p25": 9.902747986757876e-05,
+              "p50": 0.00035504425885243444,
+              "p75": 0.003451552331524834,
+              "p95": 0.5913156838519024
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.008939931883891328,
+            "quantiles": {
+              "p05": -0.217519929790183,
+              "p25": -0.04444734980492676,
+              "p50": 0.0002612462429907314,
+              "p75": 0.02465064807864454,
+              "p95": 0.18071438884895988
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.004264314956154484,
+            "quantiles": {
+              "p05": -0.11977927961356012,
+              "p25": -0.04000855089521956,
+              "p50": -0.014167779604748625,
+              "p75": -0.000735316291422966,
+              "p95": 0.2581721006094011
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 23375,
+        "q_mse": 0.02417104371269413,
+        "draw_mse": 0.025558993775439055,
+        "q_brier_component": 0.012085521856347065,
+        "draw_brier_component": 0.038338490663158586,
+        "brier": 0.05042401251950564,
+        "q_brier_fraction": 0.2396779084503042,
+        "draw_brier_fraction": 0.7603220915496961,
+        "cross_entropy": 0.8113085813825793,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.12252111128567784,
+            "quantiles": {
+              "p05": -0.9999999275064084,
+              "p25": -0.9999823991276809,
+              "p50": 0.9118154298208806,
+              "p75": 0.9999997971197994,
+              "p95": 0.9999999814212656
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.0775518145876426,
+            "quantiles": {
+              "p05": 1.463612949533841e-08,
+              "p25": 9.260177907911702e-08,
+              "p50": 9.46268393214526e-07,
+              "p75": 0.00010101796846518013,
+              "p95": 0.7604576584501495
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.008436286250188994,
+            "quantiles": {
+              "p05": -0.2610262601190484,
+              "p25": -0.045804662105811245,
+              "p50": 2.856801242100646e-05,
+              "p75": 0.0253497429097298,
+              "p95": 0.2278660128363151
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.004208086258233115,
+            "quantiles": {
+              "p05": -0.16526617616242417,
+              "p25": -0.044500992765651365,
+              "p50": -0.015514551381657108,
+              "p75": -0.0011822607022217726,
+              "p95": 0.42348931971853276
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 23375,
+        "q_mse": 0.01971340793800313,
+        "draw_mse": 0.01786258087457017,
+        "q_brier_component": 0.009856703969001564,
+        "draw_brier_component": 0.026793871311855254,
+        "brier": 0.03665057528085682,
+        "q_brier_fraction": 0.2689372238626191,
+        "draw_brier_fraction": 0.7310627761373808,
+        "cross_entropy": 0.4302529325423153,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.12417848434916325,
+            "quantiles": {
+              "p05": -0.9966476947124117,
+              "p25": -0.9885985561952939,
+              "p50": 0.8237608143326932,
+              "p75": 0.9952282608834567,
+              "p95": 0.9972587959620758
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07440717054723603,
+            "quantiles": {
+              "p05": 0.0022024529092756094,
+              "p25": 0.0033932401302460688,
+              "p50": 0.005276462870016171,
+              "p75": 0.013470363781333216,
+              "p95": 0.6060605025387515
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.006778913186703564,
+            "quantiles": {
+              "p05": -0.22935472882839855,
+              "p25": -0.0398397622050118,
+              "p50": -0.0018092334753937456,
+              "p75": 0.021853981015272805,
+              "p95": 0.21953367393520862
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.001063442217826547,
+            "quantiles": {
+              "p05": -0.14057699856788447,
+              "p25": -0.038463386702726754,
+              "p50": -0.011842098386484269,
+              "p75": 0.00170210903155059,
+              "p95": 0.26972274619287284
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 23375,
+        "q_mse": 0.022124345149358158,
+        "draw_mse": 0.02204363655712549,
+        "q_brier_component": 0.011062172574679079,
+        "draw_brier_component": 0.033065454835688235,
+        "brier": 0.04412762741036731,
+        "q_brier_fraction": 0.250685867876054,
+        "draw_brier_fraction": 0.749314132123946,
+        "cross_entropy": 0.4947269188957858,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.12318406051107202,
+            "quantiles": {
+              "p05": -0.9986590338436264,
+              "p25": -0.995428785575024,
+              "p50": 0.8738052232823015,
+              "p75": 0.9980910844849877,
+              "p95": 0.9989035081527801
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07629395697147998,
+            "quantiles": {
+              "p05": 0.000880993559088034,
+              "p25": 0.0013574363433933782,
+              "p50": 0.0021110994197936655,
+              "p75": 0.005461765657108321,
+              "p95": 0.6963224313194469
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.00777333702479482,
+            "quantiles": {
+              "p05": -0.24795654675709974,
+              "p25": -0.043448696008521415,
+              "p50": -0.0002941583141280457,
+              "p75": 0.02382404077291339,
+              "p95": 0.2255059849850471
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0029502286420704884,
+            "quantiles": {
+              "p05": -0.15455618245884925,
+              "p25": -0.04212145141790918,
+              "p50": -0.014036969130869227,
+              "p75": 4.4025798416295425e-05,
+              "p95": 0.36020664267626595
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 23375,
+        "q_mse": 0.004454538706712084,
+        "draw_mse": 0.004921353727673398,
+        "q_brier_component": 0.002227269353356042,
+        "draw_brier_component": 0.007382030591510097,
+        "brier": 0.009609299944866138,
+        "q_brier_fraction": 0.23178268616185532,
+        "draw_brier_fraction": 0.7682173138381447,
+        "cross_entropy": 0.3167992261472191,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.12683321029845268,
+            "quantiles": {
+              "p05": -0.9947779673881282,
+              "p25": -0.9524934626335346,
+              "p50": 0.5845823339390052,
+              "p75": 0.9903165032629393,
+              "p95": 0.9993841145316824
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07563359346598227,
+            "quantiles": {
+              "p05": 0.0004462940051246289,
+              "p25": 0.0036516396293357605,
+              "p50": 0.012786840590098977,
+              "p75": 0.04192795028611113,
+              "p95": 0.48991176830733135
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.004124187237414151,
+            "quantiles": {
+              "p05": -0.11567414867610609,
+              "p25": -0.020520840955702113,
+              "p50": -3.838094485686394e-05,
+              "p75": 0.011782163084679331,
+              "p95": 0.10083117866413291
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0022898651365727764,
+            "quantiles": {
+              "p05": -0.06712952084786906,
+              "p25": -0.019637268744705214,
+              "p50": -0.006378427474960535,
+              "p75": 0.00010058144110060963,
+              "p95": 0.15307791247220262
+            }
+          }
+        }
+      }
+    },
+    "not_in_check": {
+      "sf_saved": {
+        "rows": 22501,
+        "q_mse": 0.0003904243582494563,
+        "draw_mse": 7.285934920691656e-05,
+        "q_brier_component": 0.00019521217912472815,
+        "draw_brier_component": 0.00010928902381037483,
+        "brier": 0.00030450120293510296,
+        "q_brier_fraction": 0.641088367609283,
+        "draw_brier_fraction": 0.35891163239071716,
+        "cross_entropy": 0.2937320360768071,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.15446133856698216,
+            "quantiles": {
+              "p05": -0.990416767604707,
+              "p25": -0.9041369733408616,
+              "p50": 0.6092262631193556,
+              "p75": 0.9843020716306199,
+              "p95": 1.0
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07296800470794206,
+            "quantiles": {
+              "p05": 0.0,
+              "p25": 0.005618754356871006,
+              "p50": 0.023300082015678347,
+              "p75": 0.07597138106207381,
+              "p95": 0.342529296875
+            }
+          },
+          "signed_q_error": {
+            "mean": 4.4363055882253206e-05,
+            "quantiles": {
+              "p05": -0.023542553186416626,
+              "p25": -0.002602416676429131,
+              "p50": 0.0,
+              "p75": 0.002458615011647014,
+              "p95": 0.02280979307394493
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0009543845359631213,
+            "quantiles": {
+              "p05": -0.008459154852601666,
+              "p25": -0.000588306891324171,
+              "p50": 8.149508842203446e-07,
+              "p75": 0.0018919728647645954,
+              "p95": 0.01259275373682838
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 22501,
+        "q_mse": 0.014714922847574433,
+        "draw_mse": 0.0173707525831039,
+        "q_brier_component": 0.007357461423787216,
+        "draw_brier_component": 0.026056128874655853,
+        "brier": 0.03341359029844306,
+        "q_brier_fraction": 0.22019368041781623,
+        "draw_brier_fraction": 0.7798063195821839,
+        "cross_entropy": 0.47085098193979913,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.14562416422264565,
+            "quantiles": {
+              "p05": -0.9997584525617965,
+              "p25": -0.9964507514625968,
+              "p50": 0.8961843841658872,
+              "p75": 0.9993700637845416,
+              "p95": 0.9999134320157168
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07502810715717495,
+            "quantiles": {
+              "p05": 1.574038774515068e-05,
+              "p25": 9.216445249457299e-05,
+              "p50": 0.0003384026617415766,
+              "p75": 0.00321032621532655,
+              "p95": 0.5760849800122526
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.008792811288454239,
+            "quantiles": {
+              "p05": -0.21414063169369757,
+              "p25": -0.042963569945763114,
+              "p50": 0.0001890289222037378,
+              "p75": 0.024035305744880636,
+              "p95": 0.1796576125040512
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.003014486985196014,
+            "quantiles": {
+              "p05": -0.11929811095071328,
+              "p25": -0.03942261469402393,
+              "p50": -0.013606690058510609,
+              "p75": -0.0004086437243236201,
+              "p95": 0.24275877719213346
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 22501,
+        "q_mse": 0.023977129459649492,
+        "draw_mse": 0.024534169555768457,
+        "q_brier_component": 0.011988564729824746,
+        "draw_brier_component": 0.03680125433365269,
+        "brier": 0.04878981906347744,
+        "q_brier_fraction": 0.24571857325863744,
+        "draw_brier_fraction": 0.7542814267413624,
+        "cross_entropy": 0.7907174914880961,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.14623776231656552,
+            "quantiles": {
+              "p05": -0.9999999333079118,
+              "p25": -0.999978052043185,
+              "p50": 0.9864207589820455,
+              "p75": 0.999999825237956,
+              "p95": 0.9999999826991716
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07513279800782584,
+            "quantiles": {
+              "p05": 1.3632687043585255e-08,
+              "p25": 8.353998770355362e-08,
+              "p50": 8.151552632305674e-07,
+              "p75": 8.346654708825931e-05,
+              "p95": 0.7422885504518967
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.008179213194534355,
+            "quantiles": {
+              "p05": -0.2580093982094487,
+              "p25": -0.04423374090595944,
+              "p50": 5.692873636164997e-06,
+              "p75": 0.024892113690921924,
+              "p95": 0.2273359325796197
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0031191778358468964,
+            "quantiles": {
+              "p05": -0.1651567811424159,
+              "p25": -0.04376605094123662,
+              "p50": -0.014891754735722598,
+              "p75": -0.0008251817657130119,
+              "p95": 0.4047369214900158
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 22501,
+        "q_mse": 0.019512756822285236,
+        "draw_mse": 0.017029971798435073,
+        "q_brier_component": 0.009756378411142618,
+        "draw_brier_component": 0.02554495769765261,
+        "brier": 0.03530133610879523,
+        "q_brier_fraction": 0.2763741967463901,
+        "draw_brier_fraction": 0.7236258032536098,
+        "cross_entropy": 0.4203067037454206,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.14768651441134859,
+            "quantiles": {
+              "p05": -0.9966945614265106,
+              "p25": -0.9880940875113297,
+              "p50": 0.905136025994397,
+              "p75": 0.9953580612555729,
+              "p95": 0.9972965826504638
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07200178586174247,
+            "quantiles": {
+              "p05": 0.00217391526585721,
+              "p25": 0.0033323647684924437,
+              "p50": 0.005150907792170311,
+              "p75": 0.012802044019288363,
+              "p95": 0.5907489768110329
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.006730461099751307,
+            "quantiles": {
+              "p05": -0.22785370612526434,
+              "p25": -0.038270745989679056,
+              "p50": -0.002022194851527548,
+              "p75": 0.02125844776801067,
+              "p95": 0.21869470441970373
+            }
+          },
+          "signed_draw_error": {
+            "mean": -1.1834310236459217e-05,
+            "quantiles": {
+              "p05": -0.14065391760203438,
+              "p25": -0.03806861845256277,
+              "p50": -0.011344508943046595,
+              "p75": 0.0019503745116820279,
+              "p95": 0.25373872162487976
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 22501,
+        "q_mse": 0.021935644983345555,
+        "draw_mse": 0.02110210757277142,
+        "q_brier_component": 0.010967822491672777,
+        "draw_brier_component": 0.03165316135915713,
+        "brier": 0.0426209838508299,
+        "q_brier_fraction": 0.25733386470052627,
+        "draw_brier_fraction": 0.7426661352994738,
+        "cross_entropy": 0.4829396840091662,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.14681726315447874,
+            "quantiles": {
+              "p05": -0.9986778102069326,
+              "p25": -0.9952225385294952,
+              "p50": 0.9531742877054739,
+              "p75": 0.9981430219767745,
+              "p95": 0.9989186226434323
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.0738803931493925,
+            "quantiles": {
+              "p05": 0.0008695897050514053,
+              "p25": 0.001333048939792852,
+              "p50": 0.0020612269962256456,
+              "p75": 0.005170401852822556,
+              "p95": 0.6775017733518751
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.007599712356621133,
+            "quantiles": {
+              "p05": -0.24633409710431542,
+              "p25": -0.04198324775783524,
+              "p50": -0.0005391658606002103,
+              "p75": 0.023259606118770426,
+              "p95": 0.22420520550389245
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0018667729774135547,
+            "quantiles": {
+              "p05": -0.15461919219086234,
+              "p25": -0.04137004989439059,
+              "p50": -0.013379183857148584,
+              "p75": 0.00036334234366210166,
+              "p95": 0.3425750872601203
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 22501,
+        "q_mse": 0.0043961928887227405,
+        "draw_mse": 0.004681906798677227,
+        "q_brier_component": 0.0021980964443613703,
+        "draw_brier_component": 0.00702286019801584,
+        "brier": 0.009220956642377211,
+        "q_brier_fraction": 0.2383805205481033,
+        "draw_brier_fraction": 0.7616194794518967,
+        "cross_entropy": 0.3107917033532059,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.15034102612777217,
+            "quantiles": {
+              "p05": -0.9945377567270346,
+              "p25": -0.9492063912817802,
+              "p50": 0.7603340057267778,
+              "p75": 0.9914811693891629,
+              "p95": 0.9994499127632895
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.0737111274306129,
+            "quantiles": {
+              "p05": 0.0004080980455932388,
+              "p25": 0.003254198797000085,
+              "p50": 0.01238908143255328,
+              "p75": 0.04071502254193832,
+              "p95": 0.4816920561993304
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.004075949383327719,
+            "quantiles": {
+              "p05": -0.11526967485035156,
+              "p25": -0.019763588578373015,
+              "p50": -0.00013326632873711386,
+              "p75": 0.011483932749839942,
+              "p95": 0.09952211812593859
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0016975072586339532,
+            "quantiles": {
+              "p05": -0.06709626001406797,
+              "p25": -0.01935963018310431,
+              "p50": -0.006057172835754781,
+              "p75": 0.00019818803265419266,
+              "p95": 0.14514811079309248
+            }
+          }
+        }
+      }
+    },
+    "legal_gt_30": {
+      "sf_saved": {
+        "rows": 9472,
+        "q_mse": 0.00042147032880521403,
+        "draw_mse": 7.220428376198098e-05,
+        "q_brier_component": 0.00021073516440260701,
+        "draw_brier_component": 0.00010830642564297147,
+        "brier": 0.0003190415900455786,
+        "q_brier_fraction": 0.6605256837282599,
+        "draw_brier_fraction": 0.33947431627173974,
+        "cross_entropy": 0.32389248009641053,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.4639010799496881,
+            "quantiles": {
+              "p05": -0.943581800285372,
+              "p25": -0.018559218559218604,
+              "p50": 0.9549893194995422,
+              "p75": 0.989708044929076,
+              "p95": 0.9998912221493504
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.08214937438173968,
+            "quantiles": {
+              "p05": 6.709998803944512e-05,
+              "p25": 0.006133854762620888,
+              "p50": 0.023433119877342264,
+              "p75": 0.10265486725663717,
+              "p95": 0.3400048816206981
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.0006995883758506279,
+            "quantiles": {
+              "p05": -0.02692229890415134,
+              "p25": -0.0031993779759533214,
+              "p50": -6.855118195592258e-06,
+              "p75": 0.001923948555507704,
+              "p95": 0.022464119214282152
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0006579964830704132,
+            "quantiles": {
+              "p05": -0.00881010753089811,
+              "p25": -0.0008323936576465612,
+              "p50": 7.299631044400755e-06,
+              "p75": 0.0015339279610890907,
+              "p95": 0.011894587348422053
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 9472,
+        "q_mse": 0.01798171733263571,
+        "draw_mse": 0.007660249185961371,
+        "q_brier_component": 0.008990858666317854,
+        "draw_brier_component": 0.011490373778942057,
+        "brier": 0.02048123244525991,
+        "q_brier_fraction": 0.438980353860427,
+        "draw_brier_fraction": 0.561019646139573,
+        "cross_entropy": 0.4275932627619553,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.4701720875483999,
+            "quantiles": {
+              "p05": -0.9984922956775538,
+              "p25": -0.04851505833096715,
+              "p50": 0.9974565206984884,
+              "p75": 0.9995930369189151,
+              "p95": 0.999932306811608
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07036378033634182,
+            "quantiles": {
+              "p05": 1.2380064332344653e-05,
+              "p25": 9.60382000288257e-05,
+              "p50": 0.0005499374171527534,
+              "p75": 0.008991007577443021,
+              "p95": 0.5146982261314641
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.0055714192228612245,
+            "quantiles": {
+              "p05": -0.24059459499100647,
+              "p25": -0.010547588459593082,
+              "p50": 0.008452315669569277,
+              "p75": 0.03662139041432538,
+              "p95": 0.24141290099120694
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.011127597562327443,
+            "quantiles": {
+              "p05": -0.12802288926993313,
+              "p25": -0.04143178886674528,
+              "p50": -0.013075666465327797,
+              "p75": -0.001239629526698424,
+              "p95": 0.17946249121594565
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 9472,
+        "q_mse": 0.03168052106182378,
+        "draw_mse": 0.016951163116929818,
+        "q_brier_component": 0.01584026053091189,
+        "draw_brier_component": 0.025426744675394727,
+        "brier": 0.04126700520630662,
+        "q_brier_fraction": 0.3838480755199339,
+        "draw_brier_fraction": 0.6161519244800661,
+        "cross_entropy": 0.6756546033586326,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.473463657819642,
+            "quantiles": {
+              "p05": -0.9999958959073829,
+              "p25": -0.025859813096287036,
+              "p50": 0.9999973206020234,
+              "p75": 0.9999998876348,
+              "p95": 0.9999999846147425
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07070316165454414,
+            "quantiles": {
+              "p05": 1.4432284358819226e-08,
+              "p25": 1.020559303141464e-07,
+              "p50": 1.3641603714674922e-06,
+              "p75": 0.0004173095213271951,
+              "p95": 0.6416919321415399
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.008862989494103293,
+            "quantiles": {
+              "p05": -0.31178280991102814,
+              "p25": -0.007484577399184237,
+              "p50": 0.009080242288757923,
+              "p75": 0.03890938086152676,
+              "p95": 0.3647910307789011
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.010788216244125116,
+            "quantiles": {
+              "p05": -0.19148039321431826,
+              "p25": -0.048355041236999616,
+              "p50": -0.014632551966621776,
+              "p75": -0.0017006273393158219,
+              "p95": 0.30777344296347636
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 9472,
+        "q_mse": 0.025084829696720955,
+        "draw_mse": 0.008845224656951072,
+        "q_brier_component": 0.012542414848360477,
+        "draw_brier_component": 0.013267836985426608,
+        "brier": 0.025810251833787087,
+        "q_brier_fraction": 0.48594701551659186,
+        "draw_brier_fraction": 0.5140529844834081,
+        "cross_entropy": 0.4051294135493288,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.47275885641332915,
+            "quantiles": {
+              "p05": -0.993082878206115,
+              "p25": -0.03431978287186376,
+              "p50": 0.9922030176820285,
+              "p75": 0.9961493573080376,
+              "p95": 0.9975348420254687
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.06396070196103945,
+            "quantiles": {
+              "p05": 0.0021112668893206277,
+              "p25": 0.0031229688313891353,
+              "p50": 0.004929267659582017,
+              "p75": 0.01768213410281964,
+              "p95": 0.4897610409671572
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.00815818808779048,
+            "quantiles": {
+              "p05": -0.2781495486494109,
+              "p25": -0.009658980447728865,
+              "p50": 0.0052060253451792216,
+              "p75": 0.033002006846364895,
+              "p95": 0.327632559353736
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.017530675937629785,
+            "quantiles": {
+              "p05": -0.16146086176509217,
+              "p25": -0.04373455724815635,
+              "p50": -0.011847812978238264,
+              "p75": 0.0008036835296489329,
+              "p95": 0.15967162287981856
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 9472,
+        "q_mse": 0.02871175868049943,
+        "draw_mse": 0.013108333726803928,
+        "q_brier_component": 0.014355879340249716,
+        "draw_brier_component": 0.01966250059020589,
+        "brier": 0.03401837993045561,
+        "q_brier_fraction": 0.4220036159745908,
+        "draw_brier_fraction": 0.5779963840254091,
+        "cross_entropy": 0.4587234905747582,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.47318173725711693,
+            "quantiles": {
+              "p05": -0.997229697795556,
+              "p25": -0.02939534560344574,
+              "p50": 0.996881041729151,
+              "p75": 0.9984595456730672,
+              "p95": 0.9990139119506268
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.06800617777714227,
+            "quantiles": {
+              "p05": 0.0008445390034243531,
+              "p25": 0.0012492513203389134,
+              "p50": 0.0019736138763682214,
+              "p75": 0.007335555273420699,
+              "p95": 0.5820867899582073
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.00858106893157817,
+            "quantiles": {
+              "p05": -0.29782100806253775,
+              "p25": -0.006204116925632386,
+              "p50": 0.0075797454922794105,
+              "p75": 0.036647750603526985,
+              "p95": 0.3486311461713281
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.013485200121526982,
+            "quantiles": {
+              "p05": -0.17877843877477645,
+              "p25": -0.046718736193810353,
+              "p50": -0.013475033856627636,
+              "p75": -0.0005792250967868178,
+              "p95": 0.24815506049644306
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 9472,
+        "q_mse": 0.005586399348851279,
+        "draw_mse": 0.002449121868954894,
+        "q_brier_component": 0.0027931996744256396,
+        "draw_brier_component": 0.003673682803432341,
+        "brier": 0.006466882477857981,
+        "q_brier_fraction": 0.43192367945285876,
+        "draw_brier_fraction": 0.5680763205471412,
+        "cross_entropy": 0.33726515115868716,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.46778899617622316,
+            "quantiles": {
+              "p05": -0.9700465112576077,
+              "p25": -0.03609166322289064,
+              "p50": 0.9761891424733802,
+              "p75": 0.9943319680451217,
+              "p95": 0.9994737329291865
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07566717671924086,
+            "quantiles": {
+              "p05": 0.00040587813822802303,
+              "p25": 0.003429560661178246,
+              "p50": 0.0123672579979744,
+              "p75": 0.05627875026922898,
+              "p95": 0.4425774883801773
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.003188327850684532,
+            "quantiles": {
+              "p05": -0.13267669034531476,
+              "p25": -0.004948434511591923,
+              "p50": 0.003569464800470268,
+              "p75": 0.01827196285708188,
+              "p95": 0.14305424184584967
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.005824201179428399,
+            "quantiles": {
+              "p05": -0.07430415409612415,
+              "p25": -0.021415828324827114,
+              "p50": -0.006152019777891362,
+              "p75": -0.00030062036924370585,
+              "p95": 0.10654233871604342
+            }
+          }
+        }
+      }
+    },
+    "ply_40_79": {
+      "sf_saved": {
+        "rows": 4838,
+        "q_mse": 0.0004031795277087325,
+        "draw_mse": 7.72831598649822e-05,
+        "q_brier_component": 0.00020158976385436624,
+        "draw_brier_component": 0.0001159247397974733,
+        "brier": 0.00031751450365183955,
+        "q_brier_fraction": 0.6348993873848771,
+        "draw_brier_fraction": 0.36510061261512294,
+        "cross_entropy": 0.2643354872892455,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.15388296866714396,
+            "quantiles": {
+              "p05": -0.9804731465972921,
+              "p25": -0.9063267578989123,
+              "p50": 0.841562790434753,
+              "p75": 0.9838273081567367,
+              "p95": 0.9989600912553456
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.060360999232345704,
+            "quantiles": {
+              "p05": 0.0006179647257063304,
+              "p25": 0.007744470619653025,
+              "p50": 0.022641624582335262,
+              "p75": 0.06383887702166616,
+              "p95": 0.30511039618962926
+            }
+          },
+          "signed_q_error": {
+            "mean": 7.484062907432882e-06,
+            "quantiles": {
+              "p05": -0.02354851210217481,
+              "p25": -0.002714274249367321,
+              "p50": -8.291881860023054e-07,
+              "p75": 0.0022961500094850484,
+              "p95": 0.02226089303367438
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0006189817863680657,
+            "quantiles": {
+              "p05": -0.010322219657054937,
+              "p25": -0.001009250036618791,
+              "p50": 1.0544681786581482e-05,
+              "p75": 0.0017314529903572722,
+              "p95": 0.01233358596431755
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 4838,
+        "q_mse": 0.016196845767538406,
+        "draw_mse": 0.007163925352036391,
+        "q_brier_component": 0.008098422883769203,
+        "draw_brier_component": 0.010745888028054587,
+        "brier": 0.018844310911823786,
+        "q_brier_fraction": 0.4297542596098794,
+        "draw_brier_fraction": 0.5702457403901208,
+        "cross_entropy": 0.3955772340781698,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.1366088415899698,
+            "quantiles": {
+              "p05": -0.9997436606727929,
+              "p25": -0.9971559047250064,
+              "p50": 0.990790219475054,
+              "p75": 0.9994879917816323,
+              "p95": 0.999904707546791
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.03857501179263389,
+            "quantiles": {
+              "p05": 1.9576373469503817e-05,
+              "p25": 9.787349529432182e-05,
+              "p50": 0.0002811261622080387,
+              "p75": 0.0016148437682796451,
+              "p95": 0.32672651385698537
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.017266643014266697,
+            "quantiles": {
+              "p05": -0.24463111922548805,
+              "p25": -0.0544131660974331,
+              "p50": 0.0014220758756742224,
+              "p75": 0.022990899783765867,
+              "p95": 0.15956308277952522
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.02116700565334374,
+            "quantiles": {
+              "p05": -0.1272518375422487,
+              "p25": -0.04567483273478223,
+              "p50": -0.017849041520269646,
+              "p75": -0.005115755585985043,
+              "p95": 0.03584451129892701
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 4838,
+        "q_mse": 0.023460526488789008,
+        "draw_mse": 0.011563834306672426,
+        "q_brier_component": 0.011730263244394504,
+        "draw_brier_component": 0.01734575146000864,
+        "brier": 0.02907601470440314,
+        "q_brier_fraction": 0.4034343552116214,
+        "draw_brier_fraction": 0.5965656447883786,
+        "cross_entropy": 0.6626785706368301,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.13249539570280527,
+            "quantiles": {
+              "p05": -0.9999998937562682,
+              "p25": -0.9999859085782895,
+              "p50": 0.9998248540020271,
+              "p75": 0.9999998750608066,
+              "p95": 0.9999999809488626
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.03453314220411189,
+            "quantiles": {
+              "p05": 1.65981675242402e-08,
+              "p25": 7.86808884004589e-08,
+              "p50": 4.5249724821191015e-07,
+              "p75": 2.1640226206305138e-05,
+              "p95": 0.20802180566771655
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.02138008890143124,
+            "quantiles": {
+              "p05": -0.3002457708128958,
+              "p25": -0.05666302879392904,
+              "p50": 0.0015924257021947552,
+              "p75": 0.02347820945117199,
+              "p95": 0.17313400511424687
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.02520887524186575,
+            "quantiles": {
+              "p05": -0.17235863773952642,
+              "p25": -0.04943280368758396,
+              "p50": -0.018807150611745073,
+              "p75": -0.005652610839983756,
+              "p95": 1.7213614808273415e-08
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 4838,
+        "q_mse": 0.01797936705476195,
+        "draw_mse": 0.006926326951240548,
+        "q_brier_component": 0.008989683527380976,
+        "draw_brier_component": 0.010389490426860822,
+        "brier": 0.019379173954241796,
+        "q_brier_fraction": 0.4638837315051437,
+        "draw_brier_fraction": 0.5361162684948564,
+        "cross_entropy": 0.34706372087201914,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.13529790413204693,
+            "quantiles": {
+              "p05": -0.9968481744382408,
+              "p25": -0.9895958222843486,
+              "p50": 0.9765990724781828,
+              "p75": 0.9962319788187597,
+              "p95": 0.9975207660906429
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.03687170697854467,
+            "quantiles": {
+              "p05": 0.0019952415112869212,
+              "p25": 0.002788514892780072,
+              "p50": 0.003920283036031942,
+              "p75": 0.008367274198416427,
+              "p95": 0.21647664210067777
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.0185775804721896,
+            "quantiles": {
+              "p05": -0.2589369646976647,
+              "p25": -0.05002831209374023,
+              "p50": -0.0014299017687002258,
+              "p75": 0.020026271821257297,
+              "p95": 0.15036497379637523
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.022870310467432958,
+            "quantiles": {
+              "p05": -0.1436040535290753,
+              "p25": -0.043592064493084906,
+              "p50": -0.015491922028359962,
+              "p75": -0.002925292027001952,
+              "p95": 0.0032160035436806476
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 4838,
+        "q_mse": 0.02102895361083123,
+        "draw_mse": 0.009485571628083576,
+        "q_brier_component": 0.010514476805415614,
+        "draw_brier_component": 0.014228357442125365,
+        "brier": 0.02474283424754098,
+        "q_brier_fraction": 0.42495037958153786,
+        "draw_brier_fraction": 0.5750496204184621,
+        "cross_entropy": 0.3985931616715894,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.13361639907450193,
+            "quantiles": {
+              "p05": -0.9987391794967583,
+              "p25": -0.995825765311855,
+              "p50": 0.9905428697461789,
+              "p75": 0.9984926983870019,
+              "p95": 0.999008280672412
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.035468568113885,
+            "quantiles": {
+              "p05": 0.0007981053795598841,
+              "p25": 0.0011155331836663995,
+              "p50": 0.0015687259857916015,
+              "p75": 0.003369551847185849,
+              "p95": 0.2151942476428168
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.02025908552973458,
+            "quantiles": {
+              "p05": -0.2812474359110445,
+              "p25": -0.05380722465116865,
+              "p50": 0.00030879046116760733,
+              "p75": 0.022016584018523182,
+              "p95": 0.16828285250518413
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.024273449332092634,
+            "quantiles": {
+              "p05": -0.16016380507414305,
+              "p25": -0.04706028095292829,
+              "p50": -0.017495208284280195,
+              "p75": -0.004527828440452436,
+              "p95": 0.0012424994099355104
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 4838,
+        "q_mse": 0.004549558120083977,
+        "draw_mse": 0.001991721333308374,
+        "q_brier_component": 0.0022747790600419885,
+        "draw_brier_component": 0.002987581999962561,
+        "brier": 0.005262361060004549,
+        "q_brier_fraction": 0.43227346700532593,
+        "draw_brier_fraction": 0.5677265329946741,
+        "cross_entropy": 0.2768013479459864,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.14449779449968989,
+            "quantiles": {
+              "p05": -0.9897750142797846,
+              "p25": -0.950816676315267,
+              "p50": 0.9139432295384033,
+              "p75": 0.9912795960252491,
+              "p95": 0.9991061043246876
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.04869139459280258,
+            "quantiles": {
+              "p05": 0.0005880125447023291,
+              "p25": 0.004219704285888493,
+              "p50": 0.01179982617498797,
+              "p75": 0.03342843066652346,
+              "p95": 0.2901671154719169
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.009377690104546607,
+            "quantiles": {
+              "p05": -0.13150916968285728,
+              "p25": -0.025971889108570012,
+              "p50": 0.0002813236517823503,
+              "p75": 0.01098632939672084,
+              "p95": 0.08013417197586067
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.011050622853175061,
+            "quantiles": {
+              "p05": -0.07092532491008952,
+              "p25": -0.02237519299271732,
+              "p50": -0.008375698240646042,
+              "p75": -0.0021535820381827853,
+              "p95": 0.004421299532731227
+            }
+          }
+        }
+      }
+    },
+    "ply_lt_40": {
+      "sf_saved": {
+        "rows": 6038,
+        "q_mse": 0.0004998856612361351,
+        "draw_mse": 8.200871648878565e-05,
+        "q_brier_component": 0.00024994283061806756,
+        "draw_brier_component": 0.00012301307473317846,
+        "brier": 0.0003729559053512461,
+        "q_brier_fraction": 0.6701672423786237,
+        "draw_brier_fraction": 0.3298327576213762,
+        "cross_entropy": 0.4809879921476029,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.173766347569074,
+            "quantiles": {
+              "p05": -0.9604415222424366,
+              "p25": -0.7133264147487943,
+              "p50": 0.246826171875,
+              "p75": 0.9582621169576364,
+              "p95": 0.9912908746787951
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.1265946647749008,
+            "quantiles": {
+              "p05": 0.005199486917835327,
+              "p25": 0.020281096918921392,
+              "p50": 0.058553404427357465,
+              "p75": 0.26544566544566545,
+              "p95": 0.343505859375
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.0009147135111657255,
+            "quantiles": {
+              "p05": -0.03376436892573031,
+              "p25": -0.0059531599759415355,
+              "p50": -7.207027587302628e-06,
+              "p75": 0.004788260403551375,
+              "p95": 0.029907630922840545
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.00046605828217808015,
+            "quantiles": {
+              "p05": -0.01196965013520083,
+              "p25": -0.0017859339714050293,
+              "p50": 1.1752402874543044e-05,
+              "p75": 0.0023481254769989225,
+              "p95": 0.013716673598210879
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 6038,
+        "q_mse": 0.026840928394037362,
+        "draw_mse": 0.01022905514007502,
+        "q_brier_component": 0.013420464197018681,
+        "draw_brier_component": 0.01534358271011253,
+        "brier": 0.028764046907131215,
+        "q_brier_fraction": 0.46657079375334576,
+        "draw_brier_fraction": 0.533429206246654,
+        "cross_entropy": 0.6064889781462218,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.1777113206676992,
+            "quantiles": {
+              "p05": -0.9990813095644142,
+              "p25": -0.9558418071218853,
+              "p50": 0.4957088176373351,
+              "p75": 0.9971076705745506,
+              "p95": 0.999502134023167
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.11506713724017646,
+            "quantiles": {
+              "p05": 0.00012317655384709174,
+              "p25": 0.0005426115872242776,
+              "p50": 0.0032355307776271167,
+              "p75": 0.1457555214929916,
+              "p95": 0.5646296358828461
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.0030302595874594916,
+            "quantiles": {
+              "p05": -0.29257078151502836,
+              "p25": -0.07287396612610716,
+              "p50": 0.01384350410749613,
+              "p75": 0.06574280413985875,
+              "p95": 0.29842871531079157
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.011061469252546256,
+            "quantiles": {
+              "p05": -0.14278507033163126,
+              "p25": -0.06226523078731589,
+              "p50": -0.023572251747160836,
+              "p75": -0.005687003626778275,
+              "p95": 0.2240908428612928
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 6038,
+        "q_mse": 0.04951856422671163,
+        "draw_mse": 0.02586022878906259,
+        "q_brier_component": 0.024759282113355815,
+        "draw_brier_component": 0.03879034318359388,
+        "brier": 0.0635496252969497,
+        "q_brier_fraction": 0.38960547757225295,
+        "draw_brier_fraction": 0.6103945224277469,
+        "cross_entropy": 0.9321473896319904,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.18501582516132073,
+            "quantiles": {
+              "p05": -0.9999985561286392,
+              "p25": -0.9967773116105764,
+              "p50": 0.6795214700053143,
+              "p75": 0.99999691005328,
+              "p95": 0.9999998466712107
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.11815136231032891,
+            "quantiles": {
+              "p05": 1.3605711076801884e-07,
+              "p25": 1.26669102692819e-06,
+              "p50": 4.27193589347006e-05,
+              "p75": 0.03973085148856543,
+              "p95": 0.7367536712391667
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.010334764081080998,
+            "quantiles": {
+              "p05": -0.41094622875952214,
+              "p25": -0.07588233666205613,
+              "p50": 0.015401056890771155,
+              "p75": 0.07561986249286196,
+              "p95": 0.44591209775424073
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.007977244182393801,
+            "quantiles": {
+              "p05": -0.21154071369187968,
+              "p25": -0.08044223244654541,
+              "p50": -0.027373022177888354,
+              "p75": -0.007939218732985065,
+              "p95": 0.3962777696500851
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 6038,
+        "q_mse": 0.04006357050212609,
+        "draw_mse": 0.012599627059444703,
+        "q_brier_component": 0.020031785251063045,
+        "draw_brier_component": 0.018899440589167055,
+        "brier": 0.03893122584023011,
+        "q_brier_fraction": 0.5145428847596916,
+        "draw_brier_fraction": 0.48545711524030827,
+        "cross_entropy": 0.5925052917467545,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.18543643080246158,
+            "quantiles": {
+              "p05": -0.9950269097962433,
+              "p25": -0.9395430446575138,
+              "p50": 0.6813941123804925,
+              "p75": 0.9925797309793976,
+              "p95": 0.9964324639178881
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.10136603358757625,
+            "quantiles": {
+              "p05": 0.0027135674202307006,
+              "p25": 0.004335986059385348,
+              "p50": 0.00947936863909066,
+              "p75": 0.07873301297631762,
+              "p95": 0.5853450320933957
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.010755369722221868,
+            "quantiles": {
+              "p05": -0.354310500265886,
+              "p25": -0.06797454873040681,
+              "p50": 0.011442888886881997,
+              "p75": 0.0662321871529842,
+              "p95": 0.40220694724651546
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.02476257290514648,
+            "quantiles": {
+              "p05": -0.1799560928083619,
+              "p25": -0.07454639992421233,
+              "p50": -0.025254155380371703,
+              "p75": -0.006447774550708155,
+              "p95": 0.24314882597965626
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 6038,
+        "q_mse": 0.04524354527709157,
+        "draw_mse": 0.019486495963034617,
+        "q_brier_component": 0.022621772638545784,
+        "draw_brier_component": 0.029229743944551925,
+        "brier": 0.051851516583097716,
+        "q_brier_fraction": 0.43627986468422625,
+        "draw_brier_fraction": 0.5637201353157736,
+        "cross_entropy": 0.6685048734277811,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.18518406741777704,
+            "quantiles": {
+              "p05": -0.9980095110638257,
+              "p25": -0.9736971467204883,
+              "p50": 0.6821280926894049,
+              "p75": 0.9970293172122712,
+              "p95": 0.9985728630378922
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.11143723082122785,
+            "quantiles": {
+              "p05": 0.0010855716557475726,
+              "p25": 0.001736001509807094,
+              "p50": 0.0038229420063050686,
+              "p75": 0.05487367184092756,
+              "p95": 0.675084735857497
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.01050300633753735,
+            "quantiles": {
+              "p05": -0.3840822459829412,
+              "p25": -0.07300501222808159,
+              "p50": 0.01385991687786392,
+              "p75": 0.07280203626291423,
+              "p95": 0.4237195010391092
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.014691375671494871,
+            "quantiles": {
+              "p05": -0.19763969826679514,
+              "p25": -0.07665953577903381,
+              "p50": -0.02643746643662357,
+              "p75": -0.007282828056511537,
+              "p95": 0.3321929296393739
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 6038,
+        "q_mse": 0.008613391383577166,
+        "draw_mse": 0.003497715610759148,
+        "q_brier_component": 0.004306695691788583,
+        "draw_brier_component": 0.005246573416138722,
+        "brier": 0.009553269107927306,
+        "q_brier_fraction": 0.450808581139506,
+        "draw_brier_fraction": 0.5491914188604938,
+        "cross_entropy": 0.5002718115363922,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.17760702080590607,
+            "quantiles": {
+              "p05": -0.9793311810565442,
+              "p25": -0.8355748629431952,
+              "p50": 0.41255034247570255,
+              "p75": 0.9774742616723638,
+              "p95": 0.994930684648337
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.11992342440280149,
+            "quantiles": {
+              "p05": 0.002971444977440182,
+              "p25": 0.010748791787348527,
+              "p50": 0.03105699176571075,
+              "p75": 0.18320881973524833,
+              "p95": 0.4783469671193074
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.0029259597256663435,
+            "quantiles": {
+              "p05": -0.16751285639187438,
+              "p25": -0.03591357077670504,
+              "p50": 0.006390989852491549,
+              "p75": 0.03365448617115832,
+              "p95": 0.17721931124087928
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.006205182089921241,
+            "quantiles": {
+              "p05": -0.08264158675971357,
+              "p25": -0.03416648863636608,
+              "p50": -0.012142323446229217,
+              "p75": -0.003013126048617298,
+              "p95": 0.13722035769233779
+            }
+          }
+        }
+      }
+    },
+    "legal_11_30": {
+      "sf_saved": {
+        "rows": 11300,
+        "q_mse": 0.00040067130934775185,
+        "draw_mse": 7.805034167467966e-05,
+        "q_brier_component": 0.00020033565467387593,
+        "draw_brier_component": 0.00011707551251201949,
+        "brier": 0.0003174111671858954,
+        "q_brier_fraction": 0.6311550297678944,
+        "draw_brier_fraction": 0.3688449702321056,
+        "cross_entropy": 0.29503952990178683,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.04855575296489482,
+            "quantiles": {
+              "p05": -0.9846759833499754,
+              "p25": -0.9239837925693051,
+              "p50": 0.0,
+              "p75": 0.9806777844113782,
+              "p95": 1.0
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07249372238346119,
+            "quantiles": {
+              "p05": 0.0,
+              "p25": 0.007253482701912769,
+              "p50": 0.0265960693359375,
+              "p75": 0.07403903376924603,
+              "p95": 0.34439834024896265
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.00029974945756139007,
+            "quantiles": {
+              "p05": -0.022637903690338128,
+              "p25": -0.0026609467428563433,
+              "p50": 0.0,
+              "p75": 0.0028005578194217895,
+              "p95": 0.02341670341012633
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0010920981417132203,
+            "quantiles": {
+              "p05": -0.008841090135707844,
+              "p25": -0.0005445507679098192,
+              "p50": 8.149508842203446e-07,
+              "p75": 0.002243926523768294,
+              "p95": 0.013061455404584145
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 11300,
+        "q_mse": 0.013444548363992389,
+        "draw_mse": 0.026581169964727144,
+        "q_brier_component": 0.0067222741819961945,
+        "draw_brier_component": 0.039871754947090714,
+        "brier": 0.04659402912908692,
+        "q_brier_fraction": 0.14427329654991627,
+        "draw_brier_fraction": 0.8557267034500835,
+        "cross_entropy": 0.5425148791872393,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.029368502171648447,
+            "quantiles": {
+              "p05": -0.9997696476583992,
+              "p25": -0.9982177999227426,
+              "p50": 0.008456036973165559,
+              "p75": 0.9992692407591035,
+              "p95": 0.9998970385753473
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.0863794013954928,
+            "quantiles": {
+              "p05": 1.857943585939587e-05,
+              "p25": 9.603664921259213e-05,
+              "p50": 0.0002999384151523639,
+              "p75": 0.001996404770362402,
+              "p95": 0.8660678245018477
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.018887501335684988,
+            "quantiles": {
+              "p05": -0.2073805242263693,
+              "p25": -0.05522837171870029,
+              "p50": -0.0006715509175289625,
+              "p75": 0.01659735732676948,
+              "p95": 0.13391958096107479
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.014977777153744803,
+            "quantiles": {
+              "p05": -0.11523857441743486,
+              "p25": -0.04169083536016378,
+              "p50": -0.016180042568097887,
+              "p75": -4.307829554042645e-05,
+              "p95": 0.5247815426918605
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 11300,
+        "q_mse": 0.01952815287905572,
+        "draw_mse": 0.0329484255537873,
+        "q_brier_component": 0.00976407643952786,
+        "draw_brier_component": 0.049422638330680946,
+        "brier": 0.05918671477020881,
+        "q_brier_fraction": 0.16497074516530752,
+        "draw_brier_fraction": 0.8350292548346925,
+        "cross_entropy": 0.940319071892796,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.027608849368157638,
+            "quantiles": {
+              "p05": -0.9999999320076506,
+              "p25": -0.9999951230722209,
+              "p50": 0.0015332750456785505,
+              "p75": 0.9999998121533864,
+              "p95": 0.9999999827401819
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.08663546173814463,
+            "quantiles": {
+              "p05": 1.4350497166222163e-08,
+              "p25": 8.342903508788947e-08,
+              "p50": 7.562416600829207e-07,
+              "p75": 5.874712429272883e-05,
+              "p95": 0.9646133251056281
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.020647154139175793,
+            "quantiles": {
+              "p05": -0.2351644742478894,
+              "p25": -0.05674830504905057,
+              "p50": -2.3752693700807015e-07,
+              "p75": 0.01665704154465844,
+              "p95": 0.14500888913806317
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.015233837496396646,
+            "quantiles": {
+              "p05": -0.1464429073357775,
+              "p25": -0.044998799905872036,
+              "p50": -0.017334803163230758,
+              "p75": -0.00036444192121250706,
+              "p95": 0.625660089924741
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 11300,
+        "q_mse": 0.016319035869449047,
+        "draw_mse": 0.02508900993199193,
+        "q_brier_component": 0.008159517934724523,
+        "draw_brier_component": 0.0376335148979879,
+        "brier": 0.04579303283271242,
+        "q_brier_fraction": 0.17818251882403696,
+        "draw_brier_fraction": 0.8218174811759631,
+        "cross_entropy": 0.4667075830336473,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.030192829482113683,
+            "quantiles": {
+              "p05": -0.9968846950991372,
+              "p25": -0.991779249235024,
+              "p50": 0.022794198338843726,
+              "p75": 0.9948847080679415,
+              "p95": 0.9970595476228113
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.08534126004826305,
+            "quantiles": {
+              "p05": 0.0022899866551297416,
+              "p25": 0.0035422465856469153,
+              "p50": 0.005372217331807375,
+              "p75": 0.012168073545252782,
+              "p95": 0.8421131239524208
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.018063174025219748,
+            "quantiles": {
+              "p05": -0.2138606728867599,
+              "p25": -0.04997471707406384,
+              "p50": -0.005274851472528486,
+              "p75": 0.015069328852676533,
+              "p95": 0.13725533020425745
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.013939635806515074,
+            "quantiles": {
+              "p05": -0.12213491858666514,
+              "p25": -0.038287141762321196,
+              "p50": -0.013237040921269302,
+              "p75": 0.002793897529787873,
+              "p95": 0.5059854339801383
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 11300,
+        "q_mse": 0.018020749984837284,
+        "draw_mse": 0.029462050424736628,
+        "q_brier_component": 0.009010374992418642,
+        "draw_brier_component": 0.044193075637104944,
+        "brier": 0.05320345062952358,
+        "q_brier_fraction": 0.16935696624569344,
+        "draw_brier_fraction": 0.8306430337543067,
+        "cross_entropy": 0.5420207809032875,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.02864244141374006,
+            "quantiles": {
+              "p05": -0.9987538589524487,
+              "p25": -0.99670805257644,
+              "p50": 0.010159149885168486,
+              "p75": 0.9979538110030205,
+              "p95": 0.9988237834247813
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.08611778106219199,
+            "quantiles": {
+              "p05": 0.000916006594435437,
+              "p25": 0.0014169761488440908,
+              "p50": 0.0021494864369997133,
+              "p75": 0.0049236279795802146,
+              "p95": 0.9152735481743501
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.019613562093593374,
+            "quantiles": {
+              "p05": -0.2259091798410504,
+              "p25": -0.05385165747599335,
+              "p50": -0.0024112899092801343,
+              "p75": 0.015570708936191086,
+              "p95": 0.141420405887952
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.014716156820444016,
+            "quantiles": {
+              "p05": -0.13603123354161906,
+              "p25": -0.04228323811193454,
+              "p50": -0.01563407489241719,
+              "p75": 0.0009343095448769701,
+              "p95": 0.5773100142420441
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 11300,
+        "q_mse": 0.003852664965265095,
+        "draw_mse": 0.006891955756301077,
+        "q_brier_component": 0.0019263324826325474,
+        "draw_brier_component": 0.010337933634451617,
+        "brier": 0.012264266117084165,
+        "q_brier_fraction": 0.15706871199974695,
+        "draw_brier_fraction": 0.842931288000253,
+        "cross_entropy": 0.3166248955919637,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.038780612378794536,
+            "quantiles": {
+              "p05": -0.9917352637914281,
+              "p25": -0.9601870834087944,
+              "p50": 0.012263881858632239,
+              "p75": 0.9896147269012154,
+              "p95": 0.9994660628351925
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07937115680615178,
+            "quantiles": {
+              "p05": 0.00043037336403197986,
+              "p25": 0.004090693019201062,
+              "p50": 0.013933930918938901,
+              "p75": 0.03937092965474161,
+              "p95": 0.615208341669885
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.009475391128538896,
+            "quantiles": {
+              "p05": -0.10848280363583107,
+              "p25": -0.02554099472530061,
+              "p50": -0.000827408037091637,
+              "p75": 0.007862069236086955,
+              "p95": 0.06860521443636783
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.007969532564403817,
+            "quantiles": {
+              "p05": -0.06190526512444614,
+              "p25": -0.02012483253298427,
+              "p50": -0.007090245280378634,
+              "p75": 0.00032858316118761574,
+              "p95": 0.27198158282207396
+            }
+          }
+        }
+      }
+    },
+    "ply_ge_80": {
+      "sf_saved": {
+        "rows": 13117,
+        "q_mse": 0.00036191272588401136,
+        "draw_mse": 7.18843418243687e-05,
+        "q_brier_component": 0.00018095636294200568,
+        "draw_brier_component": 0.00010782651273655305,
+        "brier": 0.0002887828756785587,
+        "q_brier_fraction": 0.6266173592073596,
+        "draw_brier_fraction": 0.37338264079264055,
+        "cross_entropy": 0.2158406604320286,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.1052289006550556,
+            "quantiles": {
+              "p05": -1.0,
+              "p25": -0.9429129502605617,
+              "p50": 0.6595251174998475,
+              "p75": 0.9931423384320823,
+              "p95": 1.0
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.05223409936352118,
+            "quantiles": {
+              "p05": 0.0,
+              "p25": 0.0010300863913426962,
+              "p50": 0.014629941800596487,
+              "p75": 0.04601102983241672,
+              "p95": 0.34423828125
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.0006367705046917016,
+            "quantiles": {
+              "p05": -0.01640140762014117,
+              "p25": -0.0013352739274097303,
+              "p50": 0.0,
+              "p75": 0.0015649791357849052,
+              "p95": 0.019267186780203057
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0013180461793007544,
+            "quantiles": {
+              "p05": -0.005971538201784871,
+              "p25": -3.968336728193966e-05,
+              "p50": 8.149508842203446e-07,
+              "p75": 0.0016650055588248855,
+              "p95": 0.012043288929169301
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 13117,
+        "q_mse": 0.00833828073524479,
+        "draw_mse": 0.02549083798847165,
+        "q_brier_component": 0.004169140367622395,
+        "draw_brier_component": 0.038236256982707474,
+        "brier": 0.04240539735032987,
+        "q_brier_fraction": 0.0983162669878853,
+        "draw_brier_fraction": 0.9016837330121148,
+        "cross_entropy": 0.4406604908221249,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.09331619801704764,
+            "quantiles": {
+              "p05": -0.9998227063590566,
+              "p25": -0.9987026037625686,
+              "p50": 0.9291885487272056,
+              "p75": 0.9996051315712788,
+              "p95": 0.9999325573186917
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07138061168761847,
+            "quantiles": {
+              "p05": 1.1768017666388055e-05,
+              "p25": 5.9624397927464915e-05,
+              "p50": 0.0001684738478972549,
+              "p75": 0.0007143472022367852,
+              "p95": 0.8898010458624718
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.011275932133316255,
+            "quantiles": {
+              "p05": -0.1497173656716388,
+              "p25": -0.029064464767789677,
+              "p50": -0.0001028164179012192,
+              "p75": 0.010030771998792987,
+              "p95": 0.08193784617812304
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.020464558503398036,
+            "quantiles": {
+              "p05": -0.09071474871439685,
+              "p25": -0.02825402991901591,
+              "p50": -0.0074064635953400735,
+              "p75": 2.5408945500645986e-05,
+              "p95": 0.5507657305963714
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 13117,
+        "q_mse": 0.01165625395393014,
+        "draw_mse": 0.029490050177802752,
+        "q_brier_component": 0.00582812697696507,
+        "draw_brier_component": 0.04423507526670413,
+        "brier": 0.050063202243669204,
+        "q_brier_fraction": 0.11641538526836988,
+        "draw_brier_fraction": 0.8835846147316301,
+        "cross_entropy": 0.7768776544296075,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.09235906829083072,
+            "quantiles": {
+              "p05": -0.999999965627608,
+              "p25": -0.9999972906974344,
+              "p50": 0.9913205584094597,
+              "p75": 0.999999912385584,
+              "p95": 0.9999999866254057
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07135508121256555,
+            "quantiles": {
+              "p05": 1.0312443838365624e-08,
+              "p25": 4.649700720213002e-08,
+              "p50": 2.6328314796599623e-07,
+              "p75": 8.289186564791171e-06,
+              "p95": 0.9767313840083048
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.01223306185953317,
+            "quantiles": {
+              "p05": -0.15811484528572953,
+              "p25": -0.030220041000559306,
+              "p50": -1.7887620384904324e-08,
+              "p75": 0.0095238073577123,
+              "p95": 0.08226488137114933
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.020439028028345123,
+            "quantiles": {
+              "p05": -0.10250604225947829,
+              "p25": -0.029996263821312742,
+              "p50": -0.008066608979597318,
+              "p75": 1.869996215295917e-08,
+              "p95": 0.6355364791929892
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 13117,
+        "q_mse": 0.010074723789249103,
+        "draw_mse": 0.02355056384948396,
+        "q_brier_component": 0.005037361894624551,
+        "draw_brier_component": 0.03532584577422594,
+        "brier": 0.04036320766885049,
+        "q_brier_fraction": 0.12480083188512385,
+        "draw_brier_fraction": 0.8751991681148763,
+        "cross_entropy": 0.3682583533651209,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.09405746776169008,
+            "quantiles": {
+              "p05": -0.9970052313344975,
+              "p25": -0.991989052471399,
+              "p50": 0.9352277969942775,
+              "p75": 0.9955189690754005,
+              "p95": 0.9973080346003292
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07278179606247394,
+            "quantiles": {
+              "p05": 0.0021649275071631492,
+              "p25": 0.0033526042232333414,
+              "p50": 0.004974503629412265,
+              "p75": 0.009194979223811045,
+              "p95": 0.8711054606257475
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.010534662388673803,
+            "quantiles": {
+              "p05": -0.1442509407134239,
+              "p25": -0.024704866827424676,
+              "p50": -0.00316706210562423,
+              "p75": 0.009057130993169515,
+              "p95": 0.07771804731561009
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.02186574287825351,
+            "quantiles": {
+              "p05": -0.08481501875576303,
+              "p25": -0.0237885846157092,
+              "p50": -0.00374174662221432,
+              "p75": 0.0037867968531560773,
+              "p95": 0.5302639146567611
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 13117,
+        "q_mse": 0.010867521880496235,
+        "draw_mse": 0.02690899925562083,
+        "q_brier_component": 0.005433760940248117,
+        "draw_brier_component": 0.04036349888343124,
+        "brier": 0.04579725982367936,
+        "q_brier_fraction": 0.11864816718660108,
+        "draw_brier_fraction": 0.8813518328133989,
+        "cross_entropy": 0.4294019845476559,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.09303842807917447,
+            "quantiles": {
+              "p05": -0.9988020703226492,
+              "p25": -0.9967941037546382,
+              "p50": 0.9674676082818164,
+              "p75": 0.9982075631972727,
+              "p95": 0.9989232082950473
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07192576715252891,
+            "quantiles": {
+              "p05": 0.0008659849487372908,
+              "p25": 0.0013410571894367667,
+              "p50": 0.0019911321202840584,
+              "p75": 0.0036830512553298216,
+              "p95": 0.9333041186312839
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.011553702071189421,
+            "quantiles": {
+              "p05": -0.15168574862412307,
+              "p25": -0.02775909128419274,
+              "p50": -0.0013448893241186921,
+              "p75": 0.008911129013117525,
+              "p95": 0.07968284014709533
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.02100971396830848,
+            "quantiles": {
+              "p05": -0.09517076978162627,
+              "p25": -0.027503563040607387,
+              "p50": -0.006344867069076328,
+              "p75": 0.00142996273874903,
+              "p95": 0.5943016778846972
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 13117,
+        "q_mse": 0.002303197761420176,
+        "draw_mse": 0.006448705673352989,
+        "q_brier_component": 0.001151598880710088,
+        "draw_brier_component": 0.009673058510029482,
+        "brier": 0.01082465739073957,
+        "q_brier_fraction": 0.1063866355433359,
+        "draw_brier_fraction": 0.8936133644566641,
+        "cross_entropy": 0.23392427118103706,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.09920310685158332,
+            "quantiles": {
+              "p05": -0.9988743686043768,
+              "p25": -0.9697173085251537,
+              "p50": 0.7926871012792881,
+              "p75": 0.995900183325869,
+              "p95": 0.9995381509377477
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.06194364439179743,
+            "quantiles": {
+              "p05": 0.0003607754394562042,
+              "p25": 0.001127862383849211,
+              "p50": 0.007981731367979902,
+              "p75": 0.024375779724613144,
+              "p95": 0.6237620832355018
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.005389023298780571,
+            "quantiles": {
+              "p05": -0.07526598326826507,
+              "p25": -0.012682592743563648,
+              "p50": -0.000422702651009077,
+              "p75": 0.004812818873634717,
+              "p95": 0.04042435219597057
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.011027591207577007,
+            "quantiles": {
+              "p05": -0.045171207220127664,
+              "p25": -0.013020193053287886,
+              "p50": -0.002682151342403674,
+              "p75": 0.0004447567957905831,
+              "p95": 0.28163771934134274
+            }
+          }
+        }
+      }
+    },
+    "negative_d9_best_lt_minus100": {
+      "sf_saved": {
+        "rows": 9453,
+        "q_mse": 0.0005849602995770054,
+        "draw_mse": 0.00013205521376468508,
+        "q_brier_component": 0.0002924801497885027,
+        "draw_brier_component": 0.00019808282064702763,
+        "brier": 0.0004905629704355304,
+        "q_brier_fraction": 0.5962132639747222,
+        "draw_brier_fraction": 0.40378673602527776,
+        "cross_entropy": 0.28098954748083166,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.8888226864066625,
+            "quantiles": {
+              "p05": -1.0,
+              "p25": -0.9765141254792744,
+              "p50": -0.941255923628122,
+              "p75": -0.8700077830512613,
+              "p95": -0.5278047845671052
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.06091248944604818,
+            "quantiles": {
+              "p05": 0.0,
+              "p25": 0.01438299982831963,
+              "p50": 0.03556084643971826,
+              "p75": 0.07679277244494635,
+              "p95": 0.24035835142372047
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.0025497742341168625,
+            "quantiles": {
+              "p05": -0.025656245890212915,
+              "p25": -0.002499768033284555,
+              "p50": 4.445238806083385e-05,
+              "p75": 0.00679108023697772,
+              "p95": 0.033337784552799156
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0014130419697116784,
+            "quantiles": {
+              "p05": -0.013149591275505884,
+              "p25": -0.0014640073378097695,
+              "p50": 2.9401571835563356e-05,
+              "p75": 0.0038892006550053995,
+              "p95": 0.017397935187309428
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 9453,
+        "q_mse": 0.01703584037554639,
+        "draw_mse": 0.00509083337566961,
+        "q_brier_component": 0.008517920187773195,
+        "draw_brier_component": 0.007636250063504416,
+        "brier": 0.016154170251277612,
+        "q_brier_fraction": 0.5272892420518797,
+        "draw_brier_fraction": 0.47271075794812023,
+        "cross_entropy": 0.4317215060742058,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.9716114063121608,
+            "quantiles": {
+              "p05": -0.9998593400259334,
+              "p25": -0.9995784756984856,
+              "p50": -0.998663190268943,
+              "p75": -0.9932667460349432,
+              "p95": -0.8206100505954901
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.019886685639092197,
+            "quantiles": {
+              "p05": 5.4181729977314484e-05,
+              "p25": 0.00014105953613931555,
+              "p50": 0.00043020133965860827,
+              "p75": 0.0024782742129574233,
+              "p95": 0.13299188277277432
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.08023894567138146,
+            "quantiles": {
+              "p05": -0.29182820030119005,
+              "p25": -0.1109133133884479,
+              "p50": -0.05210348235468798,
+              "p75": -0.019163303581272495,
+              "p95": 0.0004899156454805757
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.039612761837244305,
+            "quantiles": {
+              "p05": -0.1376178970482104,
+              "p25": -0.06310254364239444,
+              "p50": -0.030468680727427314,
+              "p75": -0.010730920652740493,
+              "p95": 0.00023927976940894252
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 9453,
+        "q_mse": 0.02649071509870154,
+        "draw_mse": 0.007285452981400482,
+        "q_brier_component": 0.01324535754935077,
+        "draw_brier_component": 0.010928179472100723,
+        "brier": 0.024173537021451495,
+        "q_brier_fraction": 0.5479279899171104,
+        "draw_brier_fraction": 0.4520720100828895,
+        "cross_entropy": 0.7435262553853215,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.9874450874046377,
+            "quantiles": {
+              "p05": -0.9999999783962482,
+              "p25": -0.9999997655311706,
+              "p50": -0.9999970178408428,
+              "p75": -0.9999051423904991,
+              "p95": -0.9653392597249442
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.01057515899350192,
+            "quantiles": {
+              "p05": 1.9660155671435088e-08,
+              "p25": 2.133268026340761e-07,
+              "p50": 2.7168051920213628e-06,
+              "p75": 8.346654708825931e-05,
+              "p95": 0.030432697225124976
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.09607262676385826,
+            "quantiles": {
+              "p05": -0.38855297975049685,
+              "p25": -0.12237890313666289,
+              "p50": -0.055133941336351744,
+              "p75": -0.020738507950975982,
+              "p95": 2.2691855976475263e-07
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.04892428848283458,
+            "quantiles": {
+              "p05": -0.18290771620944968,
+              "p25": -0.0708405065052726,
+              "p50": -0.03266980925541396,
+              "p75": -0.012198002558691906,
+              "p95": 4.1252568155161666e-07
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 9453,
+        "q_mse": 0.019492629163766515,
+        "draw_mse": 0.005014083308059084,
+        "q_brier_component": 0.009746314581883258,
+        "draw_brier_component": 0.007521124962088626,
+        "brier": 0.017267439543971884,
+        "q_brier_fraction": 0.5644331087457448,
+        "draw_brier_fraction": 0.43556689125425513,
+        "cross_entropy": 0.37425831824672384,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.9714889774815019,
+            "quantiles": {
+              "p05": -0.9974771863406008,
+              "p25": -0.9956570912268345,
+              "p50": -0.9925490667528717,
+              "p75": -0.9821446312684998,
+              "p95": -0.8761374801376441
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.019446479162338475,
+            "quantiles": {
+              "p05": 0.002241622637509908,
+              "p25": 0.0037082998731699057,
+              "p50": 0.006098382768631566,
+              "p75": 0.012690400507296007,
+              "p95": 0.07712863894028049
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.08011651684072255,
+            "quantiles": {
+              "p05": -0.3227886871273096,
+              "p25": -0.10501308566303125,
+              "p50": -0.04699564853282623,
+              "p75": -0.015536391587816945,
+              "p95": 0.006333927155998839
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.04005296831399803,
+            "quantiles": {
+              "p05": -0.15279641231234387,
+              "p25": -0.05944973374785019,
+              "p50": -0.02672841600267978,
+              "p75": -0.007818993169910244,
+              "p95": 0.006507826213811998
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 9453,
+        "q_mse": 0.02347141845807107,
+        "draw_mse": 0.00627458263999488,
+        "q_brier_component": 0.011735709229035536,
+        "draw_brier_component": 0.00941187395999232,
+        "brier": 0.021147583189027853,
+        "q_brier_fraction": 0.5549432823663961,
+        "draw_brier_fraction": 0.44505671763360394,
+        "cross_entropy": 0.4300339996723744,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.9810626434353835,
+            "quantiles": {
+              "p05": -0.9989908619295657,
+              "p25": -0.9982628151777285,
+              "p50": -0.9970185384516509,
+              "p75": -0.9927855853941334,
+              "p95": -0.9279646798048901
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.014123687061036541,
+            "quantiles": {
+              "p05": 0.0008967266998469712,
+              "p25": 0.0014838927732024269,
+              "p50": 0.0024406247162351707,
+              "p75": 0.005141068314537991,
+              "p95": 0.04921733569957211
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.08969018279460397,
+            "quantiles": {
+              "p05": -0.36315411200290765,
+              "p25": -0.11600047343557174,
+              "p50": -0.05214639206583804,
+              "p75": -0.018778222170022008,
+              "p95": 0.0023910132641441675
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.04537576041529996,
+            "quantiles": {
+              "p05": -0.1706295384860788,
+              "p25": -0.06594371427862027,
+              "p50": -0.03040731335827966,
+              "p75": -0.01053960371334467,
+              "p95": 0.0024858221655407035
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 9453,
+        "q_mse": 0.0049724597538686665,
+        "draw_mse": 0.0013355091208523437,
+        "q_brier_component": 0.0024862298769343333,
+        "draw_brier_component": 0.0020032636812785153,
+        "brier": 0.004489493558212849,
+        "q_brier_fraction": 0.5537884941133621,
+        "draw_brier_fraction": 0.4462115058866378,
+        "cross_entropy": 0.29315539597095125,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.9325798556402174,
+            "quantiles": {
+              "p05": -0.9992577972170982,
+              "p25": -0.9873865115256941,
+              "p50": -0.9692072757100275,
+              "p75": -0.9302622879929355,
+              "p95": -0.6997667414480692
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.038958837898056285,
+            "quantiles": {
+              "p05": 0.0006273067724871782,
+              "p25": 0.007817567205936068,
+              "p50": 0.018701227425889592,
+              "p75": 0.04104896546281576,
+              "p95": 0.16656747381825648
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.04120739499943794,
+            "quantiles": {
+              "p05": -0.16293910695281885,
+              "p25": -0.0551002026707047,
+              "p50": -0.024062929407516864,
+              "p75": -0.007577854829987296,
+              "p95": 0.0012820376892953753
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.020540609578280227,
+            "quantiles": {
+              "p05": -0.07608176975564798,
+              "p25": -0.03166826282820119,
+              "p50": -0.014221176578056167,
+              "p75": -0.004293064572670704,
+              "p95": 0.0012454465915216744
+            }
+          }
+        }
+      }
+    },
+    "legal_le_10": {
+      "sf_saved": {
+        "rows": 3221,
+        "q_mse": 0.0003714215004491229,
+        "draw_mse": 7.639976174447423e-05,
+        "q_brier_component": 0.00018571075022456144,
+        "draw_brier_component": 0.00011459964261671134,
+        "brier": 0.00030031039284127283,
+        "q_brier_fraction": 0.6183960150946813,
+        "draw_brier_fraction": 0.3816039849053185,
+        "cross_entropy": 0.19012302627014052,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.5491389440734807,
+            "quantiles": {
+              "p05": -1.0,
+              "p25": -0.9962277140958196,
+              "p50": -0.9643513890902432,
+              "p75": -0.540349163716274,
+              "p95": 0.9973188418579129
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.04478790576569302,
+            "quantiles": {
+              "p05": 0.0,
+              "p25": 0.00035453681654430436,
+              "p50": 0.012410326428960988,
+              "p75": 0.03784497295152639,
+              "p95": 0.33207178610670246
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.0018953798980384969,
+            "quantiles": {
+              "p05": -0.011543185211435603,
+              "p25": -7.207868790970462e-05,
+              "p50": 0.0,
+              "p75": 0.00244140625,
+              "p95": 0.021811738800666114
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0014046115601135066,
+            "quantiles": {
+              "p05": -0.005554002397231717,
+              "p25": -4.795988001127238e-06,
+              "p50": 0.0,
+              "p75": 0.0016520269048880439,
+              "p95": 0.012243417845102987
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 3221,
+        "q_mse": 0.008554135604754688,
+        "draw_mse": 0.017963466871426546,
+        "q_brier_component": 0.004277067802377344,
+        "draw_brier_component": 0.02694520030713982,
+        "brier": 0.031222268109517164,
+        "q_brier_fraction": 0.13698773540009443,
+        "draw_brier_fraction": 0.8630122645999055,
+        "cross_entropy": 0.3649007286351575,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.5673303286571301,
+            "quantiles": {
+              "p05": -0.9998945508036524,
+              "p25": -0.9997002536197257,
+              "p50": -0.9990142390525298,
+              "p75": -0.6719547910272745,
+              "p95": 0.9997261511758379
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.05437063089119576,
+            "quantiles": {
+              "p05": 3.0074429578768476e-05,
+              "p25": 7.764628879432119e-05,
+              "p50": 0.0001787344849553675,
+              "p75": 0.0006549166702352962,
+              "p95": 0.5012026019842402
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.016296004685610793,
+            "quantiles": {
+              "p05": -0.14331393439210172,
+              "p25": -0.033831654757599416,
+              "p50": -0.003634635635681116,
+              "p75": 0.0005567529781478342,
+              "p95": 0.07046871615380881
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.01098733668561625,
+            "quantiles": {
+              "p05": -0.08308657367124903,
+              "p25": -0.02495449803887673,
+              "p50": -0.007171777419485585,
+              "p75": 6.958171919649993e-05,
+              "p95": 0.2332301181203209
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 3221,
+        "q_mse": 0.013860347108482819,
+        "draw_mse": 0.020500544608793587,
+        "q_brier_component": 0.006930173554241409,
+        "draw_brier_component": 0.03075081691319038,
+        "brier": 0.037680990467431785,
+        "q_brier_fraction": 0.18391696896161094,
+        "draw_brier_fraction": 0.8160830310383892,
+        "cross_entropy": 0.620690202139255,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.5672199904448237,
+            "quantiles": {
+              "p05": -0.9999999872074362,
+              "p25": -0.9999999017231623,
+              "p50": -0.9999981220098404,
+              "p75": -0.8735905558610654,
+              "p95": 0.9999999376283393
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.052080969588825,
+            "quantiles": {
+              "p05": 1.0445122724926108e-08,
+              "p25": 6.047149072279547e-08,
+              "p50": 4.0138752666796144e-07,
+              "p75": 1.0054728757682502e-05,
+              "p95": 0.5702011837593289
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.01618566647330449,
+            "quantiles": {
+              "p05": -0.14968813152362614,
+              "p25": -0.035022088310086796,
+              "p50": -0.0037724907173408706,
+              "p75": 9.442995428932122e-07,
+              "p95": 0.06627544785408457
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.00869767538324549,
+            "quantiles": {
+              "p05": -0.09759165346557368,
+              "p25": -0.02660060828835435,
+              "p50": -0.007926996158480342,
+              "p75": 3.921006252537944e-08,
+              "p95": 0.2599304131473571
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 3221,
+        "q_mse": 0.012117217086072956,
+        "draw_mse": 0.01589912567729297,
+        "q_brier_component": 0.006058608543036478,
+        "draw_brier_component": 0.02384868851593945,
+        "brier": 0.029907297058975928,
+        "q_brier_fraction": 0.20257960895259633,
+        "draw_brier_fraction": 0.7974203910474037,
+        "cross_entropy": 0.30298185681979706,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.5622982387732828,
+            "quantiles": {
+              "p05": -0.9975945884702515,
+              "p25": -0.9958622188143422,
+              "p50": -0.9923715498027845,
+              "p75": -0.828588278326758,
+              "p95": 0.9959665384906277
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.05430619080879133,
+            "quantiles": {
+              "p05": 0.002181717542174118,
+              "p25": 0.0034619452903872873,
+              "p50": 0.005164568902069738,
+              "p75": 0.009249928411069147,
+              "p95": 0.4452310834753421
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.011263914801763496,
+            "quantiles": {
+              "p05": -0.13406696764675663,
+              "p25": -0.02963656665708647,
+              "p50": -0.0036706262219857733,
+              "p75": 0.005470648784822729,
+              "p95": 0.06314873838147539
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.010922896603211803,
+            "quantiles": {
+              "p05": -0.08213123891924508,
+              "p25": -0.02086231288642295,
+              "p50": -0.0033778391705509914,
+              "p75": 0.004169535415200464,
+              "p95": 0.14442866833119633
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 3221,
+        "q_mse": 0.013000818195714862,
+        "draw_mse": 0.01845162823273489,
+        "q_brier_component": 0.006500409097857431,
+        "draw_brier_component": 0.027677442349102337,
+        "brier": 0.03417785144695978,
+        "q_brier_fraction": 0.19019361436295498,
+        "draw_brier_fraction": 0.8098063856370448,
+        "cross_entropy": 0.35002429255027523,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.5652512897762073,
+            "quantiles": {
+              "p05": -0.9990378277572272,
+              "p25": -0.9983448463235718,
+              "p50": -0.9969470375982251,
+              "p75": -0.855160807923804,
+              "p95": 0.9983865890221855
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.05297105807681153,
+            "quantiles": {
+              "p05": 0.0008726991270361443,
+              "p25": 0.0013848981866692038,
+              "p50": 0.0020665874965609616,
+              "p75": 0.0037059658771717366,
+              "p95": 0.4965813319835949
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.01421696580468809,
+            "quantiles": {
+              "p05": -0.14308164337527363,
+              "p25": -0.032911840814032645,
+              "p50": -0.0033146051227168627,
+              "p75": 0.0024334002238300956,
+              "p95": 0.06488232133601979
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.009587763871232014,
+            "quantiles": {
+              "p05": -0.0918008028465228,
+              "p25": -0.024260738159612185,
+              "p50": -0.006083426936809939,
+              "p75": 0.001571251389387841,
+              "p95": 0.20494990280524034
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 3221,
+        "q_mse": 0.0024153913864448234,
+        "draw_mse": 0.004428948958937559,
+        "q_brier_component": 0.0012076956932224117,
+        "draw_brier_component": 0.006643423438406338,
+        "brier": 0.007851119131628751,
+        "q_brier_fraction": 0.15382465518286811,
+        "draw_brier_fraction": 0.8461753448171316,
+        "cross_entropy": 0.20358707002074078,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.5577148766450748,
+            "quantiles": {
+              "p05": -0.9995338212706693,
+              "p25": -0.9971340723564921,
+              "p50": -0.9810271237068637,
+              "p75": -0.6555637630061389,
+              "p95": 0.9980906586650536
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.04922937512484834,
+            "quantiles": {
+              "p05": 0.00038046259283125764,
+              "p25": 0.0010936769197628482,
+              "p50": 0.007063152779045456,
+              "p75": 0.020559387329934266,
+              "p95": 0.3961366890922791
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.00668055267355548,
+            "quantiles": {
+              "p05": -0.07051912142534211,
+              "p25": -0.01535745825165602,
+              "p50": -0.0009232471491528171,
+              "p75": 0.0010208880659793307,
+              "p95": 0.035565238704890256
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.00584608091926882,
+            "quantiles": {
+              "p05": -0.04330744850674932,
+              "p25": -0.01136425697023639,
+              "p50": -0.0023548549442471553,
+              "p75": 0.0005216407658400246,
+              "p95": 0.11856477376082722
+            }
+          }
+        }
+      }
+    },
+    "in_check": {
+      "sf_saved": {
+        "rows": 1492,
+        "q_mse": 0.0006241038324719789,
+        "draw_mse": 0.00011565901661627758,
+        "q_brier_component": 0.00031205191623598946,
+        "draw_brier_component": 0.00017348852492441637,
+        "brier": 0.0004855404411604059,
+        "q_brier_fraction": 0.6426898560503186,
+        "draw_brier_fraction": 0.35731014394968125,
+        "cross_entropy": 0.2714329646215001,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.20211801619945682,
+            "quantiles": {
+              "p05": -1.0,
+              "p25": -0.975350593285132,
+              "p50": -0.8146605899467358,
+              "p75": 0.9465319927136586,
+              "p95": 0.9995928655971421
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.06682755202067207,
+            "quantiles": {
+              "p05": 0.0,
+              "p25": 0.004637612393396806,
+              "p50": 0.020647425748240276,
+              "p75": 0.06495641989490182,
+              "p95": 0.344970703125
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.0012516577115026667,
+            "quantiles": {
+              "p05": -0.017858172829277326,
+              "p25": -0.0013114690831585174,
+              "p50": 0.0,
+              "p75": 0.0017163731957781925,
+              "p95": 0.02252315793256826
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0010877339681110974,
+            "quantiles": {
+              "p05": -0.008097712998733419,
+              "p25": -0.00025188144637154283,
+              "p50": 5.996377805258732e-07,
+              "p75": 0.00128562966529059,
+              "p95": 0.011197436253582452
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 1492,
+        "q_mse": 0.012532583698044246,
+        "draw_mse": 0.02676013660273915,
+        "q_brier_component": 0.006266291849022123,
+        "draw_brier_component": 0.040140204904108724,
+        "brier": 0.04640649675313085,
+        "q_brier_fraction": 0.1350304868380172,
+        "draw_brier_fraction": 0.8649695131619828,
+        "cross_entropy": 0.5102606045599636,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.21362347183665814,
+            "quantiles": {
+              "p05": -0.9998549097102029,
+              "p25": -0.9992766210080759,
+              "p50": -0.9826269570485426,
+              "p75": 0.9982871205185644,
+              "p95": 0.999856212587701
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.08679177350659932,
+            "quantiles": {
+              "p05": 2.2339271316948774e-05,
+              "p25": 8.731821365245302e-05,
+              "p50": 0.00025827001554966855,
+              "p75": 0.0019410445832771495,
+              "p95": 0.8575217879146925
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.010253797925698638,
+            "quantiles": {
+              "p05": -0.19176245077080287,
+              "p25": -0.04029765258048543,
+              "p50": -0.0007830642894270125,
+              "p75": 0.012443949917103958,
+              "p95": 0.15670164648553836
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.021051955454038332,
+            "quantiles": {
+              "p05": -0.10608257747547396,
+              "p25": -0.03279731305969514,
+              "p50": -0.011795801973754313,
+              "p75": -8.697869878633062e-06,
+              "p95": 0.5227673892940414
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 1492,
+        "q_mse": 0.017346388133897064,
+        "draw_mse": 0.03141255416349446,
+        "q_brier_component": 0.008673194066948532,
+        "draw_brier_component": 0.047118831245241695,
+        "brier": 0.05579202531219023,
+        "q_brier_fraction": 0.1554558024810311,
+        "draw_brier_fraction": 0.8445441975189689,
+        "cross_entropy": 0.8262163408300633,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.21506951365950935,
+            "quantiles": {
+              "p05": -0.9999999569050649,
+              "p25": -0.9999986257684025,
+              "p50": -0.9990370871458696,
+              "p75": 0.9999978257098787,
+              "p95": 0.999999975137098
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.08436379350160368,
+            "quantiles": {
+              "p05": 1.554970285242759e-08,
+              "p25": 1.1936840781440437e-07,
+              "p50": 1.4241818668215152e-06,
+              "p75": 9.897342377349472e-05,
+              "p95": 0.961855144809844
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.011699839748549839,
+            "quantiles": {
+              "p05": -0.20715747962419265,
+              "p25": -0.04106623554448227,
+              "p50": -9.067823387430865e-06,
+              "p75": 0.010649748454074376,
+              "p95": 0.14961978624970987
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0186239754490427,
+            "quantiles": {
+              "p05": -0.12959234468552988,
+              "p25": -0.03598343676092126,
+              "p50": -0.012973688275235574,
+              "p75": -0.00029434947343310507,
+              "p95": 0.6171582060683704
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 1492,
+        "q_mse": 0.014732994093911548,
+        "draw_mse": 0.023664523158258982,
+        "q_brier_component": 0.007366497046955774,
+        "draw_brier_component": 0.03549678473738847,
+        "brier": 0.04286328178434425,
+        "q_brier_fraction": 0.17186031354338285,
+        "draw_brier_fraction": 0.8281396864566171,
+        "cross_entropy": 0.42209444588492906,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.2111970688763802,
+            "quantiles": {
+              "p05": -0.9968961158873006,
+              "p25": -0.9933360066738766,
+              "p50": -0.9673369377010095,
+              "p75": 0.9922064475963556,
+              "p95": 0.9967351954241123
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.08378020404851727,
+            "quantiles": {
+              "p05": 0.0024619845243370824,
+              "p25": 0.0038007220926495233,
+              "p50": 0.005976163326242099,
+              "p75": 0.013690701407460329,
+              "p95": 0.8047483783098226
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.007827394965420734,
+            "quantiles": {
+              "p05": -0.18531218660598425,
+              "p25": -0.03457181325131955,
+              "p50": -0.002907167612946626,
+              "p75": 0.013519324272342176,
+              "p95": 0.14582313600469418
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.01804038599595629,
+            "quantiles": {
+              "p05": -0.11052639331702671,
+              "p25": -0.028020352116639842,
+              "p50": -0.00815568907776469,
+              "p75": 0.0032206762305177945,
+              "p95": 0.4642706205797454
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 1492,
+        "q_mse": 0.01601470555528903,
+        "draw_mse": 0.02794737191857914,
+        "q_brier_component": 0.008007352777644515,
+        "draw_brier_component": 0.041921057877868706,
+        "brier": 0.049928410655513226,
+        "q_brier_fraction": 0.16037668078185305,
+        "draw_brier_fraction": 0.8396233192181468,
+        "cross_entropy": 0.4897226161832751,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.21352053574625765,
+            "quantiles": {
+              "p05": -0.9987583268833771,
+              "p25": -0.997332962047392,
+              "p50": -0.9864322456249512,
+              "p75": 0.9968801620977596,
+              "p95": 0.9986940678435223
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.08413035772036911,
+            "quantiles": {
+              "p05": 0.000984808111373891,
+              "p25": 0.0015204901894144743,
+              "p50": 0.002395299250879458,
+              "p75": 0.005553553299357614,
+              "p95": 0.8950710919636131
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.010150861835298196,
+            "quantiles": {
+              "p05": -0.1937647659142142,
+              "p25": -0.039094445040285024,
+              "p50": -0.001821119858425372,
+              "p75": 0.01072317285258631,
+              "p95": 0.1409699351633593
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.018390539667808133,
+            "quantiles": {
+              "p05": -0.12091840829620835,
+              "p25": -0.0329741712594001,
+              "p50": -0.0112100978673462,
+              "p75": 0.0010057322026489604,
+              "p95": 0.5503008434273755
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 1492,
+        "q_mse": 0.0035594693072407944,
+        "draw_mse": 0.006699223933407849,
+        "q_brier_component": 0.0017797346536203972,
+        "draw_brier_component": 0.010048835900111774,
+        "brier": 0.01182857055373217,
+        "q_brier_fraction": 0.15046067025054455,
+        "draw_brier_fraction": 0.8495393297494556,
+        "cross_entropy": 0.2915996429963765,
+        "distributions": {
+          "predicted_q": {
+            "mean": -0.20784500999545738,
+            "quantiles": {
+              "p05": -0.9991018374030789,
+              "p25": -0.9859856857258428,
+              "p50": -0.8923379033394132,
+              "p75": 0.972133445286431,
+              "p95": 0.9990088516572986
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.07614430881707815,
+            "quantiles": {
+              "p05": 0.0004746681619357125,
+              "p25": 0.003092412847553902,
+              "p50": 0.011097039483093492,
+              "p75": 0.035027863411507036,
+              "p95": 0.6042926245217675
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.004475336084497881,
+            "quantiles": {
+              "p05": -0.09591351353889058,
+              "p25": -0.018022822770088015,
+              "p50": -0.0006282042964001477,
+              "p75": 0.005700618506251226,
+              "p95": 0.08068176174396768
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.010404490764517167,
+            "quantiles": {
+              "p05": -0.05496180949044264,
+              "p25": -0.015419722016641742,
+              "p50": -0.004952837746009713,
+              "p75": 0.00035204462128980783,
+              "p95": 0.26067734718716434
+            }
+          }
+        }
+      }
+    },
+    "balanced_abs_d9_best_le100": {
+      "sf_saved": {
+        "rows": 2250,
+        "q_mse": 0.0008349207741747464,
+        "draw_mse": 3.0146417652486094e-05,
+        "q_brier_component": 0.0004174603870873732,
+        "draw_brier_component": 4.521962647872914e-05,
+        "brier": 0.00046268001356610227,
+        "q_brier_fraction": 0.9022658745723655,
+        "draw_brier_fraction": 0.09773412542763464,
+        "cross_entropy": 1.086962027406964,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.015180534812617686,
+            "quantiles": {
+              "p05": -0.20503703748302252,
+              "p25": -0.04491091042226014,
+              "p50": 0.0,
+              "p75": 0.09494752257749572,
+              "p95": 0.2190894666178445
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.3392679643056759,
+            "quantiles": {
+              "p05": 0.32254913929923085,
+              "p25": 0.336181640625,
+              "p50": 0.343017578125,
+              "p75": 0.34521484375,
+              "p95": 0.34521484375
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.001675390117858733,
+            "quantiles": {
+              "p05": -0.039329553619928286,
+              "p25": -0.007894553244113922,
+              "p50": 0.0,
+              "p75": 0.0027773603796958923,
+              "p95": 0.03161022785824989
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0002386143694578108,
+            "quantiles": {
+              "p05": -0.0035439825829423066,
+              "p25": -0.0002739722612145612,
+              "p50": 8.149508842203446e-07,
+              "p75": 0.00025120866664589403,
+              "p95": 0.003876753836632045
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 2250,
+        "q_mse": 0.03868562197601381,
+        "draw_mse": 0.15925791298432115,
+        "q_brier_component": 0.019342810988006904,
+        "draw_brier_component": 0.23888686947648174,
+        "brier": 0.25822968046448863,
+        "q_brier_fraction": 0.07490545220523905,
+        "draw_brier_fraction": 0.925094547794761,
+        "cross_entropy": 2.0106519768869693,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.030220790323964544,
+            "quantiles": {
+              "p05": -0.4888215488880968,
+              "p25": -0.07490328121759009,
+              "p50": 0.0028226501518364734,
+              "p75": 0.19697356370581126,
+              "p95": 0.5013058057281496
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.6574770308353428,
+            "quantiles": {
+              "p05": 0.3032280817469287,
+              "p25": 0.4659079209886631,
+              "p50": 0.5937350144533717,
+              "p75": 0.9476679542410275,
+              "p95": 0.9961975811353148
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.013364865393488119,
+            "quantiles": {
+              "p05": -0.3296272853049371,
+              "p25": -0.05900634782220711,
+              "p50": 0.001439539109528328,
+              "p75": 0.10496963640237925,
+              "p95": 0.33458612055201253
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.3184476808991247,
+            "quantiles": {
+              "p05": -0.021049303183260117,
+              "p25": 0.1301979929787446,
+              "p50": 0.2529302699967841,
+              "p75": 0.6056603224922401,
+              "p95": 0.6511914193314298
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 2250,
+        "q_mse": 0.0634530856088528,
+        "draw_mse": 0.21645626303327223,
+        "q_brier_component": 0.0317265428044264,
+        "draw_brier_component": 0.32468439454990833,
+        "brier": 0.35641093735433477,
+        "q_brier_fraction": 0.08901674858783772,
+        "draw_brier_fraction": 0.9109832514121622,
+        "cross_entropy": 3.1369712041837055,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.047885273152678126,
+            "quantiles": {
+              "p05": -0.5802547887598981,
+              "p25": -0.036041681842581046,
+              "p50": 0.0006576746079087757,
+              "p75": 0.19399566030253979,
+              "p95": 0.6640630836732412
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.7254894958683822,
+            "quantiles": {
+              "p05": 0.22509142810635327,
+              "p25": 0.5474639763491489,
+              "p50": 0.7692799624675408,
+              "p75": 0.9931340732714828,
+              "p95": 0.9999631763970541
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.031029348222201703,
+            "quantiles": {
+              "p05": -0.41055429729763376,
+              "p25": -0.04362076931191819,
+              "p50": 0.0007754743577398106,
+              "p75": 0.1142963387983232,
+              "p95": 0.4812674178176016
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.38646014593216405,
+            "quantiles": {
+              "p05": -0.10056261160818909,
+              "p25": 0.2098780614563793,
+              "p50": 0.42929202525686017,
+              "p75": 0.6489649159159634,
+              "p95": 0.6547840773858354
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 2250,
+        "q_mse": 0.06767433308097165,
+        "draw_mse": 0.15201178199025273,
+        "q_brier_component": 0.033837166540485825,
+        "draw_brier_component": 0.2280176729853791,
+        "brier": 0.2618548395258649,
+        "q_brier_fraction": 0.12922108524613896,
+        "draw_brier_fraction": 0.870778914753861,
+        "cross_entropy": 1.8230392056608862,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.05550574359515448,
+            "quantiles": {
+              "p05": -0.5962929989167123,
+              "p25": -0.06600347704363807,
+              "p50": 0.015005396732206154,
+              "p75": 0.25470119568567695,
+              "p95": 0.6716520151608519
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.6235824487392175,
+            "quantiles": {
+              "p05": 0.1803852611870397,
+              "p25": 0.40485168959747186,
+              "p50": 0.6134246995897885,
+              "p75": 0.9247096740871097,
+              "p95": 0.9829460590425106
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.03864981866467805,
+            "quantiles": {
+              "p05": -0.43434762915751646,
+              "p25": -0.05491484424282653,
+              "p50": 0.011503931810694371,
+              "p75": 0.16768499201494927,
+              "p95": 0.4779653886170115
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.28455309880299934,
+            "quantiles": {
+              "p05": -0.14289069970486776,
+              "p25": 0.07026352936965502,
+              "p50": 0.2724187759603249,
+              "p75": 0.580649063129042,
+              "p95": 0.6381731017485522
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 2250,
+        "q_mse": 0.06402062583018367,
+        "draw_mse": 0.1868846982648678,
+        "q_brier_component": 0.032010312915091835,
+        "draw_brier_component": 0.28032704739730174,
+        "brier": 0.3123373603123935,
+        "q_brier_fraction": 0.10248634003654179,
+        "draw_brier_fraction": 0.8975136599634584,
+        "cross_entropy": 2.1116803496403094,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.05093346132966867,
+            "quantiles": {
+              "p05": -0.5873126534447111,
+              "p25": -0.05159836997814212,
+              "p50": 0.006858203961642483,
+              "p75": 0.21755967781052177,
+              "p95": 0.6713676976009965
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.6847266770167163,
+            "quantiles": {
+              "p05": 0.20902241199548952,
+              "p25": 0.4906242688302409,
+              "p50": 0.7064729614679601,
+              "p75": 0.9656929663269954,
+              "p95": 0.9931525690867167
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.03407753639919224,
+            "quantiles": {
+              "p05": -0.41319845576956094,
+              "p25": -0.04995557123452171,
+              "p50": 0.005924008287267061,
+              "p75": 0.13552860907423492,
+              "p95": 0.4759604719357562
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.34569732708049816,
+            "quantiles": {
+              "p05": -0.11694576279128113,
+              "p25": 0.15798228397554698,
+              "p50": 0.36470383420349023,
+              "p75": 0.6217817981539233,
+              "p95": 0.6484093653891135
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 2250,
+        "q_mse": 0.011858466907662991,
+        "draw_mse": 0.04251481204324387,
+        "q_brier_component": 0.005929233453831496,
+        "draw_brier_component": 0.06377221806486581,
+        "brier": 0.06970145151869729,
+        "q_brier_fraction": 0.08506614029753727,
+        "draw_brier_fraction": 0.914933859702463,
+        "cross_entropy": 1.1871635345902676,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.027878830319717145,
+            "quantiles": {
+              "p05": -0.3552044139055935,
+              "p25": -0.05441092969937692,
+              "p50": 0.004810031915236823,
+              "p75": 0.1526043151536317,
+              "p95": 0.3785994493231959
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.5051849091158528,
+            "quantiles": {
+              "p05": 0.2976402246494949,
+              "p25": 0.40774948466219685,
+              "p50": 0.4950911555402281,
+              "p75": 0.6491264363318937,
+              "p95": 0.6696009118621881
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.011022905389240724,
+            "quantiles": {
+              "p05": -0.18110408096661584,
+              "p25": -0.029172633525238932,
+              "p50": 0.0022321752144169593,
+              "p75": 0.060602304791221875,
+              "p95": 0.19084319680974401
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.16615555917963462,
+            "quantiles": {
+              "p05": -0.031098767664562006,
+              "p25": 0.07273069027978583,
+              "p50": 0.15336215473570577,
+              "p75": 0.30515873704773994,
+              "p95": 0.3245973802058103
+            }
+          }
+        }
+      }
+    },
+    "final_roster_contains_mate_score": {
+      "sf_saved": {
+        "rows": 618,
+        "q_mse": 0.0001323638393238568,
+        "draw_mse": 2.385704150689704e-05,
+        "q_brier_component": 6.61819196619284e-05,
+        "draw_brier_component": 3.578556226034556e-05,
+        "brier": 0.00010196748192227393,
+        "q_brier_fraction": 0.6490492695737691,
+        "draw_brier_fraction": 0.35095073042623115,
+        "cross_entropy": 0.03556359665479577,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.17850283900328515,
+            "quantiles": {
+              "p05": -1.0,
+              "p25": -0.9881227452188384,
+              "p50": 0.9997073508695584,
+              "p75": 1.0,
+              "p95": 1.0
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.007150347925206017,
+            "quantiles": {
+              "p05": 0.0,
+              "p25": 0.0,
+              "p50": 9.89424172452191e-06,
+              "p75": 0.0024012992749434343,
+              "p95": 0.027867848636872434
+            }
+          },
+          "signed_q_error": {
+            "mean": 0.0005422482278488801,
+            "quantiles": {
+              "p05": -0.0043748446627210995,
+              "p25": -2.9205586587588428e-05,
+              "p50": 0.0,
+              "p75": 0.0,
+              "p95": 0.005570827564004716
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.000592700151464476,
+            "quantiles": {
+              "p05": -0.0008978826217750813,
+              "p25": 0.0,
+              "p50": 0.0,
+              "p75": 0.00020040023974639848,
+              "p95": 0.004295782360913681
+            }
+          }
+        }
+      },
+      "bt4_native": {
+        "rows": 618,
+        "q_mse": 0.000598903870627967,
+        "draw_mse": 0.0019271527574403877,
+        "q_brier_component": 0.0002994519353139835,
+        "draw_brier_component": 0.0028907291361605814,
+        "brier": 0.0031901810714745652,
+        "q_brier_fraction": 0.09386675195071947,
+        "draw_brier_fraction": 0.9061332480492804,
+        "cross_entropy": 0.05937012005902146,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.17120524203645343,
+            "quantiles": {
+              "p05": -0.9999243701120429,
+              "p25": -0.9997587221524666,
+              "p50": 0.9997599142171529,
+              "p75": 0.9999429972718294,
+              "p95": 0.9999775890997452
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.00584587931291569,
+            "quantiles": {
+              "p05": 3.861218799065482e-06,
+              "p25": 1.0922692526309117e-05,
+              "p50": 3.537164008734962e-05,
+              "p75": 7.662813809585197e-05,
+              "p95": 0.0005125608267624791
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.006755348738982833,
+            "quantiles": {
+              "p05": -0.0427462973611535,
+              "p25": -0.0018486216940519218,
+              "p50": -0.00010530938955066738,
+              "p75": -3.7836742855235084e-05,
+              "p95": 0.0001755407224652727
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.00071176846082585,
+            "quantiles": {
+              "p05": -0.025233735337428228,
+              "p25": -0.0009111019765596382,
+              "p50": 9.206877121011276e-06,
+              "p75": 3.339909237887815e-05,
+              "p95": 0.00015540616873842595
+            }
+          }
+        }
+      },
+      "ceres_primary": {
+        "rows": 618,
+        "q_mse": 0.0006343920438874626,
+        "draw_mse": 0.002377670688336526,
+        "q_brier_component": 0.0003171960219437313,
+        "draw_brier_component": 0.003566506032504789,
+        "brier": 0.003883702054448521,
+        "q_brier_fraction": 0.08167362415981537,
+        "draw_brier_fraction": 0.9183263758401844,
+        "cross_entropy": 0.09759056096166878,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.171005176702805,
+            "quantiles": {
+              "p05": -0.9999999912333825,
+              "p25": -0.9999998821730695,
+              "p50": 0.9999998212094325,
+              "p75": 0.9999999743344299,
+              "p95": 0.9999999921112941
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.005922656783715115,
+            "quantiles": {
+              "p05": 5.7997618186998785e-09,
+              "p25": 1.599500101479571e-08,
+              "p50": 3.886405383510575e-08,
+              "p75": 1.5292030904135144e-07,
+              "p95": 8.008005227976203e-06
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.00695541407263124,
+            "quantiles": {
+              "p05": -0.04154319682671377,
+              "p25": -0.0018108811341869813,
+              "p50": -6.02685098494149e-08,
+              "p75": -1.580084627028633e-08,
+              "p95": 4.1195944672223197e-08
+            }
+          },
+          "signed_draw_error": {
+            "mean": -0.0006349909900264264,
+            "quantiles": {
+              "p05": -0.025293248074210583,
+              "p25": -0.0009415962056097983,
+              "p50": 1.7157064129456002e-08,
+              "p75": 5.253426554146036e-08,
+              "p95": 7.042070455735264e-07
+            }
+          }
+        }
+      },
+      "ceres_secondary": {
+        "rows": 618,
+        "q_mse": 0.00038391245231879394,
+        "draw_mse": 0.0015550745074955797,
+        "q_brier_component": 0.00019195622615939697,
+        "draw_brier_component": 0.0023326117612433696,
+        "brier": 0.0025245679874027665,
+        "q_brier_fraction": 0.07603527697302315,
+        "draw_brier_fraction": 0.9239647230269769,
+        "cross_entropy": 0.048420317248223606,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.17041450217557197,
+            "quantiles": {
+              "p05": -0.9976609610205222,
+              "p25": -0.9957664819105655,
+              "p50": 0.9935807873127648,
+              "p75": 0.9964441452239623,
+              "p95": 0.9975853162025007
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.009457340734325134,
+            "quantiles": {
+              "p05": 0.0018853541917468932,
+              "p25": 0.0026470250255597235,
+              "p50": 0.0035446905155116395,
+              "p75": 0.005046143450211764,
+              "p95": 0.00933926189950501
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.007546088599864253,
+            "quantiles": {
+              "p05": -0.03745767849204874,
+              "p25": -0.006195125746659869,
+              "p50": -0.00366120521501212,
+              "p75": -0.0022703533826286537,
+              "p95": 0.004102068240624473
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.002899692960583593,
+            "quantiles": {
+              "p05": -0.021165502703124273,
+              "p25": 0.001545157051416205,
+              "p50": 0.0029285727533369995,
+              "p75": 0.004292804260655953,
+              "p95": 0.0071160166920980145
+            }
+          }
+        }
+      },
+      "ceres_dual": {
+        "rows": 618,
+        "q_mse": 0.0005037550040493518,
+        "draw_mse": 0.0020161761725590293,
+        "q_brier_component": 0.0002518775020246759,
+        "draw_brier_component": 0.003024264258838544,
+        "brier": 0.0032761417608632207,
+        "q_brier_fraction": 0.07688235748330667,
+        "draw_brier_fraction": 0.923117642516693,
+        "cross_entropy": 0.05347935929886994,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.1707689068919118,
+            "quantiles": {
+              "p05": -0.9990643749735296,
+              "p25": -0.9983064061887352,
+              "p50": 0.9974321758371182,
+              "p75": 0.9985776268067195,
+              "p95": 0.9990341082213062
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.0073365303639591215,
+            "quantiles": {
+              "p05": 0.0007541471554677751,
+              "p25": 0.0010588292952278544,
+              "p50": 0.0014178891392327836,
+              "p75": 0.0020185139936381253,
+              "p95": 0.003748245698653676
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.007191683883524448,
+            "quantiles": {
+              "p05": -0.04012949809878406,
+              "p25": -0.0029317072007332967,
+              "p50": -0.001576326097140035,
+              "p75": -0.0010355734772816705,
+              "p95": 0.0016145928176539257
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0007788825902175817,
+            "quantiles": {
+              "p05": -0.023604964245876173,
+              "p25": 8.972668882044734e-05,
+              "p50": 0.0011706657356081076,
+              "p75": 0.0016979272038657187,
+              "p95": 0.0028464806015334864
+            }
+          }
+        }
+      },
+      "registered_sf50_bt425_ceres25": {
+        "rows": 618,
+        "q_mse": 0.0001692914662762228,
+        "draw_mse": 0.0004954427205746462,
+        "q_brier_component": 8.46457331381114e-05,
+        "draw_brier_component": 0.0007431640808619693,
+        "brier": 0.0008278098140000807,
+        "q_brier_fraction": 0.1022526330403026,
+        "draw_brier_fraction": 0.8977473669596975,
+        "cross_entropy": 0.03723118658549104,
+        "distributions": {
+          "predicted_q": {
+            "mean": 0.17474495673373383,
+            "quantiles": {
+              "p05": -0.9995752778465293,
+              "p25": -0.9934025543898074,
+              "p50": 0.9991701703154134,
+              "p75": 0.999581371922191,
+              "p95": 0.9997333368026317
+            }
+          },
+          "predicted_draw": {
+            "mean": 0.006870776381821712,
+            "quantiles": {
+              "p05": 0.00021690318743159637,
+              "p25": 0.00034359046843430416,
+              "p50": 0.0005259150205338015,
+              "p75": 0.001610256315857472,
+              "p95": 0.014711208777137743
+            }
+          },
+          "signed_q_error": {
+            "mean": -0.003215634041702382,
+            "quantiles": {
+              "p05": -0.020713716436620167,
+              "p25": -0.0013389051508556349,
+              "p50": -0.0004889468518208817,
+              "p75": -0.00029092467742067307,
+              "p95": 0.0009343724317922516
+            }
+          },
+          "signed_draw_error": {
+            "mean": 0.0003131286080801713,
+            "quantiles": {
+              "p05": -0.01158507167535038,
+              "p25": -2.5670588985195824e-05,
+              "p50": 0.0003260441324427387,
+              "p75": 0.0005167475685477591,
+              "p95": 0.0015556243756529398
+            }
+          }
+        }
+      }
+    }
+  },
+  "elapsed_seconds": 39.79956155602122,
+  "limits": "SF ruler agreement, not Elo or true Q calibration; current SF witness is not a retroactive historical hash. Fixed recipes, no fit. Output row bank preserves original source/game identities."
+}
