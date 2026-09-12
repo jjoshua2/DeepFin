@@ -10,7 +10,7 @@ measurements support which claims.
 | --- | --- |
 | [Ceres materializer batch screen](2026-09-12-ceres-materializer-batch-benchmark.md) | Real 8,192-row outputs identical at 128/512; observed timings confounded by cache/order, no production speedup claim |
 | [Ceres source-read cache](2026-09-12-ceres-source-block-cache.md) | CPU component benchmark: identical batches,1.74s→0.12s reads; future collector cache/timers, no GPU throughput claim |
-| [Small G10 Ceres pilot](2026-09-11-g10-ceres-pilot.md) | 32,768-row policy/value/Q-draw and same-move constraint diagnostics complete; Ceres reduces balanced SF-flagged mass but adds globally, no strength claim |
+| [Small G10 Ceres pilot](2026-09-11-g10-ceres-pilot.md) | Full 262,079-row/32-shard G10 Ceres bank qualified; existing policy/value/Q-draw and constraint diagnostics remain first4 only, no strength claim |
 | [Saved SF negative constraints](2026-09-11-sf-negative-constraints-screen.md) | Completed 262,079-row SF/BT4 diagnostic: >300cp flagged mass mostly unscored; no blanket T300 promotion or Ceres strength claim |
 | [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | 1,574,952 matched saved-SF rows; real 262,079-row fixed-policy SF/BT4 value pair materialized in 4m32s; no training/strength result |
 | [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | Full 18,910,484-row Ceres bank qualified at September 12 01:41 UTC; collection complete, policy materialization launched, training pending, no playing result |
