@@ -10,7 +10,7 @@ measurements support which claims.
 | --- | --- |
 | [Ceres materializer batch screen](2026-09-12-ceres-materializer-batch-benchmark.md) | Real 8,192-row outputs identical at 128/512; observed timings confounded by cache/order, no production speedup claim |
 | [Ceres source-read cache](2026-09-12-ceres-source-block-cache.md) | CPU component benchmark: identical batches,1.74s→0.12s reads; future collector cache/timers, no GPU throughput claim |
-| [Small G10 Ceres pilot](2026-09-11-g10-ceres-pilot.md) | 262,079 G10 Ceres rows qualified; separate 790,282-row next96 collection launched under 2h total bound, not yet added to coverage; science remains first4 only |
+| [Small G10 Ceres pilot](2026-09-11-g10-ceres-pilot.md) | 1,052,361 G10 Ceres rows qualified after run06 next96; matching 792,643-row run07 collection launched under 2h bound, not yet included; science remains first4 only |
 | [Conservative research recovery](2026-09-12-conservative-research-recovery.md) | Guarded SF generation resumed; all 15 remaining native-WDL cohorts completed and qualified within two hours, covering the accepted 16.40M G10 positions; subsequent metadata consumer admission passed |
 | [Saved SF negative constraints](2026-09-11-sf-negative-constraints-screen.md) | Completed 262,079-row SF/BT4 diagnostic: >300cp flagged mass mostly unscored; no blanket T300 promotion or Ceres strength claim |
 | [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | 1,574,952 matched saved-SF rows; native BT4 WDL and metadata manifest admission complete for all 16,404,093 accepted common G10 positions; remaining 19 original B100 policy products launched sequentially; full-cohort value targets and training remain pending |
