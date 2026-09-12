@@ -132,3 +132,37 @@ A preserved failure in worker 2, game 99518, ply 318 explains why the full-large
 The future generator now checks a preceding block before using it to request another search: contiguous ranks, the requested full width, finite effective scores, and unique legal moves. Explicit `searchmoves` must match the preceding request's roster exactly; an unrestricted numeric first rung may return a legal top-k subset of its requested width. A failure stops extension and adds `extension_stop_reason: invalid_candidate_roster` to the observed phase; at the G10 decision it also records that gate reason. The valid phase-zero observations, malformed later observations, and parser anomaly counters remain available. Harmless repeated emissions of the same block still allow extension.
 
 This does not redefine the parser's rank-based `complete` flag, deduplicate historical observations, or repair the frozen corpus. It prevents malformed candidate rosters from propagating into a subsequent search; it does not sanitize a malformed final phase with no further handoff or guarantee that every saved intermediate d9 block is valid. The latest-phase d9 derivation remains unchanged. No live generator restart or adoption is part of this change. The full failed derivation remains failed, the separately qualified prefix remains valid, and later native-BT4 coverage does not retroactively repair the SF baseline. One diagnosed row establishes the failure mechanism, not its frequency.
+
+## Original run07 large native BT4 WDL coverage completed, September 12
+
+The complete original run07 common-large cohort now has native BT4 WDL labels:
+**2,008,952 rows in 246 shards**, with 1,912 rows in its final shard. Unlike the
+four run06 collection units, this collection writes one complete output namespace.
+Combined with run06 large (2,013,019 rows) and both earlier increments
+(526,376 rows), direct G10 native-WDL coverage is now **4,548,347 rows**.
+
+The existing qualified collector exited zero in 1,182.65 seconds (19m43s), within
+a 2,100-second enclosing bound and 2,000-second child bound. It retained batch
+128, two threads on CPUs 4–5, the same native probability teacher and mandatory
+GPU lease. Its subsequent terminal-only qualification exited zero in 18.04 seconds
+with 50,356 KiB reported peak RSS. All five saved arrays across every shard
+(128,572,928 decoded bytes) passed their stored hashes, exact row/source/teacher
+bindings and finite float32 probability checks; maximum unit-mass error was
+1.4831e-7. Independent completion review passed without rereading the arrays.
+
+Two earlier advisory preflights returned a busy lease before collection launched.
+A bounded same-call probe subsequently acquired and released the lease; the
+transient owner's cause remains unresolved. One actual collector attempt then
+succeeded with its unchanged lease and resource guards. No lock was bypassed or
+other process stopped. Launch preflight recorded 3,348 MiB GPU memory used, 6%
+GPU utilization, no compute applications, 279.42 GiB free SSD space and
+58,173,488 KiB available RAM; Ceres policy materialization was still running.
+The [compact completion evidence](evidence/g10-value-readiness-20260911/native-wdl-run07-complete.json)
+retains the failed preflights, successful probe, launch and both terminal receipts.
+
+The single output directory makes the existing historical native-WDL consumer
+route applicable in principle; its complete provenance manifest/admission and
+writer content/feed checks have not been run for this cohort. This is completed
+label readiness, not a new value target, training admission or scientific strength
+result. The separate run06 adaptive-SF failure remains unchanged. No additional
+GPU cohort was queued, and registered Ceres comparisons retain priority.
