@@ -1,0 +1,142 @@
+{
+  "schema": 1,
+  "runtime": "5375064b56714b6b16f3a6c552efe75c7855386d",
+  "code_pr": "https://github.com/jjoshua2/DeepFin/pull/659",
+  "code_status": "Open stack on PR655; no main merge or whole-type pass claimed",
+  "execution": {
+    "status": "COMPLETE_VALUE_DIAGNOSTIC_QUALIFICATION_NOT_TRAINING",
+    "plan_sha256": "8b5864076891c30f3abc0c2739a27a15d2f99a1597d391bd873f02d571422284",
+    "started_unix": 1789185966.4917822,
+    "pid": 634935,
+    "argv": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "810s",
+      "/usr/bin/time",
+      "-o",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_complementarity_v1/execution/audit.time.json",
+      "-f",
+      "{\"seconds\":%e,\"max_rss_kib\":%M,\"exit_code\":%x}",
+      "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+      "/tmp/deepfin-g10-policy-complementarity/scripts/teacher_adjudication_audit.py",
+      "--manifest",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/adapter_manifest.json",
+      "--expected-manifest-sha256",
+      "8b81f9633050f8e2f286259671e3cefb39bfb30dffa29c7d76608723d36505c8",
+      "--start-shard",
+      "0",
+      "--max-shards",
+      "4",
+      "--max-index-bytes",
+      "2147483648",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_complementarity_v1/execution/audit",
+      "--ceres-manifest",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_pilot_v1/post_collection/completed/ceres_policy_manifest.json",
+      "--expected-ceres-manifest-sha256",
+      "972da2fabb2d1c721c6ca6b737d7404064147ecf92944ebf98392aeeaf87755e",
+      "--native-wdl-manifest",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_native_wdl_manifest_v1/manifest.json",
+      "--expected-native-wdl-manifest-sha256",
+      "23fcb56ba8b975f0659085523bc19eacf5fe8edb73d12dc59cfbbbcf0aae0946"
+    ],
+    "returncode": 0,
+    "rows": 32768,
+    "summary_sha256": "5c9f385057ce9c4fe7b881243c8764262a383232b6ac2ad6767f8d9b70246248",
+    "row_bank_sha256": "7e45c8c02cdd216f1060354259be370be74250a6c2056e46dc89954ba9b256e7",
+    "time_receipt": {
+      "seconds": 336.12,
+      "max_rss_kib": 2001572,
+      "exit_code": 0
+    },
+    "elapsed_seconds": 336.41225716099143,
+    "completed_unix": 1789186302.861996
+  },
+  "bank_only_readout_terminal": {
+    "session": 12863,
+    "exit_code": 0,
+    "seconds": 9.5,
+    "max_rss_kib": 36900,
+    "one_bank_pass": true
+  },
+  "scientific_review": {
+    "status": "PASS_WITH_MINOR_PUBLICATION_WORDING_NOTE",
+    "reviewer": "archive_review",
+    "artifacts": {
+      "analyze.py": "a1c1f8d25cf970c455aa718854169642f6b7fd80e4abb8bd1f5965c1883b72de",
+      "readout.json": "524aae708e16a3e510eb3e7bf7b963be1b0ac45e195ba8a56fe5580aeca8a2d7",
+      "readout.md": "566ed81268dbbc09e89232af21f7354556f0d173e0ae4c88c98642e95e3ab7d8",
+      "terminal.json": "f8aa5f2ba14e92231496cbda458b3509cc9536d8be0e3db2031a84a51662f941"
+    },
+    "blocking_findings": [],
+    "verified": [
+      "One completed-bank pass reconstructs each strict >300cp move set and conservative all-winner partition from saved observations; unknown scores are retained.",
+      "Full old aggregate equality checked; all32768source rows/4shards and167source-qualified game groups recorded. d9mate exclusions8775 leave23993ordinary rows.",
+      "Absolute all-stratum denominators include zero-flag rows; arithmetic midpoint and same-move retained/removed/added identities hold.",
+      "Balanced2250 rows and best-next-gap T300 complement2006 balanced/22247ordinary are separate fixed strata; no threshold tuning.",
+      "Confirmed totals522.647461\u2192552.565525 over allordinary,4.957282\u21923.076929 balanced and corresponding removed/added means match prose and JSON. Unavailable fractions and tiny nonzero balanced contradiction represented honestly.",
+      "No intervals or Elo/teacher-truth inference claimed; narrowed final roster and final-mate handling preserved."
+    ],
+    "minor_publication_note": "Replace Balanced results support complementary teacher errors with complementary teacher allocations relative to saved SF ruler; observed errors are not established. Author notified.",
+    "review_scope": "Compact JSON, prose, script and terminal metadata only; no bank/source reread, bootstrap or repeated tests."
+  },
+  "pins": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_complementarity_v1/plan.json",
+      "sha256": "8b5864076891c30f3abc0c2739a27a15d2f99a1597d391bd873f02d571422284"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_complementarity_v1/run.py",
+      "sha256": "7a22b867c2352d5863e9c972ad5e812b2dea1ad91d941cc8f367e608976b05e9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_complementarity_v1/execution/status.json",
+      "sha256": "0ba3fb4f2dab9215b1bf6140b4579e386982a7c073b8c84c727c6c8e1f3cd154"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_complementarity_v1/readout/readout.json",
+      "sha256": "524aae708e16a3e510eb3e7bf7b963be1b0ac45e195ba8a56fe5580aeca8a2d7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_complementarity_v1/readout/analyze.py",
+      "sha256": "a1c1f8d25cf970c455aa718854169642f6b7fd80e4abb8bd1f5965c1883b72de"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_complementarity_v1/readout/scientific_review.json",
+      "sha256": "9579f3d27ae27689525742cdd85c0ac33237b8f974d82475f33007edc1f7a9a7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_complementarity_v1/independent_preparation_review.json",
+      "sha256": "476cf15d55e92bc050383345c4c29c3323b982483c913d29ddc372af9c4cad32"
+    }
+  ],
+  "bulk_bank": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_complementarity_v1/execution/audit/teacher_adjudication_rows.jsonl",
+    "sha256": "7e45c8c02cdd216f1060354259be370be74250a6c2056e46dc89954ba9b256e7"
+  },
+  "validation": {
+    "focused_tests": {
+      "session": 8088,
+      "passed": 16,
+      "exit_code": 0
+    },
+    "scoped_types": {
+      "session": 95700,
+      "exit_code": 0,
+      "errors": 0,
+      "warnings": 0
+    },
+    "whole_types": "Not repeated: prior stack-wide timeouts unresolved; no whole-type pass claimed",
+    "ruff": "Scoped PASS",
+    "whole_ruff_vulture": {
+      "session": 41681,
+      "exit_code": 0,
+      "logs": [
+        "/tmp/g10-complementarity-gate-ruff.log",
+        "/tmp/g10-complementarity-gate-vulture.log"
+      ]
+    },
+    "qualification_decision": "Parent explicitly authorized this bounded research-only saved-source run after independent source/preparation PASS; not upstream merge or training admission."
+  }
+}
