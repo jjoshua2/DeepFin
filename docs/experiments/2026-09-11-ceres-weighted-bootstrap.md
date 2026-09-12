@@ -1,6 +1,6 @@
 # Weighted Ceres bootstrap preparation
 
-Status: all 18,910,484 original-corpus Ceres labels are qualified across 2,309 shards as of September 12 at 01:41 UTC. Collection is complete. Both complete producer manifests are assembled; CeresB50 policy and B100CeresV25 value materialization are active on separate CPU allocations. Neither completed materialization, training nor playing-strength results are claimed.
+Status: the complete CeresB50 policy corpus is materialized and qualified: 18,910,484 rows across 2,309 shards. Its prospective exact-epoch schedule passed and training started on September 12 at 07:56:06 UTC. B100CeresV25 value materialization remains separate ongoing work. No training completion or playing-strength result is claimed.
 
 ## Selected question
 
@@ -323,3 +323,9 @@ registered training; there is no new playing-strength result.
 | Frozen consumer fixture readout | `89b625ac4d30eb89484a6cb1066803b058859a6279d498f8f47b44f36ecaf4e4` |
 
 Bulk labels, executable manifests, logs and receipts remain in the host experiment storage. These identities bind the launch snapshot; future completion and training results belong in this record.
+
+## CeresB50 corpus completed
+
+The original batch-128 producer completed the full registered corpus in 5.57 hours. The separate frozen qualifier passed in 529.91 seconds with 381,260 KiB peak RSS, checking all 2,309 shard layouts, recipe attributes, and stable producer-bound source/teacher/output identities. It inherited the completed producer’s payload checks rather than decoding the corpus again. [Completion evidence](evidence/ceres-b50-training-handoff-20260912.json) binds the published summaries, actual COMPLETE receipt, qualification plan, and terminal.
+
+The prospective schedule passed in 421.83 seconds: 18,910,484 rows and 36,935 batches match the frozen canonical seed-zero epoch. The independently reviewed training manifest retains Python 3.10.12, NumPy 1.26.2, Torch 2.11.0+cu128, batch 512, and 16/16 plan/load workers. The coordinator launched at 07:56:06 UTC and the actual trainer stage started three seconds later; its log reached 176 of 36,935 steps at this launch snapshot. The operator inherited CPUs 0–31, preserving the historical worker layout. Training has a 16,200-second cap and the enclosing operator a 21,630-second cap; the parent owns its completion observer. There is no completed model or playing result yet. The fixed recipe remains equal sharpened BT4/Ceres policy with original SF values; this preparation establishes corpus readiness, not a stronger network.
