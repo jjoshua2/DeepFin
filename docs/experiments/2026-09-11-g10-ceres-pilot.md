@@ -4,7 +4,9 @@ Current collection status: **all 32 original run06 shards / 262,079 rows are now
 qualified**, including policy and both value-logit heads. The completed science
 below still uses the original 32,768-row first-four-shard sample; full-bank
 collection does not enlarge those diagnostic results. See the final completion
-section for provenance and the fresh-attempt history.
+section for provenance and the fresh-attempt history. A separate complete next96
+cohort collection launched on September 12; its planned 790,282 rows are not yet
+counted as completed coverage.
 
 The preregistered task was to collect C3-768-30-pre8-I8 policy and both raw value-logit heads for the first four whole original run06 G10 derived shards (0..3, 32,768 rows, 1,024 batch-32 calls, zero padding). This is a convenience prefix, **not representative G10**. Same-row teacher disagreement is a diagnostic, not an Elo estimate or a new training queue.
 
@@ -357,3 +359,61 @@ independent review and exact local artifact identities. Bulk shards remain under
 `data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/` and
 `data/lc0/ceres_compact_sidecars/g10_run06_remaining28_v2/`; failed v1 artifacts
 remain separate and are not admitted.
+
+## September 12: complete next96 cohort collection launched
+
+The existing collector driver launched at **2026-09-12T21:06:05.995196+00:00** for the complete,
+already source-qualified run06 next96 cohort: **790,282 rows / 97 shards**.
+This is a convenience cohort selected to expand the same-row teacher bank,
+not a representative sample or another small teacher-agreement experiment.
+The previous 262,079 G10 Ceres rows remain qualified. Successful collection and
+saved-output qualification would raise that coverage to **1,052,361 rows**;
+this launch does not establish the increase. The original 18,910,484-row Ceres
+corpus is separate, and the diagnostic results above still concern first4 only.
+
+Seven fresh chunks cover shards 0–15, 16–31, 32–47, 48–63, 64–79, 80–95 and 96.
+The last shard contains 3,850 real rows and requires 22 padding rows: 790,304
+fixed-batch input rows and 24,697 calls in total. Runtime `e9c1b74bc44c45f9ac6d70195f1422c6d24a65f9`,
+the C3 model, approximate fixed32 profile, ORT 1.29/NumPy 2.2.6/CUDA 13 libraries,
+policy and both raw value-logit heads are unchanged. The newer source-cache
+implementation was not adopted. No temperature fitting or backend-parity claim
+is added.
+
+The single 7,200-second allocation includes up to 6,600 seconds for the existing
+owned collection driver and cleanup, then at most 600 seconds for saved-output
+qualification. The latter also checks the original absolute deadline. Each chunk
+retains its 1,200-second ceiling, clipped by driver time remaining. There is no
+automatic retry. CPUs 2–3 and two numeric threads are used, with the existing GPU
+lease, 8 GiB ORT allocator allowance, 12 GiB sampled device and per-process RSS
+guards, a 32 GiB host MemAvailable floor and 150 GiB SSD reserve. Per-chunk output
+and state remain bounded to 128 MiB. Memory checks occur every five seconds;
+these are sampling guards, not peak measurements or hard process-RSS quotas.
+The CPU-only qualifier has a 1 GiB address-space ceiling.
+
+The parent reported 84 GiB available RAM, 12 GiB used, zero swap use and GPU 2,913 MiB/3%
+at preflight, with no other GPU job. The actual driver start receipt is retained;
+root 29510 is owned solely by parent completion observer 119. Existing CPU target
+preparation and guarded SF generation are preserved. No collection outcome was
+read for this publication.
+
+The reboot changed the inode/ctime of the 942,048-byte WSL `libdxcore.so`; its
+rehash matches the prior qualified digest. Current boot metadata is pinned,
+and the unchanged collector still verifies actual mapped-library bytes and
+provider execution. The final auditor retains all nine saved-array checks per
+shard, call/padding accounting, row/source identity, provider and loaded-library
+proofs. It uses the accepted next96 native-BT4 receipt and attributes for source
+witnesses without rereading native arrays. A policy manifest will be assembled
+from actual accepted Ceres attributes only after successful qualification;
+training admission remains separate.
+
+The prior 229,311-row collection took 985.2826 seconds, suggesting roughly 56.6 minutes
+for the new cohort at unchanged throughput, before additional overhead. This is
+an estimate, not a completion promise. Preparation passed ten metadata guard
+cases, existing default validation and independent static review. A missing
+fresh output parent in the first default attempt and a preparation timestamp
+correction are recorded without implying data execution.
+
+[Compact launch evidence](evidence/g10-ceres-next96-launched-20260912.json)
+pins the actual driver receipt, reviewed plans and exact command. Local state is
+`scratchpad/bt4_joint20/g10_ceres_run06_next96_v1/`; fresh outputs are under
+`data/lc0/ceres_compact_sidecars/g10_run06_next96_v1/`.
