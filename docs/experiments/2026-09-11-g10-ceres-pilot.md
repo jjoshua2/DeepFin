@@ -1,5 +1,11 @@
 # G10 Ceres first-four-shard convenience pilot
 
+Current collection status: **all 32 original run06 shards / 262,079 rows are now
+qualified**, including policy and both value-logit heads. The completed science
+below still uses the original 32,768-row first-four-shard sample; full-bank
+collection does not enlarge those diagnostic results. See the final completion
+section for provenance and the fresh-attempt history.
+
 The preregistered task was to collect C3-768-30-pre8-I8 policy and both raw value-logit heads for the first four whole original run06 G10 derived shards (0..3, 32,768 rows, 1,024 batch-32 calls, zero padding). This is a convenience prefix, **not representative G10**. Same-row teacher disagreement is a diagnostic, not an Elo estimate or a new training queue.
 
 Schedule only after the original18.91M Ceres collection is terminal, during final saved-output qualification or CPU target preparation, and without delaying the registered Ceres training anchors. Parent reviews this plan and publishes the preregistration before GPU spending. There is no automatic launch, wait daemon, resume or retry.
@@ -294,3 +300,60 @@ scoped host types with zero findings, configured whole Ruff/Vulture and independ
 source/plan review passed. Related whole-project type timeouts remain unresolved;
 this main documentation publication does not merge that code stack or imply a
 whole-type pass. No active runtime was replaced.
+
+
+## Remaining 28 shards completed and full bank qualified
+
+The reviewed fresh v2 attempt collected original shards 4–19 and 20–31, preserving
+qualified shards 0–3 and the original source namespace. The two chunks contain
+131,072 and 98,239 real rows respectively: 229,311 new rows plus 32,768 retained
+rows equals 262,079 across exactly 32 shards. Final shard 31 contains 8,127 rows;
+one padding row completes its final fixed-32 call. Padding is not stored as a
+source row. The new chunks made 4,096 and 3,070 calls.
+
+Collection exited zero in 985.2826 seconds (individual chunks 549.5639 and
+405.7090 seconds, plus the registered inter-chunk pause and supervision). The
+previous v1 attempt failed before inference after 5.2257 seconds. Both attempts
+remain preserved; combined collection elapsed time is approximately 990.5083
+seconds within the original 2,400-second allocation. V2 conservatively used a
+2,394-second inclusive cap, with a 2,364-second external TERM plus 30-second KILL
+bound. No automatic retry or additional allocation was introduced.
+
+The first fresh preflight stopped before collection because nonblocking GPU flock
+returned errno 11. A subsequent read-only host lock inventory showed no GPU lock;
+an exact-path probe then found the lease free. The final immediate preflight
+recorded 3,364 MiB device use, 4% utilization, 51.99 GiB available RAM and
+296.59 GiB free SSD, with the shared lease available. All observations, including
+the failed preflight, are retained. No Windows process was stopped or changed.
+
+The collector remained at `e9c1b74bc44c45f9ac6d70195f1422c6d24a65f9`, with the
+same fixed-32 profile, model and provider/library pins. No source-cache runtime
+was adopted. The 8 GiB ORT allocator cap, 12 GiB sampled device guard, CPU 4–5,
+two threads, RAM and 150 GiB disk reserve guards remained unchanged. The running
+original20M CPU materializer was preserved.
+
+After successful collection, the independently reviewed CPU-only saved-label
+qualification exited zero in 16.19 seconds at 72,460 KiB peak RSS, within its
+600-second ceiling. It audited all 28 new shards and reused the accepted first
+four through pinned qualification, attributes, source and unchanged output
+storage witnesses, without rereading their label payloads. The existing auditor
+was copied with only exact per-spec row counts and corresponding fixed-32 padding
+counts replacing its 8,192-row assumptions; payload hashes, row/roster identity,
+provider execution, call accounting and loaded-library proofs remained required.
+No raw source features, model or library payloads were rescanned by qualification.
+
+The resulting policy-consumer manifest is
+`scratchpad/bt4_joint20/g10_ceres_remaining28_v2/post_collection/completed/ceres_policy_manifest.json`,
+SHA-256 `69101b506b70bab8f94ee6520eeab2f8080b8c59295f29612389dde0a2032f36`.
+Its complete qualification receipt has SHA-256
+`401f190c04a33d2403e0e7bb06c8781d45d44909fb6cecd682cb0feaa1bddeb4`.
+Both value heads are retained in the authenticated shards. This establishes a
+complete same-row diagnostic bank, not a trained corpus, a new value comparison
+or playing strength. Existing four-shard scientific conclusions remain unchanged.
+
+[Compact completion evidence](evidence/g10-ceres-complete32-20260912.json)
+contains terminal records, counts, cumulative budget, preflight observations,
+independent review and exact local artifact identities. Bulk shards remain under
+`data/lc0/ceres_compact_sidecars/g10_run06_first4_v1/` and
+`data/lc0/ceres_compact_sidecars/g10_run06_remaining28_v2/`; failed v1 artifacts
+remain separate and are not admitted.
