@@ -1,6 +1,6 @@
 # Weighted Ceres bootstrap preparation
 
-Status: all 18,910,484 original-corpus Ceres labels are qualified across 2,309 shards as of September 12 at 01:41 UTC. Collection is complete. Both complete producer manifests are assembled; CeresB50 policy materialization is launched; the value recipe is prepared. Neither completed materialization, training nor playing-strength results are claimed.
+Status: all 18,910,484 original-corpus Ceres labels are qualified across 2,309 shards as of September 12 at 01:41 UTC. Collection is complete. Both complete producer manifests are assembled; CeresB50 policy and B100CeresV25 value materialization are active on separate CPU allocations. Neither completed materialization, training nor playing-strength results are claimed.
 
 ## Selected question
 
@@ -112,7 +112,7 @@ root session 61364 under the existing eight-hour bound, on CPU cores 0,1 with
 the GPU hidden. Its plan SHA256 is
 `1bc2189980f8551c765cbe9d97669d6c362be56a37e17af97395365175090011`.
 This is a launch observation, not a completed corpus. The B100CeresV25 value
-materialization plan is prepared and has not launched. Both plan identities are
+materialization plan was prepared but not yet launched at that snapshot; its subsequent concurrent launch is recorded below. Both original plan identities are
 in the compact evidence; training admission remains a later step. A separate [G10 convenience pilot](2026-09-11-g10-ceres-pilot.md)
 also completed collection and saved-output qualification; its diagnostic remains
 separate from the original-corpus training anchors.
@@ -242,6 +242,68 @@ The development panel SHA256 is
 `3c955d68a6c010e373b44418f3bbbf1500cf9192d04ca17ffdd3dcd191d7cbb1`.
 Final launch manifests must verify these identities and pin newly produced artifacts;
 this allocation is not itself a runnable or completed launch manifest.
+
+## Concurrent registered materialization, September 12
+
+B100CeresV25 preparation launched at 04:56:27 UTC alongside the active CeresB50
+policy writer. This overlaps preparation of the two already-registered recipes;
+it does not launch training or add a new target variant. Each corpus remains
+18,910,484 original positions. Batch size stays 128, and every transitive value
+producer file retains its previously qualified bytes.
+
+The policy job remains on its original frozen runtime and CPUs 0–1 with the shared
+preparation lock. The value job uses CPUs 2–3 and the fixed value-profile lock,
+with supervisor-only runtime `0719ad87e763250ffee45aab63190a9fd9659fd6` based on
+`f6b8b83aa0a17a4170a4c4e30a62b5ff08eb8a9e`. [PR #662](https://github.com/jjoshua2/DeepFin/pull/662)
+adds these optional allocations while preserving legacy defaults. The two jobs
+read shared immutable SF/Ceres inputs and write disjoint output/state directories;
+no active runtime was edited. Both retain two numeric threads, no GPU, STOP,
+150 GiB disk reserve, sampled 32 GiB output cap and eight-hour enclosing deadline
+with owned-process cleanup. No RSS/address-space cap is implied.
+
+Twenty-six focused subprocess/guard tests passed, scoped host type checking had
+zero errors/warnings, and configured whole Ruff/Vulture checks passed. Independent
+source and frozen-plan reviews passed; metadata-only producer admission exited zero.
+Whole-project type checks were not repeated after related broad timeouts, and no
+whole-type pass is claimed. Parent launch preflight recorded 294.316 GiB free disk,
+56,392,632 KiB available memory and no applicable STOP markers.
+
+The retained policy baseline showed 1,135 of 2,309 policy-stamped shard directories
+after 10,866 seconds, approximately 0.10445 shards/second since launch. Those stamps
+measure preparation progress, not completed corpus qualification. One check about
+20 minutes into concurrent preparation compares the interval rate with this baseline.
+If B50 clearly slows and its projected completion reaches within 30 minutes of its
+original deadline or later, stop only the new value job through its own STOP/cleanup
+path. Do not extend B50's deadline or automatically resume the value attempt.
+
+The scheduled check observed 1,313 policy-stamped shards: 178 additional shards
+in 1,489.49 seconds, or 0.11950 shards/second versus the 0.10445 baseline.
+The projected policy completion retained approximately 135 minutes before its
+original deadline, so neither stop condition held and both jobs continue. The
+value output had 176 directories; this check did not qualify their completion
+stamps. Free SSD space was 291.85 GiB and available RAM 53.59 GiB. The interval
+includes about 230 seconds before value launch and overlaps BT4 labeling, so this
+is a contention check, not evidence that concurrency caused a speedup. Projection
+also excludes unmeasured final publication overhead.
+
+While the GPU was available, one existing native BT4 WDL unit completed on CPUs
+4–5: run06 common-large derived shards 128–191, exactly 524,288 rows in 359.51
+seconds, within a 600-second enclosing bound. The unchanged qualified producer
+used batch 128 and native W/D/L probabilities. A subsequent saved-output check
+verified all five arrays across 64 shards (32 MiB decoded), exact row/teacher/source
+bindings, stored hashes, finite float32 probabilities and unit mass; the largest
+mass error was 1.465e-7. Independent receipt and checker-delta review passed. No
+source feature or model arrays were reread for that check.
+The run06 large bank now has 1,572,864 completed rows; including the earlier two
+common increments, direct native-WDL coverage totals 2,099,240 rows. This is partial
+scale preparation, not full-source or training admission, and it does not repair
+the separate malformed adaptive-SF baseline outside the qualified prefix. No
+additional GPU unit was queued.
+
+The [compact progress evidence](evidence/ceres-concurrent-preparation-20260912.json)
+retains launch, baseline, the complete co-run checkpoint and native-WDL completion
+pins. Successful materialization and existing corpus admission still precede any
+registered training; there is no new playing-strength result.
 
 ## Compact evidence identities
 
