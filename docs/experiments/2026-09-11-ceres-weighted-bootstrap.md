@@ -1,6 +1,6 @@
 # Weighted Ceres bootstrap preparation
 
-Status: the complete CeresB50 policy corpus is materialized and qualified: 18,910,484 rows across 2,309 shards. Its prospective exact-epoch schedule passed and training started on September 12 at 07:56:06 UTC. B100CeresV25 value materialization remains separate ongoing work. No training completion or playing-strength result is claimed.
+Status: the complete CeresB50 policy corpus is materialized and qualified: 18,910,484 rows across 2,309 shards. Its prospective exact-epoch schedule passed and training started on September 12 at 07:56:06 UTC. The separate B100CeresV25 value corpus is also materialized and qualified; its prospective schedule passed and training inputs are ready, with no value training launched. No training completion or playing-strength result is claimed.
 
 ## Selected question
 
@@ -329,3 +329,9 @@ Bulk labels, executable manifests, logs and receipts remain in the host experime
 The original batch-128 producer completed the full registered corpus in 5.57 hours. The separate frozen qualifier passed in 529.91 seconds with 381,260 KiB peak RSS, checking all 2,309 shard layouts, recipe attributes, and stable producer-bound source/teacher/output identities. It inherited the completed producer’s payload checks rather than decoding the corpus again. [Completion evidence](evidence/ceres-b50-training-handoff-20260912.json) binds the published summaries, actual COMPLETE receipt, qualification plan, and terminal.
 
 The prospective schedule passed in 421.83 seconds: 18,910,484 rows and 36,935 batches match the frozen canonical seed-zero epoch. The independently reviewed training manifest retains Python 3.10.12, NumPy 1.26.2, Torch 2.11.0+cu128, batch 512, and 16/16 plan/load workers. The coordinator launched at 07:56:06 UTC and the actual trainer stage started three seconds later; its log reached 176 of 36,935 steps at this launch snapshot. The operator inherited CPUs 0–31, preserving the historical worker layout. Training has a 16,200-second cap and the enclosing operator a 21,630-second cap; the parent owns its completion observer. There is no completed model or playing result yet. The fixed recipe remains equal sharpened BT4/Ceres policy with original SF values; this preparation establishes corpus readiness, not a stronger network.
+
+## Value corpus completed
+
+B100CeresV25 materialization completed at 2026-09-12 09:19:35.364403 UTC, after 4.39 hours. The full 18,910,484-row, 2,309-shard corpus passed the existing qualifier in 722.56 seconds with 384,284 KiB peak RSS. The actual value-lane producer map and original SF/B100/BT4/Ceres lineage are retained in [compact evidence](evidence/ceres-value-training-readiness-20260912.json).
+
+This prepares the registered 50% SF / 25% BT4 / 25% Ceres value mixture with unchanged B100 policy. Its prospective schedule passed in 463.960 seconds, matching all 18,910,484 rows and 36,935 batches of the canonical epoch. The final schema-3 manifest binds the actual 17-entry value-lane producer map, completed qualification, and schedule; the reviewed host operator preserves the 16,200-second training budget and 21,630-second outer bound. Value training has not launched, and no playing result is claimed. The earlier CeresB50 training launch remains the last policy-training observation in this publication.
