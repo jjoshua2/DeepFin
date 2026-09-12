@@ -339,3 +339,51 @@ review SHA256 is
 the completion receipt SHA256 is
 `a813f9ed47f151e876a4eb228c0032ecae846414553fe32010eccdee2eb7ddf3`.
 The full source manifests and external archives remain available.
+
+## September 12: older E0 corpus archived and reclaimed
+
+The distinct legacy `qtemp_0.0005_hist_20m_bt4_toptie_a100` corpus completed
+copy/content verification and exact local shard reclamation. This is the older
+top-max-ties alpha1 recipe, not sharpened E0T05 or current SF/B100/Ceres inputs.
+The archive preserves 713,331 members and 9,658,007,914 logical source bytes in an
+11,016,949,760-byte tar. Local and full external readback SHA256 both equal
+`88008399652e742796eca2ede6eac4e4db3c4de111529b173e0754a7713c2bae`.
+The copy finished in 2,386.83 seconds (39m47s); the recorded maximum RSS was
+99,844 KiB with zero swaps. The verified staging tar was removed.
+
+A separate metadata comparison checked the saved manifest digest, all current
+source stamps and exact membership in 38.76 seconds without reading payloads
+again. Host consumer inspection found no source references. The inaccessible
+same-user process was identified as `ssh-agent`; other disclosed processes were
+WSL support services. This is practical scoped visibility, not a claim that every
+process descriptor was readable. Current generation, downside and WDL batch plans
+do not bind this legacy corpus.
+
+After independent and parent review, the remover deleted exactly 2,309 shard
+directories in 37.76 seconds. The durable journal has 2,309 matched intent/removal
+pairs. Only the original `derive_targets_summary.json` and
+`bt4_policy_mix_summary.json` remain at the source root, with unchanged hashes;
+all runs, checkpoints, arena records and lineage were retained. The independently
+observed external archive identity also remained unchanged. Prior allocated shard
+blocks totaled **12,217,753,600 bytes**; the concurrent filesystem free-space
+increase was **12,163,784,704 bytes**. These are different measurements, not an
+exact attribution of every free byte. The completed operation observed
+265,960,140,800 bytes free; this is a historical snapshot, not reserved capacity.
+
+The copy retained its four-hour inclusive bound, CPUs0–1, two threads, no GPU,
+2GiB per-process address-space limit, 24GiB staging ceiling, 16MiB/s transfer
+pacing and 150GiB local reserve plus staging reservation. Exact reclamation used
+a separate 30-minute inclusive bound, 512MiB address space, the same two CPUs,
+shared nonblocking preparation lock, STOP and fd-based deletion with a durable
+per-shard journal. No active input or preserved interrupted output was removed.
+
+Restore location:
+`/mnt/e/chess_derived_archive_20260908/E0Legacy_v1/qtemp_0.0005_hist_20m_bt4_toptie_a100.tar`.
+The source manifest remains at
+`scratchpad/bt4_joint20/E0Legacy_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_toptie_a100/source.jsonl`,
+SHA256 `4331ace78c550937a6a77fe70360ba6030cbf447cbe7528eebc3fb5dc2dc0305`.
+Restore into a fresh directory and verify the archived identities before renewed
+source admission. Retained summaries alone are insufficient for training.
+[Compact completed receipts and review pins](evidence/e0legacy-archive-reclaimed-20260912.json)
+record both operations; this storage recovery establishes no new playing result
+or proof that the full 100M working set fits.
