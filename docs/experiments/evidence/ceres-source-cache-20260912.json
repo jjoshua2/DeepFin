@@ -1,0 +1,171 @@
+{
+  "plan": {
+    "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/shard_001008.zarr",
+    "columns": [
+      "x",
+      "game_id",
+      "ply_index",
+      "has_game_id",
+      "has_ply_index"
+    ],
+    "code_sha256": "5613d7e83c1877854de08c92937da4396c428b837e0837398c1d7eb7d257d8d1",
+    "rows": 8192,
+    "batch": 32,
+    "cache_rows": 512,
+    "order": [
+      "baseline32",
+      "cache512"
+    ],
+    "passes_each": 1,
+    "decision": "Require all per-column per-batch decoded digests equal. Report read/decode timing only, no end-to-end claim. No automatic repeat.",
+    "bounds": "CPU2,3 numericthreads2 GPUhidden nice19 ionice3 addressspace2GiB outer110TERM10KILL inclusive120s",
+    "cache_order_limitation": "Baseline first warms pages; no eviction/repeats. This tests decode access pattern with order confounding."
+  },
+  "result": {
+    "status": "PASS_IDENTICAL_ALL_256_BATCHES_FIVE_COLUMNS",
+    "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/shard_001008.zarr",
+    "plan_sha256": "aa6d033ad83e7bbe2490156f599a45a1dfaab4c7d9fcb1df56d26e32298840f7",
+    "code_sha256": "5613d7e83c1877854de08c92937da4396c428b837e0837398c1d7eb7d257d8d1",
+    "source_metadata_sha256": "80137c1eade79fd0a860699b4eae624e64a7e90a1f89f5df693672c8c348c27a",
+    "array_metadata": {
+      "x": {
+        "chunks": [
+          512,
+          175,
+          8,
+          8
+        ],
+        "compressor": {
+          "blocksize": 0,
+          "clevel": 2,
+          "cname": "zstd",
+          "id": "blosc",
+          "shuffle": 2
+        },
+        "dtype": "<f2",
+        "fill_value": 0.0,
+        "filters": null,
+        "order": "C",
+        "shape": [
+          8192,
+          175,
+          8,
+          8
+        ],
+        "zarr_format": 2
+      },
+      "game_id": {
+        "chunks": [
+          512
+        ],
+        "compressor": {
+          "blocksize": 0,
+          "clevel": 2,
+          "cname": "zstd",
+          "id": "blosc",
+          "shuffle": 2
+        },
+        "dtype": "<i8",
+        "fill_value": 0,
+        "filters": null,
+        "order": "C",
+        "shape": [
+          8192
+        ],
+        "zarr_format": 2
+      },
+      "ply_index": {
+        "chunks": [
+          512
+        ],
+        "compressor": {
+          "blocksize": 0,
+          "clevel": 2,
+          "cname": "zstd",
+          "id": "blosc",
+          "shuffle": 2
+        },
+        "dtype": "<i4",
+        "fill_value": 0,
+        "filters": null,
+        "order": "C",
+        "shape": [
+          8192
+        ],
+        "zarr_format": 2
+      },
+      "has_game_id": {
+        "chunks": [
+          512
+        ],
+        "compressor": {
+          "blocksize": 0,
+          "clevel": 2,
+          "cname": "zstd",
+          "id": "blosc",
+          "shuffle": 2
+        },
+        "dtype": "|u1",
+        "fill_value": 0,
+        "filters": null,
+        "order": "C",
+        "shape": [
+          8192
+        ],
+        "zarr_format": 2
+      },
+      "has_ply_index": {
+        "chunks": [
+          512
+        ],
+        "compressor": {
+          "blocksize": 0,
+          "clevel": 2,
+          "cname": "zstd",
+          "id": "blosc",
+          "shuffle": 2
+        },
+        "dtype": "|u1",
+        "fill_value": 0,
+        "filters": null,
+        "order": "C",
+        "shape": [
+          8192
+        ],
+        "zarr_format": 2
+      }
+    },
+    "results": [
+      {
+        "mode": "baseline32",
+        "read_decode_and_slice_seconds": 1.7428159386618063,
+        "digest_and_compare_seconds": 0.15771363183739595,
+        "elapsed_seconds": 1.901140346977627,
+        "batches": 256,
+        "ordered_batch_column_digest_sha256": "0dedc88724aa225fe6f39848bd0970dbd1daeb4b4d7cecec97ec23b316e8e1b2"
+      },
+      {
+        "mode": "cache512",
+        "read_decode_and_slice_seconds": 0.12342368019744754,
+        "digest_and_compare_seconds": 0.1527008528355509,
+        "elapsed_seconds": 0.2764380419976078,
+        "batches": 256,
+        "ordered_batch_column_digest_sha256": "0dedc88724aa225fe6f39848bd0970dbd1daeb4b4d7cecec97ec23b316e8e1b2"
+      }
+    ],
+    "elapsed_seconds": 2.2231275560043287,
+    "max_rss_kib": 69812,
+    "limitation": "Baseline first, cache candidate second; filesystem page-cache/order confounded, one pass each. No inference or end-to-end collector timing."
+  },
+  "execution": {
+    "status": "TERMINAL_SUCCESS",
+    "session": 78395,
+    "exit_code": 0,
+    "terminal_chunk": "9f41b1",
+    "plan_sha256": "aa6d033ad83e7bbe2490156f599a45a1dfaab4c7d9fcb1df56d26e32298840f7",
+    "code_sha256": "5613d7e83c1877854de08c92937da4396c428b837e0837398c1d7eb7d257d8d1",
+    "result_sha256": "962b6c52b12e1e4b033bc250bba9dd354a73ca5e8b5ea5ea65b45384859e8301",
+    "readout_sha256": "a36b6d4172b120724457e4c414664739d08b3800fd50176540932455cfb3cb29"
+  },
+  "host_artifacts": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_throughput_saved_timing_v1/cache_benchmark"
+}
