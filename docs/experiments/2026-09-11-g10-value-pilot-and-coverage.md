@@ -308,7 +308,7 @@ original B100 policy-product prerequisite for the full-cohort value writer.
 It does **not** create a new SF/BT4 value blend, qualify a training corpus or
 establish playing strength. The follow-on value writer must still verify
 native cached contents, actual stored feeds and original SF/B100 lineage;
-no follow-on launch is claimed in this record.
+no follow-on launch was claimed at that completion snapshot.
 
 [Compact completion evidence](evidence/g10-b100-all20-completed-20260912.json)
 contains per-cohort source/output mappings, recipe and summary hashes, timings,
@@ -318,3 +318,45 @@ products are under
 the retained run06 increment product remains at
 `scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/B100`.
 The parent's root session 99876 exited zero and sole observer 141 is closed.
+
+
+## Remaining SF50/native BT4 value targets launched
+
+After all 20 original B100 policy products completed, the fixed **50% original SF
+plus 50% native BT4 WDL** writer launched at **22:54:39 UTC on September 12**.
+One sequential CPU batch covers the remaining **19 cohorts / 16,142,014 rows /
+1,980 shards**. The previously qualified **262,079-row** original-SF/native-BT4
+control is preserved and excluded from the rewrite. This continues that existing
+recipe; no dose sweep or adaptive-SF input is selected.
+
+Every command binds the actual completed B100 derive and policy summary hashes.
+B100 T0.5 policy remains unchanged, while the original SF corpus retains the
+native teacher's source qualification and feed identity. The historical manifests
+are not relabeled as B100 inputs. Run06-large uses its reviewed four-output
+native-WDL mapping. The unchanged writer still checks cached probabilities,
+actual stored feeds, row identities, original SF/B100 nonpolicy lineage and final
+storage identities before publishing each complete target product.
+
+The earlier 262,079-row original-value integration took **65.41 seconds**, with
+**394,652 KiB** maximum reported process RSS. Linear scaling suggests **about
+67 minutes** for the remaining rows; this is a one-cohort extrapolation, not a
+full-batch throughput or memory guarantee. The actual allocation is **four hours
+inclusive**, including 300 seconds reserved for final metadata checks. A cohort
+starts only if its complete allowance plus that reserve remains. Failures and
+budget stops preserve partial artifacts and report only completed products;
+there is no automatic retry or extension.
+
+The launch uses **CPUs 6–7**, two numerical-library threads, GPU hidden,
+**4 GiB address space**, at least **32 GiB Linux available memory**, **150 GiB
+free disk**, and a **32 GiB sampled output cap**. Parent preflight observed about
+83 GiB available memory, zero swap use and 225 GiB free disk. These are startup
+observations, not peaks or an aggregate Windows/GPU memory bound. Only one value
+producer runs at a time.
+
+The [compact launch evidence](evidence/g10-native-value50-remaining19-launch-20260912.json)
+contains the exact plan and runtime, independent preparation review, actual
+B100 summary bindings, all 19 output mappings and an immutable launch snapshot.
+Parent root session **39995**, sole observer **184**, owns completion. This is
+**target materialization in progress**, not completed full-cohort value targets,
+training admission or a playing-strength result. No job was launched or polled
+for this publication beyond the single small launch-state snapshot.
