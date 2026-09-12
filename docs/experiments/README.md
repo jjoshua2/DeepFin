@@ -9,7 +9,7 @@ measurements support which claims.
 | Record | Scope |
 | --- | --- |
 | [Ceres source-read cache](2026-09-12-ceres-source-block-cache.md) | CPU component benchmark: identical batches,1.74s→0.12s reads; future collector cache/timers, no GPU throughput claim |
-| [Small G10 Ceres pilot](2026-09-11-g10-ceres-pilot.md) | 32,768-row policy/dual-value collection and saved qualification complete in four shards; policy diagnostic pending, no strength claim |
+| [Small G10 Ceres pilot](2026-09-11-g10-ceres-pilot.md) | 32,768-row policy diagnostic complete: Ceres/mixes improve balanced conditional SF regret but worsen the overall mean; remaining collection stopped before inference, no value/strength claim |
 | [Saved SF negative constraints](2026-09-11-sf-negative-constraints-screen.md) | Completed 262,079-row SF/BT4 diagnostic: >300cp flagged mass mostly unscored; no blanket T300 promotion or Ceres strength claim |
 | [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | 1,574,952 matched saved-SF rows; real 262,079-row fixed-policy SF/BT4 value pair materialized in 4m32s; no training/strength result |
 | [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | Full 18,910,484-row Ceres bank qualified at September 12 01:41 UTC; collection complete, policy materialization launched, training pending, no playing result |
