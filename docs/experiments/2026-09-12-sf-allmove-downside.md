@@ -1,7 +1,7 @@
 # One all-move SF downside candidate
 
-Status: implementation and bounded pilot preparation only. No real target rewrite,
-inference, training or playing result. The registered Ceres value comparisons retain
+Status: the one-shard saved-source producer pilot passed (8,192 rows). No full
+corpus rewrite, inference, training or playing result. The registered Ceres value comparisons retain
 priority.
 
 For normalized stored B100 policy (BT4 temperature 0.5), multiply each legal move
@@ -22,7 +22,7 @@ These are also the source validations reused by the unmerged tactical-transfer
 producer; importing that separate producer is unnecessary. Existing legacy targets
 and full-corpus behavior remain the default.
 
-## Proposed first real pilot (not launched)
+## First real pilot preregistration
 
 Use the original `run03_s3` raw source, original 18,910,484-row SF corpus and its
 B100 T0.5 policy product. Their summary pins are respectively
@@ -50,7 +50,7 @@ more than one raw file because physical rows and retained rows differ.
 Prior G10 saved-source analyses took about 47 seconds for one 8,192-row shard,
 and 377 seconds for four shards with Ceres comparison, but those are different
 pipelines. They justify a bounded exploratory budget, not a runtime guarantee.
-This producer's join/copy throughput is unmeasured. Stop on the first integrity,
+At registration, this producer's join/copy throughput was unmeasured. Stop on the first integrity,
 resource or cap failure, preserve partial output, and diagnose before expanding.
 No automatic full rewrite follows a passed pilot.
 
@@ -70,3 +70,26 @@ with substantial missing deeper scores, not evidence that every flagged move is
 bad. This single candidate tests a different mechanism from isolated-best transfer;
 it is not a threshold or dose sweep. It also changes entropy/support allocation,
 so any eventual gain would not isolate tactical information from calibration.
+
+## Completed first-shard producer pilot
+
+The single pilot passed, including a separate saved-output check inside the same
+bounded operator. It consumed 8,371 physical rows (179 without results), emitted
+8,192 rows and changed 4,660 stored policies. There were 5,679 ordinary rows and
+2,513 mate-domain rows; mate-domain targets were unchanged. No stored support
+losses occurred. All sixteen nonpolicy arrays retained their source bytes, verified
+through 273 copied-file hashes; the saved policy digest and normalized-mass checks
+also passed. [Compact evidence](evidence/sf-allmove-downside-pilot-20260912.json)
+contains all aggregate producer diagnostics and exact source/output/receipt pins.
+
+The producer took 13.57 seconds with 518,204 KiB peak RSS; the complete operator,
+including saved-output qualification, took 15.999 seconds. An initial attempt failed
+before source admission because the CLI lacked the runtime `PYTHONPATH` (0.625
+seconds). That failure remains intact. A fresh namespace with only the environment
+correction and a 599-second remaining bound succeeded; no target or source contract
+changed between attempts.
+
+This establishes a working bounded producer on the selected original prefix. It
+neither estimates playing strength nor proves whole-corpus throughput or validity.
+The output remains explicitly pilot-only and has no trainable corpus summary.
+No full rewrite or training is automatically launched from this result.
