@@ -2,7 +2,8 @@
 """Run one pinned Ceres policy/value materialization, never training or retrying.
 
 Schema1: profile, cwd, commit, python, state, corpus, producer_manifest{path,sha256},
-producer_sha256, pins, supervisor_sha256, stop_paths. Default validates only.
+producer_sha256, pins, supervisor_sha256, stop_paths. Optional cpu_affinity and
+preparation_lock allocate a reviewed independent lane. Default validates only.
 Execution requires --execute and one absolute --deadline shared with an external
 GNU timeout (TERM30seconds before deadline, KILL at deadline), maximum8hours.
 """
@@ -49,6 +50,8 @@ PLAN_KEYS = {
     "supervisor_sha256",
     "stop_paths",
 }
+
+OPTIONAL_PLAN_KEYS = {"cpu_affinity", "preparation_lock"}
 
 
 def require(condition: Any, message: str) -> None:
@@ -152,9 +155,29 @@ def partial(p: dict[str, Any]) -> Path:
     return out.with_name(out.name + ".writing")
 
 
+def execution_settings(p: dict[str, Any]) -> tuple[list[int], Path]:
+    affinity = p.get("cpu_affinity", [0, 1])
+    require(
+        isinstance(affinity, list) and bool(affinity)
+        and all(type(cpu) is int and cpu >= 0 for cpu in affinity)
+        and len(set(affinity)) == len(affinity),
+        "cpu_affinity must contain unique nonnegative integer CPUs",
+    )
+    if "cpu_affinity" in p:
+        require(set(affinity) <= os.sched_getaffinity(0), "requested CPUs unavailable")
+    lock = path(p.get("preparation_lock", str(LOCK)))
+    require(
+        lock in (LOCK, BASE / f"{p['profile']}.preparation.lock")
+        and lock.parent.is_dir(),
+        "preparation lock must be the shared or fixed profile lock",
+    )
+    return affinity, lock
+
+
 def validate(p: dict[str, Any]) -> None:
     require(
-        set(p) == PLAN_KEYS and type(p["schema"]) is int and p["schema"] == 1,
+        PLAN_KEYS <= set(p) <= PLAN_KEYS | OPTIONAL_PLAN_KEYS
+        and type(p["schema"]) is int and p["schema"] == 1,
         "materialization schema/keys differ",
     )
     require(p["profile"] in PROFILES, "unsupported Ceres profile")
@@ -229,6 +252,9 @@ def validate(p: dict[str, Any]) -> None:
         str(Path(p["state"]).parent / "STOP"),
     }
     require(required <= set(p["stop_paths"]), "required STOP paths missing")
+    _, lock = execution_settings(p)
+    require(all(not owned.paths_overlap(lock, item) for item in inputs + outputs),
+            "preparation lock overlaps input/output")
     fresh(p)
 
 
@@ -378,7 +404,8 @@ def execute(
         "supervisor Python differs",
     )
     budget()
-    lock_fd = os.open(LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    _, preparation_lock = execution_settings(p)
+    lock_fd = os.open(preparation_lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         fresh(p)
@@ -392,6 +419,8 @@ def execute(
             "plan_sha256": plan_sha256,
             "profile": p["profile"],
             "corpus": p["corpus"],
+            "cpu_affinity": sorted(os.sched_getaffinity(0)),
+            "preparation_lock": str(preparation_lock),
             "started_unix": time.time(),
             "deadline_unix": deadline,
             "returncode": None,
@@ -499,7 +528,9 @@ def main(argv: list[str] | None = None) -> int:
         MKL_NUM_THREADS="2",
         NUMEXPR_NUM_THREADS="2",
     )
-    os.sched_setaffinity(0, {0, 1})
+    validate(p)
+    affinity, _ = execution_settings(p)
+    os.sched_setaffinity(0, set(affinity))
     os.nice(max(0, 19 - os.getpriority(os.PRIO_PROCESS, 0)))
     subprocess.run(
         ["/usr/bin/ionice", "-c", "3", "-p", str(os.getpid())], check=True, timeout=5

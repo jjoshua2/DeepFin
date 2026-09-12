@@ -613,7 +613,7 @@ This is a separate value intervention from the equal-weight policy mixture.
 
 `scripts/ceres_materialize.py` runs either `CeresB50` or `B100CeresV25` from a
 pinned, complete teacher manifest. It constructs the registered producer command,
-uses the shared preparation lock, keeps the GPU hidden and preserves the existing
+defaults to the shared preparation lock and CPUs 0–1, keeps the GPU hidden and preserves the existing
 STOP, disk, process-cleanup and eight-hour enclosing bounds. Run it with the exact
 planned interpreter and an external timeout; a merged tool does not start a rewrite.
 
@@ -625,6 +625,24 @@ and `corpus`, `producer_manifest` (path/hash), `producer_sha256`, `pins`,
 The deadline includes preflight, waiting, publication checks and cleanup; at the
 maximum eight-hour allocation, use an outer timeout of 28,770 seconds followed by
 30 seconds of kill grace.
+
+A reviewed independent allocation may optionally set `cpu_affinity` (a nonempty
+list of unique available CPU IDs) and `preparation_lock`. The lock must be either
+the existing `hybrid_endpoint_run01/preparation.lock` or the fixed
+`hybrid_endpoint_run01/{profile}.preparation.lock`; arbitrary lock paths and
+symlinks are rejected. This permits disjoint policy/value outputs to use separate
+CPU allocations while reading shared immutable teacher data. It does not schedule
+resources automatically or make overlapping writes safe. Duplicate attempts on
+the same selected lock still contend, and the child inherits its lock FD and CPU
+affinity. The receipt records the realized affinity and lock. Numeric thread
+limits, batch 128, recipe/input pins, STOP, 150 GiB reserve, sampled 32 GiB output
+cap and deadline cleanup stay unchanged. There is no implicit memory-limit guard.
+
+Never edit a supervisor or producer checkout serving an active materialization.
+Prepare a separately pinned runtime and plan; preserve producer bytes when only
+the allocation changes. Concurrent SSD traffic can slow both jobs despite distinct
+cores. Choose allocations against current memory/disk use and the existing run's
+deadline, and stop only the newly owned job if it threatens that allocation.
 
 Both Ceres producers bind each completed shard's storage identity into the summary
 and recheck it before publication. `scripts/ceres_corpus_qualification.py` consumes
