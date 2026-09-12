@@ -1,12 +1,11 @@
 # G10 Ceres first-four-shard convenience pilot
 
-Current collection status: **all 32 original run06 shards / 262,079 rows are now
-qualified**, including policy and both value-logit heads. The completed science
-below still uses the original 32,768-row first-four-shard sample; full-bank
-collection does not enlarge those diagnostic results. See the final completion
-section for provenance and the fresh-attempt history. A separate complete next96
-cohort collection launched on September 12; its planned 790,282 rows are not yet
-counted as completed coverage.
+Current collection status: **1,845,004 G10 rows / 226 shards are qualified**
+across the original run06 increment and both complete next96 cohorts, including
+policy and both value-logit heads. A separate 2,013,019-row run06 large collection
+has launched; it is not yet included. The completed science below still uses the
+original 32,768-row first-four-shard sample. Collection does not enlarge those
+diagnostic results. The dated sections retain the actual execution history.
 
 The preregistered task was to collect C3-768-30-pre8-I8 policy and both raw value-logit heads for the first four whole original run06 G10 derived shards (0..3, 32,768 rows, 1,024 batch-32 calls, zero padding). This is a convenience prefix, **not representative G10**. Same-row teacher disagreement is a diagnostic, not an Elo estimate or a new training queue.
 
@@ -464,9 +463,9 @@ hard RAM quotas. The parent reported 83 GiB available RAM, zero swap use,
 
 Run07's immutable driver start receipt records PID 70553. Parent exec session
 46827 has sole completion observer 160; this publication reads its launch
-receipt, not its evolving outcome. **Run07 is not yet included in qualified
-coverage here.** Only successful completion and saved-output qualification
-would raise G10 Ceres coverage to **1,845,004 rows**. No active observer was
+receipt, not its evolving outcome. At that launch snapshot, run07 was not yet
+included in qualified coverage. Successful completion and saved-output
+qualification would raise G10 Ceres coverage to **1,845,004 rows**. No active observer was
 polled for this publication.
 
 [Compact completion and launch evidence](evidence/g10-ceres-run06-completed-run07-launched-20260912.json)
@@ -474,3 +473,57 @@ contains exact terminal/start records, per-chunk proof summaries, resource bound
 and artifact identities. Run07 state is
 `scratchpad/bt4_joint20/g10_ceres_run07_next96_v1/`; outputs are under
 `data/lc0/ceres_compact_sidecars/g10_run07_next96_v1/`.
+
+## September 12: matching next96 complete; run06 large launched
+
+Run07 next96 collection completed at **2026-09-12T22:36:36.462292+00:00**:
+all seven chunks exited zero, with **792,643 rows / 97 shards** collected in
+**2,345.535 seconds**. Parent root 46827 and sole observer 160 closed with exit 0.
+Saved-output qualification passed the unchanged nine-array, provider/kernel,
+loaded-library, source/row and call-count checks for all 97 shards. The final
+6,211-row shard has 29 padding rows, yielding 24,771 fixed32 calls. The resulting
+policy manifest has SHA-256
+`f39b4ef89aab38bd2ae6068e55568b6a66b07195dd4a3c17c15e739a2cb9708e`.
+Independent compact review checked exact completed layouts and proof records;
+no arrays or model were reread.
+
+Qualified G10 Ceres coverage is now **1,845,004 rows / 226 shards**:
+262,079 original-increment rows + 790,282 run06 next96 + 792,643 run07 next96.
+This remains separate from the original 18,910,484-row Ceres corpus. Both value
+heads are retained; target materialization and training admission remain separate,
+and the earlier first4 scientific results are unchanged.
+
+The complete original `G10_common_large_v1/run06_g10` source collection then
+launched at **2026-09-12T22:39:55.902706+00:00**, with actual driver PID 84779,
+parent root 99754 and sole completion observer 172. It plans **2,013,019 rows /
+246 shards** in fifteen 16-shard chunks plus a final 6-shard chunk. Last shard 245
+contains 5,979 rows and requires 5 padding rows: **62,907 calls / 2,013,024 inputs**.
+Only successful collection and saved qualification would raise G10 coverage to
+**3,858,023 rows**. This launch adds no completed rows and does not repair the
+separately failed adaptive-SF large derivation or relabel its frozen inputs.
+
+The existing schema 2 native-WDL admission supplies an exact 246-shard mapping
+across four genuine native output roots. The prepared qualifier preserves that
+mapping and all saved Ceres checks; it creates no synthetic combined native
+namespace. Runtime `e9c1b74bc44c45f9ac6d70195f1422c6d24a65f9`, approximate fixed32
+profile, model, policy and both value-logit outputs remain unchanged; no source
+cache was adopted.
+
+The **2h40 / 9,600-second inclusive allocation** permits 9,000 seconds for the
+existing collection driver and cleanup, then at most 600 seconds for the CPU-only
+saved audit, which also enforces the original absolute deadline. The measured
+run06 next96 rate projects about 96.2 minutes for this cohort; that whole-run
+extrapolation already includes its baseline pauses and is not a guarantee.
+Existing per-chunk 1,200-second bounds, shared GPU lease, CPUs 2–3/two threads,
+8 GiB ORT allowance, 12 GiB sampled device/per-process RSS guards, 32 GiB available
+host-memory floor and 150 GiB SSD reserve remain in force. Output/state is capped
+at 128 MiB per chunk; the final qualifier has 1 GiB address space. Samples do not
+establish peaks or hard process-RSS quotas. No retry or automatic extension is
+allocated. Parent preflight reported 84 GiB available RAM, zero swap use, 227 GiB
+free SSD and GPU 2,933 MiB/9%. Existing CPU preparation and generation were preserved.
+
+[Compact completed-run07 and large-launch evidence](evidence/g10-ceres-run07-completed-large-launched-20260912.json)
+pins the terminal qualification, manifest, independent review, new plans and
+actual start. Large state is `scratchpad/bt4_joint20/g10_ceres_run06_large_v1/`,
+with fresh outputs under `data/lc0/ceres_compact_sidecars/g10_run06_large_v1/`.
+No active observer was polled or new outcome read for this publication.

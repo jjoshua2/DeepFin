@@ -1,0 +1,259 @@
+{
+  "artifacts": {
+    "large_actual_start": {
+      "bytes": 616,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/driver/actual_start.json",
+      "sha256": "d189467828ec983e82ced12a3693c749a89ef53890cfbd5550babcf3f64a47a8"
+    },
+    "large_audit_plan": {
+      "bytes": 6450,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/post_collection/plan.json",
+      "sha256": "a142e2010f9c323f02023856c30b3fb90cd44ea497f06f3b2a38385515233627"
+    },
+    "large_command": {
+      "bytes": 1006,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/command.sh",
+      "sha256": "9bab05823f9338c1c8daeb8fdf6459069c9507bf7cc96bb37d654bd3a5e7d103"
+    },
+    "large_default_validation": {
+      "bytes": 462,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/preparation_validation.json",
+      "sha256": "7377bc32e3dfb06e2833921f0bdaffd33c670dfdef91b2d0881010276ec6e058"
+    },
+    "large_driver_plan": {
+      "bytes": 30248,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/driver.plan.json",
+      "sha256": "11bfd2e41326c0ca04f7f3058e33d0e348d2ee9e4728f988f7dd5ce70681f95b"
+    },
+    "large_native_readiness": {
+      "bytes": 1053,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/metadata_readiness.json",
+      "sha256": "671da4fa28868a6624ec447aa67e0e022d3ae1a5de4e5284e8643a06b0814c21"
+    },
+    "large_review": {
+      "bytes": 2245,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/independent_review.json",
+      "sha256": "9a41935cd10bf930970ef3ef9b1cc65d9360daed3398afb16b9b5adfe09338b5"
+    },
+    "run07_completed_review": {
+      "bytes": 1638,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_next96_v1/post_collection/completed_review.json",
+      "sha256": "bbd93c7eea4623ff5a2cfe2763b3c7a4ab7e45344e5557356f79454ac7ab6ab9"
+    },
+    "run07_driver_complete": {
+      "bytes": 3733,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_next96_v1/driver/manifest.json",
+      "sha256": "bf1f336adcb25d8b65ea25ce5050e28a9a27666a7a732598252dde614d497950"
+    },
+    "run07_manifest": {
+      "bytes": 2528666,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_next96_v1/post_collection/completed/ceres_policy_manifest.json",
+      "sha256": "f39b4ef89aab38bd2ae6068e55568b6a66b07195dd4a3c17c15e739a2cb9708e"
+    },
+    "run07_saved_qualification": {
+      "bytes": 265881,
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_next96_v1/post_collection/completed/qualification.json",
+      "sha256": "8003fdd9967657934fd55bb24fb5b09c21caed743cc68b4c7fba8a0cf46da0c9"
+    }
+  },
+  "coverage": {
+    "currently_qualified_G10_rows": 1845004,
+    "currently_qualified_G10_shards": 226,
+    "planned_run06_large_rows": 2013019,
+    "planned_run06_large_shards": 246,
+    "previous_original_increment": 262079,
+    "run06_next96_qualified": 790282,
+    "run07_next96_qualified": 792643,
+    "separate_original_Ceres_corpus_rows": 18910484,
+    "would_be_qualified_G10_rows_if_large_passes": 3858023
+  },
+  "large_contract": {
+    "CPU": [
+      2,
+      3
+    ],
+    "ORT_allocator_GiB": 8,
+    "SSD_reserve_GiB": 150,
+    "cache_adopted": false,
+    "calls": 62907,
+    "chunks": [
+      [
+        0,
+        16
+      ],
+      [
+        16,
+        16
+      ],
+      [
+        32,
+        16
+      ],
+      [
+        48,
+        16
+      ],
+      [
+        64,
+        16
+      ],
+      [
+        80,
+        16
+      ],
+      [
+        96,
+        16
+      ],
+      [
+        112,
+        16
+      ],
+      [
+        128,
+        16
+      ],
+      [
+        144,
+        16
+      ],
+      [
+        160,
+        16
+      ],
+      [
+        176,
+        16
+      ],
+      [
+        192,
+        16
+      ],
+      [
+        208,
+        16
+      ],
+      [
+        224,
+        16
+      ],
+      [
+        240,
+        6
+      ]
+    ],
+    "driver_seconds": 9000,
+    "heads": [
+      "policy",
+      "value",
+      "value2"
+    ],
+    "host_available_floor_GiB": 32,
+    "input_rows": 2013024,
+    "last_shard_rows": 5979,
+    "native_roots": 4,
+    "native_schema": 2,
+    "padding_rows": 5,
+    "per_chunk_output_state_MiB": 128,
+    "profile": "ceres-c3-fixed32-compact-v2",
+    "qualifier_AS_GiB": 1,
+    "qualifier_seconds": 600,
+    "runtime": "e9c1b74bc44c45f9ac6d70195f1422c6d24a65f9",
+    "sample_cadence_seconds": 5,
+    "sampled_device_GiB": 12,
+    "sampled_each_process_RSS_GiB": 12,
+    "threads": 2,
+    "total_seconds": 9600
+  },
+  "large_launch": {
+    "actual_start": {
+      "chunk_ids": [
+        "shards0_15",
+        "shards16_31",
+        "shards32_47",
+        "shards48_63",
+        "shards64_79",
+        "shards80_95",
+        "shards96_111",
+        "shards112_127",
+        "shards128_143",
+        "shards144_159",
+        "shards160_175",
+        "shards176_191",
+        "shards192_207",
+        "shards208_223",
+        "shards224_239",
+        "shards240_245"
+      ],
+      "overall_seconds": 9000,
+      "pid": 84779,
+      "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/driver.plan.json",
+      "plan_sha256": "11bfd2e41326c0ca04f7f3058e33d0e348d2ee9e4728f988f7dd5ce70681f95b",
+      "started_unix": 1789252795.9027057
+    },
+    "exclusive_parent_observer": 172,
+    "observer_status_at_handoff": "ACTIVE",
+    "parent_reported_preflight": {
+      "GPU_used_MiB": 2933,
+      "GPU_utilization_percent": 9,
+      "SSD_free_GiB": 227,
+      "available_RAM_GiB": 84,
+      "swap_used": 0
+    },
+    "parent_root": 99754,
+    "scope": "Parent-reported preflight, not publication-author measurement or peak.",
+    "started_utc": "2026-09-12T22:39:55.902706+00:00"
+  },
+  "limits": [
+    "New large launch is not qualified coverage or training admission.",
+    "Prior first4 science stays first4; no new Elo result or representative sample claim.",
+    "No adaptive-SF failed large derivation repair or old data relabeling.",
+    "Sampled memory limits are not hard process-RSS quotas or peak measurements.",
+    "No arrays/models/active observer polls repeated for publication."
+  ],
+  "run07": {
+    "calls": 24771,
+    "checks": [
+      "Exact7 terminal chunks/97 ordered entries; original source and policy-manifest storage witnesses match completed audit records.",
+      "Nine saved-array proof hashes per shard, provider403/4events and first/final library observations retained in actual qualified review.",
+      "Actual wrapper call counts and final6211row/29pad contract verified."
+    ],
+    "collection_seconds": 2345.5353961380006,
+    "created_unix": 1789252893.7722566,
+    "driver_complete": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_next96_v1/driver/manifest.json",
+      "sha256": "bf1f336adcb25d8b65ea25ce5050e28a9a27666a7a732598252dde614d497950"
+    },
+    "limits": [
+      "Compact metadata only; no arrays, models, source payload, repeated bootstrap or active observer polls.",
+      "No strength result, training admission or new completed diagnostic population."
+    ],
+    "manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_next96_v1/post_collection/completed/ceres_policy_manifest.json",
+      "sha256": "f39b4ef89aab38bd2ae6068e55568b6a66b07195dd4a3c17c15e739a2cb9708e"
+    },
+    "padding_rows": 29,
+    "parent_terminal_attestation": {
+      "observer_closed": true,
+      "root": 46827,
+      "sole_observer": 160,
+      "terminal_exit_code": 0
+    },
+    "qualification": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_next96_v1/post_collection/completed/qualification.json",
+      "sha256": "8003fdd9967657934fd55bb24fb5b09c21caed743cc68b4c7fba8a0cf46da0c9"
+    },
+    "rows": 792643,
+    "shards": 97,
+    "status": "PASS_COMPACT_COMPLETED_REVIEW"
+  },
+  "run07_collection_ended_utc": "2026-09-12T22:36:36.462292+00:00",
+  "schema": 1,
+  "status": "RUN07_NEXT96_QUALIFIED_RUN06_LARGE_DRIVER_LAUNCHED",
+  "timing_basis": {
+    "caveat": "Scaled whole-run estimate already includes baseline pauses; 450seconds actual new planned pauses are not an additional measured cost. No throughput guarantee.",
+    "linear_scaled_large_seconds": 5771.125531822818,
+    "measured_rows": 790282,
+    "measured_run06_next96_seconds": 2265.66
+  }
+}
