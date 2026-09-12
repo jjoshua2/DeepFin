@@ -90,6 +90,31 @@ def test_real_rewrite_and_consumer(tmp_path, monkeypatch):
     original = Path(manifest['source']) / 'shard_000000.zarr'
     target = out / original.name
     before, after = tool.copies.file_map(original), tool.copies.file_map(target)
+    # Exercise the exact extracted shard path independently after full-manifest
+    # admission, with smaller batches that exercise partial-chunk writes.
+    accepted, source_summary, specs = tool.read_manifest(Path(args.manifest), args.expected_manifest_sha256)
+    single = tmp_path / 'single_shard'
+    single.mkdir()
+    shard_args = argparse.Namespace(**{**vars(args), 'batch_size': 8})
+    proof, states, metrics = tool.rewrite_shard(
+        shard_args, manifest=accepted, original=source_summary, spec=specs[0],
+        entry=accepted['entries'][0], writing=single, weight=.5,
+        temperatures={'bt4': .5, 'ceres': .5}, guard=lambda: None)
+    direct: Any = zarr.open_group(str(single / original.name), mode='r')
+    full: Any = zarr.open_group(str(target), mode='r')
+    assert dict(direct.attrs) == dict(full.attrs)
+    for name in tool.ARRAYS:
+        a, b = np.asarray(direct[name][:]), np.asarray(full[name][:])
+        assert a.dtype == b.dtype
+        assert a.shape == b.shape
+        assert a.tobytes() == b.tobytes()
+    assert proof['policy_target_sha256'] == result['outputs'][0]['policy_target_sha256']
+    assert proof['changed_rows'] == result['outputs'][0]['changed_rows']
+    assert metrics['max_mass_error'] == result['max_stored_mass_error']
+    assert metrics['max_tv'] == result['max_stored_total_variation']
+    assert metrics['support_lost'] == result['support_lost_move_entries']
+    assert metrics['full_input_digest_verified_shards'] == result['bt4_lineage']['full_input_digest_verified_shards']
+    assert all(tool.shared.storage_identity(path) == state for path, state in states.items())
     for name, digest in before.items():
         if name != '.zattrs' and not name.startswith('policy_target/'):
             assert after[name] == digest
