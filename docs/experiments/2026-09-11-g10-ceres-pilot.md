@@ -1,6 +1,6 @@
-# G10 Ceres first-four-shard convenience pilot — prepared, not launched
+# G10 Ceres first-four-shard convenience pilot
 
-Collect C3-768-30-pre8-I8 policy and both raw value-logit heads for the first four whole original run06 G10 derived shards (0..3, 32,768 rows, 1,024 batch-32 calls, zero padding). This is a convenience prefix, **not representative G10**. Same-row teacher disagreement is a diagnostic, not an Elo estimate or a new training queue.
+The preregistered task was to collect C3-768-30-pre8-I8 policy and both raw value-logit heads for the first four whole original run06 G10 derived shards (0..3, 32,768 rows, 1,024 batch-32 calls, zero padding). This is a convenience prefix, **not representative G10**. Same-row teacher disagreement is a diagnostic, not an Elo estimate or a new training queue.
 
 Schedule only after the original18.91M Ceres collection is terminal, during final saved-output qualification or CPU target preparation, and without delaying the registered Ceres training anchors. Parent reviews this plan and publishes the preregistration before GPU spending. There is no automatic launch, wait daemon, resume or retry.
 
@@ -34,4 +34,34 @@ Bank both raw Ceres WDL heads for a later explicitly authenticated native-BT4-WD
 
 This pilot follows the [completed SF constraint diagnostic](2026-09-11-sf-negative-constraints-screen.md) and preserves the [registered Ceres training anchors](2026-09-11-ceres-weighted-bootstrap.md). To avoid CPU contention if collection overlaps final original-corpus qualification, run the existing CPU-only qualification on cores 2,3 and this pilot on its pinned cores 4,5. Target materialization retains cores 0,1. These are resource allocations, not changes to either teacher or verifier.
 
-Preparation and independent review passed without reading payloads or loading a model. Actual collection, output qualification and policy diagnostics remain unexecuted. The [preparation receipt](evidence/g10-ceres-first4-prepared-20260911.json) pins the reviewed plan, adapter and driver. Both Ceres heads will be banked for future value work; their presence alone does not complete the missing native-BT4 join.
+Preparation and independent review passed without reading payloads or loading a model. The preparation snapshot below preceded the completed collection and qualification reported next. The [preparation receipt](evidence/g10-ceres-first4-prepared-20260911.json) pins the reviewed plan, adapter and driver. Both Ceres heads will be banked for future value work; their presence alone does not complete the missing native-BT4 join.
+
+## Completed collection and saved qualification, September 12
+
+The original-corpus collector finished before this pilot launched. The existing
+one-chunk driver completed all **32,768 rows in four shards** in **152.47 seconds**,
+with 1,024 fixed-32 calls and zero padding. Root collection session 60278 exited
+zero. This is a measured whole-pilot cost, not a speedup comparison.
+
+The independently reviewed post-collection adapter then reused the existing saved
+chunk auditor unchanged. Qualification session 34959 exited zero with
+`PASS_SAVED_G10_CERES_FIRST4_NOT_TRAINING`. All 36 saved arrays passed the existing
+content, shape and identity checks, retaining both raw value heads, legal rosters,
+source-column digests, provider evidence, endpoint runtime observations and terminal
+invocation proofs. The adapter matched the original G10 source storage and its
+historically qualified source-column hashes without rereading source features,
+native BT4 values, model or library payloads.
+
+[Compact completion evidence](evidence/g10-ceres-first4-completed-20260912.json)
+pins the driver, reviewed preparation and actual saved qualification
+(`d82997934ae7b5a5dca31c1b9ce3588b854c4158bc98e5b9c5edc5d759d477d5`).
+The actual four-shard policy-consumer manifest has SHA256
+`972da2fabb2d1c721c6ca6b737d7404064147ecf92944ebf98392aeeaf87755e`;
+it was assembled from accepted attributes and is paired with the terminal
+qualification receipt. It does not admit a training corpus.
+
+The prospective policy diagnostic has not run. There are no new teacher-comparison
+statistics or playing results to report. Both Ceres value heads are saved, but the
+explicit native-BT4 value join remains outstanding. The convenience prefix retains
+its sampling limitation; these four shards do not establish representative G10
+behavior or replace the registered original-corpus training comparisons.

@@ -1,0 +1,138 @@
+{
+  "status": "COMPLETE_ORIGINAL_CERES_SAVED_BANK",
+  "reviewed_utc": "2026-09-12T01:41:50.206271+00:00",
+  "coverage": {
+    "shards": 2260,
+    "rows": 18513920,
+    "newly_payload_verified_chunks": 16,
+    "reused_qualified_chunks": 126,
+    "scope": "Only terminal-success receipts frozen at this audit start; excludes other roots and in-progress or failed chunks."
+  },
+  "recovery_shard_range": "48..2307",
+  "accepted_prior_other_roots": {
+    "range": "0..47 and 2308",
+    "shards": 49,
+    "rows": 396564,
+    "evidence": "ceres-snapshot15-20260911.json"
+  },
+  "total_qualified_shards": 2309,
+  "total_qualified_rows": 18910484,
+  "expected_rows": 18910484,
+  "percent": 100,
+  "collection": {
+    "schema": 1,
+    "status": "COMPLETE",
+    "plan_sha256": "053c1365cbeee1919141007c0b4e7bf94997733f4c6e47b1c26f52cd180e36ae",
+    "ended_unix": 1789176883.077234,
+    "elapsed_seconds": 81733.77408723102
+  },
+  "root_terminals": {
+    "collection": {
+      "session": 47292,
+      "exit_code": null,
+      "driver_status": "COMPLETE",
+      "observer_closed": true,
+      "host_process_gone": true,
+      "note": "Root observation returned no captured exit code; completion rests on driver receipt."
+    },
+    "snapshot16": {
+      "session": 37900,
+      "exit_code": 0
+    },
+    "basis": "Snapshot audit terminal 0 captured; collection status from terminal driver receipt and host observation."
+  },
+  "publication_checks": {
+    "terminal_receipt_hashes": 142,
+    "unchanged_prior_chunk_reviews": 126,
+    "new_chunk_reviews": 16,
+    "scope": "Metadata only; no repeated payload checks"
+  },
+  "pins": {
+    "completed_snapshot_16.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/completed_snapshot_16.json",
+      "sha256": "a156bef0bb4d997cffde3d9b06e49c23c0d1c45274c76d7363d2e21fbf9430a0"
+    },
+    "completed_snapshot_15.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/completed_snapshot_15.json",
+      "sha256": "ca515de4a06cb2c60bb5ee822643eb81bca7409aa40c5a8071b17eaf353ab48c"
+    },
+    "driver/manifest.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/driver/manifest.json",
+      "sha256": "bdf475a3d3102be75822e52a9c42c0a073d798cc7db3c7d3d7f12b1f0e4255ce"
+    },
+    "audit_completed.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/audit_completed.py",
+      "sha256": "d5d409d083bb35ffb5b2be61aa56ce168464ab7217cda970d1090fc544adbd17"
+    },
+    "audit_saved_chunk.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/audit_saved_chunk.py",
+      "sha256": "c38b1fa61bc458a1e81ee1ee2ca5503f499f6d4c980c2a83e8f41a1b85e627f5"
+    },
+    "assembly/receipt.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/teacher_manifest_assembly_v1/completed_snapshot16_v1/receipt.json",
+      "sha256": "b45ac3b4b60cae20e64108ee756e3b454d3d0139cc4d8f8052c3fdca932ab702"
+    },
+    "assembly/policy_manifest.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/teacher_manifest_assembly_v1/completed_snapshot16_v1/policy_manifest.json",
+      "sha256": "2eed622b9e9af1907d7aea36fbeeb22bbb33344b4dcde16e2eac336e7861fada"
+    },
+    "assembly/value_manifest.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/teacher_manifest_assembly_v1/completed_snapshot16_v1/value_manifest.json",
+      "sha256": "ada83e09bf4dfed7af24db1f6cfa297cc308ae6ac6744ac78bb5942d7b385cef"
+    },
+    "materialization/CeresB50.plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/materialization_snapshot16_v1/CeresB50.plan.json",
+      "sha256": "1bc2189980f8551c765cbe9d97669d6c362be56a37e17af97395365175090011"
+    },
+    "materialization/B100CeresV25.plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/materialization_snapshot16_v1/B100CeresV25.plan.json",
+      "sha256": "b86ac524906d9d4c349ff9527847c4b78f46b252a13df163075edf76e497eac1"
+    }
+  },
+  "training_admission": false,
+  "new_strength_results": false,
+  "limitations": [
+    "Original features not reconstructed; saved source/feed proof inherited from producer.",
+    "Prior qualification reuse relies on unchanged local filesystem metadata and trusted monotonic wall-clock history.",
+    "First-call provider profile and endpoint library observations do not continuously profile every inference call.",
+    "No model loading, GPU queries, inference, relabeling, running-job changes or automatic polling."
+  ],
+  "manifest_assembly": {
+    "status": "COMPLETE_MANIFEST_ASSEMBLY_NOT_CORPUS_ADMISSION",
+    "rows": 18910484,
+    "shards": 2309,
+    "plan_sha256": "0641f35293af927c3ea07e10a5676da74b449988181859c4b650c82d9a8760cb",
+    "code_sha256": "fb78e5fefea952226754be04a1d4b6669260e4719b89b5211cb2f94eceefb215",
+    "policy_manifest_sha256": "2eed622b9e9af1907d7aea36fbeeb22bbb33344b4dcde16e2eac336e7861fada",
+    "value_manifest_sha256": "ada83e09bf4dfed7af24db1f6cfa297cc308ae6ac6744ac78bb5942d7b385cef",
+    "limitations": [
+      "Pinned accepted invocation evidence; no new payload/history verification.",
+      "Raw BT4 policy full historical input provenance inherited, not newly proved.",
+      "Producer materialization, completed corpus qualification and training remain separate."
+    ],
+    "terminal": {
+      "session": 51620,
+      "exit_code": 0,
+      "basis": "Author-observed terminal, parent notified"
+    }
+  },
+  "materialization_launch": {
+    "policy": {
+      "profile": "CeresB50",
+      "status": "LAUNCHED_NOT_COMPLETED",
+      "root_session": 61364,
+      "observer": 2603,
+      "cpu_affinity": [
+        0,
+        1
+      ],
+      "gpu_visible": false,
+      "inclusive_cap_hours": 8,
+      "basis": "Parent reviewed exact plan/command and launched; no completion result captured"
+    },
+    "value": {
+      "profile": "B100CeresV25",
+      "status": "PREPARED_NOT_LAUNCHED"
+    }
+  }
+}
