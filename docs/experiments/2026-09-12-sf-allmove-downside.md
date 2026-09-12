@@ -101,3 +101,52 @@ The allocation is 43,200 seconds inclusive: the enclosing timeout sends TERM at 
 The pilot's inner-producer and process-wall extrapolations suggested roughly 6.16–8.70 hours, but startup, raw-row mix, compression and I/O differ across the corpus. Twelve hours is an allocation, not a throughput guarantee. Stop on the first integrity or resource failure, preserve partial output, and do not automatically restart or extend the budget.
 
 On successful producer exit, a bounded final check verifies complete counts, the original full layout, published recipe metadata and producer proof coverage. It inherits the producer's raw/q-policy, source-state and copied-byte verification rather than rescanning every payload. [Compact launch evidence](evidence/sf-allmove-downside-full-launch-20260912.json) retains the exact preregistration, command, plan, source review and actual launch snapshot. Full completion has not been observed for this record; a prepared corpus would still require a separately selected training comparison. The active Ceres value training is unchanged.
+
+## Relationship to earlier SF targets
+
+This is a gentler variant of an already tested all-move attenuation family, not
+our first all-move SF experiment. Ordinary Tactical100 used
+`max(0.1, exp(-max(0, deficit-100)/100))` on every move, followed by normalization;
+it also changed winning/losing mate targets categorically. Its completed fixed-400
+comparison against B100 was −13.58 Elo with nominal paired 95% interval
+[−52.41, +24.91], an unresolved result. It did not establish that all SF downside
+information is useless. See the [completed Tactical100 record](2026-09-10-bt4-sf-tactical-training.md).
+
+Downside300 retains full weight through 300 cp, uses only a relative factor of 0.5
+beyond that, and changes no mate-domain row. At a 200 cp deficit, Tactical100's
+weight was about 0.368 while the new weight is 1; at 400 cp the old floor gives 0.1
+and the new weight is 0.5. Both preserve conditional BT4 odds only where their
+weights agree; the new step rule preserves odds throughout each of its two sets.
+The separately considered Tactical300 transfer rule instead gates on the SF-best
+versus next-lower score and transfers donor mass to the best set. That distinction
+explains missed near-good-move cases, but does not make Downside300 novel relative
+to Tactical100's all-move use.
+
+## Prospective training comparison (not launched)
+
+If the running complete producer succeeds and the actual completed source is
+qualified, train `B100Downside300` for one original matched epoch against the
+unchanged B100 control. Policy is the only target intervention; original SF values,
+source rows/order, initialization seed zero, original historical trainer/runtime,
+batch 512, 36,935 updates and 420 windows remain fixed. Keep the existing 16/16
+plan/load workers and 16,200-second training cap, with 21,630 seconds inclusive for
+the coordinator. Corpus completion, output summary hashes, qualification and
+prospective/realized schedule receipts are unresolved prerequisites, not fabricated
+manifest values. The schema-3 profile allows training only; arena preparation is
+separate and requires the genuine completed checkpoint.
+
+After a valid epoch, run one fixed comparison against B100 at 400 simulations,
+128 swapped pairs / 256 games, priors 1.0, the existing development panel
+`3c955d68…`, seed 20260909, 300 plies and no tablebases. Preserve rolling concurrency
+128 and batch cap 4,096; retain the qualified arena and strict capture-corrected
+coordinator. Arena stage cap is 5,400 seconds, with 10,230 seconds inclusive of
+lease wait and cleanup. This matches the previous screens and tests a substantive
+change in intervention strength without spending compute on another grid.
+
+Read the candidate score and nominal paired 95% interval after all registered
+pairs finish. An interval above 0.5 supports this package at this seed and search
+setting; below 0.5 favors B100; crossing 0.5 remains unresolved. No automatic
+extension, threshold/dose fit, promotion or seed replication follows. A positive
+estimate alone does not establish a gain, and one reused development panel cannot
+resolve training-seed variance. Preserve failed runs; invalid qualification or
+incomplete training/matches do not provide a negative scientific verdict.
