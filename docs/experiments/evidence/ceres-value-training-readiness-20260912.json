@@ -1,0 +1,100 @@
+{
+  "status": "VALUE_CORPUS_AND_SCHEDULE_QUALIFIED_TRAINING_READY_NOT_LAUNCHED",
+  "profile": "B100CeresV25",
+  "rows": 18910484,
+  "shards": 2309,
+  "materialization": {
+    "status": "COMPLETE",
+    "returncode": 0,
+    "parent_session": 97295,
+    "parent_observer": 2697,
+    "started_unix": 1789188987.2836962,
+    "completed_unix": 1789204775.3644025,
+    "completed_utc": "2026-09-12T09:19:35.364403+00:00",
+    "elapsed_seconds": 15788.080706357956
+  },
+  "qualification": {
+    "status": "PASS_REGISTERED_CORPUS_QUALIFICATION",
+    "session": 35749,
+    "exit_code": 0,
+    "wall_seconds": 722.56,
+    "max_rss_kib": 384284
+  },
+  "pins": {
+    "materialization_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/value_concurrent_preparation_v1/B100CeresV25.plan.json",
+      "sha256": "74196667c267557e55c8fdac5f852e514ab70bec1670e48d3bedc7e6bd0acf9a"
+    },
+    "materialization_status": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/value_concurrent_preparation_v1/execution/status.json",
+      "sha256": "acbaa79ec904ef1f7b7dd903ec640df4d53f53155c5e47277dbb7133d6f9fe64"
+    },
+    "derive_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_ceres_value25/derive_targets_summary.json",
+      "sha256": "73ee78a843fbf1106a917e1620fc814a9a9e7213f24ed9c56c02956c6cdc3c32"
+    },
+    "rewrite_summary": {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_ceres_value25/ceres_value_mix_summary.json",
+      "sha256": "565064cc634d4fb53370c159e2962ab2a656ad46264475bb83fa91da36369741"
+    },
+    "qualification_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/corpus_qualification_v1/plan.json",
+      "sha256": "8e89e4eb511629013bfe02fe2cd3ea88842ca734b0ea5f341e366b4810d25a5d"
+    },
+    "qualification_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/corpus_qualification_v1/independent_review.json",
+      "sha256": "e38577d26e8ae81589978257c92522bb23286bc4080be52f6cdcc8f2152fd16d"
+    },
+    "qualification_terminal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/corpus_qualification_v1/terminal.json",
+      "sha256": "69bccc0dcfb4732e961a5cba91647d230e3898f041c296964a23364f3de753d5"
+    },
+    "dataset_qualification": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/dataset_qualification.json",
+      "sha256": "8e9f55fb0e87a8964e3236e506a31c8443af2d98afa9179095dd1df59dbf3081"
+    },
+    "prospective_report": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/prospective_schedule.json",
+      "sha256": "0330e293a5c72f865fccb3288d8f891170babea2d3920087a24891b1ba05392a"
+    },
+    "prospective_completion": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/prospective_schedule_v1/completed.json",
+      "sha256": "9936b1900c8c7817f0768858d76223a808b2c30225c7150b6288ca9be62a404d"
+    },
+    "prospective_terminal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/prospective_schedule_v1/terminal.json",
+      "sha256": "4d54c618e233c28430e02ff59b877e5a6a224ae1d3a15a0041c1771ed197efd2"
+    },
+    "training_manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/training_manifest.json",
+      "sha256": "8d57bd4b207fc358217ba0e5a68af8ea009f88d4aee86f9f79f4ecf2534a0902"
+    },
+    "training_manifest_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/training_manifest_independent_review.json",
+      "sha256": "b8e880c9fcf969b932c5f1dc34f7664ea4ba155ad47639ed29048784e6e94d31"
+    },
+    "host_operator": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/host_operator_v1/run.py",
+      "sha256": "05775afcddec4b75e26ac8bb01ba33a755ab4e83b73c303daff4eb906445ebc8"
+    },
+    "host_operator_plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/training_handoff_v1/B100CeresV25/host_operator_v1/plan.json",
+      "sha256": "7cf5bdf56ddf7b0e2cd41ae20a61c617cf5915da1637c80ebf1503831b8217c1"
+    }
+  },
+  "limits": [
+    "No value training launched. Policy training status remains the earlier launch observation; no fresh policy process polling for this publication.",
+    "Qualification checks metadata/storage witnesses and inherits completed producer payload checks; no repeated source or teacher array scan.",
+    "No strength or calibration improvement claim."
+  ],
+  "prospective_schedule": {
+    "session": 87270,
+    "exit_code": 0,
+    "wall_seconds": 463.96,
+    "rows": 18910484,
+    "batches": 36935,
+    "canonical": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+    "scope": "HistoricalC completion plus prospective B100CeresV25 only; no value training completion."
+  },
+  "training": "Final schema3 manifest and host operator ready; parent decides later launch. No value training launched."
+}
