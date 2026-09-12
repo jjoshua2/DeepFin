@@ -1,9 +1,7 @@
 # Conservative research recovery after the September 12 reboot
 
 Status: guarded SF generation resumed at **19:07:34 UTC**, and the remaining
-common-corpus native-BT4 WDL batch launched at **19:08:34 UTC**. These are actual
-launch observations, not completed generation or labels. The parent owns both
-completion observers; no new training or playing result is claimed.
+common-corpus native-BT4 WDL batch launched at **19:08:34 UTC**. The native-WDL batch subsequently completed and passed saved-output qualification for all 15 cohorts; SF generation remains a separately monitored job. No new training or playing result is claimed.
 
 The [initial conservative restart](2026-09-12-sf-allmove-downside.md#september-12-reboot-and-conservative-restart)
 preserved interrupted downside output; the reboot's cause remains unconfirmed.
@@ -63,3 +61,34 @@ are early warmup observations, not peaks or proof of safe steady-state usage.
 all launch, preservation, plan and independent-review pins, exact cohorts and
 parent-owned handles. No live process polling or payload scans were needed to
 publish this record. Results will be appended after actual completion.
+
+## Completed native WDL for all accepted common G10 positions
+
+The batch finished all **11,065,464 positions across 15 cohorts and 1,358 shards**.
+Together with the previously qualified 5,338,629 positions, direct native-WDL
+coverage now includes all **16,404,093 accepted common G10 positions** in 20
+cohorts. This is the frozen accepted pool, not the full planned 100M corpus.
+
+Collection took 5,412.17 seconds (90m12s). The automatic saved-output check then
+passed before the original two-hour deadline; total time through qualification
+was 5,508.47 seconds (91m48s). All five arrays were read once across every new
+shard—708,189,696 decoded bytes—and passed source/teacher/row bindings, stored
+hashes and finite float32 probability checks. Maximum unit-mass error was
+1.47535e-7. Parent root83736/observer71 closed with exit zero. A subsequent
+compact review checked all 15 invocation bindings and 1,358 proof records without
+reading arrays again. No cohort was dropped or retried, and no further GPU batch
+was automatically queued.
+
+[Full cohort counts and compact completion evidence](evidence/common-g10-native-wdl-complete-20260912.json)
+retain all outputs, original qualification identities, completion pins and runtime
+costs. Nineteen source cohorts have one complete native-WDL output directory and
+can follow the existing historical manifest route. The older run06 common-large
+cohort instead spans four independently qualified output units; the current
+reader requires one `wdl_dir` and matching invocation/attribute namespaces. A
+small explicit multi-output admission extension is needed to reuse those four
+units together without inventing a merged provenance identity.
+
+No new manifest or writer admission was run for this completion record. Those
+steps must preserve actual producer/source/model/head/selection bindings and the
+existing content/feed checks. Completed teacher coverage does not establish a
+new value target, qualified training recipe or playing-strength gain.

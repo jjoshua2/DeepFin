@@ -1,6 +1,6 @@
 # Saved G10 values and neural-teacher coverage
 
-Status: matched saved-SF derivations now cover all 1,574,952 rows with existing native-BT4 WDL. The exact prefix succeeded after the full-large attempt failed outside that subset. A real 262,079-row fixed-policy value pair passed materialization. Direct G10 native-WDL coverage is now 5,338,629 rows after a disjoint 790,282-row next96 cohort; no new training or strength result.
+Status: matched saved-SF derivations now cover all 1,574,952 rows with existing native-BT4 WDL. The exact prefix succeeded after the full-large attempt failed outside that subset. A real 262,079-row fixed-policy value pair passed materialization. Direct G10 native-WDL coverage now includes all 16,404,093 accepted common positions after the remaining 15-cohort batch; no new training or strength result.
 
 The next SF value comparison reuses the recorded adaptive d10/d12 observations. It does not increase search depth or launch additional Stockfish inference over the future 100M-position corpus. The opt-in selector is implemented in [PR #633](https://github.com/jjoshua2/DeepFin/pull/633). The existing [census](2026-09-11-deeper-sf-value-census.md) establishes target differences, not improved accuracy.
 
@@ -201,3 +201,5 @@ and terminal handles. The single complete output directory supports the existing
 consumer route in principle; its provenance-manifest admission and writer checks
 have not been run. No new target, training admission, playing-strength result or
 automatic further GPU cohort follows from this coverage milestone.
+
+The [completed common-pool native-WDL batch](2026-09-12-conservative-research-recovery.md#completed-native-wdl-for-all-accepted-common-g10-positions) now supplies all 16,404,093 accepted positions. Consumer provenance admission remains separate, including the older four-output run06 large cohort. No new training or strength result follows from this coverage.
