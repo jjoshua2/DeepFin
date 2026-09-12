@@ -194,3 +194,33 @@ reported “paused cleanly,” and no failure marker was present. This restart p
 no claimed new labels: backfill was false and 35,436,868 existing policy-only rows
 remain without native WDL. Generation stays held pending safe preservation of
 open tails and a reduced-worker recovery plan.
+
+### Lower-concurrency training preparation
+
+Before any Downside training launch, the selected execution setting is two epoch
+planner workers and two loader workers. Other registered profiles retain 16/16.
+The frozen trainer, sampler, seed, batch size, row schedule and optimizer cadence
+remain unchanged; the coordinator requires the actual completed receipt to record
+2/2 for Downside. Ordered loader results and serial per-game RNG use preserve the
+intended example order. Lower loader concurrency reduces concurrent decoder
+work, but does not shrink the sampler's retained active pool or its full refill
+list, so no proportional memory saving is claimed.
+
+The completed Ceres runs reported 11.69–11.93 GiB maximum RSS in their timed
+coordinator runs, with zero reported swaps. Those observations do not establish
+aggregate host/Windows/GPU peaks or explain the reboot. The prospective Downside
+host operator requires 48 GiB Linux available memory before starting and 32 GiB
+while waiting. If the threshold is breached, it signals only its owned coordinator
+and waits for all live members of its coordinator process group, even if the
+timing wrapper exits first. The 30-second TERM grace exceeds the coordinator’s
+two five-second nested cleanup stages; remaining owned members receive KILL
+with five seconds for verification. No CPU-materializer address-space cap is applied to CUDA training. The
+frozen trainer has no newer working-set-cap option.
+
+This is preparation only. Actual corpus completion, qualification, prospective
+schedule and final isolated-runtime admission still precede launch. No active
+runtime or training job is changed by this amendment.
+
+[Memory observations and frozen-sampler fixture evidence](evidence/downside-training-memory-20260912.json)
+retain the completed RSS receipts and the synthetic 16/16 versus 2/2 ordered-row
+comparison. These checks do not measure full-training memory savings.
