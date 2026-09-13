@@ -1,8 +1,8 @@
 # Matched value transfer on original plus G10 data
 
-Status: preregistered; multi-corpus admission implementation is in progress. Neither
-training arm nor evaluation has launched. Existing target products are complete;
-their combined training compatibility and schedule are still to be qualified.
+Status: prospective admission, the fixed opening panel and the frozen selected-subset
+preflight are complete. Neither training arm nor evaluation has launched. Actual
+staging and realized training remain to be verified.
 
 ## Question and allocation
 
@@ -83,8 +83,8 @@ After both complete and their actual schedules/receipts qualify, compare V50
 color-swapped opening pairs**, both search-prior temperatures **1.0**. Use the
 existing qualified opening-generation procedure with new panel seed **20260913**;
 freeze its actual complete panel/hash before either training launch. Register
-its source/book and endpoint/history contract with the package. Panel identity
-is a prelaunch artifact still to be produced, not a hash asserted here.
+its source/book and endpoint/history contract with the package. The panel is now frozen before either training launch; its actual identity and
+construction evidence appear below.
 
 Keep the qualified training search shape, no tablebases, 300-ply limit, rolling
 128 concurrent games and inference batch cap 4,096. Evaluation gets **7,200
@@ -133,7 +133,7 @@ The report binds the manifest, logical map, ordered game-column hashes, actual
 runtime versions, seed/batch and per-arm physical/canonical schedule identities.
 It is explicitly prospective, not a completed training receipt.
 
-Prepared local manifest (not admitted or executed):
+At implementation registration, the prepared local manifest (then not admitted or executed) was:
 `scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/manifest.draft.json`,
 SHA256 `18830f7e403035cb8b0a2303d5c3877a792e7f3d28e894a2d1bd0680a49fcec6`.
 It names 21 source/target groups, 4,321 shards per arm and 35,314,577 rows.
@@ -158,12 +158,12 @@ Focused fixture tests cover CLI admission at seed 101, duplicate-basename mappin
 swapped/missing cohort order, game-key mismatch, overlapping raw selection,
 modified values, wrong dose/head/parent, extra shards, input pin drift, fresh
 output and single-read metadata witnessing with loader restoration on failure.
-No real corpus admission, array scan, training or evaluation ran for this change.
+No real corpus admission, array scan, training or evaluation ran during that implementation validation; the subsequent bounded admission is recorded below.
 
-The remaining training-only adapter must consume the actual admission report,
-retain frozen trainer history/value compatibility gates, and verify actual staging
-and realized completion against this new logical map. It must not reuse the old
-18.91M canonical hash or accidentally train the SF100 arm on source policy targets.
+The implemented training-only adapter consumes the actual admission report,
+retains frozen trainer history/value compatibility gates, and requires actual staging
+and realized completion against this new logical map. It uses the new canonical
+identity and the B100 policy roots for SF100; training execution remains pending.
 
 Final validation: 13 focused fixture tests passed. Scoped host type checking passed
 with zero findings; final-file Ruff and Vulture passed. The whole type gate reported
@@ -172,3 +172,109 @@ the new files. Native modules were not built or changed to clear that environmen
 limitation. A separate 0.10-second summary-only check confirmed that all 21 actual
 source/B100/V50 recipes fit the implemented contract; this did not walk shards,
 run admission or decode arrays.
+
+## Frozen opening panel — completed before training
+
+The registered seed **20260913** produced **256 unique opening endpoints / 512
+color-swapped games**, stored as root FEN, sixteen legal moves and replayed final
+FEN. The complete saved panel SHA-256 is
+`14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c`.
+One small-panel review replayed every history, verified valid nonterminal endpoints
+and exact final FENs, and found **zero normalized endpoint EPD overlaps and zero
+exact root/history overlaps** with the previous 128-opening panel `3c955d68…`.
+This establishes disjointness only from that panel, not all training/development
+positions or an independent opening distribution. No overlap filtering or reseeding
+was used.
+
+The first preparation attempt failed after **1.583 seconds** because importing
+the whole arena module imported unused Torch, whose library mapping exceeded the
+4 GiB address-space limit. No panel or model was built; the compressed-book digest
+had already been checked. The preserved correction executed the exact untouched
+`load_paired_openings` AST function from the pinned arena source, with the exact
+opening module loaded directly to avoid package initialization. It retained the
+same book, frequency-weighted PGN prefixes, NumPy 1.26.2 RNG, seed and history rules.
+It did not change the sampler or raise the memory cap.
+
+The corrected run completed with exit 0 in **71.872 seconds**, maximum RSS
+**498,344 KiB**, and no Torch import. Its 298-second bound plus the failed attempt
+fit the original 300-second allocation; CPUs 4–5, two numeric threads, hidden GPU,
+4 GiB address space, 48 GiB startup headroom and 150 GiB disk reserve were retained.
+[Compact panel evidence](evidence/combined35m-fixed-panel-20260913.json) pins the
+failed attempt, exact invocation/source/book, independent preparation review and
+completed panel. Review did not reread the book, rerun generation or load models.
+The later actual match package must reproduce this full panel and the registered
+256-pair/seed20260913 settings; the old 128-pair helper constants are not sufficient.
+
+
+## Completed prospective admission and selected-subset amendment
+
+The one CPU admission pass completed with exit 0 in **382.722 seconds**. It
+admitted the ordered **21-cohort, 4,321-shard, 35,314,577-row** source/B100/V50
+mapping and computed each prospective schedule at seed 101 and batch 512. Each
+contains **182,188 namespaced games and 68,974 updates**: 68,863 full batches and
+111 batches of 511 rows. Full ordered game-ID/presence witnesses and canonical
+game grouping matched across the three arms. The canonical source identity is
+`ca3922c459b321dd5e890f8b3e21f6fee6a24aa6c7f0d76653165616aeca67bd`;
+physical hashes differ because the target directories differ. The report SHA-256
+is `00c28c92a530eb56d5051bb3606ecff6516eb580f94325c8da7fd16ccd692bb9`.
+
+This is a prospective identity proof, not realized training. It inherits the
+qualified generator/whole-game contract and disjoint raw selections without
+inventing historical per-shard source-code attestation. No feature/target arrays
+or models were loaded, and the review did not repeat the game-column pass.
+The source arm is only a proof reference; SF100 training uses B100 policy roots.
+The invocation retained the registered 3,000-second inclusive CPU bound, two
+threads, hidden GPU, 32 GiB available-memory and 150 GiB disk floors. Memory
+checks are callbacks, not an independent watchdog inside a planner or an RSS cap.
+
+The frozen trainer's partial-corpus gate identified a separate, explicit launch
+condition: the selected G10 derivations are finished products of global raw runs
+that remain unfinished. Before training, register the existing
+`--allow-partial-corpus` opt-in **only for the exact complete selected union**.
+Require every selected G10 shard's `derive_run_finalized` to be true and require
+the original corpus to be nonpartial. No attributes are rewritten; unfinished
+selected derivations remain ineligible. Leak, history, architecture, replay and
+value gates remain unchanged, with no `--allow-leak` or mixed-history override.
+
+A separate **1,200-second CPU qualification allowance** covers both arms
+sequentially through the unchanged frozen preflight, including its two label
+presence columns and exact selected-shard metadata. Its command uses CPUs 6–7,
+two threads, hidden GPU, 32 GiB host headroom and 150 GiB disk reserve; no
+address-space cap is claimed. The later training receipt must reproduce the
+qualified partial-corpus record exactly. This allowance is additional to the
+completed 3,000-second prospective allocation; training/evaluation budgets and
+targets are unchanged. The actual qualification result is recorded below.
+
+For the eventual arena, **20260913 is both the opening-generation seed and arena
+seed**. The existing book path, sixteen-ply sampler and fresh seeded RNG regenerate
+the immutable panel before model loading; this is not a switch to a panel-supplied
+arena method. Completed training, actual staged identity and the fixed match
+package remain required. No combined training or strength result is claimed.
+
+
+The corrected selected-subset preflight completed with exit 0 in **88.668 seconds**
+(87.675 seconds inside the helper), with maximum RSS **1,045,604 KiB** and zero
+swaps. Both arms covered all **4,321 selected shards**. Each has **2,012 G10
+partial-source stamps**, all with finalized derivations; the original corpus is
+not partial. The active `search_wdl` column covers **35,314,577/35,314,577 rows**;
+the unused optional `sf_wdl` label field covers zero rows. The config uses
+`sf_wdl_frac=0` and `search_wdl_frac=1`: `search_wdl` is SF-derived in SF100
+and mixed in V50, so absent `sf_wdl` labels do not mean absent SF value. The unchanged frozen
+architecture, trainer, replay, history and value preflights passed.
+
+The preserved first attempt failed after **65.820 seconds**: the frozen B100
+preflight had passed, but the new wrapper incorrectly required both label-presence fields to
+have full coverage. Its correction requires exactly the registered optional-zero
+and active-full counts; it does not weaken the trainer's gates or change data.
+Three small metadata fixtures checked that distinction. The retry kept a fresh
+output namespace and a **1,134-second inclusive remaining cap**, so its maximum
+plus the first attempt's rounded-up 65.821-second charge remained below the
+original 1,200-second allocation. Actual combined elapsed time was **154.488
+seconds**. No failed-attempt partial record was reconstructed or adopted.
+
+The actual qualification SHA-256 is
+`fb72304dccd0cb277d3fcc80b57287964723760fcca5ddcd0bbc6b917039d8b7`.
+The [compact evidence](evidence/combined35m-fixed-panel-20260913.json) binds both
+attempts, the correction, independent reviews and completed admission/panel.
+These are completed preparation checks; neither combined model has been trained
+in this record, and no strength result is claimed.
