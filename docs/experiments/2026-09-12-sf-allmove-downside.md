@@ -313,3 +313,14 @@ and immutable host/trainer launch snapshot. Parent root **6338**, sole observer
 result is claimed. The later registered fixed-400, 256-game comparison against
 B100 still requires a genuine completed candidate and reviewed match handoff;
 no match or additional arena bank launches automatically.
+
+### Match-reader worker admission
+
+The completed-epoch match reader retains 16 planner / 16 loader workers for
+existing recipe roles. Downside alone requires 2/2, with its exact corpus name,
+pinned complete schema-1 recipe and derived-summary binding, fixed ordinary-only
+300 cp / 0.5 settings, original SF/B100 source identities and qualified producer
+map. Renaming another recipe to Downside does not waive those checks. All existing
+canonical/realized schedule, training-window and checkpoint evidence requirements
+remain unchanged. This reader amendment enables the already registered handoff;
+it does not supply a completed candidate, change arena settings or launch games.
