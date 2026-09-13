@@ -1,6 +1,6 @@
 # Ceres100 policy endpoint preparation
 
-Registered September 13, 2026. Status: full Ceres100 materialization and metadata corpus qualification completed; no endpoint training or evaluation is allocated.
+Registered September 13, 2026. Status: full Ceres100 materialization, corpus qualification and prospective epoch qualification completed; the seed-0 training host launched at 14:53:49 UTC. Completed training and the deciding comparison remain pending.
 
 The missing pure-Ceres policy endpoint is a substantive comparison with the previous equal BT4/Ceres policy mixture. CeresB50 trained on the original 18,910,484 rows with original SF values and scored +12.22 Elo, nominal 95% paired interval [-22.88, +47.57], against B100. That unresolved result does not establish whether the BT4 contribution helps or hurts. No completed pure-Ceres policy student appears in the inspected experiment records. The separate Ceres value mixture retained B100 policy and does not answer this question. See the [completed Ceres record](2026-09-11-ceres-weighted-bootstrap.md).
 
@@ -71,3 +71,14 @@ After genuine completion and CPU package admission, one fixed comparison:400simu
 Deciding statistic: candidate score and nominal95% interval clustered over the256 swapped opening pairs. Entire interval above0.5 supports this endpoint; entire interval below0.5 favors B100; crossing0.5 is unresolved. No automatic extra games, seed replication, calibration or promotion. The reused bank and shared development seed constrain generalization.
 
 Retain all three historical valid_control=false caveats: no held-out purity receipt, committed rather than fresh live config premises, and intentional game_epoch sampling rather than the historical replacement sampler. No training launch is authorized by a draft manifest alone. Actual prospective PASS and final manifest/host review are still required.
+
+
+## Prospective qualification complete; epoch host launched
+
+The original prospective verifier passed in **289.288 seconds**. Report `ee6c9cff…` and independent review `1208d708…` bind the complete original 18,910,484-row/2,309-shard Ceres100 corpus to the fixed seed-0 canonical schedule `dc687fc3…`, with 36,935 planned updates. This is prospective qualification; actual staging and realized training still require the completed-epoch check.
+
+One existing default command validation returned exit 0 and printed the exact Ceres100 source and fresh output paths, seed 0, batch 512, 88-update windows and two planner/two loader workers. It allocated no GPU work and queued no comparison. Its receipt does not contain an elapsed duration, so none is inferred here. Final schema3 manifest `c680aeca…`, host plan `f1e0f7f2…` and independent final review `ad1ff287…` retain the immutable registration `e6169825…` and frozen coordinator `543691257…`; the original wise-cloud trainer and sampler remain unchanged.
+
+The parent launched the actual host command at **2026-09-13 14:53:49.289165 UTC** (exec 94358, sole observer 480). The saved `started.json` records the requested coordinator command and owned process group. This publication claims a host launch, not an observed optimizer step or completed epoch. The startup guard measured 89,145,061,376 available bytes; parent prelaunch checks reported approximately 83 GiB available memory, zero swap use, 192 GiB free disk and a clear GPU. These are launch observations, not peak or current resource claims. The 48 GiB startup/32 GiB ongoing memory floors, 150 GiB disk reserve, 16,200-second training cap and 21,630-second enclosing allowance remain fixed.
+
+[Compact qualification/default/launch evidence](evidence/ceres100-epoch-launch-20260913.json) retains the actual receipts, final bindings and both independent reviews. The separately registered 512-game/400-simulation comparison against B100 remains unlaunched, with no automatic B50 comparison or extension. Reused development-panel status, approximate-Ceres provenance and all three historical control caveats remain unchanged. No model, active training progress, corpus payload or game bank was read for this publication.
