@@ -1,0 +1,118 @@
+{
+  "schema": 1,
+  "kind": "COMPLETED_G10_CERES_RUN06_LARGE_COLLECTION",
+  "parent_reported_terminal": {
+    "root": 99754,
+    "sole_observer": 172,
+    "closed": true,
+    "exit_code": 0,
+    "source": "Parent captured completion notification; no separate machine terminal receipt synthesized"
+  },
+  "collection": {
+    "status": "COMPLETE",
+    "chunks": 16,
+    "shards": 246,
+    "calls": 62907,
+    "input_rows": 2013024,
+    "padding_rows": 5,
+    "real_rows": 2013019,
+    "driver_elapsed_seconds": 6106.740749408002,
+    "driver_ended_unix": 1789258902.6434329,
+    "driver_ended_utc": "2026-09-13T00:21:42.643433+00:00",
+    "inclusive_allocation_seconds": 9600,
+    "qualification_seconds": null,
+    "qualification_timing_note": "Separate qualifier elapsed time not captured in saved qualification JSON; not inferred from driver time."
+  },
+  "qualification": {
+    "status": "PASS_SAVED_G10_CERES_RUN06_LARGE_COMPLETE_NOT_TRAINING",
+    "new_payload_shards": 246,
+    "reused_shards": 0,
+    "verified_array_proofs": 2214,
+    "native_admission": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_all_common_native_admission_v1/execution/G10_common_large_v1__run06_g10.admission.json",
+      "sha256": "7211d516e1de7b3d8ef35acb1b7837963461743d757f4cd377777ae41c606131"
+    },
+    "manifest_sha256": "74a0c76bc8b3fe0b20dc3ec77e259810fee0cae3ca55a21b3b3637f5efb6ed36"
+  },
+  "coverage": {
+    "previous_rows": 1845004,
+    "previous_shards": 226,
+    "added_rows": 2013019,
+    "added_shards": 246,
+    "total_rows": 3858023,
+    "total_shards": 472
+  },
+  "runtime": {
+    "commit": "e9c1b74bc44c45f9ac6d70195f1422c6d24a65f9",
+    "backend": {
+      "batch_size": 32,
+      "execution": "sequential",
+      "input": [
+        "squares_byte",
+        "uint8",
+        [
+          64,
+          137
+        ]
+      ],
+      "native_dtype": "float16",
+      "numpy": "2.2.6",
+      "onnxruntime": "1.29.0",
+      "optimization": "extended",
+      "outputs": [
+        "policy",
+        "value",
+        "value2"
+      ],
+      "provider_options": {
+        "arena_extend_strategy": "kSameAsRequested",
+        "device_id": 0,
+        "gpu_mem_limit": 8589934592,
+        "use_tf32": 0
+      },
+      "providers": [
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "remainder": "repeat_last_real",
+      "threads": [
+        2,
+        1
+      ],
+      "value_interpretation": "primary raw logits; optional secondary raw logits; no native blend",
+      "value_order": [
+        "win",
+        "draw",
+        "loss"
+      ],
+      "value_pov": "side_to_move"
+    },
+    "model_sha256": "44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3",
+    "producer": {
+      "chess_anti_engine/encoding/ceres_tpg.py": "ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0",
+      "chess_anti_engine/moves/leela_index.py": "ac8f6f07dc1ce8e382de1d94ce4053f92b9cf3bc0eefe730d7fd0763ca11e1cd",
+      "scripts/bt4_derived_wdl_sidecar.py": "8ba98f8d49d642ff7defff457e4dc9426f4e096ee7a1747a257abce62f9ccd1e",
+      "scripts/ceres_derived_sidecar.py": "2631fb48fef7820084879bf9371b22842a949d252525b2c79d2c51ab65645597"
+    }
+  },
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/driver.plan.json": "11bfd2e41326c0ca04f7f3058e33d0e348d2ee9e4728f988f7dd5ce70681f95b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/command.sh": "9bab05823f9338c1c8daeb8fdf6459069c9507bf7cc96bb37d654bd3a5e7d103",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/driver/actual_start.json": "d189467828ec983e82ced12a3693c749a89ef53890cfbd5550babcf3f64a47a8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/driver/manifest.json": "e42f9652f8f6c01bcf100f6fb8e36ef230919c0f721a26602ae5be868bb4d9d0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/post_collection/plan.json": "a142e2010f9c323f02023856c30b3fb90cd44ea497f06f3b2a38385515233627",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/post_collection/completed/qualification.json": "51acff1b059e6af127b9abb9be97512a2c071c602044f718f3667d45a2c3a580",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/post_collection/completed/ceres_policy_manifest.json": "74a0c76bc8b3fe0b20dc3ec77e259810fee0cae3ca55a21b3b3637f5efb6ed36",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/independent_review.json": "9a41935cd10bf930970ef3ef9b1cc65d9360daed3398afb16b9b5adfe09338b5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_all_common_native_admission_v1/execution/G10_common_large_v1__run06_g10.admission.json": "7211d516e1de7b3d8ef35acb1b7837963461743d757f4cd377777ae41c606131",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run06_large_v1/post_collection/completed_review.json": "9057abb6e24490e8094caa3fdb170dd98209dda122723e3f09ede09c1652fffe"
+  },
+  "limitations": [
+    "Complete run06 large convenience cohort; no strength inference.",
+    "Inherited source/feed proofs; no raw features/model/library reread.",
+    "Both value heads retained; manifest enables policy consumer, not training admission.",
+    "Original 18,910,484-row Ceres corpus is separate.",
+    "Earlier first4 scientific readouts unchanged; no training admission or Elo claim.",
+    "No additional Ceres collection launched; Downside training is owned separately by parent."
+  ]
+}
