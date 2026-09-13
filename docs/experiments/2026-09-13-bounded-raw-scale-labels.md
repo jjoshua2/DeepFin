@@ -174,3 +174,25 @@ The frozen plan is `a0ac417b…`, command `3f7825a6…`, using runtime `a22893d�
 The allocation is **three hours inclusive**, CPUs **8–9**, two numerical threads, nice 19, hidden GPU, **48 GiB available RAM at startup / 32 GiB at running checks**, and a **150-GiB running disk floor**. Startup requires **170 GiB free**: 150 GiB plus the **16-GiB aggregate output allowance** and 4 GiB for other writers. The launched supervisor admitted these startup guards. No address-space cap is imposed; the RAM checks are not an aggregate memory guarantee. The raw-index allowance is 1 GiB with only two raw indexes cached, while the whole-output cap remains separate. Deadline, STOP and owned-process cleanup stay in effect; there is no automatic retry.
 
 [Compact launch evidence](evidence/raw-joint-adapter-launched-20260913.json) pins the two manifests, saved source-receipt indexes, reviews and actual launch observation. The historical policy-only adapter timing motivated the bound; it is not a measured joint-adapter throughput result. Exact joint-output checks and any later consumer/training qualification remain pending.
+
+
+## Joint adapter completed
+
+The joint adapter finished with **outer exit 0 in 2061.148 seconds**, ending at **2026-09-13T22:14:53.161476+00:00**. Both sequential stages completed: **1,006,190 run06 rows / 123 shards** and **511,735 run07 rows / 63 shards**, totaling **1,517,925 rows / 186 derived shards**. Saved process commands and observed argv match the frozen plan; the stage times were **1366.126** and **694.587 seconds**.
+
+Both adapted summaries retain the saved BT4 policy and native float32 WDL probability contract, with win/draw/loss order and side-to-move perspective. The actual source-qualified records match all **184 raw-shard receipts**. Native adaptation records **zero new teacher evaluations**. The policy summary’s inherited `teacher_evaluations_per_position=1` describes the original collection, not new adapter inference. No new model evaluation or target mixture was performed.
+
+Independent compact review `3af2e4d8…` passed. This review checked saved counts, commands, summary/profile bindings and raw receipt identities; it did not repeat payload, NPZ, model or output-tree scans. Actual physical-row matching was performed by the completed adapter. The result is a completed reusable policy/native-WDL bank, **not training admission or a strength result**. A subsequent B100 materialization must still apply its existing consumer checks.
+
+[Compact completion evidence](evidence/raw-adapter-completed-b100-handoff-20260913.json) preserves both stage receipts, exact summary pins and independent review.
+
+
+## B100 materialization: pre-writer failure and corrected launch
+
+The first B100 outer invocation failed in **0.032895 seconds with exit 1**: `taskset` rejected the malformed `-c8,9` option before the writer or execution state began. That original failure and log remain preserved. It is a launch-command failure, not evidence of an invalid corpus.
+
+The correction supplies `-c 8,9`. One existing non-executing metadata validation returned **exit 0 / VALIDATED_NOT_EXECUTED**; it did not run the writer or reread labels. Independent retry review `1be1c0fd…` passed. The corrected command `bef4f784…` launched at **2026-09-13T22:29:13.328918+00:00** (parent exec **97105**, sole observer **822**). The saved supervisor start is **2026-09-13T22:29:15.018724+00:00**, with first-stage run06 PID **539088**. The retry retains the **original absolute deadline 2026-09-13T23:26:15.494126+00:00**; it does not receive a fresh one-hour budget. At this publication snapshot, B100 materialization is **launched, not completed**.
+
+The frozen plan `5027eb3b…` uses the existing global B100 policy recipe: BT4 weight **1.0**, temperature **0.5**, for the same **1,517,925 rows / 186 shards**. SF-derived values remain unchanged, and the separately adapted native-WDL banks remain preserved. This stage performs no new inference or value mixture. The operating runtime remains `6b91f587…`.
+
+Bounds retain CPUs **8–9**, two threads, nice 19 and idle I/O, hidden GPU, **4-GiB address space**, **4-GiB aggregate allocated output**, **48/32-GiB startup/running available RAM**, and **158/150-GiB startup/running free disk**. Startup includes 4 GiB for outputs and 4 GiB for other writers. The original one-hour allocation includes a 300-second qualification/cleanup reserve; existing deadline, STOP and owned-process cleanup remain in effect. No B100 completion, downstream consumer admission or training result is claimed.
