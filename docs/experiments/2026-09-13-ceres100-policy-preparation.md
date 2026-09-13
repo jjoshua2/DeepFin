@@ -46,3 +46,28 @@ Independent completed review passed. This milestone supplies a qualified policy 
 ## Prospective low-memory training admission
 
 The explicit Ceres100 schema3 training-only profile now requests two planner and two loader workers, and completed-match admission requires that same 2/2 setting plus the pinned complete pure-Ceres recipe and original SF-value lineage. The reader reuses the existing full Ceres recipe checks, including teachers, source, nonpolicy preservation, producer pins and completed shard proofs. Other profiles retain their prior settings: B100 and CeresB50 remain 16/16; the existing Downside 2/2 exception is unchanged. The frozen trainer, sampler, seed 0, batch 512 and one-epoch horizon are unchanged. This amendment allocates no training or evaluation; an actual prospective schedule, final manifest and reviewed host command remain prerequisites after a scientific allocation decision.
+
+
+## Registered endpoint training and deciding comparison
+
+The parent selected pure Ceres100 as the next substantive policy endpoint before inspecting the combined35M value score. This decision retains original SF values and does not depend on that comparison’s outcome. The exact frozen registration below is also retained at `ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/preregistration.md`, SHA256 `e6169825d07af0d622cabccc68535928b9c5ac6645a31634029c1974161a3c8f`. The original prospective verifier has been launched under its separate bounded CPU allocation; its completed report and training launch remain pending at this publication snapshot. No GPU training has been launched by this preparation.
+
+### Frozen registration
+
+Registered before any Ceres100 training or evaluation. Parent selected this substantive policy endpoint independently of the combined35M value result; that bank has not been inspected for a score at registration. No new labels or corpus rewrite.
+
+Hypothesis: pure Ceres policy T0.5, retaining original SF values, improves on the existing B100 T0.5 policy endpoint. The deciding comparison is Ceres100 versus the completed seed0 B100 checkpoint b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62. No automatic CeresB50 comparison, fine-tuning or dose grid.
+
+Use the qualified original18,910,484-row/2309-shard Ceres100 corpus (qualification172b060b..., derive6844ed43..., rewriteb640508c...). Only policy_target changes; all16 nonpolicy arrays, including original SF search_wdl values, are retained. Both teacher temperatures0.5, BT4weight0/Ceresweight1. Saved Ceres approximate fixed32 ORT/CUDA profile is unchanged; native-Ceres parity is not claimed.1495 positive legal move entries lost through float16 storage are entries, not affected rows.
+
+Train a fresh model with frozen wise-cloud trainer/config/sampler and seed0 (both torch initialization and game schedule), batch512, one actual epoch:18,910,484 rows,36,935 updates,97,968 games,420 windows (88 updates each, final63), warmup1000. Existing B100 used16/16 workers; the explicit Ceres100 amendment543691257 uses2/2 as an execution difference. Require actual prospective and completed canonical schedule dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f and actual planned=realized schedule; do not merely assume worker equivalence.
+
+Existing coordinator schema3 fixes training allowance16,200seconds; retain enclosing21,630seconds inclusive,48GiB available memory before startup/32GiB while running,150GiB free disk reserve and owned STOP/cleanup. No CUDA virtual-address cap. This is a maximum, not a2h guarantee: Downside2/2 took7832s, CeresB50 took11055s, while different concurrent load can change cost. No automatic deadline extension or restart.
+
+Before training, one original prospective verifier invocation is proposed under1800seconds inclusive (1770TERM+30KILL),CPU6,7,hiddenGPU and two numeric threads (original verifier internally usesTorch2/Blosc1). It reads identity/presence columns and metadata, not features/policies/models. No repeat corpus qualification. No small RLIMIT_AS that prevents CPU Torch mapping. Existing STOP,150GiB disk and32MiB sampled output guard retained; parent checks host memory before launch. Parent approved this CPU allocation after reviewing the concrete plan and independent static review 4240399d on September 13, before execution.
+
+After genuine completion and CPU package admission, one fixed comparison:400simulations,256swapped pairs/512games,priors1,noTB,maxplies300,rolling128/batch4096. Reuse immutable panel14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c and seed20260913 explicitly as a DEVELOPMENT bank now also used for the35M value comparison, not fresh confirmation. No prior Ceres outcome was selected on this bank. Arena allowance7200seconds stage/12030seconds enclosing, matching existing512-game host; arena adaptation/final bindings remain a later reviewed task.
+
+Deciding statistic: candidate score and nominal95% interval clustered over the256 swapped opening pairs. Entire interval above0.5 supports this endpoint; entire interval below0.5 favors B100; crossing0.5 is unresolved. No automatic extra games, seed replication, calibration or promotion. The reused bank and shared development seed constrain generalization.
+
+Retain all three historical valid_control=false caveats: no held-out purity receipt, committed rather than fresh live config premises, and intentional game_epoch sampling rather than the historical replacement sampler. No training launch is authorized by a draft manifest alone. Actual prospective PASS and final manifest/host review are still required.
