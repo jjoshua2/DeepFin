@@ -116,3 +116,35 @@ Parent review caught two preparation defects before any producer attempt: an inc
 The separate V100 source extension was merged in [PR #722](https://github.com/jjoshua2/DeepFin/pull/722), with independent full-source review. That supplies explicit alpha 1 lineage, historical V50 verifier and future training/match support; it does not qualify outputs that have not completed. Actual rewrite completion, V100 corpus/subset/prospective qualification and final training bindings remain required. Failure preserves partial outputs and evidence without automatic retry. The currently selected value recipe remains V50 until the registered completed comparison supplies evidence to change it.
 
 [Compact plan, disk accounting, review and actual-launch evidence](evidence/native-v100-rewrite-launched-20260913.json) retains every stage's exact argv/native binding and hashes the full local plan/layouts. This publication read only immutable launch/preparation records; it did not poll active jobs, scan corpus payloads, rerun source admission or launch training.
+
+## Actual V100 rewrite completed; prospective schedule launched
+
+The CPU rewrite completed with **exit 0 in 7705.348 seconds** (2 hours 8 minutes
+25 seconds), within the four-hour allocation. All **21 ordered cohorts /
+35,314,577 rows / 4321 shards** completed. The actual alpha-one recipe replaces
+`search_wdl` with native BT4 WDL probabilities (SF weight zero), retaining B100
+policy and the 16 other arrays under the frozen producer's source/content proofs.
+
+All 35,314,577 rows were reported changed. Maximum stored probability-mass error
+was **0.0003662109375**, reflecting stored precision rather than an exact-unit-sum
+claim. The largest child RSS in saved per-stage resource receipts was
+**401,868 KiB**; this is a child measurement, not aggregate host peak or proof of
+a memory improvement. Independent compact review reconciled all 21 completed
+stages and 42 rewrite/derive-summary pins, including the copied B100 policy
+summaries. It did not repeat payload checks.
+
+At **19:55:27.042 UTC**, the parent launched the prospective ordered-corpus
+schedule against those actual completed outputs. Manifest
+`446fc6041d25d0efa1a51ad9ba994572c65536e70fa0275198d85260cafae1f2`
+binds the exact 21 roots. The CPU-only command uses CPUs 4,5, two numeric threads,
+nice 19, a shared 1740-second deadline and an **1800-second outer allocation**.
+It requires 48 GiB available RAM and 150 GiB disk at startup, with the existing
+32-GiB callback guard and no address-space cap. Startup recorded
+88,348,295,168 bytes available RAM and 184,630,718,464 bytes free disk.
+
+[Compact completion and launch evidence](evidence/v100-rewrite-completed-20260913.json)
+retains actual terminal/start records and independent completed-rewrite and
+final-command reviews. Rewrite completion does not establish a completed
+prospective schedule, selected-subset compatibility, training or an arena result.
+The frozen original preregistration remains unchanged; the registered V100
+versus V50 question is still unresolved.
