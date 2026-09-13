@@ -682,12 +682,22 @@ workers under the unchanged frozen trainer. Its history/value/encoding gates
 remain in force.
 
 The plan binds `corpus_manifest`, actually passed `prospective`, `runtime_manifest`,
-`preregistration`, the pretraining `opening_panel`, absolute `state`/`run` and
+`preregistration`, `selected_subset_qualification`, the pretraining `opening_panel`, absolute `state`/`run` and
 `stop_paths`, plus exact `code_pins` for the coordinator and its schedule, stage,
 original-coordinator and memory helpers. It selects `schema: 1`, the profile and
 role, `training_seconds: 21600` and `coordinator_seconds: 27000`. V50 additionally
 requires the same comparison's completed SF100 `previous_training` receipt.
 No existing output is adopted or resumed.
+
+The selected-subset qualification binds the same manifest, prospective schedule,
+runtime/config and ordered roots, plus the frozen preflight's exact per-arm
+`partial_corpus` records. The explicit `--allow-partial-corpus` flag permits the
+complete selected G10 products whose global raw producers are still running.
+Every flagged derivation must be finalized, and no original-corpus or unselected
+shard may appear. Completed training must reproduce those exact records. This
+does not enable `--allow-leak` or `--allow-mixed-history`, or admit unfinished
+selected products. The frozen trainer still runs its preflights before staging
+or constructing a model.
 
 The GPU lease wait counts toward the inclusive coordinator allowance; the full
 training stage must still fit before it can start. The existing owned-stage
@@ -707,7 +717,8 @@ the run and cannot produce a valid training receipt.
 The fixed `bt4_package_readout.py` accepts this explicit combined profile with
 `training: {candidate_training: PIN, reference_training: PIN}`. It requires V50
 versus SF100, matching admitted corpus/schedule/panel and completed process
-receipts, 256 pairs, 400 simulations and both priors 1.0. Its generic
+receipts, 256 pairs, 400 simulations, arena seed 20260913 and both priors 1.0.
+The same seed regenerates the pretraining opening panel from the pinned book. Its generic
 `launch_qualification_verified: false` remains honest: actual arena launch
 qualification is still separate from completed training and bank validation.
 The historical generic package schema and two-depth recipe launcher are unchanged.

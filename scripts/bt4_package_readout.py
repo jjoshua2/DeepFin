@@ -66,7 +66,7 @@ def panel_fens(ref: dict[str, Any], pairs: int) -> list[str]:
 def verify_combined_training(contract: dict[str, Any]) -> None:
     require(set(contract['training']) == {'candidate_training', 'reference_training'}, 'combined training fields')
     combined.matched_training_pair({**contract['training'], 'candidate': contract['candidate'], 'reference': contract['reference']})
-    for key, value in {'pairs': 256, 'sims': 400, 'candidate_prior_temperature': 1.0,
+    for key, value in {'pairs': 256, 'sims': 400, 'seed': 20260913, 'candidate_prior_temperature': 1.0,
                        'reference_prior_temperature': 1.0}.items():
         same(contract[key], value, 'registered combined ' + key)
     for key, value in {'loop': 'rolling', 'compile': 'on', 'eval_max_batch': 4096, 'max_concurrent_games': 128}.items():

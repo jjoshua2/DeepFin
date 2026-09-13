@@ -27,7 +27,7 @@ def completed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str
     cohorts, mapping = [], []
     roots: dict[str, list[str]] = {'B100': [], 'V50': []}
     for i in range(21):
-        cohort: dict[str, Any] = {'id': f'c{i}', 'roots': {}}
+        cohort: dict[str, Any] = {'id': f'c{i}', 'roots': {}, 'identity_kind': 'historical-single-source' if i == 0 else 'qualified-g10-selection'}
         row: dict[str, Any] = {'cohort': f'c{i}', 'shard_index': 0, 'rows': 1, 'namespace': str(i), 'paths': {}}
         for arm in ('source', 'B100', 'V50'):
             root = tmp_path / f'{arm}_{i}'
@@ -54,6 +54,14 @@ def completed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str
     prospective = put(tmp_path / 'prospective.json', report)
     runtime = {'executable': '/frozen/python', **report['runtime']}
     runtime_pin = put(tmp_path / 'runtime.json', {'runtime': runtime})
+    partial = {arm: {'partial': True, 'allow_partial_corpus': True, 'incomplete_shards': {
+        Path(row['paths'][arm]).parent.name + '/' + Path(row['paths'][arm]).name: {'derive_run_finalized': True}
+        for row in mapping[1:]}} for arm in ('B100', 'V50')}
+    subset = put(tmp_path / 'subset.json', {'schema': 1, 'status': 'PASS_SELECTED_COMPLETE_UNION_FROZEN_PREFLIGHT',
+        'corpus_manifest': manifest, 'prospective': prospective, 'runtime_manifest': runtime_pin, 'trainer_shards': roots,
+        'partial_corpus': partial, 'flags': {'allow_partial_corpus': True, 'allow_leak': False, 'allow_mixed_history': False},
+        'config': {'path': str(tool.owned.RUNTIME / 'configs/lc0_positive_control.yaml'),
+                   'sha256': tool.FROZEN['configs/lc0_positive_control.yaml']}})
     evidence: dict[str, Any] = {}
     for side, role in zip(('candidate', 'reference'), ('Combined35M_V50', 'Combined35M_SF100')):
         arm = tool.ROLES[role]
@@ -66,7 +74,7 @@ def completed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str
         checkpoint = {'role': role, 'path': str(run / 'checkpoint.pt'), 'sha256': side * 8}
         plan = plans[arm]
         summary = {'seed': 101, 'batch_size': 512, 'warmup_steps': 1000, 'train_window_steps': 88,
-                   'steps_realized': 1, 'compute_loss_calls': 1, 'corpus': {'shard_dirs': roots[arm]},
+                   'steps_realized': 1, 'compute_loss_calls': 1, 'corpus': {'shard_dirs': roots[arm], 'partial_corpus': partial[arm]},
                    'sampling': {**plan, 'rows_realized': 21, 'batches_realized': 1, 'complete': True,
                                 'plan_workers': 2, 'load_workers': 2, 'same_game_repeats_max': 0,
                                 'decoded_rows_resident': 0, 'realized_sha256': plan['plan_sha256']},
@@ -78,7 +86,7 @@ def completed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str
         summary_pin = put(run / 'summary.json', summary)
         receipt = {'schema': 1, 'complete': True, 'profile': tool.PROFILE, 'role': role, 'run': str(run),
                    'corpus_manifest': manifest, 'prospective': prospective, 'opening_panel': panel,
-                   'runtime_manifest': runtime_pin, 'preregistration': {'path': '/registered', 'sha256': 'a' * 64},
+                   'runtime_manifest': runtime_pin, 'selected_subset_qualification': subset, 'preregistration': {'path': '/registered', 'sha256': 'a' * 64},
                    'checkpoint': checkpoint, 'summary_sha256': summary_pin['sha256'],
                    'physical_plan_sha256': plan['plan_sha256'], 'canonical_plan_sha256': plans['source']['plan_sha256'],
                    'actual_staging_verified': True, 'actual_game_columns_verified': True,
@@ -102,10 +110,13 @@ def test_actual_multiroot_arguments_and_pair_completion(completed: Any) -> None:
     command = tool.train_command(reference, report, '/frozen/python')
     assert command[command.index('--shards') + 1:command.index('--out-dir')] == report['trainer_shards']['B100']
     assert command[command.index('--seed') + 1] == '101'
+    assert '--allow-partial-corpus' in command
+    assert '--allow-leak' not in command
+    assert '--allow-mixed-history' not in command
     assert command[command.index('--epoch-plan-workers') + 1] == command[command.index('--epoch-load-workers') + 1] == '2'
 
 
-@pytest.mark.parametrize('mutation', ['realization', 'seed', 'workers', 'window', 'roots', 'physical', 'columns', 'staging', 'command', 'process', 'role'])
+@pytest.mark.parametrize('mutation', ['realization', 'seed', 'workers', 'window', 'roots', 'physical', 'columns', 'staging', 'partial_original', 'partial_unfinished', 'partial_summary', 'command', 'process', 'role'])
 def test_completed_evidence_rejects_wrong_schedule_or_execution(completed: Any, mutation: str) -> None:
     evidence, _ = completed
     receipt = tool.read_pin(evidence['candidate_training'])
@@ -128,6 +139,16 @@ def test_completed_evidence_rejects_wrong_schedule_or_execution(completed: Any, 
         receipt['actual_game_columns'][0]['game_id_sha256'] = 'changed'
     elif mutation == 'staging':
         receipt['actual_staging_sha256'] = 'wrong'
+    elif mutation in ('partial_original', 'partial_unfinished'):
+        qual = tool.read_pin(receipt['selected_subset_qualification'])
+        entries = qual['partial_corpus']['V50']['incomplete_shards']
+        if mutation == 'partial_original':
+            entries['V50_0/shard_000000.zarr'] = {'derive_run_finalized': True}
+        else:
+            entries[next(iter(entries))]['derive_run_finalized'] = False
+        receipt['selected_subset_qualification'] = put(Path(receipt['selected_subset_qualification']['path']), qual)
+    elif mutation == 'partial_summary':
+        summary['corpus']['partial_corpus']['allow_partial_corpus'] = False
     elif mutation == 'command':
         process['command'][process['command'].index('--shards') + 1] = '/source-proof-only'
     elif mutation == 'process':
@@ -136,7 +157,7 @@ def test_completed_evidence_rejects_wrong_schedule_or_execution(completed: Any, 
         receipt['role'] = 'B100'
     receipt['summary_sha256'] = put(summary_path, summary)['sha256']
     receipt['training_process'] = put(Path(receipt['training_process']['path']), process)
-    with pytest.raises(ValueError, match=r'differs|incomplete|nonfinite|training'):
+    with pytest.raises(ValueError, match=r'differs|incomplete|nonfinite|training|partial|finalized'):
         tool.verify_completed(receipt)
 
 
@@ -166,15 +187,15 @@ def test_fixed_package_requires_matched_training_and_pretraining_panel(completed
     evidence, _ = completed
     receipt = tool.read_pin(evidence['candidate_training'])
     contract = {**evidence, 'training': {k: v for k, v in evidence.items() if k.endswith('_training')},
-                'pairs': 256, 'sims': 400, 'candidate_prior_temperature': 1., 'reference_prior_temperature': 1.,
+                'pairs': 256, 'sims': 400, 'seed': 20260913, 'candidate_prior_temperature': 1., 'reference_prior_temperature': 1.,
                 'opening_panel': receipt['opening_panel'], 'execution': {'loop': 'rolling', 'compile': 'on',
                     'eval_max_batch': 4096, 'max_concurrent_games': 128}}
     reader.verify_combined_training(contract)
-    for key, value in [('pairs', 128), ('sims', 100), ('candidate_prior_temperature', .5),
+    for key, value in [('pairs', 128), ('sims', 100), ('seed', 42), ('candidate_prior_temperature', .5),
                        ('opening_panel', {'path': '/another', 'sha256': 'b' * 64})]:
         changed = copy.deepcopy(contract)
         changed[key] = value
-        with pytest.raises(ValueError, match=r'differs|incomplete|nonfinite|training'):
+        with pytest.raises(ValueError, match=r'differs|incomplete|nonfinite|training|partial|finalized'):
             reader.verify_combined_training(changed)
 
 
@@ -201,7 +222,8 @@ def test_default_plan_is_read_only_and_invalid_seed_rejects_before_outputs(compl
     manifest['code_pins'] = {str(Path(p).resolve()): tool.owned.sha(p) for p in
                             (tool.__file__, tool.owned.__file__, tool.original.__file__, tool.memory.__file__, tool.schedule.__file__)}
     # Isolate frozen source bytes from this machine's actual historical runtime.
-    monkeypatch.setattr(tool, 'FROZEN', {})
+    real_pin = tool.owned.pin
+    monkeypatch.setattr(tool.owned, 'pin', lambda path, digest: None if str(path).startswith(str(tool.owned.RUNTIME)) else real_pin(path, digest))
     path = tmp_path / 'launch.json'
     put(path, manifest)
     monkeypatch.setattr(sys, 'argv', ['combined_corpus_train', '--manifest', str(path)])

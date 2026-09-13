@@ -91,6 +91,37 @@ def admission(m: dict[str, Any]) -> dict[str, Any]:
     return report
 
 
+def selected_subset(m: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
+    """One registered opt-in: finished selected G10 products, not partial writes."""
+    qualification = read_pin(m['selected_subset_qualification'])
+    same(qualification['schema'], 1, 'subset qualification schema')
+    same(qualification['status'], 'PASS_SELECTED_COMPLETE_UNION_FROZEN_PREFLIGHT', 'subset qualification status')
+    for key in ('corpus_manifest', 'prospective', 'runtime_manifest'):
+        same(qualification[key], m[key], 'subset ' + key)
+    same(qualification['config'], {'path': str(owned.RUNTIME / 'configs/lc0_positive_control.yaml'),
+                                  'sha256': FROZEN['configs/lc0_positive_control.yaml']}, 'subset frozen config')
+    same(qualification['flags'], {'allow_partial_corpus': True, 'allow_leak': False, 'allow_mixed_history': False},
+         'subset flags')
+    same(qualification['trainer_shards'], report['trainer_shards'], 'subset ordered roots')
+    manifest = read_pin(m['corpus_manifest'])
+    original_ids = {c['id'] for c in manifest['cohorts'] if c['identity_kind'] == 'historical-single-source'}
+    require(len(original_ids) == 1, 'ambiguous original corpus')
+    for arm in ROLES.values():
+        roots = report['trainer_shards'][arm]
+        require(len({Path(root).name for root in roots}) == len(roots), 'ambiguous frozen partial-stamp root names')
+        eligible = {Path(row['paths'][arm]).parent.name + '/' + Path(row['paths'][arm]).name
+                    for row in report['mapping'] if row['cohort'] not in original_ids}
+        partial = qualification['partial_corpus'][arm]
+        require(set(partial) == {'incomplete_shards', 'partial', 'allow_partial_corpus'}, 'subset partial fields')
+        same(partial['allow_partial_corpus'], True, 'explicit subset allowance')
+        same(partial['partial'], bool(partial['incomplete_shards']), 'partial record boolean')
+        require(bool(partial['incomplete_shards']) and set(partial['incomplete_shards']) <= eligible,
+                'unexpected original or unselected partial shard')
+        require(all(item['derive_run_finalized'] is True for item in partial['incomplete_shards'].values()),
+                'selected derivation not finalized')
+    return qualification['partial_corpus']
+
+
 def validate(m: dict[str, Any], *, fresh: bool = True) -> dict[str, Any]:
     same(m['schema'], 1, 'schema')
     same(m['profile'], PROFILE, 'profile')
@@ -115,11 +146,12 @@ def validate(m: dict[str, Any], *, fresh: bool = True) -> dict[str, Any]:
     for suffix, digest in FROZEN.items():
         owned.pin(owned.RUNTIME / suffix, digest)
     report = admission(m)
+    selected_subset(m, report)
     if m['role'] == 'Combined35M_V50':
         prior = read_pin(m['previous_training'])
         verify_completed(prior)
         same(prior['role'], 'Combined35M_SF100', 'sequential SF100 predecessor')
-        for key in ('corpus_manifest', 'prospective', 'opening_panel', 'runtime_manifest', 'preregistration'):
+        for key in ('corpus_manifest', 'prospective', 'opening_panel', 'runtime_manifest', 'preregistration', 'selected_subset_qualification'):
             same(prior[key], m[key], 'predecessor ' + key)
     else:
         require('previous_training' not in m, 'SF100 must be the first fresh arm')
@@ -131,10 +163,10 @@ def train_command(m: dict[str, Any], report: dict[str, Any], python: str) -> lis
             '--shards', *report['trainer_shards'][ROLES[m['role']]], '--out-dir', m['run'],
             '--steps', '0', '--batch-size', '512', '--sampling-mode', 'game_epoch',
             '--epoch-plan-workers', '2', '--epoch-load-workers', '2', '--seed', '101',
-            '--device', 'cuda', '--train-window-steps', '88', '--allow-invalid-control']
+            '--device', 'cuda', '--train-window-steps', '88', '--allow-invalid-control', '--allow-partial-corpus']
 
 
-def summary_contract(summary: dict[str, Any], report: dict[str, Any], role: str) -> None:
+def summary_contract(summary: dict[str, Any], report: dict[str, Any], role: str, partial: dict[str, Any]) -> None:
     arm = ROLES[role]
     plan = report['arms'][arm]['physical_plan']
     expected = {**plan, 'complete': True, 'rows_realized': plan['rows_planned'],
@@ -147,6 +179,7 @@ def summary_contract(summary: dict[str, Any], report: dict[str, Any], role: str)
                        'steps_realized': plan['batches_planned'], 'compute_loss_calls': plan['batches_planned']}.items():
         same(summary.get(key), value, 'actual training ' + key)
     same(summary['corpus']['shard_dirs'], report['trainer_shards'][arm], 'actual ordered training roots')
+    same(summary['corpus']['partial_corpus'], partial[arm], 'actual declared complete subset')
     original.verify_window_cadence(summary)
     require(all(w['grad_nonfinite_skip_rate'] == 0 and w['transient_cuda_retry_batches'] == 0
                 and math.isfinite(w['loss']) and math.isfinite(w['grad_norm_mean'])
@@ -188,7 +221,7 @@ def verify_actual_columns(run: Path, report: dict[str, Any], role: str) -> dict[
 def completed_training(m: dict[str, Any], report: dict[str, Any], charge: dict[str, Any]) -> dict[str, Any]:
     run, role = Path(m['run']), m['role']
     summary = owned.read(run / 'summary.json')
-    summary_contract(summary, report, role)
+    summary_contract(summary, report, role, selected_subset(m, report))
     realized = verify_actual_columns(run, report, role)
     roster_sha = realized['actual_staging_sha256']
     checkpoint = {'role': role, **pin(run / 'checkpoint.pt')}
@@ -207,7 +240,7 @@ def completed_training(m: dict[str, Any], report: dict[str, Any], charge: dict[s
                'historical_valid_control': summary['valid_control'],
                'historical_validity_problems': summary['validity_problems'],
                'proof': 'Exact actual staged-link order and frozen trainer physical plan/realization equal the admitted prospective arm; canonical identity is inherited from its game-column proof. No feature/target revalidation.'}
-    receipt.update({k: m[k] for k in ('corpus_manifest', 'prospective', 'opening_panel', 'preregistration', 'runtime_manifest', 'code_pins')})
+    receipt.update({k: m[k] for k in ('corpus_manifest', 'prospective', 'opening_panel', 'preregistration', 'runtime_manifest', 'code_pins', 'selected_subset_qualification')})
     return receipt
 
 
@@ -219,7 +252,7 @@ def verify_completed(receipt: dict[str, Any]) -> dict[str, Any]:
     role, run = receipt['role'], Path(receipt['run'])
     require(run.is_absolute(), 'relative completed run')
     summary = read_pin({'path': str(run / 'summary.json'), 'sha256': receipt['summary_sha256']})
-    summary_contract(summary, report, role)
+    summary_contract(summary, report, role, selected_subset(receipt, report))
     same(receipt['physical_plan_sha256'], report['arms'][ROLES[role]]['physical_plan']['plan_sha256'], 'completed physical plan')
     same(receipt['canonical_plan_sha256'], report['arms'][ROLES[role]]['canonical_plan_sha256'], 'completed canonical plan')
     require(receipt['actual_staging_verified'] is True and receipt['actual_game_columns_verified'] is True,
@@ -263,7 +296,7 @@ def matched_training_pair(evidence: dict[str, Any]) -> tuple[str, str]:
         same(receipt['role'], role, 'combined match direction')
         same(receipt['checkpoint'], evidence[side], 'combined match checkpoint')
         receipts.append(receipt)
-    for key in ('corpus_manifest', 'prospective', 'canonical_plan_sha256', 'opening_panel', 'preregistration', 'runtime_manifest'):
+    for key in ('corpus_manifest', 'prospective', 'canonical_plan_sha256', 'opening_panel', 'preregistration', 'runtime_manifest', 'selected_subset_qualification'):
         same(receipts[0][key], receipts[1][key], 'matched ' + key)
     require(evidence['candidate']['path'] != evidence['reference']['path']
             and evidence['candidate']['sha256'] != evidence['reference']['sha256'], 'candidate is reference')
