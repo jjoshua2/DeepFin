@@ -84,3 +84,21 @@ extraction diff, with producer SHA-256
 `44de843884d37fc2709a8ebc95944299ec6412b8e97179db4eddeaf637a60e3d`.
 The historical plan pins that uncommitted state; committing the same source
 does not retroactively change the execution identity.
+
+## Future materializer source-block reuse
+
+The materializer's Ceres feed-alignment check now reads one decoded 512-row `x`
+block and supplies the same 128-row conversion/digest batches from it. The block
+is released before the next read; at the qualified float16 `[N,175,8,8]` layout,
+it retains at most 10.94 MiB. Other storage chunk sizes keep 128-row reads.
+Source hashes, legal/row checks and feed-digest comparisons remain unchanged,
+as do policy write batches and the current supervisor's batch-128 command.
+The shared alignment check serves both policy and value materialization.
+
+Chunked fixture tests compare every conversion input byte, include a final
+one-row batch and verify three TPG source reads instead of ten across 1,153 rows.
+They also check release before each new allocation and the non-512 fallback.
+Existing policy/value writer fixtures exercise output and provenance checks.
+This is source-read reduction evidence, not measured end-to-end acceleration.
+No real-payload benchmark ran, and the active/frozen Ceres100 producer was not
+modified or replaced. Future adoption requires its own producer identity.

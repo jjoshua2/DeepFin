@@ -90,13 +90,23 @@ def check_ceres_alignment(group: Any, bank: Any, attrs: dict[str, Any], rows: in
     require(bool(np.array_equal(bank['legal_offsets'][:], np.r_[0, np.cumsum(counts)])
             and np.array_equal(bank['legal_indices'][:], np.nonzero(legal)[1])),
             'Ceres legal roster differs')
-    for start in range(0, rows, 128):
-        feed = ceres.tpg.stored_x_to_ceres_tpg_bytes(
-            group['x'][start:start + 128], input_history_encoding=shared.HISTORY,
-            history_rep_fix=True)
-        require(bool(np.array_equal(shared.row_digests(feed),
-                               bank['tpg_feed_sha256'][start:start + 128])),
-                'Ceres feed identity differs')
+    x = group['x']
+    # The qualified layout stores 512 rows per compressed x chunk. Decode it
+    # once while retaining the historical 128-row conversion/digest batches.
+    # Other layouts keep their previous direct 128-row read behavior.
+    block_rows = 512 if x.chunks[0] == 512 else 128
+    for base in range(0, rows, block_rows):
+        end = min(base + block_rows, rows)
+        block = np.asarray(x[base:end])
+        for start in range(base, end, 128):
+            feed = ceres.tpg.stored_x_to_ceres_tpg_bytes(
+                block[start - base:min(start + 128, end) - base],
+                input_history_encoding=shared.HISTORY, history_rep_fix=True)
+            require(bool(np.array_equal(shared.row_digests(feed),
+                                   bank['tpg_feed_sha256'][start:start + 128])),
+                    'Ceres feed identity differs')
+        # Drop the old allocation before requesting the next decoded block.
+        del block
 
 
 def verify_bt4_lineage(manifest: dict[str, Any], specs: list[dict[str, Any]]) -> dict[str, Any]:
