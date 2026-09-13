@@ -1,0 +1,1050 @@
+{
+  "status": "TRAINING_COMPLETED_CPU_PACKAGE_QUALIFIED_ARENA_HOST_LAUNCHED_NO_OUTCOME",
+  "playing_result": null,
+  "records": {
+    "training/training.complete.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/training.complete.json",
+      "sha256": "830c73becca94931e91ee5a16e37745829c8e20db125c2459e9336613e97784c",
+      "content": {
+        "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+        "checkpoint": {
+          "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1/checkpoint.pt",
+          "role": "Ceres100",
+          "sha256": "8b8fea7b9ae0fba2a836d724a75631873f32d624f015fa28c067b1b19709bd85"
+        },
+        "complete": true,
+        "historical_valid_control": false,
+        "historical_validity_problems": [
+          "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+          "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+          "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+        ],
+        "input_pins": {
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/ceres_target_mix_summary.json": "b640508c736e60868f332c6461a01972af35e5724e2efcbb242d823701fbc866",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/derive_targets_summary.json": "6844ed432c09cf03f112cffa3452e3315e5f5de832837de4b8fbe022713de095",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18"
+        },
+        "physical_plan_sha256": "7f4c18df63dd3e11f60fcd6b8aa5a6e766de2b4cd9e57715500a75c29526ec51",
+        "role": "Ceres100",
+        "run": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1",
+        "schedule": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/realized_schedule.json",
+          "sha256": "4336eb43d3ea28c2162d29580a059822c95979ab88d000d567c29bb430e22ae5"
+        },
+        "summary_sha256": "1cf126c398491c23a9b85193fd9a104b274d3081e189a4e3e10318de36113eed",
+        "training_charge_seconds": 7657.045734917992
+      }
+    },
+    "training/complete.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/complete.json",
+      "sha256": "11d44cf609fb2cd46d23e3e5b6166c01067e03c7d8399a92cbc2bb812a445ea3",
+      "content": {
+        "gpu_seconds": 7657.045734917992,
+        "profile": "Ceres100",
+        "promotion": "NONE; no arena executed",
+        "scope": "training_only",
+        "training_only_complete": true,
+        "training_receipt_sha256": "830c73becca94931e91ee5a16e37745829c8e20db125c2459e9336613e97784c"
+      }
+    },
+    "training/independent_completed_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/independent_completed_review.json",
+      "sha256": "94cb56280dab1146fffb18153738aebe4582061d7c57191d5d53d50dcd74d2b7",
+      "content": {
+        "status": "PASS_INDEPENDENT_COMPLETED_CERES100_EPOCH_REVIEW",
+        "refs": {
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/training.complete.json": "830c73becca94931e91ee5a16e37745829c8e20db125c2459e9336613e97784c",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/complete.json": "11d44cf609fb2cd46d23e3e5b6166c01067e03c7d8399a92cbc2bb812a445ea3",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training_manifest.json": "c680aecaeb5f866c63d7a60f9c453f23e1b91a775747686cdb0f0e565c26de8f",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1/summary.json": "1cf126c398491c23a9b85193fd9a104b274d3081e189a4e3e10318de36113eed",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/realized_schedule.json": "4336eb43d3ea28c2162d29580a059822c95979ab88d000d567c29bb430e22ae5",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/prospective_schedule.json": "ee6c9cfff8ab67bfcd6be49302f359c7a676f1ab083313ddd76b257f7206d8b9",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/host_operator_v1/terminal.json": "6f6a962e68ed1de9a1c2b8645fc36474200dfc35ee39066d047862b04d485b19",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/training/process.json": "3aa64852ffba6b13000a1057d8ffd62e13bd75259e970e0697697485a82d47af",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/schedule/process.json": "bfdc25af4c957610ade1424bf3c7d70d3a40afdd9dae4d85a34f14710e4dcfdf"
+        },
+        "checkpoint_from_receipt": {
+          "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1/checkpoint.pt",
+          "role": "Ceres100",
+          "sha256": "8b8fea7b9ae0fba2a836d724a75631873f32d624f015fa28c067b1b19709bd85"
+        },
+        "rows": 18910484,
+        "shards": 2309,
+        "updates": 36935,
+        "windows": 420,
+        "final_window_updates": 63,
+        "seed": 0,
+        "workers": [
+          2,
+          2
+        ],
+        "training_seconds": 7657.045734917992,
+        "host_seconds": 7815.018467664719,
+        "schedule_seconds": 155.03968905100191,
+        "physical_plan_sha256": "7f4c18df63dd3e11f60fcd6b8aa5a6e766de2b4cd9e57715500a75c29526ec51",
+        "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+        "historical_validity_problems": [
+          "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+          "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+          "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+        ],
+        "findings": [],
+        "scope": "Actual realized schedule/summary and process metadata match admitted prospective, seed0 and2/2 frozen trainer. Input pins bind previously qualified pureCeres policy and16unchanged nonpolicy arrays/SFvalues; no new payload verification or stronger claim. Checkpoint from genuine completed receipt, not rehashed.",
+        "limits": [
+          "No models/columns/verifier/tests repeated.",
+          "Historical valid_control false preserved; no strength result yet."
+        ]
+      }
+    },
+    "host_operator_v1/terminal.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/host_operator_v1/terminal.json",
+      "sha256": "6f6a962e68ed1de9a1c2b8645fc36474200dfc35ee39066d047862b04d485b19",
+      "content": {
+        "returncode": 0,
+        "started_unix": 1789311229.2891648,
+        "ended_unix": 1789319044.3076324,
+        "manifest_sha256": "c680aecaeb5f866c63d7a60f9c453f23e1b91a775747686cdb0f0e565c26de8f",
+        "training_complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/complete.json",
+        "scope": "Coordinator terminal only; parent must inspect actual completed training and realized schedule receipts."
+      }
+    },
+    "training/training/process.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/training/process.json",
+      "sha256": "3aa64852ffba6b13000a1057d8ffd62e13bd75259e970e0697697485a82d47af",
+      "content": {
+        "command": [
+          "/usr/bin/python3",
+          "scripts/lc0_control_train.py",
+          "--config",
+          "configs/lc0_positive_control.yaml",
+          "--shards",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05",
+          "--out-dir",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1",
+          "--steps",
+          "0",
+          "--batch-size",
+          "512",
+          "--sampling-mode",
+          "game_epoch",
+          "--epoch-plan-workers",
+          "2",
+          "--epoch-load-workers",
+          "2",
+          "--seed",
+          "0",
+          "--device",
+          "cuda",
+          "--train-window-steps",
+          "88",
+          "--allow-invalid-control"
+        ],
+        "complete": false,
+        "cwd": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+        "ended_unix": 1789318888.7187457,
+        "exit_code": 0,
+        "gpu_seconds": 7657.045734917992,
+        "hard_seconds": 16200,
+        "input_pins": {
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/ceres_target_mix_summary.json": "b640508c736e60868f332c6461a01972af35e5724e2efcbb242d823701fbc866",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/derive_targets_summary.json": "6844ed432c09cf03f112cffa3452e3315e5f5de832837de4b8fbe022713de095",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18"
+        },
+        "launcher_sha256": "ba7c0fc37bba16dd40882c8cc090eca14048d092e272dcae16227a926a0fbf33",
+        "owner_pid": 359116,
+        "process_complete": true,
+        "runtime": {
+          "cuda": "12.8",
+          "executable": "/usr/bin/python3",
+          "native_extensions": {
+            "chess_anti_engine.encoding._features_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+            "chess_anti_engine.encoding._lc0_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+            "chess_anti_engine.mcts._mcts_tree": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+            "chess_anti_engine.nnue._nnue_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so"
+          },
+          "numpy": "1.26.2",
+          "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+          "torch": "2.11.0+cu128"
+        },
+        "stage_seconds": 7657.045734917992,
+        "started_unix": 1789311231.67301,
+        "supervisor_command": [
+          "/usr/bin/timeout",
+          "--signal=TERM",
+          "--kill-after=30s",
+          "16170s",
+          "/usr/bin/python3",
+          "scripts/lc0_control_train.py",
+          "--config",
+          "configs/lc0_positive_control.yaml",
+          "--shards",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05",
+          "--out-dir",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1",
+          "--steps",
+          "0",
+          "--batch-size",
+          "512",
+          "--sampling-mode",
+          "game_epoch",
+          "--epoch-plan-workers",
+          "2",
+          "--epoch-load-workers",
+          "2",
+          "--seed",
+          "0",
+          "--device",
+          "cuda",
+          "--train-window-steps",
+          "88",
+          "--allow-invalid-control"
+        ],
+        "supervisor_pid": 359154,
+        "training_cmdline": [
+          "/usr/bin/python3",
+          "scripts/lc0_control_train.py",
+          "--config",
+          "configs/lc0_positive_control.yaml",
+          "--shards",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05",
+          "--out-dir",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1",
+          "--steps",
+          "0",
+          "--batch-size",
+          "512",
+          "--sampling-mode",
+          "game_epoch",
+          "--epoch-plan-workers",
+          "2",
+          "--epoch-load-workers",
+          "2",
+          "--seed",
+          "0",
+          "--device",
+          "cuda",
+          "--train-window-steps",
+          "88",
+          "--allow-invalid-control"
+        ],
+        "training_pid": 359155
+      }
+    },
+    "training/schedule/process.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/schedule/process.json",
+      "sha256": "bfdc25af4c957610ade1424bf3c7d70d3a40afdd9dae4d85a34f14710e4dcfdf",
+      "content": {
+        "command": [
+          "/usr/bin/nice",
+          "-n",
+          "19",
+          "/usr/bin/ionice",
+          "-c",
+          "3",
+          "/usr/bin/taskset",
+          "-c",
+          "0,1",
+          "/usr/bin/python3",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py",
+          "--run",
+          "Ceres100=/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1",
+          "--output",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/realized_schedule.json"
+        ],
+        "complete": false,
+        "cwd": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+        "ended_unix": 1789319043.8500478,
+        "exit_code": 0,
+        "gpu_seconds": 0.0,
+        "gpu_stage": false,
+        "hard_seconds": 1800,
+        "owner_pid": 359116,
+        "process_complete": true,
+        "schedule_cmdline": [
+          "/usr/bin/python3",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py",
+          "--run",
+          "Ceres100=/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1",
+          "--output",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/realized_schedule.json"
+        ],
+        "schedule_pid": 391520,
+        "stage_seconds": 155.03968905100191,
+        "started_unix": 1789318888.810361,
+        "supervisor_command": [
+          "/usr/bin/timeout",
+          "--signal=TERM",
+          "--kill-after=30s",
+          "1770s",
+          "/usr/bin/nice",
+          "-n",
+          "19",
+          "/usr/bin/ionice",
+          "-c",
+          "3",
+          "/usr/bin/taskset",
+          "-c",
+          "0,1",
+          "/usr/bin/python3",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py",
+          "--run",
+          "Ceres100=/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1",
+          "--output",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/realized_schedule.json"
+        ],
+        "supervisor_pid": 391519
+      }
+    },
+    "training/realized_schedule.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/realized_schedule.json",
+      "sha256": "4336eb43d3ea28c2162d29580a059822c95979ab88d000d567c29bb430e22ae5",
+      "selected_fields": {
+        "arms": {
+          "Ceres100": {
+            "canonical_plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+            "corpus": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05",
+            "metadata_matches_source": true,
+            "physical_plan_sha256": "7f4c18df63dd3e11f60fcd6b8aa5a6e766de2b4cd9e57715500a75c29526ec51",
+            "staging": "verified actual",
+            "summary_sha256": "1cf126c398491c23a9b85193fd9a104b274d3081e189a4e3e10318de36113eed",
+            "training_completion_verified": true
+          }
+        },
+        "batch_size": 512,
+        "elapsed_seconds": 152.76793155299674,
+        "limits": [
+          "No feature/target decoding or identity check; unchanged non-policy rows require separate mixer provenance.",
+          "Plan hashes cover game choices and shard paths, not per-row offsets; row-order equality is a code-backed inference.",
+          "Historical NumPy version without a banked runtime stamp remains unknown.",
+          "An unfinished run or prospective corpus is not realized training evidence."
+        ],
+        "proof": "Identical canonical planner inputs and full ordered game columns imply identical (original source, shard, row offset) order with the pinned scheduler and same NumPy RNG.",
+        "runtime": {
+          "numpy": "1.26.2",
+          "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+          "torch": "2.11.0+cu128"
+        },
+        "seed": 0,
+        "source_plan": {
+          "batch_size": 512,
+          "batches_planned": 36935,
+          "full_batches_planned": 36699,
+          "game_identity": "resolved_shard_parent+game_id",
+          "games": 97968,
+          "min_batch_rows_planned": 511,
+          "mode": "game_epoch",
+          "plan_sha256": "dc687fc333295dee565d19bb4f20da5aa95479dba3aacc5499c22a4004acc64f",
+          "ragged_batches_planned": 236,
+          "row_order": "seeded_shuffle_within_shard_game_segments",
+          "rows_planned": 18910484,
+          "seed": 0,
+          "shards": 2309,
+          "sources": 1
+        },
+        "verifier_sha256": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18"
+      },
+      "ordered_source_column_records": 2309
+    },
+    "arena/arena_outer_started.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/arena_outer_started.json",
+      "sha256": "ccf7f54728a6acacadcb7a335f308b4e1a1e9a3db71b171e81613f7ae51fdbec",
+      "content": {
+        "started_unix": 1789319420.046924,
+        "argv": [
+          "/usr/bin/timeout",
+          "--signal=TERM",
+          "--kill-after=30s",
+          "12000s",
+          "/usr/bin/env",
+          "PYTHONOPTIMIZE=0",
+          "TORCHINDUCTOR_COMPILE_THREADS=2",
+          "OMP_NUM_THREADS=2",
+          "OPENBLAS_NUM_THREADS=2",
+          "MKL_NUM_THREADS=2",
+          "/usr/bin/nice",
+          "-n",
+          "19",
+          "/usr/bin/ionice",
+          "-c",
+          "3",
+          "/usr/bin/python3",
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/combined_corpus_arena.py",
+          "--manifest",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/manifest.final.json",
+          "--expected-manifest-sha256",
+          "df9945d14d72288559daf7ffe71bd5245d4c71d2f2df6caabcc842681b742940",
+          "--execute",
+          "--expected-prepared-sha256",
+          "d69405e1057f83a2040a2cffca5025806124d90e031f7e71923ced147649c65c",
+          "--deadline-unix",
+          "1789331420.046924"
+        ],
+        "inclusive_seconds": 12030,
+        "command_sha256": "159cc19648e5f6d3b2314d2d6f87d4f6c8c987067cf6a621c75a75077d659210"
+      }
+    },
+    "arena/cpu_outer_terminal.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/cpu_outer_terminal.json",
+      "sha256": "ddfe885b75571ee0fb74c99a7913fca4813a9f14aa369bdb93cac38515144eea",
+      "content": {
+        "returncode": 0,
+        "ended_unix": 1789319282.6712399,
+        "elapsed_seconds": 67.24966025352478
+      }
+    },
+    "arena/independent_actual_cpu_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/independent_actual_cpu_review.json",
+      "sha256": "9c163bb416f619d9657c5544e79bf5960359effede48757113dbd0424701cf30",
+      "content": {
+        "status": "PASS_INDEPENDENT_ACTUAL_CPU_PACKAGE_REVIEW",
+        "refs": {
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/prepared_pair/prepared.json": "d69405e1057f83a2040a2cffca5025806124d90e031f7e71923ced147649c65c",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/manifest.final.json": "df9945d14d72288559daf7ffe71bd5245d4c71d2f2df6caabcc842681b742940",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/prepared_pair/observed.json": "70efe5ca52e30622b4cde4e9d603c448faeb061348700bb984de869486521fd5",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/prepared_pair/request.json": "6c1f4fbdff491c3543ecbc376a98e662c182b9bd3748735bb9c75bc54ba6cf65",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/prepared_pair/cpu_process/process.json": "29cd2a99e20c38fc0ef315b074dd73edeb23f7f672fad91a1059eb717898995d",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/cpu_outer_terminal.json": "ddfe885b75571ee0fb74c99a7913fca4813a9f14aa369bdb93cac38515144eea",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/opening_panel.json": "14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/training.complete.json": "830c73becca94931e91ee5a16e37745829c8e20db125c2459e9336613e97784c",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training.complete.json": "fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/arena_command.final.json": "159cc19648e5f6d3b2314d2d6f87d4f6c8c987067cf6a621c75a75077d659210"
+        },
+        "prepared_sha256": "d69405e1057f83a2040a2cffca5025806124d90e031f7e71923ced147649c65c",
+        "manifest_sha256": "df9945d14d72288559daf7ffe71bd5245d4c71d2f2df6caabcc842681b742940",
+        "host_seconds": 67.24966025352478,
+        "stage_seconds": 64.31894441599434,
+        "models": {
+          "Ceres100": {
+            "dynamic_relations": false,
+            "parameters": 61444448,
+            "architecture_sha256": "2944501f56ea5d8b43310b2e00f182294375ae9cdfc52c43da5abaf9ca38bf5e"
+          },
+          "B100": {
+            "dynamic_relations": false,
+            "parameters": 61444448,
+            "architecture_sha256": "2944501f56ea5d8b43310b2e00f182294375ae9cdfc52c43da5abaf9ca38bf5e"
+          }
+        },
+        "panel_histories": 256,
+        "cuda_initialized": false,
+        "findings": [],
+        "scope": "Genuine candidate/reference completion pins match actual prepared checkpoint identities; observed CPU model architecture/runtime and regenerated fixed panel match manifest; exact400/512/256seed20260913priors1 command preserved. Full executable command observed for CPUstage; process_complete true/exit0 despite generic complete:false staging flag.",
+        "limits": [
+          "No models/book/probe/default rerun.",
+          "Parent binds actual prepared hash and deadline in final arena host command; no launch/outcome claimed."
+        ],
+        "final_arena_binding": "PASS exact frozen draft argv with actual manifest/prepared only, parent actualstart+12000 placeholder;12030inclusive and compiler2 preserved. No extra default needed."
+      }
+    },
+    "arena/manifest.final.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/manifest.final.json",
+      "sha256": "df9945d14d72288559daf7ffe71bd5245d4c71d2f2df6caabcc842681b742940",
+      "content": {
+        "runtime": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_identity.json",
+          "sha256": "3197e5b8c54db34def8071f275b3a926160b86adae1b716240c17ba75df1ca1e"
+        },
+        "live_config": {
+          "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/configs/pbt2_small.yaml",
+          "sha256": "6e5e5dff3ed62dd8155dfc4a73f253690073b7d521d41941ac4d8fcde5e37624"
+        },
+        "book": {
+          "path": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+          "sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c"
+        },
+        "sprt_lookahead_pairs": 64,
+        "schema": 1,
+        "profile": "ceres100_b100_seed0_fixed512",
+        "candidate": {
+          "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1/checkpoint.pt",
+          "role": "Ceres100",
+          "sha256": "8b8fea7b9ae0fba2a836d724a75631873f32d624f015fa28c067b1b19709bd85"
+        },
+        "reference": {
+          "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+          "role": "B100",
+          "sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62"
+        },
+        "candidate_training": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/training.complete.json",
+          "sha256": "830c73becca94931e91ee5a16e37745829c8e20db125c2459e9336613e97784c"
+        },
+        "reference_training": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training.complete.json",
+          "sha256": "fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799"
+        },
+        "opening_panel": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/opening_panel.json",
+          "sha256": "14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c"
+        },
+        "preregistration": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/preregistration.md",
+          "sha256": "e6169825d07af0d622cabccc68535928b9c5ac6645a31634029c1974161a3c8f"
+        },
+        "state": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/prepared_pair",
+        "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_B100_fixed400_512_run01",
+        "stop_paths": [
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/STOP",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/STOP",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/STOP"
+        ],
+        "code_pins": {
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/combined_corpus_arena.py": "dcf125f55ea1d55cc997a531874fb1caa4a7c43dbcf08e18ed4b8d8c275fe4de",
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/combined_corpus_arena_probe.py": "0c9e690a2a2db7c33f3c51d64c2de5cfd530dd9db37910e74614e62039cba808",
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/bt4_recipe_screen.py": "ea815de4d674817581780612c0890777ced772c21857d45d575f7d8eb4f3f5bc",
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/bt4_package_readout.py": "6cdb86a14ca310693901940937b2452f3b30ff8847b020fb5997df93795fc2fc",
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/bt4_direct_screen.py": "99506413c900da41d8a8f9c069676f4fe12f1f69f1393a69f707b69afa54cb88",
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/training_host_memory.py": "94e074f17104bc1aa3ca9b6be99f715d9a906ff3e5546892ffe94612fd21dfdc",
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/bt4_recipe_readout.py": "d038b197ddf4737c29d4e6f81c7a391688211878ce62456dee80b35580cdb68b",
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/combined_corpus_train.py": "87ed234c2861920e96427010833a3c5c55fa3d3c136655f3957426647ed15acb",
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/combined_corpus_schedule.py": "a871fbe867f5afef9b0a110c2521a247de61e47117f9db4d6bbaadee924de9f8",
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/bt4_one_epoch_screen.py": "ba7c0fc37bba16dd40882c8cc090eca14048d092e272dcae16227a926a0fbf33"
+        },
+        "training_verifier": {
+          "path": "/tmp/deepfin-ceres100-fixed-arena/scripts/bt4_recipe_readout.py",
+          "sha256": "d038b197ddf4737c29d4e6f81c7a391688211878ce62456dee80b35580cdb68b"
+        }
+      }
+    },
+    "arena/arena_command.final.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/arena_command.final.json",
+      "sha256": "159cc19648e5f6d3b2314d2d6f87d4f6c8c987067cf6a621c75a75077d659210",
+      "content": {
+        "argv_template": [
+          "/usr/bin/timeout",
+          "--signal=TERM",
+          "--kill-after=30s",
+          "12000s",
+          "/usr/bin/env",
+          "PYTHONOPTIMIZE=0",
+          "TORCHINDUCTOR_COMPILE_THREADS=2",
+          "OMP_NUM_THREADS=2",
+          "OPENBLAS_NUM_THREADS=2",
+          "MKL_NUM_THREADS=2",
+          "/usr/bin/nice",
+          "-n",
+          "19",
+          "/usr/bin/ionice",
+          "-c",
+          "3",
+          "/usr/bin/python3",
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/combined_corpus_arena.py",
+          "--manifest",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/manifest.final.json",
+          "--expected-manifest-sha256",
+          "df9945d14d72288559daf7ffe71bd5245d4c71d2f2df6caabcc842681b742940",
+          "--execute",
+          "--expected-prepared-sha256",
+          "d69405e1057f83a2040a2cffca5025806124d90e031f7e71923ced147649c65c",
+          "--deadline-unix",
+          "ACTUAL_START_PLUS_12000"
+        ],
+        "inclusive_seconds": 12030,
+        "manifest_sha256": "df9945d14d72288559daf7ffe71bd5245d4c71d2f2df6caabcc842681b742940",
+        "prepared_sha256": "d69405e1057f83a2040a2cffca5025806124d90e031f7e71923ced147649c65c",
+        "cwd": "/tmp/deepfin-ceres100-fixed-arena"
+      }
+    },
+    "arena/prepared_pair/prepared.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/prepared_pair/prepared.json",
+      "sha256": "d69405e1057f83a2040a2cffca5025806124d90e031f7e71923ced147649c65c",
+      "content": {
+        "status": "CPU_PREPARED_NOT_LAUNCHED",
+        "manifest": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/manifest.final.json",
+          "sha256": "df9945d14d72288559daf7ffe71bd5245d4c71d2f2df6caabcc842681b742940"
+        },
+        "runtime_root": "/tmp/deepfin-ordered-arena-lookahead-runtime",
+        "runtime": {
+          "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+          "executable": "/usr/bin/python3",
+          "torch": "2.11.0+cu128",
+          "cuda": "12.8",
+          "numpy": "1.26.2",
+          "native_extensions": {
+            "chess_anti_engine.encoding._features_ext": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+            "chess_anti_engine.encoding._lc0_ext": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+            "chess_anti_engine.mcts._mcts_tree": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+            "chess_anti_engine.nnue._nnue_ext": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so"
+          },
+          "native_extension_sha256": {
+            "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c",
+            "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df",
+            "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so": "9d8cc4ba5ab20e78cfc0d183c62801765002ca49d56dbf10010f16a95291e01d",
+            "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082"
+          }
+        },
+        "input_stamps": {
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/derive_targets_summary.json": [
+            2096,
+            14376107,
+            165403,
+            1788853989297630454,
+            1788853989297630454
+          ],
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": [
+            2096,
+            12551410,
+            31264,
+            1788548640711042667,
+            1788548640711042667
+          ],
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1/summary.json": [
+            2096,
+            16895393,
+            2456194,
+            1789318884391246847,
+            1789318884391246847
+          ],
+          "/tmp/deepfin-ordered-arena-lookahead-runtime/scripts/arena_standard.py": [
+            2096,
+            14692074,
+            211752,
+            1788893122926510266,
+            1788893122926510266
+          ],
+          "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip": [
+            2096,
+            9044020,
+            9663653,
+            1780003887951973399,
+            1780003887951973399
+          ],
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/combined_corpus_arena.py": [
+            2096,
+            17282633,
+            18572,
+            1789311572863718351,
+            1789311572863718351
+          ],
+          "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so": [
+            2096,
+            9748801,
+            954392,
+            1788374229000000000,
+            1788374231333006229
+          ],
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": [
+            2096,
+            9747777,
+            132986,
+            1788538245125828061,
+            1788538245125828061
+          ],
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/derive_targets_summary.json": [
+            2096,
+            17244605,
+            168843,
+            1789290462061983331,
+            1789290462061983331
+          ],
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/bt4_package_readout.py": [
+            2096,
+            17282606,
+            18155,
+            1789311572863494884,
+            1789311572863494884
+          ],
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_close_run02/sf-close/manifest.json": [
+            2096,
+            81354195,
+            7513,
+            1788711782055247397,
+            1788711782055247397
+          ],
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/bt4_one_epoch_screen.py": [
+            2096,
+            17282605,
+            57255,
+            1789311520935093216,
+            1789311520935093216
+          ],
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/summary.json": [
+            2096,
+            14563506,
+            2455632,
+            1788867801124940379,
+            1788867801124940379
+          ],
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt": [
+            2096,
+            14563452,
+            665664141,
+            1788867799263500566,
+            1788867799839500202
+          ],
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/bt4_recipe_screen.py": [
+            2096,
+            17282611,
+            23800,
+            1789311520935093216,
+            1789311520935093216
+          ],
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/bt4_policy_mix_summary.json": [
+            2096,
+            14432657,
+            2631,
+            1788853989299542082,
+            1788853989299542082
+          ],
+          "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so": [
+            2096,
+            9748799,
+            198944,
+            1788374223000000000,
+            1788374231332258135
+          ],
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_qualification.json": [
+            2096,
+            71590598,
+            6285,
+            1788893600997902340,
+            1788893600997902340
+          ],
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/training.complete.json": [
+            2096,
+            81101227,
+            3084,
+            1789319044272405295,
+            1789319044272405295
+          ],
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": [
+            2096,
+            81351795,
+            11194,
+            1788631003713935284,
+            1788631003713935284
+          ],
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/realized_schedule.json": [
+            2096,
+            73550787,
+            732286,
+            1789319043304673073,
+            1789319043304673073
+          ],
+          "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/eval/sprt.py": [
+            2096,
+            14691564,
+            20854,
+            1788893122936214610,
+            1788893122936214610
+          ],
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/bt4_recipe_readout.py": [
+            2096,
+            17282610,
+            37216,
+            1789311520935093216,
+            1789311520935093216
+          ],
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": [
+            2096,
+            11818450,
+            162597,
+            1788382332380541877,
+            1788382332380541877
+          ],
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05/ceres_target_mix_summary.json": [
+            2096,
+            17244447,
+            1811596,
+            1789290462054302788,
+            1789290462054302788
+          ],
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/recipe_lookahead_adoption_v1/runtime_identity.json": [
+            2096,
+            71590601,
+            2758,
+            1788893600998277257,
+            1788893600998277257
+          ],
+          "/tmp/deepfin-ordered-arena-lookahead-runtime/configs/pbt2_small.yaml": [
+            2096,
+            14691776,
+            78557,
+            1788893074307575927,
+            1788893074307575927
+          ],
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/combined_corpus_schedule.py": [
+            2096,
+            17282635,
+            19115,
+            1789311520943093214,
+            1789311520943093214
+          ],
+          "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so": [
+            2096,
+            9748803,
+            644144,
+            1788374231000000000,
+            1788374231333618294
+          ],
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/opening_panel.json": [
+            2096,
+            81100382,
+            105069,
+            1789272680736129130,
+            1789272680736129130
+          ],
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/combined_corpus_train.py": [
+            2096,
+            17282636,
+            23836,
+            1789311520943093214,
+            1789311520943093214
+          ],
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/realized_schedule.json": [
+            2096,
+            71287851,
+            732279,
+            1788868086928159487,
+            1788868086928159487
+          ],
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/bt4_direct_screen.py": [
+            2096,
+            17282601,
+            24001,
+            1789311520935093216,
+            1789311520935093216
+          ],
+          "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so": [
+            2096,
+            9748800,
+            612568,
+            1788374225000000000,
+            1788374231332558372
+          ],
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/combined_corpus_arena_probe.py": [
+            2096,
+            17282634,
+            4781,
+            1789311675215038235,
+            1789311675215038235
+          ],
+          "/tmp/deepfin-ceres100-fixed-arena/scripts/training_host_memory.py": [
+            2096,
+            17282782,
+            2573,
+            1789311520971093210,
+            1789311520971093210
+          ],
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": [
+            2096,
+            15888896,
+            2454204,
+            1788721753754669164,
+            1788721753754669164
+          ],
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1/checkpoint.pt": [
+            2096,
+            16895392,
+            665664141,
+            1789318883381829868,
+            1789318883617829825
+          ],
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": [
+            2096,
+            9747375,
+            29472,
+            1788360668021465563,
+            1788360668021465563
+          ],
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/preregistration.md": [
+            2096,
+            81100951,
+            4004,
+            1789310670480139228,
+            1789310670480139228
+          ],
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training.complete.json": [
+            2096,
+            71287843,
+            3018,
+            1788868088596394088,
+            1788868088596394088
+          ]
+        },
+        "contract_template": {
+          "schema": 1,
+          "profile": "ceres100_b100_seed0_fixed512",
+          "candidate": {
+            "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1/checkpoint.pt",
+            "role": "Ceres100",
+            "sha256": "8b8fea7b9ae0fba2a836d724a75631873f32d624f015fa28c067b1b19709bd85"
+          },
+          "reference": {
+            "path": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+            "role": "B100",
+            "sha256": "b30ab345d0cf3acfb51bea6c90a91aef3c1dd5edb78da3c92d3a504fb2735d62"
+          },
+          "candidate_prior_temperature": 1.0,
+          "reference_prior_temperature": 1.0,
+          "sims": 400,
+          "pairs": 256,
+          "seed": 20260913,
+          "settings": {
+            "mode": "matched_sims",
+            "candidate": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1/checkpoint.pt",
+            "reference": "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+            "games": 512,
+            "seed": 20260913,
+            "openings": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+            "openings_kind": "book",
+            "opening_plies": 16,
+            "sims_candidate": 400,
+            "sims_reference": 400,
+            "ms_per_move": null,
+            "max_plies": 300,
+            "temperature": 0.1,
+            "gumbel_add_noise": true,
+            "search_candidate": {
+              "shape": "training",
+              "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+              "gumbel": {
+                "c_scale": 0.1,
+                "c_scale_root": -1.0,
+                "c_visit": 50.0,
+                "c_visit_root": -1.0,
+                "full_tree": true,
+                "halving_div": 2,
+                "policy_temp": 1.0,
+                "q_visit_exp_root": 99.0,
+                "target_max_visit_cap": 5,
+                "target_q_rescale": true,
+                "target_untempered_prior": true,
+                "topk": 16,
+                "volatility_anchor": 0.05,
+                "volatility_factor_clip": 4.0,
+                "volatility_fpu": 0.0,
+                "volatility_q_scale": 0.0
+              },
+              "vloss_weight": 1,
+              "target_batch": 0,
+              "tree_reuse": "cold"
+            },
+            "search_reference": {
+              "shape": "training",
+              "source": "pbt2_small.yaml -> reco -> worker SearchConfig + CLI(policy_temp=1.0)",
+              "gumbel": {
+                "c_scale": 0.1,
+                "c_scale_root": -1.0,
+                "c_visit": 50.0,
+                "c_visit_root": -1.0,
+                "full_tree": true,
+                "halving_div": 2,
+                "policy_temp": 1.0,
+                "q_visit_exp_root": 99.0,
+                "target_max_visit_cap": 5,
+                "target_q_rescale": true,
+                "target_untempered_prior": true,
+                "topk": 16,
+                "volatility_anchor": 0.05,
+                "volatility_factor_clip": 4.0,
+                "volatility_fpu": 0.0,
+                "volatility_q_scale": 0.0
+              },
+              "vloss_weight": 1,
+              "target_batch": 0,
+              "tree_reuse": "cold"
+            },
+            "volatility_candidate": null,
+            "uci_args": "",
+            "syzygy": "",
+            "syzygy_max_pieces": 0
+          },
+          "execution": {
+            "loop": "rolling",
+            "compile": "on",
+            "eval_max_batch": 4096,
+            "max_concurrent_games": 128,
+            "max_seconds": 7140.0
+          },
+          "opening_panel": {
+            "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/opening_panel_v2/opening_panel.json",
+            "sha256": "14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c"
+          },
+          "training": {
+            "candidate_training": {
+              "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/training/training.complete.json",
+              "sha256": "830c73becca94931e91ee5a16e37745829c8e20db125c2459e9336613e97784c"
+            },
+            "reference_training": {
+              "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/B100_training/training.complete.json",
+              "sha256": "fa2b63bfa7e4d4039a8fe1f788378416eee4568ec301c6b83e1a357724979799"
+            }
+          },
+          "bank": {
+            "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_B100_fixed400_512_run01/arena.games.jsonl"
+          },
+          "process": {
+            "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_B100_fixed400_512_run01/process.json"
+          },
+          "results_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_B100_fixed400_512_run01/arena.results.jsonl"
+        },
+        "command": [
+          "/usr/bin/python3",
+          "scripts/arena_standard.py",
+          "--candidate",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_ceres_policy_C100T05_epoch_v1/checkpoint.pt",
+          "--reference",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_epoch_v1/checkpoint.pt",
+          "--games",
+          "512",
+          "--mode",
+          "matched_sims",
+          "--sims",
+          "400",
+          "--seed",
+          "20260913",
+          "--openings",
+          "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+          "--opening-plies",
+          "16",
+          "--max-plies",
+          "300",
+          "--temperature",
+          "0.1",
+          "--search-shape",
+          "training",
+          "--cand-gumbel",
+          "policy_temp=1.0",
+          "--ref-gumbel",
+          "policy_temp=1.0",
+          "--compile",
+          "on",
+          "--device",
+          "cuda",
+          "--max-concurrent-games",
+          "128",
+          "--eval-max-batch",
+          "4096",
+          "--max-seconds",
+          "7140.0",
+          "--syzygy-max-pieces",
+          "0",
+          "--games-out",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_B100_fixed400_512_run01/arena.games.jsonl",
+          "--out",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/Ceres100_B100_fixed400_512_run01/arena.results.jsonl"
+        ],
+        "observed": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/prepared_pair/observed.json",
+          "sha256": "70efe5ca52e30622b4cde4e9d603c448faeb061348700bb984de869486521fd5"
+        },
+        "request": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/training_readiness_v1/registered_epoch_v1/arena_preparation_v1/prepared_pair/request.json",
+          "sha256": "6c1f4fbdff491c3543ecbc376a98e662c182b9bd3748735bb9c75bc54ba6cf65"
+        }
+      }
+    }
+  }
+}
