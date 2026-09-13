@@ -1,0 +1,270 @@
+{
+  "status": "ACTUAL_TRAINING_LAUNCHED_NOT_COMPLETED",
+  "host_started_utc": "2026-09-13T00:41:11.277320+00:00",
+  "trainer_stage_started_utc": "2026-09-13T00:41:16.718956+00:00",
+  "parent_handles": {
+    "root": 6338,
+    "sole_observer": 215
+  },
+  "prerequisites": "Parent reported previous large Ceres collection99754/sole172 terminal0 and saved qualification PASS before training launch.",
+  "launch_snapshot": {
+    "recorded_unix": 1789260111.7266092,
+    "scope": "Single launch-only observation; no training progress or outcome read. Parent owns6338/sole215.",
+    "snapshots": {
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/host_operator_v1/started.json": {
+        "pid": 128668,
+        "pgid": 128668,
+        "started_unix": 1789260071.2773197,
+        "command": [
+          "/usr/bin/time",
+          "-v",
+          "-o",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/host_operator_v1/resources.txt",
+          "/usr/bin/nice",
+          "-n",
+          "19",
+          "/usr/bin/ionice",
+          "-c",
+          "3",
+          "/tmp/deepfin-downside-training-memory-runtime/.venv/bin/python",
+          "/tmp/deepfin-downside-training-memory-runtime/scripts/bt4_one_epoch_screen.py",
+          "--manifest",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/training_manifest.json",
+          "--execute"
+        ],
+        "manifest_sha256": "d3b402c25eb55e374e078f74e7ba2e8599d02d37e7449324b236fc6c99fa8e45",
+        "plan_sha256": "70051772621ba76efa3b0dec97f6749449785fc27abe04915bbd630c7f724656",
+        "affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31
+        ],
+        "startup_available_bytes": 90912325632,
+        "memory_guard_gib": {
+          "startup": 48,
+          "running": 32
+        }
+      },
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/training/training/process.json": {
+        "command": [
+          "/usr/bin/python3",
+          "scripts/lc0_control_train.py",
+          "--config",
+          "configs/lc0_positive_control.yaml",
+          "--shards",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1",
+          "--out-dir",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_epoch_v1",
+          "--steps",
+          "0",
+          "--batch-size",
+          "512",
+          "--sampling-mode",
+          "game_epoch",
+          "--epoch-plan-workers",
+          "2",
+          "--epoch-load-workers",
+          "2",
+          "--seed",
+          "0",
+          "--device",
+          "cuda",
+          "--train-window-steps",
+          "88",
+          "--allow-invalid-control"
+        ],
+        "complete": false,
+        "cwd": "/home/josh/projects/chess/.dev/worktree/wise-cloud",
+        "hard_seconds": 16200,
+        "input_pins": {
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/replay/game_epoch.py": "621e5d0764e62cee492688e63e4099ff8cbc0d39ea094b252c3cae31cd74fde3",
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/configs/lc0_positive_control.yaml": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2",
+          "/home/josh/projects/chess/.dev/worktree/wise-cloud/scripts/lc0_control_train.py": "52d1132689c1cd53a23b63c9274226b467bd9aafdc34548a18db121a03bf9337",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json": "391837e49773465edced77bfd13f4084edc60feeff0484078280873d942e50ef",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1/bt4_sf_downside_policy_summary.json": "bd523ea8efb37569ae3a308defb207896ba6087a686b553f7e6a4f7d4c252380",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1/derive_targets_summary.json": "ce1ce9dfb3637efee77bb4b8b56be3cba53158cd3675a46a20dce7430b6c3a1b",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05_epoch_v1/summary.json": "cacc3652db3deb2bcd12cf69b0493d3f48d7ef2555c3ea4dc7502fedff3313fd",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/global_run02/verify_matched_schedule.py": "4e8e27e861021dd4c75a1a21404ff9aed0d55775e0212def585bc21b1d8cde18"
+        },
+        "launcher_sha256": "8603ec38f584c2bad122da4c98904e31aa969a2696ef3ef7c2a3f80a060cff88",
+        "owner_pid": 128669,
+        "runtime": {
+          "cuda": "12.8",
+          "executable": "/usr/bin/python3",
+          "native_extensions": {
+            "chess_anti_engine.encoding._features_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+            "chess_anti_engine.encoding._lc0_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+            "chess_anti_engine.mcts._mcts_tree": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+            "chess_anti_engine.nnue._nnue_ext": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so"
+          },
+          "numpy": "1.26.2",
+          "python": "3.10.12 (main, Mar  3 2026, 11:56:32) [GCC 11.4.0]",
+          "torch": "2.11.0+cu128"
+        },
+        "started_unix": 1789260076.7189565,
+        "supervisor_command": [
+          "/usr/bin/timeout",
+          "--signal=TERM",
+          "--kill-after=30s",
+          "16170s",
+          "/usr/bin/python3",
+          "scripts/lc0_control_train.py",
+          "--config",
+          "configs/lc0_positive_control.yaml",
+          "--shards",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1",
+          "--out-dir",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_epoch_v1",
+          "--steps",
+          "0",
+          "--batch-size",
+          "512",
+          "--sampling-mode",
+          "game_epoch",
+          "--epoch-plan-workers",
+          "2",
+          "--epoch-load-workers",
+          "2",
+          "--seed",
+          "0",
+          "--device",
+          "cuda",
+          "--train-window-steps",
+          "88",
+          "--allow-invalid-control"
+        ],
+        "supervisor_pid": 128707,
+        "training_cmdline": [
+          "/usr/bin/python3",
+          "scripts/lc0_control_train.py",
+          "--config",
+          "configs/lc0_positive_control.yaml",
+          "--shards",
+          "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1",
+          "--out-dir",
+          "/home/josh/projects/chess/runs/armB/qtemp_0.0005_hist_20m_bt4_sf_downside300w05_epoch_v1",
+          "--steps",
+          "0",
+          "--batch-size",
+          "512",
+          "--sampling-mode",
+          "game_epoch",
+          "--epoch-plan-workers",
+          "2",
+          "--epoch-load-workers",
+          "2",
+          "--seed",
+          "0",
+          "--device",
+          "cuda",
+          "--train-window-steps",
+          "88",
+          "--allow-invalid-control"
+        ],
+        "training_pid": 128708
+      }
+    },
+    "parent_preflight": {
+      "available_gib_approx": 84,
+      "swap_used": 0,
+      "free_disk_gib_approx": 211,
+      "gpu_used_mib": 3752,
+      "gpu_utilization_percent": 7
+    }
+  },
+  "references": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/host_operator_v1/launch_publication_snapshot.json",
+      "sha256": "bc48e1ab958fe633a57ff35ed9ad0150f3d5cf5a570ab9e8f5d51eab8aec183f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/host_operator_v1/plan.json",
+      "sha256": "70051772621ba76efa3b0dec97f6749449785fc27abe04915bbd630c7f724656"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/host_operator_v1/run.py",
+      "sha256": "3c7aca072801f2b9102782befc89a5d22fc07428e2a49cd8976c6b52828d5138"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/host_operator_v1/command.txt",
+      "sha256": "d73b368e4367ca9f1fb4282411d2f96dac1f4a66e9520a232987113ee7161799"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/training_manifest.json",
+      "sha256": "d3b402c25eb55e374e078f74e7ba2e8599d02d37e7449324b236fc6c99fa8e45"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/training_manifest_validation.json",
+      "sha256": "fa01c4dd3289fc769c4ea841a42543d543a88d1c64df0f20a9bea9f20a48a7cb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/independent_final_training_review.json",
+      "sha256": "5d1432a0f5b701ae064a3821d965335be6d0be4174136b6d7953705bacb83b6d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/B100Downside300.dataset_qualification.json",
+      "sha256": "90f5fc130267d286aae42766f287d914df206be0c581617d875540734f9794e8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/B100Downside300.prospective_schedule.json",
+      "sha256": "f56b5a7cccf87a0512ccaa08aeed30ace50cbf883d6b79f206989749306c9987"
+    }
+  ],
+  "runtime_commit": "442dd35ec8da222c059346e30bdbf76051b47332",
+  "training_manifest": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/training_manifest.json",
+    "sha256": "d3b402c25eb55e374e078f74e7ba2e8599d02d37e7449324b236fc6c99fa8e45"
+  },
+  "training_config": {
+    "profile": "B100Downside300",
+    "rows": 18910484,
+    "seed": 0,
+    "batch_size": 512,
+    "expected_batches": 36935,
+    "expected_windows": 420,
+    "plan_workers": 2,
+    "load_workers": 2,
+    "training_stage_seconds": 16200,
+    "host_inclusive_seconds": 21630,
+    "minimum_available_startup_gib": 48,
+    "minimum_available_running_gib": 32,
+    "no_cuda_address_space_cap": true
+  },
+  "actual_requested_and_observed_argv_equal": true,
+  "limits": [
+    "Launch proves requested/observed command, not completed updates, realized schedule or a model.",
+    "Original frozen trainer/sampler unchanged; lower loader concurrency does not cap retained replay pool.",
+    "Three float16 positive move-entry support losses remain disclosed from full target production.",
+    "No automatic match or new arena bank; completed checkpoint and fixed-match handoff review remain future prerequisites."
+  ],
+  "scope": "One saved host/trainer process-receipt observation only; no progress log, outcome, payload or model read."
+}
