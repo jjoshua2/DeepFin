@@ -1,6 +1,6 @@
 # Ceres100 policy endpoint preparation
 
-Registered September 13, 2026. Status: Ceres100 training and realized-epoch qualification completed; the registered Ceres100-versus-B100 arena host launched at 17:10:20 UTC. No playing result is reported.
+Registered September 13, 2026. Status: completed Ceres100 versus B100 scored +2.04 Elo [−22.16, +26.26] at 400 simulations. The registered result is unresolved; retain B100 policy.
 
 The missing pure-Ceres policy endpoint is a substantive comparison with the previous equal BT4/Ceres policy mixture. CeresB50 trained on the original 18,910,484 rows with original SF values and scored +12.22 Elo, nominal 95% paired interval [-22.88, +47.57], against B100. That unresolved result does not establish whether the BT4 contribution helps or hurts. At preregistration, no completed pure-Ceres policy student appeared in the inspected experiment records. The separate Ceres value mixture retained B100 policy and does not answer this question. See the [completed Ceres record](2026-09-11-ceres-weighted-bootstrap.md).
 
@@ -109,3 +109,24 @@ The requested match remains **Ceres100 versus B100, 400 simulations, 512 games /
 The launch explicitly sets `TORCHINDUCTOR_COMPILE_THREADS=2` alongside two numeric threads. This bounds requested compiler concurrency; it is **not measured memory savings**. Existing 48-GiB startup/32-GiB ongoing available-memory floors, 150-GiB disk reserve, owned cleanup, STOP handling, 7,200-second arena stage and 12,030-second enclosing allowance remain. The outer command retains its registered 12,000-second application deadline plus 30-second termination margin. Training and arena run sequentially.
 
 [Compact completed-training, CPU-package and actual-launch evidence](evidence/ceres100-trained-arena-launched-20260913.json) includes the genuine receipts and independent reviews, with selected realized-schedule fields and identities for the full saved metadata. No model, corpus payload, opening book or active game bank was reread for publication, and no active job was polled. Approximate teacher provenance and all three historical control caveats remain unchanged.
+
+
+## Completed deciding comparison: unresolved
+
+The full registered **512-game / 256-swapped-pair** comparison finished with Ceres100 scoring **50.29297%**, or **+2.04 Elo with nominal 95% paired interval [−22.16, +26.26]**, against B100. Both used 400 simulations and prior temperature 1.0. The interval crosses equality, so the preregistered hypothesis is **unresolved** and **B100 remains the policy reference**. This does not establish equivalence, reject the Ceres family, or trigger extra games, a dose sweep or promotion.
+
+| Pentanomial category | Pairs |
+| --- | ---: |
+| Two candidate wins | 29 |
+| Candidate win and draw | 52 |
+| Two draws or split wins | 95 |
+| Candidate loss and draw | 53 |
+| Two candidate losses | 27 |
+
+The middle category includes both double draws and split wins. All 256 pair scores are retained in the [compact completed evidence](evidence/ceres100-policy-result-20260913.json). The prior CeresB50 policy mixture scored +12.22 Elo [−22.88, +47.57] against B100 and was also unresolved. Comparing those two point estimates does not establish that B50 beats Ceres100; no direct B50 match follows automatically.
+
+The owned GPU stage completed successfully in **2,031.458 seconds**. The enclosing host returned **exit 0 in 2,034.914 seconds**, ending at **2026-09-13 17:44:14.960426 UTC** (exec77013 / sole observer550). Its completed process record reports `process_complete=true` and an actual observed arena command matching the qualified CPU package. No missing-command recovery or rerun was needed. The generic reader's `launch_qualification_verified=false` remains explicit: the separate CPU-package review, immutable parent launch and owned process/runtime/cwd/prepared bindings supply the external launch evidence rather than changing that flag.
+
+Independent completed review `73c06e19…` checked the complete small bank once: its content hash, all 512 unique pair halves, panel opening FENs, colors, seeds, settings, results and every published pair score. Independent arithmetic reproduced the score, standard error, Elo and pentanomial counts. The already completed full reader checked checkpoint contents and original-epoch training lineage; those model checks were not repeated during review. The actual command retained seed 20260913, the reused development panel, rolling 128 / batch 4096, maximum 300 plies, no tablebases and the original search shape. Compiler concurrency was explicitly set to 2; this is neither a bitwise-equivalence nor measured memory-savings claim.
+
+The scope remains one original 18.91M-row training seed and a reused development bank. Native-Ceres numerical parity is unestablished for the approximate C3 fixed32 profile. All three historical `valid_control=false` caveats remain: no held-out purity receipt, committed rather than current live-config premises, and intentional game-epoch rather than historical replacement sampling. This comparison does not settle 100M transfer, independent replication or future RL strength. The separately selected native-BT4 value endpoint addresses a different question and preserves B100 policy.

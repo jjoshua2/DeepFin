@@ -9,7 +9,7 @@ measurements support which claims.
 | Record | Scope |
 | --- | --- |
 | [Native BT4 value endpoint](2026-09-13-native-bt4-value-endpoint.md) | Matched 35M V100-versus-V50 contrast; bounded native-value CPU rewrite launched, actual target qualification and training pending |
-| [Ceres100 policy endpoint preparation](2026-09-13-ceres100-policy-preparation.md) | Pure-Ceres seed-0 2/2-worker epoch completed and CPU package qualified; registered 512-game/400-simulation B100 arena host launched, no result yet |
+| [Ceres100 policy endpoint preparation](2026-09-13-ceres100-policy-preparation.md) | Pure-Ceres endpoint completed: +2.04 Elo [−22.16, +26.26] versus B100 over 512 games at 400 simulations; unresolved, retain B100 policy |
 | [Ceres materializer batch screen](2026-09-12-ceres-materializer-batch-benchmark.md) | Real 8,192-row outputs identical at 128/512; observed timings confounded by cache/order, no production speedup claim |
 | [Ceres source-read cache](2026-09-12-ceres-source-block-cache.md) | CPU component benchmark: identical batches,1.74s→0.12s reads; future collector cache/timers, no GPU throughput claim |
 | [Small G10 Ceres pilot](2026-09-11-g10-ceres-pilot.md) | 5,866,975 G10 Ceres rows / 718 shards qualified after run07 large completion; no further collection queued, science remains first4 only |
