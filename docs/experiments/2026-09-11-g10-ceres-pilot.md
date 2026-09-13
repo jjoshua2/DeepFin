@@ -723,7 +723,7 @@ with the separately preserved prefix, this completes collection of all
 **263,916 rows / 33 shards** of the accepted batch-v3 run06 cohort: 8248 physical
 calls and 20 padding rows across both allocations.
 
-The two outer executions total 1894.474 seconds of allocated work; their
+The two outer executions total 1894.474 seconds of elapsed execution time; their
 between-run preparation gap is separate. This is measured collection time,
 not a controlled throughput comparison. The fixed32 approximate C3 teacher,
 full legal policy and both raw value heads retain their existing semantics.
