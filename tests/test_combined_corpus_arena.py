@@ -123,7 +123,12 @@ def test_training_verifier_uses_bound_original_path_and_restores(tmp_path, monke
     m["training_verifier"] = {"path": str(p), "sha256": sha}
     monkeypatch.setattr(tool, "combined", SimpleNamespace(__file__=str(p)))
     monkeypatch.setattr(
-        tool.reader, "read_json", lambda ref: {"code_pins": {str(p): sha}}
+        tool.reader,
+        "read_json",
+        lambda ref: {
+            "code_pins": {str(p): sha},
+            "previous_training": m["reference_training"],
+        },
     )
     previous = tool.package.combined
 
@@ -137,9 +142,24 @@ def test_training_verifier_uses_bound_original_path_and_restores(tmp_path, monke
         fail_inside()
     assert tool.package.combined is previous
     monkeypatch.setattr(
-        tool.reader, "read_json", lambda ref: {"code_pins": {str(p): "wrong"}}
+        tool.reader,
+        "read_json",
+        lambda ref: {
+            "code_pins": {str(p): "wrong"},
+            "previous_training": m["reference_training"],
+        },
     )
     with pytest.raises(ValueError, match="binding"), tool.training_verifier(m):
+        pass
+    monkeypatch.setattr(
+        tool.reader,
+        "read_json",
+        lambda ref: {
+            "code_pins": {str(p): sha},
+            "previous_training": {"path": "/foreign"},
+        },
+    )
+    with pytest.raises(ValueError, match="predecessor"), tool.training_verifier(m):
         pass
 
 
