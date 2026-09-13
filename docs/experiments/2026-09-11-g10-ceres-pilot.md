@@ -1,11 +1,11 @@
 # G10 Ceres first-four-shard convenience pilot
 
-Current collection status: **5,866,975 G10 rows / 718 shards are qualified**
-across the original run06 increment, both complete next96 cohorts and both complete
-large cohorts, including policy and both value-logit heads. No further Ceres
-collection was queued at that completion; the bounded prefix launch below is a subsequent allocation. The completed science below still uses the original
-32,768-row first-four-shard sample. Collection does not enlarge those diagnostic
-results. The dated sections retain the actual execution history.
+Current collection status: **6,130,891 G10 rows / 751 shards are qualified**,
+including the complete batch-v3 run06 cohort added below, with policy and both
+value-logit heads. This is saved consumer qualification, not training admission.
+The completed science below still uses the original 32,768-row first-four-shard
+sample. Collection does not enlarge those diagnostic results. Dated sections
+retain their historical coverage snapshots.
 
 The preregistered task was to collect C3-768-30-pre8-I8 policy and both raw value-logit heads for the first four whole original run06 G10 derived shards (0..3, 32,768 rows, 1,024 batch-32 calls, zero padding). This is a convenience prefix, **not representative G10**. Same-row teacher disagreement is a diagnostic, not an Elo estimate or a new training queue.
 
@@ -735,3 +735,30 @@ These establish collected sidecars, not full-cohort consumer qualification:
 the previously qualified **5,866,975 rows / 718 shards** remain unchanged in
 this record. No saved-array validation, training or match was repeated for
 publication.
+
+## September 13: batch-v3 run06 saved consumer qualification passed
+
+The separately allocated CPU qualifier completed with **exit 0 in 13.860 seconds**
+against the two completed collection roots. It qualified all **263,916 rows /
+33 shards**, with 33 newly audited payload shards and no reused shard audits.
+Total qualified G10 Ceres coverage is now **6,130,891 rows / 751 shards**.
+
+The unchanged saved-output auditor checked nine arrays per shard (**297 arrays**),
+including legal-policy storage, both raw value-logit heads, row/game/ply identity
+and stored feed hashes. Each chunk retained 403 CUDA neural kernel events, four
+CPU shape events, first/final library observations and no missing final evidence
+or partial directories. Exact source/native bindings and the full ordered
+33-shard consumer manifest were reconciled across both collection roots.
+
+The policy-consumer manifest is
+`524e425f02cf54267b829dbebc52f30f7ddb3c01626455e155680cc9090e7328`.
+[Compact evidence](evidence/g10-ceres-batchv3-run06-qualified-20260913.json)
+preserves the actual terminal, manifest/report pins, per-shard audit results and
+independent completion review. The latter checked compact receipts and identity
+relationships without repeating saved-array checks.
+
+The qualifier used a separate 600-second CPU-only allocation, CPUs 2,3, two
+threads, a 1-GiB address-space cap, 32-GiB host headroom and 150-GiB disk reserve.
+This does not establish native Ceres parity, representative-corpus performance,
+a trained model or an Elo result. Both value heads are retained, while this
+manifest enables the existing policy consumer; training admission remains separate.
