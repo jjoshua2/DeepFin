@@ -1,10 +1,9 @@
 # G10 Ceres first-four-shard convenience pilot
 
-Current collection status: **3,858,023 G10 rows / 472 shards are qualified**
-across the original run06 increment, both complete next96 cohorts and the complete
-run06 large cohort, including policy and both value-logit heads. The next complete
-run07 large cohort has launched for 2,008,952 additional rows; those rows are not
-yet included. The completed science below still uses the original
+Current collection status: **5,866,975 G10 rows / 718 shards are qualified**
+across the original run06 increment, both complete next96 cohorts and both complete
+large cohorts, including policy and both value-logit heads. No further Ceres
+collection is queued. The completed science below still uses the original
 32,768-row first-four-shard sample. Collection does not enlarge those diagnostic
 results. The dated sections retain the actual execution history.
 
@@ -607,3 +606,32 @@ extension. [Compact actual-launch evidence](evidence/g10-ceres-run07-large-launc
 pins the driver start, exact plans/command and independent review. This publication
 read the saved start file once and did not poll collection, models, arrays or
 active observers.
+
+
+## Run07 large completed — 5,866,975 G10 rows qualified
+
+The run07 large driver completed all **16 chunks with exit 0** in **6,206.363
+seconds**, ending at **2026-09-13 05:42:05.933 UTC**. Automatic saved-output
+qualification passed for **2,008,952 rows / 246 shards**. The last shard has
+**1,912 real rows and eight padding rows**; the complete cohort used **62,780
+fixed32 calls / 2,008,960 input rows**. This brings cumulative qualified G10 Ceres
+coverage to **5,866,975 rows / 718 shards**. The separately qualified original
+18.91M corpus and the first4 diagnostic sample retain their existing scopes.
+
+The saved qualification records all **2,214 nine-array proofs**, exact ordered
+source/shard bindings, both value-logit heads and the unchanged approximate
+backend. Every chunk records 403 neural provider events, four CPU shape events,
+and first/final observations of thirteen mapped libraries, with no missing final
+evidence or partial directories. The accepted manifest SHA-256 is
+`d64aab4ab703c4940928651e36864d1a8c60fb6b8379f9b4c11de966806f7467`.
+Runtime `e9c1b74…`, fixed32 settings and the registered 9,600-second inclusive
+collection/qualification bound were unchanged. The 6,206.363-second measurement
+is the driver duration; a separate qualifier duration is not claimed.
+
+Independent completion review read only the saved driver, invocation, manifest
+and qualification metadata. It did not reread payloads or rerun qualification.
+[Compact completion and handoff evidence](evidence/g10-ceres-complete-sf100-launched-20260913.json)
+retains exact receipts. This is approximate-backend coverage, not native numerical
+parity, automatic training admission or a strength result. No more Ceres collection
+was queued; the GPU next went to the separately registered combined SF100 training
+arm. Ongoing SF 2+1 generation was preserved.

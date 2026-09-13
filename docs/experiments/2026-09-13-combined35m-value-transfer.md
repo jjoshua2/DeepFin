@@ -1,8 +1,8 @@
 # Matched value transfer on original plus G10 data
 
 Status: prospective admission, the fixed opening panel and the frozen selected-subset
-preflight are complete. Neither training arm nor evaluation has launched. Actual
-staging and realized training remain to be verified.
+preflight are complete. The SF100 trainer has launched; V50 and evaluation remain
+unlaunched. Actual staging and realized training remain to be verified.
 
 ## Question and allocation
 
@@ -278,3 +278,36 @@ The [compact evidence](evidence/combined35m-fixed-panel-20260913.json) binds bot
 attempts, the correction, independent reviews and completed admission/panel.
 These are completed preparation checks; neither combined model has been trained
 in this record, and no strength result is claimed.
+
+
+## SF100 trainer launched after Ceres completion
+
+After the complete run07 large Ceres collection and saved qualification returned
+exit 0, the registered SF100 host invocation launched at **2026-09-13
+05:47:32.680 UTC**. A single saved process-receipt observation records the actual
+frozen trainer command at **05:47:36.568 UTC**, coordinator PID224311 and trainer
+PID224339, with the exact reviewed 21 B100 roots and command. This establishes
+trainer invocation, not an optimizer-step count, checkpoint or completion.
+
+Manifest SHA-256
+`4a658613ea86631b9764622ab236a101da831557dbf75a520fead263c99917de`
+binds the completed prospective/subset proofs, panel and immutable amended
+preregistration `c7cf784f…`. The coordinator is frozen at `442ad0b6…`; the original
+trainer is unchanged. Seed101, batch512, two planner/two loader workers, common
+B100 T0.5 policy and original SF `search_wdl` targets are unchanged. The planned
+epoch has 35,314,577 rows and 68,974 updates; realization remains outstanding.
+The explicit selected-subset opt-in remains the only new corpus allowance.
+
+The one default command validation returned exit 0 before launch. Parent preflight
+reported approximately **83 GiB available memory, zero swap use, 211 GiB free SSD
+and no GPU compute applications**. The owned coordinator retains its mandatory
+GPU lease, 48 GiB startup/32 GiB running memory floors and 150 GiB SSD reserve.
+The training stage is bounded at **21,600 seconds**, within the **27,000-second
+inclusive** host allowance; CUDA has no address-space cap. No duplicate host
+watchdog or automatic resume was added.
+
+[Compact launch evidence](evidence/g10-ceres-complete-sf100-launched-20260913.json)
+binds the exact host command, default validation, independent review and immutable
+stage snapshot. This publication did not poll training progress, read models or
+change the running job. V50 still requires this arm's qualified completion and
+will precede the fixed comparison; neither has launched in this snapshot.
