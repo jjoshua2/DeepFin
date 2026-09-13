@@ -50,6 +50,7 @@ CORPORA = {
     'B100V50': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_value50'),
     'B100Downside300': SOURCE.with_name(SOURCE.name + '_bt4_sf_downside300w05_v1'),
     'B100Tactical100': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_tactical100'),
+    'Ceres100': SOURCE.with_name(SOURCE.name + '_ceres_policy_C100T05'),
     'CeresB50': SOURCE.with_name(SOURCE.name + '_bt4_ceres_policy_B50T05'),
     'B100CeresV25': SOURCE.with_name(SOURCE.name + '_bt4_global_B100T05_ceres_value25'),
 }
@@ -84,6 +85,7 @@ B100_PARENT_PINS = {'derive_targets_summary.json': '47e0e0cca578a89278383d1faef7
 
 # Qualified producer snapshots, independent of the historical training runtime.
 CERES_PROFILE = 'CeresB50'
+CERES_POLICY_PROFILES = {CERES_PROFILE, 'Ceres100'}
 CERES_VALUE_PROFILE = 'B100CeresV25'
 # The collected fixed32 dual-head teacher; no native Ceres parity is implied.
 CERES_BACKEND = {
@@ -112,7 +114,7 @@ TACTICAL_PRODUCER_PINS = {
 def recipe_summary_name(m):
     if role_for(m) == CERES_VALUE_PROFILE:
         return 'ceres_value_mix_summary.json'
-    if role_for(m) == CERES_PROFILE:
+    if role_for(m) in CERES_POLICY_PROFILES:
         return 'ceres_target_mix_summary.json'
     if role_for(m) == DOWNSIDE_PROFILE:
         return 'bt4_sf_downside_policy_summary.json'
@@ -339,7 +341,7 @@ def verify_ceres_recipe(m, rewritten, derived):
         'schema': 1, 'complete': True, 'status': 'COMPLETE',
         'kind': 'bt4-ceres-policy',
         'algorithm': 'separately-normalized-probability-mixture-float16-v1',
-        'weights': {'bt4': .5, 'ceres': .5},
+        'weights': {'bt4': 0., 'ceres': 1.} if role_for(m) == 'Ceres100' else {'bt4': .5, 'ceres': .5},
         'temperatures': {'bt4': .5, 'ceres': .5},
         'source_dir': str(SOURCE),
         'source_summary_sha256': COMMON_PINS[str(SOURCE / 'derive_targets_summary.json')],
@@ -518,7 +520,7 @@ def validate(m):
         arena.require(m.get('mode') == 'training_only' and registered, 'schema3 requires training_only mode and profile')
     if registered:
         keys |= {'profile', 'data_qualification'}
-        if role_for(m) in {CERES_PROFILE, CERES_VALUE_PROFILE}:
+        if role_for(m) in {*CERES_POLICY_PROFILES, CERES_VALUE_PROFILE}:
             keys.add('ceres_producer_pins')
             pins = m.get('ceres_producer_pins')
             arena.require(isinstance(pins, dict) and bool(pins), 'Ceres producer freeze required')
@@ -527,7 +529,7 @@ def validate(m):
                               and all(c in '0123456789abcdef' for c in v)
                               for k, v in pins.items()), 'invalid Ceres producer pins')
         arena.require(m['schema'] in (2, 3) and role_for(m) in CORPORA, 'unsupported registered profile')
-        arena.require(role_for(m) not in {'SoftSF10', TACTICAL_PROFILE, DOWNSIDE_PROFILE, CERES_PROFILE, CERES_VALUE_PROFILE, *VALUE_ALPHAS} or only, f'{role_for(m)} requires schema3 training_only')
+        arena.require(role_for(m) not in {'SoftSF10', TACTICAL_PROFILE, DOWNSIDE_PROFILE, *CERES_POLICY_PROFILES, CERES_VALUE_PROFILE, *VALUE_ALPHAS} or only, f'{role_for(m)} requires schema3 training_only')
         if not only:
             keys |= {'reader', 'comparisons'}
             arena.require(m['comparisons'] == [list(cell) for cell in comparisons(m)], 'registered comparison order differs')
@@ -573,7 +575,7 @@ def verify_data_qualification(m):
         'source': {'path': str(SOURCE), 'derive_sha256': COMMON_PINS[str(SOURCE / 'derive_targets_summary.json')]},
         'derive_summary': {'path': str(corpus / 'derive_targets_summary.json'),
                            'sha256': input_pins(m)[str(corpus / 'derive_targets_summary.json')]},
-        ('rewrite_summary' if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, DOWNSIDE_PROFILE, CERES_PROFILE, CERES_VALUE_PROFILE, *VALUE_ALPHAS} else 'mix_summary'): {
+        ('rewrite_summary' if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, DOWNSIDE_PROFILE, *CERES_POLICY_PROFILES, CERES_VALUE_PROFILE, *VALUE_ALPHAS} else 'mix_summary'): {
             'path': str(corpus / recipe_summary_name(m)),
             'sha256': input_pins(m)[str(corpus / recipe_summary_name(m))]},
     }
@@ -617,7 +619,7 @@ def check_pins(m):
     corpus = corpus_for(m)
     mix = arena.read(corpus / recipe_summary_name(m))
     derived = arena.read(corpus / 'derive_targets_summary.json')
-    expected_postprocess = {k: v for k, v in mix.items() if k != 'outputs'} if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, DOWNSIDE_PROFILE, CERES_PROFILE} else mix
+    expected_postprocess = {k: v for k, v in mix.items() if k != 'outputs'} if role_for(m) in {'SoftSF10', TACTICAL_PROFILE, DOWNSIDE_PROFILE, *CERES_POLICY_PROFILES} else mix
     if role_for(m) == CERES_VALUE_PROFILE:
         verify_ceres_value_recipe(m, mix, derived)
     elif role_for(m) in VALUE_ALPHAS:
@@ -626,7 +628,7 @@ def check_pins(m):
         arena.require(derived['policy_target_postprocess'] == expected_postprocess, 'published recipe lineage differs')
     if role_for(m) in {CERES_VALUE_PROFILE, *VALUE_ALPHAS}:
         pass
-    elif role_for(m) == CERES_PROFILE:
+    elif role_for(m) in CERES_POLICY_PROFILES:
         verify_ceres_recipe(m, mix, derived)
     elif role_for(m) in {TACTICAL_PROFILE, DOWNSIDE_PROFILE}:
         verify_tactical_recipe(m, mix, derived)

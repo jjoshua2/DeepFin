@@ -255,6 +255,10 @@ def test_command_is_fixed_recipe_and_separate_timeout(prepared):
     assert float(command[3][:-1]) <= 90
     for name in ["--bt4-weight", "--bt4-temperature", "--ceres-temperature"]:
         assert command[command.index(name) + 1] == "0.5"
+    p["profile"] = "Ceres100"
+    endpoint = tool.command(p, time.time() + 120)
+    assert endpoint[endpoint.index("--bt4-weight") + 1] == "0.0"
+    assert endpoint[endpoint.index("--ceres-temperature") + 1] == "0.5"
     p["profile"] = "B100CeresV25"
     command = tool.command(p, time.time() + 120)
     assert command[5].endswith("/scripts/ceres_value_mix.py")
@@ -394,3 +398,24 @@ def test_unavailable_cpu_and_arbitrary_or_symlink_lock_rejected(prepared):
 def test_legacy_plan_retains_fixed_defaults(prepared):
     p, _, _, _ = prepared
     assert tool.execution_settings(p) == ([0, 1], tool.LOCK)
+
+
+def test_endpoint_memory_guard_and_legacy_limit(prepared, monkeypatch):
+    p, _, _, _ = prepared
+    original = Path.read_text
+    monkeypatch.setattr(Path, 'read_text', lambda path, *a, **k:
+        'MemAvailable: 33554431 kB\n' if str(path) == '/proc/meminfo' else original(path, *a, **k))
+    tool.guard(p, time.time() + 120)
+    assert tool.output_cap(p) == 32 * 2**30
+    p['profile'] = 'Ceres100'
+    assert tool.output_cap(p) == 64 * 2**30
+    with pytest.raises(ValueError, match='memory below'):
+        tool.guard(p, time.time() + 120)
+
+
+def test_endpoint_cannot_extend_seven_hour_allocation(prepared):
+    p, _, _, _ = prepared
+    p['profile'] = 'Ceres100'
+    with pytest.raises(ValueError, match='profile maximum'):
+        tool.execute(p, 'f' * 64, time.time() + 25260)
+    assert not Path(p['state']).exists()
