@@ -1,6 +1,6 @@
 # One all-move SF downside candidate
 
-Status: the complete 18,910,484-row rebuild, dedicated corpus qualification and prospective original-runtime schedule passed. The selected 2/2-worker epoch launched at 00:41 UTC on September 13 and is running under the reviewed memory guards; no completed Downside checkpoint or playing result yet.
+Status: Downside300 completed the registered one-epoch training with matched realized schedule. The fixed 256-game / 400-simulation comparison against B100 has launched; outcomes remain unread. Peak reported RSS was 11.950 GiB, with no demonstrated reduction from the earlier 16/16-worker runs.
 
 For normalized stored B100 policy (BT4 temperature 0.5), multiply each legal move
 with a raw d9 deficit strictly greater than 300 cp by 0.5, leave the others at 1,
@@ -324,3 +324,63 @@ map. Renaming another recipe to Downside does not waive those checks. All existi
 canonical/realized schedule, training-window and checkpoint evidence requirements
 remain unchanged. This reader amendment enables the already registered handoff;
 it does not supply a completed candidate, change arena settings or launch games.
+
+## Completed one-epoch training
+
+Downside300 completed **18,910,484 rows / 36,935 updates / 420 windows** using
+**two planner and two loader workers**. Actual physical and realized schedule
+hashes both equal `24248a04…`; the completed schedule reconstruction agrees with
+canonical `dc687fc3…`. All saved windows sum to the registered row/update counts,
+with finite losses, no nonfinite-gradient skips and no transient CUDA retry
+batches. The final checkpoint is `a0e18457…`; this readout uses the completed
+producer/coordinator receipts, without rereading model contents.
+
+The charged training stage took **7,832.083 seconds** (about 2 hours 11 minutes).
+The timed coordinator, including surrounding work, reported **2:13:45**, exit
+zero and zero swaps. Parent root6338 / sole observer215 is closed with exit zero.
+The training receipt is `0cbc3838…`; no arena was included in that receipt.
+
+The timed maximum RSS was **12,530,384 KiB (11.950 GiB)**, similar to the earlier
+16/16-worker Ceres runs' **11.694–11.931 GiB**. These observations do **not** show a
+peak-memory reduction from lowering worker concurrency. The sampler still reported
+225,477 peak decoded rows and 39 peak decoded shards. Different target recipes,
+run timings and concurrent archive/generation work prevent a causal concurrency
+comparison; the timed maximum is neither summed concurrent-process memory nor a
+whole-host, Windows or GPU peak. It does not explain the earlier reboot.
+
+The historical summary remains **`valid_control: false`** with its three original
+limitations: no held-out purity receipt, comparison against committed configuration
+rather than a contemporaneous live configuration, and a game-epoch sampler that
+differs from the historical replacement-sampled replay control. Completed schedule
+matching supports this registered bootstrap comparison; it does not repair those
+limitations or make a resumed-RL strength claim.
+
+
+## Registered match launched after actual CPU qualification
+
+The actual CPU package passed with both checkpoint architectures and the registered
+opening/search contract verified, then received independent review. Preparation
+used no initialized CUDA context. Its generic historical process receipt retains
+`complete: false`; the recorded zero exit, end time, completed CPU package and
+independent package review establish preparation, not a finished arena.
+
+The parent launched the Downside300-versus-B100 operator on September 13 at
+**03:30:19 UTC**. It acquired the shared GPU lease after **0.089 seconds**.
+The fixed contract remains **400 simulations / 256 games / 128 swapped pairs**,
+both priors **1.0**, the registered development opening panel `3c955d68…`,
+seed 20260909, 300-ply cap and no tablebases. Rolling concurrency remains 128
+and the inference batch cap 4,096. The owned arena cap is 5,400 seconds and the
+whole-operation bound 10,230 seconds. Neither an extra depth nor a temperature
+sweep was added after training.
+
+The launch preflight observed about 84 GiB available RAM, zero swap use,
+214 GiB SSD free and 2,935 MiB GPU memory at 3% utilization, with no compute
+applications reported. Parent root **41700**, sole observer **260**, owns the
+match completion; the publication did not read progress or outcomes. Prepared
+package `c52c5b74…` and final operator `7109a0b4…` bind the actual checkpoints.
+
+[Combined training completion and actual match-launch evidence](evidence/downside-trained-match-launched-20260913.json)
+contains exact receipt, schedule, checkpoint and operator identities, independent
+reviews and the historical validity limitations. **No playing result yet.** Apply
+the registered paired interval after all pairs finish; an unresolved interval does
+not trigger automatic extension or promotion.
