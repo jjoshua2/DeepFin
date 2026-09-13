@@ -8,7 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [Native BT4 value endpoint](2026-09-13-native-bt4-value-endpoint.md) | Selected matched 35M V100-versus-V50 contrast; disk accounting complete; explicit qualification support pending, no launch |
+| [Native BT4 value endpoint](2026-09-13-native-bt4-value-endpoint.md) | Matched 35M V100-versus-V50 contrast; bounded native-value CPU rewrite launched, actual target qualification and training pending |
 | [Ceres100 policy endpoint preparation](2026-09-13-ceres100-policy-preparation.md) | Pure-Ceres seed-0 2/2-worker epoch completed and CPU package qualified; registered 512-game/400-simulation B100 arena host launched, no result yet |
 | [Ceres materializer batch screen](2026-09-12-ceres-materializer-batch-benchmark.md) | Real 8,192-row outputs identical at 128/512; observed timings confounded by cache/order, no production speedup claim |
 | [Ceres source-read cache](2026-09-12-ceres-source-block-cache.md) | CPU component benchmark: identical batches,1.74s→0.12s reads; future collector cache/timers, no GPU throughput claim |
