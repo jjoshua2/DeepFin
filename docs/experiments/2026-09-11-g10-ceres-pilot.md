@@ -671,3 +671,45 @@ before any inference attempt. Parent and independent preparation reviews passed.
 [Launch evidence](evidence/bounded-ceres-and-raw-audit-launched-20260913.json)
 preserves exact commands, plan/review pins and immutable start samples, together
 with the concurrent [raw eligibility audit](2026-09-13-bounded-raw-scale-labels.md#actual-baseline-eligibility-audit-launched). Neither operation has a completed result in this launch snapshot.
+
+## September 13: batch-v3 prefix completed
+
+The 16-shard collection completed with **exit 0 in 923.146 seconds**
+(15 minutes 23 seconds), within its one-hour allocation. All **131,072 rows**
+from source shards 0..15 are recorded, with **4096 fixed32 calls and zero
+padding**. Each owned chunk completed within its 180-second ceiling. Actual
+receipts retain the source selection, CUDA/CPU provider configuration and full
+legal policy plus both raw value heads.
+
+The largest recorded device-memory sample was **5182 MiB**, below the sampled
+8-GiB threshold. This is not an instantaneous maximum or a controlled memory
+savings result. Approximate C3 I8/native-parity limitations remain unchanged.
+
+[Independent completion evidence](evidence/ceres-prefix-and-raw-audit-completed-20260913.json)
+reconciles driver, wrapper and collector receipts without repeating model or
+array validation. This establishes completed collection of the prefix; it does
+not itself increase the **5,866,975-row / 718-shard fully qualified coverage**
+or establish full-cohort consumer/training admission.
+
+## September 13: remaining 17 shards launched
+
+At **19:12:14.656 UTC**, the parent launched the remaining source shards 16..32
+of this same accepted batch-v3 run06 cohort. The exact planned remainder is
+**132,844 rows / 17 shards**; the final shard contains 1772 real rows plus
+20 padding rows, for **4152 planned fixed32 calls** across the remainder. The
+completed 131,072-row prefix remains untouched in its separate output roots.
+
+This uses the same fixed32 collector, with only the wrapper's explicit range and
+final-row count adapted. The whole allocation is **1800 seconds**, including
+TERM/KILL cleanup; 180-second individual ceilings and 30-second interchunk gaps
+remain, but their summed maxima exceed the whole budget. The outer deadline
+therefore governs, and an unfinished prefix or active partial shard is preserved
+without automatic retry. The completed first allocation's 923.146 seconds
+supports a roughly 1000-second planning estimate, not a guarantee.
+
+Parent and independent preparation reviews passed before launch. The actual
+start recorded no GPU compute applications, 88,902,627,328 bytes available RAM
+and 192,645,062,656 bytes free disk. The prior CPU, GPU, RAM, disk and ownership
+guards remain unchanged. [Launch evidence](evidence/ceres-prefix-and-raw-audit-completed-20260913.json)
+pins the exact command, driver plan and review. No remaining-shard completion
+or expanded full-cohort qualification is claimed in this snapshot.

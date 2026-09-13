@@ -63,3 +63,37 @@ Parent review and independent source/execution review passed before launch.
 binds the actual start, exact selected manifest, command and reviews. This is a
 launch snapshot: preliminary counters are intentionally not a final eligibility
 result. Failure or a completed progress prefix would not admit a training corpus.
+
+## Completed baseline eligibility audit
+
+The CPU audit completed with **exit 0 in 1300.442 seconds**, within its
+1800-second budget. All 184 selected raw shards and 1,527,153 physical rows were
+accounted for under the frozen collection and source identities.
+
+| Classification | Rows |
+| --- | ---: |
+| Eligible under the existing baseline rules | 1,517,925 |
+| No result, following the existing drop rule | 9,198 |
+| Additional required baseline exclusions | 30 |
+| Physical total | 1,527,153 |
+
+All 30 result-bearing failures have invalid **phase-zero legal-move support**;
+the composite-value validator also rejects those same rows because it requires
+valid phase-zero support. Policy and value counts therefore overlap rather than
+identify 60 failures. These compact diagnostics do not determine whether the
+underlying move-list defect was duplication, an illegal move or missing/replaced
+support. They do not establish a later-phase-only failure.
+
+The 30 rows span 13 shards (22 rows from run06 and 8 from run07). Dropping entire
+affected shards would discard **105,839 otherwise eligible rows**, leaving
+1,412,086 instead of 1,517,925. The next implementation therefore targets exact
+reviewed row exclusions, separately preserving the existing no-result rule. Its
+identities must include source namespace, shard and physical row, with actual
+derivation identity checks; any unlisted defect remains fatal. No repair,
+derivation or training admission has occurred in this result.
+
+Independent compact review reconciled all shard counts and 9,228 unique
+diagnostic identities. Saved diagnostics occupy 5,178,177 bytes, below the
+512-MiB cap. [Completion evidence](evidence/ceres-prefix-and-raw-audit-completed-20260913.json)
+preserves the exact report and review identities, the 30 required exclusions and
+their limits. Publication did not repeat raw payload checks or the audit.
