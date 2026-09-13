@@ -446,6 +446,7 @@ from scripts import gen_random_selfplay_shards as gen
 from scripts import gen_sf_rooted_corpus as corpus
 from scripts import corpus_row_provenance as row_refs
 from scripts import adaptive_sf_value
+from scripts import baseline_row_exclusions as baseline_rows
 from scripts.corpus_selection_schema import validate_selection_metadata
 
 #: Derived-shard schema.  Bumped when the MEANING of an emitted column changes,
@@ -2508,6 +2509,7 @@ class DeriveStats:
 
     rows_read: int = 0
     rows_written: int = 0
+    rows_dropped_baseline_audit: int = 0
     rows_dropped_no_result: int = 0
     rows_dropped_envelope: int = 0
     rows_dropped_policy_support: int = 0
@@ -2970,8 +2972,19 @@ class DeriveOptions:
     spill_chunk_rows: int = SPILL_CHUNK_ROWS
     row_provenance: bool = False
     max_policy_support_misses: int = 0
+    baseline_exclusions: baseline_rows.Exclusions | None = None
 
     def __post_init__(self) -> None:
+        if self.baseline_exclusions is not None and (
+            self.scheme.kind != 'uniform' or self.scheme.depth != 9 or self.scheme.value_depth is not None
+            or self.scheme.policy_observation != 'phase0'
+            or self.scheme.value_observation != 'latest-phase'
+            or self.scheme.sf_value_selector != 'current'
+            or self.value_scheme != VALUE_SCHEME_SEARCH or self.limit
+            or self.max_envelope_misses or self.max_policy_support_misses
+            or not self.row_provenance
+        ):
+            raise ValueError('baseline exclusions require full selected phase0/latest-phase uniform-d9 search with provenance and no other skip allowance')
         if self.scheme.sf_value_selector != "current" and self.value_scheme != VALUE_SCHEME_SEARCH:
             raise ValueError("adaptive SF value initially requires value-scheme search")
         if self.max_policy_support_misses < 0:
@@ -4381,6 +4394,8 @@ def derive(
         corpus_record if corpus_record is not None
         else read_corpus_record(corpus_dir)
     )
+    if options.baseline_exclusions is not None:
+        options.baseline_exclusions.bind(record.source_selection)
     summary = record.facts
     problems = scheme_vs_staircase_problems(
         options.scheme, summary.get("staircase_parsed", []),
@@ -4452,12 +4467,16 @@ def derive(
             pending_refs = pending_refs[options.rows_per_shard :]
             shard_index += 1
 
+    exclusions = options.baseline_exclusions.pending(list(shards)) if options.baseline_exclusions else {}
     for path in shards:
         for raw_index, row in enumerate(iter_corpus_rows(path)):
             if options.limit and deriver.stats.rows_read >= options.limit:
                 break
             deriver.stats.rows_read += 1
             tt_carried.add(_check_row_identity(row, corpus_sha))
+            if baseline_rows.consume(exclusions, path, raw_index, row):
+                deriver.stats.rows_dropped_baseline_audit += 1
+                continue
             try:
                 derived = deriver.derive_row(row)
             except PolicySupportMiss as exc:
@@ -4535,6 +4554,8 @@ def derive(
             "was dropped are different problems.",
         )
 
+    baseline_rows.require(not exclusions, 'unused exclusion IDs')
+    _check_baseline_coverage(options, deriver.stats, record)
     enforce_take_effect(options, deriver.stats)
     _stamp_realized_row_schema(out_dir, written, deriver.stats, record)
     out = build_summary(
@@ -5090,6 +5111,8 @@ def _flush_ordered(
     )
     _verify_value_column_on_disk(writing, arrs)
     provenance = None
+    if options.baseline_exclusions is not None:
+        zarr.open_group(str(writing), mode="a").attrs['derive_baseline_exclusions'] = options.baseline_exclusions.proof
     if options.row_provenance:
         if references is None:
             raise CorpusIntegrityError("requested row provenance is missing from writer")
@@ -5350,6 +5373,15 @@ def _stamp_shard_attrs(path: Path, options: DeriveOptions, corpus_sha: str) -> N
     })
 
 
+def _check_baseline_coverage(options: DeriveOptions, stats: DeriveStats, corpus_record: CorpusRecord) -> None:
+    if options.baseline_exclusions is not None:
+        options.baseline_exclusions.bind(corpus_record.source_selection)
+        proof = options.baseline_exclusions.proof
+        baseline_rows.require((stats.rows_dropped_baseline_audit, stats.rows_read, stats.rows_written, stats.rows_dropped_no_result)
+                              == (proof['excluded_rows'], proof['physical_rows'], proof['eligible_rows'], proof['no_result_rows']),
+                              'realized audited coverage differs')
+
+
 def build_summary(
     *,
     options: DeriveOptions,
@@ -5364,6 +5396,7 @@ def build_summary(
     verify_source_selection(corpus_record)
     facts = corpus_record.facts
     return {
+        **({'baseline_exclusions': options.baseline_exclusions.proof} if options.baseline_exclusions else {}),
         **({"source_selection": corpus_record.source_selection} if corpus_record.source_selection is not None else {}),
         "schema": derive_schema_for(options.value_scheme),
         "started_utc": started_utc,
@@ -5604,6 +5637,7 @@ def build_summary(
            if options.max_policy_support_misses else {}),
         "realized": {
             **stats.summary(),
+            **({'rows_dropped_baseline_audit': stats.rows_dropped_baseline_audit} if options.baseline_exclusions else {}),
             **({"rows_dropped_policy_support": stats.rows_dropped_policy_support,
                 "policy_support_exclusions": stats.policy_support_exclusions}
                if options.max_policy_support_misses else {}),
@@ -6030,6 +6064,7 @@ _GAME_OWNED_FIELDS: tuple[str, ...] = (
 _SUM_FIELDS: tuple[str, ...] = (
     "rows_read",
     "rows_dropped_no_result",
+    "rows_dropped_baseline_audit",
     "rows_dropped_envelope",
     "rows_dropped_policy_support",
     "nodes_floor_hits",
@@ -6586,6 +6621,8 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
             del buffered_refs[:options.spill_chunk_rows]
 
     stop = False
+    exclusions = (task.options.baseline_exclusions.pending(list(task.shards[task.span.lo:task.span.hi]))
+                  if task.options.baseline_exclusions else {})
     for shard_index in range(span.lo, task.shards_in_play):
         overflow = shard_index >= span.hi
         if overflow and (
@@ -6627,6 +6664,9 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
             max_gidx = gidx
             deriver.stats.rows_read += 1
             tt_carried.add(_check_row_identity(row, task.corpus_sha))
+            if baseline_rows.consume(exclusions, task.shards[shard_index], seen - 1, row):
+                deriver.stats.rows_dropped_baseline_audit += 1
+                continue
             try:
                 derived = deriver.derive_row(row)
             except PolicySupportMiss as exc:
@@ -6691,6 +6731,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
         if bank.stream_path(name).exists()
     }
 
+    baseline_rows.require(not exclusions, 'unused worker exclusion IDs')
     return _WorkerResult(
         index=task.index,
         stats=bank.plain(),
@@ -7107,6 +7148,8 @@ def derive_parallel(
         corpus_record if corpus_record is not None
         else read_corpus_record(corpus_dir)
     )
+    if options.baseline_exclusions is not None:
+        options.baseline_exclusions.bind(record.source_selection)
     summary = record.facts
     problems = scheme_vs_staircase_problems(
         options.scheme, summary.get("staircase_parsed", []),
@@ -7216,6 +7259,7 @@ def derive_parallel(
     stats = _merge_stats(results, streams=_stream_files(results))
     stats.rows_written = _check_rows_written(written, survivors)
 
+    _check_baseline_coverage(options, stats, record)
     enforce_take_effect(options, stats)
     _stamp_realized_row_schema(out_dir, written, stats, record)
     out = build_summary(
@@ -7251,6 +7295,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--source-shards", type=Path,
                         help="source-bound closed-shard JSON selection; --limit cuts the selected original-order stream")
+    parser.add_argument("--baseline-exclusions", type=Path, help="pinned complete audit exclusions; requires full source selection and provenance")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--scheme", required=True, help=" | ".join(_SCHEME_FORMS))
     parser.add_argument("--temp", type=float, default=1.0)
@@ -7508,6 +7553,7 @@ def main(argv: list[str] | None = None) -> int:
         spill_chunk_rows=spill_chunk_rows,
         qz=qz,
         row_provenance=bool(args.row_provenance),
+        baseline_exclusions=baseline_rows.load(args.baseline_exclusions) if args.baseline_exclusions else None,
     )
     if workers > 1:
         # ⚑ A DIFFERENT FUNCTION, NOT A PARAMETER ON THE SAME ONE.  `--workers
