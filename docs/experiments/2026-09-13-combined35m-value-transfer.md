@@ -1,8 +1,8 @@
 # Matched value transfer on original plus G10 data
 
-Status: prospective admission, the fixed opening panel and the frozen selected-subset
-preflight are complete. The SF100 trainer has launched; V50 and evaluation remain
-unlaunched. Actual staging and realized training remain to be verified.
+Status: SF100 completed its matched epoch and actual staging/schedule verification.
+The V50 host invocation launched on September 13 at 09:50:27 UTC. V50 completion
+and the preregistered comparison remain pending; no playing-strength result exists.
 
 ## Question and allocation
 
@@ -295,7 +295,7 @@ binds the completed prospective/subset proofs, panel and immutable amended
 preregistration `c7cf784f…`. The coordinator is frozen at `442ad0b6…`; the original
 trainer is unchanged. Seed101, batch512, two planner/two loader workers, common
 B100 T0.5 policy and original SF `search_wdl` targets are unchanged. The planned
-epoch has 35,314,577 rows and 68,974 updates; realization remains outstanding.
+epoch has 35,314,577 rows and 68,974 updates; realization remained outstanding at that launch snapshot.
 The explicit selected-subset opt-in remains the only new corpus allowance.
 
 The one default command validation returned exit 0 before launch. Parent preflight
@@ -311,3 +311,17 @@ binds the exact host command, default validation, independent review and immutab
 stage snapshot. This publication did not poll training progress, read models or
 change the running job. V50 still requires this arm's qualified completion and
 will precede the fixed comparison; neither has launched in this snapshot.
+
+## SF100 completed; sequential V50 host launched
+
+SF100's enclosing command returned exit 0 at **2026-09-13 09:45:46.676 UTC**, after 14,293.996 seconds. The actual training stage used 14,209.244 seconds, followed by 80.368 seconds of CPU completion verification. The completed receipt binds checkpoint `633a03e7…`; its identity was inherited from the qualified receipt and summary for this publication, without reading the checkpoint again.
+
+The realized epoch contains **35,314,577 rows, 4,321 shards, 21 sources, 182,188 games and 68,974 updates**. Of these batches, 68,863 are full and 111 are ragged, with a minimum of 511 rows. Seed 101, batch 512, two planner/two loader workers and all 784 training windows match the fixed recipe. The actual B100 physical schedule `2e7c431d…` equals its planned digest; the verified logical mapping retains canonical schedule `ca3922c4…`. Completion verified actual staged paths and ordered game-column witnesses against the accepted prospective proof. Independent review found all windows finite, zero nonfinite skips and zero CUDA retries.
+
+The summary still records `valid_control=false` for three historical reasons: no held-out purity receipt; architecture/trainer premises judged against committed pins rather than a fresh live configuration; and game-epoch sampling deliberately differing from the historical replacement-sampled control. These limitations remain explicit. They do not turn a completed matched epoch into an Elo result or erase the intended common sampling contract between the two new arms.
+
+After this genuine predecessor completion, one V50 default command validation passed in 0.5466 seconds and selected the exact ordered **21 V50 roots**. The final manifest `64f0f16e…` pins SF100 receipt `389b0680…`, the same original trainer/coordinator runtime, preregistration `c7cf784f…`, panel `14470ee9…`, prospective proof and selected-subset qualification. V50 retains B100 policy and changes only the prepared value recipe to 50% original SF / 50% native BT4. Initialization/schedule seed 101 and the 2/2 worker configuration remain shared. The existing selected-subset allowance remains limited to the qualified finalized G10 products; no leak or history override was added.
+
+The parent launched the actual V50 host command at **09:50:27.454253 UTC** (exec 48861, sole observer 424). This is a host-invocation snapshot, not an observed optimizer step or completed V50 epoch. Launch-time checks reported approximately 83 GiB available memory, zero swap use, 195 GiB free disk and no GPU compute applications. The existing owned lease, 48 GiB startup/32 GiB ongoing available-memory floors, 150 GiB disk reserve, 21,600-second training cap and 27,000-second inclusive coordinator allowance remain unchanged.
+
+[Compact completed/launch evidence](evidence/combined35m-sf100-completed-v50-launched-20260913.json) preserves both independent reviews, the actual SF100 receipts and aggregate training metrics, exact V50 default argv and immutable launch snapshot. No models, active training outputs or corpus arrays were read for publication. The fixed 256-pair/512-game, 400-simulation evaluation on the precommitted seed 20260913 panel remains pending; no score, Elo, promotion or additional training allocation is claimed.
