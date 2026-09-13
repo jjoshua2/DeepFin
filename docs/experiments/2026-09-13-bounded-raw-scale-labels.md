@@ -1,6 +1,6 @@
 # Bounded raw policy and native-WDL scale labels
 
-Status: the bounded collector launched on **2026-09-13 at 17:50:11 UTC**, after the parent observed the preceding Ceres arena exit 0. This record captures launch only; no new group completion or training-ready rows are claimed. The parent owns execution 55179 and observer 609.
+Status: the bounded collector completed with exit 0 on **2026-09-13 at 18:34:10 UTC**, recording **184 raw shards / 1,527,153 rows** in **2638.682 seconds** (43 minutes 58.682 seconds). The 12-group allocation ended; these labels are not yet derived or training-admitted. The original launch snapshot is retained below.
 
 ## Allocation and purpose
 
@@ -23,3 +23,21 @@ The outer launch recorded 88,090,669,056 bytes available RAM and 214,444,892,160
 Parent source/command review and independent review passed. Independent review `74ce1320987521e09924488519e646eaf6ebccdf54d52bb9a3a32128e9df67a1` includes the corrected outer cleanup grace. The plan is `bdca27264c2ca8d86f56b4b28a18c4a20504b30a16356a7ae024debdf72ef287`; command is `2e9964cc4a00151758a8a055cdf40f9e959f35156df14e8dc67a8ed1c83c3eca`.
 
 [Compact evidence](evidence/2026-09-13-bounded-raw-scale-label-launch.json) preserves actual launch, ownership, first-group argv and original snapshot references. Later derivation and raw-to-derived identity qualification remain necessary before these labels can join a training corpus. Existing accepted G10 native coverage and frozen V100 implementation are unchanged.
+
+## Actual bounded completion
+
+Execution 55179 and parent observer 609 are closed with exit 0. All 12 collector groups completed successfully: the first eleven recorded 16 shards each and the last recorded 8, despite requesting up to 16. Every group remained below its 1740-second cap; the first took 232.444 seconds. The whole outer invocation took 2638.682 seconds of the allocated 7200.
+
+| Source namespace | Newly recorded shards | Raw rows |
+| --- | ---: | ---: |
+| run06_g10 | 122 | 1,013,011 |
+| run07_g10_companion4 | 62 | 514,142 |
+| Total | 184 | 1,527,153 |
+
+The saved completion reason is literally `MAX_NEW_SHARDS`, but **the 192-shard cap was not reached**. The unchanged operator initializes that reason before its fixed 12-iteration loop and retains it when the loop ends naturally. The observed stopping condition was exhaustion of those 12 group slots, with a nonempty final group of 8. The original receipt remains immutable; this correction does not establish that current generation is caught up or show another collection run is needed.
+
+The independent compact review reconciled every group receipt with the final list: all 184 `(source_id, source_shard)` identities are unique, and group/source/whole row sums match. Each receipt binds the qualified BT4 model and remapping revision, source and input identity digests, legal policy output, and native float32 WDL probabilities in win/draw/loss order from the side-to-move perspective. Recorded publication times fall within this allocation. Existing receipt stability checks remained enabled. No sidecar arrays, raw payloads, models or inference were reread for the review.
+
+Successful completion passed the frozen operator's resource guards; the startup samples above remain the available resource evidence, not measured peak RAM or GPU usage. This adds raw label coverage only: `training_admitted` and `backfill` are both false. The earlier snapshot's disjointness observation applies to that snapshot, not automatically to all later source closures. No further collection is queued by this record, and source generation and unrelated work remain unchanged.
+
+[Completion evidence](evidence/2026-09-13-bounded-raw-scale-label-completed.json) retains exact terminal, final/group receipt and independent-review pins, the saved reason string and its corrected interpretation. Parent and independent compact checks agree on the counts; neither repeated payload validation.
