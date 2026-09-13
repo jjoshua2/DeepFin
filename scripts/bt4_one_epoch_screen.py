@@ -699,7 +699,7 @@ def verify_schedule(report, *, prospective, m=None):
 
 def epoch_workers(m):
     """Execution concurrency only; the frozen trainer still determines the schedule."""
-    return 2 if m.get('profile') == DOWNSIDE_PROFILE else 16
+    return 2 if m.get('profile') in {DOWNSIDE_PROFILE, 'Ceres100'} else 16
 
 
 def train_command(m):
