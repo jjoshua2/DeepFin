@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "kind": "G10_CERES_RUN07_LARGE_LAUNCH_ONLY",
+  "actual_start": {
+    "pid": 187211,
+    "started_unix": 1789271919.5701385,
+    "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_large_v1/driver.plan.json",
+    "plan_sha256": "5251a11d92a78b2868cf1f1f191e60cc51d723ced78cd99de805d0224295e480",
+    "overall_seconds": 9000,
+    "chunk_ids": [
+      "shards0_15",
+      "shards16_31",
+      "shards32_47",
+      "shards48_63",
+      "shards64_79",
+      "shards80_95",
+      "shards96_111",
+      "shards112_127",
+      "shards128_143",
+      "shards144_159",
+      "shards160_175",
+      "shards176_191",
+      "shards192_207",
+      "shards208_223",
+      "shards224_239",
+      "shards240_245"
+    ]
+  },
+  "actual_start_utc": "2026-09-13T03:58:39.570138+00:00",
+  "parent_owned_observer": {
+    "root": 52976,
+    "sole_observer": 289,
+    "status": "Launched per parent; completion not read"
+  },
+  "coverage": {
+    "qualified_rows_before": 3858023,
+    "qualified_shards_before": 472,
+    "planned_rows": 2008952,
+    "planned_shards": 246,
+    "last_shard_rows": 1912,
+    "padding_rows": 8,
+    "fixed32_calls": 62780,
+    "fixed32_input_rows": 2008960,
+    "conditional_qualified_total_rows": 5866975,
+    "conditional_qualified_total_shards": 718
+  },
+  "runtime": {
+    "commit": "e9c1b74bc44c45f9ac6d70195f1422c6d24a65f9",
+    "profile": "ceres-c3-fixed32-compact-v2",
+    "outputs": [
+      "policy",
+      "value",
+      "value2"
+    ],
+    "native_admission": "Existing schema1 single complete run07 large source; no repeated native payload audit."
+  },
+  "bounds": {
+    "inclusive_seconds": 9600,
+    "driver_seconds": 9000,
+    "qualification_reserve_seconds": 600,
+    "per_chunk_seconds": 1200,
+    "cpu_affinity": [
+      2,
+      3
+    ],
+    "numeric_threads": 2,
+    "ORT_allowance_GiB": 8,
+    "sampled_device_limit_MiB": 12288,
+    "sampled_each_process_RSS_GiB": 12,
+    "host_available_floor_GiB": 32,
+    "SSD_reserve_GiB": 150,
+    "per_chunk_output_state_MiB": 128,
+    "qualifier_address_space_GiB": 1
+  },
+  "parent_reported_preflight": {
+    "host_available_GiB": 84,
+    "swap_used": 0,
+    "SSD_free_GiB": 213,
+    "GPU_used_MiB": 2953,
+    "GPU_utilization_percent": 3
+  },
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_large_v1/driver/actual_start.json": "7f45263b57d68d28ec3706e183b89165b625d9b43eb83125512deeccd6019156",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_large_v1/driver.plan.json": "5251a11d92a78b2868cf1f1f191e60cc51d723ced78cd99de805d0224295e480",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_large_v1/command.sh": "04188b75c8456f5e3e786cf9d7a44bcf1ef603e4dbc33a45aa39113e009837cc",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_large_v1/commands.json": "c54a18d9a12d3eaf8535269766cfda4ed9f994fa55a97440c13449e465917d54",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_large_v1/post_collection/plan.json": "bd456f9e431d41a3673a58fa710918695e16afbbd3f7bcd8d3291e02737dcb29",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_large_v1/independent_review.json": "afa439c02437696c14420673671f1e6bf58b6e3a8e664aa32dd4cbffb7da41de",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_large_v1/metadata_readiness.json": "30d85b4e04ed2a3dd8c605a6ca88c771ac707d0e9e3a44e7052c3a56c9b367d8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_run07_large_v1/preparation_validation.json": "b2a9ee2a1291e81aced40b54b9ec1e1789b4d71be978c2af1f04cd0db0906eed"
+  },
+  "limitations": [
+    "Launch is not completion, training admission or strength evidence.",
+    "Approximate backend unchanged; no native parity claim, source cache, new method or temperature fit.",
+    "Samples do not establish peaks or hard aggregate RSS quotas.",
+    "Qualified coverage and prior first4 science remain unchanged until completion and qualification.",
+    "No active observer, payload or model read for publication; one saved driver start file only."
+  ]
+}
