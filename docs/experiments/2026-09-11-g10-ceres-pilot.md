@@ -713,3 +713,25 @@ and 192,645,062,656 bytes free disk. The prior CPU, GPU, RAM, disk and ownership
 guards remain unchanged. [Launch evidence](evidence/ceres-prefix-and-raw-audit-completed-20260913.json)
 pins the exact command, driver plan and review. No remaining-shard completion
 or expanded full-cohort qualification is claimed in this snapshot.
+
+## September 13: complete batch-v3 run06 collection
+
+The remaining 17 shards completed with **exit 0 in 971.328 seconds**
+(16 minutes 11 seconds), within the 1800-second allocation. The remainder
+contains **132,844 rows**, with 20 padding rows and 4152 fixed32 calls. Combined
+with the separately preserved prefix, this completes collection of all
+**263,916 rows / 33 shards** of the accepted batch-v3 run06 cohort: 8248 physical
+calls and 20 padding rows across both allocations.
+
+The two outer executions total 1894.474 seconds of elapsed execution time; their
+between-run preparation gap is separate. This is measured collection time,
+not a controlled throughput comparison. The fixed32 approximate C3 teacher,
+full legal policy and both raw value heads retain their existing semantics.
+Native Ceres parity remains unestablished.
+
+[Completion evidence](evidence/filtered-raw-derivation-launched-20260913.json)
+binds the actual terminal and driver receipts and independent compact review.
+These establish collected sidecars, not full-cohort consumer qualification:
+the previously qualified **5,866,975 rows / 718 shards** remain unchanged in
+this record. No saved-array validation, training or match was repeated for
+publication.
