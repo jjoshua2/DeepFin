@@ -119,10 +119,6 @@ def training_verifier(m: dict[str, Any]) -> Generator[None]:
     )
     for side in ("candidate", "reference"):
         receipt = reader.read_json(m[side + "_training"])
-        if side == "candidate":
-            reader.same(
-                receipt["previous_training"], m["reference_training"], "V50 predecessor"
-            )
         reader.same(
             receipt["code_pins"].get(ref["path"]),
             ref["sha256"],

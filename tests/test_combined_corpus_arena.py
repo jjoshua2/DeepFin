@@ -121,14 +121,70 @@ def test_training_verifier_uses_bound_original_path_and_restores(tmp_path, monke
     p.write_text('def matched_training_pair(m):\n m["verified"] = True\n')
     sha = tool.owned.sha(p)
     m["training_verifier"] = {"path": str(p), "sha256": sha}
+    # Use the actual producer to establish the completion schema, not a guessed
+    # predecessor field (which exists only in the launch manifest).
+    producer_m = dict(
+        m,
+        role="Combined35M_V50",
+        run="/fake/run",
+        state="/fake/state",
+        code_pins={str(p): sha},
+        previous_training=m["reference_training"],
+    )
+    for key in (
+        "corpus_manifest",
+        "prospective",
+        "opening_panel",
+        "preregistration",
+        "runtime_manifest",
+        "selected_subset_qualification",
+    ):
+        producer_m.setdefault(key, {})
+    with monkeypatch.context() as context:
+        context.setattr(tool.combined, "summary_contract", lambda *a: None)
+        context.setattr(tool.combined, "selected_subset", lambda *a: {})
+        context.setattr(
+            tool.combined,
+            "verify_actual_columns",
+            lambda *a: {"actual_staging_sha256": "staging", "actual_game_columns": []},
+        )
+        context.setattr(
+            tool.combined, "pin", lambda path: {"path": str(path), "sha256": "digest"}
+        )
+        context.setattr(tool.combined.owned, "sha", lambda path: "digest")
+        context.setattr(
+            tool.combined.owned,
+            "read",
+            lambda path: {
+                "checkpoints": [
+                    {
+                        "role": "last",
+                        "path": "/fake/run/checkpoint.pt",
+                        "sha256": "digest",
+                    }
+                ],
+                "valid_control": False,
+                "validity_problems": [],
+            },
+        )
+        receipt = tool.combined.completed_training(
+            producer_m,
+            {
+                "arms": {
+                    "V50": {
+                        "canonical_plan_sha256": "canonical",
+                        "physical_plan": {"plan_sha256": "physical"},
+                    }
+                }
+            },
+            {"gpu_seconds": 1.0},
+        )
+    assert "previous_training" not in receipt
     monkeypatch.setattr(tool, "combined", SimpleNamespace(__file__=str(p)))
     monkeypatch.setattr(
         tool.reader,
         "read_json",
-        lambda ref: {
-            "code_pins": {str(p): sha},
-            "previous_training": m["reference_training"],
-        },
+        lambda ref: receipt,
     )
     previous = tool.package.combined
 
@@ -146,20 +202,9 @@ def test_training_verifier_uses_bound_original_path_and_restores(tmp_path, monke
         "read_json",
         lambda ref: {
             "code_pins": {str(p): "wrong"},
-            "previous_training": m["reference_training"],
         },
     )
     with pytest.raises(ValueError, match="binding"), tool.training_verifier(m):
-        pass
-    monkeypatch.setattr(
-        tool.reader,
-        "read_json",
-        lambda ref: {
-            "code_pins": {str(p): sha},
-            "previous_training": {"path": "/foreign"},
-        },
-    )
-    with pytest.raises(ValueError, match="predecessor"), tool.training_verifier(m):
         pass
 
 
