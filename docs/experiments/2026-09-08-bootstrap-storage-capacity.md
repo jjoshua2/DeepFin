@@ -426,10 +426,64 @@ reclamation step. Fresh consumer and source-stability checks precede any removal
 All runs, checkpoints, optimizer state and receipts remain; the current Downside,
 original SF/B100/C and active G10 inputs are outside this operation.
 
-**Copy completion is unread; source bytes reclaimed = 0.** The
+**At the launch snapshot, copy completion was unread and source bytes reclaimed were 0.** The
 [compact actual-launch evidence](evidence/tactical100-archive-launched-20260913.json)
 contains exact command, source/destination and review pins. Preparation's initial
 sandbox mount check failed before the census because its view was read-only;
 the retained host attempt confirmed writable E: and completed the single census.
 This publication read only small saved preparation/launch records; it did not
 poll the archive or repeat the inventory.
+
+
+## September 13: Tactical100 archive verified and exact shards reclaimed
+
+The copy finished successfully in **2,879.775 seconds (47m59.775s)**. Parent root
+71709 / sole observer 233 closed with exit 0. The **13,254,707,200-byte** archive
+passed complete member/content verification and external readback against SHA-256
+`b1765a5674d1dd561718c09be34e7b940aad6d92952659f82e6bb8f98fbbe96e`.
+Its **713,331 members** preserve the original corpus files and directories;
+source manifest SHA-256 is
+`f3156922c3b8dedcb437f2dd752b761836e22eeba62aac6ae1965f4a22753fd0`.
+Only the verified local staging tar was removed at copy completion.
+
+A separate metadata comparison then checked exact membership and all recorded
+source stamps without rereading payloads. It confirmed **2,309 shard directories**
+with **14,384,427,008 allocated bytes**, excluding the two summaries retained
+locally. Fresh scoped observation found no exact-source references among 52
+same-user processes; permission-limited PID 30 was identified as ssh-agent and
+seven other-user processes as WSL roles. Current Downside training and SF recovery
+plans excluded the candidate. These are scoped observations, not a claim of full
+process visibility or absence of future dependencies.
+
+After independent review and parent authorization, the unchanged removal method
+with exact Tactical100 bindings finished in **49.168 seconds**, ending at
+**2026-09-13T02:08:00.076416+00:00**. Parent root **17721 / sole observer 243**
+closed with exit 0. Its durable journal contains exactly **2,309 removal intents
+and 2,309 successful removals**. Final top-level inspection found only
+`derive_targets_summary.json` and `bt4_sf_tactical_policy_summary.json`, with
+unchanged recorded metadata; the external archive identity also remained unchanged.
+All runs, checkpoints, optimizer state and receipts remain. Original SF/B100/C,
+current Downside and active G10 inputs were outside the removal scope.
+
+Filesystem free space changed from **215,922,315,264** to **230,295,519,232 bytes**,
+an observed increase of **14,373,203,968 bytes**. This is a concurrent filesystem
+measurement, not isolated attribution; the prior allocated shard sum is a
+separate measurement. The removal retained the 1,800-second inclusive bound,
+512 MiB address-space cap, CPUs 0–1, owned lock, STOP handling and partial-failure
+journal. No automatic retry, new archive or additional reclamation is launched.
+
+Restore from the exact external archive:
+`/mnt/e/chess_derived_archive_20260908/Tactical100_v1/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100.tar`.
+Before restoration, verify its full SHA-256 above and extract with GNU tar into a
+fresh empty directory with sufficient space. The archive contains the original
+corpus directory name. Do not overwrite the retained source path or an active
+experiment; validate restored contents and the intended consumer before reuse.
+ACL/xattrs were captured but not independently compared. Later metadata stability
+is not a new content-integrity proof against undetected storage corruption.
+
+[Compact completed copy and reclamation evidence](evidence/tactical100-archive-reclaimed-20260913.json)
+pins the copy, metadata eligibility, exact removal list, independent reviews,
+completion and journal. This publication reviewed those saved records, a single
+final directory listing and archive/summary metadata only; it repeated no payload
+hashes, source census, model reads or active-job polling. Scientific results and
+the separately running Downside training are unchanged.

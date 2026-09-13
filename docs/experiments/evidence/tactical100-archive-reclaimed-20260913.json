@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "kind": "TACTICAL100_COPY_AND_EXACT_RECLAMATION_COMPLETE",
+  "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100",
+  "archive": "/mnt/e/chess_derived_archive_20260908/Tactical100_v1/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100.tar",
+  "copy": {
+    "status": "COPY_AND_CONTENT_VERIFICATION_COMPLETE",
+    "elapsed_seconds": 2879.774736404419,
+    "archive_bytes": 13254707200,
+    "archive_sha256": "b1765a5674d1dd561718c09be34e7b940aad6d92952659f82e6bb8f98fbbe96e",
+    "source_manifest_sha256": "f3156922c3b8dedcb437f2dd752b761836e22eeba62aac6ae1965f4a22753fd0",
+    "verified_members": 713331,
+    "source_logical_bytes": 11896485651,
+    "source_retained_until_separately_qualified_removal": true
+  },
+  "reclamation": {
+    "status": "COMPLETE_EXACT_SHARD_RECLAMATION_SUMMARIES_RETAINED",
+    "started_unix": 1789265230.9083817,
+    "ended_unix": 1789265280.076416,
+    "deadline_unix": 1789267030.8651593,
+    "removed_shards": 2309,
+    "list_sha256": "a66a69afeb558d617a83b7d6211fd91a39dc613c638d8395623abae1c4344d9b",
+    "script_sha256": "f1b3be73564265d981ab476b706a522de124968cd9e0d945d81dee06e466d92c",
+    "archive_current_stat": {
+      "st_dev": 75,
+      "st_ino": 281474978208068,
+      "st_mode": 33279,
+      "st_uid": 1000,
+      "st_gid": 1000,
+      "st_size": 13254707200,
+      "st_mtime_ns": 1789263431906124400,
+      "st_ctime_ns": 1789263433231174500
+    },
+    "retained_summaries": [
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100/bt4_sf_tactical_policy_summary.json",
+        "sha256": "f7e66757bfdaa70e71064a5ae5ec5854d8abe608fcaebf5c19da14a5a4330e7d",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 16065243,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 61623643,
+          "st_mtime_ns": 1789058714925796602,
+          "st_ctime_ns": 1789058714977796594
+        }
+      },
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100/derive_targets_summary.json",
+        "sha256": "9e97884cdeb0527c8e6ce30b9bf8a32f25af5b10fe03e9af4ca04be1854c2e4e",
+        "stat": {
+          "st_dev": 2096,
+          "st_ino": 16065370,
+          "st_mode": 33188,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 1033927,
+          "st_mtime_ns": 1789058715000078033,
+          "st_ctime_ns": 1789058715000078033
+        }
+      }
+    ],
+    "filesystem_free_before_bytes": 215922315264,
+    "filesystem_free_after_bytes": 230295519232,
+    "filesystem_free_delta_bytes": 14373203968,
+    "prior_allocated_shard_bytes": 14384427008,
+    "space_limit": "Free-space delta is a concurrent whole-filesystem observation, not isolated attribution to this removal. Prior allocated sum is separate.",
+    "no_resume": true
+  },
+  "parent_reported_terminals": [
+    {
+      "root": 71709,
+      "sole_observer": 233,
+      "closed": true,
+      "exit_code": 0
+    },
+    {
+      "root": 17721,
+      "sole_observer": 243,
+      "closed": true,
+      "exit_code": 0
+    }
+  ],
+  "removal_elapsed_seconds": 49.16803431510925,
+  "removal_ended_utc": "2026-09-13T02:08:00.076416+00:00",
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/plan.json": "a5c822c66337f8fe9d81f2a312d170b254bdc7f1eb5f00fad618dab4b1821fad",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/staging/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100/verified.json": "aa1f9e2a45365da7e04afa82b72ce60a813dd3c34da9c6444ddfaa894491fd78",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/independent_completed_review.json": "ecc280f3418f96785be6e9eca3aad6fcd74bdd0339bdc2c72b47b7c770db95fe",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/reclamation_preparation_v1/readiness_receipt.json": "de1b244b1e0c131de83d2d609ea65da5c9c6c5beca890bfb47adf4abe412fce9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/reclamation_preparation_v1/proposed_shard_removal_list.json": "a66a69afeb558d617a83b7d6211fd91a39dc613c638d8395623abae1c4344d9b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/reclamation_preparation_v1/independent_preparation_review.json": "d48fbcad604542743dc1e9c7fb3fe18342aaae4e34caf98fa4747ae1ec55e962",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/reclamation_preparation_v1/reclaim_shards.py": "f1b3be73564265d981ab476b706a522de124968cd9e0d945d81dee06e466d92c",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/reclamation_execution_v1/completed.json": "6539a27a012f79a06b601d01e2645a2966abdc1f403e94b8ca3bcf0d2af41716",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/reclamation_execution_v1/shards.jsonl": "2649280cf67988ea6e53be7a18bd9fc9d80753a0316063b28bfd25a2744125d0",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/reclamation_execution_v1/independent_completed_review.json": "4dcde1f285d1a551c266342a5bf3a06d144acb49f561aef740b9095cf4fa737c"
+  },
+  "limits": [
+    "Copy uses inherited4h inclusive,48GiB sampled available RAM,2GiB per-process AS,CPU0,1 and16MiB/s transfer pacing; not aggregate RSS or block-I/O guarantee.",
+    "Exact removal1800s inclusive/512MiB AS; no resume or automatic retry.",
+    "Scoped consumer evidence excludes named active plans; PID30 ssh-agent and seven WSL roles disclosed, not universal visibility.",
+    "ACL/xattrs captured but not independently compared.",
+    "Archive payload verification performed by completed copy; later metadata stability does not prove against undetected storage corruption.",
+    "Filesystem free-space delta is concurrent, not isolated attribution.",
+    "All runs/checkpoints, both root summaries and current SF/B100/C/Downside/G10 inputs preserved; no new jobs authorized."
+  ]
+}
