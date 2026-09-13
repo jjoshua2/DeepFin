@@ -722,3 +722,15 @@ The same seed regenerates the pretraining opening panel from the pinned book. It
 `launch_qualification_verified: false` remains honest: actual arena launch
 qualification is still separate from completed training and bank validation.
 The historical generic package schema and two-depth recipe launcher are unchanged.
+
+`combined_corpus_arena.py` prepares and runs the registered Combined35M V50/SF100
+value comparison after both actual training receipts qualify. It uses the pinned
+original combined-training verifier, the existing arena runtime qualification,
+and the existing owned-stage supervisor. Its separate CPU probe checks the actual
+checkpoint pair and regenerates the frozen 256-pair panel at seed 20260913.
+The explicit command fixes 512 games, 400 simulations, priors 1.0, rolling 128
+and batch 4096; legacy direct-screen defaults do not select this experiment.
+Preparation and execution require pinned manifests and absolute owned deadlines;
+no-flag inspection is static only. The active trainer and arena implementation are
+unchanged. Final host adoption still binds genuine completion, runtime and source
+pins; metadata drafts do not authorize a match.
