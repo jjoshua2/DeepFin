@@ -534,3 +534,48 @@ A fresh host fd/cwd observation found no visible references to the exact source.
 The parent launched the exact **outer copy command at 2026-09-13T20:37:01.476691+00:00**, with an absolute deadline of **2026-09-13T23:37:01.476691+00:00** (exec **52568**, sole observer **779**). This is an invocation receipt, not a completed archive. **Verification is pending and source bytes reclaimed are zero at this snapshot.** The planned destination is `/mnt/e/chess_derived_archive_20260908/Ceres100_v1/qtemp_0.0005_hist_20m_ceres_policy_C100T05.tar`. No archive checksum or restore-ready claim exists yet. Copying preserves all source bytes; a later separately qualified reclamation would remove only the exact shard directories and retain `derive_targets_summary.json` and `ceres_target_mix_summary.json`, all checkpoints and neighboring partials.
 
 [Compact actual-launch evidence](evidence/ceres100-archive-launched-20260913.json) pins the immutable launch, final plan, census summary and independent review. Preparing this publication read saved small records only; it did not repeat the census, hash payloads, or poll the archive or training.
+
+## September 13: Ceres100 external copy verified
+
+The Ceres100 archive operation completed with **exit 0 in 2925.590 seconds**
+(48 minutes 46 seconds), within its three-hour allocation. All **713,331 archive
+members** were checked against the original source manifest. The external tar
+is **13,459,886,080 bytes**, SHA256
+`292f11114a7927251ea571d2f2e9e3ce62506dfe44d54480cbbe24f91715f0c6`,
+at `/mnt/e/chess_derived_archive_20260908/Ceres100_v1/qtemp_0.0005_hist_20m_ceres_policy_C100T05.tar`.
+
+The completed helper verified source member contents and recorded metadata,
+source stability and external readback; the local staging tar was then removed.
+Independent compact review matched the terminal, verification receipt and
+external file stat without repeating the archive or source payload checks. GNU
+tar captures ACLs/xattrs, but these were not independently compared; the checked
+metadata includes file mode, ownership and modification time.
+
+At copy completion the original corpus was still online. Exact shard reclamation
+requires the subsequent fresh source/consumer qualification and reviewed remover;
+root summaries, all runs/checkpoints, source teachers and neighboring partials
+remain protected. [Completion evidence](evidence/ceres100-archive-completed-20260913.json)
+preserves the actual copy proof and independent review. Copy completion alone
+does not establish reclaimed SSD space.
+
+## September 13: exact Ceres100 shard reclamation completed
+
+After fresh source stability and consumer qualification, the reviewed remover
+completed with **exit 0 in 62.589 seconds**. It removed exactly the listed
+**2309 Ceres100 derived shard directories**. Both root summaries remain with
+their original hashes; all training runs, checkpoints, game banks, teacher/raw
+sources and neighboring partial outputs remain outside the removal scope. The
+external archive identity still matches the verified copy.
+
+The pre-removal allocation of those exact shards was **14,650,634,240 bytes**.
+Observed filesystem free space changed from **182,973,345,792** to
+**197,620,441,088 bytes**, a **14,647,095,296-byte** increase. This is a concurrent
+whole-filesystem observation, not an isolated measurement of reclamation;
+it is intentionally separate from the shard allocation total.
+
+[Final evidence](evidence/ceres100-archive-completed-20260913.json) retains the
+copy verification, exact removal receipt and preserved-summary identities.
+Independent completion review reconciled all 2309 intent/removal pairs and
+confirmed the two retained summary identities and unchanged archive stat. The
+original Ceres100 payload is now cold storage; its experiment/checkpoint evidence
+remains online. No corpus or archive payload was rescanned for publication.
