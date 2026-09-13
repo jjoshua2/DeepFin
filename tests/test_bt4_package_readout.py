@@ -252,3 +252,57 @@ def test_explicit_null_observed_command_is_not_missing() -> None:
     process['arena_cmdline'] = None
     with pytest.raises(ValueError, match='observed arena command differs'):
         tool.command_observation(process, {}, allow_timeout_preexec=False)
+
+
+@pytest.mark.parametrize('defect', ['none', 'null', 'empty_list', 'unrelated', 'supervisor',
+                                    'pid', 'budget', 'elapsed', 'failed', 'incomplete', 'bank'])
+def test_explicit_empty_procfs_observation_requires_complete_supervised_bank(package: Any, defect: str) -> None:
+    path, contract, rows = package
+    process = Path(contract['process']['path'])
+    data = json.loads(process.read_text())
+    hard = contract['execution']['max_seconds'] + 60
+    data.update(arena_cmdline=[''], hard_seconds=hard, owner_pid=100, supervisor_pid=101,
+                arena_pid=102, started_unix=1000., ended_unix=1100.,
+                supervisor_command=['/usr/bin/timeout', '--signal=TERM', '--kill-after=30s',
+                                    f'{hard-30}s', *data['command']])
+    if defect == 'null':
+        data['arena_cmdline'] = None
+    elif defect == 'empty_list':
+        data['arena_cmdline'] = []
+    elif defect == 'unrelated':
+        data['arena_cmdline'] = [*data['command'], '--resume']
+    elif defect == 'supervisor':
+        data['supervisor_command'][3] = '1s'
+    elif defect == 'pid':
+        data['arena_pid'] = data['supervisor_pid']
+    elif defect == 'budget':
+        data['hard_seconds'] += 1
+    elif defect == 'elapsed':
+        data['ended_unix'] = data['started_unix'] + hard + 1
+    elif defect == 'failed':
+        data['exit_code'] = 1
+    elif defect == 'incomplete':
+        data['process_complete'] = False
+    elif defect == 'bank':
+        rows = rows[:-1]
+    process.write_text(json.dumps(data))
+    contract['process'] = pin(process)
+    save_package(path, contract, rows)
+    original = process.read_bytes()
+    with pytest.raises(ValueError, match=r'observed arena command|process exit|process completion'):
+        tool.read_contract(path)
+    if defect == 'none':
+        with pytest.raises(ValueError, match='preexec observed command'):
+            tool.read_contract(path, allow_timeout_preexec=True)
+        result = tool.read_contract(path, allow_empty_procfs=True)
+        assert result['command_observation'] == 'unavailable_empty_procfs_snapshot'
+        assert result['bank_complete']
+        assert result['launch_qualification_verified'] is False
+        assert result['result']['score'] == .375
+    else:
+        with pytest.raises(ValueError, match=r'observed arena command|preexec|process|complete fixed paired bank'):
+            tool.read_contract(path, allow_empty_procfs=True)
+        # Enabling both precise exceptions still cannot excuse other failures.
+        with pytest.raises(ValueError, match=r'preexec|process|complete fixed paired bank'):
+            tool.read_contract(path, allow_empty_procfs=True, allow_timeout_preexec=True)
+    assert process.read_bytes() == original

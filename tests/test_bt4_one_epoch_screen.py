@@ -639,8 +639,8 @@ def test_softsf_completed_epoch_uses_shared_schedule_and_retains_history_limits(
     assert receipt['historical_validity_problems'] == ['historical purity limitation']
 
 
-@pytest.mark.parametrize('unexpected', [False, True])
-def test_owned_stage_rechecks_preexec_snapshot_before_stamping_workload(tmp_path, monkeypatch, unexpected):
+@pytest.mark.parametrize('snapshot_kind', ['timeout', 'empty', 'unexpected', 'empty_pid_change'])
+def test_owned_stage_rechecks_preexec_snapshot_before_stamping_workload(tmp_path, monkeypatch, snapshot_kind):
     monkeypatch.setattr(arena, 'RUNTIME', tmp_path)
     monkeypatch.setattr(arena, 'disk_guard', lambda _path: None)
     monkeypatch.setattr(arena, 'environment', lambda _gpu=False: {'CUDA_VISIBLE_DEVICES': ''})
@@ -652,16 +652,33 @@ def test_owned_stage_rechecks_preexec_snapshot_before_stamping_workload(tmp_path
     def first_preexec_snapshot(path):
         if str(path).startswith('/proc/') and path.name == 'cmdline' and not injected:
             injected.append(str(path))
-            snapshot = [*command, '--unexpected'] if unexpected else wrapped
+            if snapshot_kind.startswith('empty'):
+                return b''
+            snapshot = [*command, '--unexpected'] if snapshot_kind == 'unexpected' else wrapped
             return ('\0'.join(snapshot) + '\0').encode()
         return original_read(path)
 
     monkeypatch.setattr(Path, 'read_bytes', first_preexec_snapshot)
+    if snapshot_kind == 'empty_pid_change':
+        original_text = Path.read_text
+        def changed_child(path, *args, **kwargs):
+            if str(path).startswith('/proc/') and path.name == 'children' and injected:
+                return '999999'
+            return original_text(path, *args, **kwargs)
+        monkeypatch.setattr(Path, 'read_text', changed_child)
+        with pytest.raises(ValueError, match='workload child changed'):
+            arena.run_owned_stage(command, tmp_path / 'stage', 35, None, 'arena', {}, manifest={})
+        assert (tmp_path / 'stage/failed.json').is_file()
+        return
     receipt = arena.run_owned_stage(command, tmp_path / 'stage', 35, None, 'arena', {}, manifest={})
     assert injected
-    if unexpected:
+    if snapshot_kind == 'unexpected':
         assert receipt['arena_cmdline'] == [*command, '--unexpected']
         assert 'arena_preexec_cmdline' not in receipt
+    elif snapshot_kind == 'empty':
+        assert receipt['arena_empty_cmdline'] == ['']
+        assert receipt['arena_cmdline'] == command
+        assert receipt['arena_pid'] == receipt['arena_empty_cmdline_pid']
     else:
         assert receipt['arena_preexec_cmdline'] == wrapped
         assert receipt['arena_cmdline'] == command

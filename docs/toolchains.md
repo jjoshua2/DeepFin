@@ -734,3 +734,14 @@ Preparation and execution require pinned manifests and absolute owned deadlines;
 no-flag inspection is static only. The active trainer and arena implementation are
 unchanged. Final host adoption still binds genuine completion, runtime and source
 pins; metadata drafts do not authorize a match.
+
+The fixed-package reader rejects mismatched observed argv by default. Its separate
+`--allow-empty-procfs-capture` option admits only the literal `['']` observation
+with the exact requested command, timeout supervisor, distinct process IDs,
+successful completion and bounded timestamps, while retaining all complete-bank
+checks. The observation remains `unavailable_empty_procfs_snapshot`; it does not
+prove actual exec, and launch qualification still requires external evidence.
+The combined host enables this and the exact timeout-preexec case explicitly.
+Future owned stages retain an empty sample as provisional evidence and retry the
+same child within the existing ten-second capture window. Original process and
+failure receipts are never rewritten to recover a completed bank.

@@ -445,7 +445,7 @@ def execute(m: dict[str, Any], prepared_pin: dict[str, str], deadline: float) ->
             )
             actual_pin = recipe.write(out / "package.contract.json", actual)
             # Existing reader verifies complete bank and actual command; generic launch flag stays false.
-            result = package.read_contract(Path(actual_pin["path"]))
+            result = package.read_contract(Path(actual_pin["path"]), allow_timeout_preexec=True, allow_empty_procfs=True)
             check()
             readout = recipe.write(out / "readout.json", result)
             recipe.write(
