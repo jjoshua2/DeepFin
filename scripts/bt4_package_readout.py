@@ -163,13 +163,15 @@ def command_check(command: Any, contract: dict[str, Any]) -> None:
     require(args['device'] in (None, ['cuda']), 'command device')
 
 
-def command_observation(process: dict[str, Any], contract: dict[str, Any], *, allow_timeout_preexec: bool) -> str:
+def command_observation(process: dict[str, Any], contract: dict[str, Any], *, allow_timeout_preexec: bool,
+                        allow_empty_procfs: bool = False) -> str:
     if 'arena_cmdline' not in process:
         return 'not_recorded'
     observed = process['arena_cmdline']
     if observed == process['command']:
         return 'actual_command'
-    require(allow_timeout_preexec, 'observed arena command differs')
+    empty = observed == [''] and allow_empty_procfs
+    require(empty or allow_timeout_preexec, 'observed arena command differs')
     seconds = process.get('hard_seconds')
     require(type(seconds) is int and seconds > 30
             and seconds == contract['execution']['max_seconds'] + 60, 'preexec hard budget')
@@ -177,17 +179,21 @@ def command_observation(process: dict[str, Any], contract: dict[str, Any], *, al
     expected = ['/usr/bin/timeout', '--signal=TERM', '--kill-after=30s', f'{seconds - 30}s',
                 *process['command']]
     same(process.get('supervisor_command'), expected, 'preexec supervisor command')
-    same(observed, expected, 'preexec observed command')
+    if not empty:
+        same(observed, expected, 'preexec observed command')
+    same(process.get('exit_code'), 0, 'preexec process exit')
+    same(process.get('process_complete'), True, 'preexec process completion')
     pids = [process.get(k) for k in ('owner_pid', 'supervisor_pid', 'arena_pid')]
     require(all(type(pid) is int and pid > 0 for pid in pids) and len(set(pids)) == 3,
             'preexec supervisor/child identity')
     start, end = process.get('started_unix'), process.get('ended_unix')
     require(positive(start) and positive(end), 'preexec timestamps')
     require(0 < cast(float, end) - cast(float, start) <= seconds, 'preexec elapsed budget')
-    return 'exact_supervised_timeout_preexec_snapshot'
+    return 'unavailable_empty_procfs_snapshot' if empty else 'exact_supervised_timeout_preexec_snapshot'
 
 
-def read_contract(path: Path, *, allow_timeout_preexec: bool = False) -> dict[str, Any]:
+def read_contract(path: Path, *, allow_timeout_preexec: bool = False,
+                  allow_empty_procfs: bool = False) -> dict[str, Any]:
     raw = path.read_bytes()
     contract = json.loads(raw)
     validate(contract)
@@ -200,7 +206,8 @@ def read_contract(path: Path, *, allow_timeout_preexec: bool = False) -> dict[st
     same(process.get('exit_code'), 0, 'process exit')
     same(process.get('process_complete'), True, 'process completion')
     command_check(process['command'], contract)
-    observation = command_observation(process, contract, allow_timeout_preexec=allow_timeout_preexec)
+    observation = command_observation(process, contract, allow_timeout_preexec=allow_timeout_preexec,
+                                      allow_empty_procfs=allow_empty_procfs)
     bank = pinned(contract['bank'])
     log = read_game_log(bank)
     require(not log.truncated_tail, 'torn game bank')
@@ -257,9 +264,12 @@ def main() -> None:
     parser.add_argument('--contract', type=Path, action='append', required=True)
     parser.add_argument('--allow-timeout-preexec-capture', action='store_true',
                         help='Admit only the exact recorded timeout fork/exec snapshot; retain all bank checks')
+    parser.add_argument('--allow-empty-procfs-capture', action='store_true',
+                        help="Admit only recorded [''] as unavailable argv with exact supervisor proof; retain all bank checks")
     args = parser.parse_args()
     require(len(args.contract) == 1, 'exactly one contract required')
-    print(json.dumps(read_contract(args.contract[0], allow_timeout_preexec=args.allow_timeout_preexec_capture), indent=2))
+    print(json.dumps(read_contract(args.contract[0], allow_timeout_preexec=args.allow_timeout_preexec_capture,
+                                   allow_empty_procfs=args.allow_empty_procfs_capture), indent=2))
 
 
 if __name__ == '__main__':

@@ -331,12 +331,23 @@ def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, s
                     children = Path(f'/proc/{child.pid}/task/{child.pid}/children')
                     ids = children.read_text().split() if children.exists() else []
                     if ids:
+                        provisional_pid = receipt.get(f'{stage}_empty_cmdline_pid',
+                                                      receipt.get(f'{stage}_preexec_pid'))
+                        require(provisional_pid is None or int(ids[0]) == provisional_pid,
+                                'workload child changed during command capture')
                         try:
                             cmdline = Path(f'/proc/{ids[0]}/cmdline').read_bytes().decode().strip('\0').split('\0')
                         except FileNotFoundError:
                             pass
                         else:
-                            if cmdline != wrapped:
+                            if cmdline == ['']:
+                                # Empty procfs reads are unavailable observations, not argv.
+                                # Preserve the first sample and retry the same child.
+                                if f'{stage}_empty_cmdline' not in receipt:
+                                    receipt[f'{stage}_empty_cmdline'] = cmdline
+                                    receipt[f'{stage}_empty_cmdline_pid'] = int(ids[0])
+                                    write(out / 'process.json', receipt)
+                            elif cmdline != wrapped:
                                 receipt[f'{stage}_pid'] = int(ids[0])
                                 receipt[f'{stage}_cmdline'] = cmdline
                                 write(out / 'process.json', receipt)
