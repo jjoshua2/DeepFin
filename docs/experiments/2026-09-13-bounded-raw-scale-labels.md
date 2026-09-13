@@ -161,3 +161,16 @@ records the actual terminal and both summary pins. This completes derived
 baseline eligibility and provenance only. Matching these filtered/permuted rows
 to the existing raw BT4 policy/native-WDL banks still requires an exact adapter
 and consumer qualification; no BT4 adapter or training admission is claimed.
+
+
+## Joint policy and native-WDL adapter launched
+
+After the Ceres100 archive was verified and its exact 2,309 cold shard directories reclaimed, the parent launched the existing joint raw-sidecar adapter at **2026-09-13T21:40:32.013006+00:00** (exec **90211**, sole observer **804**). The adapter supervisor recorded its start at **2026-09-13T21:40:32.091139+00:00**. A saved first-stage receipt records the exact run06 command and child PID **525514**. This is a launch observation; neither source is claimed complete here.
+
+The two sequential targets are **1,006,190 run06 rows / 123 derived shards** and **511,735 run07 rows / 63 derived shards**, totaling **1,517,925 rows / 186 shards**. The adapter matches retained rows through their source-qualified raw identities and physical-row provenance to already saved BT4 policy and native WDL labels. It performs **no new teacher inference or model evaluation**, applies no new target mixture, and does not confer training admission. The exact 30 audited exclusions and 9,198 no-result drops remain those of the completed derivation above.
+
+The frozen plan is `a0ac417b…`, command `3f7825a6…`, using runtime `a22893d…`. Independent source/manifest review `6e6f4309…` and operator review `8e76…` passed before launch. The plan's historical “deferred” status describes preparation; the subsequent immutable launch receipt records that the resource condition was met. Ceres100 reclamation reported **14,647,095,296 bytes** of concurrent filesystem-free increase; this differs from its separately measured allocated shard sum and is not isolated attribution.
+
+The allocation is **three hours inclusive**, CPUs **8–9**, two numerical threads, nice 19, hidden GPU, **48 GiB available RAM at startup / 32 GiB at running checks**, and a **150-GiB running disk floor**. Startup requires **170 GiB free**: 150 GiB plus the **16-GiB aggregate output allowance** and 4 GiB for other writers. The launched supervisor admitted these startup guards. No address-space cap is imposed; the RAM checks are not an aggregate memory guarantee. The raw-index allowance is 1 GiB with only two raw indexes cached, while the whole-output cap remains separate. Deadline, STOP and owned-process cleanup stay in effect; there is no automatic retry.
+
+[Compact launch evidence](evidence/raw-joint-adapter-launched-20260913.json) pins the two manifests, saved source-receipt indexes, reviews and actual launch observation. The historical policy-only adapter timing motivated the bound; it is not a measured joint-adapter throughput result. Exact joint-output checks and any later consumer/training qualification remain pending.
