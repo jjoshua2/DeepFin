@@ -171,7 +171,10 @@ def test_stat_watch_does_not_reread_receipts(tmp_path):
     assert tool.stat_paths(before) != before
 
 
-def test_execute_uses_owned_stage_guard_and_preserves_failure(tmp_path, monkeypatch):
+@pytest.mark.parametrize("change_receipt", [False, True])
+def test_execute_uses_owned_stage_guard_and_preserves_failure(
+    tmp_path, monkeypatch, change_receipt
+):
     from contextlib import nullcontext
     import time
 
@@ -210,11 +213,17 @@ def test_execute_uses_owned_stage_guard_and_preserves_failure(tmp_path, monkeypa
 
     def run(cmd, _out, seconds, lease, stage, _metadata, **kwargs):
         calls.append((cmd, seconds, lease, stage, kwargs))
+        if change_receipt:
+            Path(prepared_pin["path"]).write_text("changed")
         kwargs["guard"]()
         raise RuntimeError("owned-stage failure")
 
     monkeypatch.setattr(tool.owned, "run_owned_stage", run)
-    with pytest.raises(RuntimeError, match="owned-stage failure"):
+    error_type = ValueError if change_receipt else RuntimeError
+    error_message = (
+        "preparation evidence changed" if change_receipt else "owned-stage failure"
+    )
+    with pytest.raises(error_type, match=error_message):
         tool.execute(m, prepared_pin, time.time() + 12000)
     assert calls[0][1] == 7200
     assert calls[0][2] is not None

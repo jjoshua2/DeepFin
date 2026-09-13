@@ -120,7 +120,9 @@ def training_verifier(m: dict[str, Any]) -> Generator[None]:
     for side in ("candidate", "reference"):
         receipt = reader.read_json(m[side + "_training"])
         if side == "candidate":
-            reader.same(receipt["previous_training"], m["reference_training"], "V50 predecessor")
+            reader.same(
+                receipt["previous_training"], m["reference_training"], "V50 predecessor"
+            )
         reader.same(
             receipt["code_pins"].get(ref["path"]),
             ref["sha256"],
@@ -146,7 +148,9 @@ def training_verifier(m: dict[str, Any]) -> Generator[None]:
 
 
 def static(m: dict[str, Any]) -> None:
-    reader.require(sys.flags.optimize == 0, "unoptimized assertion-enabled host required")
+    reader.require(
+        sys.flags.optimize == 0, "unoptimized assertion-enabled host required"
+    )
     reader.same(m["profile"], PROFILE, "combined arena profile")
     reader.same(
         tuple(m[s]["role"] for s in ("candidate", "reference")),
@@ -203,6 +207,10 @@ def stamps(
             "training_process",
         ):
             paths.add(receipt[key]["path"])
+    runtime_proof = reader.read_json(m["runtime"])
+    paths.update(
+        runtime_proof[k]["path"] for k in ("qualification", "original_runtime_manifest")
+    )
     paths.update(str(runtime / p) for p in recipe.arena_overlay(m)[1])
     paths.update(rt["native_extension_sha256"])
     return stat_paths(paths)
@@ -341,6 +349,12 @@ def execute(m: dict[str, Any], prepared_pin: dict[str, str], deadline: float) ->
     reader.same(reader.read_json(prepared["manifest"]), m, "prepared manifest")
     reader.read_json(prepared["observed"])
     reader.read_json(prepared["request"])
+    preparation_stamps = stat_paths(
+        [
+            prepared_pin["path"],
+            *[prepared[k]["path"] for k in ("manifest", "observed", "request")],
+        ]
+    )
     with training_verifier(m):
         runtime, rt = recipe.qualified_runtime(m)
         reader.same(str(runtime), prepared["runtime_root"], "prepared runtime")
@@ -367,6 +381,11 @@ def execute(m: dict[str, Any], prepared_pin: dict[str, str], deadline: float) ->
 
         def check() -> None:
             guard(m, deadline)
+            reader.same(
+                stat_paths(preparation_stamps),
+                preparation_stamps,
+                "preparation evidence changed",
+            )
             reader.require(not (operator / "STOP").exists(), "operator STOP")
             reader.same(
                 stat_paths(prepared["input_stamps"]),
