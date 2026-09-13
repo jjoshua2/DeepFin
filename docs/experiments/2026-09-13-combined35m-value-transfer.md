@@ -1,8 +1,9 @@
 # Matched value transfer on original plus G10 data
 
-Status: both matched training epochs and actual completion verification passed.
-The CPU pair package passed, and the fixed 512-game arena host command launched
-on September 13 at 14:01:49 UTC. Evaluation results remain pending.
+Status: the completed 512-game comparison supports V50 over SF100 at 35.3M rows:
+**+31.30 Elo, nominal paired 95% interval [+8.53, +54.34]**. V50 is the provisional
+value recipe for this setting. The original host failed during readout after a
+successful GPU stage; separate reviewed read-only recovery qualified the bank.
 
 ## Question and allocation
 
@@ -338,3 +339,20 @@ The actual CPU pair preparation passed in **68.705 seconds** of host time (**64.
 The parent launched the arena host command at **2026-09-13 14:01:49.686701 UTC** (exec 81597, sole observer 444). This records the actual host invocation, not a completed game or an interim score. The fixed comparison is **V50 versus SF100, 256 swapped pairs / 512 games, 400 simulations**, opening seed **20260913**, priors 1, no tablebases, maximum 300 plies, rolling 128 and batch 4096. The stage allowance is 7,200 seconds with the existing 7,140-second internal arena limit; the enclosing allowance is 12,030 seconds including cleanup. Parent prelaunch observations were approximately 83 GiB available memory, zero swap use, 193 GiB free disk and no GPU compute applications. These are launch-time observations, not peak or current resource claims.
 
 [Compact completion and launch evidence](evidence/combined35m-v50-completed-arena-launched-20260913.json) preserves both independent reviews, the actual CPU package, final manifest and immutable host launch command. No active job, game bank, corpus array or model was read for publication. No score, Elo, promotion, extra games or new training allocation is claimed.
+
+
+## Completed fixed comparison and readout recovery
+
+V50 scored **54.492%** against SF100 over all **512 games / 256 swapped opening pairs**. Its nominal paired 95% score interval is **[51.228%, 57.757%]**, corresponding to **+31.30 Elo [+8.53, +54.34]**. Both models trained on the same 35,314,577 rows with B100 policy, initialization/schedule seed 101 and one complete matched game epoch. The evaluation retained 400 simulations, search priors 1.0, the frozen seed-20260913 panel, rolling 128, batch 4096, no tablebases and the 300-ply limit.
+
+The precommitted interval is wholly above 0.5, supporting **V50 as the provisional 35M value recipe** over pure SF values for this corpus, seed and search setting. This supports mixing native BT4 WDL with SF rather than establishing an optimal dose. It does not establish training-seed replication, a 100M result, search scaling or readiness to deploy an RL loop. The three historical-control limitations above remain. The five paired-outcome bins are **22 / 85 / 87 / 41 / 21** from candidate double-win through double-loss; the middle 87 includes both double draws and split wins, not 87 double draws.
+
+The actual arena GPU process completed with exit **0** in **2,127.961 seconds**, within its 7,200-second allowance. The enclosing host exited **1** after **2,133.331 seconds** because strict readout rejected `arena_cmdline=[""]`. Its early procfs snapshot was empty; the old capture loop mistakenly treated it as final argv and stopped retrying. The precise cause of the empty OS observation cannot be established retrospectively. The saved requested command, exact timeout supervisor, distinct owner/supervisor/child IDs, runtime, timestamps and successful process completion remain intact.
+
+[PR713](https://github.com/jjoshua2/DeepFin/pull/713) added same-child capture retry for future stages and a narrow explicit recovery option for this unavailable observation. It retained the normal checkpoint-content, combined-training lineage, complete-bank, actual settings, opening-FEN and pair checks. The original process, contract, bank and failed-host receipt were preserved; no games were rerun. The first recovery invocation failed on an import before evidence reads because the live working directory shadowed the isolated scripts package. Running from the correct isolated checkout then completed the full reader with exit 0, reporting **2.805 seconds** inside the reader. These recovery terminal observations are preserved as parent-captured tool evidence, rather than represented as a new arena process receipt.
+
+Recovered readout `398eae3d…` explicitly reports `command_observation="unavailable_empty_procfs_snapshot"` and retains `launch_qualification_verified=false`. The previously qualified CPU package and separate independent review bind the actual checkpoints/runtime, regenerated pretraining panel and saved owned-supervisor/process evidence to the recovered contract. This is an external provenance review, not a retrospective observation of executed argv. Independent scientific review `e5d7ae73…` accepted the completed comparison and the registered decision with these limits.
+
+The separate pure-Ceres policy comparison was selected before this outcome was read. It retains original SF-derived values to isolate the policy-teacher change; this value result does not silently alter that control. Its corpus and admission details remain in the [Ceres100 record](2026-09-13-ceres100-policy-preparation.md).
+
+[Compact result evidence](evidence/combined35m-value-result-20260913.json) includes all 256 pair scores, the original GPU process and failed host, parent recovery observations, exact small-artifact pins and both source/scientific reviews. Publication consumed those saved records only; it did not reread models, game banks, opening books or corpus payloads, or rerun validation.
