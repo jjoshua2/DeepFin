@@ -25,6 +25,19 @@ FROZEN_PINS = {
 TEACHER = '1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0'
 ARMS = ('source', 'B100', 'V50')
 
+V100_KIND = 'matched-b100-sf-native100-corpus-set'
+
+
+def corpus_arms(manifest: dict[str, Any]) -> tuple[str, str, str]:
+    kind = manifest['kind']
+    require(kind in {'matched-b100-sf-native50-corpus-set', V100_KIND}, 'unknown corpus recipe kind')
+    return ('source', 'B100', 'V100') if kind == V100_KIND else ARMS
+
+
+def role_map(manifest: dict[str, Any]) -> dict[str, str]:
+    return ({'Combined35M_V100': 'V100'} if corpus_arms(manifest)[-1] == 'V100'
+            else {'Combined35M_SF100': 'B100', 'Combined35M_V50': 'V50'})
+
 
 def require(ok: bool, message: str) -> None:
     if not ok:
@@ -58,9 +71,9 @@ def root_path(cohort: dict[str, Any], arm: str) -> Path:
     return Path(summary_ref(cohort, arm)['path']).parent
 
 
-def validate_recipe(cohort: dict[str, Any]) -> list[dict[str, Any]]:
+def validate_recipe(cohort: dict[str, Any], value_arm: str = 'V50') -> list[dict[str, Any]]:
     """Check unchanged original SF lineage and the two fixed target recipes."""
-    source, policy, value = (read_pin(summary_ref(cohort, arm)) for arm in ARMS)
+    source, policy, value = (read_pin(summary_ref(cohort, arm)) for arm in ('source', 'B100', value_arm))
     require('value_target_postprocess' not in source and 'policy_target_postprocess' not in source,
             'original SF source is already target-modified')
     specs = source['shards']
@@ -73,6 +86,8 @@ def validate_recipe(cohort: dict[str, Any]) -> list[dict[str, Any]]:
     require(rows == cohort['rows'], 'cohort row count differs')
     p = read_pin(cohort['policy_recipe'])
     v = read_pin(cohort['value_recipe'])
+    require(value_arm in {'V50', 'V100'}, 'unknown value arm')
+    alpha = 1.0 if value_arm == 'V100' else .5
     subset(p, {'kind': 'global', 'algorithm': 'legal-normalized-global-arithmetic-v1',
                'alpha': 1.0, 'bt4_temperature': .5, 'rows': rows,
                'expected_shards': len(specs), 'source_dir': str(root_path(cohort, 'source')),
@@ -82,30 +97,31 @@ def validate_recipe(cohort: dict[str, Any]) -> list[dict[str, Any]]:
             and same_json({k: x for k, x in policy.items() if k != 'policy_target_postprocess'}, source),
             'B100 changed original source/value lineage')
     subset(v, {'schema': 1, 'status': 'COMPLETE', 'kind': 'bt4_value_rewrite',
-               'algorithm': 'normalized-wdl-arithmetic-float16-v1', 'sf_weight': .5, 'bt4_weight': .5,
+               'algorithm': 'normalized-wdl-arithmetic-float16-v1', 'sf_weight': 1 - alpha, 'bt4_weight': alpha,
                'wdl_order': 'WDL', 'wdl_pov': 'side_to_move', 'wdl_kind': 'probabilities',
                'wdl_output': '/output/wdl', 'onnx_sha256': TEACHER, 'rows': rows, 'shards': len(specs),
                'source_dir': str(root_path(cohort, 'B100')), 'sf_source_dir': str(root_path(cohort, 'source')),
                'source_derive_summary_sha256': summary_ref(cohort, 'B100')['sha256'],
                'source_policy_summary_sha256': cohort['policy_recipe']['sha256'],
                'sf_derive_summary_sha256': summary_ref(cohort, 'source')['sha256'],
-               'mutated_arrays': ['search_wdl'], 'value_scheme': 'sf-bt4-native-alpha=0.5',
+               'mutated_arrays': ['search_wdl'], 'value_scheme': f'sf-bt4-native-alpha={alpha!r}',
                'value_source': 'stored-sf-search-and-derived-bt4-wdl;onnx=' + TEACHER
-                   + ';output=/output/wdl;bt4_weight=0.5'}, 'V50 recipe')
+                   + f';output=/output/wdl;bt4_weight={alpha!r}'}, value_arm + ' recipe')
     expected = dict(policy)
     expected['value_scheme'] = {'name': v['value_scheme'], 'source': v['value_source']}
     expected['value_target_postprocess'] = {k: x for k, x in v.items() if k != 'outputs'}
     require(same_json(value, expected), 'V50 changed policy/history/source lineage')
     require([(s['path'], s['rows']) for s in v['outputs']] == [(s['path'], s['rows']) for s in specs],
             'V50 output coverage/order differs')
-    require(sha(root_path(cohort, 'V50') / 'bt4_policy_mix_summary.json') == cohort['policy_recipe']['sha256'],
+    require(sha(root_path(cohort, value_arm) / 'bt4_policy_mix_summary.json') == cohort['policy_recipe']['sha256'],
             'V50 copied policy recipe differs')
     return specs
 
 
 def admit(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     """Metadata admission only; pinned qualification is inherited, not rerun."""
-    subset(manifest, {'schema': 1, 'kind': 'matched-b100-sf-native50-corpus-set',
+    arms = corpus_arms(manifest)
+    subset(manifest, {'schema': 1, 'kind': manifest['kind'],
                       'batch_size': 512,
                       'game_identity_contract': 'disjoint-whole-game-raw-shard-selections-v1'}, 'manifest')
     require(type(manifest['seed']) is int and 0 <= manifest['seed'] < 2**32, 'invalid schedule seed')
@@ -121,7 +137,7 @@ def admit(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         require(isinstance(c['id'], str) and re.fullmatch(r'[A-Za-z0-9_-]+', c['id']) is not None
                 and c['id'] not in ids, 'duplicate/invalid logical cohort')
         ids.add(c['id'])
-        for arm in ARMS:
+        for arm in corpus_arms(manifest):
             root = root_path(c, arm)
             require(root.is_absolute() and root.is_dir() and not root.is_symlink()
                     and root.resolve() not in roots, 'duplicate/aliased corpus root')
@@ -169,8 +185,8 @@ def admit(manifest: dict[str, Any]) -> list[dict[str, Any]]:
             key = (c['source_namespace'], raw)
             require(key not in raw_seen, 'overlapping physical raw shard selection')
             raw_seen.add(key)
-        specs = validate_recipe(c)
-        for arm in ARMS:
+        specs = validate_recipe(c, arms[-1])
+        for arm in corpus_arms(manifest):
             root = root_path(c, arm)
             actual = sorted(root.glob('shard_*.zarr'))
             require([p.name for p in actual] == [x['path'] for x in specs]
@@ -178,7 +194,7 @@ def admit(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         for index, spec in enumerate(specs):
             mapping.append({'cohort': c['id'], 'shard_index': index, 'rows': spec['rows'],
                             'namespace': c['source_namespace'],
-                            'paths': {arm: str(root_path(c, arm) / spec['path']) for arm in ARMS}})
+                            'paths': {arm: str(root_path(c, arm) / spec['path']) for arm in arms}})
     require(len(historical_namespaces) <= 1, 'only one qualified historical source is supported')
     require(not historical_namespaces.intersection(ns for ns, _ in raw_seen), 'historical/G10 namespaces collide')
     require(sum(s['rows'] for s in mapping) == manifest['expected_rows'], 'union row count differs')
@@ -259,7 +275,7 @@ def prospective(manifest: dict[str, Any], mapping: list[dict[str, Any]], guard: 
     source_columns = None
     source_plan: Any = None
     arms = {}
-    for arm in ARMS:
+    for arm in corpus_arms(manifest):
         paths = ordered_paths(mapping, arm)
         records, columns = scan_columns(epoch, paths, mapping, guard)
         guard()
@@ -316,8 +332,8 @@ def main() -> None:
     report = {'status': 'PASS_CORPUS_SET_METADATA_NOT_TRAINING', 'manifest_sha256': args.expected_manifest_sha256,
               'mapping': mapping, 'rows': sum(r['rows'] for r in mapping),
               'seed': manifest['seed'], 'batch_size': manifest['batch_size'],
-              'trainer_shards': {arm: [str(root_path(c, arm)) for c in manifest['cohorts']] for arm in ('B100', 'V50')},
-              'training_role_to_arm': {'Combined35M_SF100': 'B100', 'Combined35M_V50': 'V50'},
+              'trainer_shards': {arm: [str(root_path(c, arm)) for c in manifest['cohorts']] for arm in role_map(manifest).values()},
+              'training_role_to_arm': role_map(manifest),
               'limits': ['Producer/source qualification is inherited from pinned receipts, not repeated.',
                          'No feature/target read or full training admission; trainer history/value gates remain required.',
                          'Whole-game equivalence inherits the qualified generator contract and exact disjoint rosters; historical per-shard source-code attestation was not added.']}

@@ -11,6 +11,7 @@ import argparse
 import fcntl
 import hashlib
 import importlib
+import importlib.util
 import json
 import math
 import os
@@ -29,6 +30,8 @@ from scripts import combined_corpus_schedule as schedule
 
 PROFILE = 'combined35m_value_seed101'
 ROLES = {'Combined35M_SF100': 'B100', 'Combined35M_V50': 'V50'}
+V100_ROLE = 'Combined35M_V100'
+LEGACY_VERIFIER_SHA = '87ed234c2861920e96427010833a3c5c55fa3d3c136655f3957426647ed15acb'
 ROWS = 35314577
 PANEL_SHA = '14470ee9bcf5fdfc822bb19988941ecf4bbe2a1ea739d46487d3663b1735340c'
 FROZEN = {
@@ -54,13 +57,55 @@ def same(actual: Any, expected: Any, label: str) -> None:
             == json.dumps(expected, sort_keys=True, allow_nan=False), label + ' differs')
 
 
+def arm_for(role: str) -> str:
+    return 'V100' if role == V100_ROLE else ROLES[role]
+
+
+def legacy_v50(receipt: dict[str, Any], ref: dict[str, str]) -> dict[str, Any]:
+    """Use the exact saved V50 verifier, not changed coordinator byte identities."""
+    require(Path(ref['path']).is_absolute(), 'absolute historical verifier')
+    same(ref['sha256'], LEGACY_VERIFIER_SHA, 'historical V50 verifier source')
+    same(receipt['code_pins'].get(ref['path']), ref['sha256'], 'historical verifier binding')
+    owned.pin(ref['path'], ref['sha256'])
+    spec = importlib.util.spec_from_file_location('_v100_prior_v50_verifier', ref['path'])
+    require(spec is not None and spec.loader is not None, 'historical verifier import')
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    same(receipt['role'], 'Combined35M_V50', 'V100 predecessor role')
+    return module.verify_completed(receipt)
+
+
+def verify_v100_predecessor(m: dict[str, Any], report: dict[str, Any]) -> None:
+    prior = read_pin(m['previous_training'])
+    prior_report = legacy_v50(prior, m['previous_verifier'])
+    value_masks(read_pin({'path': str(Path(prior['run']) / 'summary.json'), 'sha256': prior['summary_sha256']}))
+    for key in ('opening_panel', 'runtime_manifest'):
+        same(prior[key], m[key], 'V100 common ' + key)
+    current_manifest = read_pin(m['corpus_manifest'])
+    prior_manifest = read_pin(prior['corpus_manifest'])
+    # Same ordered physical source/policy selection; only the new value root differs.
+    keys = ('id', 'rows', 'source_namespace', 'identity_kind', 'raw_shards',
+            'source_qualification', 'identity_receipt', 'policy_recipe')
+    for old, new in zip(prior_manifest['cohorts'], current_manifest['cohorts'], strict=True):
+        same({k: old.get(k) for k in keys}, {k: new.get(k) for k in keys}, 'V100 common cohort identity')
+        for arm in ('source', 'B100'):
+            same(old['roots'][arm], new['roots'][arm], 'V100 common source/policy root')
+    same(report['ordered_source_columns'], prior_report['ordered_source_columns'], 'V100 common game columns')
+    same(report['arms']['source']['physical_plan'], prior_report['arms']['source']['physical_plan'],
+         'V100 common source schedule')
+    same(report['arms']['V100']['canonical_plan_sha256'], prior['canonical_plan_sha256'], 'V100 canonical')
+
+
 def admission(m: dict[str, Any]) -> dict[str, Any]:
     """Small pinned artifacts only; no corpus admission or game-column rerun."""
     manifest = read_pin(m['corpus_manifest'])
     report = read_pin(m['prospective'])
     same(report['status'], 'PASS_CORPUS_SET_PROSPECTIVE_NOT_TRAINING', 'prospective status')
     same(report['manifest_sha256'], m['corpus_manifest']['sha256'], 'manifest binding')
-    same(report['training_role_to_arm'], ROLES, 'scientific role mapping')
+    same(report['training_role_to_arm'], schedule.role_map(manifest), 'scientific role mapping')
+    require(m['role'] in report['training_role_to_arm'], 'role is not admitted by corpus recipe')
     for value in (manifest, report):
         same(value['seed'], 101, 'seed')
         same(value['batch_size'], 512, 'batch size')
@@ -71,7 +116,7 @@ def admission(m: dict[str, Any]) -> dict[str, Any]:
     same(len(mapping), manifest['expected_shards'], 'mapping shard count')
     same(sum(row['rows'] for row in mapping), ROWS, 'mapping row count')
     require(all(type(row['rows']) is int and row['rows'] > 0 for row in mapping), 'invalid shard rows')
-    for arm in ROLES.values():
+    for arm in report['training_role_to_arm'].values():
         roots = report['trainer_shards'][arm]
         same(roots, [str(Path(c['roots'][arm]['summary']['path']).parent) for c in manifest['cohorts']], 'ordered training roots')
         require(len(set(roots)) == 21 and all(Path(root).is_absolute() for root in roots), 'invalid roots')
@@ -103,10 +148,14 @@ def selected_subset(m: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]
     same(qualification['flags'], {'allow_partial_corpus': True, 'allow_leak': False, 'allow_mixed_history': False},
          'subset flags')
     same(qualification['trainer_shards'], report['trainer_shards'], 'subset ordered roots')
+    if m['role'] == V100_ROLE:
+        same(qualification['coverage']['V100'], {
+            'search_wdl': {'rows': ROWS, 'labelled_rows': ROWS},
+            'sf_wdl': {'rows': ROWS, 'labelled_rows': 0}}, 'V100 required/optional coverage')
     manifest = read_pin(m['corpus_manifest'])
     original_ids = {c['id'] for c in manifest['cohorts'] if c['identity_kind'] == 'historical-single-source'}
     require(len(original_ids) == 1, 'ambiguous original corpus')
-    for arm in ROLES.values():
+    for arm in report['training_role_to_arm'].values():
         roots = report['trainer_shards'][arm]
         require(len({Path(root).name for root in roots}) == len(roots), 'ambiguous frozen partial-stamp root names')
         eligible = {Path(row['paths'][arm]).parent.name + '/' + Path(row['paths'][arm]).name
@@ -125,7 +174,7 @@ def selected_subset(m: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]
 def validate(m: dict[str, Any], *, fresh: bool = True) -> dict[str, Any]:
     same(m['schema'], 1, 'schema')
     same(m['profile'], PROFILE, 'profile')
-    require(m['role'] in ROLES, 'unknown combined role')
+    require(m['role'] in {*ROLES, V100_ROLE}, 'unknown combined role')
     same(m['training_seconds'], 21600, 'training cap')
     same(m['coordinator_seconds'], 27000, 'coordinator cap')
     require(isinstance(m['stop_paths'], list) and m['stop_paths']
@@ -147,7 +196,9 @@ def validate(m: dict[str, Any], *, fresh: bool = True) -> dict[str, Any]:
         owned.pin(owned.RUNTIME / suffix, digest)
     report = admission(m)
     selected_subset(m, report)
-    if m['role'] == 'Combined35M_V50':
+    if m['role'] == V100_ROLE:
+        verify_v100_predecessor(m, report)
+    elif m['role'] == 'Combined35M_V50':
         prior = read_pin(m['previous_training'])
         verify_completed(prior)
         same(prior['role'], 'Combined35M_SF100', 'sequential SF100 predecessor')
@@ -160,14 +211,38 @@ def validate(m: dict[str, Any], *, fresh: bool = True) -> dict[str, Any]:
 
 def train_command(m: dict[str, Any], report: dict[str, Any], python: str) -> list[str]:
     return [python, 'scripts/lc0_control_train.py', '--config', 'configs/lc0_positive_control.yaml',
-            '--shards', *report['trainer_shards'][ROLES[m['role']]], '--out-dir', m['run'],
+            '--shards', *report['trainer_shards'][arm_for(m['role'])], '--out-dir', m['run'],
             '--steps', '0', '--batch-size', '512', '--sampling-mode', 'game_epoch',
             '--epoch-plan-workers', '2', '--epoch-load-workers', '2', '--seed', '101',
             '--device', 'cuda', '--train-window-steps', '88', '--allow-invalid-control', '--allow-partial-corpus']
 
 
+def value_masks(summary: dict[str, Any]) -> None:
+    """Observed frozen-config supervision: search WDL only, no auxiliary CE."""
+    expected = {
+        'sf_wdl_frac (realized)': 0., 'search_wdl_frac (realized)': 1.,
+        'game_frac (intended outcome share)': 0., 'sf_effective_frac (labelled sf mass)': 0.,
+        'search_effective_frac (labelled search mass)': 1., 'leaked_from_sf': 0.,
+        'leaked_from_search': 0., 'leaked_to_outcome': 0.,
+        'outcome_borne_frac (game_frac + leak)': 0.,
+    }
+    for key, value in expected.items():
+        same(summary['realized'].get(key), value, 'supervised WDL mask ' + key)
+    for key, value in {'rebuild_categorical_target (realized)': 1.,
+                       'categorical_target column present': 0., 'rebuild applies to this batch': 0.,
+                       'sf_labelled_frac': 0., 'search_labelled_frac': 1.,
+                       'categorical outcome_borne_frac': 0.}.items():
+        same(summary['realized_categorical'].get(key), value, 'categorical mask ' + key)
+    require(bool(summary['train_window_metrics']), 'missing supervised-loss windows')
+    for window in summary['train_window_metrics']:
+        for key in ('categorical_loss', 'sf_eval_loss'):
+            same(window.get(key), 0., 'inactive auxiliary loss ' + key)
+
+
 def summary_contract(summary: dict[str, Any], report: dict[str, Any], role: str, partial: dict[str, Any]) -> None:
-    arm = ROLES[role]
+    if role == V100_ROLE:
+        value_masks(summary)
+    arm = arm_for(role)
     plan = report['arms'][arm]['physical_plan']
     expected = {**plan, 'complete': True, 'rows_realized': plan['rows_planned'],
                 'batches_realized': plan['batches_planned'], 'plan_workers': 2, 'load_workers': 2,
@@ -188,7 +263,7 @@ def summary_contract(summary: dict[str, Any], report: dict[str, Any], role: str,
 
 def verify_staging(run: Path, report: dict[str, Any], role: str) -> str:
     """Exact links/order, including foreign extras; never open a shard payload."""
-    expected = [Path(row['paths'][ROLES[role]]) for row in report['mapping']]
+    expected = [Path(row['paths'][arm_for(role)]) for row in report['mapping']]
     staged = run / 'staged_shards'
     actual = sorted(staged.iterdir())
     same([p.name for p in actual], [f'shard_{i:06d}.zarr' for i in range(len(expected))], 'actual staged roster')
@@ -212,7 +287,7 @@ def verify_actual_columns(run: Path, report: dict[str, Any], role: str) -> dict[
         memory.require_available(memory.RUNNING_GIB)
         owned.disk_guard(run)
     records, columns = schedule.scan_columns(epoch, paths, report['mapping'], guard)
-    schedule.canonical_records(records, report['mapping'], ROLES[role])
+    schedule.canonical_records(records, report['mapping'], arm_for(role))
     same(columns, report['ordered_source_columns'], 'realized full ordered game columns')
     same(verify_staging(run, report, role), roster_sha, 'staging stability')
     return {'actual_staging_sha256': roster_sha, 'actual_game_columns': columns}
@@ -227,7 +302,7 @@ def completed_training(m: dict[str, Any], report: dict[str, Any], charge: dict[s
     checkpoint = {'role': role, **pin(run / 'checkpoint.pt')}
     require(any(c['role'] == 'last' and c['path'] == checkpoint['path'] and c['sha256'] == checkpoint['sha256']
                 for c in summary['checkpoints']), 'last checkpoint differs')
-    plan = report['arms'][ROLES[role]]
+    plan = report['arms'][arm_for(role)]
     receipt = {'schema': 1, 'profile': PROFILE, 'complete': True, 'role': role, 'run': str(run),
                'checkpoint': checkpoint, 'summary_sha256': owned.sha(run / 'summary.json'),
                'canonical_plan_sha256': plan['canonical_plan_sha256'],
@@ -241,24 +316,28 @@ def completed_training(m: dict[str, Any], report: dict[str, Any], charge: dict[s
                'historical_validity_problems': summary['validity_problems'],
                'proof': 'Exact actual staged-link order and frozen trainer physical plan/realization equal the admitted prospective arm; canonical identity is inherited from its game-column proof. No feature/target revalidation.'}
     receipt.update({k: m[k] for k in ('corpus_manifest', 'prospective', 'opening_panel', 'preregistration', 'runtime_manifest', 'code_pins', 'selected_subset_qualification')})
+    if role == V100_ROLE:
+        receipt.update({k: m[k] for k in ('previous_training', 'previous_verifier')})
     return receipt
 
 
 def verify_completed(receipt: dict[str, Any]) -> dict[str, Any]:
     """Match admission reads small completion evidence, never models or corpora."""
-    require(receipt['complete'] is True and receipt['profile'] == PROFILE and receipt['role'] in ROLES,
+    require(receipt['complete'] is True and receipt['profile'] == PROFILE and receipt['role'] in {*ROLES, V100_ROLE},
             'incomplete or foreign combined training')
     report = admission(receipt)
+    if receipt['role'] == V100_ROLE:
+        verify_v100_predecessor(receipt, report)
     role, run = receipt['role'], Path(receipt['run'])
     require(run.is_absolute(), 'relative completed run')
     summary = read_pin({'path': str(run / 'summary.json'), 'sha256': receipt['summary_sha256']})
     summary_contract(summary, report, role, selected_subset(receipt, report))
-    same(receipt['physical_plan_sha256'], report['arms'][ROLES[role]]['physical_plan']['plan_sha256'], 'completed physical plan')
-    same(receipt['canonical_plan_sha256'], report['arms'][ROLES[role]]['canonical_plan_sha256'], 'completed canonical plan')
+    same(receipt['physical_plan_sha256'], report['arms'][arm_for(role)]['physical_plan']['plan_sha256'], 'completed physical plan')
+    same(receipt['canonical_plan_sha256'], report['arms'][arm_for(role)]['canonical_plan_sha256'], 'completed canonical plan')
     require(receipt['actual_staging_verified'] is True and receipt['actual_game_columns_verified'] is True,
             'actual staging/game-column proof missing')
     same(receipt['actual_game_columns'], report['ordered_source_columns'], 'actual ordered game columns')
-    expected_paths = [str(Path(row['paths'][ROLES[role]]).resolve()) for row in report['mapping']]
+    expected_paths = [str(Path(row['paths'][arm_for(role)]).resolve()) for row in report['mapping']]
     expected_roster_sha = hashlib.sha256(json.dumps(expected_paths, separators=(',', ':')).encode()).hexdigest()
     same(receipt['actual_staging_sha256'], expected_roster_sha, 'recorded actual staging mapping')
     charge = receipt['training_charge_seconds']
@@ -288,6 +367,16 @@ def verify_completed(receipt: dict[str, Any]) -> dict[str, Any]:
 
 
 def matched_training_pair(evidence: dict[str, Any]) -> tuple[str, str]:
+    if evidence['candidate']['role'] == V100_ROLE:
+        candidate = read_pin(evidence['candidate_training'])
+        verify_completed(candidate)
+        same(candidate['checkpoint'], evidence['candidate'], 'V100 candidate checkpoint')
+        same(candidate['previous_training'], evidence['reference_training'], 'V100 deciding V50 receipt')
+        reference = read_pin(evidence['reference_training'])
+        legacy_v50(reference, candidate['previous_verifier'])
+        same(reference['checkpoint'], evidence['reference'], 'V100 reference checkpoint')
+        require(evidence['candidate']['sha256'] != evidence['reference']['sha256'], 'candidate is reference')
+        return (V100_ROLE, 'Combined35M_V50')
     roles = ('Combined35M_V50', 'Combined35M_SF100')
     receipts = []
     for side, role in zip(('candidate', 'reference'), roles):

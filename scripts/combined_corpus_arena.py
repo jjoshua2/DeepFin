@@ -124,7 +124,7 @@ def training_verifier(m: dict[str, Any]) -> Generator[None]:
     reader.same(
         ref["sha256"], owned.sha(combined.__file__), "reviewed combined verifier source"
     )
-    for side in ("candidate", "reference"):
+    for side in (("candidate",) if m["profile"] == package.V100_PROFILE else ("candidate", "reference")):
         receipt = reader.read_json(m[side + "_training"])
         reader.same(
             receipt["code_pins"].get(ref["path"]),
@@ -154,10 +154,11 @@ def static(m: dict[str, Any]) -> None:
     reader.require(
         sys.flags.optimize == 0, "unoptimized assertion-enabled host required"
     )
-    reader.require(m["profile"] in {PROFILE, package.CERES_PROFILE}, "registered arena profile")
+    reader.require(m["profile"] in {PROFILE, package.CERES_PROFILE, package.V100_PROFILE}, "registered arena profile")
     reader.same(
         tuple(m[s]["role"] for s in ("candidate", "reference")),
-        package.CERES_ROLES if m["profile"] == package.CERES_PROFILE else ROLES,
+        package.CERES_ROLES if m["profile"] == package.CERES_PROFILE else
+        package.V100_ROLES if m["profile"] == package.V100_PROFILE else ROLES,
         "registered direction",
     )
     reader.same(m["opening_panel"]["sha256"], combined.PANEL_SHA, "registered panel")
@@ -202,6 +203,8 @@ def stamps(
     for side in ("candidate", "reference"):
         receipt = reader.read_json(m[side + "_training"])
         paths.add(str(Path(receipt["run"]) / "summary.json"))
+        if m["profile"] == package.V100_PROFILE and side == "candidate":
+            paths.add(receipt["previous_verifier"]["path"])
         if m["profile"] == package.CERES_PROFILE:
             paths.update(receipt["input_pins"])
             paths.add(receipt["schedule"]["path"])
@@ -271,8 +274,10 @@ def prepare(m: dict[str, Any], manifest_pin: dict[str, str], deadline: float) ->
             owned.pin(m[side]["path"], m[side]["sha256"])
         before = stamps(m, runtime, rt)
         state.mkdir()
-        roles = package.CERES_ROLES if m["profile"] == package.CERES_PROFILE else ROLES
-        cell_name = "ceres_endpoint" if m["profile"] == package.CERES_PROFILE else "combined_value"
+        roles = (package.CERES_ROLES if m["profile"] == package.CERES_PROFILE else
+                 package.V100_ROLES if m["profile"] == package.V100_PROFILE else ROLES)
+        cell_name = ("ceres_endpoint" if m["profile"] == package.CERES_PROFILE else
+                     "native100_value" if m["profile"] == package.V100_PROFILE else "combined_value")
         request = {
             "packages": {m[s]["role"]: m[s] for s in ("candidate", "reference")},
             "runtime_root": str(runtime),
@@ -313,6 +318,7 @@ def prepare(m: dict[str, Any], manifest_pin: dict[str, str], deadline: float) ->
         reader.same(
             observed["status"],
             ("PASS_ACTUAL_CERES_ENDPOINT_CPU_PREPARATION" if m["profile"] == package.CERES_PROFILE
+             else "PASS_ACTUAL_NATIVE100_VALUE_PAIR_CPU_PREPARATION" if m["profile"] == package.V100_PROFILE
              else "PASS_ACTUAL_COMBINED_VALUE_PAIR_CPU_PREPARATION"),
             "CPU pair",
         )

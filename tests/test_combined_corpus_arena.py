@@ -411,3 +411,66 @@ def test_probe_cell_dispatch_preserves_exact_registered_directions(roles):
         cell = probe.registered_cell(dict.fromkeys(roles))
         assert (cell['candidate'], cell['reference']) == roles
         assert cell['priors'] == [1.0, 1.0]
+
+
+@pytest.mark.parametrize('defect', ['none', 'old_profile', 'reverse', 'old_seed', 'old_pairs', 'prior', 'deadline'])
+def test_native100_fixed_profile_reaches_exact_command(pair, defect):
+    m, verified = pair
+    m['profile'] = tool.package.V100_PROFILE
+    m['candidate']['role'], m['reference']['role'] = tool.package.V100_ROLES
+    contract = tool.contract_for(m, settings(m))
+    if defect == 'old_profile':
+        contract['profile'] = tool.PROFILE
+    elif defect == 'reverse':
+        contract['candidate']['role'], contract['reference']['role'] = reversed(tool.package.V100_ROLES)
+    elif defect == 'old_seed':
+        contract['seed'] = 42
+    elif defect == 'old_pairs':
+        contract['pairs'] = 128
+    elif defect == 'prior':
+        contract['candidate_prior_temperature'] = .5
+    elif defect == 'deadline':
+        contract['execution']['max_seconds'] = 5340.
+    if defect != 'none':
+        with pytest.raises(ValueError, match='differs'):
+            tool.package.validate(contract)
+        return
+    tool.package.validate(contract)
+    assert verified[0]['candidate']['role'] == 'Combined35M_V100'
+    assert verified[0]['reference']['role'] == 'Combined35M_V50'
+    command = tool.command(contract, '/usr/bin/python3')
+    tool.package.command_check(command, contract)
+    assert command[command.index('--games') + 1] == '512'
+    assert command[command.index('--sims') + 1] == '400'
+
+
+def test_native100_host_requires_current_verifier_only_in_candidate(tmp_path, monkeypatch):
+    m = manifest(tmp_path)
+    m['profile'] = tool.package.V100_PROFILE
+    verifier = tmp_path / 'current.py'
+    verifier.write_text('def matched_training_pair(m):\n m["bridge_called"] = True\n')
+    digest = tool.owned.sha(verifier)
+    m['training_verifier'] = {'path': str(verifier), 'sha256': digest}
+    monkeypatch.setattr(tool, 'combined', SimpleNamespace(__file__=str(verifier)))
+    receipts = {
+        m['candidate_training']['path']: {'code_pins': {str(verifier): digest}},
+        m['reference_training']['path']: {'code_pins': {'/old/verifier.py': 'old'}},
+    }
+    monkeypatch.setattr(tool.reader, 'read_json', lambda ref: receipts[ref['path']])
+    previous = tool.package.combined
+    with tool.training_verifier(m):
+        assert m['bridge_called']
+    assert tool.package.combined is previous
+    receipts[m['candidate_training']['path']]['code_pins'] = {}
+    with pytest.raises(ValueError, match='binding'), tool.training_verifier(m):
+        pass
+
+
+def test_native100_probe_cell_direction():
+    from scripts import combined_corpus_arena_probe as probe
+
+    cell = probe.registered_cell(dict.fromkeys(tool.package.V100_ROLES))
+    assert cell == {'name': 'native100_value', 'candidate': 'Combined35M_V100',
+                    'reference': 'Combined35M_V50', 'priors': [1.0, 1.0]}
+    with pytest.raises(AssertionError):
+        probe.registered_cell(dict.fromkeys(('Combined35M_V100', 'Combined35M_SF100')))

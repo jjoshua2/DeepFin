@@ -745,3 +745,30 @@ The combined host enables this and the exact timeout-preexec case explicitly.
 Future owned stages retain an empty sample as provisional evidence and retry the
 same child within the existing ten-second capture window. Original process and
 failure receipts are never rewritten to recover a completed bank.
+
+The explicit native endpoint uses corpus kind
+`matched-b100-sf-native100-corpus-set` and role `Combined35M_V100`. Its ordered
+`source`/`B100`/`V100` mapping accepts only the unchanged value writer's alpha 1
+recipe: normalized native BT4 `search_wdl`, original B100 policy, and all other
+arrays unchanged. A half-mix recipe cannot acquire this role by renaming its root.
+The same prospective tool produces the canonical witnesses; the subset preflight
+must record full required `search_wdl` coverage and zero unused `sf_wdl` coverage.
+
+V100 requires `previous_training` for the completed seed-101 Combined35M V50
+reference and `previous_verifier` for its exact historical coordinator source.
+That verifier checks the old receipt under its original code identity. The new
+coordinator additionally matches ordered original-source/B100 roots, source
+identity records, game-column witnesses and the canonical schedule. It does not
+rewrite the historical receipt or pretend both runs used the new coordinator.
+Completion checks the realized search-only WDL masks, no outcome leakage, absent
+categorical targets and zero categorical/SF-eval loss in every window. The coupled
+categorical output may still change through shared features; this is a native-only
+supervised WDL endpoint, not independent native supervision of every value head.
+
+Arena profile `combined35m_native100_vs_v50_seed101` binds V100 versus that exact
+V50 receipt, 512 games / 400 simulations, seed 20260913 and the reused 256-pair
+development panel, priors 1.0, rolling 128 / batch 4096. Existing combined and
+Ceres profiles retain their directions and contracts. Future host commands supply
+`TORCHINDUCTOR_COMPILE_THREADS=2` before Python; no active runtime is changed.
+Actual rewrite, qualification, prospective and completed-training pins remain
+prerequisites to a runnable endpoint; adding this profile launches no work.

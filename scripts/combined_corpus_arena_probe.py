@@ -14,7 +14,9 @@ from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 def registered_cell(packages):
     roles = set(packages)
-    if roles == {"Ceres100", "B100"}:
+    if roles == {"Combined35M_V100", "Combined35M_V50"}:
+        cell = {"name": "native100_value", "candidate": "Combined35M_V100", "reference": "Combined35M_V50", "priors": [1.0, 1.0]}
+    elif roles == {"Ceres100", "B100"}:
         cell = {"name": "ceres_endpoint", "candidate": "Ceres100", "reference": "B100", "priors": [1.0, 1.0]}
     else:
         assert roles == {"Combined35M_V50", "Combined35M_SF100"}
@@ -123,6 +125,7 @@ def main():
     assert not torch.cuda.is_initialized()
     out = {
         "status": ("PASS_ACTUAL_CERES_ENDPOINT_CPU_PREPARATION" if roles == {"Ceres100", "B100"}
+                   else "PASS_ACTUAL_NATIVE100_VALUE_PAIR_CPU_PREPARATION" if roles == {"Combined35M_V100", "Combined35M_V50"}
                    else "PASS_ACTUAL_COMBINED_VALUE_PAIR_CPU_PREPARATION"),
         "runtime": rt,
         "models": models,

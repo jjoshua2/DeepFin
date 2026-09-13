@@ -237,3 +237,49 @@ def test_historical_source_and_g10_share_only_the_canonical_map(tmp_path: Path) 
     old['source_qualification'] = write(Path(old['source_qualification']['path']), qualification)
     with pytest.raises(ValueError, match='historical source qualification'):
         tool.admit(manifest([old, g10]))
+
+
+def native100_cohort(tmp_path: Path) -> dict[str, Any]:
+    c = cohort(tmp_path, 'native')
+    c['roots']['V100'] = c['roots'].pop('V50')
+    recipe_path = Path(c['value_recipe']['path'])
+    recipe = json.loads(recipe_path.read_text())
+    recipe.update(sf_weight=0., bt4_weight=1., value_scheme='sf-bt4-native-alpha=1.0')
+    recipe['value_source'] = recipe['value_source'].replace('bt4_weight=0.5', 'bt4_weight=1.0')
+    c['value_recipe'] = write(recipe_path, recipe)
+    derived_path = Path(c['roots']['V100']['summary']['path'])
+    derived = json.loads(derived_path.read_text())
+    derived['value_scheme'] = {'name': recipe['value_scheme'], 'source': recipe['value_source']}
+    derived['value_target_postprocess'] = {k: v for k, v in recipe.items() if k != 'outputs'}
+    c['roots']['V100']['summary'] = write(derived_path, derived)
+    return c
+
+
+def test_native100_recipe_and_ordered_mapping(tmp_path: Path) -> None:
+    c = native100_cohort(tmp_path)
+    m = manifest([c])
+    m['kind'] = tool.V100_KIND
+    mapping = tool.admit(m)
+    assert tool.role_map(m) == {'Combined35M_V100': 'V100'}
+    assert mapping[0]['paths']['V100'] == str(Path(c['roots']['V100']['summary']['path']).parent / 'shard_000000.zarr')
+    assert mapping[0]['paths']['B100'] != mapping[0]['paths']['V100']
+
+
+@pytest.mark.parametrize('mutation', ['half_dose', 'policy', 'rows', 'teacher'])
+def test_native100_cannot_relabel_half_dose_or_change_lineage(tmp_path: Path, mutation: str) -> None:
+    c = native100_cohort(tmp_path)
+    path = Path(c['value_recipe']['path'])
+    recipe = json.loads(path.read_text())
+    if mutation == 'half_dose':
+        recipe.update(sf_weight=.5, bt4_weight=.5)
+    elif mutation == 'policy':
+        recipe['source_policy_summary_sha256'] = '0' * 64
+    elif mutation == 'rows':
+        recipe['rows'] = 2
+    else:
+        recipe['onnx_sha256'] = '0' * 64
+    c['value_recipe'] = write(path, recipe)
+    m = manifest([c])
+    m['kind'] = tool.V100_KIND
+    with pytest.raises(ValueError, match='V100 recipe'):
+        tool.admit(m)
