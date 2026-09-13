@@ -65,6 +65,8 @@ def panel_fens(ref: dict[str, Any], pairs: int) -> list[str]:
 
 CERES_PROFILE = 'ceres100_b100_seed0_fixed512'
 CERES_ROLES = ('Ceres100', 'B100')
+V100_PROFILE = 'combined35m_native100_vs_v50_seed101'
+V100_ROLES = ('Combined35M_V100', 'Combined35M_V50')
 
 
 def verify_ceres_training(contract: dict[str, Any]) -> None:
@@ -83,6 +85,12 @@ def verify_ceres_training(contract: dict[str, Any]) -> None:
 
 
 def verify_combined_training(contract: dict[str, Any]) -> None:
+    native100 = contract['profile'] == V100_PROFILE
+    same(tuple(contract[s]['role'] for s in ('candidate', 'reference')),
+         V100_ROLES if native100 else ('Combined35M_V50', 'Combined35M_SF100'), 'combined direction')
+    if native100:
+        same(contract['execution']['max_seconds'], 7140.0, 'V100 execution deadline')
+        same(contract['opening_panel']['sha256'], combined.PANEL_SHA, 'V100 development panel')
     require(set(contract['training']) == {'candidate_training', 'reference_training'}, 'combined training fields')
     combined.matched_training_pair({**contract['training'], 'candidate': contract['candidate'], 'reference': contract['reference']})
     for key, value in {'pairs': 256, 'sims': 400, 'seed': 20260913, 'candidate_prior_temperature': 1.0,
@@ -99,11 +107,11 @@ def validate(contract: dict[str, Any]) -> None:
     fields = {'schema', 'profile', 'candidate', 'reference', 'candidate_prior_temperature',
         'reference_prior_temperature', 'sims', 'pairs', 'seed', 'settings', 'execution',
         'opening_panel', 'bank', 'process', 'results_path'}
-    if contract.get('profile') in {combined.PROFILE, CERES_PROFILE}:
+    if contract.get('profile') in {combined.PROFILE, CERES_PROFILE, V100_PROFILE}:
         fields.add('training')
     require(set(contract) == fields, 'package contract fields')
     same(contract['schema'], 1, 'schema')
-    if contract['profile'] == combined.PROFILE:
+    if contract['profile'] in {combined.PROFILE, V100_PROFILE}:
         verify_combined_training(contract)
     elif contract['profile'] == CERES_PROFILE:
         verify_ceres_training(contract)
@@ -272,12 +280,15 @@ def read_contract(path: Path, *, allow_timeout_preexec: bool = False,
         'command_observation': observation,
         'checkpoint_content_verified_now': True, 'launch_qualification_verified': False,
         **({'combined_training_lineage_verified': True, 'training': contract['training']}
-           if contract['profile'] == combined.PROFILE else {}),
+           if contract['profile'] in {combined.PROFILE, V100_PROFILE} else {}),
+        **({'development_panel_reused': True} if contract['profile'] == V100_PROFILE else {}),
         **({'original_epoch_training_lineage_verified': True, 'training': contract['training'],
             'development_panel_reused': True} if contract['profile'] == CERES_PROFILE else {}),
         'limitations': ['Fixed-N nominal paired interval for these packages; not optimal temperature or training-seed uncertainty.',
             'Pinned process record and command checked; runtime provenance, checkpoint/book bytes and full history consumed at launch require external evidence.',
-            ('Combined training lineage and pretraining panel are verified; actual arena launch qualification remains separate.'
+            ('Matched35M native100/V50 lineage verified; reused development panel is not fresh confirmation.'
+             if contract['profile'] == V100_PROFILE else
+             'Combined training lineage and pretraining panel are verified; actual arena launch qualification remains separate.'
              if contract['profile'] == combined.PROFILE else
              'Original matched epoch and Ceres endpoint recipe verified; reused development panel is not fresh confirmation.'
              if contract['profile'] == CERES_PROFILE else
