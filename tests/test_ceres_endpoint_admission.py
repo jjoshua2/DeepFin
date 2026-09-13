@@ -49,3 +49,26 @@ def test_exact_policy_recipe_and_cross_profile_rejection(tmp_path, monkeypatch, 
     wrong_source = {**recipe, 'source_summary_sha256': '0' * 64}
     with pytest.raises(ValueError, match='mixture or historical source'):
         epoch.verify_ceres_recipe(m, wrong_source, source)
+
+
+@pytest.mark.parametrize(('profile', 'workers'), [('Ceres100', '2'), ('CeresB50', '16'), ('B100', '16')])
+def test_endpoint_worker_choice_reaches_actual_training_argv(tmp_path, monkeypatch, profile, workers):
+    import sys
+    from tests.test_ceres_policy_training_admission import prepared
+
+    m, files, recipe, derived, _ = prepared(tmp_path, monkeypatch)
+    corpus = epoch.corpus_for(m)
+    monkeypatch.setitem(epoch.CORPORA, 'Ceres100', corpus)
+    if profile == 'Ceres100':
+        m['profile'] = profile
+        recipe['weights'] = {'bt4': 0., 'ceres': 1.}
+        derived['policy_target_postprocess']['weights'] = dict(recipe['weights'])
+        files[m['data_qualification']['path']]['profile'] = profile
+    epoch.validate(m)
+    epoch.check_pins(m)
+    files[m['runtime_manifest']['path']] = {'runtime': {'executable': sys.executable}}
+    m['profile'] = profile
+    argv = epoch.train_command(m)
+    assert argv[argv.index('--epoch-plan-workers') + 1] == workers
+    assert argv[argv.index('--epoch-load-workers') + 1] == workers
+    assert argv[argv.index('--seed') + 1] == '0'

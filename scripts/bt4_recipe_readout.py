@@ -105,7 +105,24 @@ def lookahead_pairs(evidence: dict[str, Any]) -> int | None:
 
 
 def matched_epoch_workers(role: str, receipt: dict[str, Any], corpus: str) -> int:
-    """The Downside execution amendment requires its pinned complete recipe."""
+    """Low-memory endpoint exceptions require their pinned complete recipes."""
+    if role == "Ceres100":
+        from scripts import bt4_one_epoch_screen as epoch
+
+        root = Path(corpus)
+        same(str(root), str(epoch.CORPORA[role]), "Ceres100 training corpus")
+        recipe_path = str(root / "ceres_target_mix_summary.json")
+        derive_path = str(root / "derive_targets_summary.json")
+        recipe = read_json({"path": recipe_path, "sha256": receipt["input_pins"][recipe_path]})
+        derived = read_json({"path": derive_path, "sha256": receipt["input_pins"][derive_path]})
+        same(derived["policy_target_postprocess"],
+             {k: v for k, v in recipe.items() if k != "outputs"},
+             "Ceres100 derived recipe binding")
+        # Reuse the full endpoint admission: exact source, teachers, nonpolicy
+        # preservation, producer pins and completed shard proofs; no array reads.
+        epoch.verify_ceres_recipe(
+            {"profile": role, "ceres_producer_pins": recipe["producer_sha256"]}, recipe, derived)
+        return 2
     if role != "B100Downside300":
         return 16
     from scripts.bt4_one_epoch_screen import B100_PARENT_PINS, DOWNSIDE_PRODUCER_PINS

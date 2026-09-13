@@ -356,3 +356,49 @@ def test_downside_two_workers_require_bound_complete_recipe(make, tmp_path, defe
     else:
         with pytest.raises((reader.InvalidCell, KeyError)):
             reader.matched_training_pair(evidence)
+
+
+@pytest.mark.parametrize('defect', ['none', 'workers16', 'mixed_workers', 'B100', 'CeresB50', 'dose', 'source', 'derived', 'missing_recipe'])
+def test_ceres100_workers_require_actual_endpoint_receipt(make, tmp_path, monkeypatch, defect):
+    from scripts import bt4_one_epoch_screen as epoch
+    from tests.test_ceres_policy_training_admission import prepared
+
+    m, _files, recipe, derived, _ = prepared(tmp_path, monkeypatch)
+    corpus = epoch.corpus_for(m)
+    monkeypatch.setitem(epoch.CORPORA, 'Ceres100', corpus)
+    recipe['weights'] = {'bt4': 0., 'ceres': 1.}
+    derived['policy_target_postprocess']['weights'] = dict(recipe['weights'])
+    role = defect if defect in {'B100', 'CeresB50'} else 'Ceres100'
+    evidence = qualify_manifest(make(roles=(role, 'G50')), tmp_path, (role, 'G50'))
+    receipt = reader.read_json(evidence['candidate_training'])
+    summary_path = Path(receipt['run']) / 'summary.json'
+    summary = json.loads(summary_path.read_text())
+    summary['corpus']['shard_dirs'] = [str(corpus)]
+    summary['sampling'].update(plan_workers=2, load_workers=2)
+    if defect == 'workers16':
+        summary['sampling'].update(plan_workers=16, load_workers=16)
+    elif defect == 'mixed_workers':
+        summary['sampling']['load_workers'] = 16
+    elif defect == 'dose':
+        recipe['weights'] = {'bt4': .5, 'ceres': .5}
+        derived['policy_target_postprocess']['weights'] = dict(recipe['weights'])
+    elif defect == 'source':
+        recipe['source_summary_sha256'] = '0' * 64
+        derived['policy_target_postprocess']['source_summary_sha256'] = '0' * 64
+    elif defect == 'derived':
+        derived['policy_target_postprocess']['weights'] = {'bt4': .5, 'ceres': .5}
+    for name, body in [('ceres_target_mix_summary.json', recipe), ('derive_targets_summary.json', derived)]:
+        ref = put(corpus / name, body)
+        receipt['input_pins'][ref['path']] = ref['sha256']
+    if defect == 'missing_recipe':
+        receipt['input_pins'].pop(str(corpus / 'ceres_target_mix_summary.json'))
+    receipt['summary_sha256'] = put(summary_path, summary)['sha256']
+    schedule = reader.read_json(receipt['schedule'])
+    schedule['arms'][role].update(corpus=str(corpus), summary_sha256=receipt['summary_sha256'])
+    receipt['schedule'] = put(Path(receipt['schedule']['path']), schedule)
+    evidence['candidate_training'] = put(Path(evidence['candidate_training']['path']), receipt)
+    if defect == 'none':
+        assert reader.matched_training_pair(evidence) == (role, 'G50')
+    else:
+        with pytest.raises((ValueError, KeyError)):
+            reader.matched_training_pair(evidence)
