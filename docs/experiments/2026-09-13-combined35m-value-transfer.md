@@ -112,3 +112,63 @@ replicated finding. Existing historical-control limitations remain explicit.
 
 Ceres coverage proceeds separately using otherwise available GPU time. It is not
 silently mixed into V50 or used to choose a checkpoint from this comparison.
+
+## Prepared admission implementation
+
+`scripts/combined_corpus_schedule.py` adds an explicitly pinned, ordered corpus-set
+manifest and optional prospective schedule pass. Existing single-source tools and
+the historical sampler are unchanged. The manifest maps `(cohort, shard_index)`
+to the original source, B100 and V50 paths; unqualified basenames cannot collide.
+It checks the two fixed recipes and original SF lineage, qualified raw-roster
+disjointness, root aliases, actual shard inventory and source/qualification pins.
+The original corpus uses its existing qualification; G10 uses the existing
+metadata identity assessment with its historical source-code caveat, without
+requiring a new per-shard generation attestation.
+
+The prospective pass imports the hash-pinned historical sampler, witnesses its
+small game-ID/presence-column reads once, and compares full ordered columns and
+canonical game grouping. Physical schedules use the manifest seed. The source
+is a proof reference: emitted training directories include **B100 and V50 only**.
+The report binds the manifest, logical map, ordered game-column hashes, actual
+runtime versions, seed/batch and per-arm physical/canonical schedule identities.
+It is explicitly prospective, not a completed training receipt.
+
+Prepared local manifest (not admitted or executed):
+`scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/manifest.draft.json`,
+SHA256 `18830f7e403035cb8b0a2303d5c3877a792e7f3d28e894a2d1bd0680a49fcec6`.
+It names 21 source/target groups, 4,321 shards per arm and 35,314,577 rows.
+
+After immutable code review, the proposed one-pass invocation is:
+
+```text
+python scripts/combined_corpus_schedule.py \
+  --manifest /absolute/path/manifest.draft.json \
+  --expected-manifest-sha256 18830f7e403035cb8b0a2303d5c3877a792e7f3d28e894a2d1bd0680a49fcec6 \
+  --output /fresh/path/prospective.json --execute --deadline-unix <launch+2970>
+```
+
+Use the qualified historical interpreter, GPU hidden, CPUs 4 and 5, two numeric threads,
+nice 19 and 2,970 seconds to TERM plus 30 seconds for KILL
+cleanup within the registered 3,000 seconds. Require 32 GiB available memory and
+150 GiB disk reserve. Resource checks occur during admission/scan callbacks; they
+are not a separate watchdog inside a long planner call. No address-space cap is proposed: the qualified Torch import uses large virtual
+mappings. This is not an RSS-cap claim; the outer timeout remains mandatory. Do not run a redundant default pass first.
+
+Focused fixture tests cover CLI admission at seed 101, duplicate-basename mapping,
+swapped/missing cohort order, game-key mismatch, overlapping raw selection,
+modified values, wrong dose/head/parent, extra shards, input pin drift, fresh
+output and single-read metadata witnessing with loader restoration on failure.
+No real corpus admission, array scan, training or evaluation ran for this change.
+
+The remaining training-only adapter must consume the actual admission report,
+retain frozen trainer history/value compatibility gates, and verify actual staging
+and realized completion against this new logical map. It must not reuse the old
+18.91M canonical hash or accidentally train the SF100 arm on source policy targets.
+
+Final validation: 13 focused fixture tests passed. Scoped host type checking passed
+with zero findings; final-file Ruff and Vulture passed. The whole type gate reported
+236 missing-native-module source findings in this unbuilt worktree, with none in
+the new files. Native modules were not built or changed to clear that environment
+limitation. A separate 0.10-second summary-only check confirmed that all 21 actual
+source/B100/V50 recipes fit the implemented contract; this did not walk shards,
+run admission or decode arrays.
