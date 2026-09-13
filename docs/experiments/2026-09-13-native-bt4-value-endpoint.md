@@ -1,8 +1,7 @@
 # Native BT4 value endpoint on the matched 35M corpus
 
 Selected September 13, 2026, before reading the running Ceres100 policy match.
-Status: preparation selected and metadata disk accounting completed; explicit
-V100 qualification support is pending. No V100 corpus, training run or match has launched.
+Status: the bounded V100 CPU rewrite launched at 17:38:46 UTC. Explicit qualification/training support is implemented; actual completed targets and dataset qualification remain pending. No V100 training run or match has launched.
 
 ## Question and control
 
@@ -100,3 +99,20 @@ committed rather than current live-config premises, and game-epoch sampling
 distinct from the historical replacement control. This one-seed comparison
 does not settle 100M transfer, RL behavior, other teacher mixtures, draw-versus-Q
 calibration, or value/policy interactions with a different policy teacher.
+
+
+## Actual bounded CPU rewrite launch
+
+The parent launched the rewrite at **2026-09-13 17:38:46.483384 UTC** (exec61857 / sole observer597), bound to plan `bbabe006…` and frozen preregistration SHA-256 `3ca5d62d491a0064b0950ccdd6d021f9a04a88bf4189fb150d298f6c85fbd0de`. This is an actual outer-command launch, not completed target production or dataset qualification. Startup measured **84,433,498,112 bytes available RAM** and **216,670,490,624 bytes free disk**; these are launch snapshots, not current measurements.
+
+The fixed plan rewrites exactly **21 B100 input roots / 35,314,577 rows / 4,321 shards** into fresh outputs. The original 18.91M stage retains its qualified `5afc1e2f…` writer/runtime and batch 256; the 20 G10 stages retain `c2ce999d…`, batch 1024 and the accepted native-WDL bank mappings, including the four-output run06-large mapping. Both unchanged writers already support alpha 1. Only `search_wdl` changes; B100 policy, all other arrays, source identity checks and observation selectors remain fixed. No new teacher evaluation, source selection or live runtime modification occurs.
+
+The existing sequential operator retains one child at a time, CPUs 6–7 / two numeric threads, hidden GPU and low CPU/I/O priority. The supervisor uses a 12-GiB virtual-address limit; the original stage retains its 12-GiB limit and G10 children retain 4 GiB. These address-space limits are not claimed physical-memory consumption. Startup requires 48 GiB available RAM; ongoing checks require 32 GiB. The whole operation has one **14,400-second absolute deadline**, including imports, preflight, producers, final metadata and cleanup: outer TERM at 14,370 seconds plus 30 seconds to KILL. The original stage is allocated 6,500 seconds; the 20 G10 allowances total 6,680 seconds, followed by a 300-second final reserve. Insufficient remaining budget yields a preserved completed prefix, not an all 21 completion or automatic extension.
+
+One metadata-only accounting pass measured **26.245 GiB allocated across the exact inputs**. The plan reserves **190 GiB free at startup: 150 GiB retained floor + 32 GiB aggregate output allowance + 8 GiB for other writers**. The 32-GiB output check counts allocated blocks across all completed outputs, active `.writing` output, records and directories. It runs periodically at 300 seconds and after stages/finalization; it is a sampled threshold, **not a filesystem quota**. Frequent disk checks retain the 150-GiB floor. The other-writer allowance is reserved capacity, not a guarantee about future write rates.
+
+Parent review caught two preparation defects before any producer attempt: an incorrect 2,180-shard count in the preflight/completion predicates, and an output-accounting race when a writer atomically renames `.writing` to its final path. Both were corrected before launch. Focused fixtures execute the actual predicates (accept 4,321 / reject 2,180) and accounting helper; the latter retries only disappearance, at most three times within the same deadline, and requires a complete scan while other errors remain fatal. Independent preparation review `d7b2dd21…` passed the corrected frozen operator and bindings. There was no invalid producer launch to discard.
+
+The separate V100 source extension was merged in [PR #722](https://github.com/jjoshua2/DeepFin/pull/722), with independent full-source review. That supplies explicit alpha 1 lineage, historical V50 verifier and future training/match support; it does not qualify outputs that have not completed. Actual rewrite completion, V100 corpus/subset/prospective qualification and final training bindings remain required. Failure preserves partial outputs and evidence without automatic retry. The currently selected value recipe remains V50 until the registered completed comparison supplies evidence to change it.
+
+[Compact plan, disk accounting, review and actual-launch evidence](evidence/native-v100-rewrite-launched-20260913.json) retains every stage's exact argv/native binding and hashes the full local plan/layouts. This publication read only immutable launch/preparation records; it did not poll active jobs, scan corpus payloads, rerun source admission or launch training.
