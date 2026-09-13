@@ -77,9 +77,11 @@ def test_probability_mixing_and_single_sharpening():
                            sum(np.array([.2 * .6, .8 * .4])**2))
 
 
-def test_real_rewrite_and_consumer(tmp_path, monkeypatch):
+@pytest.mark.parametrize('weight', [.5, 0.])
+def test_real_rewrite_and_consumer(tmp_path, monkeypatch, weight):
     from chess_anti_engine.replay.shard import load_shard_arrays
     args, manifest = fixture(tmp_path, monkeypatch)
+    args.bt4_weight = weight
     result = tool.rewrite(args)
     out = Path(args.out)
     assert result['complete']
@@ -98,7 +100,7 @@ def test_real_rewrite_and_consumer(tmp_path, monkeypatch):
     shard_args = argparse.Namespace(**{**vars(args), 'batch_size': 8})
     proof, states, metrics = tool.rewrite_shard(
         shard_args, manifest=accepted, original=source_summary, spec=specs[0],
-        entry=accepted['entries'][0], writing=single, weight=.5,
+        entry=accepted['entries'][0], writing=single, weight=weight,
         temperatures={'bt4': .5, 'ceres': .5}, guard=lambda: None)
     direct: Any = zarr.open_group(str(single / original.name), mode='r')
     full: Any = zarr.open_group(str(target), mode='r')
@@ -246,3 +248,13 @@ def test_explicit_legacy_collection_binding(tmp_path, monkeypatch, defect):
     specs = [{'path': 'shard_000000.zarr', 'rows': 32}]
     with pytest.raises(ValueError, match=r'BT4|remap'):
         tool.verify_bt4_lineage(manifest, specs)
+
+
+def test_pure_ceres_endpoint_ignores_bt4_allocation():
+    legal = np.array([[1, 1, 0]])
+    logits = np.log(np.array([[.6, .4, .1]]))
+    targets = [tool.policy_target(np.array([b]), logits, legal, bt4_weight=0.,
+               bt4_temperature=.5, ceres_temperature=.5)
+               for b in ([.2, .8, 0.], [.9, .1, 0.])]
+    np.testing.assert_array_equal(targets[0], targets[1])
+    np.testing.assert_allclose(targets[0], [[.36 / .52, .16 / .52, 0.]])

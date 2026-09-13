@@ -1,0 +1,89 @@
+{
+  "status": "ACTUAL_V2_LAUNCH_NOT_COMPLETED_CORPUS",
+  "actual_launch": {
+    "started_utc": "2026-09-13T06:13:33.883234+00:00",
+    "command_sha256": "26bbe50c6d19a27d9a2539973ce13976cef27cdd92bd89f5a4e8fa8580242c2b",
+    "plan_sha256": "1ccd6f8d5d224858c0cfbfd994b27f2ab5a6ae2561b8328f5f6cf7a9cb9f700a",
+    "independent_review_sha256": "c34ff5025bb9ed5bd2de27162329436163fc2af5798b870e55c72eb1dbfb5e47",
+    "inclusive_seconds": 25197
+  },
+  "actual_launch_pin": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/actual_launch.json",
+    "sha256": "3d7f71beec8ae8b2e5f2c9e2e0a42acbb91ceb0dd2b608cc67e13d25d3be322e"
+  },
+  "v2_preparation": {
+    "status": "PREPARED_V2_NOT_LAUNCHED",
+    "prior_failure": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v1/actual_terminal.json",
+      "sha256": "06f5007e78325c7a0f229d4e9a89b150d4faf12c41b6e66704b8124c4b3baa53"
+    },
+    "prior_log": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v1/supervisor.log",
+      "sha256": "197639ec90c23cbb4b8c8eb6c2d565922902de7ccd44e1ee984d7c4f6b1e0327"
+    },
+    "failure": "Runtime native import missing before manifest/payload admission; no completed policy output. Original records preserved.",
+    "runtime_commit": "49906329aeef9ad48a09298db0dc9bb15af84e55",
+    "producer_unchanged": {
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/encoding/ceres_tpg.py": "ea0bc14c31eedd18abe67b9b90287b2d1b20245ec42aed4faa0d69d21df229b0",
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/encoding/lc0.py": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/eval/rvg_surgery.py": "7a0e4469ccf7534e34bfd00e06208c7e142fb0c42ef9c4c4ec1116eec641aa20",
+      "/tmp/deepfin-ceres100-materialization-runtime/chess_anti_engine/moves/leela_index.py": "ac8f6f07dc1ce8e382de1d94ce4053f92b9cf3bc0eefe730d7fd0763ca11e1cd",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/adapt_raw_bt4_sidecars.py": "86c7b78eb5a767c97873bc9881874cd6c93d88634ba298f3246b8ec2fa0c649f",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_derived_wdl_sidecar.py": "8ba98f8d49d642ff7defff457e4dc9426f4e096ee7a1747a257abce62f9ccd1e",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_policy_dump.py": "d6b62559952aee3b0baeeadfdb584aeb9a6fd88b0d2285ab162ee39776be2cf8",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_policy_mix.py": "931a7b83a85182d76a8aeff3515b41235df7f975f750bcea5c011b81009a0d47",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_raw_corpus_sidecar.py": "65d476618b2cf752b28547322935cf6d4eef37922337ba360d4546989ea850b9",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_value_rewrite.py": "4da01a1695b1950d8006519c37f8db4c7a31e1021e0f49328692f4b4dc9b7c88",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/ceres_derived_sidecar.py": "2631fb48fef7820084879bf9371b22842a949d252525b2c79d2c51ab65645597",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/ceres_selected_bank.py": "1f1468bf0b29b88edcab8e1b0ea8d6945ced1d59f9e37bfb69f1129e99492aed",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/ceres_target_mix.py": "edbcfaa9a1524e3ce02868ad20c0cbe6c85e71ea25ff03bb228364f232babeb7",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/raw_wdl_adaptation.py": "11b8732b5abbedd5f96aeb5dfabc542519cd76fc7f69c28adb61556e85035cb6",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/sf_d9_rank_sidecar.py": "53c2d1d1638c9e0646e68430c56a413c2b0b78a5ca815996eda770eecd8d3def",
+      "/tmp/deepfin-ceres100-materialization-runtime/scripts/sf_policy_rewrite.py": "f2926d10ca695d2cbbcd12f03a26cee23529f6e798e9a3585148392858fda176"
+    },
+    "native_resolution": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/native_resolution.json",
+      "sha256": "747b7b6f7bb21c17bb39d1d8d9f2a4db0559c798c82f78a298d286056f381cc8"
+    },
+    "import_validation": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/import_validation.json",
+      "sha256": "e0aa49c9a64a81f8686d956c4f0b6b20dc2985945d07ab0f9076c07cbce3bcd1"
+    },
+    "plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/plan.json",
+      "sha256": "1ccd6f8d5d224858c0cfbfd994b27f2ab5a6ae2561b8328f5f6cf7a9cb9f700a"
+    },
+    "command": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/command.txt",
+      "sha256": "26bbe50c6d19a27d9a2539973ce13976cef27cdd92bd89f5a4e8fa8580242c2b"
+    },
+    "budget": {
+      "original_inclusive_seconds": 25200,
+      "prior_attempt_seconds": 2.363,
+      "rounded_prior_charge_seconds": 3,
+      "remaining_inclusive_seconds": 25197,
+      "TERM_seconds": 25167,
+      "KILL_grace_seconds": 30,
+      "maximum_attempts_seconds": 25199.363
+    },
+    "qualification_note": "One import-only check2.032s, separate preparation validation; no corpus admission/payload scan/inference. Existing supervisor validates all new native binary pins before any producer launch."
+  },
+  "import_validation": {
+    "status": "PASS_IMPORT_ONLY_NO_ADMISSION_OR_PAYLOAD",
+    "python": "3.13.15 (main, Sep  1 2026, 14:18:08) [Clang 22.1.3 ]",
+    "producer": "/tmp/deepfin-ceres100-materialization-runtime/scripts/ceres_target_mix.py",
+    "admission": "/tmp/deepfin-ceres100-materialization-runtime/scripts/bt4_one_epoch_screen.py",
+    "native_resolved_paths": {
+      "chess_anti_engine.encoding._features_ext": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+      "chess_anti_engine.encoding._lc0_ext": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+      "chess_anti_engine.mcts._mcts_tree": "/tmp/deepfin-bt4-hybrid-tools/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+      "chess_anti_engine.nnue._nnue_ext": "/tmp/deepfin-bt4-sf-close-followup/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so"
+    },
+    "elapsed_seconds": 2.0323648170015076
+  },
+  "independent_review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres100_policy_preparation_v2/independent_review.json",
+    "sha256": "c34ff5025bb9ed5bd2de27162329436163fc2af5798b870e55c72eb1dbfb5e47"
+  },
+  "observation": "Parent reported exec77576,soleobserver391 running at launch. No job poll or output read performed for publication. No completed corpus/training claim."
+}

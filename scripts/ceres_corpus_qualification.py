@@ -25,7 +25,7 @@ from scripts import ceres_target_mix as policy
 from scripts import ceres_value_mix as value
 
 ROWS, SHARDS = 18910484, 2309
-PROFILES = {'CeresB50': policy.SUMMARY, 'B100CeresV25': value.SUMMARY}
+PROFILES = {'Ceres100': policy.SUMMARY, 'CeresB50': policy.SUMMARY, 'B100CeresV25': value.SUMMARY}
 require = policy.require
 
 
@@ -103,7 +103,7 @@ def qualify(plan_path: Path, expected: str, out: Path, *, execute: bool) -> dict
         seen[p] = stamp(p)
     source = Path(manifest['source'])
     sf = Path(manifest.get('sf_source', manifest['source']))
-    require(sf == epoch.SOURCE and source == (sf if profile == 'CeresB50' else epoch.CORPORA['B100']), 'wrong source')
+    require(sf == epoch.SOURCE and source == (sf if profile in epoch.CERES_POLICY_PROFILES else epoch.CORPORA['B100']), 'wrong source')
     originals = read(sf / policy.DERIVE_SUMMARY, epoch.COMMON_PINS[str(sf / policy.DERIVE_SUMMARY)])
     read(source / policy.DERIVE_SUMMARY, manifest['source_summary_sha256'])
     specs = originals['shards']
@@ -138,7 +138,7 @@ def qualify(plan_path: Path, expected: str, out: Path, *, execute: bool) -> dict
         require(read(dest / '.zgroup') == read(parent / '.zgroup') == {'zarr_format': 2}, 'group format differs')
         attrs = read(dest / '.zattrs', proof['attrs_sha256'])
         expected_attrs = read(parent / '.zattrs')
-        if profile == 'CeresB50':
+        if profile in epoch.CERES_POLICY_PROFILES:
             expected_attrs['ceres_policy_postprocess'] = {
                 'schema': 1, 'kind': 'bt4-ceres-policy', 'algorithm': policy.ALGORITHM,
                 'weights': rewritten['weights'], 'temperatures': rewritten['temperatures'],
@@ -162,9 +162,9 @@ def qualify(plan_path: Path, expected: str, out: Path, *, execute: bool) -> dict
                          'layouts': layouts, 'files_manifest_sha256': digest,
                          'output_storage_identity': proof['output_storage_identity']})
     m = {'profile': profile, 'ceres_producer_pins': pins}
-    (epoch.verify_ceres_recipe if profile == 'CeresB50' else epoch.verify_ceres_value_recipe)(m, rewritten, derived)
+    (epoch.verify_ceres_recipe if profile in epoch.CERES_POLICY_PROFILES else epoch.verify_ceres_value_recipe)(m, rewritten, derived)
     require(derived.get('policy_target_postprocess') == {k: v for k, v in rewritten.items() if k != 'outputs'}
-            if profile == 'CeresB50' else derived.get('value_target_postprocess') == {k: v for k, v in rewritten.items() if k != 'outputs'}, 'derive postprocess differs')
+            if profile in epoch.CERES_POLICY_PROFILES else derived.get('value_target_postprocess') == {k: v for k, v in rewritten.items() if k != 'outputs'}, 'derive postprocess differs')
     for path, expected_state in states.items():
         guard()
         require(policy.shared.storage_identity(path) == expected_state, 'storage changed during qualification')

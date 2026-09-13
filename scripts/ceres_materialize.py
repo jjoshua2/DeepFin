@@ -30,7 +30,7 @@ from scripts import ceres_collection_batches as owned
 
 BASE = Path("/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01")
 LOCK = BASE / "preparation.lock"
-PROFILES = {"CeresB50": "ceres_target_mix", "B100CeresV25": "ceres_value_mix"}
+PROFILES = {"Ceres100": "ceres_target_mix", "CeresB50": "ceres_target_mix", "B100CeresV25": "ceres_value_mix"}
 MAX_SECONDS = 28800
 RESERVE = 150 * 2**30
 OUTPUT_CAP = 32 * 2**30
@@ -280,7 +280,15 @@ def output_bytes(p: dict[str, Any]) -> int:
     return sum(int(line.split()[0]) for line in result.stdout.splitlines())
 
 
+def output_cap(p: dict[str, Any]) -> int:
+    return 64 * 2**30 if p["profile"] == "Ceres100" else OUTPUT_CAP
+
+
 def guard(p: dict[str, Any], deadline: float) -> None:
+    if p["profile"] == "Ceres100":
+        memory = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
+        require(int(memory["MemAvailable"].split()[0]) * 1024 >= 32 * 2**30,
+                "memory below32GiBheadroom")
     require(time.time() < deadline - 30, "shared deadline cleanup margin reached")
     require(not any(os.path.lexists(x) for x in p["stop_paths"]), "STOP marker")
     require(
@@ -315,10 +323,10 @@ def command(p: dict[str, Any], deadline: float) -> list[str]:
         str(Path(p["state"]) / "STOP"),
         "--execute",
     ]
-    if p["profile"] == "CeresB50":
+    if p["profile"] in {"CeresB50", "Ceres100"}:
         result += [
             "--bt4-weight",
-            "0.5",
+            "0.0" if p["profile"] == "Ceres100" else "0.5",
             "--bt4-temperature",
             "0.5",
             "--ceres-temperature",
@@ -347,7 +355,7 @@ def verify_publication(p: dict[str, Any], budget: Any) -> dict[str, Any]:
         "publication producer differs",
     )
     admission = {"profile": p["profile"], "ceres_producer_pins": p["producer_sha256"]}
-    if p["profile"] == "CeresB50":
+    if p["profile"] in {"CeresB50", "Ceres100"}:
         epoch.verify_ceres_recipe(admission, result, derived)
     else:
         epoch.verify_ceres_value_recipe(admission, result, derived)
@@ -369,7 +377,7 @@ def verify_publication(p: dict[str, Any], budget: Any) -> dict[str, Any]:
             "published output storage changed",
         )
     budget()
-    require(output_bytes(p) <= OUTPUT_CAP, "published output exceeds32GiBsamplecap")
+    require(output_bytes(p) <= output_cap(p), f"published output exceeds{output_cap(p) // 2**30}GiBsamplecap")
     return {
         "profile": p["profile"],
         "corpus": str(out),
@@ -388,8 +396,8 @@ def execute(
     plan_path: Path | None = None,
 ) -> dict[str, Any]:
     require(
-        math.isfinite(deadline) and 60 < deadline - time.time() <= MAX_SECONDS,
-        "deadline must leave60seconds..8hours",
+        math.isfinite(deadline) and 60 < deadline - time.time() <= (25200 if p["profile"] == "Ceres100" else MAX_SECONDS),
+        "deadline must leave60seconds..profile maximum",
     )
 
     def budget() -> None:
@@ -461,7 +469,7 @@ def execute(
                         if time.monotonic() - sampled_at >= SAMPLE_SECONDS:
                             size = output_bytes(p)
                             record["sampled_output_allocated_bytes"] = size
-                            require(size <= OUTPUT_CAP, "output exceeds32GiBsamplecap")
+                            require(size <= output_cap(p), f"output exceeds{output_cap(p) // 2**30}GiBsamplecap")
                             owned.write_json(state / "status.json", record)
                             sampled_at = time.monotonic()
                         try:
