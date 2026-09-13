@@ -2,8 +2,9 @@
 
 Current collection status: **3,858,023 G10 rows / 472 shards are qualified**
 across the original run06 increment, both complete next96 cohorts and the complete
-run06 large cohort, including policy and both value-logit heads. No further Ceres
-collection is launched. The completed science below still uses the original
+run06 large cohort, including policy and both value-logit heads. The next complete
+run07 large cohort has launched for 2,008,952 additional rows; those rows are not
+yet included. The completed science below still uses the original
 32,768-row first-four-shard sample. Collection does not enlarge those diagnostic
 results. The dated sections retain the actual execution history.
 
@@ -565,3 +566,44 @@ ordered shard/count agreement and the retained runtime proofs without repeating
 array, model, library, test or active-job reads. The separately registered Downside
 training proceeds under its own parent-owned launch; this collection record adds
 no observation of that training.
+
+
+## 2026-09-13 UTC: complete run07 large cohort launched
+
+The existing collector launched the already source/native-qualified
+`G10_common_large_v1/run07_g10_companion4` cohort at
+**2026-09-13T03:58:39.570138+00:00**, actual driver PID **187211**. Parent root
+**52976 / sole observer 289** owns completion. This launch plans **2,008,952 rows /
+246 shards** in fifteen 16-shard chunks and a final six-shard chunk. Last shard
+245 contains **1,912 real rows plus eight padding rows**: **62,780 fixed32 calls /
+2,008,960 input rows** overall. Current qualified coverage remains **3,858,023 rows /
+472 shards**; successful collection and saved qualification would raise it to
+**5,866,975 rows / 718 shards**. No completed rows are added by this launch record.
+
+The completed run06 large driver's 6,106.741 seconds projects about 6,094.4 seconds
+for the new cohort by row count; this includes the baseline pauses and is not a
+guarantee. The unchanged **9,600-second inclusive bound** allows 9,000 seconds
+for collection/cleanup and at most 600 seconds for saved qualification under the
+same initial absolute deadline. Existing per-chunk 1,200-second limits, fifteen
+30-second pauses, shared GPU lease, CPUs 2–3 and two numeric threads remain.
+The 8 GiB ORT allowance, sampled 12 GiB total-device/per-process RSS limits,
+32 GiB available host-memory floor, 150 GiB SSD reserve and 128 MiB per-chunk
+output/state cap are unchanged. Final CPU-only qualification retains 1 GiB address
+space. Sampled limits do not establish peaks or hard aggregate RSS guarantees.
+
+Runtime `e9c1b74bc44c45f9ac6d70195f1422c6d24a65f9`, approximate fixed32 C3 profile,
+model and policy/value/value2 outputs are unchanged. The existing accepted native
+schema 1 admission supplies one complete run07 output root; the terminal qualifier
+retains exact source/row/feed/storage bindings and all nine Ceres saved-array,
+provider, call and mapped-library checks. Preparation checked native attribute
+metadata without rereading native payloads or rerunning admission. Sixteen range
+checks, both default validations and independent static review passed. No source
+cache, teacher fit or new inference method was adopted.
+
+Parent preflight reported 84 GiB available RAM, zero swap use, 213 GiB free SSD
+and GPU 2,953 MiB / 3%. Ongoing SF 2+1 generation was preserved. There is no new
+training admission, first4 diagnostic update, strength claim, retry or automatic
+extension. [Compact actual-launch evidence](evidence/g10-ceres-run07-large-launched-20260913.json)
+pins the driver start, exact plans/command and independent review. This publication
+read the saved start file once and did not poll collection, models, arrays or
+active observers.
