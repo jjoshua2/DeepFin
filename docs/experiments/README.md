@@ -9,7 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [Bounded raw scale labels](2026-09-13-bounded-raw-scale-labels.md) | Existing joint policy/native-WDL collector launched; at most 192 newly recorded shards /two hours, no old policy-only backfill or training admission |
+| [Bounded raw scale labels](2026-09-13-bounded-raw-scale-labels.md) | Completed 184 raw shards / 1,527,153 rows in 2638.682s; 12-group limit exhausted, saved reason corrected in prose; no backfill or training admission |
 | [Native BT4 value endpoint](2026-09-13-native-bt4-value-endpoint.md) | Matched 35M V100-versus-V50 contrast; bounded native-value CPU rewrite launched, actual target qualification and training pending |
 | [Ceres100 policy endpoint preparation](2026-09-13-ceres100-policy-preparation.md) | Pure-Ceres endpoint completed: +2.04 Elo [−22.16, +26.26] versus B100 over 512 games at 400 simulations; unresolved, retain B100 policy |
 | [Ceres materializer batch screen](2026-09-12-ceres-materializer-batch-benchmark.md) | Real 8,192-row outputs identical at 128/512; observed timings confounded by cache/order, no production speedup claim |
