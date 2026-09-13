@@ -104,6 +104,48 @@ def lookahead_pairs(evidence: dict[str, Any]) -> int | None:
     return value
 
 
+def matched_epoch_workers(role: str, receipt: dict[str, Any], corpus: str) -> int:
+    """The Downside execution amendment requires its pinned complete recipe."""
+    if role != "B100Downside300":
+        return 16
+    from scripts.bt4_one_epoch_screen import B100_PARENT_PINS, DOWNSIDE_PRODUCER_PINS
+
+    root = Path(corpus)
+    require(root.is_absolute() and root.name == "qtemp_0.0005_hist_20m_bt4_sf_downside300w05_v1",
+            "Downside training corpus differs")
+    recipe_path = str(root / "bt4_sf_downside_policy_summary.json")
+    derive_path = str(root / "derive_targets_summary.json")
+    recipe = read_json({"path": recipe_path, "sha256": receipt["input_pins"][recipe_path]})
+    derived = read_json({"path": derive_path, "sha256": receipt["input_pins"][derive_path]})
+    expected = {"schema": 1, "status": "COMPLETE", "kind": "bt4_sf_allmove_downside",
+                "algorithm": "stored-b100-allmove-sf-gapgt300-weight0.5-ordinary-v1",
+                "rows": 18910484, "shards": 2309, "mutated_arrays": ["policy_target"],
+                "nonpolicy_arrays_copied": 16,
+                "recipe": {"gap_cp_strictly_greater_than": 300.0, "flagged_relative_weight": .5,
+                           "mate_handling": "any-mate-domain-row-unchanged",
+                           "cp_domain": [-32000.0, 32000.0],
+                           "base": "normalized stored B100 float16 policy",
+                           "storage": "float64 weighting -> float32 -> float16; zero flagged mass preserves bytes",
+                           "roster": "all original legal d9 moves; no next-best gate"}}
+    same({k: recipe.get(k) for k in expected}, expected, "Downside complete fixed recipe")
+    require(not recipe.get("pilot_only", False), "Downside pilot cannot match")
+    same(recipe["sf_derive_summary_sha256"],
+         TRAINING_PINS["data/nnue_derived/armB/qtemp_0.0005_hist_20m/derive_targets_summary.json"],
+         "Downside original SF source")
+    same(recipe["source_derive_summary_sha256"], B100_PARENT_PINS["derive_targets_summary.json"],
+         "Downside original B100 source")
+    same(recipe["source_policy_summary_sha256"], B100_PARENT_PINS["bt4_policy_mix_summary.json"],
+         "Downside original B100 policy")
+    producers = recipe["producer_sha256"]
+    same(len(producers), len(DOWNSIDE_PRODUCER_PINS), "Downside producer count")
+    for suffix, digest in DOWNSIDE_PRODUCER_PINS.items():
+        same([v for k, v in producers.items() if Path(k).is_absolute() and k.endswith("/" + suffix)],
+             [digest], "Downside producer " + suffix)
+    same(derived["policy_target_postprocess"], {k: v for k, v in recipe.items() if k != "outputs"},
+         "Downside derived recipe binding")
+    return 2
+
+
 def matched_training_pair(evidence: dict[str, Any]) -> tuple[str, str]:
     """Bind roles to completed original-corpus epochs, without loading weights.
 
@@ -156,10 +198,11 @@ def matched_training_pair(evidence: dict[str, Any]) -> tuple[str, str]:
         physical = receipt["physical_plan_sha256"]
         same(arm["physical_plan_sha256"], physical, "realized physical epoch")
         same(summary["corpus"]["shard_dirs"], [arm["corpus"]], "training corpus")
+        workers = matched_epoch_workers(role, receipt, arm["corpus"])
         expected = {"mode": "game_epoch", "complete": True, "seed": 0, "batch_size": 512,
                     "rows_planned": 18910484, "rows_realized": 18910484,
                     "batches_planned": 36935, "batches_realized": 36935, "shards": 2309,
-                    "games": 97968, "plan_workers": 16, "load_workers": 16,
+                    "games": 97968, "plan_workers": workers, "load_workers": workers,
                     "same_game_repeats_max": 0, "decoded_rows_resident": 0,
                     "plan_sha256": physical, "realized_sha256": physical}
         for key, value in expected.items():
