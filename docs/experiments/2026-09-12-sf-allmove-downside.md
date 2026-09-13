@@ -1,6 +1,6 @@
 # One all-move SF downside candidate
 
-Status: the complete 18,910,484-row rebuild, dedicated corpus qualification and prospective original-runtime schedule passed. The selected 2/2-worker training launch is being prepared; no Downside checkpoint or playing result yet.
+Status: the complete 18,910,484-row rebuild, dedicated corpus qualification and prospective original-runtime schedule passed. The selected 2/2-worker epoch launched at 00:41 UTC on September 13 and is running under the reviewed memory guards; no completed Downside checkpoint or playing result yet.
 
 For normalized stored B100 policy (BT4 temperature 0.5), multiply each legal move
 with a raw d9 deficit strictly greater than 300 cp by 0.5, leave the others at 1,
@@ -273,9 +273,43 @@ The timed producer reported 698,756 KiB maximum RSS; the schedule verifier repor
 or explain the earlier reboot. The interrupted first preparation remains preserved
 and unused. The next step is the already registered one-epoch comparison using two
 planner and two loader workers, after final frozen runtime/manifest and host
-readiness checks. Training has not launched in this record.
+readiness checks. Training had not launched at that completion snapshot.
 
 [Compact completion, qualification and schedule evidence](evidence/sf-allmove-downside-completed-20260912.json)
 includes exact external artifact pins, complete small receipts, the independent
 readout and scope limitations. No new playing-strength conclusion follows from
 successful data preparation.
+
+
+## Actual one-epoch training launch
+
+After completed corpus qualification, the original prospective schedule and final
+independent manifest/host review, the Downside coordinator started at **00:41:11 UTC
+on September 13**. Its training stage started at **00:41:16 UTC**. The single saved
+process observation recorded the actual trainer command matching the requested
+command. The previous large Ceres collection had terminated successfully and
+passed saved qualification before this launch; no running collection was displaced.
+
+The registered epoch uses the **18,910,484-row** Downside corpus, seed **0**, batch
+size **512**, and **two planner / two loader workers**. It retains the frozen
+historical trainer, sampler, original SF values and optimizer configuration.
+The expected **36,935 updates / 420 windows** are completion requirements, not
+results inferred from launch. The training-stage budget is **16,200 seconds**;
+the host bound is **21,630 seconds inclusive**. The existing historical control
+caveats and three float16 move-entry support losses remain applicable.
+
+The reviewed host helper requires **48 GiB Linux available memory at startup**
+and **32 GiB while running**. Its failure path waits for the owned coordinator
+process group, allowing nested training cleanup even if the timing wrapper exits
+first. CUDA training has no CPU-materializer address-space cap. Parent preflight
+reported approximately **84 GiB available memory**, **zero swap use**, **211 GiB
+free disk**, and **3,752 MiB GPU usage / 7% utilization**. These are startup
+observations, not training peaks or proof of aggregate host-memory safety.
+
+The [compact launch evidence](evidence/sf-allmove-downside-training-launch-20260913.json)
+pins the actual manifest, memory runtime `442dd35ec…`, final independent review
+and immutable host/trainer launch snapshot. Parent root **6338**, sole observer
+**215**, owns completion. No completed model, realized schedule or playing-strength
+result is claimed. The later registered fixed-400, 256-game comparison against
+B100 still requires a genuine completed candidate and reviewed match handoff;
+no match or additional arena bank launches automatically.
