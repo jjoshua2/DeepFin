@@ -1,0 +1,238 @@
+{
+  "schema": 1,
+  "status": "ACTUAL_COPY_LAUNCHED_COMPLETION_UNREAD_SOURCE_RETAINED",
+  "artifact_refs": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/plan.json",
+      "sha256": "a5c822c66337f8fe9d81f2a312d170b254bdc7f1eb5f00fad618dab4b1821fad",
+      "bytes": 9220
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/parent_launch.json",
+      "sha256": "fb0e703eb59f2c3dc7be2446781d1bf320bfab12cebd2a93db037e3feac65359",
+      "bytes": 471
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/source_readiness.json",
+      "sha256": "d3dfb6ca6ceeaa5392585d8eb88e7c6e5d4ac75408c48f4b32b7b02f1a443669",
+      "bytes": 2986
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/preparation_checks.json",
+      "sha256": "797d63a9ffce4ca4028b7b44808f5a174d8ebe2006ee2e8639071661577efeac",
+      "bytes": 1180
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/independent_preparation_review.json",
+      "sha256": "b12ef1a906284c5bca8e5dab43ede98503d1b09dbd770c4443c2bb667ac5236f",
+      "bytes": 2459
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/archive_Tactical100.py",
+      "sha256": "0ad785f3aeb160fd59c85cab2e0622f78e1232f617491521f6ea51f791a57c01",
+      "bytes": 20651
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/run_registered.py",
+      "sha256": "99bb4e26f4ad2ae9a1de7e3edcf0b945ef683f53ad19b8d0baf72cfab50c3172",
+      "bytes": 2576
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/operator_command.json",
+      "sha256": "46792c2792d087d70c5c1d343b06b638d3824b364ef38e884576722f6e8d0b08",
+      "bytes": 1122
+    }
+  ],
+  "parent_launch": {
+    "started_unix": 1789260960.2287595,
+    "deadline_unix": 1789275360.2287595,
+    "argv": [
+      "/usr/bin/timeout",
+      "--signal=TERM",
+      "--kill-after=30s",
+      "14370s",
+      "/usr/bin/python3.10",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/run_registered.py",
+      "--plan-sha256",
+      "a5c822c66337f8fe9d81f2a312d170b254bdc7f1eb5f00fad618dab4b1821fad",
+      "--deadline",
+      "1789275360.2287595"
+    ],
+    "source_retained": true
+  },
+  "started_utc": "2026-09-13T00:56:00.228760+00:00",
+  "deadline_utc": "2026-09-13T04:56:00.228760+00:00",
+  "parent_reported_owner": {
+    "root_session": 71709,
+    "sole_observer": 233,
+    "scope": "Parent owns terminal observation; publication did not poll job."
+  },
+  "parent_reported_preflight": {
+    "available_memory_gib_approx": 77,
+    "swap_used": 0,
+    "SSD_free_gib_approx": 210,
+    "external_free_gib_approx": 7514,
+    "mount": "E: writable9p",
+    "limitation": "Parent-reported startup samples, not resource peaks."
+  },
+  "source_readiness": {
+    "status": "PASS_BOUNDED_METADATA_ELIGIBILITY_NOT_COPY",
+    "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100",
+    "source_root_stat": {
+      "st_dev": 2096,
+      "st_ino": 11896393,
+      "st_mode": 16877,
+      "st_uid": 1000,
+      "st_gid": 1000,
+      "st_size": 94208,
+      "st_mtime_ns": 1789058715000078033,
+      "st_ctime_ns": 1789058747989791269
+    },
+    "rows": 18910484,
+    "shards": 2309,
+    "counts": {
+      "files": 671768,
+      "directories": 41563,
+      "logical_bytes": 11896485651,
+      "allocated_bytes": 14447185920,
+      "hardlinked_regular_files": 0
+    },
+    "metadata_inventory": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/metadata_inventory.jsonl",
+      "sha256": "e1e12950c11fe6a2ec496cca76776b4341f29baa632233d8594427e35ef9c8e6",
+      "bytes": 75241363
+    },
+    "inventory_wall_seconds": 80.08992043099715,
+    "coarse_tar_bytes": 12652102419,
+    "estimate_limitation": "Tar/PAX overhead estimate, not an actual archive size or hard upper bound; existing24GiB stream cap remains. Allocated blocks are metadata sum, not a promise of reclaimed space.",
+    "summary_pins": [
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100/derive_targets_summary.json",
+        "sha256": "9e97884cdeb0527c8e6ce30b9bf8a32f25af5b10fe03e9af4ca04be1854c2e4e",
+        "bytes": 1033927
+      },
+      {
+        "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100/bt4_sf_tactical_policy_summary.json",
+        "sha256": "f7e66757bfdaa70e71064a5ae5ec5854d8abe608fcaebf5c19da14a5a4330e7d",
+        "bytes": 61623643
+      }
+    ],
+    "selection": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_assessment_v1/assessment.json",
+      "sha256": "adfd96250bd0c3fbaa8f3618ce329663f99ebda668db5d1344fae92f1fa38f4b",
+      "bytes": 5875
+    },
+    "current_training_manifest": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/sf_allmove_downside_preparation_v1/training_admission_v1/training_manifest.json",
+      "sha256": "d3b402c25eb55e374e078f74e7ba2e8599d02d37e7449324b236fc6c99fa8e45",
+      "bytes": 2924
+    },
+    "candidate_not_current_training_input": true,
+    "mount": {
+      "target": "/mnt/e",
+      "source": "E:\\",
+      "fstype": "9p",
+      "options": "rw,noatime,aname=drvfs;path=E:\\;uid=1000;gid=1000;symlinkroot=/mnt/,cache=0x5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+    },
+    "resources": {
+      "local_free_bytes": 225513340928,
+      "available_RAM_bytes": 83067817984
+    },
+    "external_free_bytes": 8067441692672,
+    "scope": "Single source metadata-membership/hardlink/size eligibility traversal. Only root summary contents hashed; no shard payload, model, checkpoint, active job or process-descriptor reads. Actual archive operator repeats inventory with hashes to prove content; preparation census is not reused as content proof."
+  },
+  "preparation_checks": {
+    "status": "PASS_PREPARED_NOT_EXECUTED",
+    "elapsed_seconds": 80.10878806300025,
+    "plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/plan.json",
+      "sha256": "a5c822c66337f8fe9d81f2a312d170b254bdc7f1eb5f00fad618dab4b1821fad",
+      "bytes": 9220
+    },
+    "helper": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/archive_Tactical100.py",
+      "sha256": "0ad785f3aeb160fd59c85cab2e0622f78e1232f617491521f6ea51f791a57c01",
+      "bytes": 20651
+    },
+    "wrapper": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/run_registered.py",
+      "sha256": "99bb4e26f4ad2ae9a1de7e3edcf0b945ef683f53ad19b8d0baf72cfab50c3172",
+      "bytes": 2576
+    },
+    "source_readiness": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/source_readiness.json",
+      "sha256": "d3dfb6ca6ceeaa5392585d8eb88e7c6e5d4ac75408c48f4b32b7b02f1a443669",
+      "bytes": 2986
+    },
+    "exact_reverse_substitution_and_AST_equal": true,
+    "active_processes_not_polled": true,
+    "copy_or_deletion_performed": false,
+    "fixture_tests_not_repeated": true
+  },
+  "independent_review": {
+    "verdict": "PASS_PREPARATION_ONLY",
+    "pins": {
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/plan.json": "a5c822c66337f8fe9d81f2a312d170b254bdc7f1eb5f00fad618dab4b1821fad",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/archive_Tactical100.py": "0ad785f3aeb160fd59c85cab2e0622f78e1232f617491521f6ea51f791a57c01",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/run_registered.py": "99bb4e26f4ad2ae9a1de7e3edcf0b945ef683f53ad19b8d0baf72cfab50c3172",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/operator_command.json": "46792c2792d087d70c5c1d343b06b638d3824b364ef38e884576722f6e8d0b08",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/source_readiness.json": "d3dfb6ca6ceeaa5392585d8eb88e7c6e5d4ac75408c48f4b32b7b02f1a443669",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/Tactical100_cold_archive_v1/preparation_checks.json": "797d63a9ffce4ca4028b7b44808f5a174d8ebe2006ee2e8639071661577efeac"
+    },
+    "checks": [
+      "Exact reverse substitutions recover accepted E0Legacy helper and wrapper bytes; sole resource behavior change is 16 to 48 GiB available-memory floor",
+      "Exact completed Tactical100 source/name and fresh archive/state namespace, source retained",
+      "Four-hour absolute deadline shared by child stages; nonblocking preparation lock; owned child cleanup and partial preservation",
+      "Actual 48 GiB memory sampling, 150 GiB local reserve plus initial staging reservation, 24 GiB stream/staging ceiling, two CPUs, hidden GPU, 2 GiB per-process address space and pacing retained",
+      "One saved metadata census reports 2309 shards, zero hardlinks and source-root summaries; no repeated census or content proof claim"
+    ],
+    "metadata_counts": {
+      "files": 671768,
+      "directories": 41563,
+      "logical_bytes": 11896485651,
+      "allocated_bytes": 14447185920,
+      "hardlinked_regular_files": 0
+    },
+    "limitations": [
+      "No copy, deletion, payload/model read, metadata walk, active-job poll or tests performed by reviewer",
+      "75 MB saved inventory and source summaries not rescanned; accepted preparation receipt binds their hashes",
+      "Parent retains fresh resource/ownership launch decision; successful copy is not deletion qualification",
+      "Sampled available memory and per-process address space are not aggregate RSS guarantees"
+    ]
+  },
+  "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100",
+  "destination": "/mnt/e/chess_derived_archive_20260908/Tactical100_v1/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100.tar",
+  "resources": {
+    "inclusive_wall_seconds": 14400,
+    "driver_TERM_seconds_before_deadline": 30,
+    "child_TERM_seconds_before_deadline": 30,
+    "child_KILL_grace_seconds": 20,
+    "outer_KILL_grace_seconds": 30,
+    "cpu_affinity": [
+      0,
+      1
+    ],
+    "numeric_threads": 2,
+    "nice": 19,
+    "ionice_class": 3,
+    "GPU_hidden": true,
+    "minimum_local_free_bytes": 161061273600,
+    "initial_local_reservation_extra_bytes": 28346784153,
+    "minimum_destination_free_bytes": 51539607552,
+    "minimum_available_RAM_bytes": 51539607552,
+    "per_process_RLIMIT_AS_bytes": 2147483648,
+    "staging_file_logical_bytes_ceiling": 25769803776,
+    "staging_guard_interval_seconds": 10,
+    "tar_stream_hard_ceiling_bytes": 25769803776,
+    "checksum_pacing_bytes_per_second": 33554432,
+    "rsync_bwlimit_KiB_per_second": 16384
+  },
+  "selection": "Finished Tactical100 corpus; training and registered match completed without demonstrated benefit. Original B100 retained; every checkpoint/run remains online. This is retention management, not a new scientific verdict.",
+  "source_bytes_reclaimed": 0,
+  "limitations": [
+    "Copy/content verification and external readback completion are unread. No claim archive exists or matches yet.",
+    "No source deletion. Later reclamation needs actual verification and refreshed consumer/stability checks.",
+    "Source metadata inventory was not repeated; no shard payloads, models or live jobs read by this publication.",
+    "48GiB archive memory floor gives margin above training32GiB floor but does not guarantee reaction ordering on sudden allocations."
+  ]
+}
