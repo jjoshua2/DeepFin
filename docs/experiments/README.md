@@ -8,7 +8,7 @@ measurements support which claims.
 
 | Record | Scope |
 | --- | --- |
-| [Ceres100 policy endpoint preparation](2026-09-13-ceres100-policy-preparation.md) | Pure saved Ceres policy with SF values retained; corrected CPU preparation launched within seven-hour allocation, no completed corpus or training allocation |
+| [Ceres100 policy endpoint preparation](2026-09-13-ceres100-policy-preparation.md) | Pure Ceres policy corpus completed and qualified: 18,910,484 rows/2,309 shards, SF values retained; 1,495 float16 support-loss move entries, no training allocation |
 | [Ceres materializer batch screen](2026-09-12-ceres-materializer-batch-benchmark.md) | Real 8,192-row outputs identical at 128/512; observed timings confounded by cache/order, no production speedup claim |
 | [Ceres source-read cache](2026-09-12-ceres-source-block-cache.md) | CPU component benchmark: identical batches,1.74s→0.12s reads; future collector cache/timers, no GPU throughput claim |
 | [Small G10 Ceres pilot](2026-09-11-g10-ceres-pilot.md) | 5,866,975 G10 Ceres rows / 718 shards qualified after run07 large completion; no further collection queued, science remains first4 only |
