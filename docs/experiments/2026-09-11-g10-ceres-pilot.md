@@ -1,11 +1,11 @@
 # G10 Ceres first-four-shard convenience pilot
 
-Current collection status: **1,845,004 G10 rows / 226 shards are qualified**
-across the original run06 increment and both complete next96 cohorts, including
-policy and both value-logit heads. A separate 2,013,019-row run06 large collection
-has launched; it is not yet included. The completed science below still uses the
-original 32,768-row first-four-shard sample. Collection does not enlarge those
-diagnostic results. The dated sections retain the actual execution history.
+Current collection status: **3,858,023 G10 rows / 472 shards are qualified**
+across the original run06 increment, both complete next96 cohorts and the complete
+run06 large cohort, including policy and both value-logit heads. No further Ceres
+collection is launched. The completed science below still uses the original
+32,768-row first-four-shard sample. Collection does not enlarge those diagnostic
+results. The dated sections retain the actual execution history.
 
 The preregistered task was to collect C3-768-30-pre8-I8 policy and both raw value-logit heads for the first four whole original run06 G10 derived shards (0..3, 32,768 rows, 1,024 batch-32 calls, zero padding). This is a convenience prefix, **not representative G10**. Same-row teacher disagreement is a diagnostic, not an Elo estimate or a new training queue.
 
@@ -527,3 +527,41 @@ pins the terminal qualification, manifest, independent review, new plans and
 actual start. Large state is `scratchpad/bt4_joint20/g10_ceres_run06_large_v1/`,
 with fresh outputs under `data/lc0/ceres_compact_sidecars/g10_run06_large_v1/`.
 No active observer was polled or new outcome read for this publication.
+
+
+## 2026-09-13 UTC: run06 large collection and qualification complete
+
+The complete `G10_common_large_v1/run06_g10` collection finished all **16 chunks,
+246 shards and 2,013,019 real rows**. The driver reports **6,106.741 seconds
+(1h41m46.741s)**, ending at **2026-09-13T00:21:42.643433+00:00**. This is the
+collection-driver duration, including its inter-chunk pauses; a separate qualifier
+duration is not recorded in the saved qualification JSON. Parent captured root
+99754 / sole observer 172 closed with exit 0 after the automatic saved audit.
+The registered allocation remained 9,600 seconds inclusive of collection, cleanup
+and qualification; no retry or extension was used.
+
+All **62,907 fixed32 calls** account for **2,013,024 input rows**, including exactly
+**5 padding rows** in the final 5,979-row shard. The saved auditor passed all
+**2,214 array proofs (nine arrays per shard)**, retaining policy and both raw value
+heads, source/feed and storage bindings, provider placement, and first/final
+mapped-library evidence. The existing schema 2 native admission retained the exact
+246-shard mapping across four genuine output roots. No native arrays were reread
+for this publication. The qualified policy manifest is
+`74a0c76bc8b3fe0b20dc3ec77e259810fee0cae3ca55a21b3b3637f5efb6ed36`.
+
+This raises qualified G10 Ceres coverage from **1,845,004 / 226** to
+**3,858,023 rows / 472 shards**. The original 18,910,484-row Ceres corpus remains
+separate. Runtime `e9c1b74bc44c45f9ac6d70195f1422c6d24a65f9`, approximate fixed32
+profile, model and both value-head settings are unchanged; no source cache was
+adopted. Collection establishes saved teacher coverage, not native-backend parity,
+training admission, representative G10 performance or a strength result. It does
+not repair the earlier adaptive-SF derivation, and the first4 scientific readouts
+remain unchanged. No additional Ceres collection is queued by this record.
+
+[Compact completion evidence](evidence/g10-ceres-run06-large-completed-20260913.json)
+pins the actual driver, qualification, policy manifest, source admission and
+compact completion review. Review checked all 16 completion receipt hashes,
+ordered shard/count agreement and the retained runtime proofs without repeating
+array, model, library, test or active-job reads. The separately registered Downside
+training proceeds under its own parent-owned launch; this collection record adds
+no observation of that training.
