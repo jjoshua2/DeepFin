@@ -128,3 +128,36 @@ exact retained-row alignment in downstream teacher joins remain necessary.
 [Launch evidence](evidence/filtered-raw-derivation-launched-20260913.json) retains
 the immutable start, command, plan, runtime and review pins. No completed output,
 adapter qualification or training admission is claimed here.
+
+## Completed exact filtered derivation
+
+Both sequential sources completed with **exit 0**. The outer execution took
+**2016.500 seconds** (33 minutes 37 seconds), within its three-hour allocation.
+Actual retained rows equal the audited expectation: **1,517,925 rows**, written
+to **186 derived shards**. Raw and derived shard counts differ because output
+is repacked at 8192 rows per shard.
+
+| Source | Physical raw rows | No-result drops | Exact audited exclusions | Derived rows | Derived shards |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| run06 | 1,013,011 | 6,799 | 22 | 1,006,190 | 123 |
+| run07 | 514,142 | 2,399 | 8 | 511,735 | 63 |
+| Total | 1,527,153 | 9,198 | 30 | 1,517,925 | 186 |
+
+The two source stages took 1348.194 and 667.376 seconds. This is actual elapsed
+execution, not a controlled speedup or peak-memory comparison. The recorded
+selectors remain uniform-d9 phase-zero policy and the existing latest-phase
+composite value rule, with temperature 0.0005 and zero requested policy floor.
+All retained rows have verified input keys; the outputs retain source directory
+and configuration, raw shard and physical row, plus original/stored history
+input keys in per-shard provenance. The 105,839 eligible rows that a whole-shard
+exclusion would have discarded are preserved by the exact row filter.
+
+The inherited sharp-SF target storage reports 21,617,693 positive move entries
+underflowing to zero in float16. This counts move entries, not excluded rows;
+no new clamp or target repair was applied by the row filter.
+
+[Completion evidence](evidence/filtered-raw-derivation-completed-20260913.json)
+records the actual terminal and both summary pins. This completes derived
+baseline eligibility and provenance only. Matching these filtered/permuted rows
+to the existing raw BT4 policy/native-WDL banks still requires an exact adapter
+and consumer qualification; no BT4 adapter or training admission is claimed.
