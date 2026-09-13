@@ -97,3 +97,34 @@ diagnostic identities. Saved diagnostics occupy 5,178,177 bytes, below the
 512-MiB cap. [Completion evidence](evidence/ceres-prefix-and-raw-audit-completed-20260913.json)
 preserves the exact report and review identities, the 30 required exclusions and
 their limits. Publication did not repeat raw payload checks or the audit.
+
+## Exact filtered derivation launched
+
+At **19:27:03.448 UTC**, the parent launched the reviewed row-filtered derivation
+of the same 184 audited raw shards. The implementation merged in
+[PR #731](https://github.com/jjoshua2/DeepFin/pull/731) binds the 30 exact
+additional exclusions to audited source/shard/physical-row identities and retains
+the existing 9,198 no-result drops. Expected output is **1,517,925 rows**:
+1,006,190 from run06 and 511,735 from run07. These are expectations, not completed
+derivation counts. Policy and value selectors remain unchanged; no scores are
+repaired and no unlisted defect is silently skipped.
+
+The frozen runtime `a22893d1434d05365a33a95c846d3b8bf47b1eed` processes run06
+then run07 sequentially, one worker per source, on CPUs 8,9 with two numeric
+threads, nice 19 and a hidden GPU. The **three-hour inclusive allocation** uses
+one shared deadline and owned process-group cleanup. Available RAM must be
+48 GiB at startup and 32 GiB during sampled checks, with 150 GiB disk reserve
+and an 8-GiB aggregate allocated-output threshold sampled every 30 seconds.
+Sampling thresholds are not hard quotas. The start recorded 88,641,429,504 bytes
+available RAM and 189,193,846,784 bytes free disk.
+
+Before launch, review caught and fixed a restart-freshness issue: existing or
+symlinked execution receipts and stage directories are refused before writing
+the start record. Parent and independent final preparation reviews passed.
+Partial evidence is retained on failure; completing only the first source does
+not establish complete two-source derivation. Actual output qualification and
+exact retained-row alignment in downstream teacher joins remain necessary.
+
+[Launch evidence](evidence/filtered-raw-derivation-launched-20260913.json) retains
+the immutable start, command, plan, runtime and review pins. No completed output,
+adapter qualification or training admission is claimed here.
