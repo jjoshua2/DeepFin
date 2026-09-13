@@ -387,3 +387,49 @@ source admission. Retained summaries alone are insufficient for training.
 [Compact completed receipts and review pins](evidence/e0legacy-archive-reclaimed-20260912.json)
 record both operations; this storage recovery establishes no new playing result
 or proof that the full 100M working set fits.
+
+
+## September 13: Tactical100 cold copy launched
+
+The parent launched the completed, unselected Tactical100 policy corpus copy at
+**00:56:00 UTC**, with one absolute **04:56:00 UTC** deadline. This continues
+SSD offloading during training. Tactical100's completed registered match was
+unresolved; B100 remained the incumbent. Archiving its derived corpus does not
+change that scientific interpretation or remove its trained checkpoints.
+
+Source:
+`data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100`.
+The intended archive is
+`/mnt/e/chess_derived_archive_20260908/Tactical100_v1/qtemp_0.0005_hist_20m_bt4_global_B100T05_tactical100.tar`.
+A single bounded metadata census found **2,309 shards**, **671,768 files** and
+**41,563 directories**, with no hardlinked regular files. Logical file size is
+**11,896,485,651 bytes**; allocated blocks sum to **14,447,185,920 bytes**.
+Neither number is an observed archive size or a promise of space reclaimed.
+The census took about 80 seconds and did not read shard contents.
+
+The reviewed E0Legacy helper/wrapper are reused with literal path bindings and
+one resource change: the available-memory floor rises from 16 to **48 GiB**.
+This leaves margin above training's 32 GiB guard, without guaranteeing reaction
+ordering on sudden allocation. The copy keeps its four-hour inclusive bound,
+CPUs 0–1, idle I/O and low CPU priority, two numeric threads, hidden GPU,
+2 GiB per-process address-space limit, 24 GiB staging ceiling, 16 MiB/s transfer
+pacing, 150 GiB SSD reserve plus staging reservation and 48 GiB external reserve.
+The parent observed approximately 77 GiB available RAM, zero swap use, 210 GiB
+SSD free and 7,514 GiB external free on the writable E: 9p mount before launch.
+These are startup samples, not aggregate memory or disk guarantees.
+
+The actual command uses plan `a5c822c6…` and preserves the shared nonblocking
+preparation lock, STOP markers and one absolute deadline. Parent root session
+**71709**, sole observer **233**, owns completion. All source files remain until
+copy/content verification, full external readback and a later separately reviewed
+reclamation step. Fresh consumer and source-stability checks precede any removal.
+All runs, checkpoints, optimizer state and receipts remain; the current Downside,
+original SF/B100/C and active G10 inputs are outside this operation.
+
+**Copy completion is unread; source bytes reclaimed = 0.** The
+[compact actual-launch evidence](evidence/tactical100-archive-launched-20260913.json)
+contains exact command, source/destination and review pins. Preparation's initial
+sandbox mount check failed before the census because its view was read-only;
+the retained host attempt confirmed writable E: and completed the single census.
+This publication read only small saved preparation/launch records; it did not
+poll the archive or repeat the inventory.
