@@ -341,3 +341,73 @@ def test_cpu_probe_real_settings_use_new_seed_and_full_pair_count(
     assert contract["settings"]["games"] == 512
     assert contract["settings"]["seed"] == 20260913
     assert observed["cuda_initialized"] is False
+
+
+@pytest.mark.parametrize('defect', ['none', 'old_seed', 'old_pairs', 'wrong_role', 'wrong_prior', 'wrong_panel', 'workers16', 'missing_schedule'])
+def test_ceres_endpoint_original_receipt_and_fixed_settings(tmp_path, monkeypatch, defect):
+    from tests.test_matched_recipe_pair import completed_training, put
+    from scripts import bt4_one_epoch_screen as epoch
+
+    m = manifest(tmp_path)
+    m['profile'] = tool.package.CERES_PROFILE
+    for side, role in zip(('candidate', 'reference'), tool.package.CERES_ROLES):
+        m[side] = {'role': role, 'path': str(tmp_path / role / 'checkpoint.pt'),
+                   'sha256': ('a' if side == 'candidate' else 'b') * 64}
+        m[side + '_training'] = completed_training(tmp_path, m[side])
+    # Real original completed-receipt shape; no combined-only keys are supplied.
+    pin = m['candidate_training']
+    receipt = tool.reader.read_json(pin)
+    corpus = epoch.CORPORA['Ceres100']
+    summary_path = Path(receipt['run']) / 'summary.json'
+    summary = tool.owned.read(summary_path)
+    summary['corpus']['shard_dirs'] = [str(corpus)]
+    summary['sampling'].update(plan_workers=2, load_workers=2)
+    if defect == 'workers16':
+        summary['sampling'].update(plan_workers=16, load_workers=16)
+    receipt['summary_sha256'] = put(summary_path, summary)['sha256']
+    schedule = tool.reader.read_json(receipt['schedule'])
+    schedule['arms']['Ceres100'].update(corpus=str(corpus), summary_sha256=receipt['summary_sha256'])
+    receipt['schedule'] = put(Path(receipt['schedule']['path']), schedule)
+    if defect == 'missing_schedule':
+        receipt.pop('schedule')
+    m['candidate_training'] = put(Path(pin['path']), receipt)
+    # Endpoint recipe behavior is exercised by test_matched_recipe_pair; this
+    # integration isolates dispatch to the actual original completion checker.
+    monkeypatch.setattr(tool.reader, 'matched_epoch_workers', lambda role, *_: 2 if role == 'Ceres100' else 16)
+    contract = tool.contract_for(m, settings(m))
+    if defect == 'old_seed':
+        contract['seed'] = 42
+    if defect == 'old_pairs':
+        contract['pairs'] = 128
+    if defect == 'wrong_role':
+        contract['candidate']['role'] = 'CeresB50'
+    if defect == 'wrong_prior':
+        contract['candidate_prior_temperature'] = .7
+    if defect == 'wrong_panel':
+        contract['opening_panel']['sha256'] = '0' * 64
+    if defect != 'none':
+        with pytest.raises((ValueError, KeyError)):
+            tool.package.validate(contract)
+        return
+    tool.package.validate(contract)
+    cmd = tool.command(contract, '/usr/bin/python3')
+    tool.package.command_check(cmd, contract)
+    assert cmd[cmd.index('--seed') + 1] == '20260913'
+    assert cmd[cmd.index('--games') + 1] == '512'
+    assert cmd[cmd.index('--sims') + 1] == '400'
+    m['training_verifier'] = {'path': tool.reader.__file__, 'sha256': tool.owned.sha(tool.reader.__file__)}
+    with tool.training_verifier(m):
+        pass
+
+
+@pytest.mark.parametrize('roles', [('Ceres100', 'B100'), ('Combined35M_V50', 'Combined35M_SF100'), ('Ceres100', 'Combined35M_SF100'), ('CeresB50', 'B100')])
+def test_probe_cell_dispatch_preserves_exact_registered_directions(roles):
+    from scripts import combined_corpus_arena_probe as probe
+
+    if roles not in (tool.package.CERES_ROLES, tool.ROLES):
+        with pytest.raises(AssertionError):
+            probe.registered_cell(dict.fromkeys(roles))
+    else:
+        cell = probe.registered_cell(dict.fromkeys(roles))
+        assert (cell['candidate'], cell['reference']) == roles
+        assert cell['priors'] == [1.0, 1.0]

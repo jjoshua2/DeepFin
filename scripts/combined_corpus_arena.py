@@ -82,7 +82,7 @@ def contract_for(m: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     out = Path(m["output"])
     return {
         "schema": 1,
-        "profile": PROFILE,
+        "profile": m["profile"],
         "candidate": m["candidate"],
         "reference": m["reference"],
         "candidate_prior_temperature": 1.0,
@@ -110,6 +110,13 @@ def contract_for(m: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
 
 @contextmanager
 def training_verifier(m: dict[str, Any]) -> Generator[None]:
+    if m["profile"] == package.CERES_PROFILE:
+        ref = m["training_verifier"]
+        owned.pin(ref["path"], ref["sha256"])
+        reader.same(ref["sha256"], owned.sha(reader.__file__), "reviewed original epoch verifier")
+        reader.matched_training_pair(m)
+        yield
+        return
     # Completed receipts bind the original coordinator's path as well as its bytes.
     ref = m["training_verifier"]
     reader.require(Path(ref["path"]).is_absolute(), "absolute training verifier")
@@ -147,11 +154,11 @@ def static(m: dict[str, Any]) -> None:
     reader.require(
         sys.flags.optimize == 0, "unoptimized assertion-enabled host required"
     )
-    reader.same(m["profile"], PROFILE, "combined arena profile")
+    reader.require(m["profile"] in {PROFILE, package.CERES_PROFILE}, "registered arena profile")
     reader.same(
         tuple(m[s]["role"] for s in ("candidate", "reference")),
-        ROLES,
-        "combined direction",
+        package.CERES_ROLES if m["profile"] == package.CERES_PROFILE else ROLES,
+        "registered direction",
     )
     reader.same(m["opening_panel"]["sha256"], combined.PANEL_SHA, "registered panel")
     reader.same(m["book"]["sha256"], owned.BOOK_SHA, "registered book")
@@ -195,14 +202,15 @@ def stamps(
     for side in ("candidate", "reference"):
         receipt = reader.read_json(m[side + "_training"])
         paths.add(str(Path(receipt["run"]) / "summary.json"))
-        for key in (
-            "prospective",
-            "corpus_manifest",
-            "runtime_manifest",
-            "selected_subset_qualification",
-            "training_process",
-        ):
-            paths.add(receipt[key]["path"])
+        if m["profile"] == package.CERES_PROFILE:
+            paths.update(receipt["input_pins"])
+            paths.add(receipt["schedule"]["path"])
+        else:
+            for key in (
+                "prospective", "corpus_manifest", "runtime_manifest",
+                "selected_subset_qualification", "training_process",
+            ):
+                paths.add(receipt[key]["path"])
     runtime_proof = reader.read_json(m["runtime"])
     paths.update(
         runtime_proof[k]["path"] for k in ("qualification", "original_runtime_manifest")
@@ -263,6 +271,8 @@ def prepare(m: dict[str, Any], manifest_pin: dict[str, str], deadline: float) ->
             owned.pin(m[side]["path"], m[side]["sha256"])
         before = stamps(m, runtime, rt)
         state.mkdir()
+        roles = package.CERES_ROLES if m["profile"] == package.CERES_PROFILE else ROLES
+        cell_name = "ceres_endpoint" if m["profile"] == package.CERES_PROFILE else "combined_value"
         request = {
             "packages": {m[s]["role"]: m[s] for s in ("candidate", "reference")},
             "runtime_root": str(runtime),
@@ -272,9 +282,9 @@ def prepare(m: dict[str, Any], manifest_pin: dict[str, str], deadline: float) ->
             "arena_seed": 20260913,
             "cells": [
                 {
-                    "name": "combined_value",
-                    "candidate": ROLES[0],
-                    "reference": ROLES[1],
+                    "name": cell_name,
+                    "candidate": roles[0],
+                    "reference": roles[1],
                     "priors": [1.0, 1.0],
                 }
             ],
@@ -302,7 +312,8 @@ def prepare(m: dict[str, Any], manifest_pin: dict[str, str], deadline: float) ->
         observed = owned.read(state / "observed.json")
         reader.same(
             observed["status"],
-            "PASS_ACTUAL_COMBINED_VALUE_PAIR_CPU_PREPARATION",
+            ("PASS_ACTUAL_CERES_ENDPOINT_CPU_PREPARATION" if m["profile"] == package.CERES_PROFILE
+             else "PASS_ACTUAL_COMBINED_VALUE_PAIR_CPU_PREPARATION"),
             "CPU pair",
         )
         reader.same(
@@ -314,7 +325,7 @@ def prepare(m: dict[str, Any], manifest_pin: dict[str, str], deadline: float) ->
             observed["panel"], reader.read_json(m["opening_panel"]), "actual panel"
         )
         reader.same(observed["cuda_initialized"], False, "CPU-only observation")
-        contract = contract_for(m, observed["cells"]["combined_value"]["settings"])
+        contract = contract_for(m, observed["cells"][cell_name]["settings"])
         package.validate(contract)
         cmd = command(contract, rt["executable"])
         package.command_check(cmd, contract)

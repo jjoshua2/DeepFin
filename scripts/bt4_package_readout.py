@@ -63,6 +63,25 @@ def panel_fens(ref: dict[str, Any], pairs: int) -> list[str]:
     return fens
 
 
+CERES_PROFILE = 'ceres100_b100_seed0_fixed512'
+CERES_ROLES = ('Ceres100', 'B100')
+
+
+def verify_ceres_training(contract: dict[str, Any]) -> None:
+    from scripts import bt4_recipe_readout as original
+
+    require(set(contract['training']) == {'candidate_training', 'reference_training'}, 'Ceres training fields')
+    same(tuple(contract[s]['role'] for s in ('candidate', 'reference')), CERES_ROLES, 'Ceres direction')
+    original.matched_training_pair({**contract['training'], 'candidate': contract['candidate'], 'reference': contract['reference']})
+    for key, value in {'pairs': 256, 'sims': 400, 'seed': 20260913,
+                       'candidate_prior_temperature': 1.0, 'reference_prior_temperature': 1.0}.items():
+        same(contract[key], value, 'registered Ceres ' + key)
+    same(contract['opening_panel']['sha256'], combined.PANEL_SHA, 'Ceres development panel')
+    for key, value in {'loop': 'rolling', 'compile': 'on', 'eval_max_batch': 4096,
+                       'max_concurrent_games': 128, 'max_seconds': 7140.0}.items():
+        same(contract['execution'][key], value, 'Ceres execution ' + key)
+
+
 def verify_combined_training(contract: dict[str, Any]) -> None:
     require(set(contract['training']) == {'candidate_training', 'reference_training'}, 'combined training fields')
     combined.matched_training_pair({**contract['training'], 'candidate': contract['candidate'], 'reference': contract['reference']})
@@ -80,12 +99,14 @@ def validate(contract: dict[str, Any]) -> None:
     fields = {'schema', 'profile', 'candidate', 'reference', 'candidate_prior_temperature',
         'reference_prior_temperature', 'sims', 'pairs', 'seed', 'settings', 'execution',
         'opening_panel', 'bank', 'process', 'results_path'}
-    if contract.get('profile') == combined.PROFILE:
+    if contract.get('profile') in {combined.PROFILE, CERES_PROFILE}:
         fields.add('training')
     require(set(contract) == fields, 'package contract fields')
     same(contract['schema'], 1, 'schema')
     if contract['profile'] == combined.PROFILE:
         verify_combined_training(contract)
+    elif contract['profile'] == CERES_PROFILE:
+        verify_ceres_training(contract)
     else:
         same(contract['profile'], 'explicit_checkpoint_prior_packages', 'profile')
     for key in ('candidate_prior_temperature', 'reference_prior_temperature'):
@@ -252,10 +273,14 @@ def read_contract(path: Path, *, allow_timeout_preexec: bool = False,
         'checkpoint_content_verified_now': True, 'launch_qualification_verified': False,
         **({'combined_training_lineage_verified': True, 'training': contract['training']}
            if contract['profile'] == combined.PROFILE else {}),
+        **({'original_epoch_training_lineage_verified': True, 'training': contract['training'],
+            'development_panel_reused': True} if contract['profile'] == CERES_PROFILE else {}),
         'limitations': ['Fixed-N nominal paired interval for these packages; not optimal temperature or training-seed uncertainty.',
             'Pinned process record and command checked; runtime provenance, checkpoint/book bytes and full history consumed at launch require external evidence.',
             ('Combined training lineage and pretraining panel are verified; actual arena launch qualification remains separate.'
              if contract['profile'] == combined.PROFILE else
+             'Original matched epoch and Ceres endpoint recipe verified; reused development panel is not fresh confirmation.'
+             if contract['profile'] == CERES_PROFILE else
              'Legal panel history and endpoint order verified now; recipe labels and training lineage are declarations requiring separate qualification.')]}
 
 
