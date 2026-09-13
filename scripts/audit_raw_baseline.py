@@ -6,6 +6,7 @@ from collections import Counter
 from dataclasses import replace
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -91,14 +92,67 @@ def inspect_row(row: dict[str, Any], config: str, worker: int, tool: derive.Targ
             'eligible': policy_error is None and value_error is None and row.get('result') is not None}
 
 
-def selection(manifest: dict[str, Any], guard: Callable[[], None]) -> list[dict[str, Any]]:
+def selected_receipts(manifest: dict[str, Any], guard: Callable[[], None]) -> list[dict[str, Any]]:
+    require(('collection' in manifest) != ('receipt_selection' in manifest), 'one receipt admission route required')
+    if 'collection' in manifest:
+        collection = read_pin(manifest['collection'], guard)
+        require(collection['status'] == 'BOUNDED_RAW_LABEL_COLLECTION_COMPLETE', 'collection not complete')
+        entries = collection['receipts']
+        require(collection['new_shards'] == len(entries), 'receipt count')
+        require(sum(row['positions'] for row in entries) == collection['new_rows'], 'receipt row total')
+        return entries
+    selected = read_pin(manifest['receipt_selection'], guard)
+    require(selected['schema'] == 1 and selected['kind'] == 'SAVED_JOINT_RECEIPT_SELECTION', 'saved selection schema')
+    entries = selected['receipts']
+    wanted = {(row['source_id'], row['source_shard']): row for row in entries}
+    require(len(wanted) == len(entries), 'duplicate selected receipt')
+    require(selected['selected_shards'] == len(entries)
+            and selected['selected_raw_rows'] == sum(row['positions'] for row in entries), 'selected receipt counts')
+    source_ids = {source['id'] for source in manifest['sources']}
+    snapshots = selected['receipt_snapshots']
+    ids = [item['source_id'] for item in snapshots]
+    require(len(set(ids)) == len(ids) and set(ids) == source_ids, 'snapshot source identities')
+    found = set()
+    for snapshot in snapshots:
+        ref = {key: snapshot[key] for key in ('path', 'sha256')}
+        path = Path(ref['path'])
+        require(path.is_absolute() and path == path.resolve(), 'noncanonical snapshot')
+        require(digest(path, guard) == ref['sha256'], 'snapshot hash mismatch')
+        seen = set()
+        with path.open('rb') as stream:
+            for line in stream:
+                guard()
+                require(line.endswith(b'\n'), 'torn snapshot receipt')
+                row = json.loads(line)
+                key = (row['source_id'], row['source_shard'])
+                require(key[0] == snapshot['source_id'] and key not in seen, 'snapshot source or duplicate receipt')
+                seen.add(key)
+                if key in wanted:
+                    require(row == wanted[key], 'selected receipt differs from snapshot')
+                    found.add(key)
+        require(digest(path, guard) == ref['sha256'], 'snapshot changed during admission')
+    require(found == set(wanted), 'selected receipt missing from snapshot')
+    return entries
+
+
+def positive_int(value: str) -> int:
+    result = int(value)
+    require(result > 0, 'positive integer required')
+    return result
+
+
+def positive_seconds(value: str) -> float:
+    result = float(value)
+    require(math.isfinite(result) and result > 0, 'positive finite seconds required')
+    return result
+
+
+def selection(manifest: dict[str, Any], guard: Callable[[], None], *, max_shards: int = MAX_SHARDS) -> list[dict[str, Any]]:
     require(manifest['schema'] == 1, 'manifest schema')
     require(manifest['teacher_sha256'] == '1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0', 'registered teacher required')
-    collection = read_pin(manifest['collection'], guard)
-    require(collection['status'] == 'BOUNDED_RAW_LABEL_COLLECTION_COMPLETE', 'collection not complete')
-    entries = collection['receipts']
-    require(0 < len(entries) <= MAX_SHARDS and collection['new_shards'] == len(entries), 'receipt count')
-    require(sum(row['positions'] for row in entries) == collection['new_rows'], 'receipt row total')
+    require(type(max_shards) is int and max_shards > 0, 'positive max_shards required')
+    entries = selected_receipts(manifest, guard)
+    require(0 < len(entries) <= max_shards, 'receipt count')
     sources = {}
     for source in manifest['sources']:
         root = Path(source['source_dir'])
@@ -132,9 +186,9 @@ def selection(manifest: dict[str, Any], guard: Callable[[], None]) -> list[dict[
     return result
 
 
-def audit(manifest: dict[str, Any], out: Path, guard: Callable[[], None], *, diagnostic_cap: int = MAX_DIAGNOSTICS) -> dict[str, Any]:
+def audit(manifest: dict[str, Any], out: Path, guard: Callable[[], None], *, diagnostic_cap: int = MAX_DIAGNOSTICS, max_shards: int = MAX_SHARDS) -> dict[str, Any]:
     require(0 < diagnostic_cap <= MAX_DIAGNOSTICS, 'diagnostic cap')
-    entries = selection(manifest, guard)
+    entries = selection(manifest, guard, max_shards=max_shards)
     out = out.resolve()
     require(all(not out.is_relative_to(Path(e['source_dir'])) and not Path(e['source_dir']).is_relative_to(out) for e in entries), 'output overlaps raw source')
     out.mkdir()  # fresh, failed evidence is never adopted
@@ -193,18 +247,24 @@ def audit(manifest: dict[str, Any], out: Path, guard: Callable[[], None], *, dia
         raise
 
 
-def main() -> None:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--expected-manifest-sha256', required=True)
     parser.add_argument('--out', type=Path, required=True)
-    parser.add_argument('--deadline-unix', type=float, required=True)
-    args = parser.parse_args()
+    parser.add_argument('--deadline-unix', type=positive_seconds, required=True)
+    parser.add_argument('--max-shards', type=positive_int, default=MAX_SHARDS)
+    parser.add_argument('--max-seconds', type=positive_seconds, default=1740.)
+    return parser.parse_args(argv)
+
+
+def main() -> None:
+    args = parse_args()
     require(os.environ.get('CUDA_VISIBLE_DEVICES') == '', 'GPU must be hidden')
     require(len(os.sched_getaffinity(0)) <= 2, 'at most two CPUs')
     require(all(os.environ.get(k) == '2' for k in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS')), 'two numeric threads')
     memory.require_available(48)
-    deadline = min(args.deadline_unix, time.time() + 1740)
+    deadline = min(args.deadline_unix, time.time() + args.max_seconds)
     last_resources = 0.
     def guard() -> None:
         nonlocal last_resources
@@ -216,7 +276,7 @@ def main() -> None:
         memory.require_available(32)
         require(shutil.disk_usage(args.out.parent).free >= 150 * 1024**3, 'disk reserve')
     manifest = read_pin({'path': str(args.manifest.resolve()), 'sha256': args.expected_manifest_sha256}, guard)
-    audit(manifest, args.out, guard)
+    audit(manifest, args.out, guard, max_shards=args.max_shards)
 
 
 if __name__ == '__main__':
