@@ -815,3 +815,29 @@ cap. Physical-memory guards remain active. Streaming bounds resident raw data
 without making a full-run throughput guarantee. Failures retain evidence and do
 not emit a completed eligibility report. No production audit is implied by the
 source fixtures.
+
+
+### Deriving with exact audited baseline exclusions
+
+`derive_corpus_targets.py --baseline-exclusions MANIFEST --source-shards SELECTION
+--row-provenance` consumes a schema-1 manifest with three `{path, sha256}` pins:
+`audit` (successful audit complete.json), `diagnostics` (rejected.jsonl), and
+`selection` (the existing closed-shard selection). It requires the complete
+roster for one source within the completed audit, rather than a timed-out audit
+prefix. Raw hashes remain checked by the existing source selection path.
+
+This opt-in is limited to full uniform-d9 derivation with phase0 policy,
+latest-phase value, no value-depth override, search value scheme, and no other
+skip allowances. It removes only diagnosed baseline failures with a result.
+Ordinary missing-result skips retain their existing counter. Exclusion IDs must
+match source namespace, original shard/physical offset and worker/game/ply;
+duplicate, unknown, changed and unused IDs are refused. The original no-flag
+path is unchanged.
+
+Both sequential and parallel paths retain physical raw offsets for the existing
+row provenance sidecar. The existing raw BT4 adapter therefore joins surviving
+rows without renumbering or new inference. Every output shard and the summary
+record the exclusion evidence pins, and completed coverage must equal the audit's
+physical, eligible, no-result and exclusion counts. Use a fresh output directory.
+A filtered corpus needs its own later schedule qualification; this command does
+not reuse a previous corpus's training schedule or allocate training.
