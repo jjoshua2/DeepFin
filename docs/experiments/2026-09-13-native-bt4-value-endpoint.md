@@ -148,3 +148,43 @@ final-command reviews. Rewrite completion does not establish a completed
 prospective schedule, selected-subset compatibility, training or an arena result.
 The frozen original preregistration remains unchanged; the registered V100
 versus V50 question is still unresolved.
+
+## Prospective schedule and compatibility completed; V100 training launched
+
+The prospective schedule completed with exit 0 in **371.488 seconds**. All
+21 ordered cohorts / 4321 shards contain **35,314,577 rows and 182,188 games**.
+The seed-101, batch-512 plan expects **68,974 updates**. Source, B100 and V100
+canonical schedules match the prior V50 controls at
+`ca3922c459b321dd5e890f8b3e21f6fee6a24aa6c7f0d76653165616aeca67bd`;
+the V100 path-specific physical plan is
+`4b47ce5ecb8fd272d8b93455107d8926dc485cd42915d707ba0e2beb3dc0f007`.
+These are prospective schedules, not realized training receipts.
+
+The subsequent selected-subset compatibility qualification completed with exit 0
+in **48.056 seconds**. All 2012 G10 shards marked as globally partial sources
+are selected finalized shards; the original 2309 shards are not partial. The
+registered `allow_partial_corpus` exception applies to this exact completed
+selection. Leak and mixed-history allowances remain false. `search_wdl` covers
+all 35,314,577 rows; the unused `sf_wdl` label/value-blend field has zero coverage
+as registered. Historical architecture/replay/trainer caveats remain recorded,
+and the actual trainer still executes its own compatibility gates.
+
+The parent launched the host at **20:17:18.936 UTC** and the owned training stage
+started at **20:17:23.691 UTC**, PID 501378 under timeout supervisor 501377.
+The actual startup receipt records the qualified `wise-cloud` runtime with
+Python 3.10.12, NumPy 1.26.2, PyTorch 2.11.0+cu128 and CUDA 12.8. Its actual
+command selects the 21 V100 roots, seed 101, batch 512, game-epoch sampling,
+**two planning and two loading workers**. Compiler workers are capped at two.
+
+The training stage has a **21600-second** ceiling; coordinator and outer bounds
+are 27000 and 27030 seconds. Existing GPU ownership, cleanup, 48-GiB startup /
+32-GiB running headroom and 150-GiB disk reserve remain. Startup recorded no
+GPU compute applications, 89,001,152,512 bytes available RAM and
+184,231,911,424 bytes free disk. These are launch samples, not measured peaks.
+The single metadata/argv default check exited 0 before launch; parent and
+independent final host reviews passed.
+
+[Completed prerequisites and actual launch evidence](evidence/v100-training-launched-20260913.json)
+preserve exact report, qualification, host-manifest and review pins. No completed
+training or realized schedule is claimed. The registered fixed **512-game,
+400-simulation V100-versus-V50 arena** remains after training and has not launched.
