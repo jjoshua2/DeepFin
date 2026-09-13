@@ -1,6 +1,6 @@
 # One all-move SF downside candidate
 
-Status: Downside300 completed the registered one-epoch training with matched realized schedule. The fixed 256-game / 400-simulation comparison against B100 has launched; outcomes remain unread. Peak reported RSS was 11.950 GiB, with no demonstrated reduction from the earlier 16/16-worker runs.
+Status: Downside300 completed the registered one-epoch training with matched realized schedule. The fixed 256-game / 400-simulation comparison against B100 completed at +17.66 Elo [−17.97, +53.66], unresolved under the registered rule. Peak reported RSS was 11.950 GiB, with no demonstrated reduction from the earlier 16/16-worker runs.
 
 For normalized stored B100 policy (BT4 temperature 0.5), multiply each legal move
 with a raw d9 deficit strictly greater than 300 cp by 0.5, leave the others at 1,
@@ -384,3 +384,36 @@ contains exact receipt, schedule, checkpoint and operator identities, independen
 reviews and the historical validity limitations. **No playing result yet.** Apply
 the registered paired interval after all pairs finish; an unresolved interval does
 not trigger automatic extension or promotion.
+
+
+## Completed fixed-400 comparison
+
+The registered bank completed all **256 games / 128 swapped opening pairs**.
+Downside300 scored **52.539%**, equivalent to **+17.66 Elo** with a nominal
+paired 95% interval of **[−17.97, +53.66]** against B100. Pentanomial counts
+from candidate double-loss through double-win are **16 / 18 / 48 / 29 / 17**.
+Both priors remained 1.0 at 400 simulations.
+
+This is **unresolved under the registered rule**: the interval crosses zero.
+Keep B100 as incumbent; do not automatically extend this bank, promote Downside,
+or fit another gap/dose from it. The positive estimate leaves a gentler tactical
+filter plausible, but does not establish that Stockfish improves pure BT4 policy.
+The earlier Tactical100 result and this result are separate comparisons against
+B100, not a direct test that the gentler filter is stronger. Training-seed
+uncertainty and reuse of the development panel remain limitations.
+
+The completed operator pins contract `7e503393…`, readout `d03e0751…` and
+complete bank `93844f18…`. The generic reader reports
+`launch_qualification_verified: false`: its bank/checkpoint checks do not replace
+the separately saved launch and training qualifications. Independent review
+`8819ebeb…` checked those external bindings, the actual command/runtime, complete
+process exit and saved pair-score arithmetic, with no findings. The arena took
+1,046.171 seconds (17.44 minutes), below its registered cap.
+[Compact completed-match evidence](evidence/downside-fixed400-result-20260913.json)
+retains the exact identities and reader limitations.
+
+Next allocation: prepare a matched original-SF-value versus SF50/native-BT450-value
+comparison with common B100 policy on the existing **35,314,577 distinct rows**
+(original18.91M plus qualified G10 16.40M). This is a proposed scale-transfer
+comparison, not a launched or qualified training run. Its ordered multi-corpus
+admission and common schedule proof must precede training.
