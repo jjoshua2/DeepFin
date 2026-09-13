@@ -1,4 +1,4 @@
-"""CPU preparation of the completed combined_value and original B100 checkpoint pair; no GPU."""
+"""CPU preparation of the completed Combined35M V50/SF100 checkpoint pair; no GPU."""
 
 import hashlib
 import importlib
