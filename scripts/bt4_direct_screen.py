@@ -303,7 +303,7 @@ def acquire_gpu_lease(lease):
     fcntl.flock(lease, fcntl.LOCK_EX)
 
 
-def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, stop_paths=(), cwd=None, env=None) -> dict[str, Any]:
+def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, stop_paths=(), cwd=None, env=None, guard=None) -> dict[str, Any]:
     """One bounded process group; caller owns the inherited GPU lease and pin checks."""
     require((cwd is None) == (env is None), 'explicit stage cwd and env must be supplied together')
     stage_cwd = RUNTIME if cwd is None else Path(cwd)
@@ -325,6 +325,8 @@ def run_owned_stage(cmd, out, seconds, lease_fd, stage, metadata, *, manifest, s
             receipt['supervisor_pid'] = child.pid
             write(out / 'process.json', receipt)
             while child.poll() is None:
+                if guard is not None:
+                    guard()
                 if f'{stage}_pid' not in receipt and time.monotonic() - started < 10:
                     children = Path(f'/proc/{child.pid}/task/{child.pid}/children')
                     ids = children.read_text().split() if children.exists() else []

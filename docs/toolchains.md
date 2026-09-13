@@ -669,3 +669,45 @@ sources, plus the profile, corpus, deadline, disk reserve and STOP paths. Run wi
 two CPU threads, GPU hidden and a separately bounded enclosing process. The emitted
 `PASS_REGISTERED_CORPUS_QUALIFICATION` receipt still precedes the frozen prospective
 schedule check and exact training manifest; it does not launch training.
+
+### Combined original/G10 value comparison
+
+`scripts/combined_corpus_train.py --manifest PLAN.json` inspects the explicit
+`combined35m_value_seed101` training plan; `--execute` performs one fresh arm.
+This is the registered 21-cohort comparison, not a replacement for the historical
+single-source coordinator. `Combined35M_SF100` uses the admission report's ordered
+**B100** roots, and `Combined35M_V50` uses its V50 roots. The `source` arm exists
+only for identity proof. Both use seed 101, batch 512 and two planner/loader
+workers under the unchanged frozen trainer. Its history/value/encoding gates
+remain in force.
+
+The plan binds `corpus_manifest`, actually passed `prospective`, `runtime_manifest`,
+`preregistration`, the pretraining `opening_panel`, absolute `state`/`run` and
+`stop_paths`, plus exact `code_pins` for the coordinator and its schedule, stage,
+original-coordinator and memory helpers. It selects `schema: 1`, the profile and
+role, `training_seconds: 21600` and `coordinator_seconds: 27000`. V50 additionally
+requires the same comparison's completed SF100 `previous_training` receipt.
+No existing output is adopted or resumed.
+
+The GPU lease wait counts toward the inclusive coordinator allowance; the full
+training stage must still fit before it can start. The existing owned-stage
+wait loop applies STOP, disk, deadline and host-memory checks, retaining its
+failure cleanup. Startup requires 48 GiB available RAM, running work 32 GiB and
+150 GiB free SSD. There is no CUDA address-space cap. An outer bounded operator
+still owns terminal evidence and the absolute launch deadline.
+
+After training, the lease is released and a 1,800-second CPU stage checks actual
+staged link order, full game columns against the prospective witnesses, summary
+window totals and the actual planned/realized physical hash. It does not rerun
+all prospective planners, open feature/target arrays or load a model. Canonical
+row-order equivalence inherits the frozen sampler and matching game-column proof;
+it is not a newly recorded per-row training trace. Failed completion preserves
+the run and cannot produce a valid training receipt.
+
+The fixed `bt4_package_readout.py` accepts this explicit combined profile with
+`training: {candidate_training: PIN, reference_training: PIN}`. It requires V50
+versus SF100, matching admitted corpus/schedule/panel and completed process
+receipts, 256 pairs, 400 simulations and both priors 1.0. Its generic
+`launch_qualification_verified: false` remains honest: actual arena launch
+qualification is still separate from completed training and bank validation.
+The historical generic package schema and two-depth recipe launcher are unchanged.
