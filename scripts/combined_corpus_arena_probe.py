@@ -12,6 +12,16 @@ from scripts import arena_standard as arena
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
 
+def registered_cell(packages):
+    roles = set(packages)
+    if roles == {"Ceres100", "B100"}:
+        cell = {"name": "ceres_endpoint", "candidate": "Ceres100", "reference": "B100", "priors": [1.0, 1.0]}
+    else:
+        assert roles == {"Combined35M_V50", "Combined35M_SF100"}
+        cell = {"name": "combined_value", "candidate": "Combined35M_V50", "reference": "Combined35M_SF100", "priors": [1.0, 1.0]}
+    return cell
+
+
 def main():
     request = json.loads(Path(sys.argv[1]).read_text())
     root = Path(request["runtime_root"])
@@ -19,15 +29,8 @@ def main():
     assert Path(arena.__file__).resolve() == root / "scripts/arena_standard.py"
     torch.set_num_threads(2)
     torch.set_num_interop_threads(2)
-    assert set(request["packages"]) == {"Combined35M_V50", "Combined35M_SF100"}
-    assert request["cells"] == [
-        {
-            "name": "combined_value",
-            "candidate": "Combined35M_V50",
-            "reference": "Combined35M_SF100",
-            "priors": [1.0, 1.0],
-        }
-    ]
+    roles = set(request["packages"])
+    assert request["cells"] == [registered_cell(request["packages"])]
     seed = request["arena_seed"]
     assert type(seed) is int
     assert seed == 20260913
@@ -119,7 +122,8 @@ def main():
     }
     assert not torch.cuda.is_initialized()
     out = {
-        "status": "PASS_ACTUAL_COMBINED_VALUE_PAIR_CPU_PREPARATION",
+        "status": ("PASS_ACTUAL_CERES_ENDPOINT_CPU_PREPARATION" if roles == {"Ceres100", "B100"}
+                   else "PASS_ACTUAL_COMBINED_VALUE_PAIR_CPU_PREPARATION"),
         "runtime": rt,
         "models": models,
         "panel": panel,
