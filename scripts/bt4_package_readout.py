@@ -15,6 +15,7 @@ import chess
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from chess_anti_engine.utils.game_log import read_game_log, settings_fingerprint
 from scripts.bt4_recipe_readout import pinned, read_json, require, same, summary
+from scripts import combined_corpus_train as combined
 
 
 def positive(value: Any) -> bool:
@@ -62,12 +63,31 @@ def panel_fens(ref: dict[str, Any], pairs: int) -> list[str]:
     return fens
 
 
+def verify_combined_training(contract: dict[str, Any]) -> None:
+    require(set(contract['training']) == {'candidate_training', 'reference_training'}, 'combined training fields')
+    combined.matched_training_pair({**contract['training'], 'candidate': contract['candidate'], 'reference': contract['reference']})
+    for key, value in {'pairs': 256, 'sims': 400, 'seed': 20260913, 'candidate_prior_temperature': 1.0,
+                       'reference_prior_temperature': 1.0}.items():
+        same(contract[key], value, 'registered combined ' + key)
+    for key, value in {'loop': 'rolling', 'compile': 'on', 'eval_max_batch': 4096, 'max_concurrent_games': 128}.items():
+        same(contract['execution'][key], value, 'combined execution ' + key)
+    for side in ('candidate', 'reference'):
+        receipt = read_json(contract['training'][side + '_training'])
+        same(contract['opening_panel'], receipt['opening_panel'], 'combined pretraining panel')
+
+
 def validate(contract: dict[str, Any]) -> None:
-    require(set(contract) == {'schema', 'profile', 'candidate', 'reference', 'candidate_prior_temperature',
+    fields = {'schema', 'profile', 'candidate', 'reference', 'candidate_prior_temperature',
         'reference_prior_temperature', 'sims', 'pairs', 'seed', 'settings', 'execution',
-        'opening_panel', 'bank', 'process', 'results_path'}, 'package contract fields')
+        'opening_panel', 'bank', 'process', 'results_path'}
+    if contract.get('profile') == combined.PROFILE:
+        fields.add('training')
+    require(set(contract) == fields, 'package contract fields')
     same(contract['schema'], 1, 'schema')
-    same(contract['profile'], 'explicit_checkpoint_prior_packages', 'profile')
+    if contract['profile'] == combined.PROFILE:
+        verify_combined_training(contract)
+    else:
+        same(contract['profile'], 'explicit_checkpoint_prior_packages', 'profile')
     for key in ('candidate_prior_temperature', 'reference_prior_temperature'):
         require(positive(contract[key]), 'positive finite per-side prior required')
     require(type(contract['sims']) is int and contract['sims'] > 0
@@ -223,9 +243,13 @@ def read_contract(path: Path, *, allow_timeout_preexec: bool = False) -> dict[st
         'pair_scores': [s/2 for s in totals], 'result': summary(totals),
         'command_observation': observation,
         'checkpoint_content_verified_now': True, 'launch_qualification_verified': False,
+        **({'combined_training_lineage_verified': True, 'training': contract['training']}
+           if contract['profile'] == combined.PROFILE else {}),
         'limitations': ['Fixed-N nominal paired interval for these packages; not optimal temperature or training-seed uncertainty.',
             'Pinned process record and command checked; runtime provenance, checkpoint/book bytes and full history consumed at launch require external evidence.',
-            'Legal panel history and endpoint order verified now; recipe labels and training lineage are declarations requiring separate qualification.']}
+            ('Combined training lineage and pretraining panel are verified; actual arena launch qualification remains separate.'
+             if contract['profile'] == combined.PROFILE else
+             'Legal panel history and endpoint order verified now; recipe labels and training lineage are declarations requiring separate qualification.')]}
 
 
 def main() -> None:
