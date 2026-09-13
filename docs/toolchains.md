@@ -772,3 +772,46 @@ Ceres profiles retain their directions and contracts. Future host commands suppl
 `TORCHINDUCTOR_COMPILE_THREADS=2` before Python; no active runtime is changed.
 Actual rewrite, qualification, prospective and completed-training pins remain
 prerequisites to a runnable endpoint; adding this profile launches no work.
+
+
+### Receipt-selected raw baseline eligibility
+
+`scripts/audit_raw_baseline.py` audits at most 192 closed raw shards selected by
+an immutable completed joint policy/native-WDL collection receipt. Its schema-1
+manifest contains `collection: {path, sha256}`, the registered `teacher_sha256`,
+and `sources: [{id, source_dir, manifest: {path, sha256}}]`. Source IDs must match
+the collection receipts; the source manifest pin binds its raw configuration.
+It verifies compressed source hashes and physical row counts, then streams rows
+through the existing deriver identity checks and phase0 uniform-d9 policy
+selector plus the existing consumed composite-d9 baseline validator. It does
+not select adaptive labels, repair repeated moves, or derive targets.
+
+Policy and composite-value rejection counters are separate and can overlap:
+the value validator also requires complete phase0 support. Diagnostics identify
+source namespace, shard, physical row, game and ply. Whole-shard exclusion counts
+include eligible rows lost as collateral. Rows without results remain excluded
+by the historical derivation rule; they do not alone disqualify a shard. Identity
+faults are fatal even on these rows. A completed eligibility report is neither
+sidecar-content qualification nor training admission.
+
+Run only after the exact completed receipt and source manifest pins are reviewed.
+An example bounded invocation (substitute qualified absolute paths and digest):
+
+```bash
+taskset -c 4,5 env CUDA_VISIBLE_DEVICES= OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 \
+  PYTHONPATH="$AUDIT_RUNTIME" timeout --signal=TERM --kill-after=30 1770 \
+  "$QUALIFIED_PYTHON" "$AUDIT_RUNTIME/scripts/audit_raw_baseline.py" \
+  --manifest "$AUDIT_MANIFEST" --expected-manifest-sha256 "$AUDIT_MANIFEST_SHA" \
+  --out "$FRESH_AUDIT_OUTPUT" --deadline-unix "$AUDIT_DEADLINE"
+```
+
+The deadline is capped internally at 1740 seconds, leaving the external cleanup
+reserve within 1800 seconds. The tool requires two numeric threads, at most two
+CPUs, hidden GPUs, 48 GiB available RAM at startup, 32 GiB during execution and
+150 GiB free disk. Rejected-row diagnostics stop at 512 MiB. The unchanged
+deriver import loads Torch transitively, but no model is constructed; use a
+qualified interpreter/native-extension environment without a small virtual-memory
+cap. Physical-memory guards remain active. Streaming bounds resident raw data
+without making a full-run throughput guarantee. Failures retain evidence and do
+not emit a completed eligibility report. No production audit is implied by the
+source fixtures.
