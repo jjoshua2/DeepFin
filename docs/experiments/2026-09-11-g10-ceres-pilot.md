@@ -3,7 +3,7 @@
 Current collection status: **5,866,975 G10 rows / 718 shards are qualified**
 across the original run06 increment, both complete next96 cohorts and both complete
 large cohorts, including policy and both value-logit heads. No further Ceres
-collection is queued. The completed science below still uses the original
+collection was queued at that completion; the bounded prefix launch below is a subsequent allocation. The completed science below still uses the original
 32,768-row first-four-shard sample. Collection does not enlarge those diagnostic
 results. The dated sections retain the actual execution history.
 
@@ -635,3 +635,39 @@ retains exact receipts. This is approximate-backend coverage, not native numeric
 parity, automatic training admission or a strength result. No more Ceres collection
 was queued; the GPU next went to the separately registered combined SF100 training
 arm. Ongoing SF 2+1 generation was preserved.
+
+## September 13: bounded batch-v3 prefix launched
+
+While the selected V100 value rewrite runs on CPU, a separate Ceres collection
+started at **18:49:43.663 UTC**. It selects the first 16 full shards of the
+already accepted `G10_common_batch_v3/run06_g10` cohort: **131,072 planned rows**
+out of 263,916 rows / 33 shards. This cohort is outside the qualified coverage
+above. The launch does not increase the current **5,866,975 rows / 718 shards**
+qualified count, enlarge the first-four-shard diagnostic, or admit training data.
+
+The unchanged `e9c1b74` fixed32 C3 collector banks full legal policy logits and
+both value heads. Approximate C3 I8 inference still does not establish native
+Ceres parity. Sixteen one-shard chunks have 180-second ceilings; the existing
+driver's minimum 30-second pauses are retained. Chunk ceilings plus pauses total
+3330 seconds inside the **3600-second inclusive outer limit**. The prior
+2,013,019-row collection took 6106.741 seconds; its linear prefix extrapolation
+is about 398 seconds, but sixteen session startups and 450 seconds of pauses
+make that an incomplete cost estimate, not measured prefix throughput.
+
+The command uses CPUs 2,3, two numeric threads, nice 19 / idle I/O, batch 32 and
+an 8-GiB ORT arena allowance. Startup available RAM is at least 48 GiB, ongoing
+headroom 32 GiB, and disk reserve 150 GiB; total device usage is sampled against
+8 GiB and each process RSS against 12 GiB. These are sampling guards, not hard
+quotas. The actual outer launch recorded 88,404,570,112 bytes available RAM and
+198,568,243,200 bytes free disk. No peak-memory saving is inferred.
+
+The parent owns terminal observation and waits for collector cleanup before
+training. Existing STOP handling can abort an active chunk; partial output and
+evidence remain, with no automatic retry or assumed resumability. All 16 range
+checks and driver default validation passed. An initial default rejected the
+missing output parent; creating only that empty directory resolved preparation
+before any inference attempt. Parent and independent preparation reviews passed.
+
+[Launch evidence](evidence/bounded-ceres-and-raw-audit-launched-20260913.json)
+preserves exact commands, plan/review pins and immutable start samples, together
+with the concurrent [raw eligibility audit](2026-09-13-bounded-raw-scale-labels.md#actual-baseline-eligibility-audit-launched). Neither operation has a completed result in this launch snapshot.

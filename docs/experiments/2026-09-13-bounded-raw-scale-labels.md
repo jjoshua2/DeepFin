@@ -41,3 +41,25 @@ The independent compact review reconciled every group receipt with the final lis
 Successful completion passed the frozen operator's resource guards; the startup samples above remain the available resource evidence, not measured peak RAM or GPU usage. This adds raw label coverage only: `training_admitted` and `backfill` are both false. The earlier snapshot's disjointness observation applies to that snapshot, not automatically to all later source closures. No further collection is queued by this record, and source generation and unrelated work remain unchanged.
 
 [Completion evidence](evidence/2026-09-13-bounded-raw-scale-label-completed.json) retains exact terminal, final/group receipt and independent-review pins, the saved reason string and its corrected interpretation. Parent and independent compact checks agree on the counts; neither repeated payload validation.
+
+## Actual baseline eligibility audit launched
+
+At **18:45:38.569 UTC**, the parent launched the receipt-selected CPU audit of
+the exact **184 shards / 1,527,153 rows** completed above. The tool merged in
+[PR #728](https://github.com/jjoshua2/DeepFin/pull/728) checks source hashes, row
+identity and the existing phase-zero uniform-d9 policy and consumed composite-d9
+value eligibility rules. It does not repair rows, select adaptive labels or
+produce training targets. See the [tool contract](../toolchains.md#receipt-selected-raw-baseline-eligibility).
+
+The frozen runtime is `1cacea59dff150673e41cfe0dd9b6cfb66edf6da`. The command
+uses CPUs 4,5, two numeric threads and a hidden GPU, with an **1800-second whole
+budget** (1740-second internal deadline; 1770-second TERM plus 30-second KILL).
+It requires 48 GiB available RAM at startup, 32 GiB during sampled checks,
+150 GiB free disk and at most 512 MiB of rejection diagnostics; no virtual-memory
+cap is imposed. The start sample recorded 88,646,012,928 bytes available RAM.
+
+Parent review and independent source/execution review passed before launch.
+[Compact launch evidence](evidence/bounded-ceres-and-raw-audit-launched-20260913.json)
+binds the actual start, exact selected manifest, command and reviews. This is a
+launch snapshot: preliminary counters are intentionally not a final eligibility
+result. Failure or a completed progress prefix would not admit a training corpus.
