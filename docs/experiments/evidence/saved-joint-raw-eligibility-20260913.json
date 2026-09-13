@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "status": "AUDIT_REGISTERED_NOT_EXECUTED",
+  "metadata_inventory": {
+    "totals": {
+      "all": {
+        "shards": 7141,
+        "rows": 59264839
+      },
+      "policy_only": {
+        "shards": 4270,
+        "rows": 35436868
+      },
+      "joint": {
+        "shards": 2871,
+        "rows": 23827971
+      },
+      "joint_already_covered": {
+        "shards": 292,
+        "rows": 2423512
+      },
+      "joint_candidate": {
+        "shards": 2579,
+        "rows": 21404459
+      },
+      "joint_contract_unclear": {
+        "shards": 0,
+        "rows": 0
+      }
+    },
+    "candidate_shards": 2579,
+    "candidate_raw_rows": 21404459,
+    "scope": "Only stable run06/run07 saved joint raw receipt indexes; exact original35M+new184 source/shard rosters excluded. No growing raw inventory or payload admission. Candidate rows are raw positions, not accepted derived rows.",
+    "limits": [
+      "Receipt contracts and disjoint roster establish potential coverage only. Source files/sidecars not rehashed or walked.",
+      "Any candidate requires bounded baseline eligibility audit and original physical identity validation before derivation, then exact adapter admission.",
+      "No new inference, value blend or derivation selected.",
+      "Not a global search of every historical derived artifact: exact exclusion is the actual accepted35M corpus and new184-shard derived/B100 cohort. Other unadmitted historical experiments are not claimed absent."
+    ]
+  },
+  "selected_shards": 512,
+  "selected_raw_rows": 4249935,
+  "selection_rule": [
+    {
+      "source_id": "run06_g10",
+      "first": 384
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "first": 128
+    }
+  ],
+  "pins": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/remaining_raw_joint_inventory_v1/assessment.json",
+      "sha256": "0072af4c66d81217c154097bb4fa374782df17b0dc3c6f75f78edd63bd668f8d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/remaining_raw_joint_inventory_v1/candidate_receipts.jsonl",
+      "sha256": "9b741afad298028cd4aac3d6a8c2ffa84b86ac8a33ce9beff0f2e4f4067f4249"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/selection.json",
+      "sha256": "2f88e85f624598c93a6e22fd9d37476b72240f7c7d41f2dc7a37f3132bb68345"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/disjointness_v1/assessment.json",
+      "sha256": "b524ecf7405931e1903fcd300e983c3379db19f2b63355ea91b4331600682c9e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/selection.final.json",
+      "sha256": "771c331c15f5ab8791ecf1afa904899949fb4d1a086c76dc19ca332f0259493d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/manifest.final.json",
+      "sha256": "32bcd2d9c3a524e4c7b9ac2ddeaf7a278d5fed7c743dff12132b69f719e40990"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/actual_metadata_selection.json",
+      "sha256": "4fd3ad3a33d242fb92555106d874cd3bbdfdd0c44960cf62607e44f812a67658"
+    }
+  ],
+  "resource_bounds": {
+    "seconds": 7200,
+    "cpu": [
+      8,
+      9
+    ],
+    "threads": 2,
+    "memory_available_gib": [
+      48,
+      32
+    ],
+    "disk_floor_gib": 150,
+    "metadata_output_cap_gib": 1,
+    "address_space_cap": null
+  },
+  "no_eligibility_or_training_admission_claim": true,
+  "actual_metadata_selection": "PASS512/4249935; explicit per-source snapshot IDs, original draft preserved. Receipt membership only, not raw eligibility."
+}

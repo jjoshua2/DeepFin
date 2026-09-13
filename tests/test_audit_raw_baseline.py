@@ -148,3 +148,85 @@ def test_no_result_rejection_does_not_discard_valid_shard_rows(tmp_path: Path) -
     assert result['counts']['no_result_rows'] == 1
     assert result['counts']['whole_shard_retained_rows'] == 1
     assert result['counts']['whole_shard_collateral_eligible_rows'] == 0
+
+
+def saved_manifest(tmp_path: Path) -> dict[str, Any]:
+    m = manifest(tmp_path, [row()])
+    old = json.loads(Path(m.pop('collection')['path']).read_text())
+    receipt = old['receipts'][0]
+    snapshot = tmp_path / 'receipts.jsonl'
+    snapshot.write_text(json.dumps(receipt) + '\n')
+    selected = {'schema': 1, 'kind': 'SAVED_JOINT_RECEIPT_SELECTION',
+        'selected_shards': 1, 'selected_raw_rows': 1, 'receipts': [receipt],
+        'receipt_snapshots': [{'source_id': 'run06', 'path': str(snapshot),
+            'sha256': hashlib.sha256(snapshot.read_bytes()).hexdigest()}]}
+    m['receipt_selection'] = put(tmp_path / 'selected.json', selected)
+    return m
+
+
+def test_saved_receipt_membership_keeps_physical_source_identity(tmp_path: Path) -> None:
+    m = saved_manifest(tmp_path)
+    entries = tool.selection(m, lambda: None, max_shards=512)
+    assert entries[0]['source_shard'] == 'w00-00000.jsonl.gz'
+    assert entries[0]['rows'] == 1
+    assert len(entries[0]['source_namespace']) == 64
+    result = tool.audit(m, tmp_path / 'audit', lambda: None, max_shards=512)
+    assert result['counts']['eligible_rows'] == 1
+    assert result['shards'][0]['source_namespace'] == entries[0]['source_namespace']
+
+
+@pytest.mark.parametrize('fault', ['tamper', 'missing', 'duplicate', 'snapshot_duplicate', 'snapshot_hash', 'source', 'both_routes'])
+def test_saved_receipt_selection_refuses_unproven_members(tmp_path: Path, fault: str) -> None:
+    m = saved_manifest(tmp_path)
+    path = Path(m['receipt_selection']['path'])
+    s = json.loads(path.read_text())
+    snapshot = Path(s['receipt_snapshots'][0]['path'])
+    if fault == 'tamper':
+        s['receipts'][0]['source_sha256'] = 'f' * 64
+    elif fault == 'missing':
+        s['receipts'][0]['source_shard'] = 'w00-99999.jsonl.gz'
+    elif fault == 'duplicate':
+        s['receipts'] *= 2
+        s['selected_shards'] = s['selected_raw_rows'] = 2
+    elif fault == 'snapshot_duplicate':
+        snapshot.write_text(snapshot.read_text() * 2)
+        s['receipt_snapshots'][0]['sha256'] = hashlib.sha256(snapshot.read_bytes()).hexdigest()
+    elif fault == 'snapshot_hash':
+        snapshot.write_text(snapshot.read_text() + '\n')
+    elif fault == 'source':
+        s['receipt_snapshots'][0]['source_id'] = 'other'
+    else:
+        m['collection'] = {'path': '/never-read', 'sha256': '0' * 64}
+    m['receipt_selection'] = put(path, s)
+    with pytest.raises(ValueError, match=r'snapshot|duplicate|route'):
+        tool.selection(m, lambda: None, max_shards=512)
+
+
+def test_default_limits_and_legacy_receipt_route_preserved(tmp_path: Path) -> None:
+    args = tool.parse_args(['--manifest', '/m', '--expected-manifest-sha256', '0' * 64,
+        '--out', '/o', '--deadline-unix', '1000000'])
+    assert args.max_shards == 192
+    assert args.max_seconds == 1740
+    m = manifest(tmp_path, [row()])
+    assert len(tool.selection(m, lambda: None)) == 1
+    with pytest.raises(ValueError, match='positive max_shards'):
+        tool.selection(m, lambda: None, max_shards=0)
+
+
+@pytest.mark.parametrize('value', ['0', '-1', 'nan', 'inf', '-inf'])
+def test_nonpositive_or_nonfinite_seconds_refused(value: str) -> None:
+    with pytest.raises(ValueError, match='positive finite'):
+        tool.positive_seconds(value)
+
+
+def test_legacy_default_shard_ceiling_and_explicit_larger_bound(tmp_path: Path) -> None:
+    m = manifest(tmp_path, [row()])
+    path = Path(m['collection']['path'])
+    c = json.loads(path.read_text())
+    first = c['receipts'][0]
+    c['receipts'] = [{**first, 'source_shard': f'w00-{i:05d}.jsonl.gz'} for i in range(193)]
+    c['new_shards'] = c['new_rows'] = 193
+    m['collection'] = put(path, c)
+    with pytest.raises(ValueError, match='receipt count'):
+        tool.selection(m, lambda: None)
+    assert len(tool.selection(m, lambda: None, max_shards=512)) == 193
