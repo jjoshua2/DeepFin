@@ -1,8 +1,8 @@
 # Matched value transfer on original plus G10 data
 
-Status: SF100 completed its matched epoch and actual staging/schedule verification.
-The V50 host invocation launched on September 13 at 09:50:27 UTC. V50 completion
-and the preregistered comparison remain pending; no playing-strength result exists.
+Status: both matched training epochs and actual completion verification passed.
+The CPU pair package passed, and the fixed 512-game arena host command launched
+on September 13 at 14:01:49 UTC. Evaluation results remain pending.
 
 ## Question and allocation
 
@@ -325,3 +325,16 @@ After this genuine predecessor completion, one V50 default command validation pa
 The parent launched the actual V50 host command at **09:50:27.454253 UTC** (exec 48861, sole observer 424). This is a host-invocation snapshot, not an observed optimizer step or completed V50 epoch. Launch-time checks reported approximately 83 GiB available memory, zero swap use, 195 GiB free disk and no GPU compute applications. The existing owned lease, 48 GiB startup/32 GiB ongoing available-memory floors, 150 GiB disk reserve, 21,600-second training cap and 27,000-second inclusive coordinator allowance remain unchanged.
 
 [Compact completed/launch evidence](evidence/combined35m-sf100-completed-v50-launched-20260913.json) preserves both independent reviews, the actual SF100 receipts and aggregate training metrics, exact V50 default argv and immutable launch snapshot. No models, active training outputs or corpus arrays were read for publication. The fixed 256-pair/512-game, 400-simulation evaluation on the precommitted seed 20260913 panel remains pending; no score, Elo, promotion or additional training allocation is claimed.
+
+
+## V50 completed; fixed comparison host launched
+
+V50 completed with exit 0 after **14,323.275 seconds** of host time, including **14,248.789 seconds** charged to training and **71.323 seconds** of completion verification. Receipt `3a8294c3…` binds checkpoint `6d36f93d…`. Its matched epoch contains 35,314,577 rows, 4,321 shards, 21 roots, 68,974 updates and 784 windows, with 70 updates in the final window. The actual physical schedule `16aef536…` and verified staging match the accepted V50 contract; both arms retain canonical schedule `ca3922c4…`, initialization/schedule seed 101 and two planner/two loader workers.
+
+Independent completed-metadata review passed (`1d106a4d…`). The same three historical `valid_control=false` caveats remain: no held-out purity receipt, committed rather than fresh live configuration premises, and deliberate game-epoch sampling instead of the historical replacement sampler. Both matched training completions establish readiness for the registered comparison, not playing strength. Checkpoint identities here are inherited from the completed receipts; publication did not reload or hash models.
+
+The actual CPU pair preparation passed in **68.705 seconds** of host time (**64.320 seconds** in the CPU stage). It checked the two completed checkpoints, matching **61,444,448-parameter** architectures, settings and all 256 regenerated opening histories against the immutable panel; CUDA remained uninitialized. Prepared contract `a00afe1f…`, manifest `9652fd3e…` and independent review `cb0a0fe1…` bind this admission. The adapter is frozen at `7e47ef0cc…` in its isolated runtime; the qualified historical arena runtime is unchanged.
+
+The parent launched the arena host command at **2026-09-13 14:01:49.686701 UTC** (exec 81597, sole observer 444). This records the actual host invocation, not a completed game or an interim score. The fixed comparison is **V50 versus SF100, 256 swapped pairs / 512 games, 400 simulations**, opening seed **20260913**, priors 1, no tablebases, maximum 300 plies, rolling 128 and batch 4096. The stage allowance is 7,200 seconds with the existing 7,140-second internal arena limit; the enclosing allowance is 12,030 seconds including cleanup. Parent prelaunch observations were approximately 83 GiB available memory, zero swap use, 193 GiB free disk and no GPU compute applications. These are launch-time observations, not peak or current resource claims.
+
+[Compact completion and launch evidence](evidence/combined35m-v50-completed-arena-launched-20260913.json) preserves both independent reviews, the actual CPU package, final manifest and immutable host launch command. No active job, game bank, corpus array or model was read for publication. No score, Elo, promotion, extra games or new training allocation is claimed.
