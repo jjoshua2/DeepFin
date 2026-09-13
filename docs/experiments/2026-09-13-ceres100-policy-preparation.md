@@ -1,6 +1,6 @@
 # Ceres100 policy endpoint preparation
 
-Registered September 13, 2026. Status: corrected v2 CPU materialization launched at 06:13:33 UTC; no completed endpoint corpus, training or evaluation result.
+Registered September 13, 2026. Status: full Ceres100 materialization and metadata corpus qualification completed; no endpoint training or evaluation is allocated.
 
 The missing pure-Ceres policy endpoint is a substantive comparison with the previous equal BT4/Ceres policy mixture. CeresB50 trained on the original 18,910,484 rows with original SF values and scored +12.22 Elo, nominal 95% paired interval [-22.88, +47.57], against B100. That unresolved result does not establish whether the BT4 contribution helps or hurts. No completed pure-Ceres policy student appears in the inspected experiment records. The separate Ceres value mixture retained B100 policy and does not answer this question. See the [completed Ceres record](2026-09-11-ceres-weighted-bootstrap.md).
 
@@ -23,3 +23,21 @@ The first actual preparation attempt failed after 2.363 seconds at 06:09:37 UTC,
 The corrected preparation adds four existing native-module symlinks to that isolated runtime. All corresponding C/header sources match both the qualified original materializer and the resolved binary-owner worktrees. Actual import resolution passed once in 2.032 seconds, importing the real producer and admission modules without a corpus admission, payload read or model load. Native binary hashes are now explicit input pins. No producer bytes, target mathematics, environment packages or active runtime were changed or rebuilt.
 
 The fresh v2 plan is `ceres100_policy_preparation_v2/plan.json`, SHA256 `1ccd6f8d5d224858c0cfbfd994b27f2ab5a6ae2561b8328f5f6cf7a9cb9f700a`. Its prepared command has a 25,197-second remaining inclusive allocation (25,167 seconds to TERM plus 30 seconds to KILL); three seconds are charged against the original seven-hour allocation for the first attempt. The separate import-only preparation check is recorded as validation. Source, teacher manifest, batch128, CPU6,7, memory/disk/output guards and owned cleanup remain unchanged. After independent v2 review PASS `c34ff502…`, the parent launched the corrected preparation at 06:13:33.883234 UTC (exec77576, sole observer391). This is the actual command-launch snapshot, not a completed producer or qualified corpus. [Compact evidence](evidence/ceres100-preparation-launch-20260913.json) preserves the original failure, successful import-only validation, fresh plan and actual launch pins. No training or evaluation is allocated.
+
+## Full endpoint corpus completed and qualified
+
+The corrected producer completed all **18,910,484 rows in 2,309 shards** at 09:08:37 UTC on September 13, after 10,503.777 seconds (2 hours 55 minutes). The existing metadata qualifier then passed at 09:33:32 UTC: 264.061 seconds for the enclosing command and 261.718 seconds inside the qualifier. Its status is `PASS_REGISTERED_CORPUS_QUALIFICATION`. It checked actual layouts, recipe attributes and stable producer-bound storage identities, inheriting the completed producer's payload/feed/copy checks without decoding the corpus again. [Compact completed evidence](evidence/ceres100-completed-preparation-20260913.json) retains all aggregate producer metrics, complete source/teacher/recipe pins and actual terminal/qualification/review references.
+
+Only `policy_target` changed. All 16 nonpolicy arrays remain unchanged, including original SF-derived `search_wdl` values. Weights are exactly BT4=0/Ceres=1, both recorded teacher temperatures are 0.5, and the original saved teacher profile and provenance remain fixed.
+
+| Stored-policy diagnostic | Full-corpus result |
+| --- | ---: |
+| Maximum stored mass error | 0.00042724609375 |
+| Maximum stored total variation | 0.0002075328771593776 |
+| Positive legal move entries rounded to zero in float16 | 1,495 |
+
+The support-loss count is **move entries, not rows**; the summary does not supply an affected-row count. The stored-error bounds passed the registered qualifier. No rounding clamp or target repair was introduced.
+
+The commands reported maximum RSS of 994,156 KiB for materialization and 383,120 KiB for qualification. These are observed command resource measurements, not host-wide peaks or future guarantees. The 2-hour-55-minute materialization is faster than the earlier 5.57-hour B50 observation, but this was not a controlled throughput benchmark: cache state and concurrent I/O differ. The runtime retained the original batch128 producer bytes and did **not** adopt PR707. The initial import failure, subsequent qualified native resolution and original launch snapshots above remain preserved.
+
+Independent completed review passed. This milestone supplies a qualified policy corpus, not a completed prospective training schedule, trained endpoint or playing result. Training/evaluation allocation still follows the current matched 35M value results; no new GPU job is queued by this completion.
