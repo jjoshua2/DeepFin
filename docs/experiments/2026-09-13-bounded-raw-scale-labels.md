@@ -196,3 +196,16 @@ The correction supplies `-c 8,9`. One existing non-executing metadata validation
 The frozen plan `5027eb3b…` uses the existing global B100 policy recipe: BT4 weight **1.0**, temperature **0.5**, for the same **1,517,925 rows / 186 shards**. SF-derived values remain unchanged, and the separately adapted native-WDL banks remain preserved. This stage performs no new inference or value mixture. The operating runtime remains `6b91f587…`.
 
 Bounds retain CPUs **8–9**, two threads, nice 19 and idle I/O, hidden GPU, **4-GiB address space**, **4-GiB aggregate allocated output**, **48/32-GiB startup/running available RAM**, and **158/150-GiB startup/running free disk**. Startup includes 4 GiB for outputs and 4 GiB for other writers. The original one-hour allocation includes a 300-second qualification/cleanup reserve; existing deadline, STOP and owned-process cleanup remain in effect. No B100 completion, downstream consumer admission or training result is claimed.
+
+
+## B100 materialization completed; physical source disjointness established
+
+The corrected B100 invocation completed with **exit 0 in 420.809 seconds**, ending at **2026-09-13T22:36:14.137501+00:00**. Its supervisor recorded **418.500 seconds** and `COMPLETE_ALL2_B100_POLICY_NOT_VALUE_OR_TRAINING_ADMISSION`. Both source products completed: **1,006,190 run06 rows / 123 shards** and **511,735 run07 rows / 63 shards**, totaling **1,517,925 rows / 186 shards**. The earlier 0.032895-second pre-writer taskset failure remains preserved; the successful retry finished within the original deadline.
+
+Independent completion review `6b087e72…` passed against the actual commands, recipe and summary bindings. The global B100 weight **1.0** / temperature **0.5** policy recipe preserves SF-derived values and the 16 non-policy arrays by the unchanged writer’s copy-and-rewrite construction. This compact review did not independently rehash those payloads. The separately adapted native-WDL banks remain preserved, with no new teacher evaluation.
+
+Metadata review `b524ecf7…` establishes **1,517,925 additional source-qualified physical rows** relative to the existing **35,314,577-row** selection. The new **184 raw source/config-qualified shards** intersect **zero** of the **1,990 raw shards** in its 20 G10 cohort rosters; the original 18,910,484 rows have the separately qualified run03 lineage. Retained subsets of these disjoint raw shards cannot share a source-qualified physical row. This uses the saved source identities and qualified roster, retaining the historical source-SHA limitation; it does not invent a new historical per-shard attestation.
+
+The potential combined count is **36,832,502 rows if subsequently admitted**. Physical-source disjointness does not establish unique chess positions, unique histories, independent games or statistical independence. No payload or game-column scan was repeated. The completed materialization and metadata disjointness proof do **not** confer union/training admission, launch a training run or demonstrate strength.
+
+[Compact completion and disjointness evidence](evidence/filtered-b100-completed-20260913.json) records the actual terminal, output summary bindings and both review identities. The next status is potential expansion eligibility with consumer/training admission still pending.
