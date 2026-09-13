@@ -3,6 +3,7 @@
 Start here for experiment planning and readouts. [Project guidance](../../CLAUDE.md)
 holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.
+For future bootstrap choices, see the [adaptive decision policy](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#september-13-adaptive-decisions-for-the-remaining-bootstrap-research): registered result classification and the next research decision are separate.
 
 ## Records
 
@@ -28,7 +29,7 @@ measurements support which claims.
 | [Bootstrap storage capacity](2026-09-08-bootstrap-storage-capacity.md) | Ongoing SSD-to-external transfer and verified reclamation for 100M; G20T1/G20T05/G50T05 reclamation complete; run04/run05 external copies verified and 870 closed shards reclaimed; metadata and unlisted tails retained; legacy E0 archive verified and 2,309 cold shard directories reclaimed; Tactical100 archive verified and 2,309 exact shards reclaimed; both summaries/checkpoints retained; Downside300 archive verified and 2,309 exact shards reclaimed; root summaries and all experiment artifacts retained |
 | [Value collection and horizon readiness](2026-09-08-value-collection-and-horizon-readiness.md) | Full 18.91M WDL bank and V50 training complete; V50 arena started, no playing result |
 | [B100 tactical policy readiness](2026-09-08-b100-tactical-policy-readiness.md) | Producer/admission merged; corrected bounded preparation independently reviewed; V50-first schedule, no tactical rewrite/training |
-| [Next value and policy contrasts](2026-09-08-bootstrap-next-value-and-policy-contrasts.md) | B100V50 training and realized schedule complete; registered B100 arena started, no playing result |
+| [Next value and policy contrasts](2026-09-08-bootstrap-next-value-and-policy-contrasts.md) | September 13 adaptive decision policy: retain registered result labels; estimates, uncertainty, mechanism and cost guide further tests or provisional use; V100 remains selected |
 | [SF-anchored value bootstrap](2026-09-08-sf-anchored-value-bootstrap.md) | Matched 128-row WDL diagnostic complete; B100V50 is the first value contrast |
 | [Ceres teacher readiness](2026-09-08-ceres-teacher-readiness.md) | C3 CPU/sample evidence retained; approximate fixed32 policy + primary-value collector implemented, 8,192-row integrated cost pilot prepared, not launched |
 | [Faster recipe matches](2026-09-08-faster-recipe-matches.md) | First prospective SPRT plus fixed deep probe completed in46m35s; speculative scheduling bottleneck identified; no controlled speedup claim |
