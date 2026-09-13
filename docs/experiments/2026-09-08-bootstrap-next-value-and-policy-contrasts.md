@@ -1,11 +1,58 @@
 # Next bootstrap contrasts: value first, selective SF policy use
 
 September 8, 2026 local time; the dose analysis completed September 9 UTC.
+The September 13 adaptive-decision update below governs future research choices;
+the dated launch and result passages retain their historical meaning.
 **September 9 update: B100V50 training and realized schedule verification are
 complete. Its registered B100 arena has started; no playing result is reported.** The completed [SoftSF10/B100 result](2026-09-08-soft-sf-qualified-training-sample.md#completed-softsf10-versus-b100-result)
 favors B100 at both budgets. This motivates separating useful SF information from
 forcing the whole policy to imitate SF rankings. The priorities below are research
 choices, not a launched queue or a claim that their targets improve play.
+
+## September 13: adaptive decisions for the remaining bootstrap research
+
+The user clarified the prospective selection policy: a confidence interval need
+not exclude zero before a recipe earns another experiment or provisional use.
+Keep two statements distinct in each readout: **the result under its registered
+rule**, and **the next research decision with its rationale**. Historical
+“unresolved” classifications remain unresolved; they do not prohibit later
+adaptive work. A provisional choice is a working decision, not a new claim that
+superiority has been established.
+
+Choose the next comparison or working recipe using the estimated effect and its
+uncertainty, plausible mechanism, evidence quality, relevance to the intended
+bootstrap, and the cost of testing or being wrong. Neither statistical
+significance nor a positive point estimate automatically promotes a recipe.
+An interval crossing zero also does not automatically reject it. Invalid or
+mismatched evidence still needs correction; this policy does not make it valid.
+
+Promising changes to different parts of the recipe can earn a combined test even
+when their individual matches were inconclusive. For example, the
+[SF-downside policy result](2026-09-12-sf-allmove-downside.md) and
+[Ceres policy-mixture result](2026-09-11-ceres-weighted-bootstrap.md) leave policy
+alternatives available alongside the
+[35M value-mixture evidence](2026-09-13-combined35m-value-transfer.md).
+A policy/value combination may be useful to compare directly with the current
+working recipe; individual Elo estimates are not additive and shared-network
+interactions remain an empirical question. This is an option, not a mandatory
+sequence or a selection of mixture weights.
+
+The [V100-versus-V50 contrast](2026-09-13-native-bt4-value-endpoint.md) remains the
+selected next value question. Its active frozen registration, corpus, budget and
+result-classification rule are unchanged. After its result, choose between a
+promising policy/value mixture, a different substantive contrast, or provisional
+use of the best-supported package based on the evidence then available. Existing
+historical decisions to retain B100 or V50 record those earlier decisions; they
+are not permanent significance gates for subsequent research.
+
+Spend additional games when reducing match uncertainty could change an actionable
+decision enough to justify the cost. Do not automatically extend every unresolved
+match or chase an interval until it excludes zero. A new seed, relevant-scale
+transfer, or a different recipe can answer a more valuable question than a more
+precise score on the same checkpoints. Preserve completed banks and report any
+follow-up as its own planned comparison; do not reinterpret a frozen stopping
+rule after inspecting its outcome. Continue selecting useful bounded work within
+the existing research authorization without seeking approval for each test.
 
 ## Ongoing storage work supports the whole roadmap
 
