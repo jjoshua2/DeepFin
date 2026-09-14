@@ -28,7 +28,7 @@ def main():
     work = Path(plan['work_root'])
     state = Path(plan['state'])
     owned.require(not work.exists() and not work.is_symlink() and not state.exists() and not state.is_symlink(), 'fresh task roots required')
-    owned.require(os.sched_getaffinity(0) == {2, 3}, 'CPU2,3 allocation required')
+    owned.require(os.sched_getaffinity(0) == {10, 11}, 'CPU10,11 allocation required')
     owned.require(all(os.environ.get(k) == v for k, v in plan['environment'].items()), 'isolated environment')
     memory.require_available(48)
     owned.require(shutil.disk_usage(work.parent).free >= 162 * 1024**3, '162GiB startup reserve')
