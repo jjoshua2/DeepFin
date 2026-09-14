@@ -579,3 +579,44 @@ Independent completion review reconciled all 2309 intent/removal pairs and
 confirmed the two retained summary identities and unchanged archive stat. The
 original Ceres100 payload is now cold storage; its experiment/checkpoint evidence
 remains online. No corpus or archive payload was rescanned for publication.
+
+
+## September 13: SoftSF10 copy-only archive launched
+
+The parent invoked the reviewed SoftSF10 archive operation at **2026-09-13T23:58:01.657051+00:00**
+(exec **8341**, sole observer **881**). Its wrapper recorded
+`STARTED_COPY_ONLY` at **2026-09-13T23:58:01.760049+00:00**, with the exact helper argv
+and the same absolute deadline. These saved receipts establish invocation;
+archive completion and external verification remain pending at this snapshot.
+
+The source is `data/nnue_derived/armB/qtemp_0.0005_hist_20m_softsf_cp10`,
+the completed **18,910,484-row / 2,309-shard** SoftSF10 policy product. The
+planned external archive is
+`/mnt/e/chess_derived_archive_20260908/SoftSF10_v1/qtemp_0.0005_hist_20m_softsf_cp10.tar`.
+The entire source remains online during copy. Both root summaries, all runs,
+checkpoints, raw/teacher inputs and neighboring partial directories are protected;
+no source deletion or reclaimed SSD space is claimed.
+
+Plan `caa1d8ef…`, command `0d19b75a…` and independent review `9f723f84…`
+bind the literal adaptation of the completed Ceres100 copy/verify workflow.
+The only behavioral limit change is the staging/tar ceiling from 14 to **12 GiB**.
+The saved metadata census estimated a **10.015-GiB tar** and **11.628 GiB** of
+allocated shard storage; neither is an actual completed archive size or space saving.
+No census or payload hashing was repeated for this launch publication.
+
+The allocation is **three hours inclusive**, CPUs **0–1**, two numerical threads,
+nice 19 and idle I/O, hidden GPU, **2-GiB per-process address space** and a
+**48-GiB available-RAM floor**. Startup requires **167.2 GiB free SSD**:
+154 GiB running floor (150 GiB reserve plus 4 GiB for other writers), plus
+13.2 GiB including the tar allowance and 10% margin. The external reserve is
+24 GiB. Transfer/checksum pacing remains 16/32 MiB per second; periodic guards
+are not hard RAM or disk quotas. The existing owned cleanup shares the original
+10,800-second deadline and preserves partial state on failure.
+
+The saved host preparation observed writable E: through 9p and no visible scoped
+source consumers; opaque PID30 and other-user processes were explicitly disclosed.
+That copy-only observation is not removal qualification. The initial sandbox mount
+check failed on its read-only view before the host check succeeded.
+[Compact launch evidence](evidence/softsf10-archive-launched-20260913.json)
+retains the actual invocation and frozen bindings. Any later reclamation requires
+verified external completion and a fresh exact-shard assessment.
