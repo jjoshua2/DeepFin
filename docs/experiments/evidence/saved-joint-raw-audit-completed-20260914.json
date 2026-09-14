@@ -1,0 +1,87 @@
+{
+  "status": "COMPLETED_AUDIT_NOT_DERIVATION_OR_TRAINING_ADMISSION",
+  "review": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/independent_completed_review.json",
+    "sha256": "435043af0ca2a6f117478c860c828536a82d401ac520d407009ea702395d9d24"
+  },
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/selected/audit/complete.json": "f87827d750947b19de75c1fd909f67f6a1342d8e34b54fd10c2ca0fc2e12fcb6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/selection.final.json": "771c331c15f5ab8791ecf1afa904899949fb4d1a086c76dc19ca332f0259493d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/manifest.final.json": "32bcd2d9c3a524e4c7b9ac2ddeaf7a278d5fed7c743dff12132b69f719e40990",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/outer_terminal.json": "2474a7fc932efe58104b369f7372d09041e99ae7befcb5ddf1f5c2e0a399d131",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/plan.json": "a138c9e7517e063aafbe9bbd56d08b91a46eed1a3ab7165541a05856737deaf6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/command.txt": "8a38a750d06ea8b1f68ff349e600516955923d19898aa268c9d0f9f9c0a30ff8",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/operator_v1/selected/audit/rejected.jsonl": "971d749f4f98b285a2cb009c5cea1027b060df29a85357123b55371c6fc34aa6"
+  },
+  "outer_terminal": {
+    "returncode": 0,
+    "ended_unix": 1789344542.272221,
+    "elapsed_seconds": 3784.6375851631165
+  },
+  "counts": {
+    "physical_rows": 4249935,
+    "eligible_rows": 4219426,
+    "whole_shard_collateral_eligible_rows": 337981,
+    "whole_shard_retained_rows": 3881445,
+    "no_result_rows": 30421,
+    "policy_rejected_rows": 88,
+    "value_rejected_rows": 90,
+    "required_baseline_rejected_rows": 88
+  },
+  "sources": [
+    {
+      "source_id": "run06_g10",
+      "counts": {
+        "physical_rows": 3187400,
+        "eligible_rows": 3165724,
+        "whole_shard_collateral_eligible_rows": 205832,
+        "whole_shard_retained_rows": 2959892,
+        "no_result_rows": 21622,
+        "policy_rejected_rows": 54,
+        "value_rejected_rows": 56,
+        "required_baseline_rejected_rows": 54
+      },
+      "selection": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/run06_g10.selection.json",
+        "sha256": "1e4990cb181a21a3ba2eaef3de585cb98de7be3d90f46cc7792cb6b34831c128"
+      },
+      "exclusion_manifest_draft": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/run06_g10.exclusions.draft.json",
+        "sha256": "2aa5af8a47de497591232041b414f5d2ed97dd227848ff8202235c5ca6fbbbbf"
+      },
+      "loadable_by_current_loader": false
+    },
+    {
+      "source_id": "run07_g10_companion4",
+      "counts": {
+        "physical_rows": 1062535,
+        "eligible_rows": 1053702,
+        "whole_shard_collateral_eligible_rows": 132149,
+        "whole_shard_retained_rows": 921553,
+        "no_result_rows": 8799,
+        "policy_rejected_rows": 34,
+        "value_rejected_rows": 34,
+        "required_baseline_rejected_rows": 34
+      },
+      "selection": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/run07_g10_companion4.selection.json",
+        "sha256": "8bbee5933bbeb3432ba4139eaa250c57a8a85bbe5fe04cd6ca877af51862902d"
+      },
+      "exclusion_manifest_draft": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/run07_g10_companion4.exclusions.draft.json",
+        "sha256": "985151f2e495302b5068a7d0f4cb4044041326f86fd6512ecac6c3cefb6dc5b8"
+      },
+      "loadable_by_current_loader": false
+    }
+  ],
+  "required_reasons": {
+    "phase0_support:CorpusIntegrityError / invalid_roster": 87,
+    "None / invalid_roster": 1
+  },
+  "limitations": [
+    "Current baseline_row_exclusions loader accepts the legacy collection route only, at most 192 shards; these receipt-selection exclusion drafts are not yet loadable.",
+    "No raw payload or model recheck during independent completion review.",
+    "Physical source rows, not unique positions or independent games.",
+    "No derivation or training admission allocated."
+  ]
+}

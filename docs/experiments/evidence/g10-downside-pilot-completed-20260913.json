@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "status": "COMPLETED_SELECTED_G10_DOWNSIDE_PILOT_NOT_TRAINING",
+  "actual": {
+    "rows": 8192,
+    "shards": 1,
+    "raw_rows_decoded": 8243,
+    "changed_rows": 4953,
+    "changed_fraction": 0.6046142578125,
+    "categories": {
+      "mate_domain_unchanged": 2089,
+      "ordinary_downside": 6103
+    },
+    "outer_seconds": 9.889016151428223,
+    "stage_seconds": 8.004895883001154,
+    "producer_seconds": 6.435029575994122,
+    "copied_file_proofs": 275,
+    "nonpolicy_arrays": 16,
+    "stored_mass_error_max": 0.000400543212890625,
+    "stored_TV_error_max": 0.00018628156469170117,
+    "stored_relative_error_max": 0.19999947551470187,
+    "stored_support_losses": 0
+  },
+  "limitations": [
+    "One shard proves pilot only, not full-corpus throughput or training admission",
+    "raw_limit266491 and no-result4400 are inherited full-source counts, not pilot read/drop counts",
+    "Changed rows are stored policy differences, not removed rows/mass",
+    "No payload/copied-file/raw reread or hash, no model/test/job execution"
+  ],
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_downside_selected_preparation_v1/pilot_v1/complete.json": "8b15232ee8ad27900e8297bb214f936618fe0eb2fd9667e02c8c85295d513198",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_downside_selected_preparation_v1/pilot_v1/outer_terminal.json": "0ede9b0df2d21ee553608badd47cfa05a3d7d83e1095aa101bb752fd5fe54742",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_downside_selected_preparation_v1/pilot_v1/plan.json": "625efa7bb80d4ec5467f46af5302b27beec08620a8dcc45cf4b9b68086cca864",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_downside_selected_preparation_v1/pilot_v1/independent_review.json": "53e24fd007c742c57ddd3e4b4b3b3ef96a6e1fbbb4ac725631c0608cbc005747",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_downside_selected_preparation_v1/pilot_v1/independent_completed_review.json": "3e224b89c3ff727b1c19f128e35b472ff6a6655fa160bdb66f169379ce86bd4d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_downside_selected_preparation_v1/pilot_v1/selected/output/bt4_sf_downside_policy_summary.json": "f1a4a7ef02f1cf4adc561602fcb90c1cca3b71eeb9529a78022ba8f63249e26c"
+  },
+  "summary": {
+    "algorithm": "stored-b100-allmove-sf-gapgt300-weight0.5-ordinary-v1",
+    "categories": {
+      "mate_domain_unchanged": 2089,
+      "ordinary_downside": 6103
+    },
+    "changed_rows": 4953,
+    "elapsed_seconds": 6.435029575994122,
+    "full_source_rows": 262079,
+    "history_lineage": "Inherited original input_key_verified/source x; no fresh history re-encoding.",
+    "join": "pinned-physical-provenance-phase0-full-d9-v1",
+    "kind": "bt4_sf_allmove_downside",
+    "limitations": "Original historical control/provenance limitations unchanged; no valid-control promotion, inference, training or strength claim.",
+    "mutated_arrays": [
+      "policy_target"
+    ],
+    "nonpolicy_arrays_copied": 16,
+    "pilot_max_raw_rows": 32768,
+    "pilot_only": true,
+    "raw_dir": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10",
+    "raw_history_keys_sha256_in_emitted_order": "cb16ee79caa1b5dd61a87f33a99bc37b2d783ecea3f73bc19941c5a64db1a8dd",
+    "raw_limit": 266491,
+    "raw_limit_semantics": "inherited source derivation count, not newly decoded rows",
+    "raw_manifest_present": true,
+    "raw_rows_decoded": 8243,
+    "recipe": {
+      "base": "normalized stored B100 float16 policy",
+      "cp_domain": [
+        -32000.0,
+        32000.0
+      ],
+      "flagged_relative_weight": 0.5,
+      "gap_cp_strictly_greater_than": 300.0,
+      "mate_handling": "any-mate-domain-row-unchanged",
+      "roster": "all original legal d9 moves; no next-best gate",
+      "storage": "float64 weighting -> float32 -> float16; zero flagged mass preserves bytes"
+    },
+    "rows": 8192,
+    "rows_dropped_no_result": 4400,
+    "schema": 1,
+    "score_bounds": "Original producer discards UCI upper/lower bounds; rows retain aggregate counts, not per-line flags.",
+    "selected_g10": true,
+    "selected_roster_sha256": "ed97677f8a312d3bd686654421b7915d1f1181cf1d54513b9c5325e4ad6a6147",
+    "sf_derive_summary_sha256": "ab214d52665ee4ad6ccf756c0515344dc9653c3b51de15965fc74323198b7fd9",
+    "sf_source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/derived",
+    "shards": 1,
+    "source_derive_summary_sha256": "57ce6e73fcb78fc81ceef34a5bf37e6449beae787acce2132acfca20d6178e83",
+    "source_dir": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/B100",
+    "source_drop_counts_inherited": true,
+    "source_policy_summary_sha256": "ee5491701674b821bcb65deecaecd1b780e8cebaa444759c4829a8f9f60bc5e4",
+    "status": "PILOT_COMPLETE_NOT_TRAINING",
+    "stored_TV_error_max": 0.00018628156469170117,
+    "stored_mass_error_max": 0.000400543212890625,
+    "stored_relative_error_max": 0.19999947551470187,
+    "stored_support_losses": 0,
+    "winning_mate_zero_base_mass_rows": 0
+  }
+}
