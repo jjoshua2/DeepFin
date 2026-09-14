@@ -1,0 +1,162 @@
+{
+  "status": "V100_TRAINING_COMPLETE_CPU_PREPARED_ARENA_LAUNCHED_NO_MATCH_RESULT",
+  "training": {
+    "receipt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/training/training.complete.json",
+      "sha256": "4b957c80913a1022fcd5fc0e3ec5468c39ee73e33a2dc0f328b95601805b44bd"
+    },
+    "checkpoint": {
+      "path": "/home/josh/projects/chess/runs/combined35m_v100_seed101/checkpoint.pt",
+      "role": "Combined35M_V100",
+      "sha256": "9bf9ceffd4f93fe36eba3f525d69c1a8756e97e4f332973594c8c4eff1a7c836"
+    },
+    "rows": 35314577,
+    "steps": 68974,
+    "seed": 101,
+    "plan_workers": 2,
+    "load_workers": 2,
+    "physical_plan_sha256": "4b47ce5ecb8fd272d8b93455107d8926dc485cd42915d707ba0e2beb3dc0f007",
+    "realized_sha256": "4b47ce5ecb8fd272d8b93455107d8926dc485cd42915d707ba0e2beb3dc0f007",
+    "canonical_plan_sha256": "ca3922c459b321dd5e890f8b3e21f6fee6a24aa6c7f0d76653165616aeca67bd",
+    "actual_staging_verified": true,
+    "actual_game_columns_verified": true,
+    "training_charge_seconds": 14316.171944101996,
+    "host_terminal": {
+      "returncode": 0,
+      "ended_unix": 1789345034.0851963,
+      "elapsed_seconds": 14395.149104356766
+    },
+    "historical_valid_control": false,
+    "historical_validity_problems": [
+      "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+      "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+      "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+    ]
+  },
+  "cpu_preparation": {
+    "terminal": {
+      "exit_code": 0,
+      "ended_unix": 1789345575.8861177,
+      "elapsed_seconds": 68.1985375881195
+    },
+    "independent_review": {
+      "status": "PASS_ACTUAL_CPU_PREPARED_FIXED_ARENA_BINDING_NOT_LAUNCHED",
+      "prepared": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/prepared_pair/prepared.json",
+        "sha256": "9119cbcb20f192c5d7915e33e1fccc9ffbc48cb14bb40451a6d9c88a7e7fe15a"
+      },
+      "manifest": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/manifest.final.json",
+        "sha256": "9efbce842bd016aa6386530031c0d2c702234aa3030c984a0b2908f907952ac8"
+      },
+      "observed": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/prepared_pair/observed.json",
+        "sha256": "bacedaddd8327c3313264bac3bfee8f6b911aacad6b5c96c1dc01083f64df3f1"
+      },
+      "request": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/prepared_pair/request.json",
+        "sha256": "010df5555196a0ff624800d428ca0677d6d22d1e747017abd7c5967956d3949b"
+      },
+      "outer_terminal": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/cpu_outer_terminal.json",
+        "sha256": "f1102e1cc9ee0a8915a0da110d6027b4328fc021aef0e701493df9430d672757"
+      },
+      "outer_start": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/cpu_outer_started.json",
+        "sha256": "87350baf255f6a17ffb1a5fd6e25c38713a41b3c45ce48ce05fbd4566e30163d"
+      },
+      "arena_binding": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/arena.final.json",
+        "sha256": "e6ffd198a5192d6e50a9b0806a88a19ee57071a828d32761fc3af9592737adc3"
+      },
+      "command": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/command.arena.final.txt",
+        "sha256": "364ce47d039a47dbf2ebfa73c31ab7780d54c25dbd47978ee6e627feffdcac2c"
+      },
+      "findings": [],
+      "verified": "Actual CPU0, matching V100/V50 checkpoint/role pins, qualified package architecture,256 full ordered panel histories and registered512/400/seed20260913/prior1 settings, unchanged manifest; exact prepared SHA inserted into reviewed bounded arena invocation.",
+      "limits": "Small actual CPU/manifest/panel metadata only; no model/book/array reads, CPU probe/default/model hashes rerun, GPU or job checks. Arena still unlaunched; parent owns freshhost preflight/launch."
+    }
+  },
+  "arena_launch": {
+    "started_unix": 1789345837.3710139,
+    "argv": [
+      "/bin/bash",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/command.arena.final.txt"
+    ],
+    "prepared_sha256": "9119cbcb20f192c5d7915e33e1fccc9ffbc48cb14bb40451a6d9c88a7e7fe15a",
+    "prelaunch_note": "Earlier parent check used an incorrect prepared path and failed before any invocation; actual structured binding used here."
+  },
+  "fixed_settings": {
+    "games": 512,
+    "pairs": 256,
+    "simulations": 400,
+    "seed": 20260913,
+    "prior_temperatures": [
+      1,
+      1
+    ],
+    "max_plies": 300,
+    "tablebases": false,
+    "rolling_games": 128,
+    "eval_batch": 4096,
+    "cpu": [
+      2,
+      3
+    ],
+    "compile_threads": 2,
+    "outer_seconds_inclusive": 12030,
+    "owned_stage_seconds": 7200
+  },
+  "artifact_refs": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/training/training.complete.json",
+      "sha256": "4b957c80913a1022fcd5fc0e3ec5468c39ee73e33a2dc0f328b95601805b44bd"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/host_v1/outer_terminal.json",
+      "sha256": "e80f7df12ec4b4863023017722c7ea9831fb2901ad0de9887f6cbc4eb7eae738"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/manifest.final.json",
+      "sha256": "9efbce842bd016aa6386530031c0d2c702234aa3030c984a0b2908f907952ac8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/prepared_pair/prepared.json",
+      "sha256": "9119cbcb20f192c5d7915e33e1fccc9ffbc48cb14bb40451a6d9c88a7e7fe15a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/prepared_pair/observed.json",
+      "sha256": "bacedaddd8327c3313264bac3bfee8f6b911aacad6b5c96c1dc01083f64df3f1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/prepared_pair/request.json",
+      "sha256": "010df5555196a0ff624800d428ca0677d6d22d1e747017abd7c5967956d3949b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/cpu_outer_started.json",
+      "sha256": "87350baf255f6a17ffb1a5fd6e25c38713a41b3c45ce48ce05fbd4566e30163d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/cpu_outer_terminal.json",
+      "sha256": "f1102e1cc9ee0a8915a0da110d6027b4328fc021aef0e701493df9430d672757"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/independent_actual_cpu_review.json",
+      "sha256": "314bd66ab42a9cbe8c55816d5282610ba00aa9b495f4e2425d1d5e36fceba896"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/independent_final_training_cpu_binding_review.json",
+      "sha256": "a2a9fc780e69dca7b8ed6ebe4deb0447ca6fe20920203f50d8dfe4d243bbcc62"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/command.arena.final.txt",
+      "sha256": "364ce47d039a47dbf2ebfa73c31ab7780d54c25dbd47978ee6e627feffdcac2c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/arena_preparation_v1/arena_outer_started.json",
+      "sha256": "a21369647fb9412c5187502b32853d8f11ed6df75def1820a2451e02e9ae1ea5"
+    }
+  ],
+  "limits": "Actual immutable launch snapshot only; no result or promotion. Reused development panel, single seed, unchanged historical invalid-control premises. Frozen runtime/prereg unchanged. No model/book/default/CPU probe repeats."
+}
