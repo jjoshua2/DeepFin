@@ -1,2 +1,5 @@
-Project guidance lives in [CLAUDE.md](CLAUDE.md). Read it for every task.
-Keep this file as a pointer so shared guidance cannot drift between agents.
+# DeepFin agent entry point
+
+Shared repository constraints are in [CLAUDE.md](CLAUDE.md). Follow that guide;
+load its supporting documents and Skills only when relevant to the task.
+Keep shared policy there rather than duplicating it here.

@@ -1,142 +1,75 @@
-# Project guidance
+# DeepFin project guidance
 
-Shared guidance for every agent. `AGENTS.md` points here; keep one copy.
-This guide holds durable project constraints. Task-specific procedures live in
-Skills and the linked documentation. Explicit user direction sets the task scope;
-historical plans and experiment entries are evidence, not new assignments.
-When documentation disagrees with the running system, check the relevant source,
-config and artifacts, and describe the discrepancy.
+Shared constraints for all agents; `AGENTS.md` points here. Keep one policy copy.
+DeepFin trains chess networks primarily against Stockfish, through offline bootstrap
+and distributed selfplay/training. Verify the phase relevant to the task rather than
+assuming either workflow is currently running.
 
-## Purpose and navigation
+## Scope and completion
 
-This project trains chess networks primarily against Stockfish, including research
-into its blind spots. The distributed loop is selfplay → shard upload → disk-backed
-replay → training → checkpoint → model publication to workers.
+The user request defines the deliverable; historical plans are evidence, not new
+assignments. For implementation, continue through the requested working result, fix
+introduced failures and complete applicable checks, not just a plan or first patch.
+Respect analysis-only and review-only scope.
 
-- [Development](docs/development.md): setup, commands, validation and code map.
-- [Toolchains](docs/toolchains.md): corpus, offline training, match and agent entry points.
-- [Branch lifecycle](docs/branch_lifecycle.md): main owns development; live pins deployment.
-- [Experiment records](docs/experiments/README.md): preregistrations, readouts and prior evidence.
-- [Evaluation](docs/eval_protocol.md): decide what a measurement can establish.
-- [Model heads](docs/model_heads.md): head/target/loss semantics; read before changing them.
-- [Operations](docs/operations.md): training, pause/recovery, config reload and deployment.
-- [Loop audit](docs/rl_loop_audit.md): measurement traps and stage invariants; read the
-  relevant method and stage sections when diagnosing the pipeline.
+Choose implementation, isolated edits, bounded checks and useful delegation (normally
+inheriting the selected model) within the agreed scope/budget without repeated approval.
+Pause for consequential ambiguity that evidence cannot resolve, or actions needing
+new authorization for live changes, destructive effects or additional resources.
+Existing authorization covers its stated scope; stop at the deliverable or agreed limit.
 
-`configs/pbt2_small.yaml` is the production configuration template;
-`configs/default.yaml` is a reference model. The live checkout can differ from
-`main`, and a checkpoint carries its own architecture. Read the relevant config or
-checkpoint rather than copying sizes, paths or tuning values from prose.
-Research configs and dated plans do not establish what is currently enabled.
+## Protect running work
 
-## Preserve running work
+`main` owns development; live branches pin deployments. Merging does not update running
+Python/native code. Isolate branch/build work from live checkouts and environments;
+never switch/reset beneath jobs or rebuild their in-use extensions. Preserve unrelated
+dirty files, detached jobs and intentional-stop/pause markers.
 
-Put reusable tools and fixes on `main`. The live branch may lag main for an experiment;
-it is not a separate development line. If an urgent fix is first made live, open its
-main-targeted PR in the same session and link it in the run record. Deployment of a
-main revision remains a separate, intentional operation.
+Before affecting a job, establish its owner checkout, process, effective config,
+artifacts and resource use. Live YAML edits are production changes: validate a copy,
+trace the key through validation, consumer and reload behavior, then verify adoption.
+Preserve recovery state before effects that outlive a config revert; keep durable
+baselines outside Ray-pruned directories. Budget CPU/GPU/disk beside existing jobs;
+keep the default two-thread pytest cap on shared machines. Do not commit bulk
+artifacts or transient run output.
 
-This machine often has long-running training, generation and monitoring jobs.
-Before an action that affects them, identify the owning checkout, process, config,
-artifacts and resource use. Continue from existing records and banked data before
-starting replacement work. Preserve unrelated dirty files and detached jobs.
+## Context by task
 
-Use a separate worktree for branch work when a checkout serves a live run. Never
-switch or reset that checkout underneath it: the live YAML is re-read during training.
-A merged PR does not update Python already loaded by a process or its native extension
-image. Plan adoption and any restart separately from merging.
+Read relevant sections, not a prerequisite stack of documents. Skills live in
+`.agents/skills/`; `.claude/skills` links there. Load only the applicable workflow.
 
-A live YAML edit is a production change. Trace schema → validation → consumer →
-reload behavior for the affected key; acceptance does not prove it takes effect.
-Validate a copy first and verify the realized value after adoption. Some keys are
-restart-only, and removing an override may leave the old value in memory. The live
-run Skill and operations document cover the mechanics.
+| Task | Reference |
+| --- | --- |
+| Setup, commands, code navigation, validation | [Development](docs/development.md); [toolchains](docs/toolchains.md) for corpus, offline-training and match entry points. |
+| Heads, labels, search values, encoding, training-view accounting | [Model contracts](docs/model_contracts.md); [model heads](docs/model_heads.md) for target/loss wiring. |
+| Pipeline diagnosis or measurement traps | Relevant method/stage sections of the [loop audit](docs/rl_loop_audit.md). |
+| Experiment planning, banked-data analysis, readouts | [Experiment index](docs/experiments/README.md), [evaluation](docs/eval_protocol.md), `experiment-readout`. Search relevant historical ledger entries; it is frozen. |
+| Live changes, deployment, pause, recovery | [Operations](docs/operations.md), [branch lifecycle](docs/branch_lifecycle.md), `live-run-change`; live-first fixes need same-session main PRs linked in the run record. |
+| Independent review or PR findings | `independent-review`; `deepfin-grok-review` only for requested Grok review. External/paid review is not a routine gate. |
 
-Respect intentional-stop and pause markers. Before a change whose effects survive a
-config revert, preserve enough state to recover: weights, optimizer, PID and replay,
-plus their provenance. Ray can prune checkpoints, so copy long-lived evaluation
-baselines outside its managed tune directory. Keep run output and large artifacts
-out of commits.
+Use effective config and checkpoint architecture, not values copied from prose.
+`configs/pbt2_small.yaml` is the production template; `configs/default.yaml` is a
+reference. Neither proves live state. Resolve discrepancies against relevant source,
+effective settings and artifact lineage, and report them.
 
-Budget CPU, GPU memory and disk alongside existing jobs. No simulation count or GPU
-allocator fraction guarantees an arena is safe next to training. Pytest defaults to
-two torch threads for this reason; keep that default on a shared machine.
+## Evidence and delivery
 
-## Experiments and evidence
+Before training compute or live-distribution changes, preregister the hypothesis,
+control, deciding metric, success/kill rule, budget, horizon and recovery plan. Publish
+indexed `docs/experiments/YYYY-MM-DD-slug.md` registrations/readouts on `main`, with
+compact evidence and external artifact identities/locations. Reuse banked observations;
+keep interventions separate where practical, record confounds and source-qualified
+sampling identities, and judge results against the registered rule with uncertainty.
+Teacher fit, calibration and throughput are not playing-strength results; negatives
+are conditional on the model, data and horizon tested.
 
-Use [experiment records](docs/experiments/README.md) as the primary index. Each new
-experiment gets `docs/experiments/YYYY-MM-DD-slug.md`, with its preregistration and
-subsequent readouts together, plus a link in the index. Publish completed records
-and their compact supporting evidence on `main`, with locations and identities for
-external bulk artifacts; do not leave the only useful record in a local scratchpad.
-The old [ledger](docs/experiment_ledger.md) is frozen historical evidence: search relevant
-entries and gotchas, without loading the whole file or appending new work there.
+Use change-scoped validation from the development guide. Documentation needs
+link/discovery/consistency checks, not automatic training, arenas or full suites.
+Behavior changes need an observable effect and meaningful failure case; accepted
+config is not proof it reaches the executing worker. Expand checks for affected
+boundaries, not ritual repetition after a passing final candidate.
 
-Before committing training compute or changing the live distribution, record the
-hypothesis, baseline/control, deciding metric, success/kill rule, compute budget,
-readout horizon and recovery plan. Choose these for the question using the evaluation
-protocol; a screen does not automatically require a training run or a fixed-size arena.
-Existing authorization covers work within that scope and budget. Resolve ordinary
-implementation choices without a new approval gate.
-
-Keep one data-affecting intervention per readout window where practical; record
-confounds when overlap is necessary. Bank raw observations and their source, shard,
-game and position identities alongside engine/build/search settings. Reuse those
-observations when correcting an estimator. Cluster correlated measurements at their
-sampling unit; game IDs are not necessarily unique across shards or corpora.
-
-Verify the producing code, effective settings and artifact lineage before a verdict.
-Record the readout against the precommitted rule, including uncertainty or an unread
-status when evidence is insufficient. Negative results are conditional on the model,
-data and horizon tested. Calibration, teacher agreement and throughput do not by
-themselves establish playing strength.
-
-## Semantics worth knowing
-
-- The SF component of the WDL blend has been load-bearing in prior runs. Consult the
-  ledger before removing it; a sharper teacher-fit score is not sufficient evidence.
-- `policy_sf` predicts the opponent's reply at P1 after the network's move. It is not
-  a teacher distribution over the network's current moves.
-- MCTS uses the `wdl` value head; `sf_eval` and `categorical` are auxiliary.
-- Higher PID `wdl_regret` permits worse Stockfish moves and makes the opponent weaker.
-  Best-move-based labels are distinct from the handicapped move actually played.
-- Search action IDs and network policy indices are different spaces. Use shared
-  mappings in `moves/torch_maps.py`; preserve encoding and history metadata across
-  checkpoints, replay and evaluation.
-- Count tied parameters once. A naive `state_dict` element sum counts shared Smolgen
-  weights repeatedly; architecture regression tests measure the actual model.
-- Production uses `train_views_per_ingested_position`; the old
-  `train_views_per_position` name is rejected and used a different denominator.
-
-## Implementation and review
-
-Follow nearby code and use tests that demonstrate the affected behavior, especially
-configuration propagation through the real worker path. This project's recurring
-failure is a value that is accepted but silently ignored. Ask what observable result
-proves the intended effect. [Development](docs/development.md) defines validation by
-change scope; avoid repeated full suites after checks pass without a new reason.
-
-Delegate bounded independent work when useful, with clear ownership and enough
-context to judge it. Inherit the selected model unless the task warrants another;
-there is no fixed worker count or requirement to predesign every implementation.
-
-Open PRs ready for review unless requested otherwise. Use a separate reviewer for
-consequential changes; the author is not an independent review. If independent review
-is unavailable, label the self-review and its limits. Address findings or explain why
-they do not warrant a change. Review evidence can be in comments, review bodies and
-inline threads; `reviewDecision` alone cannot establish review status. Paid or external
-review services are optional. For requested Grok reviews, use an available Grok
-review Skill and its disposable-snapshot wrapper, preserve the raw result, and verify
-its findings. Report checks and material limitations accurately.
-
-## Optional workflows
-
-Repository Skills live in `.agents/skills/`; `.claude/skills` links to the same files.
-Load only the workflow relevant to the task:
-
-- `experiment-readout`: banked-data analysis, preregistration and readouts.
-- `live-run-change`: changing or recovering an existing long-running job.
-- `independent-review`: reviewing a diff or reconciling PR review findings.
-
-These Skills describe reusable methods. Repository-specific constraints stay here;
-commands and operating details stay in the linked documentation.
+Deliver PRs ready for review unless requested otherwise. Use independent review for
+consequential changes; when unavailable, label self-review and its limits. Address
+findings or explain their disposition. Report actual checks and remaining blockers,
+distinguishing implementation, validation, deployment and research results.
