@@ -74,7 +74,9 @@ class Observation:
     input_key: str
 
 
-def observation(row: dict[str, Any], config_sha: str) -> Observation:
+def observation(
+    row: dict[str, Any], config_sha: str, *, selected_phase0: bool = False
+) -> Observation:
     """Full legal phase-zero roster, preserving original score/order precision."""
     derive._check_row_identity(row, config_sha)
     require(derive.row_schema_of(row) == 3, "raw row is not history schema3")
@@ -89,7 +91,10 @@ def observation(row: dict[str, Any], config_sha: str) -> Observation:
         row.get("piece_count") == chess.popcount(board.occupied),
         "raw piece count differs",
     )
-    require(len(row["phases"]) == 1, "requires original single-phase d9 source")
+    require(
+        selected_phase0 or len(row["phases"]) == 1,
+        "requires original single-phase d9 source",
+    )
     phase = row["phases"][0]
     legal_moves = list(board.legal_moves)
     width = len(legal_moves)
@@ -492,6 +497,10 @@ def copy_shard(source: Path, destination: Path) -> dict[str, str]:
 
 def rewrite(args: argparse.Namespace) -> dict[str, Any]:
     downside = getattr(args, "tactical_recipe", "legacy") == "allmove-downside300"
+    selected_path = getattr(args, "selected_g10_roster", None)
+    selected_pin = getattr(args, "expected_selected_g10_roster_sha256", None)
+    require(bool(selected_path) == bool(selected_pin), "selected G10 requires roster and pin")
+    require(not selected_path or downside, "selected G10 requires allmove-downside300")
     pilot_shards = getattr(args, "pilot_shards", None)
     pilot_cap = getattr(args, "pilot_max_raw_rows", None)
     require(
@@ -541,21 +550,32 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
     # remains mandatory; a manifest, when present, is still independently bound.
     manifest_path = raw_dir / "manifest.json"
     manifest_present = os.path.lexists(manifest_path)
-    metadata = {raw_dir / "summary.json": file_sha256(raw_dir / "summary.json")}
+    metadata = {} if selected_path else {raw_dir / "summary.json": file_sha256(raw_dir / "summary.json")}
     if manifest_present:
         metadata[manifest_path] = file_sha256(manifest_path)
     metadata[source_summary_path] = args.expected_source_summary_sha256
-    record = derive.read_corpus_record(raw_dir)
-    source_contract(summary, record)
-    if manifest_present:
-        manifest = derive.corpus.read_launch_manifest(raw_dir)
-        require(
-            all(
-                manifest[k] == record.facts[k]
-                for k in ("config_sha256", "row_schema", "staircase_parsed")
-            ),
-            "raw manifest/summary identity differs",
+    selected = None
+    record = None
+    if selected_path:
+        from scripts.sf_downside_g10 import SelectedG10
+
+        selected = SelectedG10(
+            args, summary, raw_dir, source,
+            lambda row, config: observation(row, config, selected_phase0=True),
         )
+        metadata.update(selected.metadata)
+    else:
+        record = derive.read_corpus_record(raw_dir)
+        source_contract(summary, record)
+        if manifest_present:
+            manifest = derive.corpus.read_launch_manifest(raw_dir)
+            require(
+                all(
+                    manifest[k] == record.facts[k]
+                    for k in ("config_sha256", "row_schema", "staircase_parsed")
+                ),
+                "raw manifest/summary identity differs",
+            )
     tactical = tactical_source(args, summary, source)
     require(
         not downside or tactical is not None,
@@ -636,7 +656,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         src = source / spec["path"]
         dst = writing / spec["path"]
         require(len(pending) == spec["rows"], "source shard row count differs")
-        order = rng.permutation(len(pending))
+        order = np.arange(len(pending)) if selected else rng.permutation(len(pending))
         aligned = [pending[int(i)] for i in order]
         g: Any = zarr.open_group(str(src), mode="r")
         require(frozenset(g.array_keys()) == ARRAYS, "expected original17-array source")
@@ -822,7 +842,14 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         pending.clear()
 
     try:
-        for path in record.shards:
+        if selected:
+            for spec in specs:
+                pending.extend(selected.join(spec, guard, pilot_cap if pilot else None))
+                flush()
+            raw_rows = summary["realized"]["rows_read"]
+            dropped = summary["realized"]["rows_dropped_no_result"]
+            raw_proofs.update(selected.raw_proofs)
+        for path in (() if record is None else record.shards):
             if raw_rows >= summary["limit_requested"] or (
                 pilot and len(outputs) == len(specs)
             ):
@@ -849,6 +876,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                     break
                 raw_rows += 1
                 read += 1
+                assert record is not None
                 derive._check_row_identity(raw, str(record.facts["config_sha256"]))
                 require(
                     all(
@@ -898,7 +926,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 pilot
                 and rows_written == sum(spec["rows"] for spec in specs)
                 and len(outputs) == len(specs)
-                and raw_rows == rows_written + dropped
+                and (selected is not None or raw_rows == rows_written + dropped)
             )
             or (
                 not pilot
@@ -910,6 +938,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             "final source complement differs",
         )
         guard()
+        if selected:
+            selected.verify()
+            selected.copy_exclusion_evidence(writing)
         if tactical:
             for root in (source, parent):
                 require(
@@ -984,6 +1015,16 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 kind="bt4_sf_allmove_downside",
                 algorithm=DOWNSIDE_ALGORITHM,
                 recipe=recipe_for_summary(downside=True),
+            )
+        if selected:
+            result.update(
+                selected_g10=True,
+                join="pinned-physical-provenance-phase0-full-d9-v1",
+                raw_rows_decoded=selected.raw_rows_decoded,
+                raw_limit_semantics="inherited source derivation count, not newly decoded rows",
+                source_drop_counts_inherited=True,
+                selected_roster_sha256=selected_pin,
+                producer_sha256={**producer_hashes, **selected.producer_hashes},
             )
         if pilot:
             result.update(
@@ -1062,6 +1103,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--pilot-max-raw-rows", type=int, help="Hard cap on raw rows joined for pilot"
     )
+    p.add_argument("--selected-g10-roster", help="Pinned closed raw selection; downside only")
+    p.add_argument("--expected-selected-g10-roster-sha256")
     p.add_argument("--expected-bt4-summary-sha256")
     p.add_argument("--expected-bt4-mix-sha256")
     return p

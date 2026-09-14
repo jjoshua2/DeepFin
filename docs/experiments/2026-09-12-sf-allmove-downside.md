@@ -417,3 +417,37 @@ comparison with common B100 policy on the existing **35,314,577 distinct rows**
 (original18.91M plus qualified G10 16.40M). This is a proposed scale-transfer
 comparison, not a launched or qualified training run. Its ordered multi-corpus
 admission and common schedule proof must precede training.
+
+
+## Selected G10 preparation path (not executed)
+
+An explicit `--selected-g10-roster` path enables only the fixed
+`allmove-downside300` recipe. It joins the already retained, shuffled derived rows
+through pinned physical-row provenance to the full **phase-zero d9** legal roster.
+The selected G10 source summaries use phase-zero policy and latest-phase values;
+later-phase d9 observations must not replace those policy scores. The legacy
+single-phase/ordered-prefix admission remains unchanged.
+
+The new path accepts finalized selected shards from an unfinished global G10 run,
+without changing its completion metadata. It retains the existing source exclusions,
+rejects excluded, duplicate, out-of-prefix or misaligned retained references, and
+reconstructs the original SF policy before applying the unchanged B100 correction.
+Only B100 policy is rewritten. All sixteen non-policy arrays and the physical-row
+sidecar are copied and verified; SF values remain intact. Any subsequent selected
+V50/V100 value mixture needs the existing qualified value writer and admission,
+not arbitrary value-source acceptance here.
+
+The join holds at most one derived shard (8,192 rows), with an x-array allowance
+of 256 MiB checked before allocation. Each needed raw shard is streamed, capped
+at 64 MiB compressed, while only requested observations are retained. It has no
+whole-corpus row dictionary. Raw shards spanning output boundaries may be decoded
+again; the emitted decode count records that work. A pilot raw-row cap therefore
+counts complete raw-file passes, not just retained rows. The original stored
+history keys are inherited and matched, not newly re-encoded as a new history proof.
+
+A proposed one-shard check uses the existing run06 common-increment cohort,
+`--pilot-shards 1 --pilot-max-raw-rows 32768`, within a separately bounded CPU
+operator. This is preparation only: no G10 payload scan, materialization or training
+has run for this change. Pilot output has no trainable derive summary. A later
+scientific choice remains conditional on the value comparison and available
+resources; implementation does not queue a 35M experiment.
