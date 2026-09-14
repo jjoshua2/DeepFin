@@ -419,7 +419,7 @@ comparison, not a launched or qualified training run. Its ordered multi-corpus
 admission and common schedule proof must precede training.
 
 
-## Selected G10 preparation path (not executed)
+## Selected G10 path and completed one-shard pilot
 
 An explicit `--selected-g10-roster` path enables only the fixed
 `allmove-downside300` recipe. It joins the already retained, shuffled derived rows
@@ -447,7 +447,17 @@ history keys are inherited and matched, not newly re-encoded as a new history pr
 
 A proposed one-shard check uses the existing run06 common-increment cohort,
 `--pilot-shards 1 --pilot-max-raw-rows 32768`, within a separately bounded CPU
-operator. This is preparation only: no G10 payload scan, materialization or training
-has run for this change. Pilot output has no trainable derive summary. A later
+operator. The bounded pilot has now completed as reported below. Pilot output has no trainable derive summary. A later
 scientific choice remains conditional on the value comparison and available
 resources; implementation does not queue a 35M experiment.
+
+
+### Selected G10 pilot completed
+
+The registered first-shard check completed with process exit 0: **8,192 retained rows**, one shard, and **8,243 raw rows decoded**, below the 32,768 decode cap. The observed command matched the registered command. Outer elapsed time was **9.8890 seconds**, owned stage 8.0049 seconds and producer 6.4350 seconds. This one-prefix cost is not a full-corpus throughput estimate.
+
+**4,953 rows (60.4614%)** changed stored policy. The recipe classified 6,103 ordinary rows and left 2,089 mate-domain rows unchanged. These are policy changes, not removed rows or removed probability mass. Saved storage errors had maximum mass error 0.0004005432, total variation error 0.0001862816 and relative error 0.1999995; no positive-support entries were lost in this pilot.
+
+The existing supervisor completed saved policy digest/mass checks and verification of 275 copied-file proofs, including all sixteen non-policy arrays and physical-row provenance. SF values remain intact. Independent compact review verified the actual command, counts, summary bindings and completed checks without repeating payload reads. The summary's raw limit 266,491 and no-result count 4,400 are inherited full-source derivation counts, not pilot reads or pilot exclusions.
+
+[Completed pilot evidence](evidence/g10-downside-pilot-completed-20260913.json) preserves the exact plan, terminal, summary and reviews. No full rewrite or training has been selected by this pilot result, and the output remains unadmitted for training.
