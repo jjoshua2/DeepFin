@@ -1,0 +1,15 @@
+# Ceres CPU encoding and value-getter semantics
+
+Status: the bounded CPU oracle launched at **2026-09-14T00:03:22.526845+00:00**, from frozen runtime `58504cea518742a4e258a9b7d10f47fc07a68c4d`. Setup, build and oracle results have not been observed in this publication. The parent owns the completion observer.
+
+The question is whether the current Python input encoding and conventional value blend match the actual upstream CPU entrypoints. This can explain implementation differences before another Ceres mixture is considered; it does not establish neural or backend parity, or playing strength.
+
+The harness targets exact upstream Ceres `64558176ad4933d3cd85b5604133d6576de921d2`. It reconstructs full FEN/UCI histories before upstream repetition calculation and truncation, then emits all 8,768 square bytes with Q-blunder inputs 0.03. Sixteen fixed fixtures cover sides, castling, promotion, en passant and repetition. A transport adds the existing 128 saved matched rows, verifies identities and exact FP16 raw logits, and feeds those bits through the public value-batch constructor. Twelve W/D/L/V getter outputs are exported as FP16 bits. Temperatures 0.55/1.5 and blend 0.4 are an explicitly named parameterless-options profile, not an assertion about effective deployed settings. Comparisons retain byte disagreements and value deltas without silently repairing them.
+
+The authorized budget is **one hour inclusive**, CPU **10,11**, two numeric/.NET threads and no GPU visibility. Setup/restore and build each have a 1,200-second ceiling; transport/oracle/readout has 900 seconds, all under one shared deadline with cleanup margin. RAM headroom is 48 GiB at startup and 32 GiB while running. Disk requirements are 162 GiB at startup and 150 GiB while running, with an 8 GiB aggregate allocated-byte allowance; startup includes another 4 GiB for other writers. CoreCLR has no address-space cap. SDK 10.0.401, source, restore caches, temporary files and outputs stay under a fresh task directory. No global installation, evaluator construction, inference fallback or automatic extension is authorized.
+
+The initial source allocation used CPU 2,3. Before launch, the parent selected CPU 10,11 to avoid the arena allocation; the affinity-only amendment and exact command are retained as implementation v2. Original v1 evidence remains intact. The executing checkout is preserved, and the README command link is corrected only in this separate publication checkout.
+
+Static preparation passed Python AST, project XML, all sixteen fixture histories, Ruff and shell syntax. Independent review passed on the original source; parent review passed the literal affinity amendment. These checks did not compile the C# project or read the saved bank. Dependency closure, build compatibility and runtime initialization remain actual-run questions. No completion or semantic equivalence is claimed here.
+
+[Compact launch evidence](evidence/ceres-cpu-semantics-launched-20260913.json) binds the plan, command, reviews and immutable snapshots of the small actual start receipts. The implementation is in [tools/ceres_cpu_oracle](../../tools/ceres_cpu_oracle/README.md).
