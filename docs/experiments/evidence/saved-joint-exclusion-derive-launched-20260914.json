@@ -1,0 +1,53 @@
+{
+  "status": "ACTUAL_METADATA_QUALIFICATION_COMPLETE_DERIVATION_LAUNCHED",
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/loader_qualification_v1/complete.json": "3d2e60bef63e81a8f11052e19dff1fafc38486798a917457adf87da1004d054d",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/loader_qualification_v1/outer_terminal.json": "b12dce1e5bc8482bf7397cd751a47939f28669f5d01ac5255d0c3dc5f3cb436a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/independent_loader_source_review.json": "ea1d4b30588653870632043933a7a849d46ab6ea7b9631221a6b924f55e096a6",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/plan.json": "a0f8b648bd1daf30a2932df3036ec9983d96876295482efddc67adf7c0a1b4bd",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/command.txt": "ea5394d43b3c5353393931839aae77e53840114fd8b7c6fa47a3cdc539d2df8a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/independent_operator_review.json": "e9a683ed9eecca0e6a823504a35f1d01d9195467e3ea21b6b60a86b2d196b102",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/outer_started.json": "152f049554c3036ff64020526ab60457e6b64a5aa18c508499353f6f31c1cf0f",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/started.json": "083fb83a824739086989d2575b2b02bc8f3d530f100e4f91b9571daed36c8860",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/size_sample.json": "f7eb0bc8822014895d4e3acb89bb266e01445709da7f3b1eabd672e8cdf8f31f"
+  },
+  "source_pr": 750,
+  "source_merge": "9fc2935f42c0c94bb72e2eb341fbae72ad31512f",
+  "frozen_runtime": "6b6893bd59628ce9d09bc0748baba3e1c36960dd",
+  "parent_execution": 34792,
+  "parent_sole_observer": 935,
+  "outer_started": {
+    "started_unix": 1789346208.3384464,
+    "argv": [
+      "/bin/bash",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/command.txt"
+    ],
+    "free_bytes": 176176648192,
+    "required_free_bytes": 175474421760,
+    "available_memory_bytes": 86884790272
+  },
+  "supervisor_started": {
+    "plan_sha256": "a0f8b648bd1daf30a2932df3036ec9983d96876295482efddc67adf7c0a1b4bd",
+    "softsf_remaining_bytes": 1528246272,
+    "softsf_staged_allocated_bytes": 11356655616,
+    "started_unix": 1789346208.4877365,
+    "startup_disk_bytes": 175474421760
+  },
+  "scope": {
+    "eligible_rows": 4219426,
+    "expected_derived_shards": 516,
+    "source_exclusions": [
+      54,
+      34
+    ],
+    "sources_sequential": true,
+    "workers_per_source": 1
+  },
+  "claims": {
+    "actual_loader_qualification": true,
+    "actual_derivation_launch": true,
+    "derivation_complete": false,
+    "training_admitted": false,
+    "new_teacher_inference": false
+  }
+}
