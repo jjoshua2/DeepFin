@@ -185,6 +185,43 @@ The single metadata/argv default check exited 0 before launch; parent and
 independent final host reviews passed.
 
 [Completed prerequisites and actual launch evidence](evidence/v100-training-launched-20260913.json)
-preserve exact report, qualification, host-manifest and review pins. No completed
-training or realized schedule is claimed. The registered fixed **512-game,
-400-simulation V100-versus-V50 arena** remains after training and has not launched.
+preserve exact report, qualification, host-manifest and review pins. At that launch
+snapshot, training and the registered arena were still pending. Their subsequent
+completion and launch are recorded below.
+
+
+## September 14 UTC: V100 training completed; fixed arena launched
+
+V100 seed-101 training completed with **35,314,577 realized rows and 68,974
+updates**, using the registered two planning and two loading workers. The
+completed receipt verifies actual staging and game-column identity, with realized
+physical schedule `4b47ce5e…` and common canonical schedule `ca3922c4…`.
+Training charged **14,316.172 seconds**; the host exited 0 at **00:17:14.085 UTC**
+after **14,395.149 seconds** including coordination and completion checks.
+The checkpoint SHA-256 is `9bf9ceffd4f93fe36eba3f525d69c1a8756e97e4f332973594c8c4eff1a7c836`.
+
+The actual CPU package preparation exited 0 in **68.199 seconds**. It verified
+the V100 checkpoint against the historical V50 checkpoint `6d36f93d…`, matched
+model architecture, and the full ordered 256-opening history panel. CUDA remained
+uninitialized during that probe. Independent review accepted the actual prepared
+receipt `9119cbcb…` and its binding to the unchanged final manifest.
+
+The parent launched the fixed arena at **00:30:37.371 UTC**: **512 games / 256
+swapped pairs, 400 simulations, seed 20260913, and both prior temperatures 1.0**.
+It retains the reused development panel, rolling 128 games, evaluation batch 4096,
+300-ply maximum and no tablebases. CPU cores 2 and 3 and two compiler workers
+are explicit; the owned arena ceiling is 7,200 seconds within the 12,030-second
+inclusive outer allocation. An earlier parent check guessed the wrong prepared
+receipt path and failed before invocation; it did not launch or repeat a match.
+
+This is a completed-training and actual-launch record, **not a match result**.
+The three historical `valid_control=false` caveats remain: no held-out purity
+receipt, committed rather than current live configuration premises, and intentional
+game-epoch sampling instead of the historical replacement sampler. The frozen
+runtime and preregistration remain unchanged. No value winner, 100M transfer,
+independent replication or RL deployment is established by this launch.
+
+[Compact completion and launch evidence](evidence/v100-trained-arena-launched-20260914.json)
+retains actual terminal/start receipts, schedule and checkpoint identities, CPU
+preparation and independent review. No model, book, training, or CPU preparation
+was repeated to publish this record.
