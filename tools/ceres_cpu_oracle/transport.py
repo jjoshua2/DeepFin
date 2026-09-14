@@ -80,6 +80,16 @@ def feature(offset: int) -> str:
     return names[offset-112] if offset < 121 else ('rank' + str(offset-121) if offset < 129 else 'file' + str(offset-129))
 
 
+def getter_values(result: dict) -> np.ndarray:
+    """Validate JSON at its C# float32 producer precision; retain exact half values."""
+    bits = np.asarray(result['bits'], dtype='<u2')
+    decoded = bits.view('<f2').astype(np.float32)
+    serialized = np.asarray(result['values'], dtype=np.float32)
+    require(bits.shape == serialized.shape == (12,)
+            and np.array_equal(decoded, serialized), 'getter bit transport')
+    return decoded.astype(np.float64)
+
+
 def compare(folder: Path) -> None:
     oracle = json.loads((folder/'oracle.json').read_text())
     reference = json.loads((folder/'reference.json').read_text())
@@ -101,8 +111,7 @@ def compare(folder: Path) -> None:
     deltas = []
     for result, source in zip(oracle['outputs'], transport['values'], strict=True):
         require(result['id'] == source['id'], 'oracle value order')
-        bits = np.asarray(result['bits'], dtype='<u2')
-        require(bits.shape == (12,) and np.array_equal(bits.view('<f2').astype(float), np.asarray(result['values'])), 'getter bit transport')
+        actual_values = getter_values(result)
         heads = []
         for key, temperature in [('primary_bits', .55), ('secondary_bits', 1.5)]:
             logits = np.asarray(source[key], dtype='<u2').view('<f2').astype(float) / temperature
@@ -110,8 +119,9 @@ def compare(folder: Path) -> None:
             heads.append(prob/prob.sum())
         approximation = .6*heads[0]+.4*heads[1]
         deltas.append({'id': source['id'], 'upstream_getters': result,
+            'bits_decoded_getter_values': actual_values.tolist(),
             'mathematical_profile_wdl': approximation.tolist(),
-            'actual_minus_mathematical_wdl': (np.asarray(result['values'][:3])-approximation).tolist()})
+            'actual_minus_mathematical_wdl': (actual_values[:3]-approximation).tolist()})
     report = {'status': 'COMPLETE_CPU_SEMANTICS_COMPARISON_NOT_NEURAL_PARITY', 'byte_mismatches': mismatches,
         'values': deltas, 'limits': 'Pinned upstream CPU getter arithmetic/encoder only; named parameterless profile, not effective deployment configuration, CUDA parity or teacher strength. Differences do not trigger production changes.'}
     (folder/'readout.json').write_text(json.dumps(report, indent=2)+'\n')
