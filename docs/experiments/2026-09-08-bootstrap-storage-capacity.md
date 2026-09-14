@@ -620,3 +620,16 @@ check failed on its read-only view before the host check succeeded.
 [Compact launch evidence](evidence/softsf10-archive-launched-20260913.json)
 retains the actual invocation and frozen bindings. Any later reclamation requires
 verified external completion and a fresh exact-shard assessment.
+
+
+## SoftSF10 reclaimed; H20T05 copy launched
+
+The SoftSF10 copy completed with exit 0 in **2,456.734 seconds**. The external archive is **11,356,651,520 bytes**, contains **713,331 verified members**, and its readback SHA256 matches `ddf7dd24425364679e62bdeaff1b63e49cb9b9695c7de6d757bcf138815e39b0`. The existing helper verified source stability, member metadata and contents; ACL/xattrs were captured but not independently compared.
+
+A single fresh metadata comparison covered the exact source roster, followed by a host consumer check after the walker exited. It found no visible source references; opaque ssh-agent PID30 and ten other-user processes remain disclosed. An earlier sandbox observation was excluded from host clearance, and a transient overlapping directory-reference observation was preserved. These observations were not treated as global or future consumer clearance.
+
+The reviewed reclaimer then completed with parent-observed exit 0 in approximately **37.997 seconds**. Its journal contains all **2,309 ordered intent/removal pairs**, and it verified that the two root summaries and external archive identity were retained. The selected shard allocation was **12,485,857,280 bytes**; the observed whole-filesystem free-space increase was **12,309,786,624 bytes**, which includes concurrent activity and is not an isolated attribution. All checkpoints, runs, raw teachers, other corpora and neighboring paths remain outside removal scope.
+
+At **2026-09-14T00:56:01.099887+00:00**, the parent launched the H20T05 copy-only operation after fresh resource checks: 199,012,872,192 free disk bytes and 86,348,681,216 available RAM bytes. The registered three-hour operation uses CPU0,1, two threads, a 14 GiB tar cap, 48 GiB available RAM, and 177.4 GiB startup/162 GiB running disk requirements. Disk reservation includes 8 GiB for the selected raw derivation and 4 GiB for other writers. Source remains in place during copy and verification; no H20 completion or reclamation is claimed here.
+
+[Compact completed/launch evidence](evidence/softsf-reclaimed-h20-launched-20260913.json) binds both independent reviews, the exact reclamation result, and an immutable H20 launch snapshot. Bulk manifests and journals remain external to Git.
