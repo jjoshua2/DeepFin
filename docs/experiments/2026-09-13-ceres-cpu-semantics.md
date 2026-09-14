@@ -30,4 +30,4 @@ The completed CPU evidence covers **144 histories** (16 explicit fixtures plus 1
 
 The FP16 GetV getter and subtraction of decoded W/L are distinct quantities. These compare actual upstream CPU getters under the explicitly named parameterless profile with the mathematical blend; they do not prove equivalent neural inference, all-history universal parity, or effective deployed configuration.
 
-[Completed CPU evidence](evidence/ceres-cpu-semantics-completed-20260913.json) retains the failed original attempt, exact recovery and independent review. This resolves the tested encoder and getter question at the saved inputs. It does not authorize a teacher replacement, a new corpus, or training, and makes no playing-strength claim.
+[Completed CPU evidence](evidence/ceres-cpu-semantics-completed-20260913.json) retains the failed original attempt, exact recovery and independent review. This resolves the tested encoder and getter question at the saved inputs. No teacher replacement, corpus rewrite, or training was performed in this check. It makes no playing-strength claim.
