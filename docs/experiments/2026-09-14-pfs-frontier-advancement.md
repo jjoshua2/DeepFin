@@ -61,7 +61,7 @@ inputs do not establish current, full-history production equivalence.
 
 ### Four diagnoses, with different remedies
 
-1. **Admission starvation:** a independently preferred root move never entered
+1. **Admission starvation:** an independently preferred root move never entered
    the active candidate set. Interior probing cannot repair this.
 2. **Premature elimination:** it entered, but was discarded before enough useful
    evidence arrived. Work after final elimination cannot help unless re-entry is
@@ -150,13 +150,14 @@ frequently, a complete-case ranking alone cannot decide it; obtain a separately
 budgeted common adjudication or mark the comparison incomplete.
 
 Use the existing calibrated score domain rather than inventing an alternate WDL
-conversion. For the prospective cp screen, primary regret is non-mate excess cp
-above the best covered reference move, capped at 1,000 cp; also report uncapped
-regret and errors above 300 cp. Handle mate scores and exact tablebase outcomes
-categorically. Confirmed tactical wins/refutations and eventual paired games are
-independent checks against merely copying the SF ruler. A same-network deeper
-search is a second diagnostic, not ground truth. Do not claim to resolve an SF
-blind spot using SF agreement alone.
+conversion. For the prospective cp screen, primary regret is the non-mate score
+shortfall from the best covered reference move: `min(1000, max(0, best_cp -
+played_cp))`, with both scores in the root mover's perspective. Also report
+uncapped regret and errors above 300 cp. Handle mate scores and exact tablebase
+outcomes categorically. Confirmed tactical wins/refutations and eventual paired
+games are independent checks against merely copying the SF ruler. A same-network
+deeper search is a second diagnostic, not ground truth. Do not claim to resolve
+an SF blind spot using SF agreement alone.
 
 ## Experiment I: shallow interior frontier repair
 
@@ -340,7 +341,10 @@ padding, dispatch or concurrency costs.
 
 Reuse `scripts/arena_standard.py` where its real consumer supports the new
 per-side settings. Its matched-time path uses UCI subprocesses; an in-process
-Gumbel override does not configure those subprocesses. Add/test the appropriate
+Gumbel override does not configure those subprocesses. Verify that the chosen
+UCI mode actually executes the modified search path. If it uses PUCT walkers
+instead, select a supported matching mode or register a separate port/contrast;
+a silently inactive Gumbel flag is not a negative result. Add/test the appropriate
 surface before giving executable launch commands. Follow [the evaluation
 protocol](../eval_protocol.md), preserve complete pairs and resume banked games
 rather than rerolling completed results.
