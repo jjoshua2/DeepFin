@@ -826,6 +826,14 @@ source fixtures.
 roster for one source within the completed audit, rather than a timed-out audit
 prefix. Raw hashes remain checked by the existing source selection path.
 
+The audit may bind either the original completed collection (at most 192 shards)
+or a saved joint `receipt_selection` (at most 512). The saved route reuses the
+auditor's metadata admission: exact pinned snapshot membership, native WDL layout,
+teacher and source/history identity, and the complete ordered audited roster must
+match. Source manifests and receipt snapshots remain pinned through derivation
+binding. This does not fabricate a collection receipt, rerun the raw audit, or
+change which physical rows qualify for exclusion.
+
 This opt-in is limited to full uniform-d9 derivation with phase0 policy,
 latest-phase value, no value-depth override, search value scheme, and no other
 skip allowances. It removes only diagnosed baseline failures with a result.

@@ -23,7 +23,7 @@ from tests.test_derive_parallel import write_split_corpus
 from tests.test_derive_corpus_targets import run_derive
 
 
-def fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
+def fixture(tmp_path: Path, *, saved: bool = False) -> tuple[Path, Path, Path]:
     rows = [row() for _ in range(5)]
     for i, r in enumerate(rows):
         r['game_id'] = i
@@ -41,7 +41,16 @@ def fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
         'dtype': 'float32', 'order': ['win', 'draw', 'loss'], 'pov': 'side_to_move', 'rows': e['rows']}} for e in entries]
     collection = put(tmp_path / 'collection.json', {'status': 'BOUNDED_RAW_LABEL_COLLECTION_COMPLETE', 'new_shards': 2,
         'new_rows': 5, 'receipts': receipts})
-    audit.audit({'schema': 1, 'collection': collection, 'teacher_sha256': teacher,
+    route = {'collection': collection}
+    if saved:
+        snapshot = tmp_path / 'receipts.jsonl'
+        snapshot.write_text(''.join(json.dumps(r) + '\n' for r in receipts))
+        selected = put(tmp_path / 'saved-selection.json', {'schema': 1,
+            'kind': 'SAVED_JOINT_RECEIPT_SELECTION', 'selected_shards': 2, 'selected_raw_rows': 5,
+            'receipts': receipts, 'receipt_snapshots': [{'source_id': 'fixture',
+                'path': str(snapshot), 'sha256': exclusions.sha(snapshot)}]})
+        route = {'receipt_selection': selected}
+    audit.audit({'schema': 1, **route, 'teacher_sha256': teacher,
         'sources': [{'id': 'fixture', 'source_dir': str(source), 'manifest': source_pin}]}, tmp_path / 'audit', lambda: None)
     def pin(p: Path) -> dict[str, str]:
         return {'path': str(p), 'sha256': exclusions.sha(p)}
@@ -51,8 +60,9 @@ def fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     return source, Path(selection['path']), p
 
 
-def test_sequential_parallel_exact_survivors_and_physical_offsets(tmp_path: Path) -> None:
-    source, selection, exclusion = fixture(tmp_path)
+@pytest.mark.parametrize('saved', [False, True])
+def test_sequential_parallel_exact_survivors_and_physical_offsets(tmp_path: Path, saved: bool) -> None:
+    source, selection, exclusion = fixture(tmp_path, saved=saved)
     outputs = []
     for workers in (1, 2):
         out = tmp_path / f'derived{workers}'
@@ -175,3 +185,91 @@ def test_wrong_audited_game_fails_actual_derivation(tmp_path: Path, workers: int
             '--baseline-exclusions', str(path), '--row-provenance', '--workers', str(workers),
             '--policy-observation', 'phase0')
     assert not (out / derive.SUMMARY_NAME).exists()
+
+
+@pytest.mark.parametrize('fault', ['selected_hash', 'source_config', 'audit_order', 'both_routes', 'snapshot_after_load'])
+def test_saved_selection_identity_and_stability(tmp_path: Path, fault: str) -> None:
+    _source, selection_path, path = fixture(tmp_path, saved=True)
+    manifest = json.loads(path.read_text())
+    report_path = Path(manifest['audit']['path'])
+    report = json.loads(report_path.read_text())
+    admission = report['manifest']
+    selected_path = Path(admission['receipt_selection']['path'])
+    selected = json.loads(selected_path.read_text())
+    if fault == 'snapshot_after_load':
+        loaded = exclusions.load(path)
+        snapshot = Path(selected['receipt_snapshots'][0]['path'])
+        snapshot.write_text(snapshot.read_text() + '\n')
+        with pytest.raises(ValueError, match='changed exclusion evidence'):
+            loaded.bind(json.loads(selection_path.read_text()))
+        return
+    if fault == 'selected_hash':
+        selected['receipts'][0]['source_sha256'] = '0' * 64
+        admission['receipt_selection'] = put(selected_path, selected)
+    elif fault == 'source_config':
+        source_path = Path(admission['sources'][0]['manifest']['path'])
+        source = json.loads(source_path.read_text())
+        source['config_sha256'] = '0' * 64
+        admission['sources'][0]['manifest'] = put(source_path, source)
+    elif fault == 'audit_order':
+        report['shards'].reverse()
+    else:
+        admission['collection'] = {'path': str(tmp_path / 'collection.json'),
+                                   'sha256': exclusions.sha(tmp_path / 'collection.json')}
+    manifest['audit'] = put(report_path, report)
+    put(path, manifest)
+    with pytest.raises(ValueError, match=r'snapshot|roster differs|one receipt admission'):
+        exclusions.load(path)
+
+
+@pytest.mark.parametrize('total', [512, 513])
+def test_saved_metadata_cap_and_clean_shards(tmp_path: Path, total: int) -> None:
+    # Extend only synthetic metadata: this tests loader admission, not a raw audit.
+    source, selection_path, path = fixture(tmp_path, saved=True)
+    manifest = json.loads(path.read_text())
+    report_path = Path(manifest['audit']['path'])
+    report = json.loads(report_path.read_text())
+    selected_path = Path(report['manifest']['receipt_selection']['path'])
+    selected = json.loads(selected_path.read_text())
+    source_selection = json.loads(selection_path.read_text())
+    for i in range(2, total):
+        name = f'w00-{i:05d}.jsonl.zst'
+        entry = {**report['shards'][0], 'source_shard': name, 'rows': 1,
+                 'counts': {key: int(key in ('physical_rows', 'eligible_rows', 'whole_shard_retained_rows'))
+                            for key in report['counts']}, 'reasons': {}}
+        report['shards'].append(entry)
+        selected['receipts'].append({**selected['receipts'][0], 'source_shard': name,
+                                    'positions': 1, 'wdl': {**selected['receipts'][0]['wdl'], 'rows': 1}})
+        source_selection['shards'].append({'source_shard': name, 'source_sha256': entry['source_sha256'], 'rows': 1})
+    selected['selected_shards'] = total
+    selected['selected_raw_rows'] = total + 3
+    snapshot = Path(selected['receipt_snapshots'][0]['path'])
+    snapshot.write_text(''.join(json.dumps(r) + '\n' for r in selected['receipts']))
+    selected['receipt_snapshots'][0]['sha256'] = exclusions.sha(snapshot)
+    report['manifest']['receipt_selection'] = put(selected_path, selected)
+    report['counts'] = {key: sum(s['counts'][key] for s in report['shards']) for key in report['counts']}
+    manifest['audit'] = put(report_path, report)
+    manifest['selection'] = put(selection_path, source_selection)
+    put(path, manifest)
+    if total > 512:
+        with pytest.raises(ValueError, match='audit shard cap'):
+            exclusions.load(path)
+    else:
+        loaded = exclusions.load(path)
+        assert loaded.proof['excluded_rows'] == 1
+        assert loaded.proof['eligible_rows'] == total + 1
+        pending = loaded.pending([source / s['source_shard'] for s in source_selection['shards']])
+        assert set(pending) == {('w00-00000.jsonl.zst', 1)}
+        assert not exclusions.consume(pending, source / 'w00-00511.jsonl.zst', 0, row())
+
+
+def test_legacy_collection_cap_remains_192(tmp_path: Path) -> None:
+    _source, _selection, path = fixture(tmp_path)
+    manifest = json.loads(path.read_text())
+    report_path = Path(manifest['audit']['path'])
+    report = json.loads(report_path.read_text())
+    report['shards'] = [report['shards'][0]] * 193
+    manifest['audit'] = put(report_path, report)
+    put(path, manifest)
+    with pytest.raises(ValueError, match='audit shard cap'):
+        exclusions.load(path)

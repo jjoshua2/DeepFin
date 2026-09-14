@@ -66,16 +66,36 @@ def load(path: Path) -> Exclusions:
     audit = read(manifest['audit'])
     require(audit['status'] == 'PASS_BASELINE_ELIGIBILITY_NOT_DERIVATION', 'audit incomplete')
     selection = read(manifest['selection'])
-    collection = read(audit['manifest']['collection'])
-    require(collection['status'] == 'BOUNDED_RAW_LABEL_COLLECTION_COMPLETE', 'collection incomplete')
     shards = audit['shards']
-    require(0 < len(shards) <= 192, 'audit shard cap')
+    admission = audit['manifest']
+    require(('collection' in admission) != ('receipt_selection' in admission), 'one receipt admission route required')
+    saved = 'receipt_selection' in admission
+    require(0 < len(shards) <= (512 if saved else 192), 'audit shard cap')
     indexed = {(s['source_namespace'], s['source_shard']): s for s in shards}
     require(len(indexed) == len(shards), 'duplicate audited shard')
-    actual = {(s['source_id'], s['source_shard'], s['source_sha256'], s['rows']) for s in shards}
-    expected = {(s['source_id'], s['source_shard'], s['source_sha256'], s['positions']) for s in collection['receipts']}
-    require(actual == expected and len(expected) == collection['new_shards'] == len(shards), 'audit/collection roster differs')
-    require(sum(s['rows'] for s in shards) == collection['new_rows'], 'collection rows differ')
+    if saved:
+        # Local import avoids the deriver -> exclusions -> auditor import cycle.
+        # Reuse the audit's complete metadata admission, including typed WDL and
+        # exact snapshot membership; never synthesize a collector receipt.
+        from scripts import audit_raw_baseline as auditor
+
+        admitted = auditor.selection(admission, lambda: None, max_shards=512)
+        require(len(admitted) == len(shards) and all(
+            all(observed.get(k) == v for k, v in expected.items())
+            for observed, expected in zip(shards, admitted)), 'audit/receipt selection roster differs')
+        selected_receipts = read(admission['receipt_selection'])
+        admission_pins = [admission['receipt_selection'],
+                          *[source['manifest'] for source in admission['sources']],
+                          *[{k: ref[k] for k in ('path', 'sha256')}
+                            for ref in selected_receipts['receipt_snapshots']]]
+    else:
+        collection = read(admission['collection'])
+        require(collection['status'] == 'BOUNDED_RAW_LABEL_COLLECTION_COMPLETE', 'collection incomplete')
+        actual = {(s['source_id'], s['source_shard'], s['source_sha256'], s['rows']) for s in shards}
+        expected = {(s['source_id'], s['source_shard'], s['source_sha256'], s['positions']) for s in collection['receipts']}
+        require(actual == expected and len(expected) == collection['new_shards'] == len(shards), 'audit/collection roster differs')
+        require(sum(s['rows'] for s in shards) == collection['new_rows'], 'collection rows differ')
+        admission_pins = [admission['collection']]
     chosen = [s for s in shards if s['source_dir'] == selection['source_dir']]
     require(bool(chosen), 'source absent from audit')
     require(all(s['config_sha256'] == selection['source_config_sha256'] for s in chosen), 'configuration differs')
@@ -122,7 +142,7 @@ def load(path: Path) -> Exclusions:
         require(all(c[k] == s['counts'][k] for k in c), 'diagnostic/audit counts differ')
         totals.update(c)
     require(all(v == audit['counts'][k] for k, v in totals.items()), 'audit aggregate counts differ')
-    pins = [manifest[k] for k in ('audit', 'selection', 'diagnostics')] + [audit['manifest']['collection']]
+    pins = [manifest[k] for k in ('audit', 'selection', 'diagnostics')] + admission_pins
     proof = {'schema': 1, 'path': str(path.resolve()), 'sha256': hashlib.sha256(raw).hexdigest(),
              'pins': [*pins, {'path': str(path.resolve()), 'sha256': hashlib.sha256(raw).hexdigest()}],
              'excluded_rows': len(rows),
