@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "status": "ACTUAL_CPU_ORACLE_LAUNCH_NO_RESULT_OBSERVED",
+  "actual_runtime": "/tmp/deepfin-ceres-cpu-oracle",
+  "actual_runtime_commit": "58504cea518742a4e258a9b7d10f47fc07a68c4d",
+  "parent_reported_handles": {
+    "exec": 91969,
+    "sole_observer": 891
+  },
+  "started_utc": "2026-09-14T00:03:22.526845+00:00",
+  "upstream_commit": "64558176ad4933d3cd85b5604133d6576de921d2",
+  "refs": {
+    "plan": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/plan.json",
+      "sha256": "9ae1b0ddfa45103bec0b72bb382f1efb29b351adfae2cf08ae659975d2ea4dde"
+    },
+    "command": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/command.txt",
+      "sha256": "d16028c54fd6c46f80d296110551cc18011fc850fb9e131df596d8eb41d0ac9a"
+    },
+    "preparation": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/preparation.json",
+      "sha256": "dcbacf445644a1e48a8f547a744735b08399b607e085c80d51b2346a2d5b3261"
+    },
+    "parent_affinity_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/parent_affinity_review.json",
+      "sha256": "2003a9663a9117b338584d5cf0a8e64c6aa6e2abc20561d778b63725a6a31d87"
+    },
+    "base_independent_review": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v1/independent_preparation_review.json",
+      "sha256": "7b619db7da9bcab4711a01de5bf1b3619a47ad3ca53f18dfffa2dd3379c24c71"
+    },
+    "static_validation": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v1/static_validation.json",
+      "sha256": "bb107334ef2127c19a5eb80100eb74795f176ce0ca5397b6275ffe7320c6b17f"
+    },
+    "outer_started": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/outer_started.json",
+      "sha256": "1c119642612dffb700d67708f6263d7791db67913d4f53c8d8d8da1f2e2bbf4d",
+      "snapshot_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/outer_started.publication_snapshot.json",
+      "snapshot_sha256": "36fc5e014bff902dbe0176fe510ed56db9e203e954b018e7029ba3f12ea26d3a",
+      "observed": {
+        "started_unix": 1789344202.5268445,
+        "argv": [
+          "/bin/bash",
+          "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/command.txt"
+        ],
+        "command_sha256": "d16028c54fd6c46f80d296110551cc18011fc850fb9e131df596d8eb41d0ac9a",
+        "scope": "CPU upstream semantics only"
+      }
+    },
+    "operator_started": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/execution/started.json",
+      "sha256": "18ea13b85cc73711a9ee080a1d2752112f63a48eacca511140fcc492c7bc59f6",
+      "snapshot_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_cpu_semantics_plan_v1/implementation_v2/operator_started.publication_snapshot.json",
+      "snapshot_sha256": "18ea13b85cc73711a9ee080a1d2752112f63a48eacca511140fcc492c7bc59f6",
+      "observed": {
+        "deadline": 1789347802.0,
+        "plan_sha256": "9ae1b0ddfa45103bec0b72bb382f1efb29b351adfae2cf08ae659975d2ea4dde",
+        "started_unix": 1789344202.570005
+      }
+    }
+  },
+  "limits": {
+    "whole_seconds": 3600,
+    "startup_available_gib": 48,
+    "running_available_gib": 32,
+    "startup_free_gib": 162,
+    "running_free_gib": 150,
+    "task_allocated_cap_gib": 8,
+    "cpu": [
+      10,
+      11
+    ],
+    "gpu": false,
+    "address_space_cap": null,
+    "explicit_histories": 16,
+    "saved_rows": 128,
+    "full_history_before_encoder_truncation": true
+  },
+  "scope": "16 explicit full histories plus128 saved rows; CPU encoding and FP16 getter semantics only",
+  "result": null,
+  "limitations": [
+    "No model inference or neural parity claim",
+    "Named parameterless .55/1.5/.4 profile, not asserted effective deployment",
+    "Build and dependency feasibility pending; stop on first failure, no automatic extension",
+    "Publication README points to v2; active runtime unchanged"
+  ]
+}
