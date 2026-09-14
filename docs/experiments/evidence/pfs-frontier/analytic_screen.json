@@ -1,0 +1,197 @@
+{
+  "evidence_kind": "analytic_and_synthetic_only",
+  "limits": "No DeepFin import/build, chess search, checkpoint, corpus, GPU, or strength test. Opportunity sets are fixed, not counterfactual search trajectories. First-round opportunities are upper bounds requiring fresh feedback; terminal/carry/transposition/batching paths are not simulated.",
+  "reviewed_repository_revision": "c7b88eaf9da6f2c8a23675b52cac60275f726e36",
+  "source_helpers": {
+    "width": "chess_anti_engine/mcts/gumbel_c.py::_realized_candidate_width",
+    "round": "chess_anti_engine/mcts/gumbel.py::halving_visits_per_action",
+    "temperature": "chess_anti_engine/mcts/gumbel.py::apply_policy_temp",
+    "normalization": "chess_anti_engine/mcts/gumbel.py::_completed_q_transform"
+  },
+  "python": "3.13.5",
+  "script_sha256": "45f8389f999797ea9a130244ebe8ab87dcc4d70322520c3319b98103cd41cba4",
+  "arithmetic_tests_passed": 8,
+  "first_rounds": [
+    {
+      "budget": 25,
+      "requested_topk": 32,
+      "legal": 40,
+      "width": 13,
+      "visits_per_candidate": 1,
+      "scheduled_round_work": 13,
+      "survivors": 7,
+      "interior_opportunities_upper_bound_per_candidate": 0
+    },
+    {
+      "budget": 100,
+      "requested_topk": 32,
+      "legal": 40,
+      "width": 32,
+      "visits_per_candidate": 1,
+      "scheduled_round_work": 32,
+      "survivors": 16,
+      "interior_opportunities_upper_bound_per_candidate": 0
+    },
+    {
+      "budget": 100,
+      "requested_topk": 16,
+      "legal": 40,
+      "width": 16,
+      "visits_per_candidate": 1,
+      "scheduled_round_work": 16,
+      "survivors": 8,
+      "interior_opportunities_upper_bound_per_candidate": 0
+    },
+    {
+      "budget": 100,
+      "requested_topk": 8,
+      "legal": 40,
+      "width": 8,
+      "visits_per_candidate": 4,
+      "scheduled_round_work": 32,
+      "survivors": 4,
+      "interior_opportunities_upper_bound_per_candidate": 3
+    },
+    {
+      "budget": 400,
+      "requested_topk": 32,
+      "legal": 40,
+      "width": 32,
+      "visits_per_candidate": 2,
+      "scheduled_round_work": 64,
+      "survivors": 16,
+      "interior_opportunities_upper_bound_per_candidate": 1
+    },
+    {
+      "budget": 400,
+      "requested_topk": 16,
+      "legal": 40,
+      "width": 16,
+      "visits_per_candidate": 6,
+      "scheduled_round_work": 96,
+      "survivors": 8,
+      "interior_opportunities_upper_bound_per_candidate": 5
+    }
+  ],
+  "quota_examples": [
+    {
+      "B": 100,
+      "R": 5,
+      "fixed_opportunities": 0,
+      "hit_probability": 0.0
+    },
+    {
+      "B": 100,
+      "R": 5,
+      "fixed_opportunities": 1,
+      "hit_probability": 0.05
+    },
+    {
+      "B": 100,
+      "R": 5,
+      "fixed_opportunities": 3,
+      "hit_probability": 0.1440012368583797
+    },
+    {
+      "B": 100,
+      "R": 5,
+      "fixed_opportunities": 10,
+      "hit_probability": 0.4162476330738481
+    }
+  ],
+  "temperature_example": {
+    "0.5": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "1.0": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "1.2": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "2.0": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ]
+  },
+  "normalizer_example": {
+    "q_before": [
+      0.2,
+      0.21,
+      0.19
+    ],
+    "q_after": [
+      0.2,
+      0.21,
+      -0.9
+    ],
+    "log_prior_up_to_constant": [
+      0.0,
+      -1.0,
+      -20.0
+    ],
+    "scale": 48.0,
+    "scores_before": [
+      24.000000000000032,
+      47.0,
+      -20.0
+    ],
+    "scores_after": [
+      47.567567567567565,
+      47.0,
+      -20.0
+    ],
+    "winner_before": "B",
+    "winner_after": "A"
+  },
+  "backup_dilution": {
+    "old_count": 9,
+    "old_q": 0.6,
+    "new_q": -0.9,
+    "competitor_q": 0.2,
+    "means_after_k_bad_backups": {
+      "1": 0.4499999999999999,
+      "2": 0.3272727272727272,
+      "3": 0.22499999999999995,
+      "4": 0.1384615384615384
+    }
+  },
+  "depth_shadow_example": {
+    "first_eligible": [
+      100,
+      0
+    ],
+    "alternating_depth": [
+      50,
+      50
+    ],
+    "assumption": "Both levels eligible on every opportunity"
+  }
+}
