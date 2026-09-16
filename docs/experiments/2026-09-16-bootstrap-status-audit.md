@@ -224,3 +224,13 @@ The CPU adapter completed successfully before reboot and is not repeated.
 
 [Recovery evidence](evidence/bootstrap-reboot-20260916.json) records the exact
 queue and launch identities. Activation does not claim completion of the batch.
+
+CPU generation also resumed for 12 hours at the existing 2+1 concurrency, with
+32 GiB available-RAM and 150 GiB disk guards. Initial automatic approval review
+rejected the resume cleanup risk. A separate copy-only operation then preserved
+and independently verified all 34 files, including every one of the 16 incomplete
+tails. The revised wrapper rehashes both copies and originals and requires its
+exact all-codec deletion roster to equal those backed-up tails. Renewed review
+accepted this concrete recovery; both generator processes and their monitor
+reported running. Backups remain outside the corpus, and completed shards are
+preserved. This changes neither label depth nor logical worker partitioning.

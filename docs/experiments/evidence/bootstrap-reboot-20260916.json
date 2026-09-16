@@ -35,5 +35,49 @@
     "qualified_block00": 264297,
     "completed_unqualified_block01_shards": 114688
   },
-  "fix_commit": "df86acee149b10bef5c1b24c63c41b2178f78855"
+  "fix_commit": "df86acee149b10bef5c1b24c63c41b2178f78855",
+  "cpu_fleet": {
+    "status": "GUARDED_RUNNING",
+    "launch": {
+      "pid": 2459,
+      "started_unix": 1789565292.879748,
+      "budget_seconds": 43200,
+      "argv": [
+        "/usr/bin/timeout",
+        "--signal=TERM",
+        "--kill-after=30s",
+        "43170s",
+        "/usr/bin/python3",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/fleet_recovery_20260916b/run_verified_preserved.py"
+      ],
+      "review": "Renewed approval submission after copy-only preservation: all34 source/copy pairs SHA256 verified; launch-time exact deletion roster must equal16 backed-up tails; independent closure passed. Originals may be unlinked by existing resume but byte-identical backup files remain outside corpus."
+    },
+    "actual": {
+      "boot": "7919fc84-f48d-4da1-8349-b6ccbae921b4",
+      "generators": {
+        "run06_g10": {
+          "pgid": 2474,
+          "pid": 2474,
+          "sid": 2474,
+          "start_ticks": 60807,
+          "state": "R"
+        },
+        "run07_g10_companion4": {
+          "pgid": 2475,
+          "pid": 2475,
+          "sid": 2475,
+          "start_ticks": 60807,
+          "state": "R"
+        }
+      },
+      "monitor_pid": 2476,
+      "plan_sha256": "6956b64b5719c66b2a636ae64c3e347a16587f1c9a197619021b2b73cc3a246d",
+      "status": "GUARDED"
+    },
+    "backup_receipt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/fleet_recovery_20260916b/preservation_complete.json",
+      "sha256": "c2d72ee705173dec0847353b1f0786a972d7e8326677d04452158715712e1fb3"
+    },
+    "wrapper_sha256": "1b34b8108637b727c4d1e42827921263139fc35552377bf314aea2ef1d6be512"
+  }
 }
