@@ -377,3 +377,77 @@ def test_historical_bridge_requires_pinned_source_and_real_completed_checks(comp
         tool.legacy_v50(receipt, ref)
     with pytest.raises(ValueError, match='verifier source'):
         tool.legacy_v50(receipt, {**ref, 'sha256': '0' * 64})
+
+
+def test_expansion_requires_exact_historical_prefix_and_audited_extras(completed: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    evidence, _ = completed
+    prior = tool.read_pin(evidence['candidate_training'])
+    old = tool.read_pin(prior['corpus_manifest'])
+    new = copy.deepcopy(old)
+    new['kind'] = tool.schedule.EXPANSION_KIND
+    new['cohorts'].append({'id': 'new', 'identity_kind': 'audited-g10-selection'})
+    m = {'previous_training': evidence['candidate_training'], 'previous_verifier': {},
+         'opening_panel': prior['opening_panel'], 'runtime_manifest': prior['runtime_manifest'],
+         'corpus_manifest': put(tmp_path / 'expanded.json', new)}
+    verified = []
+    monkeypatch.setattr(tool, 'legacy_v50', lambda receipt, ref: verified.append(receipt))
+    tool.expansion_predecessor(m)
+    assert verified == [prior]
+    new['cohorts'][1]['roots']['V50']['summary']['sha256'] = 'retargeted'
+    m['corpus_manifest'] = put(tmp_path / 'expanded.json', new)
+    with pytest.raises(ValueError, match='preserved35M'):
+        tool.expansion_predecessor(m)
+    new['cohorts'] = [*copy.deepcopy(old['cohorts']), {'id': 'new', 'identity_kind': 'qualified-g10-selection'}]
+    m['corpus_manifest'] = put(tmp_path / 'expanded.json', new)
+    with pytest.raises(ValueError, match='new audited'):
+        tool.expansion_predecessor(m)
+
+
+def test_expansion_budget_is_explicit_and_old_role_cannot_use_it() -> None:
+    m = {'profile': tool.EXPANSION_PROFILE, 'role': tool.EXPANSION_ROLE}
+    assert tool.budgets(m) == (32400, 43200)
+    assert tool.arm_for(tool.EXPANSION_ROLE) == 'V50'
+    m['role'] = 'Combined35M_V50'
+    with pytest.raises(ValueError, match='expanded role'):
+        tool.budgets(m)
+    assert tool.budgets({'profile': tool.PROFILE, 'role': 'Combined35M_V50'}) == (21600, 27000)
+
+
+def test_expansion_admits_measured_rows_but_refuses_raw_upper_bound(completed: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    evidence, report = completed
+    prior = tool.read_pin(evidence['candidate_training'])
+    manifest = tool.read_pin(prior['corpus_manifest'])
+    manifest['kind'] = tool.schedule.EXPANSION_KIND
+    rows = 50_000_003
+    extra = {'id': 'new', 'identity_kind': 'audited-g10-selection', 'roots': {
+        arm: {'summary': {'path': str(tmp_path / ('new_' + arm) / 'derive_targets_summary.json')}}
+        for arm in ('source', 'B100', 'V50')}}
+    manifest['cohorts'].append(extra)
+    manifest.update(expected_rows=rows, expected_shards=22)
+    row = {'cohort': 'new', 'rows': rows - 21, 'paths': {
+        arm: str(tmp_path / ('new_' + arm) / 'shard_000000.zarr') for arm in ('source', 'B100', 'V50')}}
+    report['mapping'].append(row)
+    report['training_role_to_arm'] = {tool.EXPANSION_ROLE: 'V50'}
+    report['trainer_shards'] = {'V50': [*report['trainer_shards']['V50'], str(tmp_path / 'new_V50')]}
+    report['rows'] = rows
+    report['arms']['V50']['physical_plan'].update(rows_planned=rows, shards=22)
+    m: dict[str, Any] = {**prior, 'profile': tool.EXPANSION_PROFILE, 'role': tool.EXPANSION_ROLE,
+         'previous_training': evidence['candidate_training'], 'previous_verifier': {},
+         'corpus_manifest': put(tmp_path / 'expanded.json', manifest)}
+    report['manifest_sha256'] = m['corpus_manifest']['sha256']
+    m['prospective'] = put(tmp_path / 'expanded_report.json', report)
+    monkeypatch.setattr(tool, 'legacy_v50', lambda *args: {})
+    assert tool.admission(m)['rows'] == rows
+    # Merely increasing expected_rows without retained-row coverage is rejected.
+    manifest['expected_rows'] += 100
+    m['corpus_manifest'] = put(tmp_path / 'expanded.json', manifest)
+    report['manifest_sha256'] = m['corpus_manifest']['sha256']
+    m['prospective'] = put(tmp_path / 'expanded_report.json', report)
+    with pytest.raises(ValueError, match='registered combined rows'):
+        tool.admission(m)
+    manifest['expected_rows'] = 49_999_999
+    m['corpus_manifest'] = put(tmp_path / 'expanded.json', manifest)
+    report['manifest_sha256'] = m['corpus_manifest']['sha256']
+    m['prospective'] = put(tmp_path / 'expanded_report.json', report)
+    with pytest.raises(ValueError, match='expansion row budget'):
+        tool.admission(m)

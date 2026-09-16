@@ -29,6 +29,8 @@ from scripts import training_host_memory as memory
 from scripts import combined_corpus_schedule as schedule
 
 PROFILE = 'combined35m_value_seed101'
+EXPANSION_PROFILE = 'audited50m_value_seed101'
+EXPANSION_ROLE = schedule.EXPANSION_ROLE
 ROLES = {'Combined35M_SF100': 'B100', 'Combined35M_V50': 'V50'}
 V100_ROLE = 'Combined35M_V100'
 LEGACY_VERIFIER_SHA = '87ed234c2861920e96427010833a3c5c55fa3d3c136655f3957426647ed15acb'
@@ -58,7 +60,33 @@ def same(actual: Any, expected: Any, label: str) -> None:
 
 
 def arm_for(role: str) -> str:
+    if role == EXPANSION_ROLE:
+        return 'V50'
     return 'V100' if role == V100_ROLE else ROLES[role]
+
+
+def budgets(m: dict[str, Any]) -> tuple[int, int]:
+    if m['profile'] == EXPANSION_PROFILE:
+        same(m['role'], EXPANSION_ROLE, 'expanded role')
+        return 32400, 43200
+    same(m['profile'], PROFILE, 'profile')
+    require(m['role'] in {*ROLES, V100_ROLE}, 'unknown combined training role')
+    return 21600, 27000
+
+
+def expansion_predecessor(m: dict[str, Any]) -> None:
+    """Append to the exact trained35M selection, retaining every prior target."""
+    prior = read_pin(m['previous_training'])
+    legacy_v50(prior, m['previous_verifier'])
+    for key in ('opening_panel', 'runtime_manifest'):
+        same(prior[key], m[key], 'expansion common ' + key)
+    old = read_pin(prior['corpus_manifest'])
+    new = read_pin(m['corpus_manifest'])
+    same(len(old['cohorts']), 21, 'historical cohort count')
+    same(old['expected_rows'], ROWS, 'historical rows')
+    same(new['cohorts'][:21], old['cohorts'], 'preserved35M cohorts')
+    require(len(new['cohorts']) > 21 and all(c['identity_kind'] == 'audited-g10-selection'
+            for c in new['cohorts'][21:]), 'expansion requires new audited cohorts')
 
 
 def legacy_v50(receipt: dict[str, Any], ref: dict[str, str]) -> dict[str, Any]:
@@ -109,23 +137,33 @@ def admission(m: dict[str, Any]) -> dict[str, Any]:
     for value in (manifest, report):
         same(value['seed'], 101, 'seed')
         same(value['batch_size'], 512, 'batch size')
-    same(report['rows'], ROWS, 'registered combined rows')
-    same(manifest['expected_rows'], ROWS, 'manifest rows')
-    same(len(manifest['cohorts']), 21, 'logical cohort count')
+    budgets(m)
+    expanded = m['profile'] == EXPANSION_PROFILE
+    rows = manifest['expected_rows'] if expanded else ROWS
+    cohorts = len(manifest['cohorts']) if expanded else 21
+    if expanded:
+        same(manifest['kind'], schedule.EXPANSION_KIND, 'expansion corpus kind')
+        require(type(rows) is int and 50_000_000 <= rows <= 60_000_000, 'expansion row budget')
+        expansion_predecessor(m)
+    else:
+        require(manifest['kind'] != schedule.EXPANSION_KIND, 'expansion mislabeled as historical')
+    same(report['rows'], rows, 'registered combined rows')
+    same(manifest['expected_rows'], rows, 'manifest rows')
+    same(len(manifest['cohorts']), cohorts, 'logical cohort count')
     mapping = report['mapping']
     same(len(mapping), manifest['expected_shards'], 'mapping shard count')
-    same(sum(row['rows'] for row in mapping), ROWS, 'mapping row count')
+    same(sum(row['rows'] for row in mapping), rows, 'mapping row count')
     require(all(type(row['rows']) is int and row['rows'] > 0 for row in mapping), 'invalid shard rows')
     for arm in report['training_role_to_arm'].values():
         roots = report['trainer_shards'][arm]
         same(roots, [str(Path(c['roots'][arm]['summary']['path']).parent) for c in manifest['cohorts']], 'ordered training roots')
-        require(len(set(roots)) == 21 and all(Path(root).is_absolute() for root in roots), 'invalid roots')
+        require(len(set(roots)) == cohorts and all(Path(root).is_absolute() for root in roots), 'invalid roots')
         paths = [row['paths'][arm] for row in mapping]
         require(len(paths) == len(set(paths)) and all(Path(p).is_absolute() for p in paths), 'aliased shard mapping')
         require(list(dict.fromkeys(str(Path(p).parent) for p in paths)) == roots, 'ordered cohort mapping differs')
         plan = report['arms'][arm]['physical_plan']
         same({k: plan[k] for k in ('seed', 'batch_size', 'rows_planned', 'shards')},
-             {'seed': 101, 'batch_size': 512, 'rows_planned': ROWS, 'shards': len(mapping)}, 'prospective dimensions')
+             {'seed': 101, 'batch_size': 512, 'rows_planned': rows, 'shards': len(mapping)}, 'prospective dimensions')
         require(report['arms'][arm]['metadata_matches_source'] is True
                 and report['arms'][arm]['training_completed'] is False, 'prospective claim differs')
         same(report['arms'][arm]['canonical_plan_sha256'], report['arms']['source']['physical_plan']['plan_sha256'],
@@ -173,10 +211,9 @@ def selected_subset(m: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]
 
 def validate(m: dict[str, Any], *, fresh: bool = True) -> dict[str, Any]:
     same(m['schema'], 1, 'schema')
-    same(m['profile'], PROFILE, 'profile')
-    require(m['role'] in {*ROLES, V100_ROLE}, 'unknown combined role')
-    same(m['training_seconds'], 21600, 'training cap')
-    same(m['coordinator_seconds'], 27000, 'coordinator cap')
+    training_cap, coordinator_cap = budgets(m)
+    same(m['training_seconds'], training_cap, 'training cap')
+    same(m['coordinator_seconds'], coordinator_cap, 'coordinator cap')
     require(isinstance(m['stop_paths'], list) and m['stop_paths']
             and all(isinstance(p, str) and Path(p).is_absolute() for p in m['stop_paths']), 'missing/relative STOP paths')
     for key in ('state', 'run'):
@@ -196,7 +233,9 @@ def validate(m: dict[str, Any], *, fresh: bool = True) -> dict[str, Any]:
         owned.pin(owned.RUNTIME / suffix, digest)
     report = admission(m)
     selected_subset(m, report)
-    if m['role'] == V100_ROLE:
+    if m['role'] == EXPANSION_ROLE:
+        pass  # admission already verifies the exact historical predecessor.
+    elif m['role'] == V100_ROLE:
         verify_v100_predecessor(m, report)
     elif m['role'] == 'Combined35M_V50':
         prior = read_pin(m['previous_training'])
@@ -240,7 +279,7 @@ def value_masks(summary: dict[str, Any]) -> None:
 
 
 def summary_contract(summary: dict[str, Any], report: dict[str, Any], role: str, partial: dict[str, Any]) -> None:
-    if role == V100_ROLE:
+    if role in (V100_ROLE, EXPANSION_ROLE):
         value_masks(summary)
     arm = arm_for(role)
     plan = report['arms'][arm]['physical_plan']
@@ -303,7 +342,7 @@ def completed_training(m: dict[str, Any], report: dict[str, Any], charge: dict[s
     require(any(c['role'] == 'last' and c['path'] == checkpoint['path'] and c['sha256'] == checkpoint['sha256']
                 for c in summary['checkpoints']), 'last checkpoint differs')
     plan = report['arms'][arm_for(role)]
-    receipt = {'schema': 1, 'profile': PROFILE, 'complete': True, 'role': role, 'run': str(run),
+    receipt = {'schema': 1, 'profile': m['profile'], 'complete': True, 'role': role, 'run': str(run),
                'checkpoint': checkpoint, 'summary_sha256': owned.sha(run / 'summary.json'),
                'canonical_plan_sha256': plan['canonical_plan_sha256'],
                'physical_plan_sha256': plan['physical_plan']['plan_sha256'],
@@ -316,15 +355,15 @@ def completed_training(m: dict[str, Any], report: dict[str, Any], charge: dict[s
                'historical_validity_problems': summary['validity_problems'],
                'proof': 'Exact actual staged-link order and frozen trainer physical plan/realization equal the admitted prospective arm; canonical identity is inherited from its game-column proof. No feature/target revalidation.'}
     receipt.update({k: m[k] for k in ('corpus_manifest', 'prospective', 'opening_panel', 'preregistration', 'runtime_manifest', 'code_pins', 'selected_subset_qualification')})
-    if role == V100_ROLE:
+    if role in (V100_ROLE, EXPANSION_ROLE):
         receipt.update({k: m[k] for k in ('previous_training', 'previous_verifier')})
     return receipt
 
 
 def verify_completed(receipt: dict[str, Any]) -> dict[str, Any]:
     """Match admission reads small completion evidence, never models or corpora."""
-    require(receipt['complete'] is True and receipt['profile'] == PROFILE and receipt['role'] in {*ROLES, V100_ROLE},
-            'incomplete or foreign combined training')
+    require(receipt['complete'] is True, 'incomplete combined training')
+    training_cap, _ = budgets(receipt)
     report = admission(receipt)
     if receipt['role'] == V100_ROLE:
         verify_v100_predecessor(receipt, report)
@@ -341,11 +380,11 @@ def verify_completed(receipt: dict[str, Any]) -> dict[str, Any]:
     expected_roster_sha = hashlib.sha256(json.dumps(expected_paths, separators=(',', ':')).encode()).hexdigest()
     same(receipt['actual_staging_sha256'], expected_roster_sha, 'recorded actual staging mapping')
     charge = receipt['training_charge_seconds']
-    require(type(charge) in (int, float) and math.isfinite(charge) and 0 < charge <= 21600, 'training cap exceeded')
+    require(type(charge) in (int, float) and math.isfinite(charge) and 0 < charge <= training_cap, 'training cap exceeded')
     process = read_pin(receipt['training_process'])
     require(process['process_complete'] is True and process['exit_code'] == 0, 'training process incomplete')
     same(process['gpu_seconds'], charge, 'process training charge')
-    same(process['hard_seconds'], 21600, 'process budget')
+    same(process['hard_seconds'], training_cap, 'process budget')
     rt = read_pin(receipt['runtime_manifest'])['runtime']
     same(process['command'], train_command(receipt, report, rt['executable']), 'actual training command')
     same(process['cwd'], str(owned.RUNTIME), 'actual training runtime')
@@ -367,6 +406,16 @@ def verify_completed(receipt: dict[str, Any]) -> dict[str, Any]:
 
 
 def matched_training_pair(evidence: dict[str, Any]) -> tuple[str, str]:
+    if evidence['candidate']['role'] == EXPANSION_ROLE:
+        candidate = read_pin(evidence['candidate_training'])
+        verify_completed(candidate)
+        same(candidate['checkpoint'], evidence['candidate'], 'expanded candidate checkpoint')
+        same(candidate['previous_training'], evidence['reference_training'], 'expanded deciding35M receipt')
+        reference = read_pin(evidence['reference_training'])
+        legacy_v50(reference, candidate['previous_verifier'])
+        same(reference['checkpoint'], evidence['reference'], 'expanded reference checkpoint')
+        require(evidence['candidate']['sha256'] != evidence['reference']['sha256'], 'candidate is reference')
+        return (EXPANSION_ROLE, 'Combined35M_V50')
     if evidence['candidate']['role'] == V100_ROLE:
         candidate = read_pin(evidence['candidate_training'])
         verify_completed(candidate)
@@ -395,12 +444,13 @@ def matched_training_pair(evidence: dict[str, Any]) -> tuple[str, str]:
 def execute(m: dict[str, Any]) -> None:
     started = time.monotonic()
     report = validate(m)
+    training_cap, coordinator_cap = budgets(m)
     memory.require_available(memory.STARTUP_GIB)
     rt = owned.runtime_identity(m['runtime_manifest'])
     actual_runtime = original.training_runtime_probe(rt)
     state = Path(m['state'])
     def guard() -> None:
-        require(time.monotonic() - started < 26940, 'coordinator budget exhausted')
+        require(time.monotonic() - started < coordinator_cap - 60, 'coordinator budget exhausted')
         require(not any(Path(p).exists() for p in [str(state / 'STOP'), *m['stop_paths']]), 'STOP requested')
         owned.disk_guard(state)
         memory.require_available(memory.RUNNING_GIB)
@@ -411,7 +461,7 @@ def execute(m: dict[str, Any]) -> None:
         with (owned.ROOT / 'scratchpad/gpu0_experiment.lock').open('a') as lease:
             while True:
                 guard()
-                require(time.monotonic() - started + 21600 + 1800 + 60 <= 27000, 'insufficient training/completion allowance')
+                require(time.monotonic() - started + training_cap + 1800 + 60 <= coordinator_cap, 'insufficient training/completion allowance')
                 try:
                     fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
@@ -424,7 +474,7 @@ def execute(m: dict[str, Any]) -> None:
             env = owned.environment(gpu=True)
             for key in ('PYTHONOPTIMIZE', 'PYTHONHOME', 'LD_PRELOAD'):
                 env.pop(key, None)
-            charge = owned.run_owned_stage(train_command(m, report, rt['executable']), state / 'training', 21600,
+            charge = owned.run_owned_stage(train_command(m, report, rt['executable']), state / 'training', training_cap,
                 lease.fileno(), 'training', {'runtime': actual_runtime, 'input_pins': m['code_pins']},
                 manifest=m, stop_paths=(*(Path(p) for p in m['stop_paths']), state / 'STOP'),
                 cwd=owned.RUNTIME, env=env, guard=guard)
@@ -471,7 +521,7 @@ def main() -> None:
         verify_completed(receipt)
         owned.write(state / 'training.complete.json', receipt)
     elif args.execute:
-        signal.alarm(26970)
+        signal.alarm(budgets(m)[1] - 30)
         execute(m)
     else:
         report = validate(m)

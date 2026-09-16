@@ -169,9 +169,20 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         source=str(sf_root), expected_source_summary_sha256=args.expected_sf_summary_sha256,
         start_shard=0, max_shards=2**31, g10_common_qualification=qualification,
         expected_g10_common_qualification_sha256=qualification_sha,
+        audited_source_manifest=getattr(args, 'audited_source_manifest', None),
+        expected_audited_source_manifest_sha256=getattr(args, 'expected_audited_source_manifest_sha256', None),
     )
     sf, specs = wdl.source_inventory(inventory_args)
     g10_admission = inventory_args.g10_admission
+    audited_admission = inventory_args.audited_source_admission
+    if audited_admission is not None:
+        require(adapter_path is not None and not native_path and not matched_path,
+                'audited source requires the raw-adapted WDL route')
+        require(adapted_pin == audited_admission['adapter_manifest']
+                and str(side_root) == audited_admission['wdl_dir'], 'audited adapter input differs')
+        pins.update({Path(p): h for p, h in audited_admission['summary_pins'].items()})
+        pins[Path(audited_admission['qualification']['path'])] = audited_admission['qualification']['sha256']
+        pins.update({Path(r['path']): r['sha256'] for r in audited_admission['baseline_exclusion_pins']})
     if g10_admission is not None:
         require(bool(native_path or adapter_path), 'G10 values require explicit native or adapted WDL provenance')
         if qualification is None or not isinstance(qualification_sha, str):
@@ -253,6 +264,10 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         pins[Path(adapted_pin['path'])] = adapted_pin['sha256']
     if native_bindings is not None:
         producer[str(Path(historical.__file__).resolve())] = wdl.file_sha256(historical.__file__)
+    if audited_admission is not None:
+        from scripts import audited_source_admission as audited
+        producer[str(Path(audited.__file__).resolve())] = wdl.file_sha256(audited.__file__)
+        producer[str(Path(audited.exclusions.__file__).resolve())] = wdl.file_sha256(audited.exclusions.__file__)
     if matched_input is not None:
         producer[str(Path(matched.__file__).resolve())] = wdl.file_sha256(matched.__file__)
     writing.mkdir(parents=True)
@@ -494,6 +509,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                                         'new_teacher_evaluations': 0}
         if g10_admission is not None:
             recipe['g10_common_admission'] = g10_admission
+        if audited_admission is not None:
+            recipe['audited_source_admission'] = audited_admission
         if native_path and native_bindings is not None:
             recipe['native_wdl_reuse'] = {
                 'profile': historical.MULTI_PROFILE if len(side_roots) > 1 else historical.PROFILE,
@@ -552,6 +569,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wdl-output", default="/output/wdl")
     parser.add_argument('--matched-sf-manifest', type=Path, default=argparse.SUPPRESS)
     parser.add_argument('--expected-matched-sf-manifest-sha256', default=argparse.SUPPRESS)
+    parser.add_argument("--audited-source-manifest", type=Path, default=argparse.SUPPRESS)
+    parser.add_argument("--expected-audited-source-manifest-sha256", default=argparse.SUPPRESS)
     parser.add_argument("--g10-common-qualification", type=Path, default=argparse.SUPPRESS)
     parser.add_argument("--expected-g10-common-qualification-sha256", default=argparse.SUPPRESS)
     parser.add_argument("--native-wdl-manifest", type=Path, default=argparse.SUPPRESS)

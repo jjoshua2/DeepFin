@@ -26,15 +26,19 @@ TEACHER = '1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0'
 ARMS = ('source', 'B100', 'V50')
 
 V100_KIND = 'matched-b100-sf-native100-corpus-set'
+EXPANSION_KIND = 'audited-expanded-b100-native50-corpus-set'
+EXPANSION_ROLE = 'Expanded50M_V50'
 
 
 def corpus_arms(manifest: dict[str, Any]) -> tuple[str, str, str]:
     kind = manifest['kind']
-    require(kind in {'matched-b100-sf-native50-corpus-set', V100_KIND}, 'unknown corpus recipe kind')
+    require(kind in {'matched-b100-sf-native50-corpus-set', V100_KIND, EXPANSION_KIND}, 'unknown corpus recipe kind')
     return ('source', 'B100', 'V100') if kind == V100_KIND else ARMS
 
 
 def role_map(manifest: dict[str, Any]) -> dict[str, str]:
+    if manifest['kind'] == EXPANSION_KIND:
+        return {EXPANSION_ROLE: 'V50'}
     return ({'Combined35M_V100': 'V100'} if corpus_arms(manifest)[-1] == 'V100'
             else {'Combined35M_SF100': 'B100', 'Combined35M_V50': 'V50'})
 
@@ -148,7 +152,17 @@ def admit(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         require(bool(qualification), 'missing source qualification')
         require(re.fullmatch(r'[0-9a-f]{64}', c['source_namespace']) is not None,
                 'invalid source namespace')
-        if c['identity_kind'] == 'qualified-g10-selection':
+        if c['identity_kind'] == 'audited-g10-selection':
+            from scripts import audited_source_admission as audited
+            require(manifest['kind'] == EXPANSION_KIND, 'audited sources need the expansion profile')
+            proof = audited.admit(Path(c['source_qualification']['path']), c['source_qualification']['sha256'],
+                                  root_path(c, 'source'), read_pin(summary_ref(c, 'source')))
+            subset(proof, {'rows': c['rows'], 'source_namespace': c['source_namespace'],
+                           'raw_shards': c['raw_shards']}, 'audited source identity')
+            value = read_pin(c['value_recipe'])
+            require(same_json(value.get('audited_source_admission'), proof),
+                    'V50 does not inherit audited source admission')
+        elif c['identity_kind'] == 'qualified-g10-selection':
             # This is the existing metadata assessment, including its historical
             # source-version caveat, not a fabricated generation attestation.
             identity = read_pin(c['identity_receipt'])

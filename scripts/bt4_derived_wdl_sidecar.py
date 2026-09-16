@@ -102,8 +102,19 @@ def source_inventory(
         args.g10_admission = g10.admit(Path(qualification), qualification_sha, source, summary)
     else:
         args.g10_admission = None
+    audited_path = getattr(args, "audited_source_manifest", None)
+    audited_sha = getattr(args, "expected_audited_source_manifest_sha256", None)
+    require(bool(audited_path) == bool(audited_sha), "audited source requires path and digest")
+    require(not (audited_path and qualification), "audited and common G10 routes are exclusive")
+    args.audited_source_admission = None
+    if audited_path:
+        if not isinstance(audited_sha, str):
+            raise ValueError('audited source SHA256 must be a string')
+        from scripts import audited_source_admission as audited
+        args.audited_source_admission = audited.admit(Path(audited_path), audited_sha, source, summary)
     require(
         type(rows) is int and rows > 0 and (args.g10_admission is not None
+            or args.audited_source_admission is not None
             or summary["corpus"]["corpus_complete"] is True),
         "source is incomplete",
     )

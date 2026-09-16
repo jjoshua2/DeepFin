@@ -283,3 +283,37 @@ def test_native100_cannot_relabel_half_dose_or_change_lineage(tmp_path: Path, mu
     m['kind'] = tool.V100_KIND
     with pytest.raises(ValueError, match='V100 recipe'):
         tool.admit(m)
+
+
+def test_audited_expansion_preserves_identity_and_rejects_overlap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts import audited_source_admission as audited
+
+    old = cohort(tmp_path, 'old')
+    new = cohort(tmp_path, 'new', 'w00-00002.jsonl.zst')
+    new['identity_kind'] = 'audited-g10-selection'
+    proof = {'rows': 3, 'source_namespace': new['source_namespace'], 'raw_shards': new['raw_shards']}
+    monkeypatch.setattr(audited, 'admit', lambda *args: proof)
+    recipe = tool.read_pin(new['value_recipe'])
+    recipe['audited_source_admission'] = proof
+    new['value_recipe'] = write(Path(new['value_recipe']['path']), recipe)
+    value = tool.read_pin(new['roots']['V50']['summary'])
+    value['value_target_postprocess'] = {k: v for k, v in recipe.items() if k != 'outputs'}
+    new['roots']['V50']['summary'] = write(Path(new['roots']['V50']['summary']['path']), value)
+    m = manifest([old, new])
+    m['kind'] = tool.EXPANSION_KIND
+    assert tool.role_map(m) == {tool.EXPANSION_ROLE: 'V50'}
+    assert sum(row['rows'] for row in tool.admit(m)) == 6
+    new['source_namespace'] = old['source_namespace']
+    new['raw_shards'] = old['raw_shards']
+    proof.update(source_namespace=new['source_namespace'], raw_shards=new['raw_shards'])
+    recipe['audited_source_admission'] = proof
+    new['value_recipe'] = write(Path(new['value_recipe']['path']), recipe)
+    with pytest.raises(ValueError, match='overlapping physical raw shard'):
+        tool.admit(m)
+
+
+def test_old_union_profile_cannot_silently_admit_new_source(tmp_path: Path) -> None:
+    c = cohort(tmp_path, 'new')
+    c['identity_kind'] = 'audited-g10-selection'
+    with pytest.raises(ValueError, match='expansion profile'):
+        tool.admit(manifest([c]))
