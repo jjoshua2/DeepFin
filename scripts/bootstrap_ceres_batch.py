@@ -31,15 +31,24 @@ def available_ram_gib() -> float:
 
 
 def allocated_bytes(roots: list[str]) -> int:
+    def allocation(path: Path) -> int:
+        try:
+            return path.lstat().st_blocks * 512
+        except FileNotFoundError:
+            # Writers atomically rename temporary chunks and shard directories.
+            # This is a sampled bound; the replacement appears on the next scan.
+            return 0
+
+    def walk_error(error: OSError) -> None:
+        if not isinstance(error, FileNotFoundError):
+            raise error
+
     total = 0
     for root in roots:
-        path = Path(root)
-        if not path.exists():
-            continue
-        for directory, _, files in os.walk(path, followlinks=False):
-            total += Path(directory).stat().st_blocks * 512
+        for directory, _, files in os.walk(root, followlinks=False, onerror=walk_error):
+            total += allocation(Path(directory))
             for name in files:
-                total += (Path(directory)/name).lstat().st_blocks * 512
+                total += allocation(Path(directory) / name)
     return total
 
 

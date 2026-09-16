@@ -73,3 +73,52 @@ def test_aggregate_output_guard_stops_before_launch(tmp_path):
     result = json.loads((tmp_path/'complete.json').read_text())
     assert 'aggregate cap' in result['reason']
     assert not (tmp_path/'qual0.json').exists()
+
+
+def test_output_scan_tolerates_atomic_chunk_rename(tmp_path, monkeypatch):
+    temporary = tmp_path/'chunk.partial'
+    temporary.write_bytes(b'a' * 8192)
+    stable = tmp_path/'stable'
+    stable.write_bytes(b'b' * 8192)
+    real_lstat = Path.lstat
+    def rename_then_stat(path, *args, **kwargs):
+        if path == temporary and temporary.exists():
+            temporary.rename(tmp_path/'chunk')
+        return real_lstat(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'lstat', rename_then_stat)
+    first = batch.allocated_bytes([str(tmp_path)])
+    assert first >= real_lstat(stable).st_blocks * 512
+    second = batch.allocated_bytes([str(tmp_path)])
+    assert second == sum(real_lstat(p).st_blocks * 512 for p in [tmp_path, stable, tmp_path/'chunk'])
+    assert second > first
+
+
+def test_output_scan_missing_directory_is_transient(tmp_path, monkeypatch):
+    def disappearing_walk(root, *, followlinks, onerror):
+        assert not followlinks
+        onerror(FileNotFoundError(root))
+        return iter([])
+    monkeypatch.setattr(batch.os, 'walk', disappearing_walk)
+    assert batch.allocated_bytes([str(tmp_path)]) == 0
+
+
+def test_output_scan_propagates_permission_and_io_failures(tmp_path, monkeypatch):
+    import errno
+    import pytest
+    for error in [PermissionError(errno.EACCES, 'denied'), OSError(errno.EIO, 'io failure')]:
+        def failing_walk(_root, *, followlinks, onerror, error=error):
+            assert not followlinks
+            onerror(error)
+            return iter([])
+        monkeypatch.setattr(batch.os, 'walk', failing_walk)
+        with pytest.raises(type(error), match=r"denied|io failure"):
+            batch.allocated_bytes([str(tmp_path)])
+
+
+def test_output_scan_lstat_permission_failure_propagates(tmp_path, monkeypatch):
+    import pytest
+    def denied(_path):
+        raise PermissionError('denied')
+    monkeypatch.setattr(Path, 'lstat', denied)
+    with pytest.raises(PermissionError, match='denied'):
+        batch.allocated_bytes([str(tmp_path)])
