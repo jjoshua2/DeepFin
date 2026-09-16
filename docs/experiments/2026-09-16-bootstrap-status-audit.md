@@ -234,3 +234,33 @@ exact all-codec deletion roster to equal those backed-up tails. Renewed review
 accepted this concrete recovery; both generator processes and their monitor
 reported running. Backups remain outside the corpus, and completed shards are
 preserved. This changes neither label depth nor logical worker partitioning.
+
+## Evening status and scale priority — September 16, 22:00 UTC window
+
+Six reboot-continuation cohorts completed and qualified **4,334,519 rows** before
+an NVML query reported GPU access blocked by the operating system at 22:21 UTC.
+Kernel dxg transport errors occurred at the same time. This was not a measured
+VRAM breach. Fresh host queries recovered and no failed worker remained. The
+batch stopped after almost nine hours; its partial block08 is preserved.
+Four untouched cohorts now continue under unchanged guards: **3,956,842 rows**,
+about **7.79 hours** expected and a **10-hour limit**. The first shard completed.
+This is a bounded recovery, not proof that future host GPU faults are impossible.
+
+The final scheduled CeresV25-versus-B100 match completed: **512 games, +33.35 Elo,
+nominal paired interval +6.08 to +61.04**. This strengthens its conditional match
+evidence; it is still the same trained checkpoints, not another training seed.
+The two direct Stockfish matches remain held for effective-profile qualification.
+They are not required before a larger-data training comparison.
+
+CPU generation remained active, with **62,982,607 closed raw rows**, an increase of
+597,804 since the twelve-hour restart. Raw counts do not establish unique eligible
+training rows. The user reaffirmed 50–60M training as the next priority. Prepare
+the additional rows and a matched scale comparison while the GPU labels; complete
+Ceres coverage of every new row is not a gate on the first SF/BT4 transfer. Roughly
+41.05M candidate rows are the near-term assembly step, not a claimed fully admitted
+training corpus. Additional existing native labels should be reused before new
+teacher inference. No 50–60M training has launched at this readout.
+
+[Evening evidence](evidence/bootstrap-evening-20260916.json) retains the queue,
+review and match records. Previously qualified and partially written outputs
+remain preserved.
