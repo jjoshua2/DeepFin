@@ -94,7 +94,7 @@ def validate(m: dict[str, Any]) -> None:
          'load_workers', 'max_working_set_bytes', 'runtime_qualification', 'preparation', 'preregistration',
          'launcher_sha256', 'stage_helper_sha256', 'recipe_helper_sha256')), 'manifest keys')
     owned.require(m['schema'] == 1 and m['scope'] == SCOPE and
-                  m['profile'] in ('H20', 'B100', 'B100T1', 'G50', 'SoftSF10'), 'unsupported two-epoch scope/profile')
+                  m['profile'] in ('H20', 'B100', 'B100T1', 'G50', 'SoftSF10', 'CeresB50V25'), 'unsupported two-epoch scope/profile')
     for key in ('plan_workers', 'load_workers', 'max_working_set_bytes'):
         owned.require(type(m[key]) is int and m[key] > 0, 'explicit positive resource allocation required')
     owned.require(type(m['training_seconds']) is int and 30 < m['training_seconds'] <= 32400,
@@ -105,6 +105,9 @@ def validate(m: dict[str, Any]) -> None:
 
 def verify_recipe(prep: dict[str, Any], profile: str) -> Path:
     """Reuse the genuine SoftSF producer gate; BT4 lineage retains old admission."""
+    if profile == 'CeresB50V25':
+        from scripts.ceres_joint_recipe import verify_training_recipe
+        return verify_training_recipe(prep)
     # T1 is a separate two-epoch recipe; it must not widen old B100 admission.
     corpus = (recipes.SOURCE.with_name(recipes.SOURCE.name + '_bt4_global_B100T1')
               if profile == 'B100T1' else recipes.CORPORA[profile])
