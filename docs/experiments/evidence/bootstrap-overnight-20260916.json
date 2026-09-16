@@ -1,0 +1,240 @@
+{
+  "status": "RUNNING_FIRST_SHARD_COMPLETED",
+  "adoption": {
+    "status": "QUEUED",
+    "queued_unix": 1789528556.335739,
+    "id": "ceres_all_missing_35m_24h_20260916",
+    "rows": 10008573,
+    "blocks": 13,
+    "batch_plan_sha256": "ea0e9498d4af6a70650f7d4d85155352e1b6c93dcac0b324ef9baa7fd763857b",
+    "queue_sha256": "e9d6bc7126857367e60523d2909d26dce14329f9a5c4d32a059d843a54551124",
+    "parent_review": "Verified registered pins and independent review, reviewed batch runner and host mount correction."
+  },
+  "supervisor": {
+    "pid": 817863,
+    "argv": [
+      "/bin/bash",
+      "/tmp/deepfin-bootstrap-operator/scripts/supervise_bootstrap_queue.sh",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/autonomous_loop_20260914",
+      "/tmp/deepfin-ordered-arena-lookahead-runtime"
+    ],
+    "started_unix": 1789528556.3369617
+  },
+  "rows": 10008573,
+  "shards": 1228,
+  "expected_hours": 19.717048719772183,
+  "block_cap_hours": 23.175,
+  "outer_cap_hours": 24,
+  "blocks": [
+    {
+      "id": "ceres_24h_00",
+      "cohort": "G10_common_increment_v1__run07_g10_companion4",
+      "rows": 264297,
+      "shards": 33,
+      "expected_seconds": 1907.4799575805664,
+      "wall_seconds": 3000,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run07_g10_companion4/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block00/registered_command.json",
+      "command_sha256": "5a01505b60429df2ba3a5e65a0dd77a90234e8c8718d6a6c0b527f2ddb61d6a1",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block00/qualification/plan.json",
+        "sha256": "1d0e9b7168cb936b3e09b6fb95a2238cdf5ea6e5957232075504739adcbd8ea1"
+      }
+    },
+    {
+      "id": "ceres_24h_01",
+      "cohort": "G10_common_parallel_next_v2__run06_g10",
+      "rows": 527604,
+      "shards": 65,
+      "expected_seconds": 3757.157492204146,
+      "wall_seconds": 4410,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run06_g10/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block01/registered_command.json",
+      "command_sha256": "4af3d844298525b526274080c6adacd8dfebcd6de0daaa5faa97ad9c696f2604",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block01/qualification/plan.json",
+        "sha256": "30ef5a4b6dd1661ff46e5f6ea31e726c824b0575385ef11f1070d14d162427c0"
+      }
+    },
+    {
+      "id": "ceres_24h_02",
+      "cohort": "G10_common_parallel_next_v2__run07_g10_companion4",
+      "rows": 525414,
+      "shards": 65,
+      "expected_seconds": 3757.157492204146,
+      "wall_seconds": 4410,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_next_v2/run07_g10_companion4/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block02/registered_command.json",
+      "command_sha256": "af2b8b504a59d94f6066494474a1ea22a9ff077c5b73c13428e3ed784c505ec4",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block02/qualification/plan.json",
+        "sha256": "cc481f24390bddefd1b97703ccbf0dd31ae95f9f4e1be5078474de3c19d1cdd8"
+      }
+    },
+    {
+      "id": "ceres_24h_03",
+      "cohort": "G10_common_parallel_v1__run06_g10",
+      "rows": 528983,
+      "shards": 65,
+      "expected_seconds": 3757.157492204146,
+      "wall_seconds": 4410,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run06_g10/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block03/registered_command.json",
+      "command_sha256": "079ab491aee37f48fe122e6d6585ef1ca4e19daaeb6d5bd59f1170ecae17db20",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block03/qualification/plan.json",
+        "sha256": "a7ce2e1d02fa31ae4706a4954f82c7d3cbc958728bcc52575c0fe1a27cd002e2"
+      }
+    },
+    {
+      "id": "ceres_24h_04",
+      "cohort": "G10_common_parallel_v1__run07_g10_companion4",
+      "rows": 528343,
+      "shards": 65,
+      "expected_seconds": 3757.157492204146,
+      "wall_seconds": 4410,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_parallel_v1/run07_g10_companion4/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block04/registered_command.json",
+      "command_sha256": "27061f513c74c2c2fbc8011ea1f278ba4541cd57a38e3c7cdbead15c399d4eef",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block04/qualification/plan.json",
+        "sha256": "d2e99b3317229da6587c861cd1171a75cecb81cafd56028ac21936ad92700318"
+      }
+    },
+    {
+      "id": "ceres_24h_05",
+      "cohort": "G10_common_worker03_tail111_v1__run06_g10",
+      "rows": 914832,
+      "shards": 112,
+      "expected_seconds": 6473.8713711825285,
+      "wall_seconds": 7530,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_worker03_tail111_v1/run06_g10/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block05/registered_command.json",
+      "command_sha256": "2d27167de79982f0faaf14ae0ce3f0ed2ca90ea27022f96ca86fedd3664b9d6b",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block05/qualification/plan.json",
+        "sha256": "a79140fa1ddaf85bd38de1f5f75ebcb83510eabe861c1a45e391cf6efd95df23"
+      }
+    },
+    {
+      "id": "ceres_24h_06",
+      "cohort": "G10_tail111_run07_recovery_v1__run07_g10_companion4",
+      "rows": 915453,
+      "shards": 112,
+      "expected_seconds": 6473.8713711825285,
+      "wall_seconds": 7530,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_tail111_run07_recovery_v1/run/run07_g10_companion4/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block06/registered_command.json",
+      "command_sha256": "8f0b5384621c8b3dd5b51ce23f677243cc3488994d3ac720726156537bfbc1bc",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block06/qualification/plan.json",
+        "sha256": "bea20319513e829139381f89d2fd51e545592df10001df6abacc836859589a3a"
+      }
+    },
+    {
+      "id": "ceres_24h_07",
+      "cohort": "G10_common_next_distinct2_v1__run06_g10",
+      "rows": 921494,
+      "shards": 113,
+      "expected_seconds": 6531.673794139515,
+      "wall_seconds": 7590,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct2_v1/run06_g10/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block07/registered_command.json",
+      "command_sha256": "5811fa20a7c5caa75360a85ca65d694b898f58fa7f1802b58b93863aaf286230",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block07/qualification/plan.json",
+        "sha256": "068f6c81c3808499dfdf9e3d09deeb1cb15279f0b9530989104e46c6d80f8176"
+      }
+    },
+    {
+      "id": "ceres_24h_08",
+      "cohort": "G10_common_next_distinct2_v1__run07_g10_companion4",
+      "rows": 925311,
+      "shards": 113,
+      "expected_seconds": 6531.673794139515,
+      "wall_seconds": 7590,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct2_v1/run07_g10_companion4/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block08/registered_command.json",
+      "command_sha256": "72d5248afb4c7243b02673eaaf0a143018ddf52d01b44c6b64b2a26a2b2ede13",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block08/qualification/plan.json",
+        "sha256": "96b0d4d9b0cce160a04ef735b80a2418fd4ca12b533b43165edf7167d25d6b41"
+      }
+    },
+    {
+      "id": "ceres_24h_09",
+      "cohort": "G10_common_next_distinct_v1__run06_g10",
+      "rows": 923911,
+      "shards": 113,
+      "expected_seconds": 6531.673794139515,
+      "wall_seconds": 7590,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct_v1/run06_g10/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block09/registered_command.json",
+      "command_sha256": "2297db6caa42cf9893531304e5ac528b7d789395ebb8e939376476152322ddde",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block09/qualification/plan.json",
+        "sha256": "a6582907a5a9e1b85750d7b0dfcd372e6d886168177892b3898296f524c9f081"
+      }
+    },
+    {
+      "id": "ceres_24h_10",
+      "cohort": "G10_common_next_distinct_v1__run07_g10_companion4",
+      "rows": 921653,
+      "shards": 113,
+      "expected_seconds": 6531.673794139515,
+      "wall_seconds": 7590,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next_distinct_v1/run07_g10_companion4/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block10/registered_command.json",
+      "command_sha256": "41e7601768c9da967066a38a2210c209fed5d7c1a97470ca1594b438fee8f3c5",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block10/qualification/plan.json",
+        "sha256": "76d8570a14ca7f69cfd9213dc3523381c5c919dea2348470b52639a5b52ced56"
+      }
+    },
+    {
+      "id": "ceres_24h_11",
+      "cohort": "G10_worker01_postderive_recovery_v1__run06_g10",
+      "rows": 1054312,
+      "shards": 129,
+      "expected_seconds": 7456.512561451305,
+      "wall_seconds": 8640,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run06_g10/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block11/registered_command.json",
+      "command_sha256": "4655e13fc55334287fe9cf26cc4bc7d2080aa6bf5702f884ff867b28a7d9fe86",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block11/qualification/plan.json",
+        "sha256": "398d68fb64d54e94f1661394cdbc9a0aa67381c680fa8b8acb817c35c99370c6"
+      }
+    },
+    {
+      "id": "ceres_24h_12",
+      "cohort": "G10_worker01_postderive_recovery_v1__run07_g10_companion4",
+      "rows": 1056966,
+      "shards": 130,
+      "expected_seconds": 7514.314984408292,
+      "wall_seconds": 8730,
+      "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_worker01_postderive_recovery_v1/execution/run07_g10_companion4/derived",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block12/registered_command.json",
+      "command_sha256": "5d9ba8f070a2ec99f56077252049b3cbb30c7ae65375c3f77781d3edf20e33b0",
+      "qualification_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block12/qualification/plan.json",
+        "sha256": "ae982c513ed04fc1d8f0c4aa71ff269a216c7b6f1d74281943377a41f2fd837d"
+      }
+    }
+  ],
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/blocks.final.json": "40f7669390955156d8effc4d0916cf5c71b751ab4d22b33a8d3cb6dfb86e8856",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/batch.plan.json": "ea0e9498d4af6a70650f7d4d85155352e1b6c93dcac0b324ef9baa7fd763857b",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/registered_batch.json": "85f56a4c6db454d6aa445c0829fc9c2ecf63f0f74ac153356bdf1a658cee83c5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/independent_review.json": "ae3093b96b611a422520131919c191c95bcd54f9183e075d9c55c98667252d1a",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/failure_and_timing_evidence.json": "1ea7748fc2710126c3dc40642c72b3afff5499d4de03d609d7d86d7fd08591e2"
+  },
+  "first_shard_observation": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_24h/block00/driver/chunks/shard000000/receipt.json",
+    "sha256": "85ed3d089bea384c396a3061eb32b52d0f6dd248ff90de6329ed2b173634b97a",
+    "complete": true,
+    "exit_code": 0,
+    "elapsed_seconds": 30.39934503200493,
+    "qualification": "Individual shard collection complete; whole cohort qualification still pending."
+  }
+}

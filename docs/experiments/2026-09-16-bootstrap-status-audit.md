@@ -154,3 +154,46 @@ published there.
 [Compact audit evidence](evidence/bootstrap-status-audit-20260916.json) retains
 bank summaries and hashes of the local reports/inventory sources. Bulk game logs
 remain at the listed local paths. The original results are preserved.
+
+## Overnight execution follow-up
+
+After the audit, the user authorized taking over the queue and then explicitly
+requested 20–24 hours of automatic work. The replacement supervisor from PR #757
+preserved the active CeresV25 match through completion. Its next small labeling
+attempt failed: one fixed-32 inference ran, then a sandbox-versus-host mount
+identity mismatch stopped validation. No completed sidecar was produced. The
+failed attempt remains preserved; the retry checks host mount identity before
+imports as well as during mapped-library verification.
+
+A reviewed sequential batch is now running: **13 cohorts, 10,008,573 rows and 1,228
+shards**, covering the remaining Ceres gap in the matched 35,314,577-row corpus.
+Expected duration is **19.72 hours** from measured template throughput; individual
+block caps sum to **23.18 hours**, with a **24-hour outer termination bound**.
+The first 8,192-row shard completed successfully in 30.4 seconds after the host
+identity correction. This is useful teacher labeling, not another arena sweep or a training launch.
+Success retains legal policy and both raw value heads; it does not itself establish
+training admission or playing strength.
+
+The batch stops at the first failed command or qualification. It checks 48 GiB
+available RAM and 170 GiB free disk at startup, retains running floors of 32 GiB
+RAM and 150 GiB disk, and samples a 12 GiB aggregate output cap. Expected teacher
+output is about 9 GiB. These are sampled guards, not a hard reservation against
+other writers. Existing CPU adapter and generator jobs retain their original
+3-hour and 8-hour bounds; no unreviewed training was added to fill time.
+
+The batch wrapper is [PR #759](https://github.com/jjoshua2/DeepFin/pull/759): five
+focused tests passed and separate wrapper/plan reviews passed. Frozen code and
+input identities, source cohorts, limits and queue adoption are recorded in the
+[overnight evidence](evidence/bootstrap-overnight-20260916.json). The supervisor
+advances from saved completion receipts without conversational polling. On failure
+it preserves completed blocks and leaves a terminal record for diagnosis.
+
+The next combined-teacher materializer is separately proposed in
+[PR #758](https://github.com/jjoshua2/DeepFin/pull/758), with independent review
+still pending; it is not part of this overnight labeling queue.
+
+The user's eventual billion-position objective strengthens the priority on teacher
+throughput, unique positions and adequate training. Cheap broad SF labels plus
+selective later deepening remain a hypothesis to compare with the existing
+staircase. Neither a d8 optimum nor a billion-position growth breakpoint has been
+established; source positions and versioned teacher labels should remain reusable.
