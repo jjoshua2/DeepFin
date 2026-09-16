@@ -197,3 +197,30 @@ throughput, unique positions and adequate training. Cheap broad SF labels plus
 selective later deepening remain a hypothesis to compare with the existing
 staircase. Neither a d8 optimum nor a billion-position growth breakpoint has been
 established; source positions and versioned teacher labels should remain reusable.
+
+## Reboot continuation — September 16, 13:00 UTC window
+
+The original overnight batch stopped before the reboot, after about 44.7 minutes.
+Its output-size scan tried to stat a temporary chunk after an atomic rename. This
+was an operator failure, not a teacher-quality result. Block00 qualified all
+264,297 rows; block01 retained 14 completed shards (114,688 rows) and an unfinished
+next shard. All original receipts and payloads remain preserved.
+
+PR #759 now fixes that race by tolerating FileNotFoundError during sampled scans;
+permission and I/O errors still fail closed. Nine focused tests pass, including
+an actual rename between directory enumeration and stat, with independent review.
+
+After the user's explicit request for at least another 12 hours, a fresh
+boot-bound queue was activated for the 11 untouched cohorts: **9,216,672 rows /
+1,130 shards**, expected **18.14 hours**, with a **22-hour inclusive outer limit**.
+The 21.12 hours of summed block allowances fit that bound. Previous block00 and
+partial block01 are excluded to avoid repeating completed inference. Complete
+coverage of the partially processed cohort remains follow-up work.
+
+All 30 library file stamps were unchanged across the reboot; host boot and mount
+metadata were rebound and verified, as were source/command pins. The previously
+reviewed RAM, disk, output and sequential failure-stop controls remain in force.
+The CPU adapter completed successfully before reboot and is not repeated.
+
+[Recovery evidence](evidence/bootstrap-reboot-20260916.json) records the exact
+queue and launch identities. Activation does not claim completion of the batch.

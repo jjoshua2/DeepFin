@@ -1,0 +1,39 @@
+{
+  "status": "ACTIVATED_NOT_COMPLETED",
+  "adoption": {
+    "status": "QUEUED",
+    "queued_unix": 1789565047.499541,
+    "id": "ceres_remaining11_reboot_20260916",
+    "rows": 9216672,
+    "blocks": 11,
+    "batch_plan_sha256": "6b01609ef5a04c048a704a0c29baac9f62e145794ee3cf9b02a19b51230a87b5",
+    "queue_sha256": "171003f86d4859d53c4b81785d109093504a7266069c387738f239748363ed10",
+    "parent_review": "Reviewed narrow scan-race fix and newhost bindings; independent plans/wrapper reviews passed."
+  },
+  "supervisor": {
+    "pid": 1795,
+    "argv": [
+      "/bin/bash",
+      "/tmp/deepfin-bootstrap-operator/scripts/supervise_bootstrap_queue.sh",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/autonomous_loop_20260914",
+      "/tmp/deepfin-ordered-arena-lookahead-runtime"
+    ],
+    "started_unix": 1789565047.5013256
+  },
+  "rows": 9216672,
+  "shards": 1130,
+  "expected_hours": 18.14353831772761,
+  "cap_hours": 22,
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_reboot_20260916/blocks.final.json": "924c43c8ea63d65d27b576c1e1999bb4044de2c76b453c16124d07e7f7554d37",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_reboot_20260916/batch.plan.json": "6b01609ef5a04c048a704a0c29baac9f62e145794ee3cf9b02a19b51230a87b5",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_reboot_20260916/registered_batch.json": "4738d6525fb8f08e90a0eaa632063ebdf3e27aba29d63a40a81fe7d1a0b4caa9",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_reboot_20260916/independent_review.json": "63e65b1a94f922974be62d22df1f5f1342b23dcdad9663c9555ea97431786533",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_reboot_20260916/library_rebinding.json": "9c49abfb948650fdc9ba15318be7f4d4783244c87b93b0c36e90b77930553f1b"
+  },
+  "preserved_prior_rows": {
+    "qualified_block00": 264297,
+    "completed_unqualified_block01_shards": 114688
+  },
+  "fix_commit": "df86acee149b10bef5c1b24c63c41b2178f78855"
+}
