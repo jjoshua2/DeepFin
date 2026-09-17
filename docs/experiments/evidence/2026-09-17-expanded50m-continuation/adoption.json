@@ -1,0 +1,22 @@
+{
+  "status": "QUEUED_CONDITIONAL_NOT_LAUNCHED",
+  "queued_unix": 1789656600.2052665,
+  "item": {
+    "id": "expanded50548069_v50_from35m_epoch4",
+    "kind": "registered_command",
+    "status": "queued",
+    "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260917/expanded50m_continue_v1/scheduler_run",
+    "max_seconds": 50570,
+    "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260917/expanded50m_continue_v1/registered_command.json",
+    "command_sha256": "85f151980598e12f9e20b900f64dcf57ed1330150509601f26f3b4b615aa8c02"
+  },
+  "previous_deadline": {
+    "deadline_unix": 1789700167.45489,
+    "deadline_utc": "2026-09-17T13:35:55Z"
+  },
+  "new_deadline": {
+    "deadline_unix": 1789750777.45489,
+    "deadline_utc": "2026-09-18T16:59:37.454890Z"
+  },
+  "reason": "User authorized full50.548069M continuation; added fourteen-hour dependency/training reservation plus cleanup. Existing current training and Ceres queue preserved."
+}
