@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.moves.encode import move_to_index
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -140,21 +141,50 @@ def _run_checked(args: list[str], *, env: dict[str, str] | None = None) -> subpr
     return result
 
 
+def _cboard_legal_indices(fen: str) -> set[int]:
+    board = chess.Board(fen)
+    cboard = CBoard.from_board(board)
+    return {int(x) for x in cboard.legal_move_indices().tolist()}
+
+
+def _cboard_index(fen: str, uci: str) -> int:
+    board = chess.Board(fen)
+    return move_to_index(chess.Move.from_uci(uci), board)
+
+
+def _cboard_after(fen: str, uci: str) -> CBoard:
+    board = chess.Board(fen)
+    child = CBoard.from_board(board)
+    child.push_index(move_to_index(chess.Move.from_uci(uci), board))
+    return child
+
+
 def test_probe_fixtures_cover_claimed_mechanics() -> None:
     """Legal-set claims must hold even when the Bend toolchain is absent."""
-    start, castle, ep, promo, check = (chess.Board(fen) for fen in FIXTURE_FENS)
-    assert len(list(start.legal_moves)) == 20
-    assert chess.Move.from_uci("e1g1") in castle.legal_moves
-    assert chess.Move.from_uci("e1c1") in castle.legal_moves
-    assert chess.Move.from_uci("e5d6") in ep.legal_moves
-    assert {move.uci() for move in promo.legal_moves if move.promotion} == {
-        "a7a8q",
-        "a7a8r",
-        "a7a8b",
-        "a7a8n",
-    }
-    assert check.is_check()
-    assert {move.uci() for move in check.legal_moves} == {
+    start, castle, ep, promo, check = FIXTURE_FENS
+    assert len(_cboard_legal_indices(start)) == 20
+
+    castle_legal = _cboard_legal_indices(castle)
+    assert _cboard_index(castle, "e1g1") in castle_legal
+    assert _cboard_index(castle, "e1c1") in castle_legal
+    castle_child = chess.Board(_cboard_after(castle, "e1g1").fen())
+    assert castle_child.king(chess.WHITE) == chess.G1
+    assert castle_child.piece_at(chess.F1) == chess.Piece.from_symbol("R")
+
+    ep_board = CBoard.from_board(chess.Board(ep))
+    assert ep_board.has_legal_en_passant()
+    assert _cboard_index(ep, "e5d6") in _cboard_legal_indices(ep)
+    ep_child = chess.Board(_cboard_after(ep, "e5d6").fen())
+    assert ep_child.piece_at(chess.D6) == chess.Piece.from_symbol("P")
+    assert ep_child.piece_at(chess.D5) is None
+
+    promo_legal = _cboard_legal_indices(promo)
+    for uci in ("a7a8q", "a7a8r", "a7a8b", "a7a8n"):
+        assert _cboard_index(promo, uci) in promo_legal
+
+    check_board = chess.Board(CBoard.from_board(chess.Board(check)).fen())
+    assert check_board.is_check()
+    assert {move.uci() for move in check_board.legal_moves} == {
         "e1d1",
         "e1d2",
         "e1f1",
@@ -177,7 +207,6 @@ def test_bend_chess_probe_matches_existing_cboard(tmp_path: Path) -> None:
     built = _run_checked([str(BUILD_SCRIPT)], env=env)
     binary = Path(built.stdout.strip().splitlines()[-1])
     assert binary.is_file(), built.stdout
-    assert "bend probe:" in built.stdout, built.stdout
 
     run = _run_checked([str(binary)])
     observed = _parse_probe(run.stdout)

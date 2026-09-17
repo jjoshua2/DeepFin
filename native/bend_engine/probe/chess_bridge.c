@@ -15,6 +15,10 @@
 
 #include "chess_anti_engine/encoding/_cboard_impl.h"
 
+#if CBOARD_MAX_LEGAL_MOVES != 256
+#error "chess_call.c stacks a 256-entry legal buffer; keep it equal to CBOARD_MAX_LEGAL_MOVES"
+#endif
+
 #define PROBE_MAX_BOARDS 128u
 #define PROBE_INVALID UINT32_MAX
 

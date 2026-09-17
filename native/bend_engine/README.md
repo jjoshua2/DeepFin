@@ -17,9 +17,6 @@ CI installs whatever Bend `https://bend-lang.com/dl/latest.json` currently
 names (sha256-checked). The parity probe is the compatibility gate; a new
 Bend patch should fail that test rather than a version-string pin.
 
-`BEND_VERSION` records the last release this tree was run against. It is not
-a pin.
-
 ```bash
 # bun is required to run the Bend compiler
 curl -fsSL https://bun.sh/install | bash
