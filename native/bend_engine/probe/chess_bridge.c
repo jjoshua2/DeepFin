@@ -169,14 +169,6 @@ static uint32_t probe_legal_count(uint32_t handle) {
   return (uint32_t)count;
 }
 
-static uint32_t probe_legal_at(uint32_t handle, uint32_t slot) {
-  if (!probe_valid_handle(handle)) return PROBE_INVALID;
-  int moves[CBOARD_MAX_LEGAL_MOVES];
-  int count = cboard_legal_move_indices(&g_probe_boards[handle], moves, 1);
-  if (slot >= (uint32_t)count) return PROBE_INVALID;
-  return (uint32_t)moves[slot];
-}
-
 static uint32_t probe_push(uint32_t handle, uint32_t action) {
   if (!probe_valid_handle(handle) || action >= 4672u) return PROBE_INVALID;
   if (g_probe_board_count >= PROBE_MAX_BOARDS) return PROBE_INVALID;
@@ -224,7 +216,6 @@ uint32_t deepfin_bend_probe_call(uint32_t op, uint32_t a, uint32_t b) {
   switch (op) {
     case 0: return probe_new_fixture(a);
     case 1: return probe_legal_count(a);
-    case 2: return probe_legal_at(a, b);
     case 3: return probe_push(a, b);
     case 4: return probe_in_check(a);
     case 5: return probe_hash32(a);
