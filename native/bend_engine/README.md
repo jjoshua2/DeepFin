@@ -22,10 +22,14 @@ PR 1 is qualified against:
 See `BEND_VERSION`. Bend is young and moves quickly; when changing the pinned
 version, rerun the parity probe rather than assuming source compatibility.
 
-Install Bend using its upstream installer:
+The upstream `curl | sh` installer always fetches **latest** Bend. PR 1 is
+qualified against 2.0.4, so install the pinned tarball instead:
 
 ```bash
-curl -fsSL https://bend-lang.com/install.sh | sh
+# bun is required to run the Bend compiler
+curl -fsSL https://bun.sh/install | bash
+native/bend_engine/install_bend.sh
+export PATH="$PWD/build/bend_toolchain/bin:$PATH"
 ```
 
 ## Build and run the probe

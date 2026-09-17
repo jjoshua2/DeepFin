@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "native/bend_engine/**"
+      - "native/bend_engine/install_bend.sh"
       - "tests/test_bend_chess_probe.py"
       - ".github/workflows/bend-probe.yml"
       - "chess_anti_engine/encoding/_cboard_impl.h"
@@ -26,22 +27,20 @@ jobs:
       - name: Install DeepFin CPU test environment
         run: uv sync --locked --extra dev --extra cpu
 
-      # Bend currently documents only its installer as the supported binary
-      # installation path. Pin the version immediately after installation so a
-      # future upstream release cannot silently qualify this probe.
-      - name: Install qualified Bend
+      # bun.sh is the supported bun install path. Bend itself is NOT installed
+      # via bend-lang.com/install.sh: that launcher always fetches latest, and
+      # 2.0.5 landed while this probe was qualified against 2.0.4.
+      - name: Install bun
+        run: |
+          if ! command -v bun >/dev/null 2>&1; then
+            curl -fsSL https://bun.sh/install | bash
+          fi
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+
+      - name: Install pinned Bend
         env:
           BEND_NO_TELEMETRY: "1"
-        run: |
-          curl -fsSL https://bend-lang.com/install.sh | sh
-          bend_bin="$(command -v bend || true)"
-          if [ -z "$bend_bin" ]; then
-            bend_bin="$(find "$HOME" -maxdepth 5 -type f -name bend -perm -u+x -print -quit)"
-          fi
-          test -n "$bend_bin"
-          echo "$(dirname "$bend_bin")" >> "$GITHUB_PATH"
-          "$bend_bin" --version | tee /tmp/bend-version.txt
-          grep -F "$(sed -n '1p' native/bend_engine/BEND_VERSION)" /tmp/bend-version.txt
+        run: native/bend_engine/install_bend.sh
 
       - name: Build and verify Bend/CBoard parity probe
         env:

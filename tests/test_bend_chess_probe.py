@@ -43,6 +43,7 @@ def _bend_bin() -> str | None:
         [
             os.environ.get("BEND_BIN"),
             "bend",
+            str(ROOT / "build" / "bend_toolchain" / "bin" / "bend"),
             str(Path.home() / ".bend" / "bin" / "bend"),
         ]
     )
