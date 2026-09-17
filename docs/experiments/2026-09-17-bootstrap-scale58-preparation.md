@@ -127,3 +127,32 @@ remain on disk. The combined prior allocated shard bytes were26,890,989,568
 (25.044GiB); observed free space afterward was207.990GiB. The latter includes
 concurrent writer activity and is not isolated reclamation attribution. This
 adds headroom for the remaining CPU chain; its resource floors still apply.
+
+## Union failure and recovery
+
+All ten new target cohorts completed, but the final union schedule step failed
+with `ValueError: sampler already imported`. The label and target writers did
+not fail. The new audited-source admission imports current replay code
+indirectly; the historical prospective pass correctly refused that already
+loaded sampler. The process exited1 within seconds rather than timing out.
+
+The correction runs the prospective pass in a fresh interpreter using the same
+hash-pinned manifest/mapping and unchanged historical sampler hash/path checks.
+Both processes retain deadlines and memory/disk/STOP checks; interrupted child
+processes are terminated and reaped. It does not delete imported modules or relax
+the historical contract. [PR767](https://github.com/jjoshua2/DeepFin/pull/767)
+contains the qualified fix at`f8f14d928` and the audited admission base.
+
+Twenty-three focused schedule tests passed. A real8,192-row source/B100/V50
+sample passed the frozen sampler after actual audited admission had loaded the
+current sampler in the parent. An initial sample-harness assertion used the wrong
+report key (`rows` instead of `rows_planned`); the successful child result was
+preserved and correctly checked without rerunning its work. Independent review
+passed the correction and sample.
+
+The recovery started at2026-09-17 23:26:27UTC under outerPID355572. It reuses
+the unchanged union and every completed target writer, publishing a new readiness
+receipt in`union_recovery_v1` before resuming the remaining915/58M CPU stages.
+The original failed receipts remain intact. The not-yet-started58M operator was
+updated to the corrected runtime and recovery receipt. A fresh50M training retry
+uses this readiness receipt; this record does not claim it has trained yet.

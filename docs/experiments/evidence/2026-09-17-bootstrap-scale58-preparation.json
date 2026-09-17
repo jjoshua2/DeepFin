@@ -220,5 +220,67 @@
     "allocated_bytes_reclaimed": 26890989568,
     "free_gib_after": 207.9899139404297,
     "limits": "Free space includes concurrent CPUwriter changes; sum of prior allocated shard bytes is separate attribution."
+  },
+  "union_recovery": {
+    "status": "RUNNING_SCHEDULE_ONLY_THEN_REMAINING_CPU",
+    "qualified_commit": "f8f14d928",
+    "code_pr": "https://github.com/jjoshua2/DeepFin/pull/767",
+    "tests_passed": 23,
+    "actual_start": {
+      "pid": 355572,
+      "started_unix": 1789687587.8450778,
+      "argv": [
+        "env",
+        "CUDA_VISIBLE_DEVICES=",
+        "OMP_NUM_THREADS=2",
+        "OPENBLAS_NUM_THREADS=2",
+        "MKL_NUM_THREADS=2",
+        "PYTHONOPTIMIZE=",
+        "PYTHONPATH=/tmp/deepfin-expanded-schedule-recovery",
+        "nice",
+        "-n",
+        "19",
+        "ionice",
+        "-c",
+        "3",
+        "taskset",
+        "-c",
+        "8,9",
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=45s",
+        "60630s",
+        "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/union_recovery_v1/run.py",
+        "--expected-plan-sha256",
+        "6834775caf6e5c532e84895f6aac092bbcd4b224707d70153ea08b912640045e"
+      ],
+      "plan_sha256": "6834775caf6e5c532e84895f6aac092bbcd4b224707d70153ea08b912640045e",
+      "review": "prepare_ceres_next independentPASS f8f14d928;23tests and actual8192-row3arm historicalsampler samplePASS"
+    },
+    "failed_error": "union/timeout exited 1",
+    "completed_target_cohorts": 10,
+    "references": [
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/failed.json",
+        "sha256": "23f7a8b0d6e7fac5a36bf08e476d856742cb022fa89c02d570a8d61b0ef01266"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/union_process/process.json",
+        "sha256": "bf936badcb3f130ba62712dfc9875f8bf02c6ca299c494b44bc1523db311d317"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/union_recovery_v1/plan.json",
+        "sha256": "6834775caf6e5c532e84895f6aac092bbcd4b224707d70153ea08b912640045e"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/union_recovery_v1/small_sample.json",
+        "sha256": "8eb78b617172dce2107dd480a7a7a1c86a7dcf28f519f7d69a61519b50e64cc1"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/union_recovery_v1/actual_start.json",
+        "sha256": "8f3080825b04a63c9214823676d03edadc893309b84c2001de9bf16d461703a4"
+      }
+    ]
   }
 }
