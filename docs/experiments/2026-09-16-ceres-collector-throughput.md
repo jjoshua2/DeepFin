@@ -1,6 +1,6 @@
 # Ceres collection throughput: zero pauses and grouped sessions
 
-Status: the bounded fixed32 pilot completed with bitwise-equivalent outputs. Group4 was adopted for the next two cohorts; the first production group completed successfully. Dynamic batch sizing remains a separate investigation.
+Status: the bounded fixed32 pilot completed with bitwise-equivalent outputs. Group4 was adopted for the next two cohorts; the first production group completed successfully. Batch512 has since been characterized and selected for a fresh streaming check; its numerical differences are recorded below.
 
 ## Why change orchestration
 
@@ -40,3 +40,11 @@ Fresh group4 continuation was adopted for cohorts11–12 only: 2,111,278 rows an
 The ONNX input has a dynamic batch dimension. Fixed32 is the qualified collector contract, not a static model shape. A separate bounded batch32/64/128 probe will test whether larger neural batches improve throughput under the same 8 GiB arena, with fresh per-shape provider proofs and prespecified numerical tolerances. Precomputed input tests measure an inference ceiling; successful candidates still need end-to-end streaming validation. Input prefetch is a subsequent option if CPU conversion and gathering remain the bottleneck.
 
 Validation: 28 focused scheduler tests passed, including real two-chunk runs at zero and thirty-second pauses, resource checking without a sleep, malformed plans and failure/timeout behavior. Ruff and diff checks passed. Independent reviews passed the scheduler change and the frozen pilot plan.
+
+## Batch512 characterization and useful-row continuation
+
+A completed 8,192-row precomputed-feed probe measured batch512 at **1,968.31 rows/sec** (4.16195 seconds for the inference pass, 10.86434 seconds including session setup/profiling). This is an inference measurement, not streaming collection throughput. Provider profiling again found 403 CUDA neural events and only four CPU integer shape operations. The selected candidate uses a 16 GiB arena, with a separate 24 GiB total-device ceiling in fresh collection plans.
+
+Batch512 is **not bitwise equivalent** to fixed32 and did not meet the initially recorded numerical-equivalence thresholds. Legal-policy top1 agreement was 99.707%; at teacher temperature 0.5, maximum/p99 total variation were 0.03674/0.01042. Maximum raw-logit differences were 0.19775 (policy), 0.12231 (value), and 0.21411 (value2). Primary-value T1 maximum total variation was 0.02441. These are measured differences, not evidence that either batch shape is a ground-truth accuracy reference. The operational choice accepts those reported differences for a same-teacher batch change; it does not claim numerical equivalence or playing-strength validation. Full metrics and receipt identities are in the [batch512 evidence](evidence/2026-09-16-ceres-batch512.json).
+
+The earlier group4 run was stopped before source shard 36 after nine successful groups: 294,912 rows are retained. Together with the completed prefixes of two earlier interrupted cohorts, 507,904 rows across 62 shards remain reusable. Fresh plans prepare only the remaining 3,056,289 rows across four cohorts. They preserve each saved shard's original batch/backend provenance and qualify the complete union. The first useful batch512 group is the missing old01 source shards 14–17 (32,768 rows); its streaming result is pending. Source-block caching already on main accompanies the new batch profile.
