@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import time
 from typing import Any
@@ -313,6 +314,62 @@ def prospective(manifest: dict[str, Any], mapping: list[dict[str, Any]], guard: 
             'proof': 'Equal canonical planner records and full ordered game columns under the pinned sampler; row-offset equality is code-backed inference, not a realized training observation.'}
 
 
+def prospective_isolated(manifest: dict[str, Any], mapping: list[dict[str, Any]],
+                         output: Path, deadline: float, guard: Any) -> dict[str, Any]:
+    """Keep admission imports out of the historical sampler's interpreter."""
+    work = output.with_name(output.name + '.prospective')
+    work.mkdir(exist_ok=False)
+    bundle = work / 'input.json'
+    bundle.write_text(json.dumps({'manifest': manifest, 'mapping': mapping}))
+    result = work / 'result.json'
+    command = [sys.executable, str(Path(__file__).resolve()), '--prospective-worker',
+               str(bundle), sha(bundle), str(result), str(deadline)]
+    with (work / 'worker.log').open('xb') as log:
+        child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            while child.poll() is None:
+                guard()
+                require(time.time() < deadline, 'prospective worker deadline')
+                try:
+                    child.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+            require(child.returncode == 0,
+                    f'prospective worker failed ({child.returncode}); see {work / "worker.log"}')
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait()
+    guard()
+    return json.loads(result.read_text())
+
+
+def prospective_worker(argv: list[str]) -> None:
+    require(len(argv) == 4, 'invalid prospective worker arguments')
+    bundle, digest, output, end = argv
+    source, target = Path(bundle), Path(output)
+    deadline = float(end)
+    require(sha(source) == digest, 'prospective input pin differs')
+    data = json.loads(source.read_text())
+    sampled_at = 0.0
+    def guard() -> None:
+        nonlocal sampled_at
+        require(time.time() < deadline, 'prospective worker deadline')
+        require(not (target.parent.parent / 'STOP').exists(), 'STOP requested')
+        if time.monotonic() - sampled_at >= 5:
+            resource_guard(target.parent)
+            sampled_at = time.monotonic()
+    guard()
+    report = prospective(data['manifest'], data['mapping'], guard)
+    require(sha(source) == digest, 'prospective input changed')
+    with target.open('x') as handle:
+        json.dump(report, handle)
+
+
 def resource_guard(output_parent: Path) -> None:
     available = next(int(line.split()[1]) * 1024 for line in Path('/proc/meminfo').read_text().splitlines()
                      if line.startswith('MemAvailable:'))
@@ -352,7 +409,7 @@ def main() -> None:
                          'No feature/target read or full training admission; trainer history/value gates remain required.',
                          'Whole-game equivalence inherits the qualified generator contract and exact disjoint rosters; historical per-shard source-code attestation was not added.']}
     if args.execute:
-        report.update(prospective(manifest, mapping, guard))
+        report.update(prospective_isolated(manifest, mapping, args.output, args.deadline_unix, guard))
         report['status'] = 'PASS_CORPUS_SET_PROSPECTIVE_NOT_TRAINING'
     guard()
     require(sha(args.manifest) == args.expected_manifest_sha256, 'manifest changed')
@@ -364,4 +421,7 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    main()
+    if sys.argv[1:2] == ['--prospective-worker']:
+        prospective_worker(sys.argv[2:])
+    else:
+        main()

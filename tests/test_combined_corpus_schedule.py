@@ -317,3 +317,47 @@ def test_old_union_profile_cannot_silently_admit_new_source(tmp_path: Path) -> N
     c['identity_kind'] = 'audited-g10-selection'
     with pytest.raises(ValueError, match='expansion profile'):
         tool.admit(manifest([c]))
+
+
+def test_prospective_runs_in_clean_interpreter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import types
+    worker = tmp_path / 'worker.py'
+    worker.write_text('import sys,json,hashlib\nfrom pathlib import Path\n'
+        'assert "chess_anti_engine.replay.game_epoch" not in sys.modules\n'
+        'assert sys.argv[1]=="--prospective-worker"\n'
+        'source,digest,result,end=sys.argv[2:]\n'
+        'assert hashlib.sha256(Path(source).read_bytes()).hexdigest()==digest\n'
+        'Path(result).write_text(json.dumps({"isolated":True}))\n')
+    monkeypatch.setitem(sys.modules, 'chess_anti_engine.replay.game_epoch', types.ModuleType('already_loaded'))
+    monkeypatch.setattr(tool, '__file__', str(worker))
+    result = tool.prospective_isolated({}, [], tmp_path / 'report.json', time.time() + 20, lambda: None)
+    assert result == {'isolated': True}
+    assert sys.modules['chess_anti_engine.replay.game_epoch'].__name__ == 'already_loaded'
+
+
+def test_prospective_guard_failure_reaps_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    events = []
+    class Child:
+        returncode = None
+        def poll(self):
+            return self.returncode
+        def terminate(self):
+            events.append('terminate')
+            self.returncode = -15
+        def wait(self, timeout=None):
+            events.append(('wait', timeout))
+            return self.returncode
+    monkeypatch.setattr(tool.subprocess, 'Popen', lambda *a, **kw: Child())
+    def fail():
+        raise RuntimeError('resource floor')
+    with pytest.raises(RuntimeError, match='resource floor'):
+        tool.prospective_isolated({}, [], tmp_path / 'report.json', time.time() + 20, fail)
+    assert events == ['terminate', ('wait', 10)]
+    assert (tmp_path / 'report.json.prospective/input.json').is_file()
+
+
+def test_prospective_worker_rejects_changed_bundle(tmp_path: Path) -> None:
+    bundle = tmp_path / 'input.json'
+    bundle.write_text('{}')
+    with pytest.raises(ValueError, match='input pin differs'):
+        tool.prospective_worker([str(bundle), '0' * 64, str(tmp_path / 'result.json'), str(time.time()+20)])
