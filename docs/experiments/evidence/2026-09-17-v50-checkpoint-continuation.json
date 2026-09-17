@@ -1,5 +1,5 @@
 {
-  "status": "ADOPTED_TRAINING_PREFLIGHT_RUNNING",
+  "status": "RUNNING_ACTUAL_OPTIMIZER_PROGRESS_VERIFIED",
   "plan": {
     "runtime": "/tmp/deepfin-bootstrap-continuation",
     "runtime_head": "64e34a5e5f7bdcc1a3475c7e484458f19183948d",
@@ -401,5 +401,25 @@
     "Explicit new epoch RNG order, not bitwise uninterrupted continuation.",
     "First launch failed at import before data/model/training; retry uses frozen cwd, explicit PYTHONPATH and module execution.",
     "No completed additional epoch or strength result yet."
-  ]
+  ],
+  "first_progress": {
+    "status": "PASS_ACTUAL_RESUMED_OPTIMIZER_PROGRESS",
+    "observed_unix": 1789615866.6488788,
+    "training_pid": 84270,
+    "supervisor_pid": 84250,
+    "donor_step": 68974,
+    "additional_steps_observed": 528,
+    "minimum_global_step": 69502,
+    "recent_windows": [
+      "[train] epoch 1/3, 176/68974 steps; total 176",
+      "[train] epoch 1/3, 264/68974 steps; total 264",
+      "[train] epoch 1/3, 352/68974 steps; total 352",
+      "[train] epoch 1/3, 440/68974 steps; total 440",
+      "[train] epoch 1/3, 528/68974 steps; total 528"
+    ],
+    "log": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/v50_continue_epochs2_4_v2/training.log",
+    "resume_state_evidence": "Active PID TensorBoard zclip/restored=1.0 atstep68974; [model] CUDA line occurs after strict fullstate restore verification.",
+    "remaining_queue": "ceres_tails08_11_12_after_training_v2",
+    "no_terminal_failure": true
+  }
 }

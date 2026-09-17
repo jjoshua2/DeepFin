@@ -1,6 +1,6 @@
 # V50 bootstrap checkpoint continuation through four total epochs
 
-Status: a three-additional-epoch continuation was queued and launched through the existing supervisor. Corpus preflight is running; no additional completed epoch or playing-strength result is claimed.
+Status: the three-additional-epoch continuation is running. Its first 528 additional optimizer updates completed successfully (cumulative step at least 69,502); no completed additional epoch or playing-strength result is claimed.
 
 The completed 35M V50 donor trained once on 35,314,577 rows and saved step 68,974. This experiment tests whether substantially longer training on the same data yields useful checkpoints before changing corpus size or recipe. The donor is `runs/combined35m_v50_seed101/checkpoint.pt`, SHA256 `6d36f93d040c8babed040159419279af62a444f6466f42b720e12bb72d67ab02`.
 
@@ -15,3 +15,5 @@ This job does not depend on finishing Ceres labeling: it reuses the already admi
 Evaluate learning progress by comparing saved horizons under common search settings. Those games follow completed checkpoints and are not a prerequisite for continuing the registered training. Expanded-corpus preparation proceeds independently on CPU; its exact eligible row count and completion must be established before a larger-data training comparison. Longer training on this same corpus is not additional unique data.
 
 Validation: 15 focused tests passed, including actual tiny first-epoch training followed by three resumed epochs, every intermediate checkpoint's cumulative step count, optimizer fallback rejection, and historical multi-epoch behavior. An actual CPU load of the 35M donor passed equality checks for all restored states. Ruff and diff checks passed; independent review passed the implementation and launcher cleanup. See the [registered command and adoption evidence](evidence/2026-09-17-v50-checkpoint-continuation.json).
+
+Actual launch verification: process 84270 restored the CUDA model and full checkpoint state, completed exact-epoch planning and CUDA warmup, then reported successful 88-step windows through 528 new updates. Its TensorBoard stream records `zclip/restored=1.0` at donor step 68,974. The existing supervisor will run the independently reviewed remaining Ceres labeling after this training job releases the GPU.
