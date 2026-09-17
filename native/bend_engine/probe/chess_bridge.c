@@ -208,6 +208,18 @@ static uint32_t probe_hash32(uint32_t handle) {
   return (uint32_t)(g_probe_boards[handle].hash & UINT64_C(0xffffffff));
 }
 
+uint32_t deepfin_bend_probe_legal_moves(
+  uint32_t handle, uint32_t *out, uint32_t capacity
+) {
+  if (!probe_valid_handle(handle) || out == NULL || capacity == 0) return 0;
+  int moves[CBOARD_MAX_LEGAL_MOVES];
+  int count = cboard_legal_move_indices(&g_probe_boards[handle], moves, 1);
+  uint32_t n = (uint32_t)count;
+  if (n > capacity) n = capacity;
+  for (uint32_t i = 0; i < n; i++) out[i] = (uint32_t)moves[i];
+  return n;
+}
+
 uint32_t deepfin_bend_probe_call(uint32_t op, uint32_t a, uint32_t b) {
   switch (op) {
     case 0: return probe_new_fixture(a);
