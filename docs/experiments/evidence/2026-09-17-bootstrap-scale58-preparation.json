@@ -1,5 +1,5 @@
 {
-  "snapshot_status": "FIRST1152_AUDIT_DERIVE_STARTED_DOWNSTREAM_PREPARED_NOT_LAUNCHED",
+  "snapshot_status": "FIRST1152_AUDIT_DERIVE_COMPLETE_DOWNSTREAM_CHAIN_LAUNCHED",
   "references": [
     {
       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/next1152_receipts.json",
@@ -11,7 +11,7 @@
     },
     {
       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/chain_v1.py",
-      "sha256": "c9a7d1fe5bbefd22891db65e2c8c3a1a6496cb62f5caeeea7c1e653bde621d62"
+      "sha256": "c7fd95f163d2940c9a1f8f6cc7a78180cedc4ffa27a3e357afb2ccc0ddd78ab4"
     },
     {
       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/plan.json",
@@ -23,7 +23,7 @@
     },
     {
       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/plan.json",
-      "sha256": "f1c8b00d3ad40772a3ac9876bbbebbcbb86b40d3d5da913cc63890c6e197e897"
+      "sha256": "673a794cc8df673d45da73927677a381d6c5b911aec9621140ec04eb65533e1d"
     },
     {
       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/run.py",
@@ -44,6 +44,14 @@
     {
       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_v1/run.py",
       "sha256": "023488e7cd6879c9b1ac12ff596c2654cf7bc35f5c993c27234617644eb3ad70"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/complete.json",
+      "sha256": "7f7df5c1988a6fc25ccd766ef9b8695dd9e8a6030972a59006b839a5732f21c5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/chain.actual_start.json",
+      "sha256": "34927ef63452b31b6ad9378f32992fc0ef12eecf535b6efa1d0482fcd73c5d34"
     }
   ],
   "first_pipeline_started": {
@@ -66,5 +74,43 @@
   ],
   "numeric_threads": 2,
   "full_training_admission_complete": false,
-  "independent_launch_review_complete": false
+  "independent_launch_review_complete": true,
+  "new_eligible_rows": 9496141,
+  "first_union_eligible_rows_after_target_writing": 50548069,
+  "expanded_union_updated_upper_bound": 58145889,
+  "first_pipeline_elapsed_seconds": 20262.281260967255,
+  "chain_actual_start": {
+    "status": "LAUNCHED_CPU_ONLY",
+    "pid": 236862,
+    "started_unix": 1789655770.8466654,
+    "argv": [
+      "env",
+      "CUDA_VISIBLE_DEVICES=",
+      "OMP_NUM_THREADS=2",
+      "OPENBLAS_NUM_THREADS=2",
+      "MKL_NUM_THREADS=2",
+      "TORCHINDUCTOR_COMPILE_THREADS=2",
+      "PYTHONOPTIMIZE=",
+      "nice",
+      "-n",
+      "19",
+      "ionice",
+      "-c",
+      "3",
+      "taskset",
+      "-c",
+      "8,9",
+      "timeout",
+      "--signal=TERM",
+      "--kill-after=45s",
+      "122520s",
+      "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/chain_v1.py"
+    ],
+    "chain_sha256": "c7fd95f163d2940c9a1f8f6cc7a78180cedc4ffa27a3e357afb2ccc0ddd78ab4",
+    "preserved_gpu_training_pid": 84270,
+    "review": "audit_matches independent launch review PASS; final185GiB startup repin",
+    "first_derived_eligible_rows": 9496141,
+    "first_union_eligible_target_rows": 50548069
+  }
 }

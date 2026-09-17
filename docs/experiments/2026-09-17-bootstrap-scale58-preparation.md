@@ -7,8 +7,10 @@ one-evaluation BT4 policy and native WDL sidecars. B100 means 100% BT4 policy,
 not 100 search nodes. Ceres coverage is optional for this comparison.
 
 This record describes preparation, not a completed 50M or 58M training corpus.
-The active 1,152-shard audit/derivation has a start receipt; the downstream chain
-was prepared and validated but had not been launched at this publication snapshot.
+The1,152-shard audit/derivation completed in20,262.281seconds (5.628h), retaining
+9,496,141 of9,556,704 raw rows. The independently reviewed downstream CPU chain
+started at2026-09-17 14:36:10UTC, outerPID236862. Its first V50 writer has an
+owned process receipt. No completed downstream union is claimed.
 The CPU operators use cores8–9/two numeric threads and hide CUDA. They preserve
 all inputs and partial outputs, and do not restart or modify the active pipeline.
 
@@ -19,13 +21,13 @@ all inputs and partial outputs, and do not restart or modify the active pipeline
 | Existing matched 35M union | 35,314,577 | Previously admitted/trained |
 | Earlier184 raw-shard extension | 1,517,925 | Baseline, adapter and B100 complete; V50 pending |
 | Saved512 raw-shard extension | 4,219,426 | Baseline and adapter complete; B100/V50 pending |
-| Next1,152 saved joint shards | 9,556,704 **raw** | Audit/derivation started; eligible count unknown |
+| Next1,152 saved joint shards | 9,496,141 eligible of9,556,704 raw | Audit/derivation complete; target writing queued in active chain |
 | Remaining915 saved joint shards | 7,597,820 **raw** | Frozen receipt selection; not audited/derived |
 
 The first three contributions total41,051,928 eligible baseline rows, but only
-the35M union is ready for the matched V50 training recipe. The next1,152 shards
-provide a raw upper bound of50,608,632 total rows. Adding the remaining915 gives
-an upper bound of58,206,452; actual retained rows will be lower. These are source
+the35M union is ready for the matched V50 training recipe. The completed next1,152 derivation brings the exact eligible baseline total to
+50,548,069. Adding the remaining915 gives an updated upper bound of58,145,889;
+its actual retained rows remain unknown. These are source
 identities, not an extrapolation of raw disk size. Exact source/shard subtraction
 excludes the earlier saved512 selection and the next1,152 selection from the
 915-shard remainder. Existing historical35M cohort identities remain unchanged;
@@ -77,10 +79,10 @@ about4.6h audit/derivation plus adapter and writing. Full58M preparation should
 not be promised within12h; the chain is useful unattended work alongside GPU
 labeling and the35M continuation.
 
-The running audit/derive operator has an8h total bound,48GiB available RAM at
+The completed audit/derive operator has an8h total bound,48GiB available RAM at
 startup/32GiB while running,180GiB free disk at startup/150GiB floor and12GiB
 allocated output cap. Downstream50 has a10h work bound after an up-to8h dependency
-wait,32GiB output cap and190GiB startup reserve. The final downstream58 stage uses
+wait,32GiB output cap and185GiB startup reserve (150GiB floor plus32GiB cap plus3GiB margin). The final downstream58 stage uses
 an8h work bound,24GiB output cap and180GiB startup reserve. Each retained150GiB disk
 floor protects the host; the startup reserves account for each stage's own bounded
 writes. The CPU chain serializes these stages, so they do not compete on cores8–9.
@@ -102,8 +104,8 @@ parsed V50 command construction without executing the writer. Operator syntax
 checks passed. No new payload audit, teacher inference or target-writing result
 is claimed by these preparation checks.
 
-Independent launch review and actual downstream completion remain outstanding at
-this snapshot. Even after the corpus/schedule receipt completes, full training
+Independent launch review passed and the CPU chain was launched; actual downstream
+completion remains outstanding at this snapshot. Even after the corpus/schedule receipt completes, full training
 admission and the matched experiment launch remain separate concrete steps.
 Frozen paths, hashes and exact selection counts are in the
 [compact evidence record](evidence/2026-09-17-bootstrap-scale58-preparation.json).
