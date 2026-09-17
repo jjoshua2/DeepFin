@@ -193,7 +193,7 @@ def probe_after_child_count(
 
 def probe_after_push(
   fixture: U32,
-  child: U32,
+  +child: U32,
   count: U32,
   best: U32,
   sum: U32
