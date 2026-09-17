@@ -1,0 +1,43 @@
+name: Bend chess probe
+
+on:
+  pull_request:
+    paths:
+      - "native/bend_engine/**"
+      - "tests/test_bend_chess_probe.py"
+      - ".github/workflows/bend-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          activate-environment: true
+
+      - name: Install DeepFin CPU test environment
+        run: uv sync --locked --extra dev --extra cpu
+
+      # Bend currently documents only its installer as the supported binary
+      # installation path. Pin the version immediately after installation so a
+      # future upstream release cannot silently qualify this probe.
+      - name: Install qualified Bend
+        run: |
+          curl -fsSL https://bend-lang.com/install.sh | sh
+          bend_bin="$(command -v bend || true)"
+          if [ -z "$bend_bin" ]; then
+            bend_bin="$(find "$HOME" -maxdepth 5 -type f -name bend -perm -u+x -print -quit)"
+          fi
+          test -n "$bend_bin"
+          echo "$(dirname "$bend_bin")" >> "$GITHUB_PATH"
+          "$bend_bin" --version | tee /tmp/bend-version.txt
+          grep -F "2.0.4" /tmp/bend-version.txt
+
+      - name: Build and verify Bend/CBoard parity probe
+        run: pytest -q tests/test_bend_chess_probe.py
