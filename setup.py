@@ -164,6 +164,22 @@ lc0_ext = Extension(
     extra_link_args=_ext_link_args(),
 )
 
+# Diagnostic companion: reuse the exact CBoard core and slider build recipe.
+# No training/search module imports this extension.
+perft_ext = Extension(
+    "chess_anti_engine.encoding._perft_ext",
+    sources=["chess_anti_engine/encoding/_perft_ext.c"],
+    include_dirs=["chess_anti_engine/encoding"],
+    depends=[
+        "chess_anti_engine/encoding/_cboard_impl.h",
+        "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+        "chess_anti_engine/encoding/_slider_attacks_impl.h",
+    ],
+    define_macros=_CBOARD_FAST_SLIDER_MACROS,
+    extra_compile_args=_ext_compile_args(),
+    extra_link_args=_ext_link_args(),
+)
+
 mcts_tree_ext = Extension(
     "chess_anti_engine.mcts._mcts_tree",
     sources=["chess_anti_engine/mcts/_mcts_tree.c"],
@@ -210,4 +226,4 @@ nnue_ext = Extension(
     extra_link_args=_ext_link_args(openmp=True),
 )
 
-setup(ext_modules=[features_ext, lc0_ext, mcts_tree_ext, nnue_ext])
+setup(ext_modules=[features_ext, lc0_ext, perft_ext, mcts_tree_ext, nnue_ext])
