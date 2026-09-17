@@ -96,28 +96,33 @@ def _expected(fen: str) -> dict[str, int]:
     }
 
 
+def _run_checked(args: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        args,
+        cwd=ROOT,
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        pytest.fail(
+            f"command failed with exit {result.returncode}: {' '.join(args)}\n"
+            f"--- stdout ---\n{result.stdout}\n"
+            f"--- stderr ---\n{result.stderr}"
+        )
+    return result
+
+
 def test_bend_chess_probe_matches_existing_cboard(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["BEND_PROBE_BUILD_DIR"] = str(tmp_path / "build")
 
-    built = subprocess.run(
-        [str(BUILD_SCRIPT)],
-        cwd=ROOT,
-        env=env,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
+    built = _run_checked([str(BUILD_SCRIPT)], env=env)
     binary = Path(built.stdout.strip().splitlines()[-1])
     assert binary.is_file(), built.stdout
 
-    run = subprocess.run(
-        [str(binary)],
-        cwd=ROOT,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
+    run = _run_checked([str(binary)])
     observed = _parse_probe(run.stdout)
 
     assert set(observed) == set(range(len(FIXTURE_FENS))), run.stdout
