@@ -1,0 +1,313 @@
+{
+  "status": "READ_ONLY_VERIFIED_SAVED_THROUGHPUT_NO_NEW_INFERENCE",
+  "fresh_joint_BT4": {
+    "rows": 1527153,
+    "shards": 184,
+    "outer_seconds": 2638.682265996933,
+    "outer_rows_per_second": 578.7559266530407,
+    "owned_stage_seconds": 2458.0703852176666,
+    "owned_stage_rows_per_second": 621.2812331103236,
+    "approx_loop_seconds_from_rounded_rates": 2204.9951406982573,
+    "batch_size": 128,
+    "ORT_threads": 2,
+    "gpu_arena_GiB": 8,
+    "max_shards_per_session": 16,
+    "runtime_commit": "8fd3940e60530aebdd7bd7f398cd04eb2679af1d",
+    "ORT_version": "1.23.2",
+    "teacher_sha256": "1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0",
+    "teacher_evaluations_per_position": 1,
+    "groups": [
+      {
+        "group": "group_00",
+        "fresh_logged_shards": 16,
+        "rows": 132226,
+        "owned_seconds": 232.4438660144806,
+        "reported_loop_rows_per_second": 693.5,
+        "log_roster_equals_new_receipt_roster": true
+      },
+      {
+        "group": "group_01",
+        "fresh_logged_shards": 16,
+        "rows": 133049,
+        "owned_seconds": 209.31026887893677,
+        "reported_loop_rows_per_second": 698.5,
+        "log_roster_equals_new_receipt_roster": true
+      },
+      {
+        "group": "group_02",
+        "fresh_logged_shards": 16,
+        "rows": 133298,
+        "owned_seconds": 205.7849566936493,
+        "reported_loop_rows_per_second": 711.5,
+        "log_roster_equals_new_receipt_roster": true
+      },
+      {
+        "group": "group_03",
+        "fresh_logged_shards": 16,
+        "rows": 133029,
+        "owned_seconds": 209.8970651626587,
+        "reported_loop_rows_per_second": 697.3,
+        "log_roster_equals_new_receipt_roster": true
+      },
+      {
+        "group": "group_04",
+        "fresh_logged_shards": 16,
+        "rows": 132388,
+        "owned_seconds": 207.90041518211365,
+        "reported_loop_rows_per_second": 701.4,
+        "log_roster_equals_new_receipt_roster": true
+      },
+      {
+        "group": "group_05",
+        "fresh_logged_shards": 16,
+        "rows": 133141,
+        "owned_seconds": 215.6005527973175,
+        "reported_loop_rows_per_second": 678.4,
+        "log_roster_equals_new_receipt_roster": true
+      },
+      {
+        "group": "group_06",
+        "fresh_logged_shards": 16,
+        "rows": 132627,
+        "owned_seconds": 209.36493921279907,
+        "reported_loop_rows_per_second": 695.5,
+        "log_roster_equals_new_receipt_roster": true
+      },
+      {
+        "group": "group_07",
+        "fresh_logged_shards": 16,
+        "rows": 132809,
+        "owned_seconds": 214.05408334732056,
+        "reported_loop_rows_per_second": 683.0,
+        "log_roster_equals_new_receipt_roster": true
+      },
+      {
+        "group": "group_08",
+        "fresh_logged_shards": 16,
+        "rows": 132834,
+        "owned_seconds": 214.49056553840637,
+        "reported_loop_rows_per_second": 680.6,
+        "log_roster_equals_new_receipt_roster": true
+      },
+      {
+        "group": "group_09",
+        "fresh_logged_shards": 16,
+        "rows": 132626,
+        "owned_seconds": 215.11727213859558,
+        "reported_loop_rows_per_second": 678.5,
+        "log_roster_equals_new_receipt_roster": true
+      },
+      {
+        "group": "group_10",
+        "fresh_logged_shards": 16,
+        "rows": 132720,
+        "owned_seconds": 208.4828269481659,
+        "reported_loop_rows_per_second": 701.8,
+        "log_roster_equals_new_receipt_roster": true
+      },
+      {
+        "group": "group_11",
+        "fresh_logged_shards": 8,
+        "rows": 66406,
+        "owned_seconds": 115.62357330322266,
+        "reported_loop_rows_per_second": 693.0,
+        "log_roster_equals_new_receipt_roster": true
+      }
+    ]
+  },
+  "linear_planning_only": {
+    "BT4_100M_hours": 47.99566881054218,
+    "BT4_1B_days": 19.998195337725907,
+    "Ceres_group4_rps": 376.5838936909208,
+    "Ceres_100M_hours": 73.76252209176062,
+    "Ceres_1B_days": 30.73438420490026
+  },
+  "limits": [
+    "Historical completed allocation, not current host throughput benchmark.",
+    "BT4 and Ceres cover different cohorts and wall-time scopes; not a matched teacher benchmark.",
+    "Scale projections assume observed throughput persists; no guarantee of bank-metadata overhead, storage, hardware availability or corpus eligibility.",
+    "No bank payload/model rehash, inference, GPU launch or full inventory walk."
+  ],
+  "references": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_00/complete.json",
+      "sha256": "112e31aac600651f16e8c95fb65ab7a049f2f02c564749e2d929cfb0d341572c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_00/started.json",
+      "sha256": "235b6bb2b5390bd9687e40d4ff3422bbbb6b7e285e3ddb7c06331471dfc9c903"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_00/collector.log",
+      "sha256": "a2df27619f5c679a5dbc5239dcc02e84558c8d1213fe57a8cf75693177dd0e21"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_01/complete.json",
+      "sha256": "7feb1f9e808a3f4da3580c3a781269baa1e61bf6a6110f56fdc2b82f062a4741"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_01/started.json",
+      "sha256": "5d78bfee77437c3584e3b991c83c9ceaba77eadd6e6ea5df9bd2b8bc19d314d8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_01/collector.log",
+      "sha256": "aee38756ba00f59e4946716208942886217a291d43f78f01c4706950c5a85f65"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_02/complete.json",
+      "sha256": "90b1e46d1f367d74816e408e1ccfa2b6bec692df189a3915d00ac756292c96d1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_02/started.json",
+      "sha256": "e2618e027e73a1469ea50bb358b1bc75997f588bce34566ea86f3b3324b05371"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_02/collector.log",
+      "sha256": "ac48eb4756465b0484f968ac500b1680d4ea1c1d8756f6da38b400adcd21f44c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_03/complete.json",
+      "sha256": "04a085af27e83ae8ae70f3325d876a0cb17d0fee8d587e93b7337cb8458cf7dd"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_03/started.json",
+      "sha256": "8bab4136b202bebf9b890ff2c67f43fb5b5bc925ded3b4314195e8e2b967494b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_03/collector.log",
+      "sha256": "db478dbf5dece1c2cba35a2dbc50939bfada13850e879952eb6f77adcabfb17f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_04/complete.json",
+      "sha256": "7721aa459c052c11824aeba74b05bd16ddd563737d7434466c0b5ed87f7469e0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_04/started.json",
+      "sha256": "ce628466036549d8a90641a65cbbd130f11e77ea51991104f8c515b189e912f0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_04/collector.log",
+      "sha256": "a43b6a5389aa8895f0901e4e82042f2470f9d0cd13c136d8569091e926ab4043"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_05/complete.json",
+      "sha256": "0aae002bb1f67bf0ac6ffdce7552f7a8d83b5fc859c3da0a9772bf50bcdbe190"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_05/started.json",
+      "sha256": "9592ce92768cf16844e2d4d5b6628f1a45ec52750c1fb4d33d8465157dbae855"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_05/collector.log",
+      "sha256": "e4c9a114371aa9f76e50004cd7df0e08985b07b0a9636cb5a89c977c9d7f1567"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_06/complete.json",
+      "sha256": "a80c4a4865efa827fca78f738f65e3b611652d0c3f459ebc8942ba2e08dc2de5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_06/started.json",
+      "sha256": "26d007bcb6b9abc3ce9fde55dc621eb8c6fd1a5880a094a0176447afc687ccfa"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_06/collector.log",
+      "sha256": "d4730e76e02bda653c1b9811b7d6d90e1a66e931d930b381f6d1fde37980f212"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_07/complete.json",
+      "sha256": "e08f62bd705d752a0f22e336bdce12dff0e9b45b9bcaed2fa07d66164ed49c42"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_07/started.json",
+      "sha256": "e106beb2f43750998aeafe531867c913f057d9e3b06ae7e8d734c2984793bb14"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_07/collector.log",
+      "sha256": "5b16ba50cef74ef3e58ffc23c261751861dc1091f4bc7c44b58d4d6567ba4024"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_08/complete.json",
+      "sha256": "d62edcf212304f3b18c5da0f85f8225cd572a1aec1c15e0833a205c8bb319b59"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_08/started.json",
+      "sha256": "d2b74494f834d121c1ab1dcae51085526c2e603212baa4ff2fb343a460d4cfba"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_08/collector.log",
+      "sha256": "cb4aab714ac2fbd3196624bad2657d294d23e064cf65dd257976be94014e2b56"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_09/complete.json",
+      "sha256": "9742d4723e6d0ad260795de49e60b17dc6dc4f509b9ae3931b7b4ca469a21530"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_09/started.json",
+      "sha256": "13c1aa1631df20c7313b3db95ef1346fe7568dda67d67d8af7770b10edd76011"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_09/collector.log",
+      "sha256": "e5b9a2ceef1fb2b54b5ea0be76148524211bad8d8c7d7abc6438baab3af47415"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_10/complete.json",
+      "sha256": "b86ff74698b72fd23b0a81f943f16cd2dbeda14b57db43f816ffcbfcfde72329"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_10/started.json",
+      "sha256": "6e61645238f443e3a1937cae5576ca965953f073a180a9aabb13f7a7b9d347b2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_10/collector.log",
+      "sha256": "b08f743c491748c4d88ccd605d59e6ac8d1d4a26a01d936320554a1ea604fee8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_11/complete.json",
+      "sha256": "d9c42101900ee25b52e6661bdd0cdab52a799207a108e3fb4ed653b6c56dc13b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_11/started.json",
+      "sha256": "e0950cf89d0a5bf6d09284c4f7f11d4fb91136733cbb9cb0dc61da56b64df488"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/group_11/collector.log",
+      "sha256": "de83c7bb3c929c6024bb70cce149bb378828af2e1ec4cf8572a9788e0ea07adb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/plan.json",
+      "sha256": "bdca27264c2ca8d86f56b4b28a18c4a20504b30a16356a7ae024debdf72ef287"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/outer_terminal.json",
+      "sha256": "b69c57a9589f313c72cf1d8dd62481b044274c277de354a354b2c79cc7631d5d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_scale_fill_v1/execution/complete.json",
+      "sha256": "c17043fa1fecfeb15af25b686a28eaf1697d3fc415c01b679a250bd70e1a2a51"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_wdl_throughput_readiness_v1/readiness.json",
+      "sha256": "a691449c2d838c852722cf6893be6249ee1ac174a3b8f19d3d292e4bfb9dfe3e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_wdl_throughput_readiness_v1/timing_readout.json",
+      "sha256": "271d88c4539acd03a6a26acfa11478cd6316f8d26be3e925e56e1d99006eaad5"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_throughput/pilot_v1/comparison.complete.json",
+      "sha256": "9b55094a803c26b123bb1ef7361b4caff18013469b8f610bbf4575ea17ea700e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/remaining_raw_joint_inventory_v1/assessment.json",
+      "sha256": "0072af4c66d81217c154097bb4fa374782df17b0dc3c6f75f78edd63bd668f8d"
+    },
+    {
+      "path": "/tmp/deepfin-bt4-label-runtime-pr580-overlay/scripts/bt4_raw_corpus_sidecar.py",
+      "sha256": "1c63aa4147ef8717855d226f30094cbc03431e556cd7106d0619adee7945363a"
+    },
+    {
+      "path": "/tmp/deepfin-bt4-label-runtime-pr580-overlay/scripts/bt4_policy_dump.py",
+      "sha256": "d6b62559952aee3b0baeeadfdb584aeb9a6fd88b0d2285ab162ee39776be2cf8"
+    }
+  ]
+}
