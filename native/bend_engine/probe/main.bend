@@ -88,6 +88,25 @@ def better(
 # Bind each effect result affinely, then pass it once into a helper whose
 # top-level parameter is reusable. That keeps effect values linear while still
 # allowing the pure search step to use an action for score + checksum.
+def scan_after_best(
+  handle: U32,
+  n: Nat,
+  slot: U32,
+  action: U32,
+  sum: U32,
+  candidate: Best
+) -> IO(Scan):
+  match candidate:
+    case Best{next_action, next_score}:
+      scan_moves(
+        handle,
+        n,
+        U32.add(slot, 1),
+        next_action,
+        next_score,
+        checksum(sum, action)
+      )
+
 def scan_after_action(
   handle: U32,
   n: Nat,
@@ -97,19 +116,18 @@ def scan_after_action(
   best_score: F32,
   sum: U32
 ) -> IO(Scan):
-  Best{next_action, next_score} = better(
-    action,
-    puct_score(action),
-    best_action,
-    best_score
-  )
-  scan_moves(
+  scan_after_best(
     handle,
     n,
-    U32.add(slot, 1),
-    next_action,
-    next_score,
-    checksum(sum, action)
+    slot,
+    action,
+    sum,
+    better(
+      action,
+      puct_score(action),
+      best_action,
+      best_score
+    )
   )
 
 def scan_moves(
