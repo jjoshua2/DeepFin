@@ -348,7 +348,8 @@ def existing_run_artifacts(out_dir: Path) -> list[str]:
     deliberately no `--overwrite`: this file adds no new delete path, and a
     rename is reversible by hand while a delete is not.
     """
-    return [name for name in RUN_ARTIFACTS if (Path(out_dir) / name).exists()]
+    names = set(RUN_ARTIFACTS) | {p.name for p in Path(out_dir).glob("checkpoint_epoch*.pt")}
+    return sorted(name for name in names if (Path(out_dir) / name).exists())
 
 
 def train_window_plan(*, steps: int, window: int) -> tuple[int, int, str | None]:
@@ -1645,9 +1646,9 @@ def _train_multiple_game_epochs(
                             "steps_end": steps_done,
                             "window_count": len(windows) - start_window,
                             "sampling": receipt})
-            if epoch_index == 0:
-                # Published only after every epoch and the realized loss guards pass.
-                trainer.save(epoch_one_pending)
+            if epoch_index < epochs - 1:
+                # Retain each boundary; publish after realized loss guards pass.
+                trainer.save(epoch_one_pending.with_name(f"checkpoint_epoch{epoch_index + 1}.pending.pt"))
             buf.close()
     finally:
         buf.close()
@@ -1899,6 +1900,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, default=Path("configs/lc0_positive_control.yaml"))
     parser.add_argument("--shards", type=Path, nargs="+", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--resume-checkpoint", type=Path)
+    parser.add_argument("--resume-checkpoint-sha256")
+    parser.add_argument("--resume-step", type=int)
     parser.add_argument(
         "--steps", type=int, required=True,
         help="optimizer steps. With --sampling-mode game_epoch, 0 resolves to "
@@ -2165,6 +2169,14 @@ def main(argv: list[str] | None = None) -> int:
   # encoding from it, and without it `select_input_history_arrays` refuses
   # every LC0-root row in the corpus. Same construction as tune/trainable.py.
     trainer = Trainer(model, model_config=model_cfg, **kwargs)
+    continuation = None
+    if args.resume_checkpoint is not None:
+        if args.sampling_mode != "game_epoch" or not args.resume_checkpoint_sha256 or args.resume_step is None:
+            raise SystemExit("bootstrap resume requires game_epoch, checkpoint SHA256 and expected step")
+        from scripts.bootstrap_checkpoint_resume import resume_bootstrap
+        continuation = resume_bootstrap(trainer, args.resume_checkpoint, args.resume_checkpoint_sha256, args.resume_step, int(args.seed))
+    elif args.resume_checkpoint_sha256 is not None or args.resume_step is not None:
+        raise SystemExit("resume identity requires --resume-checkpoint")
   # ⚑ Unique STORAGE, not sum(numel) over the state_dict: the 16
   # `layer_smolgens.N.gen_weight.weight` keys are one shared tensor (CLAUDE.md).
     params = unique_storage_param_count(model)
@@ -2581,6 +2593,11 @@ def main(argv: list[str] | None = None) -> int:
     ckpt = out_dir / "checkpoint.pt"
     trainer.save(ckpt)
     epoch_one = None
+    additional_epoch_checkpoints = []
+    for epoch in range(2, args.epochs):
+        target = out_dir / f"checkpoint_epoch{epoch}.pt"
+        (out_dir / f"checkpoint_epoch{epoch}.pending.pt").replace(target)
+        additional_epoch_checkpoints.append({"additional_epoch": epoch, "path": str(target), "sha256": sha256_file(target)})
     if args.epochs > 1:
         epoch_one = out_dir / "checkpoint_epoch1.pt"
         (out_dir / "checkpoint_epoch1.pending.pt").replace(epoch_one)
@@ -2626,7 +2643,13 @@ def main(argv: list[str] | None = None) -> int:
             "intervention, not a valid continuation of replacement-sampled "
             "control results",
         )
+    if continuation is not None:
+        if trainer.step != continuation["step_start"] + int(steps_done):
+            raise RuntimeError("continuation global step accounting differs")
+        continuation.update(step_end=trainer.step, additional_epochs=args.epochs, additional_steps=int(steps_done))
     summary = {
+        "continuation": continuation,
+        "additional_epoch_checkpoints": additional_epoch_checkpoints,
         "steps": int(args.steps),
   # ⚑ THE STEPS THAT ACTUALLY RAN. `steps` above is the REQUEST; a windowed loop
   # can train fewer (the old floor plan discarded the remainder) or more (a
