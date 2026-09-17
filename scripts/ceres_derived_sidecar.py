@@ -33,6 +33,9 @@ PROFILE = 'ceres-c3-fixed32-primary-compact-v1'
 EXTENDED_PROFILE = 'ceres-c3-fixed32-compact-v2'
 MODEL_SHA = '44aa02c775456f18ed464e33fc37b8e4abf58d7bf8f4cfb3ff19492e32e56df3'
 BATCH = 32
+SUPPORTED_BATCHES = (32, 64, 128, 256, 512)
+BATCHED_PROFILE = 'ceres-c3-batched-compact-v1'
+BATCHED_SELECTED_PROFILE = 'ceres-c3-batched-soft-sf-selected-v1'
 COLUMNS = (*shared.COLUMNS, 'legal_mask', 'has_legal_mask')
 DTYPES = {'legal_offsets': 'uint32', 'legal_indices': 'uint16', 'policy_logits': 'float16',
           'value_logits': 'float16', 'row_index': 'uint64', 'game_id': 'int64',
@@ -50,29 +53,47 @@ BACKEND: dict[str, Any] = {'onnxruntime': '1.29.0', 'numpy': '2.2.6', 'batch_siz
            'value_interpretation': 'primary raw logits; local head contract, no native blend'}
 
 
+def batch_size(args: argparse.Namespace) -> int:
+    value = getattr(args, 'batch_size', BATCH)
+    require(type(value) is int and value in SUPPORTED_BATCHES, 'unsupported Ceres inference batch size')
+    return value
+
+
+def provider_options(args: argparse.Namespace) -> dict[str, Any]:
+    gib = getattr(args, 'gpu_mem_gb', 8)
+    require(type(gib) in (int, float) and math.isfinite(gib) and 0 < gib <= 24,
+            'CUDA arena must be positive and leave device headroom')
+    require(batch_size(args) != BATCH or gib == 8, 'historical32 requires8GiB arena')
+    return {**BACKEND['provider_options'], 'gpu_mem_limit': int(gib * 2**30)}
+
+
 def extended(args: argparse.Namespace) -> bool:
     return bool(args.pad_final_batch or args.retain_value2)
 
 
 def profile(args: argparse.Namespace) -> str:
+    if batch_size(args) != BATCH:
+        return BATCHED_SELECTED_PROFILE if selected.enabled(args) else BATCHED_PROFILE
     if selected.enabled(args):
         return selected.PROFILE
     return EXTENDED_PROFILE if extended(args) else PROFILE
 
 
 def backend(args: argparse.Namespace) -> dict[str, Any]:
-    if not extended(args):
+    size = batch_size(args)
+    if not extended(args) and size == BATCH:
         return BACKEND
-    return {**BACKEND, 'outputs': ['policy', 'value', *(['value2'] if args.retain_value2 else [])],
+    return {**BACKEND, 'batch_size': size, 'provider_options': provider_options(args), 'outputs': ['policy', 'value', *(['value2'] if args.retain_value2 else [])],
             'remainder': 'repeat_last_real' if args.pad_final_batch else 'refuse',
             'value_interpretation': 'primary raw logits; optional secondary raw logits; no native blend'}
 
 
 def binding_options(expected: dict[str, Any]) -> argparse.Namespace:
     contract = expected['backend']
-    args = argparse.Namespace(pad_final_batch=contract.get('remainder') == 'repeat_last_real',
+    args = argparse.Namespace(batch_size=contract.get('batch_size'),
+                              gpu_mem_gb=contract.get('provider_options', {}).get('gpu_mem_limit', 0) / 2**30, pad_final_batch=contract.get('remainder') == 'repeat_last_real',
                               retain_value2='value2' in contract.get('outputs', []),
-                              selected_bank_qualification=('bound' if expected['profile'] == selected.PROFILE else None))
+                              selected_bank_qualification=('bound' if expected['profile'] in (selected.PROFILE, BATCHED_SELECTED_PROFILE) else None))
     require(expected['profile'] == profile(args) and contract == backend(args),
             'unsupported Ceres profile/backend')
     if selected.enabled(args):
@@ -82,25 +103,27 @@ def binding_options(expected: dict[str, Any]) -> argparse.Namespace:
     return args
 
 
-def collection_counts(n: int, pad_final_batch: bool) -> dict[str, int]:
-    require(type(n) is int and 0 < n <= 8192 and (pad_final_batch or n % BATCH == 0),
-            'fixed32 requires divisible shards of at most8192 rows unless padding is explicit')
-    padding = (-n) % BATCH
-    return {'real_rows': n, 'padding_rows': padding, 'calls': (n + padding) // BATCH,
+def collection_counts(n: int, pad_final_batch: bool, size: int = BATCH) -> dict[str, int]:
+    require(type(size) is int and size in SUPPORTED_BATCHES, 'unsupported Ceres inference batch size')
+    require(type(n) is int and 0 < n <= 8192 and (pad_final_batch or n % size == 0),
+            'requires divisible shards of at most8192 rows unless padding is explicit')
+    padding = (-n) % size
+    return {'real_rows': n, 'padding_rows': padding, 'calls': (n + padding) // size,
             'input_rows': n + padding}
 
 
 def validate_args(args: argparse.Namespace) -> None:
     selected.validate(args)
-    require(args.batch_size == BATCH and args.threads == 2, 'requires fixed32 and two threads')
-    require(args.gpu_mem_gb == 8 and args.gpu_lock and Path(args.gpu_lock).is_absolute(),
-            'requires explicit shared GPU lock and accepted8GiB CUDA arena')
+    batch_size(args)
+    require(args.threads == 2, 'requires two threads')
+    provider_options(args)
+    require(args.gpu_lock and Path(args.gpu_lock).is_absolute(), 'requires explicit shared GPU lock')
     require(args.expected_onnx_sha256 == MODEL_SHA, 'requires accepted C3 model hash')
     require(args.wdl_output == 'value' and args.wdl_output_kind == 'logits',
             'requires primary value logits (secondary retention is separately explicit)')
 
 
-def provider_proof(events: list[dict[str, Any]]) -> dict[str, Any]:
+def provider_proof(events: list[dict[str, Any]], size: int = BATCH) -> dict[str, Any]:
     neural = 0
     cpu = []
     for event in events:
@@ -129,7 +152,9 @@ def provider_proof(events: list[dict[str, Any]]) -> dict[str, Any]:
             raise ValueError('unexpected profiled provider')
     require(neural > 0, 'no CUDA neural compute proof')
     return {'CUDA_neural_kernel_events': neural, 'CPU_shape_events': cpu,
-            'scope': 'First fixed32 call in this session; later calls share graph partition.'}
+            'scope': ('First fixed32 call in this session; later calls share graph partition.' if size == BATCH
+                      else f'First batch{size} call in this session; later calls share graph partition.'),
+            **({'batch_size': size} if size != BATCH else {})}
 
 
 def open_teacher(args: argparse.Namespace) -> Any:
@@ -146,12 +171,12 @@ def open_teacher(args: argparse.Namespace) -> Any:
     options.enable_profiling = True
     options.profile_file_prefix = str(Path(args.invocation) / 'ort_profile')
     session = ort.InferenceSession(args.onnx, sess_options=options,
-        providers=[('CUDAExecutionProvider', BACKEND['provider_options']), 'CPUExecutionProvider'],
+        providers=[('CUDAExecutionProvider', provider_options(args)), 'CPUExecutionProvider'],
         enable_fallback=False)
     session.disable_fallback()
     require(session.get_providers() == BACKEND['providers'], 'session fallback')
     realized = session.get_provider_options()['CUDAExecutionProvider']
-    require(all(str(realized[k]) == str(v) for k, v in BACKEND['provider_options'].items()),
+    require(all(str(realized[k]) == str(v) for k, v in provider_options(args).items()),
             'CUDA provider options differ')
     inputs = session.get_inputs()
     require(len(inputs) == 1 and inputs[0].name == 'squares_byte'
@@ -195,8 +220,8 @@ def verify_cached(path: Path, expected: dict[str, Any]) -> dict[str, Any]:
             'completed Ceres binding differs')
     n = expected['rows']
     options = binding_options(expected)
-    counts = collection_counts(n, options.pad_final_batch)
-    if extended(options) or 'collection_counts' in attrs:
+    counts = collection_counts(n, options.pad_final_batch, batch_size(options))
+    if extended(options) or batch_size(options) != BATCH or 'collection_counts' in attrs:
         require(attrs.get('collection_counts') == counts, 'Ceres collection counts differ')
     dtypes = {**DTYPES, **({'value2_logits': 'float16'} if options.retain_value2 else {}),
               **(selected.EXTRA_DTYPES if selected.enabled(options) else {})}
@@ -240,6 +265,8 @@ def verify_cached(path: Path, expected: dict[str, Any]) -> dict[str, Any]:
     require(set(attrs['source_array_sha256']) == set(COLUMNS), 'source content proof absent')
     proof = attrs['provider_proof']
     require(proof['CUDA_neural_kernel_events'] > 0, 'provider proof absent')
+    if batch_size(options) != BATCH:
+        require(proof.get('batch_size') == batch_size(options), 'provider proof batch differs')
     require(shared.storage_identity(path) == state, 'Ceres bank changed during verification')
     return attrs
 
@@ -252,7 +279,9 @@ class SourceBatchReader:
     A batch crossing a storage boundary is joined in original row order.
     """
 
-    def __init__(self, group: Any, rows: int) -> None:
+    def __init__(self, group: Any, rows: int, max_batch: int = BATCH) -> None:
+        require(type(max_batch) is int and max_batch in SUPPORTED_BATCHES, 'unsupported reader batch')
+        self.max_batch = max_batch
         self.group = group
         self.rows = rows
         self.block_rows = group['x'].chunks[0]
@@ -261,7 +290,7 @@ class SourceBatchReader:
         self.block: dict[str, np.ndarray] = {}
 
     def read(self, start: int, end: int) -> dict[str, np.ndarray]:
-        require(0 <= start < end <= self.rows and end - start <= BATCH,
+        require(0 <= start < end <= self.rows and end - start <= self.max_batch,
                 'invalid source batch range')
         if self.block_rows > 1024:
             return {k: np.asarray(self.group[k][start:end]) for k in COLUMNS}
@@ -288,7 +317,8 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
     source = source_path(args, spec)
     state = shared.storage_identity(source)
     n = spec['rows']
-    accounting = collection_counts(n, args.pad_final_batch)
+    size = batch_size(args)
+    accounting = collection_counts(n, args.pad_final_batch, size)
     group = (selected.arrays(args, spec, COLUMNS) if selected.enabled(args)
              else shared.source_arrays(source, summary, n))
     for key in ('legal_mask', 'has_legal_mask'):
@@ -317,10 +347,10 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
         payload['x_sha256'] = shared.row_digests(group['x'])
     hashes = {k: hashlib.sha256() for k in COLUMNS}
     proof = None
-    reader = None if selected.enabled(args) else SourceBatchReader(group, n)
-    for start in range(0, n, BATCH):
+    reader = None if selected.enabled(args) else SourceBatchReader(group, n, size)
+    for start in range(0, n, size):
         guard()
-        end = min(start + BATCH, n)
+        end = min(start + size, n)
         tick = time.perf_counter()
         batch = (reader.read(start, end) if reader is not None
                  else {k: np.asarray(group[k][start:end]) for k in COLUMNS})
@@ -337,8 +367,8 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
         feed = tpg.stored_x_to_ceres_tpg_bytes(batch['x'], input_history_encoding=shared.HISTORY,
                                              history_rep_fix=True)
         real = end - start
-        session_feed = feed if real == BATCH else np.concatenate(
-            (feed, np.repeat(feed[-1:], BATCH - real, axis=0)), axis=0)
+        session_feed = feed if real == size else np.concatenate(
+            (feed, np.repeat(feed[-1:], size - real, axis=0)), axis=0)
         names = backend(args)['outputs']
         timings['cpu_prepare_and_postprocess'] += time.perf_counter() - tick
         tick = time.perf_counter()
@@ -349,7 +379,7 @@ def label_shard(args: argparse.Namespace, spec: dict[str, Any], summary: dict[st
         for name, output in zip(names, fetched, strict=True):
             width = 1858 if name == 'policy' else 3
             require(bool(isinstance(output, np.ndarray) and output.dtype == np.dtype('float16')
-                    and output.shape == (BATCH, width) and np.isfinite(output).all()),
+                    and output.shape == (size, width) and np.isfinite(output).all()),
                     'invalid native outputs')
         # Validate the full physical batch, then retain only actual source rows.
         policy, value = fetched[0][:real], fetched[1][:real]
@@ -401,7 +431,7 @@ def produce(args: argparse.Namespace) -> None:
     with shared.raw.advisory_lease(Path(args.out) / '.writer.lock', poll_seconds=1,
                                    description='Ceres writer'):
         summary, specs = selected.admit(args) if selected.enabled(args) else shared.source_inventory(args)
-        counts = [collection_counts(s['rows'], args.pad_final_batch) for s in specs]
+        counts = [collection_counts(s['rows'], args.pad_final_batch, batch_size(args)) for s in specs]
         marker = Path(args.out) / 'ceres_source.json'
         wanted = namespace(args)
         if marker.exists():
@@ -450,7 +480,7 @@ def produce(args: argparse.Namespace) -> None:
                 require(session.get_providers() == BACKEND['providers'], 'provider fallback during inference')
                 if proof is None:
                     profile = Path(session.end_profiling())
-                    proof = provider_proof(json.loads(profile.read_text()))
+                    proof = provider_proof(json.loads(profile.read_text()), batch_size(args))
                     proof['profile_sha256'] = shared.file_sha256(profile)
                     shared.raw.atomic_json(Path(args.invocation) / 'provider_proof.json', proof)
                 return proof
@@ -477,7 +507,7 @@ def produce(args: argparse.Namespace) -> None:
              **({'fragments': len(specs), 'new_fragments': len(todo)} if selected.enabled(args)
                 else {'shards': len(specs), 'new_shards': len(todo)}),
              'collection_counts': {k: sum(c[k] for c in counts) for k in counts[0]},
-             'new_collection_counts': {k: sum(collection_counts(s['rows'], args.pad_final_batch)[k]
+             'new_collection_counts': {k: sum(collection_counts(s['rows'], args.pad_final_batch, batch_size(args))[k]
                  for s in todo) for k in counts[0]},
              'stage_seconds_new_shards': stage_seconds,
              'stage_timing_scope': ('label_shard wall times only; excludes model/session setup and final corpus checks. '
@@ -502,12 +532,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = shared.build_parser()
     parser.description = __doc__
     parser.set_defaults(batch_size=BATCH, gpu_mem_gb=8)
+    parser._option_string_actions['--batch-size'].choices = SUPPORTED_BATCHES
     parser._option_string_actions['--expected-source-summary-sha256'].required = False
     parser.add_argument('--selected-bank-qualification',
                         help='Explicit immutable Soft-SF sample complete.json; --source is its bank directory')
     parser.add_argument('--expected-selected-bank-qualification-sha256')
     parser.add_argument('--pad-final-batch', action='store_true',
-                        help='Repeat the last real feed row to32 and store only real rows')
+                        help='Repeat the last real feed row to the inference batch size; store only real rows')
     parser.add_argument('--retain-value2', action='store_true',
                         help='Also retain raw secondary float16 WDL logits; no native blend')
     return parser

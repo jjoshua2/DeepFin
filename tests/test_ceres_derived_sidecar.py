@@ -14,7 +14,8 @@ from tests.test_sf_policy_rewrite import raw_row, write_corpus, run
 
 
 class Session:
-    def __init__(self, root: Path, defect: str = ''):
+    def __init__(self, root: Path, defect: str = '', batch_size: int = 32):
+        self.batch_size = batch_size
         self.root = root
         self.defect = defect
         self.requests: list[list[str]] = []
@@ -35,9 +36,9 @@ class Session:
         x = feed['squares_byte']
         self.feeds.append(x.copy())
         assert x.dtype == np.uint8
-        assert x.shape == (32, 64, 137)
-        policy = (np.arange(1858)[None, :] / 1000 + np.arange(32)[:, None]).astype('float16')
-        value = np.column_stack((np.arange(32), -np.arange(32), np.ones(32))).astype('float16')
+        assert x.shape == (self.batch_size, 64, 137)
+        policy = (np.arange(1858)[None, :] / 1000 + np.arange(self.batch_size)[:, None]).astype('float16')
+        value = np.column_stack((np.arange(self.batch_size), -np.arange(self.batch_size), np.ones(self.batch_size))).astype('float16')
         value += (len(self.requests) - 1) * 100
         secondary = value + np.float16(0.5)
         if self.defect == 'nan':
@@ -154,7 +155,7 @@ def test_cli_selects_ceres_child_and_revalidates_contract(monkeypatch):
             '--wdl-output', 'value', '--wdl-output-kind', 'logits', '--max-shards', '1', '--gpu-lock', '/fake/lock']
     assert tool.main(argv) == 0
     assert seen[0][1] is tool.child
-    with pytest.raises(ValueError, match='fixed32'):
+    with pytest.raises(SystemExit):
         tool.main([*argv, '--batch-size', '16'])
     assert len(seen) == 1
     assert tool.main([*argv, '--pad-final-batch', '--retain-value2']) == 0
@@ -394,7 +395,7 @@ def test_cached_source_batches_preserve_actual_writer_feeds_and_partial_output(t
     assert timings['session_run'] > 0
 
     class DirectReader:
-        def __init__(self, group, _rows):
+        def __init__(self, group, _rows, _max_batch=32):
             self.group = group
 
         def read(self, start, end):
@@ -415,3 +416,66 @@ def test_cached_source_batches_preserve_actual_writer_feeds_and_partial_output(t
         np.testing.assert_array_equal(cached[key][:], direct[key][:])
     assert cached.attrs['source_array_sha256'] == direct.attrs['source_array_sha256']
     assert cached.attrs['array_sha256'] == direct.attrs['array_sha256']
+
+
+@pytest.mark.parametrize('size', [64, 128, 256, 512])
+def test_configured_batch_actual_writer_tail_and_cache(tmp_path, monkeypatch, size):
+    n = size + 1
+    args = setup(tmp_path, monkeypatch, n)
+    args.batch_size = size
+    args.gpu_mem_gb = 16
+    args.pad_final_batch = args.retain_value2 = True
+    session = Session(tmp_path, batch_size=size)
+    monkeypatch.setattr(tool, 'open_teacher', lambda _a: session)
+    tool.produce(args)
+    source: Any = zarr.open_group(str(Path(args.source) / 'shard_000000.zarr'), mode='r')
+    path = Path(args.out) / 'shard_000000.zarr'
+    bank = zarr.open_group(str(path), mode='r')
+    actual = tool.tpg.stored_x_to_ceres_tpg_bytes(source['x'][:],
+        input_history_encoding=tool.shared.HISTORY, history_rep_fix=True)
+    assert len(session.feeds) == 2
+    np.testing.assert_array_equal(session.feeds[0], actual[:size])
+    np.testing.assert_array_equal(session.feeds[1], np.repeat(actual[-1:], size, axis=0))
+    np.testing.assert_array_equal(bank['tpg_feed_sha256'][:], tool.shared.row_digests(actual))
+    np.testing.assert_array_equal(bank['game_id'][:], source['game_id'][:])
+    np.testing.assert_array_equal(bank['row_index'][:], np.arange(n))
+    assert bank['value_logits'].shape == bank['value2_logits'].shape == (n, 3)
+    assert bank['policy_logits'].dtype == bank['value_logits'].dtype == np.dtype('float16')
+    assert bank.attrs['binding']['profile'] == tool.BATCHED_PROFILE
+    assert bank.attrs['binding']['backend']['batch_size'] == size
+    assert bank.attrs['binding']['backend']['provider_options']['gpu_mem_limit'] == 16 * 2**30
+    assert bank.attrs['provider_proof']['batch_size'] == size
+    expected = {'real_rows': n, 'padding_rows': size - 1, 'calls': 2, 'input_rows': size * 2}
+    assert bank.attrs['collection_counts'] == expected
+    receipt = json.loads((Path(args.invocation) / 'child_completed.json').read_text())
+    assert receipt['collection_counts'] == receipt['new_collection_counts'] == expected
+    monkeypatch.setattr(tool, 'open_teacher', lambda _a: pytest.fail('cache reopened inference'))
+    tool.produce(args)
+    args.batch_size = 32
+    args.gpu_mem_gb = 8
+    with pytest.raises(ValueError, match='namespace differs'):
+        tool.produce(args)
+    writable = zarr.open_group(str(path), mode='a')
+    proof = dict(writable.attrs['provider_proof'])
+    proof['batch_size'] = 32
+    writable.attrs['provider_proof'] = proof
+    with pytest.raises(ValueError, match='provider proof batch'):
+        tool.verify_cached(path, dict(writable.attrs['binding']))
+
+
+def test_dynamic_profile_cannot_claim_historical32_backend():
+    import argparse
+    args = argparse.Namespace(batch_size=64, pad_final_batch=True, retain_value2=True)
+    expected: dict[str, Any] = {'profile': tool.BATCHED_PROFILE, 'backend': tool.backend(args)}
+    assert tool.binding_options(expected).batch_size == 64
+    expected['backend']['batch_size'] = 32
+    with pytest.raises(ValueError, match='profile/backend'):
+        tool.binding_options(expected)
+
+
+def test_configured_batch_without_padding_requires_divisibility(tmp_path, monkeypatch):
+    args = setup(tmp_path, monkeypatch, 33)
+    args.batch_size = 64
+    monkeypatch.setattr(tool, 'open_teacher', lambda _a: pytest.fail('invalid tail opened inference'))
+    with pytest.raises(ValueError, match='divisible'):
+        tool.produce(args)
