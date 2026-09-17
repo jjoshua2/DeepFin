@@ -1,0 +1,17 @@
+# V50 bootstrap checkpoint continuation through four total epochs
+
+Status: a three-additional-epoch continuation was queued and launched through the existing supervisor. Corpus preflight is running; no additional completed epoch or playing-strength result is claimed.
+
+The completed 35M V50 donor trained once on 35,314,577 rows and saved step 68,974. This experiment tests whether substantially longer training on the same data yields useful checkpoints before changing corpus size or recipe. The donor is `runs/combined35m_v50_seed101/checkpoint.pt`, SHA256 `6d36f93d040c8babed040159419279af62a444f6466f42b720e12bb72d67ab02`.
+
+Resume the same model, optimizer moments/groups, scheduler, ZClip state, peak learning rate and global step. The CLI verifies checkpoint identity, exact model keys/shapes/dtypes and equality of all restored states; a silent optimizer reset is a failure. It uses the original 21 V50 corpus roots and training configuration, batch 512 and 88-step windows. The sampler visits each row once in each additional epoch, with new ordering seeds 102, 103 and 104. Torch RNG is explicitly reseeded 102; complete uninterrupted RNG replay is not claimed. Augmentation RNG remains continuous between the three new epochs.
+
+Retain checkpoints after each additional epoch, corresponding to total exposures of two, three and four epochs. Their global optimizer steps continue from 68,974; receipts separately record added and cumulative steps. Intermediate files remain pending until the final realized-loss guards pass, while preserving completed boundary states for recovery.
+
+The original epoch charged 14,248.8 seconds (3.96 hours), suggesting roughly 12 hours for three additional epochs; this is a planning estimate. The registered job has a 15-hour total bound including cleanup, an exclusive GPU lease, two numeric threads, two planning/loading workers, a 32 GiB available-RAM floor and 150 GiB free-disk floor. Keep the GPU lease through owned-process cleanup. STOP, resource failure or timeout preserves prior donor and newly written boundary files. The new run directory is `runs/combined35m_v50_seed101_continue_epochs2_4`.
+
+This job does not depend on finishing Ceres labeling: it reuses the already admitted V50 corpus. The initial launcher failed before model/data/training because absolute script execution resolved an old project import. The fresh retry uses module execution with an explicit frozen working directory and PYTHONPATH; direct import preflight passed. The active runtime remains isolated at commit `64e34a5e5` while publication proceeds from a separate worktree.
+
+Evaluate learning progress by comparing saved horizons under common search settings. Those games follow completed checkpoints and are not a prerequisite for continuing the registered training. Expanded-corpus preparation proceeds independently on CPU; its exact eligible row count and completion must be established before a larger-data training comparison. Longer training on this same corpus is not additional unique data.
+
+Validation: 15 focused tests passed, including actual tiny first-epoch training followed by three resumed epochs, every intermediate checkpoint's cumulative step count, optimizer fallback rejection, and historical multi-epoch behavior. An actual CPU load of the 35M donor passed equality checks for all restored states. Ruff and diff checks passed; independent review passed the implementation and launcher cleanup. See the [registered command and adoption evidence](evidence/2026-09-17-v50-checkpoint-continuation.json).
