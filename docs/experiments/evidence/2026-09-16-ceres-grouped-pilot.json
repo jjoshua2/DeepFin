@@ -1,0 +1,56 @@
+{
+  "status": "PASS_BITWISE_EQUIVALENT_GROUPED_FIXED32",
+  "comparison_receipt": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_throughput/pilot_v1/comparison.complete.json",
+    "sha256": "9b55094a803c26b123bb1ef7361b4caff18013469b8f610bbf4575ea17ea700e"
+  },
+  "plan_sha256": "11afb0fdcdec031f2ea5e66814329d45233d605dccf58a8186ae57ceaa3b96fb",
+  "reference8shards": {
+    "rows": 65536,
+    "active_chunk_seconds": 232.301631,
+    "first_start_to_last_end_seconds": 442.562849,
+    "session_run_seconds": 133.268036
+  },
+  "comparisons": 16,
+  "arrays_compared": 144,
+  "arms": [
+    {
+      "arm": "group4",
+      "rows": 65536,
+      "elapsed_seconds": 174.02762332100247,
+      "rows_per_second": 376.5838936909208,
+      "session_run_seconds": 122.60796809516614,
+      "session_run_fraction": 0.7045316470765663,
+      "gpu_utilization_samples": 28,
+      "utilization_mean": 25.142857142857142,
+      "utilization_min": 1,
+      "utilization_max": 38,
+      "cuda_neural_events": [
+        403,
+        403
+      ],
+      "CPU_shape_events_counts": [
+        4,
+        4
+      ]
+    },
+    {
+      "arm": "group8",
+      "rows": 65536,
+      "elapsed_seconds": 196.36155798399705,
+      "rows_per_second": 333.7516806896644,
+      "session_run_seconds": 153.8116993038857,
+      "session_run_fraction": 0.7833086113343068,
+      "gpu_utilization_samples": 32,
+      "utilization_mean": 20.59375,
+      "utilization_min": 1,
+      "utilization_max": 39,
+      "cuda_neural_events": [
+        403
+      ],
+      "CPU_shape_events_counts": [
+        4
+      ]
+    }
+  ]
+}

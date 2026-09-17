@@ -99,4 +99,4 @@ For durable knowledge, use [model heads](../model_heads.md),
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
 
-- [Ceres collector throughput: zero pauses and grouped sessions](2026-09-16-ceres-collector-throughput.md) — saved timing analysis, bounded numerical-equivalence pilot, results pending.
+- [Ceres collector throughput: zero pauses and grouped sessions](2026-09-16-ceres-collector-throughput.md) — completed bitwise-equivalent fixed32 pilot; group4 achieved 2.54× saved wall throughput, with low GPU utilization still unresolved.
