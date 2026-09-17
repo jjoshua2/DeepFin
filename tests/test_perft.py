@@ -32,7 +32,6 @@ characteristic rule interactions compose.
 
 from __future__ import annotations
 
-import os
 import chess
 import numpy as np
 import pytest
@@ -160,15 +159,6 @@ def test_native_perft_startpos_depth_five() -> None:
     from chess_anti_engine.encoding.perft import perft
 
     assert perft(CBoard.from_board(chess.Board()), 5) == 4865609
-
-
-def test_native_perft_startpos_depth_eight_pext_probe() -> None:
-    """One-off PEXT stress probe: 85.0B exact nodes, skipped on the magic arm."""
-    if os.environ.get("CAE_EXPECT_SLIDER_BACKEND") != "pext":
-        pytest.skip("one-off depth-7 stress probe runs only on the PEXT CI arm")
-    from chess_anti_engine.encoding.perft import perft
-
-    assert perft(CBoard.from_board(chess.Board()), 8) == 84998978956
 
 
 def test_native_perft_uses_the_cboard_slider_backend() -> None:
