@@ -1,0 +1,70 @@
+{
+  "snapshot_status": "FIRST1152_AUDIT_DERIVE_STARTED_DOWNSTREAM_PREPARED_NOT_LAUNCHED",
+  "references": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/next1152_receipts.json",
+      "sha256": "2d3ba422d5897812b850923b87b4b1552ea99b15e8fe75047b904c5508ca71ac"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/remaining915_receipts.json",
+      "sha256": "c18454ac6f6068466e1b2c72de50d7154c02699718e8f55064fe694618c9edba"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/chain_v1.py",
+      "sha256": "c9a7d1fe5bbefd22891db65e2c8c3a1a6496cb62f5caeeea7c1e653bde621d62"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/plan.json",
+      "sha256": "a9001fe969fca81c6fca681f16634a37251543de5d4eeb41a9d22ddcc50ce858"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/run.py",
+      "sha256": "c2b3cc75d14f65ab3c7c49cd150cdc89b9c24f73a8c81bd9360f778239635107"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/plan.json",
+      "sha256": "f1c8b00d3ad40772a3ac9876bbbebbcbb86b40d3d5da913cc63890c6e197e897"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/run.py",
+      "sha256": "023488e7cd6879c9b1ac12ff596c2654cf7bc35f5c993c27234617644eb3ad70"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/remaining915_pipeline_v1/plan.json",
+      "sha256": "1c866bff25f023bde9fd371b83edbf7a59cad1eb1ffcd982a4fd3e352f047dcf"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/remaining915_pipeline_v1/run.py",
+      "sha256": "c2b3cc75d14f65ab3c7c49cd150cdc89b9c24f73a8c81bd9360f778239635107"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_v1/plan.json",
+      "sha256": "dc1cb9066b93a5d8dbcb2cfbda4d612ee62e48decdad6c7d089219c98c560329"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_v1/run.py",
+      "sha256": "023488e7cd6879c9b1ac12ff596c2654cf7bc35f5c993c27234617644eb3ad70"
+    }
+  ],
+  "first_pipeline_started": {
+    "plan_sha256": "a9001fe969fca81c6fca681f16634a37251543de5d4eeb41a9d22ddcc50ce858",
+    "started_unix": 1789613733.3961954
+  },
+  "baseline_eligible_rows": 41051928,
+  "next_raw_rows": 9556704,
+  "remaining_raw_rows": 7597820,
+  "first_union_raw_upper_bound": 50608632,
+  "expanded_union_raw_upper_bound": 58206452,
+  "selected_raw_shards": {
+    "next": 1152,
+    "remaining": 915
+  },
+  "new_teacher_evaluations_planned": 0,
+  "cpu_affinity": [
+    8,
+    9
+  ],
+  "numeric_threads": 2,
+  "full_training_admission_complete": false,
+  "independent_launch_review_complete": false
+}
