@@ -1,0 +1,22 @@
+{
+  "status": "PASS_SAVED_G10_CERES_COHORT_COMPLETE_NOT_TRAINING",
+  "rows": 527604,
+  "shards": 65,
+  "new_payload_shards": 51,
+  "reused_shards": 14,
+  "manifest_sha256": "b2883b3a1f1d73341a971cc17815493abb15b66deea5b0b53a9567e58daf1a2f",
+  "qualification": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_fast_qualification_recovery_v1/partial01/qualification/completed/qualification.json",
+    "sha256": "627891f1445be3e888750dc89072aa5fb8f53b36b07fbc0f8cdfd6b56d56f959"
+  },
+  "collection": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_fast_resume_v1/partial01/driver/manifest.json",
+    "sha256": "c9af2dae402dddb9d3a150b02e31259cb4bcc024109ca4e767db192939ce2dc2",
+    "status": "COMPLETE",
+    "completed_groups": 13,
+    "new_rows": 412916,
+    "elapsed_seconds": 385.5308036360002
+  },
+  "recovery": "The original CPU qualifier lacked a pin for a newly imported module. Fresh qualification pinned all101 actually loaded frozen Python modules and verified their recorded hashes against files. Every saved output was reused; no inference repeated.",
+  "remaining_rows": 2643373
+}

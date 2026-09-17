@@ -54,3 +54,9 @@ The earlier group4 run was stopped before source shard 36 after nine successful 
 The fresh missing-row group completed **32,768 rows in 30.63385 seconds: 1,069.67 rows/sec**, with 64 physical inference calls and exit code 0. Peak sampled device memory was 7,445 MiB. Recorded shard stage totals were 0.508 seconds source reading, 4.620 CPU preparation/postprocessing, 17.065 synchronous inference, and 1.481 output/verification; setup and guards account for additional wall time. This establishes working end-to-end collection, about 2.84× the earlier 376.58 rows/sec group4 fixed32 pilot, with an ordered cross-run comparison limitation. It is distinct from the 1,968.31 rows/sec precomputed-feed measurement.
 
 The output is useful new coverage: source shards 14–17 of partial01, preserving all prior completed rows. The sequential collector can continue from successful chunk receipts; this first receipt does not claim completion of the remaining full cohorts. See the [actual streaming receipt](evidence/2026-09-16-ceres-batch512-streaming.json).
+
+## Completed first cohort and qualification recovery
+
+All 13 batch512 groups of partial01 completed, adding 412,916 rows. The first CPU qualification then failed because the historical module-pin roster did not include newly imported `scripts/adaptive_sf_value.py`. This was a qualification bookkeeping failure, not failed inference or lost outputs.
+
+A fresh CPU-only qualifier bound all 101 actually observed Python module hashes to the frozen runtime and passed the full 527,604-row, 65-shard union: 51 new shards plus 14 retained old shards. No inference was repeated. The failed lane and original qualifier are preserved. The remaining 2,643,373 rows in cohorts 08/11/12 have fresh prepared plans with the expanded module pins; they follow the independent 35M training continuation. See the [qualification recovery evidence](evidence/2026-09-17-ceres-partial01-recovery.json).
