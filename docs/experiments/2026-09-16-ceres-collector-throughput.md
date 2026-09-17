@@ -1,6 +1,6 @@
 # Ceres collection throughput: zero pauses and grouped sessions
 
-Status: the bounded fixed32 pilot completed with bitwise-equivalent outputs. Group4 is selected provisionally for the next two cohorts. Dynamic batch sizing remains a separate investigation.
+Status: the bounded fixed32 pilot completed with bitwise-equivalent outputs. Group4 was adopted for the next two cohorts; the first production group completed successfully. Dynamic batch sizing remains a separate investigation.
 
 ## Why change orchestration
 
@@ -35,7 +35,7 @@ Compact evidence: [pilot readout](evidence/2026-09-16-ceres-grouped-pilot.json) 
 
 ## Adoption and next probe
 
-Fresh group4 continuation is prepared for cohorts11–12 only: 2,111,278 rows and 33 invocations per cohort, with final groups of one and two shards. Full consumer qualification retains all source, payload and provider checks while validating the exact grouped shard roster. The two cohort caps sum 10,200 seconds; the outer limit is three hours. Existing qualified cohorts and interrupted banks remain intact. Queue adoption is recorded separately by the parent operator.
+Fresh group4 continuation was adopted for cohorts11–12 only: 2,111,278 rows and 33 invocations per cohort, with final groups of one and two shards. Full consumer qualification retains all source, payload and provider checks while validating the exact grouped shard roster. The two cohort caps sum 10,200 seconds; the outer limit is three hours. Existing qualified cohorts and interrupted banks remain intact. The parent adopted the pinned descriptor `9a3df1eb3b03e0b8ffafc4801e7adb4745fa2b3cd3466db6f1d55211a93cd3bc`. Its first production group completed 32,768 rows in 97.272454 seconds with exit code0 and all1,024 fixed32 calls accounted for. This establishes a working production invocation, not completion or qualification of either whole cohort. See the [adoption receipt](evidence/2026-09-16-ceres-group4-adoption.json).
 
 The ONNX input has a dynamic batch dimension. Fixed32 is the qualified collector contract, not a static model shape. A separate bounded batch32/64/128 probe will test whether larger neural batches improve throughput under the same 8 GiB arena, with fresh per-shape provider proofs and prespecified numerical tolerances. Precomputed input tests measure an inference ceiling; successful candidates still need end-to-end streaming validation. Input prefetch is a subsequent option if CPU conversion and gathering remain the bottleneck.
 
