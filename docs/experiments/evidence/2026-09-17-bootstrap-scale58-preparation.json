@@ -112,5 +112,113 @@
     "review": "audit_matches independent launch review PASS; final185GiB startup repin",
     "first_derived_eligible_rows": 9496141,
     "first_union_eligible_target_rows": 50548069
+  },
+  "completed_reclamation": {
+    "status": "BOTH_EXACT_RECLAMATIONS_COMPLETE",
+    "datasets": [
+      {
+        "dataset": "C20T05",
+        "completed": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/C20T05_cold_archive_v1/reclamation_execution_v2/completed.json",
+          "sha256": "8d966a332f3391831ac1f4ec3a39d70811f8a2ac255ef4c66d1f28b78dfef68e"
+        },
+        "removed_shards": 2309,
+        "allocated_bytes": 12261416960,
+        "elapsed_seconds": 49.189074993133545,
+        "retained_summaries": [
+          {
+            "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/bt4_policy_mix_summary.json",
+            "sha256": "5bf8502a12af0b9ce938a39ddfd9d95df4bfb2b1a0f80292d80d04109cce7100",
+            "stat": {
+              "st_dev": 2096,
+              "st_ino": 15728345,
+              "st_mode": 33188,
+              "st_uid": 1000,
+              "st_gid": 1000,
+              "st_size": 2744,
+              "st_mtime_ns": 1788673807092395041,
+              "st_ctime_ns": 1788673807092395041
+            }
+          },
+          {
+            "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_sfclose_C20T05/derive_targets_summary.json",
+            "sha256": "fc6a33b4f75b154ae2945240d4169b40685618ff0082cc759914a0c4f5b6e8a5",
+            "stat": {
+              "st_dev": 2096,
+              "st_ino": 15668873,
+              "st_mode": 33188,
+              "st_uid": 1000,
+              "st_gid": 1000,
+              "st_size": 165516,
+              "st_mtime_ns": 1788673807089641283,
+              "st_ctime_ns": 1788673807089641283
+            }
+          }
+        ],
+        "archive_stat": {
+          "st_dev": 75,
+          "st_ino": 281474978208094,
+          "st_mode": 33279,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 11060746240,
+          "st_mtime_ns": 1789555534074807500,
+          "st_ctime_ns": 1789555535224833900
+        }
+      },
+      {
+        "dataset": "B50T05",
+        "completed": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B50T05_cold_archive_v1/reclamation_execution_v2/completed.json",
+          "sha256": "ae12435cd6827cada112630cd3efef060b21932f7c8a776aecab6b47a774a68a"
+        },
+        "removed_shards": 2309,
+        "allocated_bytes": 14629572608,
+        "elapsed_seconds": 48.99993276596069,
+        "retained_summaries": [
+          {
+            "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_ceres_policy_B50T05/ceres_target_mix_summary.json",
+            "sha256": "bb505d76a901354b07445b2a4229856291e532dbe78d37a0f6a4f1cf94c3b37f",
+            "stat": {
+              "st_dev": 2096,
+              "st_ino": 16668328,
+              "st_mode": 33188,
+              "st_uid": 1000,
+              "st_gid": 1000,
+              "st_size": 1811520,
+              "st_mtime_ns": 1789197837945230531,
+              "st_ctime_ns": 1789197837945230531
+            }
+          },
+          {
+            "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_ceres_policy_B50T05/derive_targets_summary.json",
+            "sha256": "fdee83d5116bbd2b95f97a8700c73df7a7da4b22d1724432a06465b8ce39991f",
+            "stat": {
+              "st_dev": 2096,
+              "st_ino": 16753097,
+              "st_mode": 33188,
+              "st_uid": 1000,
+              "st_gid": 1000,
+              "st_size": 168767,
+              "st_mtime_ns": 1789197837948488676,
+              "st_ctime_ns": 1789197837948488676
+            }
+          }
+        ],
+        "archive_stat": {
+          "st_dev": 75,
+          "st_ino": 281474978208092,
+          "st_mode": 33279,
+          "st_uid": 1000,
+          "st_gid": 1000,
+          "st_size": 13438894080,
+          "st_mtime_ns": 1789553075840488000,
+          "st_ctime_ns": 1789553077350694500
+        }
+      }
+    ],
+    "allocated_bytes_reclaimed": 26890989568,
+    "free_gib_after": 207.9899139404297,
+    "limits": "Free space includes concurrent CPUwriter changes; sum of prior allocated shard bytes is separate attribution."
   }
 }

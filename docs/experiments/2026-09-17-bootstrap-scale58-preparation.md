@@ -109,3 +109,21 @@ completion remains outstanding at this snapshot. Even after the corpus/schedule 
 admission and the matched experiment launch remain separate concrete steps.
 Frozen paths, hashes and exact selection counts are in the
 [compact evidence record](evidence/2026-09-17-bootstrap-scale58-preparation.json).
+
+## Completed cold-copy reclamation
+
+After the CPU chain started, the previously content-verified C20T05 and B50T05
+local shard copies were reclaimed sequentially. Fresh checks verified pinned
+readiness/postcopy evidence, unchanged external archive identities, exact source
+root/shard/summary metadata, and no observed current consumers or dependencies
+in the active35M and expanded-corpus plans. System/ssh-agent descriptors that
+could not be inspected are disclosed in the local refresh receipts.
+
+Each existing fd-safe operator removed exactly2,309 specified shard directories
+and exited0, in49.19s and49.00s respectively. Both original root summaries remain
+hash-identical; external archives, checkpoints and active training/scale inputs
+were preserved. Per-shard intention/completion journals and terminal receipts
+remain on disk. The combined prior allocated shard bytes were26,890,989,568
+(25.044GiB); observed free space afterward was207.990GiB. The latter includes
+concurrent writer activity and is not isolated reclamation attribution. This
+adds headroom for the remaining CPU chain; its resource floors still apply.
