@@ -6,6 +6,8 @@ on:
       - "native/bend_engine/**"
       - "tests/test_bend_chess_probe.py"
       - ".github/workflows/bend-probe.yml"
+      - "chess_anti_engine/encoding/_cboard_impl.h"
+      - "chess_anti_engine/encoding/_lc0_ext.c"
   workflow_dispatch:
 
 jobs:
@@ -28,6 +30,8 @@ jobs:
       # installation path. Pin the version immediately after installation so a
       # future upstream release cannot silently qualify this probe.
       - name: Install qualified Bend
+        env:
+          BEND_NO_TELEMETRY: "1"
         run: |
           curl -fsSL https://bend-lang.com/install.sh | sh
           bend_bin="$(command -v bend || true)"
@@ -37,7 +41,9 @@ jobs:
           test -n "$bend_bin"
           echo "$(dirname "$bend_bin")" >> "$GITHUB_PATH"
           "$bend_bin" --version | tee /tmp/bend-version.txt
-          grep -F "2.0.4" /tmp/bend-version.txt
+          grep -F "$(sed -n '1p' native/bend_engine/BEND_VERSION)" /tmp/bend-version.txt
 
       - name: Build and verify Bend/CBoard parity probe
+        env:
+          BEND_NO_TELEMETRY: "1"
         run: pytest -q tests/test_bend_chess_probe.py

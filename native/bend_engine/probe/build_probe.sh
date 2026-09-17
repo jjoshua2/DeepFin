@@ -16,6 +16,17 @@ command -v "$CC_BIN" >/dev/null 2>&1 || {
   exit 2
 }
 
+export BEND_NO_TELEMETRY="${BEND_NO_TELEMETRY:-1}"
+WANT_VERSION="$(sed -n '1p' "$ROOT/native/bend_engine/BEND_VERSION")"
+GOT_VERSION="$("$BEND_BIN" --version 2>/dev/null || true)"
+case "$GOT_VERSION" in
+  *"$WANT_VERSION"*) ;;
+  *)
+    echo "error: Bend $WANT_VERSION required, got: ${GOT_VERSION:-unknown}" >&2
+    exit 2
+    ;;
+esac
+
 mkdir -p "$BUILD_DIR"
 GENERATED="$BUILD_DIR/probe.generated.c"
 BINARY="$BUILD_DIR/deepfin_bend_chess_probe"

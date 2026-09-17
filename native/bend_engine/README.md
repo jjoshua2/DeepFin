@@ -60,6 +60,11 @@ Five fixed positions cover:
 - promotion;
 - an in-check evasion position.
 
+The Python test asserts those mechanics are in the legal set. Synthetic PUCT
+selects by action id, so the applied child move may be a different legal move
+(often a king walk). Castling and en passant are therefore checked as legal
+actions, not necessarily as the selected apply.
+
 For each position the Bend program:
 
 1. obtains the sorted legal policy actions from CBoard;

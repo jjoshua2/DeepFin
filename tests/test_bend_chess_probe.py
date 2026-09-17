@@ -14,6 +14,7 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = ROOT / "native" / "bend_engine" / "probe" / "build_probe.sh"
+BEND_VERSION_FILE = ROOT / "native" / "bend_engine" / "BEND_VERSION"
 
 FIXTURE_FENS = (
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -23,10 +24,35 @@ FIXTURE_FENS = (
     "k3r3/8/8/8/8/8/8/4K3 w - - 0 1",
 )
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("bend") is None or shutil.which("clang") is None,
-    reason="Bend/clang native toolchain is not installed",
-)
+
+def _first_executable(candidates: list[str | None]) -> str | None:
+    for raw in candidates:
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+        found = shutil.which(raw)
+        if found:
+            return found
+    return None
+
+
+def _bend_bin() -> str | None:
+    return _first_executable(
+        [
+            os.environ.get("BEND_BIN"),
+            "bend",
+            str(Path.home() / ".bend" / "bin" / "bend"),
+        ]
+    )
+
+
+def _cc_bin() -> str | None:
+    return _first_executable([os.environ.get("CC"), "clang", "cc"])
+
+
+_PROBE_TOOLCHAIN_REASON = "Bend/clang native toolchain is not installed"
 
 
 def _f32(value: float | int | np.floating) -> np.float32:
@@ -114,13 +140,45 @@ def _run_checked(args: list[str], *, env: dict[str, str] | None = None) -> subpr
     return result
 
 
+def test_probe_fixtures_cover_claimed_mechanics() -> None:
+    """Legal-set claims must hold even when the Bend toolchain is absent."""
+    start, castle, ep, promo, check = (chess.Board(fen) for fen in FIXTURE_FENS)
+    assert len(list(start.legal_moves)) == 20
+    assert chess.Move.from_uci("e1g1") in castle.legal_moves
+    assert chess.Move.from_uci("e1c1") in castle.legal_moves
+    assert chess.Move.from_uci("e5d6") in ep.legal_moves
+    assert {move.uci() for move in promo.legal_moves if move.promotion} == {
+        "a7a8q",
+        "a7a8r",
+        "a7a8b",
+        "a7a8n",
+    }
+    assert check.is_check()
+    assert {move.uci() for move in check.legal_moves} == {
+        "e1d1",
+        "e1d2",
+        "e1f1",
+        "e1f2",
+    }
+
+
+@pytest.mark.skipif(_bend_bin() is None or _cc_bin() is None, reason=_PROBE_TOOLCHAIN_REASON)
 def test_bend_chess_probe_matches_existing_cboard(tmp_path: Path) -> None:
     env = os.environ.copy()
+    env["BEND_NO_TELEMETRY"] = "1"
     env["BEND_PROBE_BUILD_DIR"] = str(tmp_path / "build")
+    bend = _bend_bin()
+    cc = _cc_bin()
+    assert bend is not None
+    assert cc is not None
+    env["BEND_BIN"] = bend
+    env["CC"] = cc
 
     built = _run_checked([str(BUILD_SCRIPT)], env=env)
     binary = Path(built.stdout.strip().splitlines()[-1])
     assert binary.is_file(), built.stdout
+    version = BEND_VERSION_FILE.read_text(encoding="utf-8").splitlines()[0].strip()
+    assert version in built.stdout, built.stdout
 
     run = _run_checked([str(binary)])
     observed = _parse_probe(run.stdout)
