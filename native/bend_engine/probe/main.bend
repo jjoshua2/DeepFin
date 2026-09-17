@@ -84,6 +84,34 @@ def better(
     best_score
   )
 
+# Bend 2.0.4 does not permit a reusable (+) pattern directly on an IO bind.
+# Bind each effect result affinely, then pass it once into a helper whose
+# top-level parameter is reusable. That keeps effect values linear while still
+# allowing the pure search step to use an action for score + checksum.
+def scan_after_action(
+  handle: U32,
+  n: Nat,
+  slot: U32,
+  +action: U32,
+  best_action: U32,
+  best_score: F32,
+  sum: U32
+) -> IO(Scan):
+  Best{next_action, next_score} = better(
+    action,
+    puct_score(action),
+    best_action,
+    best_score
+  )
+  scan_moves(
+    handle,
+    n,
+    U32.add(slot, 1),
+    next_action,
+    next_score,
+    checksum(sum, action)
+  )
+
 def scan_moves(
   +handle: U32,
   n: Nat,
@@ -97,21 +125,26 @@ def scan_moves(
       IO.pure(Scan, Scan{best_action, sum})
     case 1n+p:
       do IO<Scan>:
-        +action : U32 <- Chess.legal_at(handle, slot)
-        Best{next_action, next_score} = better(
-          action,
-          puct_score(action),
-          best_action,
-          best_score
-        )
-        scan_moves(
+        action : U32 <- Chess.legal_at(handle, slot)
+        scan_after_action(
           handle,
           p,
-          U32.add(slot, 1),
-          next_action,
-          next_score,
-          checksum(sum, action)
+          slot,
+          action,
+          best_action,
+          best_score,
+          sum
         )
+
+def choose_after_first(handle: U32, n: Nat, +first: U32) -> IO(Scan):
+  scan_moves(
+    handle,
+    n,
+    1,
+    first,
+    puct_score(first),
+    checksum(0, first)
+  )
 
 def choose_n(+handle: U32, n: Nat) -> IO(Scan):
   match n:
@@ -119,41 +152,119 @@ def choose_n(+handle: U32, n: Nat) -> IO(Scan):
       IO.pure(Scan, Scan{4294967295, 0})
     case 1n+p:
       do IO<Scan>:
-        +first : U32 <- Chess.legal_at(handle, 0)
-        scan_moves(
-          handle,
-          p,
-          1,
-          first,
-          puct_score(first),
-          checksum(0, first)
-        )
+        first : U32 <- Chess.legal_at(handle, 0)
+        choose_after_first(handle, p, first)
 
 def choose(handle: U32, count: U32) -> IO(Scan):
   choose_n(handle, U32.to_nat(count))
 
-def probe_fixture(+fixture: U32) -> IO(Unit):
+def probe_after_hash(
+  fixture: U32,
+  count: U32,
+  best: U32,
+  sum: U32,
+  child_count: U32,
+  child_sum: U32,
+  check: U32,
+  hash: U32
+) -> IO(Unit):
+  IO.print(
+    "fixture=" ++ U32.show(fixture)
+    ++ " legal=" ++ U32.show(count)
+    ++ " best=" ++ U32.show(best)
+    ++ " checksum=" ++ U32.show(sum)
+    ++ " child_legal=" ++ U32.show(child_count)
+    ++ " child_checksum=" ++ U32.show(child_sum)
+    ++ " child_check=" ++ U32.show(check)
+    ++ " child_hash32=" ++ U32.show(hash)
+  )
+
+def probe_after_check(
+  fixture: U32,
+  +child: U32,
+  count: U32,
+  best: U32,
+  sum: U32,
+  child_count: U32,
+  child_sum: U32,
+  check: U32
+) -> IO(Unit):
   do IO<Unit>:
-    +handle : U32 <- Chess.new(fixture)
-    +count : U32 <- Chess.legal_count(handle)
-    selected : Scan <- choose(handle, count)
-    Scan{+best, sum} = selected
-    +child : U32 <- Chess.push(handle, best)
-    +child_count : U32 <- Chess.legal_count(child)
-    child_selected : Scan <- choose(child, child_count)
-    Scan{_, child_sum} = child_selected
-    check : U32 <- Chess.in_check(child)
     hash : U32 <- Chess.hash32(child)
-    IO.print(
-      "fixture=" ++ U32.show(fixture)
-      ++ " legal=" ++ U32.show(count)
-      ++ " best=" ++ U32.show(best)
-      ++ " checksum=" ++ U32.show(sum)
-      ++ " child_legal=" ++ U32.show(child_count)
-      ++ " child_checksum=" ++ U32.show(child_sum)
-      ++ " child_check=" ++ U32.show(check)
-      ++ " child_hash32=" ++ U32.show(hash)
+    probe_after_hash(
+      fixture, count, best, sum, child_count, child_sum, check, hash
     )
+
+def probe_after_child_scan(
+  fixture: U32,
+  +child: U32,
+  count: U32,
+  best: U32,
+  sum: U32,
+  child_count: U32,
+  child_selected: Scan
+) -> IO(Unit):
+  Scan{_, child_sum} = child_selected
+  do IO<Unit>:
+    check : U32 <- Chess.in_check(child)
+    probe_after_check(
+      fixture, child, count, best, sum, child_count, child_sum, check
+    )
+
+def probe_after_child_count(
+  fixture: U32,
+  +child: U32,
+  count: U32,
+  best: U32,
+  sum: U32,
+  +child_count: U32
+) -> IO(Unit):
+  do IO<Unit>:
+    child_selected : Scan <- choose(child, child_count)
+    probe_after_child_scan(
+      fixture, child, count, best, sum, child_count, child_selected
+    )
+
+def probe_after_push(
+  fixture: U32,
+  child: U32,
+  count: U32,
+  best: U32,
+  sum: U32
+) -> IO(Unit):
+  do IO<Unit>:
+    child_count : U32 <- Chess.legal_count(child)
+    probe_after_child_count(fixture, child, count, best, sum, child_count)
+
+def probe_after_selected(
+  fixture: U32,
+  +handle: U32,
+  count: U32,
+  selected: Scan
+) -> IO(Unit):
+  Scan{best, sum} = selected
+  do IO<Unit>:
+    child : U32 <- Chess.push(handle, best)
+    probe_after_push(fixture, child, count, best, sum)
+
+def probe_after_count(
+  fixture: U32,
+  +handle: U32,
+  +count: U32
+) -> IO(Unit):
+  do IO<Unit>:
+    selected : Scan <- choose(handle, count)
+    probe_after_selected(fixture, handle, count, selected)
+
+def probe_after_handle(fixture: U32, handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    count : U32 <- Chess.legal_count(handle)
+    probe_after_count(fixture, handle, count)
+
+def probe_fixture(fixture: U32) -> IO(Unit):
+  do IO<Unit>:
+    handle : U32 <- Chess.new(fixture)
+    probe_after_handle(fixture, handle)
 
 def main() -> IO(Unit):
   do IO<Unit>:
