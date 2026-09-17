@@ -98,3 +98,5 @@ For durable knowledge, use [model heads](../model_heads.md),
 [the loop audit](../rl_loop_audit.md) and [operations](../operations.md), following their
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
+
+- [Ceres collector throughput: zero pauses and grouped sessions](2026-09-16-ceres-collector-throughput.md) — saved timing analysis, bounded numerical-equivalence pilot, results pending.

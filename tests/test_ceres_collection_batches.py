@@ -337,7 +337,7 @@ def test_default_validates_and_does_not_execute(
         (lambda plan: plan["chunks"][0].__setitem__("timeout_seconds", 1801), "out of range"),
         (lambda plan: plan["chunks"][0].__setitem__("timeout_seconds", 31), "out of range"),
         (lambda plan: plan.__setitem__("overall_seconds", 108001), "out of range"),
-        (lambda plan: plan.__setitem__("pause_between_chunks_seconds", 29), "out of range"),
+        (lambda plan: plan.__setitem__("pause_between_chunks_seconds", -1), "out of range"),
         (lambda plan: plan.__setitem__("minimum_free_gib", 149), "out of range"),
         (lambda plan: plan["chunks"][1].__setitem__("id", "c16"), "duplicate chunk id"),
         (lambda plan: plan["chunks"][1].__setitem__("start_shard", 17), "overlaps"),
@@ -386,8 +386,9 @@ def test_nonfinite_plan_number_is_rejected(tmp_path: Path) -> None:
 
 
 @pytest.mark.usefixtures("_plenty_disk")
-def test_successful_two_chunks_and_evidence(tmp_path: Path) -> None:
-    path, digest, _worker = two_chunk_plan(tmp_path)
+@pytest.mark.parametrize("pause_seconds", [0, 30])
+def test_successful_two_chunks_and_evidence(tmp_path: Path, pause_seconds: int) -> None:
+    path, digest, _worker = two_chunk_plan(tmp_path, pause_between_chunks_seconds=pause_seconds)
     before = time.monotonic()
     code = tool.main(
         ["--plan", str(path), "--expected-plan-sha256", digest, "--execute"]
@@ -415,8 +416,12 @@ def test_successful_two_chunks_and_evidence(tmp_path: Path) -> None:
         assert body["selection"][0]["path"] == f"shard_{start:06d}.zarr"
     first = json.loads((state / "chunks" / "c16" / "receipt.json").read_text(encoding="utf-8"))
     second = json.loads((state / "chunks" / "c18" / "receipt.json").read_text(encoding="utf-8"))
-    assert second["started_unix"] - first["ended_unix"] >= 29.5
-    assert time.monotonic() - before >= 29.5
+    gap = second["started_unix"] - first["ended_unix"]
+    if pause_seconds:
+        assert gap >= pause_seconds - 0.5
+        assert time.monotonic() - before >= pause_seconds - 0.5
+    else:
+        assert gap < 5, "zero-pause plan must reach the real next launch without a fixed delay"
     assert (state / "actual_start.json").is_file()
     assert not (state / "failed.json").exists()
     assert not (state / "STOP").exists()
@@ -969,3 +974,10 @@ def test_ceres_invocation_rejects_missing_ambiguous_or_stale(
     manifest = json.loads((tmp_path / "state" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "FAILED"
     assert manifest["completed_chunks"] == []
+
+
+def test_zero_pause_still_checks_resources_without_sleep(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tool.time, "sleep", lambda _: pytest.fail("zero pause slept"))
+    tool.interruptible_wait(0, lambda: calls.append("guard"))
+    assert calls == ["guard"]
