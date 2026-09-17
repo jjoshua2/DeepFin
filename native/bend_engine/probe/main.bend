@@ -7,20 +7,22 @@ import Base
 # intentionally not a production engine path; it is the first architecture
 # probe for a future shared Bend search core.
 
-type Best is Data:
-  Best{action: U32, score: F32}
-
 type Scan is Data:
   Scan{best: U32, checksum: U32}
 
-# op codes are private to this probe:
+# Scalar op codes private to this probe:
 #   0 new_fixture(fixture)
 #   1 legal_count(handle)
-#   2 legal_at(handle, sorted_slot)
 #   3 push(handle, action) -> cloned child handle
 #   4 in_check(handle)
 #   5 zobrist_hash_low32(handle)
 def Chess.call(op: U32, a: U32, b: U32) -> IO(U32):
+  import "./chess_call.c"
+
+# The whole sorted move list crosses the effect boundary at once. This is a
+# better approximation of the intended engine boundary than one IO call per
+# child, and leaves the recursive scan entirely pure Bend.
+def Chess.legal_moves(handle: U32) -> IO(List<U32>):
   import "./chess_call.c"
 
 def Chess.new(fixture: U32) -> IO(U32):
@@ -28,9 +30,6 @@ def Chess.new(fixture: U32) -> IO(U32):
 
 def Chess.legal_count(handle: U32) -> IO(U32):
   Chess.call(1, handle, 0)
-
-def Chess.legal_at(handle: U32, slot: U32) -> IO(U32):
-  Chess.call(2, handle, slot)
 
 def Chess.push(handle: U32, action: U32) -> IO(U32):
   Chess.call(3, handle, action)
@@ -57,124 +56,67 @@ def puct_score(+action: U32) -> F32:
 def checksum(acc: U32, action: U32) -> U32:
   U32.xor(U32.mul(acc, 2654435761), U32.add(action, 1))
 
-def better_case(
-  gt: Bool,
-  action: U32,
-  score: F32,
-  best_action: U32,
-  best_score: F32
-) -> Best:
+# Bend only matches parameters/fields, not computed expressions. Keep the
+# branch in tiny helpers: the computed comparison is passed as their parameter.
+def pick_action(gt: Bool, action: U32, best: U32) -> U32:
   match gt:
     case True{}:
-      Best{action, score}
+      action
     case False{}:
-      Best{best_action, best_score}
+      best
 
-def better(
-  action: U32,
-  +score: F32,
+def pick_score(gt: Bool, score: F32, best: F32) -> F32:
+  match gt:
+    case True{}:
+      score
+    case False{}:
+      best
+
+def scan_moves(
+  xs: List<U32>,
   best_action: U32,
-  +best_score: F32
-) -> Best:
-  better_case(
-    F32.is_gt(score, best_score),
-    action,
-    score,
-    best_action,
-    best_score
-  )
-
-# Bend 2.0.4 does not permit a reusable (+) pattern directly on an IO bind.
-# Bind each effect result affinely, then pass it once into a helper whose
-# top-level parameter is reusable. That keeps effect values linear while still
-# allowing the pure search step to use an action for score + checksum.
-def scan_after_best(
-  handle: U32,
-  n: Nat,
-  slot: U32,
-  action: U32,
-  sum: U32,
-  candidate: Best
-) -> IO(Scan):
-  match candidate:
-    case Best{next_action, next_score}:
+  +best_score: F32,
+  sum: U32
+) -> Scan:
+  match xs:
+    case Nil{}:
+      Scan{best_action, sum}
+    case Con{+action, rest}:
+      next_action = pick_action(
+        F32.is_gt(puct_score(action), best_score),
+        action,
+        best_action
+      )
+      next_score = pick_score(
+        F32.is_gt(puct_score(action), best_score),
+        puct_score(action),
+        best_score
+      )
       scan_moves(
-        handle,
-        n,
-        U32.add(slot, 1),
+        rest,
         next_action,
         next_score,
         checksum(sum, action)
       )
 
-def scan_after_action(
-  handle: U32,
-  n: Nat,
-  slot: U32,
-  +action: U32,
-  best_action: U32,
-  best_score: F32,
-  sum: U32
-) -> IO(Scan):
-  scan_after_best(
-    handle,
-    n,
-    slot,
-    action,
-    sum,
-    better(
-      action,
-      puct_score(action),
-      best_action,
-      best_score
-    )
-  )
+def choose(xs: List<U32>) -> Scan:
+  match xs:
+    case Nil{}:
+      Scan{4294967295, 0}
+    case Con{+first, rest}:
+      scan_moves(
+        rest,
+        first,
+        puct_score(first),
+        checksum(0, first)
+      )
 
-def scan_moves(
-  +handle: U32,
-  n: Nat,
-  +slot: U32,
-  best_action: U32,
-  best_score: F32,
-  sum: U32
-) -> IO(Scan):
-  match n:
-    case 0n:
-      IO.pure(Scan, Scan{best_action, sum})
-    case 1n+p:
-      do IO<Scan>:
-        action : U32 <- Chess.legal_at(handle, slot)
-        scan_after_action(
-          handle,
-          p,
-          slot,
-          action,
-          best_action,
-          best_score,
-          sum
-        )
-
-def choose_after_first(handle: U32, n: Nat, +first: U32) -> IO(Scan):
-  scan_moves(
-    handle,
-    n,
-    1,
-    first,
-    puct_score(first),
-    checksum(0, first)
-  )
-
-def choose_n(+handle: U32, n: Nat) -> IO(Scan):
-  match n:
-    case 0n:
-      IO.pure(Scan, Scan{4294967295, 0})
-    case 1n+p:
-      do IO<Scan>:
-        first : U32 <- Chess.legal_at(handle, 0)
-        choose_after_first(handle, p, first)
-
-def choose(handle: U32, count: U32) -> IO(Scan):
-  choose_n(handle, U32.to_nat(count))
+def checksum_moves(xs: List<U32>, acc: U32) -> U32:
+  match xs:
+    case Nil{}:
+      acc
+    case Con{action, rest}:
+      checksum_moves(rest, checksum(acc, action))
 
 def probe_after_hash(
   fixture: U32,
@@ -213,20 +155,26 @@ def probe_after_check(
       fixture, count, best, sum, child_count, child_sum, check, hash
     )
 
-def probe_after_child_scan(
+def probe_after_child_moves(
   fixture: U32,
   +child: U32,
   count: U32,
   best: U32,
   sum: U32,
   child_count: U32,
-  child_selected: Scan
+  child_moves: List<U32>
 ) -> IO(Unit):
-  Scan{_, child_sum} = child_selected
   do IO<Unit>:
     check : U32 <- Chess.in_check(child)
     probe_after_check(
-      fixture, child, count, best, sum, child_count, child_sum, check
+      fixture,
+      child,
+      count,
+      best,
+      sum,
+      child_count,
+      checksum_moves(child_moves, 0),
+      check
     )
 
 def probe_after_child_count(
@@ -235,12 +183,12 @@ def probe_after_child_count(
   count: U32,
   best: U32,
   sum: U32,
-  +child_count: U32
+  child_count: U32
 ) -> IO(Unit):
   do IO<Unit>:
-    child_selected : Scan <- choose(child, child_count)
-    probe_after_child_scan(
-      fixture, child, count, best, sum, child_count, child_selected
+    child_moves : List<U32> <- Chess.legal_moves(child)
+    probe_after_child_moves(
+      fixture, child, count, best, sum, child_count, child_moves
     )
 
 def probe_after_push(
@@ -256,25 +204,34 @@ def probe_after_push(
 
 def probe_after_selected(
   fixture: U32,
-  +handle: U32,
+  handle: U32,
   count: U32,
   selected: Scan
 ) -> IO(Unit):
-  Scan{best, sum} = selected
-  do IO<Unit>:
-    child : U32 <- Chess.push(handle, best)
-    probe_after_push(fixture, child, count, best, sum)
+  match selected:
+    case Scan{+best, sum}:
+      do IO<Unit>:
+        child : U32 <- Chess.push(handle, best)
+        probe_after_push(fixture, child, count, best, sum)
+
+def probe_after_moves(
+  fixture: U32,
+  handle: U32,
+  count: U32,
+  moves: List<U32>
+) -> IO(Unit):
+  probe_after_selected(fixture, handle, count, choose(moves))
 
 def probe_after_count(
   fixture: U32,
   +handle: U32,
-  +count: U32
+  count: U32
 ) -> IO(Unit):
   do IO<Unit>:
-    selected : Scan <- choose(handle, count)
-    probe_after_selected(fixture, handle, count, selected)
+    moves : List<U32> <- Chess.legal_moves(handle)
+    probe_after_moves(fixture, handle, count, moves)
 
-def probe_after_handle(fixture: U32, handle: U32) -> IO(Unit):
+def probe_after_handle(fixture: U32, +handle: U32) -> IO(Unit):
   do IO<Unit>:
     count : U32 <- Chess.legal_count(handle)
     probe_after_count(fixture, handle, count)
