@@ -236,7 +236,7 @@ def probe_after_handle(fixture: U32, +handle: U32) -> IO(Unit):
     count : U32 <- Chess.legal_count(handle)
     probe_after_count(fixture, handle, count)
 
-def probe_fixture(fixture: U32) -> IO(Unit):
+def probe_fixture(+fixture: U32) -> IO(Unit):
   do IO<Unit>:
     handle : U32 <- Chess.new(fixture)
     probe_after_handle(fixture, handle)
