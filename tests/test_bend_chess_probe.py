@@ -14,7 +14,6 @@ from chess_anti_engine.encoding._lc0_ext import CBoard
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = ROOT / "native" / "bend_engine" / "probe" / "build_probe.sh"
-BEND_VERSION_FILE = ROOT / "native" / "bend_engine" / "BEND_VERSION"
 
 FIXTURE_FENS = (
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -178,8 +177,7 @@ def test_bend_chess_probe_matches_existing_cboard(tmp_path: Path) -> None:
     built = _run_checked([str(BUILD_SCRIPT)], env=env)
     binary = Path(built.stdout.strip().splitlines()[-1])
     assert binary.is_file(), built.stdout
-    version = BEND_VERSION_FILE.read_text(encoding="utf-8").splitlines()[0].strip()
-    assert version in built.stdout, built.stdout
+    assert "bend probe:" in built.stdout, built.stdout
 
     run = _run_checked([str(binary)])
     observed = _parse_probe(run.stdout)

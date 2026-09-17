@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
-# Install the Bend version recorded in BEND_VERSION. The upstream installer
-# always fetches latest; this script downloads the pinned tarball and wraps it
-# so a later 2.0.x cannot silently qualify the probe.
+# Install the current Bend release from https://bend-lang.com/dl/latest.json.
+# The parity probe is the compatibility gate: Bend is young and latest moves
+# quickly, so this does not pin a patch version. The sha256 in latest.json is
+# still checked so a truncated download cannot silently qualify.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-VERSION_FILE="$ROOT/native/bend_engine/BEND_VERSION"
 PREFIX="${BEND_PROBE_HOME:-$ROOT/build/bend_toolchain}"
-WANT_VERSION="$(sed -n '1p' "$VERSION_FILE")"
-WANT_SHA="$(sed -n 's/^sha256 //p' "$VERSION_FILE" | head -n1)"
-WANT_URL="$(sed -n 's/^url //p' "$VERSION_FILE" | head -n1)"
-
-test -n "$WANT_VERSION" && test -n "$WANT_SHA" && test -n "$WANT_URL"
+LATEST_URL="${BEND_LATEST_URL:-https://bend-lang.com/dl/latest.json}"
 
 ensure_bun() {
   if command -v bun >/dev/null 2>&1; then
@@ -22,12 +18,39 @@ ensure_bun() {
     echo "$HOME/.bun/bin/bun"
     return
   fi
-  echo "error: bun is required to run Bend $WANT_VERSION" >&2
+  echo "error: bun is required to run Bend" >&2
   echo "install it with: curl -fsSL https://bun.sh/install | bash" >&2
   exit 2
 }
 
 BUN_BIN="$(ensure_bun)"
+
+echo "bend probe: fetching $LATEST_URL"
+META="$(curl -fsSL "$LATEST_URL")"
+read -r WANT_VERSION WANT_SHA WANT_URL <<EOF
+$(printf '%s' "$META" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ver"], d["sha256"], d["url"])')
+EOF
+
+case "$WANT_VERSION" in
+  *[!0-9A-Za-z._-]*|.|..|"")
+    echo "error: invalid Bend version in latest.json: $WANT_VERSION" >&2
+    exit 2
+    ;;
+esac
+case "$WANT_SHA" in
+  *[!0-9a-f]*|"")
+    echo "error: invalid Bend sha256 in latest.json" >&2
+    exit 2
+    ;;
+esac
+test "${#WANT_SHA}" -eq 64
+case "$WANT_URL" in
+  https://bend-lang.com/dl/*) ;;
+  *)
+    echo "error: unexpected Bend tarball URL: $WANT_URL" >&2
+    exit 2
+    ;;
+esac
 
 APP="$PREFIX/app/$WANT_VERSION"
 BIN="$PREFIX/bin"

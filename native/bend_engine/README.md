@@ -11,19 +11,14 @@ Python/C extension.
 
 Nothing here is on a production UCI, selfplay, training, or inference path.
 
-## Qualified Bend toolchain
+## Bend toolchain
 
-PR 1 is qualified against:
+CI installs whatever Bend `https://bend-lang.com/dl/latest.json` currently
+names (sha256-checked). The parity probe is the compatibility gate; a new
+Bend patch should fail that test rather than a version-string pin.
 
-- Bend **2.0.4**
-- bendlang/bend commit
-  `8008146ab90abb98b496fa2a6ffe555da7fb0dd5`
-
-See `BEND_VERSION`. Bend is young and moves quickly; when changing the pinned
-version, rerun the parity probe rather than assuming source compatibility.
-
-The upstream `curl | sh` installer always fetches **latest** Bend. PR 1 is
-qualified against 2.0.4, so install the pinned tarball instead:
+`BEND_VERSION` records the last release this tree was run against. It is not
+a pin.
 
 ```bash
 # bun is required to run the Bend compiler

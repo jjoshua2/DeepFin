@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - "native/bend_engine/**"
-      - "native/bend_engine/install_bend.sh"
       - "tests/test_bend_chess_probe.py"
       - ".github/workflows/bend-probe.yml"
       - "chess_anti_engine/encoding/_cboard_impl.h"
@@ -27,9 +26,9 @@ jobs:
       - name: Install DeepFin CPU test environment
         run: uv sync --locked --extra dev --extra cpu
 
-      # bun.sh is the supported bun install path. Bend itself is NOT installed
-      # via bend-lang.com/install.sh: that launcher always fetches latest, and
-      # 2.0.5 landed while this probe was qualified against 2.0.4.
+      # bun.sh is the supported bun install path. Bend is installed from
+      # latest.json (sha256-checked) rather than a pinned patch: the language
+      # is young and the parity probe is the compatibility gate.
       - name: Install bun
         run: |
           if ! command -v bun >/dev/null 2>&1; then
@@ -37,7 +36,7 @@ jobs:
           fi
           echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
 
-      - name: Install pinned Bend
+      - name: Install latest Bend
         env:
           BEND_NO_TELEMETRY: "1"
         run: native/bend_engine/install_bend.sh
