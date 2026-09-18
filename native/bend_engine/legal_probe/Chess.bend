@@ -58,8 +58,16 @@ def get_ep(b: Board) -> U32:
   Board{pawns, knights, bishops, rooks, queens, kings, white, black, turn, rights, ep} = b
   ep
 
+# Keep U64 selection scalar. Generic Bool.pick boxes both U64 alternatives
+# on the pinned compiler, then immediately unboxes the chosen value.
+# This monomorphic match preserves the same eager inputs without heap boxes.
+def select_u64(condition: Bool, yes: U64, no: U64) -> U64:
+  match condition:
+    case True{}: yes
+    case False{}: no
+
 def color(+b: Board, turn: U32) -> U64:
-  Bool.pick(U64, U32.is_eq(turn, 1), get_white(b), get_black(b))
+  select_u64(U32.is_eq(turn, 1), get_white(b), get_black(b))
 
 def occupied(+b: Board) -> U64:
   U64.or(get_white(b), get_black(b))
@@ -148,7 +156,7 @@ def corner_right(sq: U32) -> U32:
     case _: 0
 
 def update_piece(bb: U64, remove: U64, target: U64, put: Bool) -> U64:
-  U64.or(U64.and_not(bb, remove), Bool.pick(U64, put, target, U64.zero()))
+  U64.or(U64.and_not(bb, remove), select_u64(put, target, U64.zero()))
 
 # PRE: m was produced by legal_moves(b). No arbitrary-move application API.
 def make_move(+b: Board, m: Ply) -> Board:
@@ -159,9 +167,9 @@ def make_move(+b: Board, m: Ply) -> Board:
   +target = U64.bit(U32.to_nat(dst))
   cap = Bool.pick(U32, U32.is_eq(flag, 1), U32.xor(dst, 8), dst)
   rook_from = Bool.pick(U32, U32.is_eq(U32.and(dst, 7), 6), U32.inc(dst), U32.sub(dst, 2))
-  +rook_to = Bool.pick(U64, castle, U64.bit(U32.to_nat(U32.div(U32.add(src, dst), 2))), U64.zero())
+  +rook_to = select_u64(castle, U64.bit(U32.to_nat(U32.div(U32.add(src, dst), 2))), U64.zero())
   +remove = U64.or(U64.or(U64.bit(U32.to_nat(src)), U64.bit(U32.to_nat(cap))),
-    U64.or(target, Bool.pick(U64, castle, U64.bit(U32.to_nat(rook_from)), U64.zero())))
+    U64.or(target, select_u64(castle, U64.bit(U32.to_nat(rook_from)), U64.zero())))
   +put = Bool.pick(U32, U32.is_zero(promotion), kind, promotion)
   +added = U64.or(target, rook_to)
   +w = U32.is_eq(side, 1)
@@ -213,7 +221,7 @@ def ep_target(+b: Board) -> U64:
   ok = Bool.and(U32.is_lt(target, 64), Bool.and(U32.is_eq(U32.div(target, 8), expected_rank),
     Bool.and(Bool.not(U64.test_bit(occupied(b), U32.to_nat(target))),
       U64.test_bit(U64.and(get_pawns(b), color(b, U32.xor(get_turn(b), 1))), U32.to_nat(victim)))))
-  Bool.pick(U64, ok, U64.bit(U32.to_nat(target)), U64.zero())
+  select_u64(ok, U64.bit(U32.to_nat(target)), U64.zero())
 
 def pawn_after(advances: U64, capturable: U64, r: Array<U64> & U64) -> Array<U64> & U64:
   (table, pa) = r
@@ -229,8 +237,8 @@ def pawn_targets(table: Array<U64>, +b: Board, +src: U32) -> Array<U64> & U64:
   start_rank = Bool.pick(U32, w, 1, 6)
   empty2 = Bool.and(empty1, Bool.and(U32.is_eq(U32.div(src, 8), start_rank),
     Bool.not(U64.test_bit(occ, U32.to_nat(second)))))
-  advances = U64.or(Bool.pick(U64, empty1, U64.bit(U32.to_nat(first)), U64.zero()),
-    Bool.pick(U64, empty2, U64.bit(U32.to_nat(second)), U64.zero()))
+  advances = U64.or(select_u64(empty1, U64.bit(U32.to_nat(first)), U64.zero()),
+    select_u64(empty2, U64.bit(U32.to_nat(second)), U64.zero()))
   enemies = U64.and_not(color(b, U32.xor(get_turn(b), 1)), get_kings(b))
   pawn_after(advances, U64.or(enemies, ep_target(b)), attack(0, table, src, get_turn(b), occ))
 
@@ -270,10 +278,17 @@ def scan(xs: List<&2, U32>, +b: Board, r: Array<U64> & List<&2, Ply>) -> Array<U
     case Nil{}: r
     case Con{src, rest}: scan(rest, b, scan_step(b, src, r))
 
+# Construct only the retained branch; a generic eager pick allocates a cons
+# even for rejected moves and shares/drops the accumulator unnecessarily.
+def retain_move(reject: Bool, m: Ply, acc: List<&2, Ply>) -> List<&2, Ply>:
+  match reject:
+    case True{}: acc
+    case False{}: Con{m, acc}
+
 # Transit safety is checked with the old king square vacated.
-def castle_finish(m: Ply, start_check: Bool, +acc: List<&2, Ply>, r: Array<U64> & Bool) -> Array<U64> & List<&2, Ply>:
+def castle_finish(m: Ply, start_check: Bool, acc: List<&2, Ply>, r: Array<U64> & Bool) -> Array<U64> & List<&2, Ply>:
   (table, transit_check) = r
-  (table, Bool.pick(List<&2, Ply>, Bool.or(start_check, transit_check), acc, Con{m, acc}))
+  (table, retain_move(Bool.or(start_check, transit_check), m, acc))
 
 def castle_start(+b: Board, +src: U32, dst: U32, transit: U32,
   acc: List<&2, Ply>, r: Array<U64> & Bool) -> Array<U64> & List<&2, Ply>:
@@ -304,9 +319,9 @@ def castle_side(+b: Board, +king_side: Bool,
       Bool.and(U64.test_bit(U64.and(get_rooks(b), own), U32.to_nat(rook)), U64.is_zero(U64.and(occupied(b), between)))))
   castle_checked(ok, table, b, src, dst, transit, acc)
 
-def filter_after(m: Ply, +acc: List<&2, Ply>, r: Array<U64> & Bool) -> Array<U64> & List<&2, Ply>:
+def filter_after(m: Ply, acc: List<&2, Ply>, r: Array<U64> & Bool) -> Array<U64> & List<&2, Ply>:
   (table, check) = r
-  (table, Bool.pick(List<&2, Ply>, check, acc, Con{m, acc}))
+  (table, retain_move(check, m, acc))
 
 def filter_step(+b: Board, +m: Ply, r: Array<U64> & List<&2, Ply>) -> Array<U64> & List<&2, Ply>:
   (table, acc) = r

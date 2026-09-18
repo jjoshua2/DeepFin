@@ -168,3 +168,30 @@ silently downloaded or treated as another compiler version. This remains a
 single-thread prototype benchmark, not an engine-strength result or a claim
 that Bend beats optimized C. The experiment record is
 [here](../../../docs/experiments/2026-09-18-bend-perft-baseline.md).
+
+
+## Scalar branches and opt-in allocation counters
+
+The hot core uses a typed `select_u64` match instead of generic `Bool.pick`:
+on the pinned compiler this keeps the two U32 limbs scalar rather than boxing
+both alternatives. `retain_move` constructs a list node only when retained,
+without sharing the accumulator with an unused list alternative. These are
+representation changes, not changes to move legality or ordering.
+
+The opt-in counter diagnostic is separate from ordinary timing and CI:
+
+```sh
+python -m native.bend_engine.legal_probe.profile_allocations \
+  --report artifacts/bend-allocations.json
+```
+
+It supports `--baseline-chess` exactly like the benchmark. Counts cover only
+the post-warmup traversal and include runtime heap requests, reference-wrapper
+creation/increments and destructor entries. These are instrumented runtime
+function calls, NOT OS allocations, peak bytes, or time shares. Instrumented
+timing is intentionally omitted; use `benchmark.py` for performance. Generated
+C is modified only in a disposable directory; missing or ambiguous anchors
+fail closed. The compiler pin and normal executable source remain unchanged.
+
+See [the scalar-branch record](../../../docs/experiments/2026-09-18-bend-scalar-branches.md)
+for the controlled old/new comparison and limitations.

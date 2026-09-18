@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Bend scalar branches](2026-09-18-bend-scalar-branches.md) | Profile-guided scalar U64/list selection; allocation mechanism and paired perft confirmation, no production adoption |
 | [Bend perft native baseline](2026-09-18-bend-perft-baseline.md) | Paired old/new Bend versus CBoard, conservative king-safety filter; CPU-only, no production adoption |
 | [Ceres CPU semantics oracle](2026-09-13-ceres-cpu-semantics.md) | CPU oracle complete after comparator-only recovery: 144 histories match bytes; 131 value cases quantify FP16 getter differences, no neural parity claim |
 | [Saved joint raw-label eligibility](2026-09-13-saved-joint-raw-eligibility.md) | 21.40M saved joint-label raw candidates outside covered rosters; 512-shard audit complete: 4,219,426 eligible / 4,249,935 raw rows; 88 exact exclusions qualified; 4,219,426-row / 516-shard derivation launched, no completion or training admission |
