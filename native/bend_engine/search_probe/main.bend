@@ -416,6 +416,23 @@ def finish_after_stats(
     case TailStats{total, xor, active_count}:
       SearchResult{action, active_count, budget, total, xor}
 
+def finish_combine(
+  action: U32,
+  visits: U32,
+  active: Bool,
+  budget: U32,
+  tail: TailStats
+) -> SearchResult:
+  match tail:
+    case TailStats{t_total, t_xor, t_active}:
+      SearchResult{
+        action,
+        U32.add(Bool.pick(U32, active, 1, 0), t_active),
+        budget,
+        U32.add(visits, t_total),
+        U32.xor(visit_word(action, visits), t_xor)
+      }
+
 def finish_head(
   head: Cand,
   rest: List<&2, Cand>,
@@ -423,21 +440,13 @@ def finish_head(
 ) -> SearchResult:
   match head:
     case Cand{+action, +visits, active}:
-      tail = tail_stats(rest)
-      own = TailStats{
+      finish_combine(
+        action,
         visits,
-        visit_word(action, visits),
-        Bool.pick(U32, active, 1, 0)
-      }
-      match own tail:
-        case TailStats{o_total, o_xor, o_active} TailStats{t_total, t_xor, t_active}:
-          SearchResult{
-            action,
-            U32.add(o_active, t_active),
-            budget,
-            U32.add(o_total, t_total),
-            U32.xor(o_xor, t_xor)
-          }
+        active,
+        budget,
+        tail_stats(rest)
+      )
 
 def finish(cands: List<&2, Cand>, budget: U32) -> SearchResult:
   match cands:
