@@ -75,6 +75,27 @@ A same-donor, same-additional-update control on the original 35M corpus remains
 necessary to isolate the unique-data contribution; it must not be described as
 already run. No new policy/value recipe has been selected by these horizon matches.
 
+## Registered expanded-corpus readouts
+
+Four future jobs are queued behind the running first expanded pass: each expanded-corpus epoch 1–4 versus the same
+35M epoch-4 anchor, fixed 256 games at 400 simulations. Use common opening seed
+20260918, the same search settings above and no automatic game-count extension.
+The first readout follows the first expanded pass; the remaining three follow the
+three-pass continuation. The latter preserve the intermediate boundaries and are
+not independent trained seeds. Compare scores and uncertainty before deciding
+whether more training or a direct finalist comparison is useful; a positive estimate
+need not exclude zero to earn further compute.
+
+Candidates are bound only after successful training terminal and completion
+receipts, matching the registered training-plan hash, completed-summary hash and
+actual checkpoint hash. Failed training cannot supply an earlier accidental
+checkpoint. Every arena must finish all 128 pairs and pass actual-bank validation.
+The [adopted queue evidence](evidence/expanded50m-readouts-20260918.json) records
+commands and identities; it is not evidence that any future game has completed.
+Each job allows 2,500 seconds plus 30 seconds of outer termination cleanup, with
+32 GiB available RAM and 150 GiB disk floors and an exclusive GPU lease. Independent
+review corrected exited-leader cleanup before adoption.
+
 ## Evidence and verification
 
 [Compact bank evidence](evidence/v50-horizon-20260918.json) records all four
