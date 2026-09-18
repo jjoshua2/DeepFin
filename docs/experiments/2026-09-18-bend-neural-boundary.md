@@ -54,20 +54,65 @@ classical graded features differed by 1.49e-8 from float intermediates, which
 motivates the narrow feature-only tolerance rather than falsely claiming tensor
 bit equality. CBoard's 8-bit rule50 storage is guarded against overflow.
 
-## Hosted readout
+## Hosted readout: PASS
 
-Pending at publication preparation. Local smoke artifacts are disposable and
-not committed. Hosted outputs will record the exact Torch version, package hash,
-compiler revision, session observations and negative-test counts.
+[Confirmation run 35405756949](https://github.com/jjoshua2/DeepFin/actions/runs/35405756949),
+job 105795067854, passed on the locked **Torch 2.14.0+cpu** environment. The exact
+validated executable tree was published as commit
+`28131ae90fa8c043f4a451c7b43cf07f76603c5c`, with parent #777's head. This later
+readout changes only documentation. Core published blob hashes were checked
+against the locally tested files.
+
+- Four Bend build modes passed: generic, portable helpers, native target, UBSan.
+- 64 independent encoding comparisons plus the equal-board/different-history check.
+- 40 neural epochs / **640 real native AOTI calls**. Each 16-request epoch had
+  16 distinct input tensors and 16 distinct output pairs; resets reproduced results.
+- Maximum absolute native/eager logit difference: **2.2351741790771484e-8**.
+- Every final search node/board/statistic and best move matched the diagnostic reference.
+- All six malformed native inputs rejected with code 2 and no model response.
+- Existing session regression passed **38 sessions per build**, including malformed
+  replies, cooperative cancellation, capacity, reset, terminal and EOF behavior;
+  python-chess checked all 207 distinct oracle positions.
+- Focused Ruff, Basedpyright and **53 cheap tests** passed (38 new boundary cases
+  plus 15 existing session tests). No suppression or depth increase.
+
+Identical across build modes, two epochs per fixture:
+
+| Root | Completed per epoch | Nodes | Best private key | Native requests |
+| --- | ---: | ---: | ---: | ---: |
+| Start | 16 | 338 | 1153 | 16 |
+| Kiwipete | 16 | 733 | 204 | 16 |
+| En passant | 16 | 102 | 2852 | 16 |
+| Black promotion | 16 | 122 | 3324 | 16 |
+| Repeated pre-root history | 16 | 338 | 1153 | 16 |
+
+These moves reflect untrained weights, not good chess. Keys are private Bend
+move words, not neural policy indices.
+
+Artifact: `bend-neural-confirmation`, ID **10572258848** (30-day retention).
+ZIP digest: `41ff02459e3fc0d9b5befd63debc50cf31d24d79a9bbc19af32461c5d2b63f91`.
+Neural report SHA-256: `0785bf00eee638f926c4471c693c4d28b7553362ff3b4c501e4cd604765f1859`.
+Session report SHA-256: `eff3dbfbc630b41f38539a1d5a3467d2afbbcea467ffd5d9f85015c3696e3435`.
+Executed package SHA-256: `0cdae40230af2c8c0e70620227a5d15f210877757751c2bfe5af1c14f3c410b9`.
+Package format is `deepfin-tuple-policy-wdl-cpu-f32-v1`; seed 20260918;
+root-legacy-meta/v2_threats/repetition-fix-on. Smoke packages are temporary,
+not trained artifacts and not committed. Re-exporting recreates the semantic
+check; the package's archive hash is an identity, not a reproducible-build promise.
+
+The first hosted attempt stopped at two harness lint findings before inference.
+The rerun fixed those, clarified binary-stream annotations, made CPU/F32 explicit,
+and strengthened the nonconstant-output assertion; it did not relax the numerical,
+source-integrity or chess checks. No timing comparison was made between runners.
 
 ## Remaining decision
 
-A passing smoke qualifies the boundary design only. Next use a trusted real
-checkpoint and its explicit input/model contract, then the existing CUDA parity
-bridge, and then bounded batching/backpressure before measuring end-to-end speed.
+This pass qualifies the boundary design only. Next use a trusted real checkpoint
+and its explicit input/model contract, then the existing CUDA parity bridge, and
+then bounded batching/backpressure before measuring end-to-end speed.
 No change to DeepFin production Gumbel semantics is implied by this diagnostic
 PUCT tree. No root advance, full draws, async stop, GPU, universal verification
-or independent reviewer is claimed.
+or independent reviewer is claimed. Broader repository CI is separate from this
+focused confirmation; no merge or deployment occurred.
 
 Reproduction and all protocol/manifest details:
 [`native/bend_engine/neural_probe/README.md`](../../native/bend_engine/neural_probe/README.md).
