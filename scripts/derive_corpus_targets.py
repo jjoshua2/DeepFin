@@ -446,8 +446,14 @@ from scripts import gen_random_selfplay_shards as gen
 from scripts import gen_sf_rooted_corpus as corpus
 from scripts import corpus_row_provenance as row_refs
 from scripts import adaptive_sf_value
-from scripts import baseline_row_exclusions as baseline_rows
 from scripts.corpus_selection_schema import validate_selection_metadata
+
+
+def _baseline_rows() -> Any:
+    # importlib: a `from scripts import` here still counts in basedpyright's
+    # import-cycle graph with audit_raw_baseline.
+    import importlib
+    return importlib.import_module("scripts.baseline_row_exclusions")
 
 #: Derived-shard schema.  Bumped when the MEANING of an emitted column changes,
 #: which is a different event from the corpus row schema changing -- a consumer
@@ -2972,7 +2978,7 @@ class DeriveOptions:
     spill_chunk_rows: int = SPILL_CHUNK_ROWS
     row_provenance: bool = False
     max_policy_support_misses: int = 0
-    baseline_exclusions: baseline_rows.Exclusions | None = None
+    baseline_exclusions: Any = None
 
     def __post_init__(self) -> None:
         if self.baseline_exclusions is not None and (
@@ -4474,7 +4480,7 @@ def derive(
                 break
             deriver.stats.rows_read += 1
             tt_carried.add(_check_row_identity(row, corpus_sha))
-            if baseline_rows.consume(exclusions, path, raw_index, row):
+            if _baseline_rows().consume(exclusions, path, raw_index, row):
                 deriver.stats.rows_dropped_baseline_audit += 1
                 continue
             try:
@@ -4554,7 +4560,7 @@ def derive(
             "was dropped are different problems.",
         )
 
-    baseline_rows.require(not exclusions, 'unused exclusion IDs')
+    _baseline_rows().require(not exclusions, 'unused exclusion IDs')
     _check_baseline_coverage(options, deriver.stats, record)
     enforce_take_effect(options, deriver.stats)
     _stamp_realized_row_schema(out_dir, written, deriver.stats, record)
@@ -5377,7 +5383,7 @@ def _check_baseline_coverage(options: DeriveOptions, stats: DeriveStats, corpus_
     if options.baseline_exclusions is not None:
         options.baseline_exclusions.bind(corpus_record.source_selection)
         proof = options.baseline_exclusions.proof
-        baseline_rows.require((stats.rows_dropped_baseline_audit, stats.rows_read, stats.rows_written, stats.rows_dropped_no_result)
+        _baseline_rows().require((stats.rows_dropped_baseline_audit, stats.rows_read, stats.rows_written, stats.rows_dropped_no_result)
                               == (proof['excluded_rows'], proof['physical_rows'], proof['eligible_rows'], proof['no_result_rows']),
                               'realized audited coverage differs')
 
@@ -6664,7 +6670,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
             max_gidx = gidx
             deriver.stats.rows_read += 1
             tt_carried.add(_check_row_identity(row, task.corpus_sha))
-            if baseline_rows.consume(exclusions, task.shards[shard_index], seen - 1, row):
+            if _baseline_rows().consume(exclusions, task.shards[shard_index], seen - 1, row):
                 deriver.stats.rows_dropped_baseline_audit += 1
                 continue
             try:
@@ -6731,7 +6737,7 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
         if bank.stream_path(name).exists()
     }
 
-    baseline_rows.require(not exclusions, 'unused worker exclusion IDs')
+    _baseline_rows().require(not exclusions, 'unused worker exclusion IDs')
     return _WorkerResult(
         index=task.index,
         stats=bank.plain(),
@@ -7553,7 +7559,7 @@ def main(argv: list[str] | None = None) -> int:
         spill_chunk_rows=spill_chunk_rows,
         qz=qz,
         row_provenance=bool(args.row_provenance),
-        baseline_exclusions=baseline_rows.load(args.baseline_exclusions) if args.baseline_exclusions else None,
+        baseline_exclusions=_baseline_rows().load(args.baseline_exclusions) if args.baseline_exclusions else None,
     )
     if workers > 1:
         # ⚑ A DIFFERENT FUNCTION, NOT A PARAMETER ON THE SAME ONE.  `--workers

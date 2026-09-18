@@ -1,0 +1,50 @@
+name: Bend chess probe
+
+on:
+  pull_request:
+    paths:
+      - "native/bend_engine/**"
+      - "tests/test_bend_chess_probe.py"
+      - ".github/workflows/bend-probe.yml"
+      - "chess_anti_engine/encoding/_cboard_impl.h"
+      - "chess_anti_engine/encoding/_lc0_ext.c"
+      - "chess_anti_engine/encoding/_bitboard_planes_impl.h"
+      - "chess_anti_engine/encoding/_slider_attacks_impl.h"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          activate-environment: true
+
+      - name: Install DeepFin CPU test environment
+        run: uv sync --locked --extra dev --extra cpu
+
+      # bun.sh is the supported bun install path. Bend is installed from
+      # latest.json (sha256-checked) rather than a pinned patch: the language
+      # is young and the parity probe is the compatibility gate.
+      - name: Install bun
+        run: |
+          if ! command -v bun >/dev/null 2>&1; then
+            curl -fsSL https://bun.sh/install | bash
+          fi
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+
+      - name: Install latest Bend
+        env:
+          BEND_NO_TELEMETRY: "1"
+        run: native/bend_engine/install_bend.sh
+
+      - name: Build and verify Bend/CBoard parity probe
+        env:
+          BEND_NO_TELEMETRY: "1"
+          CAE_REQUIRE_BEND_PROBE: "1"
+        run: pytest -q tests/test_bend_chess_probe.py
