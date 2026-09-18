@@ -7,6 +7,9 @@ endif()
 
 find_package(Torch REQUIRED)
 find_package(Threads REQUIRED)
+# The probe must not start a Python interpreter. Pip TorchConfig has appended
+# torch_python to TORCH_LIBRARIES before; drop it if a future wheel does it again.
+list(FILTER TORCH_LIBRARIES EXCLUDE REGEX "[Pp]ython")
 
 add_executable(
   deepfin_bend_aoti_probe

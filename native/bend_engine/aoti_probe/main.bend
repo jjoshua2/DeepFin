@@ -1,6 +1,6 @@
 import Base
 
-# PR 2 architecture probe:
+# Architecture probe:
 #
 # Bend owns the control flow and consumes only compact scalar results. The
 # native C++ side owns tensor construction and AOTInductor/LibTorch execution.

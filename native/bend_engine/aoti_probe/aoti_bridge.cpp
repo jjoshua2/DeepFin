@@ -2,8 +2,8 @@
  * Native AOTInductor bridge for the Bend architecture probe.
  *
  * Loads a .pt2 package with PyTorch's supported C++ AOTIModelPackageLoader.
- * No Python interpreter participates at runtime. PR 2 uses a tiny CPU package
- * in CI, but the loader API is the same one used for CUDA packages.
+ * No Python interpreter participates at runtime. CI uses a tiny CPU package;
+ * the loader API is the same one used for CUDA packages.
  */
 
 #include <cstdint>

@@ -1,21 +1,57 @@
 from __future__ import annotations
 
 import argparse
+import importlib
+import os
 from pathlib import Path
+import shutil
+import sys
+from typing import Any
 
-import torch
 
+def _resolve_package_cxx() -> str:
+    """Pick a C++ compiler whose libstdc++ matches a normal native process.
 
-class ProbeModel(torch.nn.Module):
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Exact binary arithmetic for the integer-valued probe inputs.
-        return x * 2.0 + 1.0
+    Inductor compiles the .pt2 wrapper with ``CXX`` / ``config.cpp.cxx``. A
+    user-local ``g++`` on PATH can be newer than the system libstdc++ the
+    probe binary actually loads; the wrapper then dlopens with
+    ``GLIBCXX_3.4.32 not found``. Prefer an explicit pin, then ``/usr/bin/g++``.
+    """
+    for raw in (
+        os.environ.get("BEND_AOTI_PACKAGE_CXX", "").strip(),
+        os.environ.get("CXX", "").strip(),
+    ):
+        if raw:
+            return raw
+    usr = Path("/usr/bin/g++")
+    if usr.is_file() and os.access(usr, os.X_OK):
+        return str(usr)
+    found = shutil.which("g++")
+    if found:
+        return found
+    raise SystemExit("error: no g++ for AOTInductor package compile")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
+
+    # Must land before torch/inductor import: config.cpp.cxx is filled from CXX
+    # at import, and a PATH g++ that is newer than system libstdc++ produces a
+    # wrapper this process cannot dlopen.
+    cxx = _resolve_package_cxx()
+    os.environ["CXX"] = cxx
+    print(f"aoti package cxx: {cxx}", file=sys.stderr)
+
+    torch = importlib.import_module("torch")
+    inductor_config = importlib.import_module("torch._inductor.config")
+    inductor_config.cpp.cxx = (cxx,)
+
+    class ProbeModel(torch.nn.Module):
+        def forward(self, x: Any) -> Any:
+            # Exact binary arithmetic for the integer-valued probe inputs.
+            return x * 2.0 + 1.0
 
     out = args.out.resolve()
     out.parent.mkdir(parents=True, exist_ok=True)

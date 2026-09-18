@@ -4,8 +4,12 @@ on:
   pull_request:
     paths:
       - "native/bend_engine/aoti_probe/**"
+      - "native/bend_engine/install_bend.sh"
       - "tests/test_bend_aoti_probe.py"
       - ".github/workflows/bend-aoti-probe.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".python-version"
   workflow_dispatch:
 
 jobs:
