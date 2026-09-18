@@ -274,6 +274,11 @@ def Best.score(best: Best) -> F32:
     case Best{action, score}:
       score
 
+def Best.action(best: Best) -> U32:
+  match best:
+    case Best{action, score}:
+      action
+
 def choose_better(
   gt: Bool,
   action: U32,
@@ -343,20 +348,19 @@ def choose_root_with_vp(
     case Nil{}:
       4294967295
     case Con{+first, rest}:
-      best = root_best_fold(
-        rest,
-        parent_n,
-        parent_w,
-        vp,
-        0.25,
-        Best{
-          RootChild.action(first),
-          RootChild.score(first, parent_n, parent_w, vp, 0.25)
-        }
+      Best.action(
+        root_best_fold(
+          rest,
+          parent_n,
+          parent_w,
+          vp,
+          0.25,
+          Best{
+            RootChild.action(first),
+            RootChild.score(first, parent_n, parent_w, vp, 0.25)
+          }
+        )
       )
-      match best:
-        case Best{action, score}:
-          action
 
 def choose_root(
   +xs: List<&2, RootChild>,
@@ -427,20 +431,19 @@ def choose_kid_with_vp(
     case Nil{}:
       4294967295
     case Con{+first, rest}:
-      best = kid_best_fold(
-        rest,
-        parent_n,
-        parent_w,
-        vp,
-        0.15,
-        Best{
-          Kid.action(first),
-          Kid.score(first, parent_n, parent_w, vp, 0.15)
-        }
+      Best.action(
+        kid_best_fold(
+          rest,
+          parent_n,
+          parent_w,
+          vp,
+          0.15,
+          Best{
+            Kid.action(first),
+            Kid.score(first, parent_n, parent_w, vp, 0.15)
+          }
+        )
       )
-      match best:
-        case Best{action, score}:
-          action
 
 def choose_kid(
   +xs: List<&2, Kid>,
@@ -556,7 +559,7 @@ def grand_visit(
   w: F32,
   +kids: List<&2, Kid>
 ) -> ChildStep:
-  kid_action = choose_kid(kids, n, w)
+  +kid_action = choose_kid(kids, n, w)
   grand_visit_value(
     action,
     prior,
@@ -715,45 +718,56 @@ def run_sims(run: Run, sims: Nat) -> Run:
     case Run{tree, path_mix} 1n+p:
       run_after_step(p, path_mix, simulate_tree(tree))
 
-def VisitStats.best_after(
+def stats_cons_decide(
   gt: Bool,
-  action: U32,
-  visits: U32,
-  old_action: U32,
-  old_visits: U32
-) -> (U32, U32):
+  +action: U32,
+  +n: U32,
+  expanded: Bool,
+  total: U32,
+  xor: U32,
+  best_action: U32,
+  best_visits: U32,
+  expanded_count: U32
+) -> VisitStats:
   match gt:
     case True{}:
-      (action, visits)
+      VisitStats{
+        U32.add(total, n),
+        U32.xor(
+          xor,
+          U32.xor(U32.mul(action, 2654435761), n)
+        ),
+        action,
+        n,
+        U32.add(expanded_count, Bool.pick(U32, expanded, 1, 0))
+      }
     case False{}:
-      (old_action, old_visits)
+      VisitStats{
+        U32.add(total, n),
+        U32.xor(
+          xor,
+          U32.xor(U32.mul(action, 2654435761), n)
+        ),
+        best_action,
+        best_visits,
+        U32.add(expanded_count, Bool.pick(U32, expanded, 1, 0))
+      }
 
 def stats_cons(child: RootChild, tail: VisitStats) -> VisitStats:
   match child tail:
     case RootChild{+action, prior, +n, w, expanded, kids}
          VisitStats{total, xor, best_action, best_visits, expanded_count}:
-      pair = VisitStats.best_after(
+      stats_cons_decide(
         U32.is_gt(n, best_visits),
         action,
         n,
+        expanded,
+        total,
+        xor,
         best_action,
-        best_visits
+        best_visits,
+        expanded_count
       )
-      match pair:
-        case (next_action, next_visits):
-          VisitStats{
-            U32.add(total, n),
-            U32.xor(
-              xor,
-              U32.xor(U32.mul(action, 2654435761), n)
-            ),
-            next_action,
-            next_visits,
-            U32.add(
-              expanded_count,
-              Bool.pick(U32, expanded, 1, 0)
-            )
-          }
 
 def visit_stats(xs: List<&2, RootChild>) -> VisitStats:
   match xs:
@@ -761,6 +775,31 @@ def visit_stats(xs: List<&2, RootChild>) -> VisitStats:
       VisitStats{0, 0, 4294967295, 0, 0}
     case Con{child, rest}:
       stats_cons(child, visit_stats(rest))
+
+def print_stats(
+  fixture: U32,
+  root_moves: U32,
+  root_n: U32,
+  root_w: F32,
+  path_mix: U32,
+  stats: VisitStats
+) -> IO(Unit):
+  match stats:
+    case VisitStats{total, xor, best_action, best_visits, expanded}:
+      IO.print(
+        "fixture=" ++ U32.show(fixture)
+        ++ " root_moves=" ++ U32.show(root_moves)
+        ++ " root_n=" ++ U32.show(root_n)
+        ++ " root_w_q4=" ++ U32.show(
+          F32.to_u32(
+            F32.mul(F32.add(root_w, 64.0), 4.0)
+          )
+        )
+        ++ " best=" ++ U32.show(best_action)
+        ++ " expanded=" ++ U32.show(expanded)
+        ++ " visit_xor=" ++ U32.show(xor)
+        ++ " path_mix=" ++ U32.show(path_mix)
+      )
 
 def print_run(
   fixture: U32,
@@ -771,23 +810,14 @@ def print_run(
     case Run{tree, path_mix}:
       match tree:
         case Tree{root_n, root_w, children}:
-          stats = visit_stats(children)
-          match stats:
-            case VisitStats{total, xor, best_action, best_visits, expanded}:
-              IO.print(
-                "fixture=" ++ U32.show(fixture)
-                ++ " root_moves=" ++ U32.show(root_moves)
-                ++ " root_n=" ++ U32.show(root_n)
-                ++ " root_w_q4=" ++ U32.show(
-                  F32.to_u32(
-                    F32.mul(F32.add(root_w, 64.0), 4.0)
-                  )
-                )
-                ++ " best=" ++ U32.show(best_action)
-                ++ " expanded=" ++ U32.show(expanded)
-                ++ " visit_xor=" ++ U32.show(xor)
-                ++ " path_mix=" ++ U32.show(path_mix)
-              )
+          print_stats(
+            fixture,
+            root_moves,
+            root_n,
+            root_w,
+            path_mix,
+            visit_stats(children)
+          )
 
 def run_tree(
   fixture: U32,
