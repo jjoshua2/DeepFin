@@ -13,13 +13,13 @@ type Cand is Data:
 type Ranked is Data:
   Ranked{action: U32, visits: U32, score: F32}
 
-type Seeded is Data:
+type Seeded is Type:
   Seeded{cands: List<Cand>, sampled: U32, seed_xor: U32}
 
-type Counted is Data:
+type Counted is Type:
   Counted{cands: List<Cand>, active: U32}
 
-type Agg is Data:
+type Agg is Type:
   Agg{
     cands: List<Cand>,
     total_visits: U32,
@@ -28,10 +28,10 @@ type Agg is Data:
     max_visit: U32
   }
 
-type QRange is Data:
+type QRange is Type:
   QRange{cands: List<Cand>, min_q: F32, max_q: F32}
 
-type RoundOut is Data:
+type RoundOut is Type:
   RoundOut{cands: List<Cand>, budget: U32}
 
 type TailStats is Data:
