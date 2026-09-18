@@ -7,6 +7,8 @@ BUILD_DIR="${BEND_AOTI_PROBE_BUILD_DIR:-$ROOT/build/bend_aoti_probe}"
 BEND_BIN="${BEND_BIN:-bend}"
 PYTHON_BIN="${PYTHON:-python}"
 CMAKE_BIN="${CMAKE:-cmake}"
+CC_BIN="${CC:-clang}"
+CXX_BIN="${CXX:-clang++}"
 
 command -v "$BEND_BIN" >/dev/null 2>&1 || {
   echo "error: Bend compiler not found: $BEND_BIN" >&2
@@ -18,6 +20,14 @@ command -v "$PYTHON_BIN" >/dev/null 2>&1 || {
 }
 command -v "$CMAKE_BIN" >/dev/null 2>&1 || {
   echo "error: CMake not found: $CMAKE_BIN" >&2
+  exit 2
+}
+command -v "$CC_BIN" >/dev/null 2>&1 || {
+  echo "error: C compiler not found: $CC_BIN" >&2
+  exit 2
+}
+command -v "$CXX_BIN" >/dev/null 2>&1 || {
+  echo "error: C++ compiler not found: $CXX_BIN" >&2
   exit 2
 }
 
