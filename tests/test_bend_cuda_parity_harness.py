@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "native" / "bend_engine" / "cuda_parity" / "run_parity.py"
 
 _spec = importlib.util.spec_from_file_location("deepfin_bend_cuda_parity", MODULE_PATH)
-assert _spec is not None and _spec.loader is not None
+assert _spec is not None\nassert _spec.loader is not None
 _mod = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = _mod
 _spec.loader.exec_module(_mod)
