@@ -7,8 +7,8 @@ BUILD_DIR="${BEND_AOTI_PROBE_BUILD_DIR:-$ROOT/build/bend_aoti_probe}"
 BEND_BIN="${BEND_BIN:-bend}"
 PYTHON_BIN="${PYTHON:-python}"
 CMAKE_BIN="${CMAKE:-cmake}"
-CC_BIN="${CC:-clang}"
-CXX_BIN="${CXX:-clang++}"
+CC_BIN="${BEND_AOTI_CC:-clang}"
+CXX_BIN="${BEND_AOTI_CXX:-clang++}"
 
 command -v "$BEND_BIN" >/dev/null 2>&1 || {
   echo "error: Bend compiler not found: $BEND_BIN" >&2
@@ -48,7 +48,15 @@ PY
 )"
 
 echo "bend AOTI probe: configuring LibTorch from $TORCH_PREFIX"
-"$CMAKE_BIN"   -S "$PROBE_DIR"   -B "$CMAKE_BUILD"   -DCMAKE_BUILD_TYPE=Release   -DCMAKE_PREFIX_PATH="$TORCH_PREFIX"   -DBEND_GENERATED_C="$GENERATED"
+echo "bend AOTI probe: C=$CC_BIN CXX=$CXX_BIN"
+"$CMAKE_BIN" \
+  -S "$PROBE_DIR" \
+  -B "$CMAKE_BUILD" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER="$CC_BIN" \
+  -DCMAKE_CXX_COMPILER="$CXX_BIN" \
+  -DCMAKE_PREFIX_PATH="$TORCH_PREFIX" \
+  -DBEND_GENERATED_C="$GENERATED"
 
 "$CMAKE_BIN" --build "$CMAKE_BUILD" --config Release --parallel 2
 
