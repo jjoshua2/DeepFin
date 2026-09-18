@@ -69,7 +69,9 @@ between sessions exits. The connection has a finite 1024-command fuel budget.
 It is not UCI, and a reset does not accept a different FEN in the same process yet.
 
 For each leaf the engine prints decimal `eval EPOCH REQUEST NODE COUNT`, a
-`board` record, COUNT `action KEY` records and `end_eval`. The key is a private
+`board` record, a `path LENGTH KEY...` record, COUNT `action KEY` records and
+`end_eval`. The path is root-to-leaf and at most 32 plies; the root has `path 0`.
+The updated verifier requires it and fails closed against an older binary. The key is a private
 packed move (`src | dst<<6 | promotion<<12 | flag<<15`), **not** a DeepFin policy
 index. The host replies with hexadecimal words:
 
@@ -96,7 +98,9 @@ loss claim is made. Bad replies end that search epoch rather than being retried.
 
 Earlier #768/#769 cover the AOTI/CUDA bridge; #770/#771 cover selected production
 Gumbel/MCTS semantics. This gate does not supersede them or remove the real-GPU
-qualification requirement. It also does not carry history planes, map to dense or
+qualification requirement. The added root-to-leaf path enables the separate
+[neural boundary gate](../neural_probe/README.md) to reconstruct pre-root and
+search history; this session command itself does not carry history planes, map to dense or
 compact policy heads, adjudicate repetition/50-move draws, reuse subtrees across
 played moves, implement UCI, or qualify GPU/multithread execution.
 
