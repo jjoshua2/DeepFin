@@ -1,0 +1,25 @@
+name: Bend neural boundary development
+on:
+  push:
+    branches: [feat/bend-neural-boundary]
+    paths: ['.github/workflows/bend-neural-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir -p /tmp/bend-neural-source
+          git archive --format=tar.gz HEAD > /tmp/bend-neural-source/deepfin.tgz
+          git rev-parse HEAD > /tmp/bend-neural-source/revision.txt
+          python -m pip download --no-deps --no-binary=:all: chess==1.11.2 -d /tmp/bend-neural-source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-neural-source
+          path: /tmp/bend-neural-source/
+          retention-days: 2
