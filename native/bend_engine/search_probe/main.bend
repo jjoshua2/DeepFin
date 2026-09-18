@@ -13,26 +13,26 @@ type Cand is Data:
 type Ranked is Data:
   Ranked{action: U32, visits: U32, score: F32}
 
-type Seeded is Type:
-  Seeded{cands: List<Cand>, sampled: U32, seed_xor: U32}
+type Seeded is Data:
+  Seeded{cands: List<&2, Cand>, sampled: U32, seed_xor: U32}
 
-type Counted is Type:
-  Counted{cands: List<Cand>, active: U32}
+type Counted is Data:
+  Counted{cands: List<&2, Cand>, active: U32}
 
-type Agg is Type:
+type Agg is Data:
   Agg{
-    cands: List<Cand>,
+    cands: List<&2, Cand>,
     total_visits: U32,
     sum_prior: F32,
     weighted_q: F32,
     max_visit: U32
   }
 
-type QRange is Type:
-  QRange{cands: List<Cand>, min_q: F32, max_q: F32}
+type QRange is Data:
+  QRange{cands: List<&2, Cand>, min_q: F32, max_q: F32}
 
-type RoundOut is Type:
-  RoundOut{cands: List<Cand>, budget: U32}
+type RoundOut is Data:
+  RoundOut{cands: List<&2, Cand>, budget: U32}
 
 type TailStats is Data:
   TailStats{total_visits: U32, visit_xor: U32, active: U32}
@@ -50,7 +50,7 @@ type SearchResult is Data:
 def Chess.call(op: U32, a: U32, b: U32) -> IO(U32):
   import "../probe/chess_call.c"
 
-def Chess.legal_moves(handle: U32) -> IO(List<U32>):
+def Chess.legal_moves(handle: U32) -> IO(List<&2, U32>):
   import "../probe/chess_call.c"
 
 def Chess.new(fixture: U32) -> IO(U32):
@@ -91,7 +91,7 @@ def initial_score(+action: U32) -> F32:
 def visit_word(+action: U32, visits: U32) -> U32:
   U32.xor(U32.mul(action, 2654435761), visits)
 
-def rank_initial(xs: List<U32>) -> List<Ranked>:
+def rank_initial(xs: List<&2, U32>) -> List<&2, Ranked>:
   match xs:
     case Nil{}:
       Nil{}
@@ -101,37 +101,51 @@ def rank_initial(xs: List<U32>) -> List<Ranked>:
         rank_initial(rest)
       }
 
-def insert_ranked(item: Ranked, xs: List<Ranked>) -> List<Ranked>:
+def insert_dec(
+  item: Ranked,
+  head: Ranked,
+  tail: List<&2, Ranked>,
+  rec: List<&2, Ranked>,
+  gt: Bool
+) -> List<&2, Ranked>:
+  match item:
+    case Ranked{action, visits, score}:
+      match head:
+        case Ranked{h_action, h_visits, h_score}:
+          match gt:
+            case True{}:
+              Con{
+                Ranked{action, visits, score},
+                Con{Ranked{h_action, h_visits, h_score}, tail}
+              }
+            case False{}:
+              Con{Ranked{h_action, h_visits, h_score}, rec}
+
+def insert_ranked(+item: Ranked, +xs: List<&2, Ranked>) -> List<&2, Ranked>:
   match item:
     case Ranked{action, visits, +score}:
       match xs:
         case Nil{}:
           Con{Ranked{action, visits, score}, Nil{}}
-        case Con{head, rest}:
+        case Con{+head, +rest}:
           match head:
             case Ranked{h_action, h_visits, +h_score}:
-              Bool.pick(
-                List<Ranked>,
-                F32.is_gt(score, h_score),
-                Con{
-                  Ranked{action, visits, score},
-                  Con{Ranked{h_action, h_visits, h_score}, rest}
-                },
-                Con{
-                  Ranked{h_action, h_visits, h_score},
-                  insert_ranked(Ranked{action, visits, score}, rest)
-                }
+              insert_dec(
+                Ranked{action, visits, score},
+                Ranked{h_action, h_visits, h_score},
+                rest,
+                insert_ranked(Ranked{action, visits, score}, rest),
+                F32.is_gt(score, h_score)
               )
 
-def sort_ranked(xs: List<Ranked>) -> List<Ranked>:
+def sort_ranked(xs: List<&2, Ranked>) -> List<&2, Ranked>:
   match xs:
     case Nil{}:
       Nil{}
     case Con{item, rest}:
-      sorted = sort_ranked(rest)
-      insert_ranked(item, sorted)
+      insert_ranked(item, sort_ranked(rest))
 
-def mark_inactive(xs: List<Ranked>) -> List<Cand>:
+def mark_inactive(xs: List<&2, Ranked>) -> List<&2, Cand>:
   match xs:
     case Nil{}:
       Nil{}
@@ -140,7 +154,7 @@ def mark_inactive(xs: List<Ranked>) -> List<Cand>:
         case Ranked{action, visits, score}:
           Con{Cand{action, visits, False{}}, mark_inactive(rest)}
 
-def mark_keep(xs: List<Ranked>, keep: Nat) -> List<Cand>:
+def mark_keep(xs: List<&2, Ranked>, keep: Nat) -> List<&2, Cand>:
   match xs:
     case Nil{}:
       Nil{}
@@ -166,7 +180,7 @@ def seed_cons(cand: Cand, tail: Seeded) -> Seeded:
             U32.xor(seed_xor, word)
           }
 
-def summarize_seed(xs: List<Cand>) -> Seeded:
+def summarize_seed(xs: List<&2, Cand>) -> Seeded:
   match xs:
     case Nil{}:
       Seeded{Nil{}, 0, 0}
@@ -174,7 +188,7 @@ def summarize_seed(xs: List<Cand>) -> Seeded:
       tail = summarize_seed(rest)
       seed_cons(cand, tail)
 
-def seed_candidates(moves: List<U32>) -> Seeded:
+def seed_candidates(moves: List<&2, U32>) -> Seeded:
   ranked = sort_ranked(rank_initial(moves))
   summarize_seed(mark_keep(ranked, 8n))
 
@@ -188,7 +202,7 @@ def count_cons(cand: Cand, tail: Counted) -> Counted:
             U32.add(count, Bool.pick(U32, active, 1, 0))
           }
 
-def count_active(xs: List<Cand>) -> Counted:
+def count_active(xs: List<&2, Cand>) -> Counted:
   match xs:
     case Nil{}:
       Counted{Nil{}, 0}
@@ -196,7 +210,7 @@ def count_active(xs: List<Cand>) -> Counted:
       tail = count_active(rest)
       count_cons(cand, tail)
 
-def visit_all(xs: List<Cand>, +vpa: U32) -> List<Cand>:
+def visit_all(xs: List<&2, Cand>, +vpa: U32) -> List<&2, Cand>:
   match xs:
     case Nil{}:
       Nil{}
@@ -227,7 +241,7 @@ def agg_cons(cand: Cand, tail: Agg) -> Agg:
             U32.max(max_visit, visits)
           }
 
-def aggregate(xs: List<Cand>) -> Agg:
+def aggregate(xs: List<&2, Cand>) -> Agg:
   match xs:
     case Nil{}:
       Agg{Nil{}, 0, 0.0, 0.0, 0}
@@ -247,7 +261,7 @@ def range_cons(cand: Cand, tail: QRange, +mixed: F32) -> QRange:
             F32.max(hi, q)
           }
 
-def completed_range(xs: List<Cand>, +mixed: F32) -> QRange:
+def completed_range(xs: List<&2, Cand>, +mixed: F32) -> QRange:
   match xs:
     case Nil{}:
       QRange{Nil{}, 1.0e30, F32.neg(1.0e30)}
@@ -256,12 +270,12 @@ def completed_range(xs: List<Cand>, +mixed: F32) -> QRange:
       range_cons(cand, tail, mixed)
 
 def rank_round(
-  xs: List<Cand>,
+  xs: List<&2, Cand>,
   +mixed: F32,
   +min_q: F32,
   +denom: F32,
   +q_scale: F32
-) -> List<Ranked>:
+) -> List<&2, Ranked>:
   match xs:
     case Nil{}:
       Nil{}
@@ -327,7 +341,7 @@ def round_after_agg(
       qr = completed_range(cands, mixed)
       round_after_range(qr, active, budget, vpa, max_visit, mixed)
 
-def round_work(cands: List<Cand>, +active: U32, +budget: U32) -> RoundOut:
+def round_work(cands: List<&2, Cand>, +active: U32, +budget: U32) -> RoundOut:
   rounds = rounds_for_count(active)
   denom = U32.mul(active, rounds)
   vpa = U32.max(1, U32.div(budget, denom))
@@ -337,7 +351,7 @@ def round_work(cands: List<Cand>, +active: U32, +budget: U32) -> RoundOut:
 
 def round_decide(
   go: Bool,
-  cands: List<Cand>,
+  cands: List<&2, Cand>,
   active: U32,
   budget: U32
 ) -> RoundOut:
@@ -352,12 +366,12 @@ def round_from_count(counted: Counted, budget: U32) -> RoundOut:
     case Counted{cands, active}:
       round_decide(U32.is_gt(active, 1), cands, active, budget)
 
-def round_once(cands: List<Cand>, budget: U32) -> RoundOut:
+def round_once(cands: List<&2, Cand>, budget: U32) -> RoundOut:
   counted = count_active(cands)
   round_from_count(counted, budget)
 
 def tail_stats(
-  xs: List<Cand>,
+  xs: List<&2, Cand>,
   total: U32,
   xor: U32,
   active_count: U32
@@ -384,7 +398,7 @@ def finish_after_stats(
     case TailStats{total, xor, active_count}:
       SearchResult{action, active_count, budget, total, xor}
 
-def finish(cands: List<Cand>, budget: U32) -> SearchResult:
+def finish(cands: List<&2, Cand>, budget: U32) -> SearchResult:
   match cands:
     case Nil{}:
       SearchResult{4294967295, 0, budget, 0, 0}
@@ -417,7 +431,7 @@ def search_after_r1(r1: RoundOut) -> SearchResult:
     case RoundOut{c1, b1}:
       search_after_r2(round_once(c1, b1))
 
-def search_three(cands: List<Cand>) -> SearchResult:
+def search_three(cands: List<&2, Cand>) -> SearchResult:
   search_after_r1(round_once(cands, 64))
 
 def print_result(
@@ -459,7 +473,7 @@ def probe_after_seeded(
 def probe_after_moves(
   fixture: U32,
   legal: U32,
-  moves: List<U32>
+  moves: List<&2, U32>
 ) -> IO(Unit):
   probe_after_seeded(fixture, legal, seed_candidates(moves))
 
@@ -469,7 +483,7 @@ def probe_after_count(
   legal: U32
 ) -> IO(Unit):
   do IO<Unit>:
-    moves : List<U32> <- Chess.legal_moves(handle)
+    moves : List<&2, U32> <- Chess.legal_moves(handle)
     probe_after_moves(fixture, legal, moves)
 
 def probe_after_handle(fixture: U32, +handle: U32) -> IO(Unit):
