@@ -1,0 +1,24 @@
+name: Bend profile development
+on:
+  push:
+    branches: [feat/bend-perft-profile]
+    paths: ['.github/workflows/bend-profile-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir -p /tmp/bend-profile-source
+          git archive --format=tar.gz HEAD native chess_anti_engine tests scripts docs .agents AGENTS.md CLAUDE.md .github pyproject.toml > /tmp/bend-profile-source/deepfin.tgz
+          git rev-parse HEAD > /tmp/bend-profile-source/revision.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-profile-source
+          path: /tmp/bend-profile-source/
+          retention-days: 2
