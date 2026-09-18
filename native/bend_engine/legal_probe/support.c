@@ -84,6 +84,9 @@ void legal_make_tables(uint64_t *out) {
 }
 
 #ifdef LEGAL_ORACLE
+#ifdef LEGAL_BENCH
+#include "bench_clock.h"
+#endif
 static CBoard from_input(const LegalInput *in) {
     CBoard b = {0};
     memcpy(b.bb, in->bb, 6 * sizeof(uint64_t));
@@ -126,6 +129,19 @@ int main(void) {
         b.bb[ROOK] & us, b.bb[QUEEN] & us, b.bb[KING] & us, b.turn)) {
         fputs("invalid input: nonmoving king is attacked\n", stderr); return 2;
     }
+#ifdef LEGAL_BENCH
+    /* Same CBoard legal generation/copy/push traversal as the parity oracle.
+     * Native-target compilation selects the real PEXT/magic backend above. */
+    volatile uint64_t warmup = reference_perft(&b, in.depth);
+    printf("warmup %" PRIu32 " %" PRIu32 "\n", (uint32_t)(warmup >> 32), (uint32_t)warmup);
+    fflush(stdout);
+    /* Tell the optimizer the second input must be read again. */
+    __asm__ __volatile__("" : "+m"(b) : : "memory");
+    perft_clock_start();
+    uint64_t nodes = reference_perft(&b, in.depth);
+    perft_clock_finish(DEEPFIN_SLIDER_BACKEND_NAME, in.depth, nodes);
+    return 0;
+#endif
     if (in.mode == 0 && in.depth == 0) { puts("nodes 0 1"); return 0; }
     int moves[CBOARD_MAX_LEGAL_MOVES];
     int count = cboard_legal_move_indices(&b, moves, 1);
