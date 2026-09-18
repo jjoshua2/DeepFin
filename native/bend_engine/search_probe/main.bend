@@ -146,27 +146,35 @@ def sort_ranked(xs: List<&2, Ranked>) -> List<&2, Ranked>:
     case Con{item, rest}:
       insert_ranked(item, sort_ranked(rest))
 
+def ranked_to_cand(item: Ranked, active: Bool) -> Cand:
+  match item:
+    case Ranked{action, visits, score}:
+      Cand{action, visits, active}
+
 def mark_inactive(xs: List<&2, Ranked>) -> List<&2, Cand>:
   match xs:
     case Nil{}:
       Nil{}
     case Con{item, rest}:
-      match item:
-        case Ranked{action, visits, score}:
-          Con{Cand{action, visits, False{}}, mark_inactive(rest)}
+      Con{
+        ranked_to_cand(item, False{}),
+        mark_inactive(rest)
+      }
 
 def mark_keep(xs: List<&2, Ranked>, keep: Nat) -> List<&2, Cand>:
-  match xs:
-    case Nil{}:
+  match xs keep:
+    case Nil{} k:
       Nil{}
-    case Con{item, rest}:
-      match item:
-        case Ranked{action, visits, score}:
-          match keep:
-            case 0n:
-              Con{Cand{action, visits, False{}}, mark_inactive(rest)}
-            case 1n+p:
-              Con{Cand{action, visits, True{}}, mark_keep(rest, p)}
+    case Con{item, rest} 0n:
+      Con{
+        ranked_to_cand(item, False{}),
+        mark_inactive(rest)
+      }
+    case Con{item, rest} 1n+p:
+      Con{
+        ranked_to_cand(item, True{}),
+        mark_keep(rest, p)
+      }
 
 def seed_cons(cand: Cand, tail: Seeded) -> Seeded:
   match cand:
@@ -211,27 +219,30 @@ def count_active(xs: List<&2, Cand>) -> Counted:
       tail = count_active(rest)
       count_cons(cand, tail)
 
+def visit_cand(cand: Cand, +vpa: U32) -> Cand:
+  match cand:
+    case Cand{action, visits, +active}:
+      add = Bool.pick(U32, active, vpa, 0)
+      Cand{action, U32.add(visits, add), active}
+
 def visit_all(xs: List<&2, Cand>, +vpa: U32) -> List<&2, Cand>:
   match xs:
     case Nil{}:
       Nil{}
     case Con{cand, rest}:
-      match cand:
-        case Cand{action, visits, +active}:
-          add = Bool.pick(U32, active, vpa, 0)
-          Con{
-            Cand{action, U32.add(visits, add), active},
-            visit_all(rest, vpa)
-          }
+      Con{
+        visit_cand(cand, vpa),
+        visit_all(rest, vpa)
+      }
 
 def agg_cons(cand: Cand, tail: Agg) -> Agg:
   match cand:
     case Cand{+action, +visits, active}:
       match tail:
-        case Agg{cands, total, sum_prior, weighted, max_visit}:
-          prior = fake_prior(action)
+        case Agg{cands, +total, sum_prior, weighted, max_visit}:
+          +prior = fake_prior(action)
           q = fake_q(action)
-          visited = U32.is_gt(visits, 0)
+          +visited = U32.is_gt(visits, 0)
           p_add = Bool.pick(F32, visited, prior, 0.0)
           w_add = Bool.pick(F32, visited, F32.mul(prior, q), 0.0)
           Agg{
@@ -255,7 +266,7 @@ def range_cons(cand: Cand, tail: QRange, +mixed: F32) -> QRange:
     case Cand{+action, +visits, active}:
       match tail:
         case QRange{cands, lo, hi}:
-          q = Bool.pick(F32, U32.is_gt(visits, 0), fake_q(action), mixed)
+          +q = Bool.pick(F32, U32.is_gt(visits, 0), fake_q(action), mixed)
           QRange{
             Con{Cand{action, visits, active}, cands},
             F32.min(lo, q),
@@ -270,6 +281,24 @@ def completed_range(xs: List<&2, Cand>, +mixed: F32) -> QRange:
       tail = completed_range(rest, mixed)
       range_cons(cand, tail, mixed)
 
+def rank_round_cand(
+  cand: Cand,
+  +mixed: F32,
+  +min_q: F32,
+  +denom: F32,
+  +q_scale: F32
+) -> Ranked:
+  match cand:
+    case Cand{+action, visits, active}:
+      q = Bool.pick(F32, U32.is_gt(visits, 0), fake_q(action), mixed)
+      q_bar = F32.div(F32.sub(q, min_q), denom)
+      live_score = F32.add(
+        F32.add(fake_gumbel(action), F32.log(fake_prior(action))),
+        F32.mul(q_scale, q_bar)
+      )
+      score = Bool.pick(F32, active, live_score, F32.neg(1.0e30))
+      Ranked{action, visits, score}
+
 def rank_round(
   xs: List<&2, Cand>,
   +mixed: F32,
@@ -281,19 +310,10 @@ def rank_round(
     case Nil{}:
       Nil{}
     case Con{cand, rest}:
-      match cand:
-        case Cand{+action, +visits, active}:
-          q = Bool.pick(F32, U32.is_gt(visits, 0), fake_q(action), mixed)
-          q_bar = F32.div(F32.sub(q, min_q), denom)
-          live_score = F32.add(
-            F32.add(fake_gumbel(action), F32.log(fake_prior(action))),
-            F32.mul(q_scale, q_bar)
-          )
-          score = Bool.pick(F32, active, live_score, F32.neg(1.0e30))
-          Con{
-            Ranked{action, visits, score},
-            rank_round(rest, mixed, min_q, denom, q_scale)
-          }
+      Con{
+        rank_round_cand(cand, mixed, min_q, denom, q_scale),
+        rank_round(rest, mixed, min_q, denom, q_scale)
+      }
 
 def rounds_for_count(+n: U32) -> U32:
   Bool.pick(
@@ -305,14 +325,14 @@ def rounds_for_count(+n: U32) -> U32:
 
 def round_after_range(
   qr: QRange,
-  active: U32,
-  budget: U32,
+  +active: U32,
+  +budget: U32,
   vpa: U32,
   max_visit: U32,
   mixed: F32
 ) -> RoundOut:
   match qr:
-    case QRange{cands, min_q, max_q}:
+    case QRange{cands, +min_q, max_q}:
       denom = F32.max(F32.sub(max_q, min_q), 0.00000001)
       q_scale = F32.mul(0.1, F32.add(50.0, U32.to_f32(max_visit)))
       ranked = sort_ranked(rank_round(cands, mixed, min_q, denom, q_scale))
@@ -335,7 +355,7 @@ def round_after_agg(
   match agg:
     case Agg{cands, total, sum_prior, weighted, max_visit}:
       weighted_q = F32.div(weighted, sum_prior)
-      mixed = F32.div(
+      +mixed = F32.div(
         F32.add(0.125, F32.mul(U32.to_f32(total), weighted_q)),
         U32.to_f32(U32.add(total, 1))
       )
@@ -345,7 +365,7 @@ def round_after_agg(
 def round_work(cands: List<&2, Cand>, +active: U32, +budget: U32) -> RoundOut:
   rounds = rounds_for_count(active)
   denom = U32.mul(active, rounds)
-  vpa = U32.max(1, U32.div(budget, denom))
+  +vpa = U32.max(1, U32.div(budget, denom))
   visited = visit_all(cands, vpa)
   agg = aggregate(visited)
   round_after_agg(agg, active, budget, vpa)
@@ -364,31 +384,28 @@ def round_decide(
 
 def round_from_count(counted: Counted, budget: U32) -> RoundOut:
   match counted:
-    case Counted{cands, active}:
+    case Counted{cands, +active}:
       round_decide(U32.is_gt(active, 1), cands, active, budget)
 
 def round_once(cands: List<&2, Cand>, budget: U32) -> RoundOut:
   counted = count_active(cands)
   round_from_count(counted, budget)
 
-def tail_stats(
-  xs: List<&2, Cand>,
-  total: U32,
-  xor: U32,
-  active_count: U32
-) -> TailStats:
+def tail_cons(cand: Cand, tail: TailStats) -> TailStats:
+  match cand tail:
+    case Cand{+action, +visits, active} TailStats{total, xor, active_count}:
+      TailStats{
+        U32.add(total, visits),
+        U32.xor(xor, visit_word(action, visits)),
+        U32.add(active_count, Bool.pick(U32, active, 1, 0))
+      }
+
+def tail_stats(xs: List<&2, Cand>) -> TailStats:
   match xs:
     case Nil{}:
-      TailStats{total, xor, active_count}
+      TailStats{0, 0, 0}
     case Con{cand, rest}:
-      match cand:
-        case Cand{+action, +visits, active}:
-          tail_stats(
-            rest,
-            U32.add(total, visits),
-            U32.xor(xor, visit_word(action, visits)),
-            U32.add(active_count, Bool.pick(U32, active, 1, 0))
-          )
+      tail_cons(cand, tail_stats(rest))
 
 def finish_after_stats(
   action: U32,
@@ -399,23 +416,35 @@ def finish_after_stats(
     case TailStats{total, xor, active_count}:
       SearchResult{action, active_count, budget, total, xor}
 
+def finish_head(
+  head: Cand,
+  rest: List<&2, Cand>,
+  budget: U32
+) -> SearchResult:
+  match head:
+    case Cand{+action, +visits, active}:
+      tail = tail_stats(rest)
+      own = TailStats{
+        visits,
+        visit_word(action, visits),
+        Bool.pick(U32, active, 1, 0)
+      }
+      match own tail:
+        case TailStats{o_total, o_xor, o_active} TailStats{t_total, t_xor, t_active}:
+          SearchResult{
+            action,
+            U32.add(o_active, t_active),
+            budget,
+            U32.add(o_total, t_total),
+            U32.xor(o_xor, t_xor)
+          }
+
 def finish(cands: List<&2, Cand>, budget: U32) -> SearchResult:
   match cands:
     case Nil{}:
       SearchResult{4294967295, 0, budget, 0, 0}
     case Con{head, rest}:
-      match head:
-        case Cand{+action, +visits, active}:
-          finish_after_stats(
-            action,
-            budget,
-            tail_stats(
-              rest,
-              visits,
-              visit_word(action, visits),
-              Bool.pick(U32, active, 1, 0)
-            )
-          )
+      finish_head(head, rest, budget)
 
 def search_after_r3(r3: RoundOut) -> SearchResult:
   match r3:
