@@ -1,0 +1,187 @@
+diff --git a/docs/experiments/README.md b/docs/experiments/README.md
+index 29eeb61..7fe6ebc 100644
+--- a/docs/experiments/README.md
++++ b/docs/experiments/README.md
+@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
+ 
+ | Record | Scope |
+ | --- | --- |
++| [Bend neural contract](2026-09-18-bend-neural-contract.md) | Native history/features/policy mapping and CPU AOTI driving Bend search; untrained composition gate, no CUDA or production claim |
+ | [Bend search sessions](2026-09-18-bend-search-sessions.md) | Persistent bounded Bend PUCT with external test policy/WDL, cancellation/reply validation and reset; CPU functionality gate, no neural or production claim |
+ | [Bend scalar branches](2026-09-18-bend-scalar-branches.md) | Profile-guided scalar U64/list selection; allocation mechanism and paired perft confirmation, no production adoption |
+ | [Bend perft native baseline](2026-09-18-bend-perft-baseline.md) | Paired old/new Bend versus CBoard, conservative king-safety filter; CPU-only, no production adoption |
+diff --git a/native/bend_engine/session_probe/README.md b/native/bend_engine/session_probe/README.md
+index 35e2b95..bdfbe19 100644
+--- a/native/bend_engine/session_probe/README.md
++++ b/native/bend_engine/session_probe/README.md
+@@ -111,3 +111,14 @@ is compatible with this design; rewriting every component in Bend is not a goal.
+ Tests are path-scoped in Actions or explicit locally. Ordinary pytest only runs
+ small parser/evaluator contract tests. Self-review only; these checks are not a
+ universal theorem, an independent human review, or evidence of playing strength.
++
++
++## History-aware evaluator extension
++
++Every evaluator request now includes `path <length> <packed keys...>` after the
++board record. This is the chronological root-to-leaf path, with at most 32 moves;
++root requests carry `path 0`. The verifier checks it against parent links rather
++than assuming a board reconstructs its history. The existing deterministic test
++evaluator remains the default. An optional test callback consumes board, actions
++and path for [native neural qualification](../neural_probe/README.md).
++Search allocation, PUCT semantics, capacity and cancellation rules are unchanged.
+diff --git a/native/bend_engine/session_probe/main.bend b/native/bend_engine/session_probe/main.bend
+index fb7752e..733de57 100644
+--- a/native/bend_engine/session_probe/main.bend
++++ b/native/bend_engine/session_probe/main.bend
+@@ -38,12 +38,56 @@ def moves_print(ms: List<&2, Chess.Ply>) -> IO(Unit):
+         IO.print("action " ++ U32.show(Search.key(m)))
+         moves_print(rest)
+ 
+-def ticket_send(ticket: Search.Ticket) -> IO(Unit):
++# Root-to-leaf packed move path is required to reproduce history features.
++# A position alone is not a neural input identity. Tree nodes remain single-owned.
++type Trace is Type:
++  Trace{pool: Array<Search.Node>, id: U32, moves: List<&2, U32>}
++
++def trace_step(moves: List<&2, U32>, r: Array<Search.Node> & Search.Node) -> Trace:
++  (pool, +node) = r
++  Trace{pool, Search.node_parent(node), Con{Search.key(Search.node_move(node)), moves}}
++
++def trace_once(done: Bool, pool: Array<Search.Node>, id: U32, moves: List<&2, U32>) -> Trace:
++  match done:
++    case True{}: Trace{pool, id, moves}
++    case False{}: trace_step(moves, Array.get(Search.Node, pool, id))
++
++def trace_next(state: Trace) -> Trace:
++  Trace{pool, +id, moves} = state
++  trace_once(U32.is_zero(id), pool, id, moves)
++
++def trace_path(n: Nat, state: Trace) -> Trace:
++  match n:
++    case 0n: state
++    case 1n+p: trace_path(p, trace_next(state))
++
++def trace_words(ms: List<&2, U32>) -> String:
++  match ms:
++    case Nil{}: ""
++    case Con{m, rest}: " " ++ U32.show(m) ++ trace_words(rest)
++
++def trace_finish(used: U32, cap: U32, n: U32, pending: U32, epoch: U32,
++  request: U32, stop: U32, limit: U32, state: Trace) -> Search.Tree & String:
++  Trace{pool, root, +moves} = state
++  (Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit},
++    "path " ++ U32.show(U32.from_nat(List.length(&2, U32, moves))) ++ trace_words(moves))
++
++def trace_tree(tree: Search.Tree, id: U32) -> Search.Tree & String:
++  Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
++  trace_finish(used, cap, n, pending, epoch, request, stop, limit,
++    trace_path(33n, Trace{pool, id, Nil{}}))
++
++def ticket_node(ticket: Search.Ticket) -> U32:
++  Search.Ticket{epoch, request, node, board, moves, needed} = ticket
++  node
++
++def ticket_send(ticket: Search.Ticket, path: String) -> IO(Unit):
+   Search.Ticket{epoch, request, node, board, +moves, needed} = ticket
+   do IO<Unit>:
+     IO.print("eval " ++ U32.show(epoch) ++ " " ++ U32.show(request) ++ " " ++ U32.show(node)
+       ++ " " ++ U32.show(U32.from_nat(List.length(&2, Chess.Ply, moves))))
+     IO.print("board " ++ board_text(board))
++    IO.print(path)
+     moves_print(moves)
+ 
+ type Live is Type:
+@@ -53,14 +97,17 @@ def live_flag(table: Array<U64>, tree: Search.Tree) -> Live & Bool:
+   Search.Tree{pool, used, cap, n, pending, epoch, request, +stop, limit} = tree
+   (Live{table, Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit}}, Bool.not(U32.is_zero(stop)))
+ 
++def step_traced(table: Array<U64>, +ticket: Search.Ticket, r: Search.Tree & String) -> IO(Live & Bool):
++  (tree, path) = r
++  do IO<Live & Bool>:
++    ticket_send(ticket, path)
++    reply : Search.Reply <- Reply.read()
++    return live_flag(table, Search.resume(tree, ticket, reply))
++
+ def step_read(needed: Bool, table: Array<U64>, tree: Search.Tree, +ticket: Search.Ticket) -> IO(Live & Bool):
+   match needed:
+     case False{}: IO.pure(Live & Bool, live_flag(table, tree))
+-    case True{}:
+-      do IO<Live & Bool>:
+-        ticket_send(ticket)
+-        reply : Search.Reply <- Reply.read()
+-        return live_flag(table, Search.resume(tree, ticket, reply))
++    case True{}: step_traced(table, ticket, trace_tree(tree, ticket_node(ticket)))
+ 
+ def ticket_needed(t: Search.Ticket) -> Bool:
+   Search.Ticket{epoch, request, node, board, moves, needed} = t
+diff --git a/native/bend_engine/session_probe/run_probe.py b/native/bend_engine/session_probe/run_probe.py
+index ebd77f7..510744e 100644
+--- a/native/bend_engine/session_probe/run_probe.py
++++ b/native/bend_engine/session_probe/run_probe.py
+@@ -3,6 +3,7 @@
+ from __future__ import annotations
+ 
+ import argparse
++from collections.abc import Callable
+ from contextlib import ExitStack
+ from dataclasses import dataclass
+ import json
+@@ -55,6 +56,13 @@ def numbers(line: str, tag: str, count: int | None = None) -> list[int]:
+     return values
+ 
+ 
++def parse_path(line: str) -> list[int]:
++    words = numbers(line, 'path')
++    if not words or words[0] > 32 or len(words) != words[0] + 1:
++        raise ValueError('malformed bounded path')
++    return words[1:]
++
++
+ def position(words: list[int]) -> rules.Position:
+     if len(words) != 19 or any(not 0 <= x <= SENTINEL for x in words):
+         raise ValueError('invalid position words')
+@@ -145,6 +153,14 @@ class Reference:
+             index = max(children, key=score)
+         return index
+ 
++    def path(self, index: int) -> list[int]:
++        result = []
++        while index:
++            node = self.nodes[index]
++            result.append(node.key)
++            index = node.parent
++        return result[::-1]
++
+     def backup(self, index: int, value: float) -> None:
+         while True:
+             a = self.nodes[index]
+@@ -285,7 +301,8 @@ def evaluation(board: rules.Position, actions: list[int], variant: int = 0) -> t
+ 
+ 
+ def session(peer: Peer, oracle: Oracle, board: rules.Position, *, epoch: int, budget: int = 24,
+-            cap: int = 4096, depth: int = 4, fault: str = '', fault_at: int = 3, variant: int = 0) -> dict[str, int | str]:
++            cap: int = 4096, depth: int = 4, fault: str = '', fault_at: int = 3, variant: int = 0,
++            evaluator: Callable[[rules.Position, list[int], list[int]], tuple[list[float], list[float]]] | None = None) -> dict[str, int | str]:
+     peer.write(f'config {epoch:x} {budget:x} {cap:x} {depth:x}\n')
+     ref = Reference(board, oracle, cap=cap, depth=depth, budget=budget)
+     exchanges = 0
+@@ -306,6 +323,9 @@ def session(peer: Peer, oracle: Oracle, board: rules.Position, *, epoch: int, bu
+         supplied = position(numbers(peer.line(), 'board', 19))
+         if supplied != ref.nodes[wanted].board:
+             raise AssertionError('request carries wrong board')
++        path = parse_path(peer.line())
++        if path != ref.path(wanted):
++            raise AssertionError('request carries wrong root-to-leaf history path')
+         if not 1 <= header[3] <= 256:
+             raise AssertionError('invalid legal action count')
+         actions = [numbers(peer.line(), 'action', 1)[0] for _ in range(header[3])]
+@@ -313,7 +333,8 @@ def session(peer: Peer, oracle: Oracle, board: rules.Position, *, epoch: int, bu
+         legal = oracle.moves(supplied)
+         if len(set(actions)) != len(actions) or set(actions) != set(legal):
+             raise AssertionError('request legal moves differ from CBoard')
+-        wdl, policy = evaluation(supplied, actions, variant)
++        wdl, policy = (evaluation(supplied, actions, variant) if evaluator is None
++                       else evaluator(supplied, actions, path))
+         fields = [epoch, ref.seq, wanted, 0, *(bits(v) for v in wdl), len(policy), *(bits(v) for v in policy)]
+         exchanges += 1
+         if fault and exchanges == fault_at:

@@ -1,20 +1,92 @@
-name: Bend neural contract development
+name: Bend native neural confirmation
 on:
   push:
     branches: [feat/bend-neural-contract]
     paths: ['.github/workflows/bend-neural-dev.yml']
 permissions:
-  contents: read
+  contents: write
 jobs:
-  snapshot:
+  confirm:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
+    env:
+      CXX: g++
+      TORCHINDUCTOR_COMPILE_THREADS: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      CUDA_VISIBLE_DEVICES: ''
     steps:
-      - run: |
-          mkdir -p /tmp/bend-neural-deps
-          python3 -m pip download --no-deps 'chess==1.11.2' 'ruff==0.15.20' -d /tmp/bend-neural-deps
-      - uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          name: bend-neural-deps
-          path: /tmp/bend-neural-deps/
-          retention-days: 2
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          activate-environment: true
+      - name: Apply and verify exactly the locally tested sources
+        run: |
+          echo 'eea20247ee082471ce0dd1c73802389aaea2259d57e3ba2cbf4a89448b1a7a15  .github/bend-neural-parent.patch' | sha256sum -c -
+          git apply --check .github/bend-neural-parent.patch
+          git apply .github/bend-neural-parent.patch
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          expected = {
+            '.github/workflows/bend-neural-contract.yml': 'ffd79c0fd3d013a43ab32b59124163f76e8d0d8a9987f2930191d12e2a298871',
+            'docs/experiments/2026-09-18-bend-neural-contract.md': '258ac8fbd5f3ebe27305f947448bc01b57a08c52f3d49c960c27f3283aa47c5d',
+            'docs/experiments/README.md': '3d4c1ec79d504e1a200c7f75c99af07132c0dbcceae835c294894204dcd561f0',
+            'native/bend_engine/neural_probe/CMakeLists.txt': '7adb821191a277ec35d320c9a1f79db36070626c91d58e965dfdc7ffcbf72034',
+            'native/bend_engine/neural_probe/README.md': '5c956b2f1f2edddc2888376a7a67f101e42fc145cbd5b61b5e21421a3c7af5b1',
+            'native/bend_engine/neural_probe/adapter.py': 'bbb37a4979b62221fce434bf806a7a6812db7fe329d2411016c6f253ff7e5f3a',
+            'native/bend_engine/neural_probe/aoti.cpp': 'c210150675c2cd49bf824cb48b8c684d57e052f3c7981ec3116e0392df2fa4d8',
+            'native/bend_engine/neural_probe/features.c': '078413bef962bbb4268efa06a098b9495f7edf153696529e852500c63d587ac0',
+            'native/bend_engine/neural_probe/model.py': 'bde41f41fe97004be2a2f1e9d3be7bb2021eac64591b555d8cc6cc298c9f63fa',
+            'native/bend_engine/neural_probe/run_probe.py': 'e1ead436cce321e4719aa4a5b074e9b5d7a07118a6f8d699ae6ba7f731b11239',
+            'native/bend_engine/session_probe/README.md': '6f7567f4d2574bebfd15d2d1b5e9a74670788c0811a37db2b31c16407472e26c',
+            'native/bend_engine/session_probe/main.bend': 'a5d26b6b33f00b74e7be96708b0ed071fbf4e26099253b4d8da3bfe141d55d47',
+            'native/bend_engine/session_probe/run_probe.py': '519b20784f4f10c418a1100949cd4b72d4825a7e179442d3017a4edfb5f49b1e',
+            'tests/test_bend_neural_contract.py': '85397ede2b66c5ef79f7c2e43bd26acab213e0a2b92a40db8709c0f71def706f',
+          }
+          for name, expected_hash in expected.items():
+              observed = hashlib.sha256(Path(name).read_bytes()).hexdigest()
+              assert observed == expected_hash, (name, observed, expected_hash)
+          PY
+          git diff --check
+      - name: Install CPU environment and verified compiler
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          python -c "import torch; assert torch.version.cuda is None"
+          bash native/bend_engine/bitboard_probe/install_toolchain.sh
+      - name: Focused static and cheap tests
+        run: |
+          ruff check native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_contract.py
+          basedpyright native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_contract.py
+          mkdir -p /tmp/neural-contract-tests
+          cp tests/test_bend_neural_contract.py tests/test_bend_search_sessions.py /tmp/neural-contract-tests/
+          PYTHONPATH="$PWD" python -m pytest -q /tmp/neural-contract-tests --confcutdir=/tmp/neural-contract-tests
+      - name: Four-mode history-aware session regression
+        run: |
+          python -m native.bend_engine.session_probe.run_probe --python-chess --report artifacts/bend-neural-sessions.json
+      - name: Real CPU AOTI and native feature-policy composition
+        run: |
+          python -m native.bend_engine.neural_probe.run_probe --report artifacts/bend-neural-contract.json
+      - name: Publish clean feature commit only after validation
+        run: |
+          git fetch --no-tags --depth=1 origin c8bf8679fe68523effc7d971def5cd27ad35d4c9
+          git rm .github/workflows/bend-neural-dev.yml .github/bend-neural-parent.patch
+          git add native/bend_engine/session_probe/main.bend native/bend_engine/session_probe/run_probe.py native/bend_engine/session_probe/README.md docs/experiments/README.md
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          commit="$(git commit-tree "$(git write-tree)" -p c8bf8679fe68523effc7d971def5cd27ad35d4c9 -m 'Qualify native history and real CPU AOTI policy driving Bend search')"
+          git push origin "$commit":refs/heads/feat/bend-neural-contract-reviewed
+          printf '%s\n' "$commit" > artifacts/bend-neural-commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-neural-confirmation
+          path: artifacts/bend-neural-*
+          retention-days: 30
