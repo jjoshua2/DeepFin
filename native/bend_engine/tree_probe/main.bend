@@ -291,51 +291,33 @@ def choose_better(
     case False{}:
       best
 
-def root_best_eval(
-  child: RootChild,
-  rest: List<&2, RootChild>,
-  parent_n: U32,
-  parent_w: F32,
-  visited_policy: F32,
-  fpu: F32,
-  +best: Best,
-  +score: F32
-) -> Best:
-  root_best_fold(
-    rest,
-    parent_n,
-    parent_w,
-    visited_policy,
-    fpu,
-    choose_better(
-      F32.is_gt(score, Best.score(best)),
-      RootChild.action(child),
-      score,
-      best
-    )
-  )
-
 def root_best_fold(
   xs: List<&2, RootChild>,
   +parent_n: U32,
   +parent_w: F32,
   +visited_policy: F32,
   +fpu: F32,
-  best: Best
+  +best: Best
 ) -> Best:
   match xs:
     case Nil{}:
       best
     case Con{+child, rest}:
-      root_best_eval(
-        child,
+      root_best_fold(
         rest,
         parent_n,
         parent_w,
         visited_policy,
         fpu,
-        best,
-        RootChild.score(child, parent_n, parent_w, visited_policy, fpu)
+        choose_better(
+          F32.is_gt(
+            RootChild.score(child, parent_n, parent_w, visited_policy, fpu),
+            Best.score(best)
+          ),
+          RootChild.action(child),
+          RootChild.score(child, parent_n, parent_w, visited_policy, fpu),
+          best
+        )
       )
 
 def choose_root_with_vp(
@@ -374,51 +356,33 @@ def choose_root(
     root_visited_policy(xs)
   )
 
-def kid_best_eval(
-  kid: Kid,
-  rest: List<&2, Kid>,
-  parent_n: U32,
-  parent_w: F32,
-  visited_policy: F32,
-  fpu: F32,
-  +best: Best,
-  +score: F32
-) -> Best:
-  kid_best_fold(
-    rest,
-    parent_n,
-    parent_w,
-    visited_policy,
-    fpu,
-    choose_better(
-      F32.is_gt(score, Best.score(best)),
-      Kid.action(kid),
-      score,
-      best
-    )
-  )
-
 def kid_best_fold(
   xs: List<&2, Kid>,
   +parent_n: U32,
   +parent_w: F32,
   +visited_policy: F32,
   +fpu: F32,
-  best: Best
+  +best: Best
 ) -> Best:
   match xs:
     case Nil{}:
       best
     case Con{+kid, rest}:
-      kid_best_eval(
-        kid,
+      kid_best_fold(
         rest,
         parent_n,
         parent_w,
         visited_policy,
         fpu,
-        best,
-        Kid.score(kid, parent_n, parent_w, visited_policy, fpu)
+        choose_better(
+          F32.is_gt(
+            Kid.score(kid, parent_n, parent_w, visited_policy, fpu),
+            Best.score(best)
+          ),
+          Kid.action(kid),
+          Kid.score(kid, parent_n, parent_w, visited_policy, fpu),
+          best
+        )
       )
 
 def choose_kid_with_vp(
@@ -632,20 +596,17 @@ def prepend_unselected(
     case ChildrenStep{children, delta, path_word}:
       ChildrenStep{Con{child, children}, delta, path_word}
 
-def update_children_branch(
+def update_children_decide(
   eq: Bool,
   child: RootChild,
   rest: List<&2, RootChild>,
-  selected: U32
+  rec: ChildrenStep
 ) -> ChildrenStep:
   match eq:
     case True{}:
       prepend_selected(rest, simulate_child(child))
     case False{}:
-      prepend_unselected(
-        child,
-        update_children(rest, selected)
-      )
+      prepend_unselected(child, rec)
 
 def update_children(
   xs: List<&2, RootChild>,
@@ -654,12 +615,12 @@ def update_children(
   match xs:
     case Nil{}:
       ChildrenStep{Nil{}, 0.0, 0}
-    case Con{+child, rest}:
-      update_children_branch(
+    case Con{+child, +rest}:
+      update_children_decide(
         U32.is_eq(RootChild.action(child), selected),
         child,
         rest,
-        selected
+        update_children(rest, selected)
       )
 
 def simulate_after_children(
@@ -696,27 +657,28 @@ def simulate_tree(tree: Tree) -> SimStep:
         choose_root(children, root_n, root_w)
       )
 
-def run_after_step(
-  remaining: Nat,
+def apply_sim_step(
   +path_mix: U32,
   step: SimStep
 ) -> Run:
   match step:
     case SimStep{tree, path_word}:
-      run_sims(
-        Run{
-          tree,
-          U32.xor(U32.mul(path_mix, 16777619), path_word)
-        },
-        remaining
-      )
+      Run{
+        tree,
+        U32.xor(U32.mul(path_mix, 16777619), path_word)
+      }
+
+def apply_sim(run: Run) -> Run:
+  match run:
+    case Run{tree, path_mix}:
+      apply_sim_step(path_mix, simulate_tree(tree))
 
 def run_sims(run: Run, sims: Nat) -> Run:
   match run sims:
     case Run{tree, path_mix} 0n:
       Run{tree, path_mix}
     case Run{tree, path_mix} 1n+p:
-      run_after_step(p, path_mix, simulate_tree(tree))
+      run_sims(apply_sim(Run{tree, path_mix}), p)
 
 def stats_cons_decide(
   gt: Bool,
