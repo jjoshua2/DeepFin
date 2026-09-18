@@ -27,7 +27,7 @@ The earlier [Tactical100 comparison](2026-09-10-bt4-sf-tactical-training.md) was
 
 Use original complete run06 G10: **262,079 positions in 32 derived shards**, original BT4 policy and already saved SF observations. Adapter manifest:
 
-`/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/adapter_manifest.json`
+`~/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_increment_v1/run06_g10/adapter_manifest.json`
 
 SHA256: `8b81f9633050f8e2f286259671e3cefb39bfb30dffa29c7d76608723d36505c8`. Original derivation summary: `ab214d52665ee4ad6ccf756c0515344dc9653c3b51de15965fc74323198b7fd9`.
 

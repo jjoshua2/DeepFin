@@ -28,7 +28,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import ceres_collection_batches as owned
 
-BASE = Path("/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01")
+BASE = Path(__file__).resolve().parents[1] / "scratchpad" / "bt4_joint20" / "hybrid_endpoint_run01"
 LOCK = BASE / "preparation.lock"
 PROFILES = {"Ceres100": "ceres_target_mix", "CeresB50": "ceres_target_mix", "B100CeresV25": "ceres_value_mix"}
 MAX_SECONDS = 28800
