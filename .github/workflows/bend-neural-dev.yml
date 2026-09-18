@@ -10,15 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       - run: |
-          mkdir -p /tmp/bend-neural-source
-          git archive --format=tar.gz HEAD native chess_anti_engine tests scripts docs .agents AGENTS.md CLAUDE.md .github pyproject.toml .python-version uv.lock setup.py > /tmp/bend-neural-source/deepfin.tgz
-          git rev-parse HEAD > /tmp/bend-neural-source/revision.txt
+          mkdir -p /tmp/bend-neural-deps
+          python3 -m pip download --no-deps 'chess==1.11.2' 'ruff==0.15.20' -d /tmp/bend-neural-deps
       - uses: actions/upload-artifact@v4
         with:
-          name: bend-neural-source
-          path: /tmp/bend-neural-source/
+          name: bend-neural-deps
+          path: /tmp/bend-neural-deps/
           retention-days: 2
