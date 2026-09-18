@@ -23,15 +23,20 @@ def test_fen_roundtrip_wire_and_draw_counter_independence() -> None:
     assert tuple(int(x, 16) for x in request(position, 3).split()) == (3, 0, 1, *position)
 
 
-@pytest.mark.parametrize("fen", [
-    "", "8/8/8/8/8/8/8 w - - 0 1", "9/8/8/8/8/8/8/8 w - - 0 1",
-    "7/8/8/8/8/8/8/8 w - - 0 1", START.replace(" w ", " x "),
-    START.replace("KQkq", "KK"), START.replace("KQkq", "HAha"),
-    START.replace(" - ", " i6 "), START.replace("0 1", "-1 1"),
-    START.replace("0 1", "0 0"),
+@pytest.mark.parametrize(("fen", "reason"), [
+    ("", "six fields"),
+    ("8/8/8/8/8/8/8 w - - 0 1", "eight ranks"),
+    ("9/8/8/8/8/8/8/8 w - - 0 1", "piece/rank"),
+    ("7/8/8/8/8/8/8/8 w - - 0 1", "incomplete FEN rank"),
+    (START.replace(" w ", " x "), "turn/counters"),
+    (START.replace("KQkq", "KK"), "castling rights"),
+    (START.replace("KQkq", "HAha"), "castling rights"),
+    (START.replace(" - ", " i6 "), "en-passant square"),
+    (START.replace("0 1", "-1 1"), "turn/counters"),
+    (START.replace("0 1", "0 0"), "turn/counters"),
 ])
-def test_invalid_fen_rejected(fen: str) -> None:
-    with pytest.raises(ValueError):
+def test_invalid_fen_rejected(fen: str, reason: str) -> None:
+    with pytest.raises(ValueError, match=reason):
         fen_position(fen)
 
 
@@ -43,13 +48,17 @@ def test_perft_reports_preserve_u64_and_require_divide_sum() -> None:
     assert parse_perft("nodes 0 0\n", 1) == (0, {})
 
 
-@pytest.mark.parametrize("text", [
-    "", "nodes 0 5\n", "divide 8 16 0 0 0 1\nnodes 0 2\n",
-    "divide 8 16 0 0 0 1\ndivide 8 16 0 1 0 1\nnodes 0 2\n",
-    "divide 64 16 0 0 0 1\nnodes 0 1\n", "nodes -1 0\n", "nodes 4294967296 0\n",
+@pytest.mark.parametrize(("text", "reason"), [
+    ("", "missing perft total"),
+    ("nodes 0 5\n", "divide sum"),
+    ("divide 8 16 0 0 0 1\nnodes 0 2\n", "divide sum"),
+    ("divide 8 16 0 0 0 1\ndivide 8 16 0 1 0 1\nnodes 0 2\n", "duplicate divide move"),
+    ("divide 64 16 0 0 0 1\nnodes 0 1\n", "invalid move output"),
+    ("nodes -1 0\n", "nondecimal output word"),
+    ("nodes 4294967296 0\n", "output word exceeds U32"),
 ])
-def test_bad_perft_report_rejected(text: str) -> None:
-    with pytest.raises(ValueError):
+def test_bad_perft_report_rejected(text: str, reason: str) -> None:
+    with pytest.raises(ValueError, match=reason):
         parse_perft(text, 1)
 
 
