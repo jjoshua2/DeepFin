@@ -121,33 +121,23 @@ def insert_dec(
             case False{}:
               Con{Ranked{h_action, h_visits, h_score}, rec}
 
-def insert_after_cons(
-  +item: Ranked,
-  +head: Ranked,
-  +rest: List<&2, Ranked>
-) -> List<&2, Ranked>:
-  match item head:
-    case Ranked{action, visits, +score} Ranked{h_action, h_visits, +h_score}:
-      insert_dec(
-        Ranked{action, visits, score},
-        Ranked{h_action, h_visits, h_score},
-        rest,
-        insert_ranked(Ranked{action, visits, score}, rest),
-        F32.is_gt(score, h_score)
-      )
+def Ranked.score(r: Ranked) -> F32:
+  match r:
+    case Ranked{action, visits, score}:
+      score
 
 def insert_ranked(+item: Ranked, +xs: List<&2, Ranked>) -> List<&2, Ranked>:
-  match item:
-    case Ranked{action, visits, score}:
-      match xs:
-        case Nil{}:
-          Con{Ranked{action, visits, score}, Nil{}}
-        case Con{head, rest}:
-          insert_after_cons(
-            Ranked{action, visits, score},
-            head,
-            rest
-          )
+  match item xs:
+    case Ranked{action, visits, score} Nil{}:
+      Con{Ranked{action, visits, score}, Nil{}}
+    case Ranked{action, visits, +score} Con{+head, +rest}:
+      insert_dec(
+        Ranked{action, visits, score},
+        head,
+        rest,
+        insert_ranked(Ranked{action, visits, score}, rest),
+        F32.is_gt(score, Ranked.score(head))
+      )
 
 def sort_ranked(xs: List<&2, Ranked>) -> List<&2, Ranked>:
   match xs:
