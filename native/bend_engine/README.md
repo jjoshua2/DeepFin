@@ -91,3 +91,36 @@ This probe does **not** include:
 - production configuration flags.
 
 Those belong in later PRs only after this smallest native boundary is proven.
+
+
+## Native AOTInductor deployment probe
+
+`aoti_probe/` validates the next boundary without changing production UCI or
+selfplay code:
+
+```text
+Bend control flow
+    -> foreign C effect
+    -> native C++ / LibTorch
+    -> AOTIModelPackageLoader
+    -> .pt2 AOTInductor package
+    -> float32 output words
+    -> Bend checksum
+```
+
+The large tensor stays native. Bend receives only compact scalar output words,
+which is the same ownership direction intended for a future engine where
+CBoard/native encoding and the NN runtime own bulk buffers while Bend owns
+search and scheduling.
+
+GitHub CI builds a tiny **CPU** `.pt2` fixture at test time, then compiles the
+Bend-emitted C and C++ AOTI bridge into one executable using Clang/Clang++ and
+C++20. Python is used only to create the fixture and discover LibTorch at build
+time; the resulting executable does not embed or start a Python interpreter.
+The fixture is compiled with ``BEND_AOTI_PACKAGE_CXX`` or ``/usr/bin/g++`` so
+the wrapper's libstdc++ matches the native process — a newer ``g++`` on PATH
+can emit a `.so` this host cannot dlopen.
+
+This proves the C++ AOTI deployment mechanism and Bend/native data path. It does
+**not** yet prove that a production DeepFin CUDA package runs correctly or at
+the desired throughput. A CUDA DeepFin-package parity test is the next gate.

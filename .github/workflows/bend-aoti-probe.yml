@@ -1,0 +1,47 @@
+name: Bend AOTI probe
+
+on:
+  pull_request:
+    paths:
+      - "native/bend_engine/aoti_probe/**"
+      - "native/bend_engine/install_bend.sh"
+      - "tests/test_bend_aoti_probe.py"
+      - ".github/workflows/bend-aoti-probe.yml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".python-version"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          activate-environment: true
+
+      - name: Install DeepFin CPU test environment
+        run: uv sync --locked --extra dev --extra cpu
+
+      - name: Install bun
+        run: |
+          if ! command -v bun >/dev/null 2>&1; then
+            curl -fsSL https://bun.sh/install | bash
+          fi
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+
+      - name: Install latest Bend
+        env:
+          BEND_NO_TELEMETRY: "1"
+        run: native/bend_engine/install_bend.sh
+
+      - name: Build .pt2 and verify Bend/native AOTI parity
+        env:
+          BEND_NO_TELEMETRY: "1"
+          CAE_REQUIRE_BEND_AOTI_PROBE: "1"
+        run: pytest -q tests/test_bend_aoti_probe.py
