@@ -24,7 +24,7 @@ def test_session_words_and_float_bits() -> None:
 @pytest.mark.parametrize('text', ['wrong 1', 'result -1', 'result 1.0',
                                  'result nan', 'result 4294967296', 'result 1 2', 'result'])
 def test_session_report_rejects_malformed_words(text: str) -> None:
-    with pytest.raises(ValueError, match='malformed|nondecimal|exceeds'):
+    with pytest.raises(ValueError, match=r'malformed|nondecimal|exceeds'):
         numbers(text, 'result', 1)
 
 
@@ -51,4 +51,5 @@ def test_fixture_evaluator_is_not_a_constant_value_or_policy() -> None:
     black = (*board[:8], 0, *board[9:])
     opposite, _ = evaluation(black, [1, 2, 3, 4])
     assert wdl[0] - wdl[2] == -(opposite[0] - opposite[2])
-    assert sum(wdl) == 1 and len(set(policy)) > 1
+    assert sum(wdl) == 1
+    assert len(set(policy)) > 1
