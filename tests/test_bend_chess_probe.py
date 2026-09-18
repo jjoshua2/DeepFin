@@ -106,6 +106,24 @@ def _parse_probe(stdout: str) -> dict[int, dict[str, int]]:
     return rows
 
 
+FEATURE_UCIS = {
+    1: "e1g1",
+    2: "e5d6",
+}
+
+
+def _parse_features(stdout: str) -> dict[int, dict[str, int]]:
+    rows: dict[int, dict[str, int]] = {}
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if not line.startswith("feature_fixture="):
+            continue
+        fields = dict(part.split("=", 1) for part in line.split())
+        fixture = int(fields.pop("feature_fixture"))
+        rows[fixture] = {key: int(value) for key, value in fields.items()}
+    return rows
+
+
 def _expected(fen: str) -> dict[str, int]:
     board = chess.Board(fen)
     cboard = CBoard.from_board(board)
@@ -218,7 +236,19 @@ def test_bend_chess_probe_matches_existing_cboard(tmp_path: Path) -> None:
 
     run = _run_checked([str(binary)])
     observed = _parse_probe(run.stdout)
+    features = _parse_features(run.stdout)
 
     assert set(observed) == set(range(len(FIXTURE_FENS))), run.stdout
     for fixture, fen in enumerate(FIXTURE_FENS):
         assert observed[fixture] == _expected(fen)
+
+    assert set(features) == set(FEATURE_UCIS), run.stdout
+    for fixture, uci in FEATURE_UCIS.items():
+        fen = FIXTURE_FENS[fixture]
+        child = _cboard_after(fen, uci)
+        child_board = chess.Board(child.fen())
+        assert features[fixture] == {
+            "feature_action": _cboard_index(fen, uci),
+            "feature_check": int(child_board.is_check()),
+            "feature_hash32": int(child.zobrist_hash) & 0xFFFFFFFF,
+        }

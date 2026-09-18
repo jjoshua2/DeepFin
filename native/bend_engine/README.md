@@ -56,10 +56,10 @@ Five fixed positions cover:
 - promotion;
 - an in-check evasion position.
 
-The Python test asserts those mechanics are in the legal set. Synthetic PUCT
-selects by action id, so the applied child move may be a different legal move
-(often a king walk). Castling and en passant are therefore checked as legal
-actions, not necessarily as the selected apply.
+Synthetic PUCT selects by action id, so the PUCT child may be a king walk.
+Castling (`e1g1`) and en passant (`e5d6`) are also applied through the same
+`Chess.push` path as extra `feature_*` lines so those encodings hit
+`cboard_push_index` in the native binary.
 
 For each position the Bend program:
 

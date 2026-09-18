@@ -204,6 +204,16 @@ static uint32_t probe_hash32(uint32_t handle) {
   return (uint32_t)(g_probe_boards[handle].hash & UINT64_C(0xffffffff));
 }
 
+/* Forced applies so castle / en passant go through Chess.push, not only the
+ * legal-set checksum. Indices must match move_to_index() on the fixture FENs. */
+static uint32_t probe_feature_action(uint32_t fixture) {
+  switch (fixture) {
+    case 1: return 307u;  /* e1g1 */
+    case 2: return 2677u; /* e5d6 */
+    default: return PROBE_INVALID;
+  }
+}
+
 uint32_t deepfin_bend_probe_legal_moves(
   uint32_t handle, uint32_t *out, uint32_t capacity
 ) {
@@ -223,6 +233,7 @@ uint32_t deepfin_bend_probe_call(uint32_t op, uint32_t a, uint32_t b) {
     case 3: return probe_push(a, b);
     case 4: return probe_in_check(a);
     case 5: return probe_hash32(a);
+    case 6: return probe_feature_action(a);
     default: return PROBE_INVALID;
   }
 }

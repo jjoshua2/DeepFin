@@ -16,6 +16,7 @@ type Scan is Data:
 #   3 push(handle, action) -> cloned child handle
 #   4 in_check(handle)
 #   5 zobrist_hash_low32(handle)
+#   6 feature_action(fixture) -> castle/ep action, or UINT32_MAX
 def Chess.call(op: U32, a: U32, b: U32) -> IO(U32):
   import "./chess_call.c"
 
@@ -39,6 +40,9 @@ def Chess.in_check(handle: U32) -> IO(U32):
 
 def Chess.hash32(handle: U32) -> IO(U32):
   Chess.call(5, handle, 0)
+
+def Chess.feature_action(fixture: U32) -> IO(U32):
+  Chess.call(6, fixture, 0)
 
 # Deterministic synthetic statistics. They make the selector exercise the same
 # shape as PUCT without involving a network in PR 1. Every operation is F32 so
@@ -118,8 +122,63 @@ def checksum_moves(xs: List<U32>, acc: U32) -> U32:
     case Con{action, rest}:
       checksum_moves(rest, checksum(acc, action))
 
-def probe_after_hash(
+def probe_feature_after_hash(
   fixture: U32,
+  action: U32,
+  check: U32,
+  hash: U32
+) -> IO(Unit):
+  IO.print(
+    "feature_fixture=" ++ U32.show(fixture)
+    ++ " feature_action=" ++ U32.show(action)
+    ++ " feature_check=" ++ U32.show(check)
+    ++ " feature_hash32=" ++ U32.show(hash)
+  )
+
+def probe_feature_after_check(
+  fixture: U32,
+  action: U32,
+  +child: U32,
+  check: U32
+) -> IO(Unit):
+  do IO<Unit>:
+    hash : U32 <- Chess.hash32(child)
+    probe_feature_after_hash(fixture, action, check, hash)
+
+def probe_feature_apply(
+  fixture: U32,
+  action: U32,
+  +child: U32
+) -> IO(Unit):
+  do IO<Unit>:
+    check : U32 <- Chess.in_check(child)
+    probe_feature_after_check(fixture, action, child, check)
+
+def probe_feature(
+  fixture: U32,
+  +handle: U32,
+  +action: U32
+) -> IO(Unit):
+  do IO<Unit>:
+    child : U32 <- Chess.push(handle, action)
+    probe_feature_apply(fixture, action, child)
+
+def probe_feature_if(
+  has: Bool,
+  fixture: U32,
+  +handle: U32,
+  +action: U32
+) -> IO(Unit):
+  match has:
+    case True{}:
+      probe_feature(fixture, handle, action)
+    case False{}:
+      do IO<Unit>:
+        return Unit{}
+
+def probe_after_hash(
+  +fixture: U32,
+  +handle: U32,
   count: U32,
   best: U32,
   sum: U32,
@@ -128,19 +187,28 @@ def probe_after_hash(
   check: U32,
   hash: U32
 ) -> IO(Unit):
-  IO.print(
-    "fixture=" ++ U32.show(fixture)
-    ++ " legal=" ++ U32.show(count)
-    ++ " best=" ++ U32.show(best)
-    ++ " checksum=" ++ U32.show(sum)
-    ++ " child_legal=" ++ U32.show(child_count)
-    ++ " child_checksum=" ++ U32.show(child_sum)
-    ++ " child_check=" ++ U32.show(check)
-    ++ " child_hash32=" ++ U32.show(hash)
-  )
+  do IO<Unit>:
+    printed : Unit <- IO.print(
+      "fixture=" ++ U32.show(fixture)
+      ++ " legal=" ++ U32.show(count)
+      ++ " best=" ++ U32.show(best)
+      ++ " checksum=" ++ U32.show(sum)
+      ++ " child_legal=" ++ U32.show(child_count)
+      ++ " child_checksum=" ++ U32.show(child_sum)
+      ++ " child_check=" ++ U32.show(check)
+      ++ " child_hash32=" ++ U32.show(hash)
+    )
+    +feature : U32 <- Chess.feature_action(fixture)
+    probe_feature_if(
+      U32.is_ne(feature, 4294967295),
+      fixture,
+      handle,
+      feature
+    )
 
 def probe_after_check(
   fixture: U32,
+  +handle: U32,
   +child: U32,
   count: U32,
   best: U32,
@@ -152,11 +220,12 @@ def probe_after_check(
   do IO<Unit>:
     hash : U32 <- Chess.hash32(child)
     probe_after_hash(
-      fixture, count, best, sum, child_count, child_sum, check, hash
+      fixture, handle, count, best, sum, child_count, child_sum, check, hash
     )
 
 def probe_after_child_moves(
   fixture: U32,
+  +handle: U32,
   +child: U32,
   count: U32,
   best: U32,
@@ -168,6 +237,7 @@ def probe_after_child_moves(
     check : U32 <- Chess.in_check(child)
     probe_after_check(
       fixture,
+      handle,
       child,
       count,
       best,
@@ -179,6 +249,7 @@ def probe_after_child_moves(
 
 def probe_after_child_count(
   fixture: U32,
+  +handle: U32,
   +child: U32,
   count: U32,
   best: U32,
@@ -188,11 +259,12 @@ def probe_after_child_count(
   do IO<Unit>:
     child_moves : List<U32> <- Chess.legal_moves(child)
     probe_after_child_moves(
-      fixture, child, count, best, sum, child_count, child_moves
+      fixture, handle, child, count, best, sum, child_count, child_moves
     )
 
 def probe_after_push(
   fixture: U32,
+  +handle: U32,
   +child: U32,
   count: U32,
   best: U32,
@@ -200,11 +272,13 @@ def probe_after_push(
 ) -> IO(Unit):
   do IO<Unit>:
     child_count : U32 <- Chess.legal_count(child)
-    probe_after_child_count(fixture, child, count, best, sum, child_count)
+    probe_after_child_count(
+      fixture, handle, child, count, best, sum, child_count
+    )
 
 def probe_after_selected(
   fixture: U32,
-  handle: U32,
+  +handle: U32,
   count: U32,
   selected: Scan
 ) -> IO(Unit):
@@ -212,11 +286,11 @@ def probe_after_selected(
     case Scan{+best, sum}:
       do IO<Unit>:
         child : U32 <- Chess.push(handle, best)
-        probe_after_push(fixture, child, count, best, sum)
+        probe_after_push(fixture, handle, child, count, best, sum)
 
 def probe_after_moves(
   fixture: U32,
-  handle: U32,
+  +handle: U32,
   count: U32,
   moves: List<U32>
 ) -> IO(Unit):
