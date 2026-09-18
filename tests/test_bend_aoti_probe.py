@@ -22,6 +22,7 @@ def _toolchain_available() -> bool:
         shutil.which("bend") is not None
         and shutil.which("cmake") is not None
         and shutil.which("clang") is not None
+        and shutil.which("clang++") is not None
     )
 
 
