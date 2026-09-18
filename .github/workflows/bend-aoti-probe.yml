@@ -4,12 +4,17 @@ on:
   pull_request:
     paths:
       - "native/bend_engine/aoti_probe/**"
+      - "native/bend_engine/cuda_parity/**"
       - "native/bend_engine/install_bend.sh"
       - "tests/test_bend_aoti_probe.py"
+      - "tests/test_bend_cuda_parity_harness.py"
       - ".github/workflows/bend-aoti-probe.yml"
       - "pyproject.toml"
       - "uv.lock"
       - ".python-version"
+      - "chess_anti_engine/inference.py"
+      - "chess_anti_engine/moves/encode.py"
+      - "chess_anti_engine/encoding/**"
   workflow_dispatch:
 
 jobs:
@@ -45,3 +50,12 @@ jobs:
           BEND_NO_TELEMETRY: "1"
           CAE_REQUIRE_BEND_AOTI_PROBE: "1"
         run: pytest -q tests/test_bend_aoti_probe.py
+
+      # GitHub's hosted runner has no NVIDIA GPU, but the CUDA parity binary
+      # should still compile against LibTorch. This catches Bend syntax, C ABI,
+      # C++20, and linker regressions before the manual GPU gate.
+      - name: Compile-check DeepFin CUDA parity harness
+        env:
+          BEND_NO_TELEMETRY: "1"
+          CAE_REQUIRE_BEND_CUDA_PARITY: "1"
+        run: pytest -q tests/test_bend_cuda_parity_harness.py
