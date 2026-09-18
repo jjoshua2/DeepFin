@@ -75,10 +75,10 @@ fixture, not a strength policy or a promise of perfectly uniform sampling.
 The path-scoped native workflow checks generic C, forced-portable U64 helpers,
 native-target C, and UndefinedBehaviorSanitizer C. Each build checks:
 
-- all legal moves and exact child states for 24 fixed positions;
-- 27 unique perft/divide cases, including the six published canonical perft
+- all legal moves and exact child states for 30 fixed positions;
+- 33 unique perft/divide cases, including the six published canonical perft
   positions also used in `tests/test_perft.py`;
-- explicit castling/transit/promotion/en-passant rule expectations;
+- explicit castling/transit/promotion/en-passant and conservative-blocker rule expectations;
 - four repeatable 32-ply traces, validating every chosen move and child against
   CBoard, plus complete legal sets and depth-2 divides at 16 sampled positions;
 - initially checkmated/stalemated traces, including the one-ply-budget boundary;
@@ -118,3 +118,53 @@ chess specification or universal legal-move equivalence theorem is supplied.
 This change has a self-review plus executable parity checks, not an independent
 human/model review. The fork's upstream source-token maintenance-budget issue
 remains separate and unchanged.
+
+
+## Opt-in perft timing and conservative king-safety fast path
+
+Outside check, an ordinary non-king/non-EP move only needs the full make/check
+filter when its source is the first occupied square on a sliding ray from its
+king. Any newly exposed slider must pass through that first blocker. The target
+remains occupied by our moving piece, including captures/promotions. This is a
+conservative test, not an exact pin detector. King moves, en passant, and every
+move while in check still use the full filter. Extra fixtures cover file/diagonal
+pins, a second blocker, an unpinned first blocker and both colors.
+
+Benchmark separately from validation (requires an otherwise idle CPU):
+
+```sh
+python -m native.bend_engine.legal_probe.benchmark \
+  --report artifacts/bend-perft-benchmark.json
+```
+
+Defaults are startpos depth 5 and Kiwipete depth 4, three measured samples per
+engine, one CPU thread, native-target Clang. This is not called by regular tests.
+Each process initializes tables, runs a full warmup and verifies its count, then
+measures one traversal with CLOCK_MONOTONIC. Compilation, initialization, table
+marshalling, printing and final table destruction are outside the interval.
+The Bend timer boundary includes a small IO-dispatch cost. On Linux the timing
+processes inherit the same single-CPU affinity; the original affinity is restored.
+Raw samples, median/min/max, counts, C slider backend, compiler flags and source
+hashes are recorded. No relative-speed assertion is made part of CI.
+
+`--mode generic` compares portable-target builds (CBoard uses magic, Bend uses
+its runtime-dispatched PEXT). `--mode native` applies identical target flags to
+both hot loops; read the C backend in the report rather than assuming PEXT.
+The C executable uses the actual CBoard generator/copy/push path, not Python
+recursion. Both perfts bulk-count legal moves at depth one; leaf counts are not
+numbers of executed make-move operations.
+
+To compare a previous core on the SAME compiler, clock, tables and flags:
+
+```sh
+git show 7e33ebe5c7aeada732fad63034181c0138ed4ca4:native/bend_engine/legal_probe/Chess.bend > /tmp/Chess.baseline.bend
+python -m native.bend_engine.legal_probe.benchmark \
+  --baseline-chess /tmp/Chess.baseline.bend --samples 3 \
+  --report artifacts/bend-perft-baseline.json
+```
+
+Only the supplied core source differs. Its SHA-256 is recorded; it is not
+silently downloaded or treated as another compiler version. This remains a
+single-thread prototype benchmark, not an engine-strength result or a claim
+that Bend beats optimized C. The experiment record is
+[here](../../../docs/experiments/2026-09-18-bend-perft-baseline.md).
