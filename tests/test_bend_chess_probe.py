@@ -56,6 +56,11 @@ def _cc_bin() -> str | None:
 _PROBE_TOOLCHAIN_REASON = "Bend/clang native toolchain is not installed"
 
 
+def _require_bend_probe() -> bool:
+    raw = os.environ.get("CAE_REQUIRE_BEND_PROBE", "").strip().lower()
+    return raw not in {"", "0", "false", "no", "n", "off"}
+
+
 def _f32(value: float | int | np.floating) -> np.float32:
     return np.float32(value)
 
@@ -192,7 +197,10 @@ def test_probe_fixtures_cover_claimed_mechanics() -> None:
     }
 
 
-@pytest.mark.skipif(_bend_bin() is None or _cc_bin() is None, reason=_PROBE_TOOLCHAIN_REASON)
+@pytest.mark.skipif(
+    (not _require_bend_probe()) and (_bend_bin() is None or _cc_bin() is None),
+    reason=_PROBE_TOOLCHAIN_REASON,
+)
 def test_bend_chess_probe_matches_existing_cboard(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["BEND_NO_TELEMETRY"] = "1"

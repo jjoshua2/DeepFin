@@ -46,4 +46,5 @@ jobs:
       - name: Build and verify Bend/CBoard parity probe
         env:
           BEND_NO_TELEMETRY: "1"
+          CAE_REQUIRE_BEND_PROBE: "1"
         run: pytest -q tests/test_bend_chess_probe.py
