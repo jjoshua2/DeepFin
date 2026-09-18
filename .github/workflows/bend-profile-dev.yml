@@ -55,7 +55,6 @@ jobs:
           p = Path('native/bend_engine/legal_probe/README.md')
           s = p.read_text() + '''
 
-
           ## Scalar branches and opt-in allocation counters
 
           The hot core uses a typed `select_u64` match instead of generic `Bool.pick`:
