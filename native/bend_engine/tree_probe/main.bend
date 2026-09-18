@@ -322,9 +322,9 @@ def root_best_fold(
 
 def choose_root_with_vp(
   xs: List<&2, RootChild>,
-  parent_n: U32,
-  parent_w: F32,
-  vp: F32
+  +parent_n: U32,
+  +parent_w: F32,
+  +vp: F32
 ) -> U32:
   match xs:
     case Nil{}:
@@ -387,9 +387,9 @@ def kid_best_fold(
 
 def choose_kid_with_vp(
   xs: List<&2, Kid>,
-  parent_n: U32,
-  parent_w: F32,
-  vp: F32
+  +parent_n: U32,
+  +parent_w: F32,
+  +vp: F32
 ) -> U32:
   match xs:
     case Nil{}:
@@ -519,8 +519,8 @@ def grand_visit_value(
 def grand_visit(
   +action: U32,
   prior: F32,
-  n: U32,
-  w: F32,
+  +n: U32,
+  +w: F32,
   +kids: List<&2, Kid>
 ) -> ChildStep:
   +kid_action = choose_kid(kids, n, w)
