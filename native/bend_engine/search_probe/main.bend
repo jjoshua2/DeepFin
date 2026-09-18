@@ -130,7 +130,7 @@ def insert_ranked(+item: Ranked, +xs: List<&2, Ranked>) -> List<&2, Ranked>:
   match item xs:
     case Ranked{action, visits, score} Nil{}:
       Con{Ranked{action, visits, score}, Nil{}}
-    case Ranked{action, visits, +score} Con{+head, +rest}:
+    case Ranked{+action, +visits, +score} Con{+head, +rest}:
       insert_dec(
         Ranked{action, visits, score},
         head,
@@ -289,7 +289,7 @@ def rank_round_cand(
   +q_scale: F32
 ) -> Ranked:
   match cand:
-    case Cand{+action, visits, active}:
+    case Cand{+action, +visits, active}:
       q = Bool.pick(F32, U32.is_gt(visits, 0), fake_q(action), mixed)
       q_bar = F32.div(F32.sub(q, min_q), denom)
       live_score = F32.add(
@@ -337,7 +337,7 @@ def round_after_range(
       q_scale = F32.mul(0.1, F32.add(50.0, U32.to_f32(max_visit)))
       ranked = sort_ranked(rank_round(cands, mixed, min_q, denom, q_scale))
       keep = U32.div(U32.add(active, 1), 2)
-      used = U32.mul(vpa, active)
+      +used = U32.mul(vpa, active)
       remaining = Bool.pick(
         U32,
         U32.is_gt(used, budget),
@@ -417,8 +417,8 @@ def finish_after_stats(
       SearchResult{action, active_count, budget, total, xor}
 
 def finish_combine(
-  action: U32,
-  visits: U32,
+  +action: U32,
+  +visits: U32,
   active: Bool,
   budget: U32,
   tail: TailStats
