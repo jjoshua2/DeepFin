@@ -1,0 +1,57 @@
+name: Bend native neural boundary
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/bend-neural-boundary.yml'
+      - 'native/bend_engine/neural_probe/**'
+      - 'native/bend_engine/session_probe/**'
+      - 'native/bend_engine/legal_probe/**'
+      - 'native/bend_engine/bitboard_probe/**'
+      - 'chess_anti_engine/encoding/**'
+      - 'chess_anti_engine/moves/**'
+      - 'chess_anti_engine/model.py'
+      - 'tests/test_bend_neural_boundary.py'
+permissions:
+  contents: read
+jobs:
+  neural:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          activate-environment: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install isolated CPU environment and pinned compiler
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          python -c "import torch; assert torch.version.cuda is None; print(torch.__version__)"
+          bash native/bend_engine/bitboard_probe/install_toolchain.sh
+      - name: Static checks and cheap boundary contracts
+        run: |
+          ruff check native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py
+          basedpyright native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py
+          python -m pytest -q tests/test_bend_neural_boundary.py tests/test_bend_search_sessions.py
+      - name: Preserve session fault and cancellation behavior with path records
+        run: |
+          python -m native.bend_engine.session_probe.run_probe --python-chess \
+            --report artifacts/bend-neural-session-regression.json
+      - name: Native CPU TinyNet and complete history-aware search round trips
+        run: |
+          python -m native.bend_engine.neural_probe.run_probe \
+            --report artifacts/bend-neural-boundary.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-neural-boundary
+          path: artifacts/bend-neural-*.json
+          retention-days: 30

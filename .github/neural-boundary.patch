@@ -1,0 +1,163 @@
+diff --git a/docs/experiments/README.md b/docs/experiments/README.md
+index 29eeb61..2bf9f62 100644
+--- a/docs/experiments/README.md
++++ b/docs/experiments/README.md
+@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
+ 
+ | Record | Scope |
+ | --- | --- |
++| [Bend neural boundary](2026-09-18-bend-neural-boundary.md) | Real history/policy encoding and persistent native CPU AOTI smoke joined to Bend search; untrained TinyNet, no CUDA or production claim |
+ | [Bend search sessions](2026-09-18-bend-search-sessions.md) | Persistent bounded Bend PUCT with external test policy/WDL, cancellation/reply validation and reset; CPU functionality gate, no neural or production claim |
+ | [Bend scalar branches](2026-09-18-bend-scalar-branches.md) | Profile-guided scalar U64/list selection; allocation mechanism and paired perft confirmation, no production adoption |
+ | [Bend perft native baseline](2026-09-18-bend-perft-baseline.md) | Paired old/new Bend versus CBoard, conservative king-safety filter; CPU-only, no production adoption |
+diff --git a/native/bend_engine/session_probe/README.md b/native/bend_engine/session_probe/README.md
+index 35e2b95..875d5b3 100644
+--- a/native/bend_engine/session_probe/README.md
++++ b/native/bend_engine/session_probe/README.md
+@@ -69,7 +69,9 @@ between sessions exits. The connection has a finite 1024-command fuel budget.
+ It is not UCI, and a reset does not accept a different FEN in the same process yet.
+ 
+ For each leaf the engine prints decimal `eval EPOCH REQUEST NODE COUNT`, a
+-`board` record, COUNT `action KEY` records and `end_eval`. The key is a private
++`board` record, a `path LENGTH KEY...` record, COUNT `action KEY` records and
++`end_eval`. The path is root-to-leaf and at most 32 plies; the root has `path 0`.
++The updated verifier requires it and fails closed against an older binary. The key is a private
+ packed move (`src | dst<<6 | promotion<<12 | flag<<15`), **not** a DeepFin policy
+ index. The host replies with hexadecimal words:
+ 
+@@ -96,7 +98,9 @@ loss claim is made. Bad replies end that search epoch rather than being retried.
+ 
+ Earlier #768/#769 cover the AOTI/CUDA bridge; #770/#771 cover selected production
+ Gumbel/MCTS semantics. This gate does not supersede them or remove the real-GPU
+-qualification requirement. It also does not carry history planes, map to dense or
++qualification requirement. The added root-to-leaf path enables the separate
++[neural boundary gate](../neural_probe/README.md) to reconstruct pre-root and
++search history; this session command itself does not carry history planes, map to dense or
+ compact policy heads, adjudicate repetition/50-move draws, reuse subtrees across
+ played moves, implement UCI, or qualify GPU/multithread execution.
+ 
+diff --git a/native/bend_engine/session_probe/main.bend b/native/bend_engine/session_probe/main.bend
+index fb7752e..3bd22af 100644
+--- a/native/bend_engine/session_probe/main.bend
++++ b/native/bend_engine/session_probe/main.bend
+@@ -38,12 +38,45 @@ def moves_print(ms: List<&2, Chess.Ply>) -> IO(Unit):
+         IO.print("action " ++ U32.show(Search.key(m)))
+         moves_print(rest)
+ 
+-def ticket_send(ticket: Search.Ticket) -> IO(Unit):
++# Root-to-leaf moves, not just the final board, define a neural input.
++# Walking the actual parent chain preserves transposition-specific history.
++type Trace is Type:
++  Trace{pool: Array<Search.Node>, path: List<&2, U32>, id: U32, valid: Bool}
++
++def trace_read(+id: U32, path: List<&2, U32>, valid: Bool, r: Array<Search.Node> & Search.Node) -> Trace:
++  (pool, +node) = r
++  +parent = Search.node_parent(node)
++  Trace{pool, Con{Search.key(Search.node_move(node)), path}, parent,
++    Bool.and(valid, U32.is_lt(parent, id))}
++
++def trace_step(stopped: Bool, t: Trace) -> Trace:
++  match stopped:
++    case True{}: t
++    case False{}:
++      Trace{pool, path, +id, valid} = t
++      trace_read(id, path, valid, Array.get(Search.Node, pool, id))
++
++def trace_dispatch(t: Trace) -> Trace:
++  Trace{pool, path, +id, +valid} = t
++  trace_step(Bool.or(U32.is_zero(id), Bool.not(valid)), Trace{pool, path, id, valid})
++
++def trace(fuel: Nat, t: Trace) -> Trace:
++  match fuel:
++    case 0n: t
++    case 1n+p: trace(p, trace_dispatch(t))
++
++def path_text(path: List<&2, U32>) -> String:
++  match path:
++    case Nil{}: ""
++    case Con{k, rest}: " " ++ U32.show(k) ++ path_text(rest)
++
++def ticket_send(ticket: Search.Ticket, +path: List<&2, U32>) -> IO(Unit):
+   Search.Ticket{epoch, request, node, board, +moves, needed} = ticket
+   do IO<Unit>:
+     IO.print("eval " ++ U32.show(epoch) ++ " " ++ U32.show(request) ++ " " ++ U32.show(node)
+       ++ " " ++ U32.show(U32.from_nat(List.length(&2, Chess.Ply, moves))))
+     IO.print("board " ++ board_text(board))
++    IO.print("path " ++ U32.show(U32.from_nat(List.length(&2, U32, path))) ++ path_text(path))
+     moves_print(moves)
+ 
+ type Live is Type:
+@@ -53,15 +86,34 @@ def live_flag(table: Array<U64>, tree: Search.Tree) -> Live & Bool:
+   Search.Tree{pool, used, cap, n, pending, epoch, request, +stop, limit} = tree
+   (Live{table, Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit}}, Bool.not(U32.is_zero(stop)))
+ 
+-def step_read(needed: Bool, table: Array<U64>, tree: Search.Tree, +ticket: Search.Ticket) -> IO(Live & Bool):
+-  match needed:
+-    case False{}: IO.pure(Live & Bool, live_flag(table, tree))
++def ticket_node(ticket: Search.Ticket) -> U32:
++  Search.Ticket{epoch, request, node, board, moves, needed} = ticket
++  node
++
++def step_path_checked(valid: Bool, table: Array<U64>, +ticket: Search.Ticket,
++  path: List<&2, U32>, tree: Search.Tree) -> IO(Live & Bool):
++  match valid:
++    case False{}: IO.die(Live & Bool, 2, "invalid search parent chain")
+     case True{}:
+       do IO<Live & Bool>:
+-        ticket_send(ticket)
++        ticket_send(ticket, path)
+         reply : Search.Reply <- Reply.read()
+         return live_flag(table, Search.resume(tree, ticket, reply))
+ 
++def step_traced(table: Array<U64>, ticket: Search.Ticket, used: U32, cap: U32,
++  n: U32, pending: U32, epoch: U32, request: U32, stop: U32, limit: U32, t: Trace) -> IO(Live & Bool):
++  Trace{pool, path, id, valid} = t
++  step_path_checked(Bool.and(valid, U32.is_zero(id)), table, ticket, path,
++    Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit})
++
++def step_read(needed: Bool, table: Array<U64>, tree: Search.Tree, +ticket: Search.Ticket) -> IO(Live & Bool):
++  match needed:
++    case False{}: IO.pure(Live & Bool, live_flag(table, tree))
++    case True{}:
++      Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
++      step_traced(table, ticket, used, cap, n, pending, epoch, request, stop, limit,
++        trace(32n, Trace{pool, Nil{}, ticket_node(ticket), True{}}))
++
+ def ticket_needed(t: Search.Ticket) -> Bool:
+   Search.Ticket{epoch, request, node, board, moves, needed} = t
+   needed
+diff --git a/native/bend_engine/session_probe/run_probe.py b/native/bend_engine/session_probe/run_probe.py
+index ebd77f7..28ebaf3 100644
+--- a/native/bend_engine/session_probe/run_probe.py
++++ b/native/bend_engine/session_probe/run_probe.py
+@@ -55,6 +55,15 @@ def numbers(line: str, tag: str, count: int | None = None) -> list[int]:
+     return values
+ 
+ 
++def parse_path(line: str) -> list[int]:
++    words = numbers(line, 'path')
++    if not words or not 0 <= words[0] <= 32 or len(words) != words[0] + 1:
++        raise ValueError('invalid root-to-leaf path length')
++    if any(k >= 1 << 17 for k in words[1:]):
++        raise ValueError('invalid packed path key')
++    return words[1:]
++
++
+ def position(words: list[int]) -> rules.Position:
+     if len(words) != 19 or any(not 0 <= x <= SENTINEL for x in words):
+         raise ValueError('invalid position words')
+@@ -308,6 +317,14 @@ def session(peer: Peer, oracle: Oracle, board: rules.Position, *, epoch: int, bu
+             raise AssertionError('request carries wrong board')
+         if not 1 <= header[3] <= 256:
+             raise AssertionError('invalid legal action count')
++        path = parse_path(peer.line())
++        expected_path = []
++        ancestor = wanted
++        while ancestor:
++            expected_path.append(ref.nodes[ancestor].key)
++            ancestor = ref.nodes[ancestor].parent
++        if path != list(reversed(expected_path)):
++            raise AssertionError('request carries wrong history path')
+         actions = [numbers(peer.line(), 'action', 1)[0] for _ in range(header[3])]
+         peer.expect('end_eval')
+         legal = oracle.moves(supplied)
