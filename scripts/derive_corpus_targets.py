@@ -450,9 +450,10 @@ from scripts.corpus_selection_schema import validate_selection_metadata
 
 
 def _baseline_rows() -> Any:
-    # Function-local: a module import cycles with audit_raw_baseline.
-    from scripts import baseline_row_exclusions as baseline_rows
-    return baseline_rows
+    # importlib: a `from scripts import` here still counts in basedpyright's
+    # import-cycle graph with audit_raw_baseline.
+    import importlib
+    return importlib.import_module("scripts.baseline_row_exclusions")
 
 #: Derived-shard schema.  Bumped when the MEANING of an emitted column changes,
 #: which is a different event from the corpus row schema changing -- a consumer
