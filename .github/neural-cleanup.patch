@@ -1,0 +1,123 @@
+--- a/native/bend_engine/neural_probe/run_probe.py
++++ b/native/bend_engine/neural_probe/run_probe.py
+@@ -55,11 +55,10 @@
+     for uci in ('g1f3', 'g8f6', 'f3g1', 'f6g8') * 2:
+         root.push_uci(uci)
+     boards = [root, chess.Board(), chess.Board(rules.CANONICAL[1][1])]
+-    for fen in ('4k3/P7/8/8/8/8/8/4K3 w - - 0 1',
++    boards.extend(chess.Board(fen) for fen in ('4k3/P7/8/8/8/8/8/4K3 w - - 0 1',
+                 '4k3/8/8/8/8/8/p7/4K3 b - - 0 1',
+                 '4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1',
+-                'r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 7 1'):
+-        boards.append(chess.Board(fen))
++                'r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 7 1'))
+     count = 0
+     for extra in ('v1', 'v2_threats'):
+         for history in ('lc0_root', 'lc0_root_legacy_meta'):
+@@ -103,6 +102,7 @@
+     nodes: int
+     best: int
+     unique_inputs: int
++    unique_outputs: int
+     max_logit_absolute_error: float
+ 
+ 
+@@ -134,6 +134,7 @@
+     ref = sessions.Reference(board, oracle, cap=4096, depth=4, budget=budget)
+     peer.write(f'config {epoch:x} {budget:x} 1000 4\n')
+     inputs: set[str] = set()
++    outputs: set[str] = set()
+     maximum_error = 0.0
+     requests = 0
+     while True:
+@@ -148,7 +149,7 @@
+             if best != sessions.SENTINEL:
+                 decode_key(root, best)
+             return {'requests': requests, 'completed': ref.completed, 'nodes': len(ref.nodes),
+-                    'best': best, 'unique_inputs': len(inputs), 'max_logit_absolute_error': maximum_error}
++                    'best': best, 'unique_inputs': len(inputs), 'unique_outputs': len(outputs), 'max_logit_absolute_error': maximum_error}
+         header = sessions.numbers(line, 'eval', 4)
+         if header[:3] != [epoch, ref.seq, wanted] or not 1 <= header[3] <= 256:
+             raise AssertionError('bad neural request identity/count')
+@@ -167,6 +168,7 @@
+         check_encoding(x, history_board, evaluator.encoding)
+         inputs.add(hashlib.sha256(x.tobytes()).hexdigest())
+         policy_logits, wdl_logits = evaluator.evaluate(x)
++        outputs.add(hashlib.sha256(policy_logits.tobytes() + wdl_logits.tobytes()).hexdigest())
+         with torch.no_grad():
+             expected = eager(torch.from_numpy(x))
+         for observed, key in ((policy_logits, 'policy'), (wdl_logits, 'wdl')):
+@@ -204,8 +206,8 @@
+                 second = neural_session(peer, oracle, root, evaluator, eager, epoch=2)
+                 if first != second:
+                     raise AssertionError('neural reset was not deterministic')
+-                if first['requests'] < 2 or first['unique_inputs'] < 2:
+-                    raise AssertionError('neural path failed to exercise nonconstant inputs')
++                if first['requests'] < 2 or first['unique_inputs'] < 2 or first['unique_outputs'] < 2:
++                    raise AssertionError('neural path failed to exercise nonconstant inputs/outputs')
+                 peer.finish()
+                 results.append({'mode': mode, 'fixture': i, 'epochs': 2, **first})
+             finally:
+--- a/native/bend_engine/neural_probe/backend.py
++++ b/native/bend_engine/neural_probe/backend.py
+@@ -19,7 +19,7 @@
+ from .adapter import Encoding
+ 
+ if TYPE_CHECKING:
+-    from typing import BinaryIO
++    from typing import IO
+ 
+ MAGIC = 0x44464E31
+ FORMAT = 'deepfin-tuple-policy-wdl-cpu-f32-v1'
+@@ -64,7 +64,7 @@
+     return binary
+ 
+ 
+-def read_exact(stream: BinaryIO, size: int, deadline: float) -> bytes:
++def read_exact(stream: IO[bytes], size: int, deadline: float) -> bytes:
+     data = bytearray()
+     while len(data) < size:
+         remaining = deadline - time.monotonic()
+@@ -77,7 +77,7 @@
+     return bytes(data)
+ 
+ 
+-def write_all(stream: BinaryIO, data: bytes, deadline: float) -> None:
++def write_all(stream: IO[bytes], data: bytes, deadline: float) -> None:
+     view = memoryview(data)
+     while view:
+         remaining = deadline - time.monotonic()
+--- a/native/bend_engine/neural_probe/package.py
++++ b/native/bend_engine/neural_probe/package.py
+@@ -21,7 +21,7 @@
+     with torch.random.fork_rng(devices=[]):
+         torch.manual_seed(SEED)
+         model = build_model(ModelConfig(kind='tiny', **asdict(encoding)))
+-    return model.eval()
++    return model.eval().cpu().float()
+ 
+ 
+ def export_smoke(package: Path, encoding: Encoding = DEFAULT_ENCODING):
+@@ -46,7 +46,7 @@
+             return result['policy'], result['wdl']
+ 
+     with torch.no_grad(), config.patch({'compile_threads': 1, 'cpp.cxx': (_resolve_package_cxx(),)}):
+-        graph = torch.export.export(Outputs().eval(), (torch.zeros((1, encoding.channels, 8, 8)),))
++        graph = torch.export.export(Outputs().eval(), (torch.zeros((1, encoding.channels, 8, 8), device="cpu", dtype=torch.float32),))
+         torch._inductor.aoti_compile_and_package(graph, package_path=str(package))
+     manifest = {'format': FORMAT, 'torch_version': str(torch.__version__),
+                 'sha256': hashlib.sha256(package.read_bytes()).hexdigest(),
+--- a/tests/test_bend_neural_boundary.py
++++ b/tests/test_bend_neural_boundary.py
+@@ -110,9 +110,8 @@
+         assert read_exact(reader, 4, time.monotonic() + 1) == b'1234'
+     r, w = os.pipe()
+     os.close(w)
+-    with os.fdopen(r, 'rb', buffering=0) as reader:
+-        with pytest.raises(RuntimeError, match='closed'):
+-            read_exact(reader, 4, time.monotonic() + 1)
++    with os.fdopen(r, 'rb', buffering=0) as reader, pytest.raises(RuntimeError, match='closed'):
++        read_exact(reader, 4, time.monotonic() + 1)
+ 
+ 
+ def test_clock_overflow_is_rejected_before_cboard_push() -> None:

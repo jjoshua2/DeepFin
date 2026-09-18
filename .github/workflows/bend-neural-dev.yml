@@ -20,11 +20,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Apply exact locally tested history-path changes
+      - name: Apply exact history path and harness cleanup changes
         run: |
           echo 'a8a4823ccab6068424e4a062de8698db14a212aa07670b1bcff6512a06a617db  .github/neural-boundary.patch' | sha256sum -c -
+          echo '821b1b4b94ed0cb102f2a6b8cbc85a6aa02fd114bf8fd448ee0299383ddf318c  .github/neural-cleanup.patch' | sha256sum -c -
           git apply --check .github/neural-boundary.patch
           git apply .github/neural-boundary.patch
+          git apply --check .github/neural-cleanup.patch
+          git apply .github/neural-cleanup.patch
           git diff --check
       - name: Install isolated CPU dependencies and pinned compiler
         run: |
@@ -33,9 +36,11 @@ jobs:
           bash native/bend_engine/bitboard_probe/install_toolchain.sh
       - name: Static checks and cheap boundary contracts
         run: |
-          ruff check native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py
-          basedpyright native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py
-          python -m pytest -q tests/test_bend_neural_boundary.py tests/test_bend_search_sessions.py
+          status=0
+          ruff check native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py || status=1
+          basedpyright native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py || status=1
+          python -m pytest -q tests/test_bend_neural_boundary.py tests/test_bend_search_sessions.py || status=1
+          exit "$status"
       - name: Existing four-mode session fault and cancellation regression
         run: |
           python -m native.bend_engine.session_probe.run_probe --python-chess \
@@ -47,7 +52,7 @@ jobs:
       - name: Publish only validated source on a clean stacked branch
         run: |
           git fetch --no-tags --depth=1 origin c8bf8679fe68523effc7d971def5cd27ad35d4c9
-          git rm .github/workflows/bend-neural-dev.yml .github/neural-boundary.patch
+          git rm .github/workflows/bend-neural-dev.yml .github/neural-boundary.patch .github/neural-cleanup.patch
           git add native/bend_engine/neural_probe native/bend_engine/session_probe/main.bend native/bend_engine/session_probe/run_probe.py native/bend_engine/session_probe/README.md tests/test_bend_neural_boundary.py docs/experiments/README.md docs/experiments/2026-09-18-bend-neural-boundary.md .github/workflows/bend-neural-boundary.yml
           git diff --cached --check
           git config user.name 'github-actions[bot]'
