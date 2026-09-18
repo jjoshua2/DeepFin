@@ -1,0 +1,34 @@
+name: Bend U64 development snapshot
+on:
+  push:
+    branches: [feat/bend-u64-sliders]
+    paths: ['.github/workflows/bend-u64-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive DeepFin source without credentials
+        run: |
+          mkdir -p /tmp/bend-u64-source
+          git archive --format=tar.gz HEAD native chess_anti_engine tests scripts docs .agents AGENTS.md CLAUDE.md .github pyproject.toml > /tmp/bend-u64-source/deepfin.tgz
+          git rev-parse HEAD > /tmp/bend-u64-source/deepfin-revision.txt
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: 57bc84edc0df32780e2c4dde44e3a2ee1a500cc9
+          path: bend-fork
+          persist-credentials: false
+      - name: Archive pinned compiler source
+        run: |
+          git -C bend-fork archive --format=tar.gz HEAD bend2 guide tests gates AGENTS.md README.md > /tmp/bend-u64-source/bend.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-u64-source
+          path: /tmp/bend-u64-source/
+          retention-days: 2
