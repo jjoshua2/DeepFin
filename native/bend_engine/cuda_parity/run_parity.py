@@ -6,7 +6,6 @@ from pathlib import Path
 import re
 import struct
 import subprocess
-import sys
 import tempfile
 
 import chess
@@ -239,7 +238,6 @@ def main() -> None:
         )
 
     batch = infer_bucket(package, args.batch)
-    root = Path(__file__).resolve().parents[3]
     build_script = Path(__file__).with_name("build_probe.sh")
 
     with tempfile.TemporaryDirectory(prefix="deepfin_bend_cuda_") as tmp:
