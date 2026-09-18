@@ -7,37 +7,40 @@ import Base
 # This keeps large tensor buffers out of Bend's term representation, matching
 # the intended engine architecture.
 
+type Summary is Data:
+  Summary{count: U32, checksum: U32}
+
 def NN.eval(seed: U32) -> IO(List<U32>):
   import "./aoti_call.c"
 
-def checksum_words(xs: List<U32>, acc: U32) -> U32:
+def summarize(
+  xs: List<U32>,
+  count: U32,
+  checksum: U32
+) -> Summary:
   match xs:
     case Nil{}:
-      acc
+      Summary{count, checksum}
     case Con{word, rest}:
-      checksum_words(
+      summarize(
         rest,
-        U32.xor(U32.mul(acc, 2654435761), word)
+        U32.add(count, 1),
+        U32.xor(U32.mul(checksum, 2654435761), word)
       )
 
-def list_len(xs: List<U32>, acc: U32) -> U32:
-  match xs:
-    case Nil{}:
-      acc
-    case Con{_, rest}:
-      list_len(rest, U32.add(acc, 1))
+def print_summary(seed: U32, summary: Summary) -> IO(Unit):
+  match summary:
+    case Summary{count, checksum}:
+      IO.print(
+        "seed=" ++ U32.show(seed)
+        ++ " count=" ++ U32.show(count)
+        ++ " checksum=" ++ U32.show(checksum)
+      )
 
-def report(+seed: U32, words: List<U32>) -> IO(Unit):
-  # The foreign value is affine, so consume it once after duplicating through
-  # an explicit reusable binder.
-  +shared = words
-  IO.print(
-    "seed=" ++ U32.show(seed)
-    ++ " count=" ++ U32.show(list_len(shared, 0))
-    ++ " checksum=" ++ U32.show(checksum_words(shared, 0))
-  )
+def report(seed: U32, words: List<U32>) -> IO(Unit):
+  print_summary(seed, summarize(words, 0, 0))
 
-def probe(seed: U32) -> IO(Unit):
+def probe(+seed: U32) -> IO(Unit):
   do IO<Unit>:
     words : List<U32> <- NN.eval(seed)
     report(seed, words)
