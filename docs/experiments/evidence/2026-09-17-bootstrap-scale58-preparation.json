@@ -282,5 +282,90 @@
         "sha256": "8f3080825b04a63c9214823676d03edadc893309b84c2001de9bf16d461703a4"
       }
     ]
+  },
+  "scale58_retry": {
+    "status": "ADAPTER_RUNNING_NOT_UNION_READY",
+    "first50M_ready_status": "COMPLETE_V50_CORPUS_AND_SCHEDULE_NOT_TRAINING",
+    "first50M_rows": 50548069,
+    "additional915_eligible_rows": 7542619,
+    "expected_final_rows": 58090688,
+    "915_elapsed_seconds": 15458.510115623474,
+    "previous_failure": "startup output reserve",
+    "actual_start": {
+      "pid": 1563798,
+      "started_unix": 1789735221.9735038,
+      "argv": [
+        "env",
+        "CUDA_VISIBLE_DEVICES=",
+        "OMP_NUM_THREADS=2",
+        "OPENBLAS_NUM_THREADS=2",
+        "MKL_NUM_THREADS=2",
+        "TORCHINDUCTOR_COMPILE_THREADS=2",
+        "PYTHONOPTIMIZE=",
+        "PYTHONPATH=/tmp/deepfin-expanded-schedule-recovery",
+        "nice",
+        "-n",
+        "19",
+        "ionice",
+        "-c",
+        "3",
+        "taskset",
+        "-c",
+        "8,9",
+        "timeout",
+        "--signal=TERM",
+        "--kill-after=45s",
+        "28800s",
+        "/tmp/deepfin-bt4-sf-close-followup/.venv/bin/python",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/run.py",
+        "--expected-plan-sha256",
+        "cca97c6ed22aa0a4ed45ca334d185522836aadf618c7baa6e06eae1677d79670",
+        "--deadline-unix",
+        "1789763961.9725096"
+      ],
+      "plan_sha256": "cca97c6ed22aa0a4ed45ca334d185522836aadf618c7baa6e06eae1677d79670",
+      "eligible_rows": 58090688,
+      "disk_free_bytes_at_launch": 202513014784,
+      "reclamation_receipt": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100T1_cold_archive_v1/reclamation_execution_v1/completed.json",
+        "sha256": "d6d7c823a22f7fe1c3a5e62c0698627b1f6a81f8ab1efea927d74921aee58efa"
+      },
+      "review": "Parent reclaim PASS; audit_matches reclaim+freshretry PASS; existing operator byte-identical; allpins/dependencies verified"
+    },
+    "reclaimed_allocated_bytes": 14766051328,
+    "references": [
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/union_recovery_v1/complete.json",
+        "sha256": "bca355071618edb5166c3a66032bacf2a8dc805a676c148940281c51d535e93b"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/remaining915_pipeline_v1/complete.json",
+        "sha256": "434048255d033afc6cade67e115ba61d8034219d48a22e9b85c30e3acc309968"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_v1/failed.json",
+        "sha256": "f63dce7fc4f616fd9d1e7304a775d4eb302c32c73e7e58cf8fe08dd3fa38905a"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/plan.json",
+        "sha256": "cca97c6ed22aa0a4ed45ca334d185522836aadf618c7baa6e06eae1677d79670"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/actual_start.json",
+        "sha256": "7ddf4eff8bd4a6ada59ff9e29b1dda9266c2968575915a9c4b5f2af989ab6f36"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100T1_cold_archive_v1/reclamation_execution_v1/completed.json",
+        "sha256": "d6d7c823a22f7fe1c3a5e62c0698627b1f6a81f8ab1efea927d74921aee58efa"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100T1_cold_archive_v1/reclamation_preparation_v1/metadata_comparison.json",
+        "sha256": "19d73bd3a19d7b25c7f2543e98a1e1aa28e3606b2e82c53129827ab09c991710"
+      },
+      {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100T1_cold_archive_v1/reclamation_preparation_v1/current_dependency_review.json",
+        "sha256": "82f19613586e3f8216267d9760dfa1e94c86336968ecc42bebaf92fd976f49eb"
+      }
+    ]
   }
 }

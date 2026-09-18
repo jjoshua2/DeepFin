@@ -156,3 +156,35 @@ receipt in`union_recovery_v1` before resuming the remaining915/58M CPU stages.
 The original failed receipts remain intact. The not-yet-started58M operator was
 updated to the corrected runtime and recovery receipt. A fresh50M training retry
 uses this readiness receipt; this record does not claim it has trained yet.
+
+## 58M target preparation resumed after disk-reserve stop
+
+The50,548,069-row union and prospective schedule completed successfully in the
+recovery namespace. The remaining915-shard audit/derivation then completed in
+4.294h, retaining7,542,619 rows. The cumulative eligible baseline is therefore
+**58,090,688 rows**; remaining target copies and union admission are still needed.
+
+The first58M downstream operator stopped on its180GiB startup disk reserve before
+creating an execution directory or running a writer. This was not a data failure.
+At takeover,175.664GiB was free. Rather than redo derivation or remove active
+corpora, the already archived B100T1 variant was reclaimed after fresh proof:
+713,331 source entries matched the completed archive witness, exact membership
+and2,309 shard identities matched, external archive identity was unchanged, and
+current consumer/active-plan checks found no dependency.
+
+The independently reviewed fd-safe operator removed only those2,309 local shard
+directories, exited0 in41.83s, and retained the content-verified external archive
+and both original summaries. Prior allocated shard space was14,766,051,328 bytes
+(13.752GiB). Active B100T05/V50 roots and checkpoints were preserved.
+
+A fresh58M CPU retry started at2026-09-18 12:40:21UTC under outerPID1563798.
+Its first saved-joint adapter has an owned process receipt and no startup failure.
+The retry uses completed915-shard derivation, runs no teacher inference, and does
+not repeat any50M target writer. It retains the existing180GiB startup/150GiB floor,
+24GiB output cap,48/32GiB available-RAM checks, two CPU threads on cores8–9, hidden
+CUDA and8h bound. Free space at launch was188.605GiB.
+
+The future58M readiness receipt is
+`scale50_readiness_20260917/downstream58_retry_v1/complete.json`;50M training need
+not wait for it. Original failures, source proofs and reclamation journals remain
+preserved. Successful58M union or training completion is not yet claimed.
