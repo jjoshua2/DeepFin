@@ -353,7 +353,7 @@ def round_after_agg(
   vpa: U32
 ) -> RoundOut:
   match agg:
-    case Agg{cands, total, sum_prior, weighted, max_visit}:
+    case Agg{cands, +total, sum_prior, weighted, max_visit}:
       weighted_q = F32.div(weighted, sum_prior)
       +mixed = F32.div(
         F32.add(0.125, F32.mul(U32.to_f32(total), weighted_q)),
