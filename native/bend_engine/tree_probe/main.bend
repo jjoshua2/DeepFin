@@ -673,12 +673,12 @@ def apply_sim(run: Run) -> Run:
     case Run{tree, path_mix}:
       apply_sim_step(path_mix, simulate_tree(tree))
 
-def run_sims(run: Run, sims: Nat) -> Run:
-  match run sims:
-    case Run{tree, path_mix} 0n:
+def run_sims(sims: Nat, run: Run) -> Run:
+  match sims run:
+    case 0n Run{tree, path_mix}:
       Run{tree, path_mix}
-    case Run{tree, path_mix} 1n+p:
-      run_sims(apply_sim(Run{tree, path_mix}), p)
+    case 1n+p Run{tree, path_mix}:
+      run_sims(p, apply_sim(Run{tree, path_mix}))
 
 def stats_cons_decide(
   gt: Bool,
@@ -789,7 +789,7 @@ def run_tree(
   print_run(
     fixture,
     root_moves,
-    run_sims(Run{Tree{0, 0.0, children}, 0}, 24n)
+    run_sims(24n, Run{Tree{0, 0.0, children}, 0})
   )
 
 def after_root_moves(
