@@ -26,7 +26,7 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           activate-environment: true
-      - name: Apply and verify exactly the locally tested sources
+      - name: Apply and verify original sources plus reviewed input guards
         run: |
           echo 'eea20247ee082471ce0dd1c73802389aaea2259d57e3ba2cbf4a89448b1a7a15  .github/bend-neural-parent.patch' | sha256sum -c -
           git apply --check .github/bend-neural-parent.patch
@@ -54,6 +54,22 @@ jobs:
               observed = hashlib.sha256(Path(name).read_bytes()).hexdigest()
               assert observed == expected_hash, (name, observed, expected_hash)
           PY
+          echo '711d78bbfb97c6d13c10633cba79026d2b0434d480a4b69bfd3c5fabaea97b33  .github/bend-neural-review.patch' | sha256sum -c -
+          git apply --check .github/bend-neural-review.patch
+          git apply .github/bend-neural-review.patch
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          expected = {
+            'adapter.py': '7e38784f531d573d481eb2768419407c4f321272a57f1ac29691ca73904479ef',
+            'aoti.cpp': '43b21758d62f5958f34cee52add5cfa4e0e07f67b1916d08c85bdc81beebebb0',
+            'run_probe.py': '5135b4a84aae0c838378704c3b9bd707f875e1f0cccf16ddbd4624c54d5304da',
+            'README.md': '762615f9c55c561bd0f43f3a87183904fc84a4842b26f2cb34f16ad041ec7f63',
+          }
+          for name, expected_hash in expected.items():
+              observed = hashlib.sha256((Path('native/bend_engine/neural_probe')/name).read_bytes()).hexdigest()
+              assert observed == expected_hash, (name, observed, expected_hash)
+          PY
           git diff --check
       - name: Install CPU environment and verified compiler
         run: |
@@ -76,8 +92,8 @@ jobs:
       - name: Publish clean feature commit only after validation
         run: |
           git fetch --no-tags --depth=1 origin c8bf8679fe68523effc7d971def5cd27ad35d4c9
-          git rm .github/workflows/bend-neural-dev.yml .github/bend-neural-parent.patch
-          git add native/bend_engine/session_probe/main.bend native/bend_engine/session_probe/run_probe.py native/bend_engine/session_probe/README.md docs/experiments/README.md
+          git rm .github/workflows/bend-neural-dev.yml .github/bend-neural-parent.patch .github/bend-neural-review.patch
+          git add native/bend_engine/session_probe/main.bend native/bend_engine/session_probe/run_probe.py native/bend_engine/session_probe/README.md docs/experiments/README.md native/bend_engine/neural_probe/adapter.py native/bend_engine/neural_probe/aoti.cpp native/bend_engine/neural_probe/run_probe.py native/bend_engine/neural_probe/README.md
           git diff --cached --check
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

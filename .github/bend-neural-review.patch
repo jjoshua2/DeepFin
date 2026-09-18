@@ -1,0 +1,176 @@
+diff --git a/native/bend_engine/neural_probe/README.md b/native/bend_engine/neural_probe/README.md
+index b3e0dbc..750c684 100644
+--- a/native/bend_engine/neural_probe/README.md
++++ b/native/bend_engine/neural_probe/README.md
+@@ -52,6 +52,10 @@ Only an explicit `deepfin-bend-cpu-tuple-v1` contract is accepted: CPU, fixed ba
+ input planes/dtype/history flags, SHA-256 package and policy-map identities, and
+ `(compact_policy_logits, wdl_logits)` output treespec. The native loader checks the
+ package's actual treespec and output shape/device/type before committing output.
++It requires `AOTI_RUNTIME_CHECK_INPUTS=1` before model loading; the coordinator sets
++this explicitly. A deliberately inconsistent input-plane sidecar is rejected by
++the package's own generated input checks, rather than trusted because its hash is
++correct. Direct C-ABI consumers must preserve this requirement.
+ This is not automatic support for arbitrary existing DeepFin package output order.
+ A valid hash identifies an artifact; it does not establish its neural semantics.
+ The qualification therefore also compares full logits against eager execution.
+diff --git a/native/bend_engine/neural_probe/adapter.py b/native/bend_engine/neural_probe/adapter.py
+index 458f6d9..c3c8125 100644
+--- a/native/bend_engine/neural_probe/adapter.py
++++ b/native/bend_engine/neural_probe/adapter.py
+@@ -7,7 +7,6 @@ import ctypes as ct
+ import hashlib
+ import json
+ from pathlib import Path
+-from typing import Self
+ 
+ import chess
+ import numpy as np
+@@ -25,7 +24,10 @@ ERROR_SIZE = 1024
+ 
+ def sha256(path: Path) -> str:
+     with path.open("rb") as stream:
+-        return hashlib.file_digest(stream, "sha256").hexdigest()
++        digest = hashlib.sha256()
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            digest.update(chunk)
++        return digest.hexdigest()
+ 
+ 
+ def key_for(board: chess.Board, move: chess.Move) -> int:
+@@ -105,7 +107,7 @@ def contract(package: Path) -> dict:
+     return data
+ 
+ 
+-class Features(AbstractContextManager):
++class Features(AbstractContextManager["Features"]):
+     """One immutable replay root; native calls validate every leaf and action set."""
+ 
+     def __init__(
+@@ -191,9 +193,6 @@ class Features(AbstractContextManager):
+             self.lib.df_root_free(self.handle)
+             self.handle = None
+ 
+-    def __enter__(self) -> Self:
+-        return self
+-
+     def prepare(
+         self, board: rules.Position, actions: list[int], path: list[int]
+     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+@@ -239,7 +238,7 @@ class Features(AbstractContextManager):
+         return planes, full[: len(actions)], compact[: len(actions)]
+ 
+ 
+-class AOTI(AbstractContextManager):
++class AOTI(AbstractContextManager["AOTI"]):
+     """Native model and legal softmax, invoked only by the test coordinator."""
+ 
+     def __init__(self, library: Path, package: Path):
+@@ -287,9 +286,6 @@ class AOTI(AbstractContextManager):
+             self.lib.df_aoti_close(self.handle)
+             self.handle = None
+ 
+-    def __enter__(self) -> Self:
+-        return self
+-
+     def evaluate(
+         self, planes: np.ndarray, compact: np.ndarray
+     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+diff --git a/native/bend_engine/neural_probe/aoti.cpp b/native/bend_engine/neural_probe/aoti.cpp
+index 61e2840..9b11cdb 100644
+--- a/native/bend_engine/neural_probe/aoti.cpp
++++ b/native/bend_engine/neural_probe/aoti.cpp
+@@ -7,6 +7,7 @@
+ #include <torch/csrc/inductor/aoti_package/model_package_loader.h>
+ #include <algorithm>
+ #include <cstdint>
++#include <cstdlib>
+ #include <cstdio>
+ #include <cstring>
+ #include <memory>
+@@ -32,6 +33,9 @@ extern "C" void* df_aoti_open(const char* path, const char* output_spec,
+   try {
+     if (!path || !output_spec || (planes != 146 && planes != 175 && planes != 179) || bf16 > 1)
+       throw std::runtime_error("invalid CPU AOTI configuration");
++    const char* guards = std::getenv("AOTI_RUNTIME_CHECK_INPUTS");
++    if (!guards || std::strcmp(guards, "1") != 0)
++      throw std::runtime_error("AOTI_RUNTIME_CHECK_INPUTS=1 is required before loading packages");
+     at::set_num_threads(2);
+     auto e = std::make_unique<Evaluator>(path, planes, bf16 != 0);
+     const auto spec = e->loader.get_call_spec();
+diff --git a/native/bend_engine/neural_probe/run_probe.py b/native/bend_engine/neural_probe/run_probe.py
+index 6a35550..fa7c8c5 100644
+--- a/native/bend_engine/neural_probe/run_probe.py
++++ b/native/bend_engine/neural_probe/run_probe.py
+@@ -7,6 +7,7 @@ import argparse
+ import json
+ import os
+ from pathlib import Path
++import shutil
+ import tempfile
+ import time
+ 
+@@ -228,8 +229,23 @@ def verify_neural(
+     package: Path,
+     model: torch.nn.Module,
+ ) -> dict:
++    if os.environ.get("AOTI_RUNTIME_CHECK_INPUTS") != "1":
++        raise ValueError(
++            "AOTI runtime input checks must be enabled before loading a model"
++        )
+     oracle = sessions.Oracle(binaries["reference"], with_python_chess=True)
+     rows = []
++    # Disabled generated-kernel input checks must never silently qualify.
++    os.environ.pop("AOTI_RUNTIME_CHECK_INPUTS")
++    try:
++        try:
++            with AOTI(library, package):
++                raise AssertionError("unchecked native loader accepted")
++        except ValueError as ex:
++            if "AOTI_RUNTIME_CHECK_INPUTS" not in str(ex):
++                raise
++    finally:
++        os.environ["AOTI_RUNTIME_CHECK_INPUTS"] = "1"
+     with AOTI(library, package) as native:
+         cfg = native.contract
+         selected = [histories()[0], *histories()[-4:]]
+@@ -321,10 +337,31 @@ def verify_neural(
+                 else:
+                     raise AssertionError("invalid AOTI request accepted")
+             native.evaluate(enc, compact)
++    wrong_input_rejected = False
++    if cfg["planes"] < 179:
++        # Deliberately inconsistent sidecar, same package hash/tuple schema.
++        # Allocate MORE input storage, never a smaller unsafe buffer for this test.
++        with tempfile.TemporaryDirectory(prefix="aoti-bad-contract-") as tmp:
++            wrong = Path(tmp) / "wrong.pt2"
++            shutil.copyfile(package, wrong)
++            changed = dict(cfg, planes=179)
++            wrong.with_suffix(".json").write_text(json.dumps(changed))
++            with AOTI(library, wrong) as mismatched:
++                try:
++                    mismatched.evaluate(
++                        np.zeros((179, 8, 8), dtype=np.float32),
++                        np.asarray([0], dtype=np.uint32),
++                    )
++                except ValueError:
++                    wrong_input_rejected = True
++                else:
++                    raise AssertionError("package input contract mismatch was accepted")
+     return {
+         "sessions": rows,
+         "native_evaluations": sum(row["native_evaluations"] for row in rows),
+-        "loaded_model_instances": 1,
++        "loaded_search_model_instances": 1,
++        "unchecked_loader_rejected": True,
++        "actual_input_mismatch_rejected": wrong_input_rejected,
+         "negative_aoti_inputs": 3,
+     }
+ 
+@@ -390,6 +427,7 @@ def main() -> None:
+     # Isolated process/cache; no live package, checkpoint, or worker is changed.
+     os.environ.setdefault("CXX", "/usr/bin/g++")
+     os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = "1"
++    os.environ["AOTI_RUNTIME_CHECK_INPUTS"] = "1"
+     torch.set_num_threads(2)
+     start = time.monotonic()
+     with tempfile.TemporaryDirectory(prefix="bend-neural-") as tmp:
