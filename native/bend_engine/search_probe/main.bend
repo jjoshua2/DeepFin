@@ -110,18 +110,18 @@ def insert_ranked(item: Ranked, xs: List<Ranked>) -> List<Ranked>:
         case Con{head, rest}:
           match head:
             case Ranked{h_action, h_visits, +h_score}:
-              gt = F32.is_gt(score, h_score)
-              match gt:
-                case True{}:
-                  Con{
-                    Ranked{action, visits, score},
-                    Con{Ranked{h_action, h_visits, h_score}, rest}
-                  }
-                case False{}:
-                  Con{
-                    Ranked{h_action, h_visits, h_score},
-                    insert_ranked(Ranked{action, visits, score}, rest)
-                  }
+              Bool.pick(
+                List<Ranked>,
+                F32.is_gt(score, h_score),
+                Con{
+                  Ranked{action, visits, score},
+                  Con{Ranked{h_action, h_visits, h_score}, rest}
+                },
+                Con{
+                  Ranked{h_action, h_visits, h_score},
+                  insert_ranked(Ranked{action, visits, score}, rest)
+                }
+              )
 
 def sort_ranked(xs: List<Ranked>) -> List<Ranked>:
   match xs:
@@ -335,15 +335,22 @@ def round_work(cands: List<Cand>, +active: U32, +budget: U32) -> RoundOut:
   agg = aggregate(visited)
   round_after_agg(agg, active, budget, vpa)
 
+def round_decide(
+  go: Bool,
+  cands: List<Cand>,
+  active: U32,
+  budget: U32
+) -> RoundOut:
+  match go:
+    case True{}:
+      round_work(cands, active, budget)
+    case False{}:
+      RoundOut{cands, budget}
+
 def round_from_count(counted: Counted, budget: U32) -> RoundOut:
   match counted:
     case Counted{cands, active}:
-      go = U32.is_gt(active, 1)
-      match go:
-        case True{}:
-          round_work(cands, active, budget)
-        case False{}:
-          RoundOut{cands, budget}
+      round_decide(U32.is_gt(active, 1), cands, active, budget)
 
 def round_once(cands: List<Cand>, budget: U32) -> RoundOut:
   counted = count_active(cands)
@@ -368,6 +375,15 @@ def tail_stats(
             U32.add(active_count, Bool.pick(U32, active, 1, 0))
           )
 
+def finish_after_stats(
+  action: U32,
+  budget: U32,
+  stats: TailStats
+) -> SearchResult:
+  match stats:
+    case TailStats{total, xor, active_count}:
+      SearchResult{action, active_count, budget, total, xor}
+
 def finish(cands: List<Cand>, budget: U32) -> SearchResult:
   match cands:
     case Nil{}:
@@ -375,27 +391,34 @@ def finish(cands: List<Cand>, budget: U32) -> SearchResult:
     case Con{head, rest}:
       match head:
         case Cand{+action, +visits, active}:
-          stats = tail_stats(
-            rest,
-            visits,
-            visit_word(action, visits),
-            Bool.pick(U32, active, 1, 0)
+          finish_after_stats(
+            action,
+            budget,
+            tail_stats(
+              rest,
+              visits,
+              visit_word(action, visits),
+              Bool.pick(U32, active, 1, 0)
+            )
           )
-          match stats:
-            case TailStats{total, xor, active_count}:
-              SearchResult{action, active_count, budget, total, xor}
 
-def search_three(cands: List<Cand>) -> SearchResult:
-  r1 = round_once(cands, 64)
+def search_after_r3(r3: RoundOut) -> SearchResult:
+  match r3:
+    case RoundOut{c3, b3}:
+      finish(c3, b3)
+
+def search_after_r2(r2: RoundOut) -> SearchResult:
+  match r2:
+    case RoundOut{c2, b2}:
+      search_after_r3(round_once(c2, b2))
+
+def search_after_r1(r1: RoundOut) -> SearchResult:
   match r1:
     case RoundOut{c1, b1}:
-      r2 = round_once(c1, b1)
-      match r2:
-        case RoundOut{c2, b2}:
-          r3 = round_once(c2, b2)
-          match r3:
-            case RoundOut{c3, b3}:
-              finish(c3, b3)
+      search_after_r2(round_once(c1, b1))
+
+def search_three(cands: List<Cand>) -> SearchResult:
+  search_after_r1(round_once(cands, 64))
 
 def print_result(
   fixture: U32,
@@ -418,16 +441,27 @@ def print_result(
         ++ " visit_xor=" ++ U32.show(visit_xor)
       )
 
+def probe_after_seeded(
+  fixture: U32,
+  legal: U32,
+  seeded: Seeded
+) -> IO(Unit):
+  match seeded:
+    case Seeded{cands, sampled, seed_xor}:
+      print_result(
+        fixture,
+        legal,
+        sampled,
+        seed_xor,
+        search_three(cands)
+      )
+
 def probe_after_moves(
   fixture: U32,
   legal: U32,
   moves: List<U32>
 ) -> IO(Unit):
-  seeded = seed_candidates(moves)
-  match seeded:
-    case Seeded{cands, sampled, seed_xor}:
-      result = search_three(cands)
-      print_result(fixture, legal, sampled, seed_xor, result)
+  probe_after_seeded(fixture, legal, seed_candidates(moves))
 
 def probe_after_count(
   fixture: U32,
