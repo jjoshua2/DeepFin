@@ -133,3 +133,14 @@ installed from the moving release feed. Bend computes PEXT/magic slider indices
 and reads `Array<U64>` attack tables, compared exhaustively with the existing
 CBoard ray walker and production magic tables. It does not change the compiler
 used by the earlier probes, and it does not replace production move generation.
+
+## Bend-owned legal move generation and perft
+
+[`legal_probe/`](legal_probe/README.md) builds on the pinned U64 slider probe.
+Bend owns copy/make, king-safety filtering, castling, en passant, promotions,
+perft/divide, and seeded random play; C only loads input and attack tables.
+A separate CBoard executable and optional python-chess validate exact moves and
+child states. This experiment is isolated from production and the CUDA/search
+stack. Native CI is path-scoped, defaults to startpos depth 4 or less, and does
+not increase existing perft test depths. See its README for the explicit depth-5
+command and scope limits.

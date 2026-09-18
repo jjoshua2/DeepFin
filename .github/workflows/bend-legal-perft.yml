@@ -1,0 +1,42 @@
+name: Bend legal moves and perft
+
+on:
+  pull_request:
+    paths:
+      - "native/bend_engine/legal_probe/**"
+      - "native/bend_engine/bitboard_probe/**"
+      - "tests/test_bend_legal_probe.py"
+      - "chess_anti_engine/encoding/_cboard_impl.h"
+      - "chess_anti_engine/encoding/_slider_attacks_impl.h"
+      - "chess_anti_engine/encoding/_bitboard_planes_impl.h"
+      - ".github/workflows/bend-legal-perft.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  legal-perft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - name: Install and verify pinned U64 compiler
+        run: bash native/bend_engine/bitboard_probe/install_toolchain.sh
+      - name: Install independent test-time rules oracle
+        run: python3 -m pip install "python-chess==1.999"
+      - name: Check Bend rules, perft/divide and seeded play against CBoard
+        run: |
+          python3 -m native.bend_engine.legal_probe.run_probe \
+            --python-chess --report artifacts/bend-legal-perft.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-legal-perft
+          path: artifacts/bend-legal-perft.json
+          retention-days: 14
