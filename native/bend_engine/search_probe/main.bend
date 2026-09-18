@@ -250,7 +250,7 @@ def range_cons(cand: Cand, tail: QRange, +mixed: F32) -> QRange:
 def completed_range(xs: List<Cand>, +mixed: F32) -> QRange:
   match xs:
     case Nil{}:
-      QRange{Nil{}, 1.0e30, -1.0e30}
+      QRange{Nil{}, 1.0e30, F32.neg(1.0e30)}
     case Con{cand, rest}:
       tail = completed_range(rest, mixed)
       range_cons(cand, tail, mixed)
@@ -274,7 +274,7 @@ def rank_round(
             F32.add(fake_gumbel(action), F32.log(fake_prior(action))),
             F32.mul(q_scale, q_bar)
           )
-          score = Bool.pick(F32, active, live_score, -1.0e30)
+          score = Bool.pick(F32, active, live_score, F32.neg(1.0e30))
           Con{
             Ranked{action, visits, score},
             rank_round(rest, mixed, min_q, denom, q_scale)
