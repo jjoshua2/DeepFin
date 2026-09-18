@@ -17,12 +17,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version-file: .python-version
-      - name: Apply exactly the locally tested patch
+      - name: Apply hash-verified implementation and timer correction
         run: |
           cat .github/perft-patch-0.txt .github/perft-patch-1.txt .github/perft-patch-2.txt > /tmp/perft-feature.patch
           echo '94bfd7f257f15cfffbae7e60b63c3ff16e1fc90ff8469488a982ff029bf0da1d  /tmp/perft-feature.patch' | sha256sum -c -
           git apply --check /tmp/perft-feature.patch
           git apply /tmp/perft-feature.patch
+          echo '481bb9ccebb841679fcc7d9d9db7042351e118fca515a47c1264baf42f70b6df  .github/perft-timer-fix.patch' | sha256sum -c -
+          git apply --check .github/perft-timer-fix.patch
+          git apply .github/perft-timer-fix.patch
           git diff --check
       - name: Install isolated compiler and validation tools
         run: |
@@ -57,7 +60,7 @@ jobs:
           PY
       - name: Commit only validated feature files
         run: |
-          git rm .github/perft-patch-0.txt .github/perft-patch-1.txt .github/perft-patch-2.txt
+          git rm .github/perft-patch-0.txt .github/perft-patch-1.txt .github/perft-patch-2.txt .github/perft-timer-fix.patch
           git add docs/experiments/2026-09-18-bend-perft-baseline.md docs/experiments/README.md native/bend_engine/legal_probe/Chess.bend native/bend_engine/legal_probe/README.md native/bend_engine/legal_probe/bench.bend native/bend_engine/legal_probe/bench_clock.c native/bend_engine/legal_probe/bench_clock.h native/bend_engine/legal_probe/benchmark.py native/bend_engine/legal_probe/run_probe.py native/bend_engine/legal_probe/support.c tests/test_bend_perft_benchmark.py
           git diff --cached --check
           git diff --cached --exit-code -- chess_anti_engine tests/test_perft.py .github/workflows/bend-legal-perft.yml
