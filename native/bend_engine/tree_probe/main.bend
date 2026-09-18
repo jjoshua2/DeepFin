@@ -718,7 +718,7 @@ def stats_cons_decide(
 def stats_cons(child: RootChild, tail: VisitStats) -> VisitStats:
   match child tail:
     case RootChild{+action, prior, +n, w, expanded, kids}
-         VisitStats{total, xor, best_action, best_visits, expanded_count}:
+         VisitStats{total, xor, best_action, +best_visits, expanded_count}:
       stats_cons_decide(
         U32.is_gt(n, best_visits),
         action,
