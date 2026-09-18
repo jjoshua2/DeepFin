@@ -49,6 +49,12 @@ EDGES = [
     ("checkmate", "7k/6Q1/5K2/8/8/8/8/8 b - - 0 1"),
     ("stalemate", "7k/5Q2/6K1/8/8/8/8/8 b - - 0 1"),
     ("draw_counter_ignored", START.replace("0 1", "150 100")),
+    ("file_pinned_knight", "4r1k1/8/8/8/8/8/4N3/4K3 w - - 0 1"),
+    ("pinned_pawn_capture", "4r1k1/8/8/8/8/3b4/4P3/4K3 w - - 0 1"),
+    ("diagonal_pin", "6k1/8/7q/8/8/8/3B4/2K5 w - - 0 1"),
+    ("second_blocker", "4r1k1/8/8/8/8/4N3/4P3/4K3 w - - 0 1"),
+    ("blocker_without_pinner", "6k1/8/8/8/8/8/4N3/4K3 w - - 0 1"),
+    ("black_file_pin", "4k3/4n3/8/8/8/8/8/4R1K1 b - - 0 1"),
 ]
 Position = tuple[int, ...]  # 8 full-width bitboards, turn, rights, ep
 Move = tuple[int, int, int, int]  # src, dst, promotion piece id, special flag
@@ -231,6 +237,17 @@ def feature_check(rows: dict[Position, dict[Move, Position]]) -> None:
         ("ep_rank_pin", (38, 45, 0, 1), False), ("ep_check_evasion", (36, 43, 0, 1), True),
         ("ep_black", (28, 19, 0, 1), True), ("ep_black_pin", (28, 19, 0, 1), False),
     ]
+    probes.extend([
+        ("file_pinned_knight", (12, 29, 0, 0), False),
+        ("pinned_pawn_capture", (12, 19, 0, 0), False),
+        ("pinned_pawn_capture", (12, 20, 0, 0), True),
+        ("diagonal_pin", (11, 18, 0, 0), False),
+        ("diagonal_pin", (11, 20, 0, 0), True),
+        ("diagonal_pin", (11, 47, 0, 0), True),
+        ("second_blocker", (20, 37, 0, 0), True),
+        ("blocker_without_pinner", (12, 29, 0, 0), True),
+        ("black_file_pin", (52, 35, 0, 0), False),
+    ])
     positions = {label: fen_position(fen) for label, fen in EDGES}
     for label, move, present in probes:
         if (move in rows[positions[label]]) != present:

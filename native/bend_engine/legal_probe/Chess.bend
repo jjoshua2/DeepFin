@@ -317,13 +317,51 @@ def filter_legal(xs: List<&2, Ply>, +b: Board, r: Array<U64> & List<&2, Ply>) ->
     case Nil{}: r
     case Con{m, rest}: filter_legal(rest, b, filter_step(b, m, r))
 
-def filter_start(+b: Board, r: Array<U64> & List<&2, Ply>) -> Array<U64> & List<&2, Ply>:
+# Outside check, an ordinary non-king move can expose our king only by
+# vacating the FIRST occupied square on one of its eight sliding rays.
+# This is deliberately conservative: the blocker need not actually be pinned.
+# King moves and en passant always take the full make/check path. In check,
+# every candidate still takes that path. No pin-line/evasion semantics change.
+def filter_fast_step(required: Bool, +b: Board, +m: Ply,
+  r: Array<U64> & List<&2, Ply>) -> Array<U64> & List<&2, Ply>:
+  match required:
+    case True{}: filter_step(b, m, r)
+    case False{}:
+      (table, acc) = r
+      (table, Con{m, acc})
+
+def filter_requires(sensitive: U64, m: Ply) -> Bool:
+  Ply{src, dst, promotion, flag} = m
+  Bool.or(U32.is_eq(flag, 1), U64.test_bit(sensitive, U32.to_nat(src)))
+
+def filter_fast(xs: List<&2, Ply>, +b: Board, +sensitive: U64,
+  r: Array<U64> & List<&2, Ply>) -> Array<U64> & List<&2, Ply>:
+  match xs:
+    case Nil{}: r
+    case Con{+m, rest}:
+      filter_fast(rest, b, sensitive, filter_fast_step(filter_requires(sensitive, m), b, m, r))
+
+def filter_blockers(+b: Board, moves: List<&2, Ply>, r: Array<U64> & U64) -> Array<U64> & List<&2, Ply>:
+  (table, rays) = r
+  own = color(b, get_turn(b))
+  sensitive = U64.and(own, U64.or(rays, get_kings(b)))
+  filter_fast(moves, b, sensitive, (table, Nil{}))
+
+def filter_checked(+b: Board, moves: List<&2, Ply>, r: Array<U64> & Bool) -> Array<U64> & List<&2, Ply>:
+  (table, check) = r
+  match check:
+    case True{}: filter_legal(moves, b, (table, Nil{}))
+    case False{}:
+      sq = U64.ctz(U64.and(get_kings(b), color(b, get_turn(b))))
+      filter_blockers(b, moves, attack(4, table, sq, get_turn(b), occupied(b)))
+
+def filter_prepare(+b: Board, r: Array<U64> & List<&2, Ply>) -> Array<U64> & List<&2, Ply>:
   (table, moves) = r
-  filter_legal(moves, b, (table, Nil{}))
+  filter_checked(b, moves, in_check(table, b, get_turn(b)))
 
 def legal_moves(table: Array<U64>, +b: Board) -> Array<U64> & List<&2, Ply>:
   +own = color(b, get_turn(b))
-  filter_start(b, castle_side(b, False{}, castle_side(b, True{},
+  filter_prepare(b, castle_side(b, False{}, castle_side(b, True{},
     scan(bit_squares(64n, U64.is_zero(own), own, Nil{}), b, (table, Nil{})))))
 
 def children(ms: List<&2, Ply>, +b: Board) -> List<&2, Board>:
