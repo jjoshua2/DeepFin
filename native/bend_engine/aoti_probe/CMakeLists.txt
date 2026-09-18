@@ -15,7 +15,7 @@ add_executable(
 )
 
 set_property(TARGET deepfin_bend_aoti_probe PROPERTY C_STANDARD 11)
-set_property(TARGET deepfin_bend_aoti_probe PROPERTY CXX_STANDARD 17)
+set_property(TARGET deepfin_bend_aoti_probe PROPERTY CXX_STANDARD 20)
 set_property(TARGET deepfin_bend_aoti_probe PROPERTY CXX_STANDARD_REQUIRED ON)
 
 target_compile_options(
