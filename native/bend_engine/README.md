@@ -124,3 +124,12 @@ can emit a `.so` this host cannot dlopen.
 This proves the C++ AOTI deployment mechanism and Bend/native data path. It does
 **not** yet prove that a production DeepFin CUDA package runs correctly or at
 the desired throughput. A CUDA DeepFin-package parity test is the next gate.
+
+## Pinned-U64 bitboard experiment
+
+[`bitboard_probe/`](bitboard_probe/README.md) is a separate CPU-only integration
+gate using the tested U64 compiler fork, pinned and source-verified rather than
+installed from the moving release feed. Bend computes PEXT/magic slider indices
+and reads `Array<U64>` attack tables, compared exhaustively with the existing
+CBoard ray walker and production magic tables. It does not change the compiler
+used by the earlier probes, and it does not replace production move generation.
