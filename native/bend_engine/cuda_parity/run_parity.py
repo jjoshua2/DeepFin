@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import os
 from pathlib import Path
 import re
+import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 
 import chess
@@ -13,7 +16,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
-from chess_anti_engine.inference import _aoti_load_package, _policy_output_full
+from chess_anti_engine.inference import _policy_output_full
 from chess_anti_engine.moves.encode import (
     COMPACT_POLICY_SIZE,
     COMPACT_TO_FULL_POLICY,
@@ -21,6 +24,7 @@ from chess_anti_engine.moves.encode import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[3]
 MAGIC = b"DFCUDA3\0"
 VERSION = 1
 FIXTURE_FENS = (
@@ -31,6 +35,30 @@ FIXTURE_FENS = (
     "k3r3/8/8/8/8/8/8/4K3 w - - 0 1",
     "r2q1rk1/pp2bppp/2npbn2/2p5/4P3/2NP1N2/PPQ1BPPP/R1B2RK1 w - - 4 10",
 )
+
+
+def _first_executable(candidates: list[str | None]) -> str | None:
+    for raw in candidates:
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+        found = shutil.which(raw)
+        if found:
+            return found
+    return None
+
+
+def _bend_bin() -> str | None:
+    return _first_executable(
+        [
+            os.environ.get("BEND_BIN"),
+            "bend",
+            str(ROOT / "build" / "bend_toolchain" / "bin" / "bend"),
+            str(Path.home() / ".bend" / "bin" / "bend"),
+        ]
+    )
 
 
 def infer_bucket(package: Path, explicit: int | None) -> int:
@@ -158,7 +186,10 @@ def python_reference(
     input_cuda = input_cpu.to(device=device)
 
     with torch.cuda.device(device_index), torch.no_grad():
-        model = _aoti_load_package(str(package))
+        importlib.import_module("torch._inductor.codecache")
+        model = torch._inductor.aoti_load_package(
+            str(package), device_index=device_index
+        )
         out = model(input_cuda)
         raw_policy = out["policy"] if "policy" in out else out["policy_own"]
         dense_policy = _policy_output_full(out).detach().float().cpu().numpy()
@@ -257,6 +288,24 @@ def main() -> None:
 
         env = os.environ.copy()
         env["BEND_CUDA_PARITY_BUILD_DIR"] = str(args.build_dir.resolve())
+        env["PYTHON"] = sys.executable
+        bend = _bend_bin()
+        if bend is None:
+            raise RuntimeError("Bend compiler not found")
+        env["BEND_BIN"] = bend
+        cmake = _first_executable([os.environ.get("CMAKE"), "cmake"])
+        if cmake:
+            env["CMAKE"] = cmake
+        cc = _first_executable(
+            [os.environ.get("BEND_CUDA_PARITY_CC"), os.environ.get("CC"), "clang"]
+        )
+        cxx = _first_executable(
+            [os.environ.get("BEND_CUDA_PARITY_CXX"), "clang++"]
+        )
+        if cc:
+            env["BEND_CUDA_PARITY_CC"] = cc
+        if cxx:
+            env["BEND_CUDA_PARITY_CXX"] = cxx
         built = _run_checked([str(build_script)], env=env)
         binary = Path(built.stdout.strip().splitlines()[-1])
         if not binary.is_file():
@@ -267,6 +316,11 @@ def main() -> None:
         run_env["DEEPFIN_AOTI_CUDA_FIXTURE"] = str(fixture)
         run_env["DEEPFIN_AOTI_DEVICE_INDEX"] = str(args.device_index)
         native = _run_checked([str(binary)], env=run_env)
+        if "cuda_parity_error=" in native.stdout:
+            raise RuntimeError(
+                f"native Bend reported a summary error:\n"
+                f"--- stdout ---\n{native.stdout}\n--- stderr ---\n{native.stderr}"
+            )
         observed = parse_native_summary(native.stdout)
 
     if observed != expected:

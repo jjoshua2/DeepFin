@@ -57,5 +57,5 @@ jobs:
       - name: Compile-check DeepFin CUDA parity harness
         env:
           BEND_NO_TELEMETRY: "1"
-          BEND_CUDA_PARITY_BUILD_DIR: "${{ runner.temp }}/bend_cuda_parity"
-        run: native/bend_engine/cuda_parity/build_probe.sh
+          CAE_REQUIRE_BEND_CUDA_PARITY: "1"
+        run: pytest -q tests/test_bend_cuda_parity_harness.py

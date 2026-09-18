@@ -1,8 +1,9 @@
 # DeepFin CUDA package parity gate
 
-This is PR 3 in the Bend-engine sequence. It is intentionally a **manual GPU
+This is the DeepFin CUDA AOTI parity gate. It is intentionally a **manual GPU
 gate** because GitHub-hosted CI does not provide the NVIDIA/CUDA environment
-used by DeepFin.
+used by DeepFin. Hosted CI compile-checks the Bend/C++ binary against CPU
+LibTorch and asserts it does not NEEDED-link libpython.
 
 It compares the same real DeepFin AOTInductor package through two paths:
 
@@ -16,8 +17,8 @@ policy and convert policy/WDL outputs to float32. The harness compares two
 independent bit-level summaries (XOR and index-weighted sum) plus tensor counts
 and raw policy width.
 
-The native executable contains no Python runtime. Python is the test oracle and
-fixture builder only.
+The native executable must not NEEDED-link a Python runtime. Python is the test
+oracle and fixture builder only.
 
 ## Run on the DeepFin CUDA host
 
@@ -63,3 +64,8 @@ It does **not** yet validate native hot weight rebinding with
 `load_constants`. Run this against a package containing the checkpoint you
 intend to compare. Live checkpoint rebinding is a later gate if the standalone
 engine/client needs one package to serve multiple published nets.
+
+Production `distributed_inference_aot_dir` is currently empty: the
+`data/aot_models_512/*.pt2` files were compiled before the bt4heads promotion
+and are not a live inference path. A CUDA PASS requires a package that the
+current torch/driver can actually execute.

@@ -141,18 +141,65 @@ std::vector<float> decode_bf16(const std::vector<uint16_t>& bits) {
   return out;
 }
 
-at::Tensor find_wdl(const std::vector<at::Tensor>& outputs) {
-  for (const auto& out : outputs) {
-    if (out.dim() == 2 && out.size(1) == 3) return out;
+// Python AOTICompiledModel unflattens loader.run() with get_call_spec()[1].
+// Flattened tensor order matches the dict keys in that treespec context.
+std::vector<std::string> output_names_from_call_spec(
+  const std::vector<std::string>& spec
+) {
+  if (spec.size() < 2) return {};
+  const std::string& out_spec = spec[1];
+  const std::string key = "\"context\": \"";
+  auto pos = out_spec.find(key);
+  if (pos == std::string::npos) return {};
+  pos += key.size();
+  std::string decoded;
+  while (pos < out_spec.size() && out_spec[pos] != '"') {
+    if (out_spec[pos] == '\\' && pos + 1 < out_spec.size()) {
+      decoded.push_back(out_spec[pos + 1]);
+      pos += 2;
+      continue;
+    }
+    decoded.push_back(out_spec[pos]);
+    ++pos;
   }
-  return {};
+  std::vector<std::string> names;
+  std::string cur;
+  bool in_str = false;
+  for (char c : decoded) {
+    if (c == '"') {
+      if (in_str) {
+        names.push_back(cur);
+        cur.clear();
+      }
+      in_str = !in_str;
+      continue;
+    }
+    if (in_str) cur.push_back(c);
+  }
+  return names;
 }
 
-at::Tensor find_policy(const std::vector<at::Tensor>& outputs) {
-  for (const auto& out : outputs) {
-    if (out.dim() == 2 && out.size(1) != 3) return out;
+at::Tensor named_output(
+  const std::vector<std::string>& names,
+  const std::vector<at::Tensor>& outputs,
+  const std::vector<std::string>& aliases
+) {
+  if (names.size() != outputs.size()) {
+    throw std::runtime_error(
+      "call_spec output names do not match AOTI run() tensors"
+    );
   }
-  return {};
+  at::Tensor found;
+  for (size_t i = 0; i < names.size(); ++i) {
+    for (const std::string& alias : aliases) {
+      if (names[i] != alias) continue;
+      if (found.defined()) {
+        throw std::runtime_error("multiple AOTI outputs match " + alias);
+      }
+      found = outputs[i];
+    }
+  }
+  return found;
 }
 
 at::Tensor dense_policy(
@@ -262,10 +309,14 @@ extern "C" uint32_t deepfin_cuda_parity_run(
     at::Tensor input = cpu.to(device);
 
     std::vector<at::Tensor> outputs = loader.run({input});
-    at::Tensor raw_policy = find_policy(outputs);
-    at::Tensor wdl = find_wdl(outputs);
+    const std::vector<std::string> names =
+      output_names_from_call_spec(loader.get_call_spec());
+    at::Tensor raw_policy = named_output(names, outputs, {"policy", "policy_own"});
+    at::Tensor wdl = named_output(names, outputs, {"wdl"});
     if (!raw_policy.defined() || !wdl.defined()) {
-      throw std::runtime_error("could not identify policy and WDL package outputs");
+      throw std::runtime_error(
+        "package call_spec does not name policy/policy_own and wdl"
+      );
     }
     if (raw_policy.size(0) != static_cast<int64_t>(fixture.batch)
         || wdl.size(0) != static_cast<int64_t>(fixture.batch)) {

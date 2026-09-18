@@ -18,6 +18,9 @@ for tool in "$BEND_BIN" "$PYTHON_BIN" "$CMAKE_BIN" "$CC_BIN" "$CXX_BIN"; do
 done
 
 export BEND_NO_TELEMETRY="${BEND_NO_TELEMETRY:-1}"
+if [ -d /usr/local/cuda/bin ]; then
+  PATH="/usr/local/cuda/bin:$PATH"
+fi
 
 mkdir -p "$BUILD_DIR"
 GENERATED="$BUILD_DIR/cuda_parity.generated.c"

@@ -1,6 +1,6 @@
 import Base
 
-# PR 3 GPU parity probe.
+# GPU parity probe.
 #
 # Bulk board tensors and neural outputs stay native. Bend receives only compact
 # scalar summaries of the dense search policy + WDL result.
