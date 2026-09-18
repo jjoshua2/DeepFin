@@ -52,9 +52,7 @@ def _cc_bin() -> str | None:
 
 
 def _cxx_bin() -> str | None:
-    return _first_executable(
-        [os.environ.get("BEND_AOTI_CXX"), "clang++", "c++"]
-    )
+    return _first_executable([os.environ.get("BEND_AOTI_CXX"), "clang++"])
 
 
 def _require_bend_aoti_probe() -> bool:
@@ -180,6 +178,10 @@ def test_bend_can_run_native_aoti_package(tmp_path: Path) -> None:
     assert binary.is_file(), built.stdout
 
     needed = _needed_libraries(binary)
+    assert needed, "readelf -d produced no NEEDED entries for the probe binary"
+    assert any("libtorch" in name for name in needed), (
+        f"probe binary did not link LibTorch; NEEDED={needed}"
+    )
     python_libs = [name for name in needed if "python" in name.lower()]
     assert python_libs == [], (
         "probe binary linked a Python runtime, which this architecture gate "

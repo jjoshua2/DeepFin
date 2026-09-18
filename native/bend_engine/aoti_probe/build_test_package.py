@@ -12,17 +12,13 @@ from typing import Any
 def _resolve_package_cxx() -> str:
     """Pick a C++ compiler whose libstdc++ matches a normal native process.
 
-    Inductor compiles the .pt2 wrapper with ``CXX`` / ``config.cpp.cxx``. A
-    user-local ``g++`` on PATH can be newer than the system libstdc++ the
-    probe binary actually loads; the wrapper then dlopens with
-    ``GLIBCXX_3.4.32 not found``. Prefer an explicit pin, then ``/usr/bin/g++``.
+    Inductor compiles the wrapper from ``CXX``. A user-local PATH ``g++`` can
+    be newer than the system libstdc++ the probe loads. Honor only
+    ``BEND_AOTI_PACKAGE_CXX``, then ``/usr/bin/g++`` — not a leftover ``CXX``.
     """
-    for raw in (
-        os.environ.get("BEND_AOTI_PACKAGE_CXX", "").strip(),
-        os.environ.get("CXX", "").strip(),
-    ):
-        if raw:
-            return raw
+    explicit = os.environ.get("BEND_AOTI_PACKAGE_CXX", "").strip()
+    if explicit:
+        return explicit
     usr = Path("/usr/bin/g++")
     if usr.is_file() and os.access(usr, os.X_OK):
         return str(usr)
