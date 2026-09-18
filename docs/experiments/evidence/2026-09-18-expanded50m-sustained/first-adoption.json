@@ -1,0 +1,17 @@
+{
+  "status": "ADOPTED_SUPERVISOR_STARTED",
+  "unix": 1789734925.597906,
+  "supervisor_pid": 1555328,
+  "item": {
+    "id": "expanded50548069_v50_from35m_epoch4_recovery_v3",
+    "kind": "registered_command",
+    "status": "queued",
+    "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_continue_v3/scheduler_run",
+    "max_seconds": 50570,
+    "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_continue_v3/registered_command.json",
+    "command_sha256": "4ff6516b75d0414656a68bd03d9ed5f7e73f4902faeb2dac0b78b1a4f2226645"
+  },
+  "old_deadline": 1789750777.45489,
+  "deadline_utc": "2026-09-20T12:35:25.592722Z",
+  "authorization": "User requested another24h useful work; parent authorized four50Mpasses and48h hardplanning envelope."
+}
