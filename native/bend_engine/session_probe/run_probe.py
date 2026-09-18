@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 from dataclasses import dataclass
 import json
 import math
@@ -210,11 +211,14 @@ class Reference:
 
 class Peer:
     def __init__(self, binary: Path, board: rules.Position):
-        self.errors = tempfile.TemporaryFile(mode='w+')
-        self.proc = subprocess.Popen([str(binary), '--threads', '1'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=self.errors, text=True, bufsize=1,
-                                     env={**os.environ, 'BEND_NO_TELEMETRY': '1'})
-        assert self.proc.stdout and self.proc.stdin
+        with ExitStack() as resources:
+            self.errors = resources.enter_context(tempfile.TemporaryFile(mode='w+'))
+            self.proc = subprocess.Popen([str(binary), '--threads', '1'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=self.errors, text=True, bufsize=1,
+                                         env={**os.environ, 'BEND_NO_TELEMETRY': '1'})
+            self.resources = resources.pop_all()
+        assert self.proc.stdout
+        assert self.proc.stdin
         self.queue: Queue[str | None] = Queue()
         def read() -> None:
             assert self.proc.stdout
@@ -261,7 +265,7 @@ class Peer:
             self.proc.stdin.close()
         if self.proc.stdout:
             self.proc.stdout.close()
-        self.errors.close()
+        self.resources.close()
 
     def finish(self) -> None:
         self.write('config 0 0 0 0\n')
