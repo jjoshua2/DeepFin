@@ -1,0 +1,63 @@
+name: Bend neural history and policy contract
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/bend-neural-contract.yml'
+      - 'native/bend_engine/neural_probe/**'
+      - 'native/bend_engine/session_probe/**'
+      - 'native/bend_engine/legal_probe/**'
+      - 'native/bend_engine/bitboard_probe/**'
+      - 'chess_anti_engine/encoding/**'
+      - 'chess_anti_engine/moves/encode.py'
+      - 'chess_anti_engine/model/**'
+      - 'tests/test_bend_neural_contract.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+permissions:
+  contents: read
+jobs:
+  neural-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CXX: g++
+      TORCHINDUCTOR_COMPILE_THREADS: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      CUDA_VISIBLE_DEVICES: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          activate-environment: true
+      - name: Install isolated CPU dependencies and pinned compiler
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          python -c "import torch; assert torch.version.cuda is None"
+          bash native/bend_engine/bitboard_probe/install_toolchain.sh
+      - name: Focused static and cheap contracts
+        run: |
+          ruff check native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_contract.py
+          basedpyright native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_contract.py
+          mkdir -p /tmp/neural-contract-tests
+          cp tests/test_bend_neural_contract.py tests/test_bend_search_sessions.py /tmp/neural-contract-tests/
+          PYTHONPATH="$PWD" python -m pytest -q /tmp/neural-contract-tests --confcutdir=/tmp/neural-contract-tests
+      - name: Native encoding and actual CPU AOTI drive Bend search
+        run: |
+          python -m native.bend_engine.neural_probe.run_probe \
+            --report artifacts/bend-neural-contract.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-neural-contract
+          path: artifacts/bend-neural-contract.json
+          retention-days: 30

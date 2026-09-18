@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
 import json
@@ -53,6 +54,13 @@ def numbers(line: str, tag: str, count: int | None = None) -> list[int]:
     if any(x > SENTINEL for x in values):
         raise ValueError('output exceeds U32')
     return values
+
+
+def parse_path(line: str) -> list[int]:
+    words = numbers(line, 'path')
+    if not words or words[0] > 32 or len(words) != words[0] + 1:
+        raise ValueError('malformed bounded path')
+    return words[1:]
 
 
 def position(words: list[int]) -> rules.Position:
@@ -144,6 +152,14 @@ class Reference:
                 return f32(q + u), -a.key
             index = max(children, key=score)
         return index
+
+    def path(self, index: int) -> list[int]:
+        result = []
+        while index:
+            node = self.nodes[index]
+            result.append(node.key)
+            index = node.parent
+        return result[::-1]
 
     def backup(self, index: int, value: float) -> None:
         while True:
@@ -285,7 +301,8 @@ def evaluation(board: rules.Position, actions: list[int], variant: int = 0) -> t
 
 
 def session(peer: Peer, oracle: Oracle, board: rules.Position, *, epoch: int, budget: int = 24,
-            cap: int = 4096, depth: int = 4, fault: str = '', fault_at: int = 3, variant: int = 0) -> dict[str, int | str]:
+            cap: int = 4096, depth: int = 4, fault: str = '', fault_at: int = 3, variant: int = 0,
+            evaluator: Callable[[rules.Position, list[int], list[int]], tuple[list[float], list[float]]] | None = None) -> dict[str, int | str]:
     peer.write(f'config {epoch:x} {budget:x} {cap:x} {depth:x}\n')
     ref = Reference(board, oracle, cap=cap, depth=depth, budget=budget)
     exchanges = 0
@@ -306,6 +323,9 @@ def session(peer: Peer, oracle: Oracle, board: rules.Position, *, epoch: int, bu
         supplied = position(numbers(peer.line(), 'board', 19))
         if supplied != ref.nodes[wanted].board:
             raise AssertionError('request carries wrong board')
+        path = parse_path(peer.line())
+        if path != ref.path(wanted):
+            raise AssertionError('request carries wrong root-to-leaf history path')
         if not 1 <= header[3] <= 256:
             raise AssertionError('invalid legal action count')
         actions = [numbers(peer.line(), 'action', 1)[0] for _ in range(header[3])]
@@ -313,7 +333,8 @@ def session(peer: Peer, oracle: Oracle, board: rules.Position, *, epoch: int, bu
         legal = oracle.moves(supplied)
         if len(set(actions)) != len(actions) or set(actions) != set(legal):
             raise AssertionError('request legal moves differ from CBoard')
-        wdl, policy = evaluation(supplied, actions, variant)
+        wdl, policy = (evaluation(supplied, actions, variant) if evaluator is None
+                       else evaluator(supplied, actions, path))
         fields = [epoch, ref.seq, wanted, 0, *(bits(v) for v in wdl), len(policy), *(bits(v) for v in policy)]
         exchanges += 1
         if fault and exchanges == fault_at:

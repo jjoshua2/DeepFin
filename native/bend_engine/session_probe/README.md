@@ -111,3 +111,14 @@ is compatible with this design; rewriting every component in Bend is not a goal.
 Tests are path-scoped in Actions or explicit locally. Ordinary pytest only runs
 small parser/evaluator contract tests. Self-review only; these checks are not a
 universal theorem, an independent human review, or evidence of playing strength.
+
+
+## History-aware evaluator extension
+
+Every evaluator request now includes `path <length> <packed keys...>` after the
+board record. This is the chronological root-to-leaf path, with at most 32 moves;
+root requests carry `path 0`. The verifier checks it against parent links rather
+than assuming a board reconstructs its history. The existing deterministic test
+evaluator remains the default. An optional test callback consumes board, actions
+and path for [native neural qualification](../neural_probe/README.md).
+Search allocation, PUCT semantics, capacity and cancellation rules are unchanged.

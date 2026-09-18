@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Bend neural contract](2026-09-18-bend-neural-contract.md) | Native history/features/policy mapping and CPU AOTI driving Bend search; untrained composition gate, no CUDA or production claim |
 | [Bend search sessions](2026-09-18-bend-search-sessions.md) | Persistent bounded Bend PUCT with external test policy/WDL, cancellation/reply validation and reset; CPU functionality gate, no neural or production claim |
 | [Bend scalar branches](2026-09-18-bend-scalar-branches.md) | Profile-guided scalar U64/list selection; allocation mechanism and paired perft confirmation, no production adoption |
 | [Bend perft native baseline](2026-09-18-bend-perft-baseline.md) | Paired old/new Bend versus CBoard, conservative king-safety filter; CPU-only, no production adoption |

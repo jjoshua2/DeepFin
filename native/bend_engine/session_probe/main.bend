@@ -38,12 +38,56 @@ def moves_print(ms: List<&2, Chess.Ply>) -> IO(Unit):
         IO.print("action " ++ U32.show(Search.key(m)))
         moves_print(rest)
 
-def ticket_send(ticket: Search.Ticket) -> IO(Unit):
+# Root-to-leaf packed move path is required to reproduce history features.
+# A position alone is not a neural input identity. Tree nodes remain single-owned.
+type Trace is Type:
+  Trace{pool: Array<Search.Node>, id: U32, moves: List<&2, U32>}
+
+def trace_step(moves: List<&2, U32>, r: Array<Search.Node> & Search.Node) -> Trace:
+  (pool, +node) = r
+  Trace{pool, Search.node_parent(node), Con{Search.key(Search.node_move(node)), moves}}
+
+def trace_once(done: Bool, pool: Array<Search.Node>, id: U32, moves: List<&2, U32>) -> Trace:
+  match done:
+    case True{}: Trace{pool, id, moves}
+    case False{}: trace_step(moves, Array.get(Search.Node, pool, id))
+
+def trace_next(state: Trace) -> Trace:
+  Trace{pool, +id, moves} = state
+  trace_once(U32.is_zero(id), pool, id, moves)
+
+def trace_path(n: Nat, state: Trace) -> Trace:
+  match n:
+    case 0n: state
+    case 1n+p: trace_path(p, trace_next(state))
+
+def trace_words(ms: List<&2, U32>) -> String:
+  match ms:
+    case Nil{}: ""
+    case Con{m, rest}: " " ++ U32.show(m) ++ trace_words(rest)
+
+def trace_finish(used: U32, cap: U32, n: U32, pending: U32, epoch: U32,
+  request: U32, stop: U32, limit: U32, state: Trace) -> Search.Tree & String:
+  Trace{pool, root, +moves} = state
+  (Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit},
+    "path " ++ U32.show(U32.from_nat(List.length(&2, U32, moves))) ++ trace_words(moves))
+
+def trace_tree(tree: Search.Tree, id: U32) -> Search.Tree & String:
+  Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
+  trace_finish(used, cap, n, pending, epoch, request, stop, limit,
+    trace_path(33n, Trace{pool, id, Nil{}}))
+
+def ticket_node(ticket: Search.Ticket) -> U32:
+  Search.Ticket{epoch, request, node, board, moves, needed} = ticket
+  node
+
+def ticket_send(ticket: Search.Ticket, path: String) -> IO(Unit):
   Search.Ticket{epoch, request, node, board, +moves, needed} = ticket
   do IO<Unit>:
     IO.print("eval " ++ U32.show(epoch) ++ " " ++ U32.show(request) ++ " " ++ U32.show(node)
       ++ " " ++ U32.show(U32.from_nat(List.length(&2, Chess.Ply, moves))))
     IO.print("board " ++ board_text(board))
+    IO.print(path)
     moves_print(moves)
 
 type Live is Type:
@@ -53,14 +97,17 @@ def live_flag(table: Array<U64>, tree: Search.Tree) -> Live & Bool:
   Search.Tree{pool, used, cap, n, pending, epoch, request, +stop, limit} = tree
   (Live{table, Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit}}, Bool.not(U32.is_zero(stop)))
 
+def step_traced(table: Array<U64>, +ticket: Search.Ticket, r: Search.Tree & String) -> IO(Live & Bool):
+  (tree, path) = r
+  do IO<Live & Bool>:
+    ticket_send(ticket, path)
+    reply : Search.Reply <- Reply.read()
+    return live_flag(table, Search.resume(tree, ticket, reply))
+
 def step_read(needed: Bool, table: Array<U64>, tree: Search.Tree, +ticket: Search.Ticket) -> IO(Live & Bool):
   match needed:
     case False{}: IO.pure(Live & Bool, live_flag(table, tree))
-    case True{}:
-      do IO<Live & Bool>:
-        ticket_send(ticket)
-        reply : Search.Reply <- Reply.read()
-        return live_flag(table, Search.resume(tree, ticket, reply))
+    case True{}: step_traced(table, ticket, trace_tree(tree, ticket_node(ticket)))
 
 def ticket_needed(t: Search.Ticket) -> Bool:
   Search.Ticket{epoch, request, node, board, moves, needed} = t

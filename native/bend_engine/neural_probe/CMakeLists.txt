@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
+project(deepfin_bend_neural_contract LANGUAGES C CXX)
+find_package(Torch REQUIRED)
+add_library(deepfin_bend_aoti SHARED aoti.cpp)
+set_property(TARGET deepfin_bend_aoti PROPERTY CXX_STANDARD 20)
+set_property(TARGET deepfin_bend_aoti PROPERTY CXX_STANDARD_REQUIRED ON)
+target_compile_options(deepfin_bend_aoti PRIVATE -O2)
+target_link_libraries(deepfin_bend_aoti PRIVATE "${TORCH_LIBRARIES}")
