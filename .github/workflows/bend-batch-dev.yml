@@ -1,0 +1,26 @@
+name: Bend batching development snapshot
+on:
+  push:
+    branches: [feat/bend-evaluator-batching]
+    paths: ['.github/workflows/bend-batch-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir -p /tmp/bend-batch-source
+          git archive --format=tar.gz HEAD > /tmp/bend-batch-source/deepfin.tgz
+          git rev-parse HEAD > /tmp/bend-batch-source/revision.txt
+          python -m pip download --no-deps --no-binary=:all: chess==1.11.2 -d /tmp/bend-batch-source
+          python -m pip download --no-deps ruff==0.15.20 -d /tmp/bend-batch-source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-batch-source
+          path: /tmp/bend-batch-source/
+          retention-days: 2
