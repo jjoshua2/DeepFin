@@ -158,6 +158,7 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import math
 import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
@@ -324,7 +325,7 @@ def min_budget_for_mid_tolerance(window: int) -> int:
 # The artifacts a completed (or half-completed) run leaves behind. `--out-dir`
 # reuse is refused when any of these is present -- see `existing_run_artifacts`.
 RUN_ARTIFACTS = ("checkpoint.pt", "checkpoint_mid.pt", "summary.json",
-                 "checkpoint_epoch1.pt", "checkpoint_epoch1.pending.pt")
+                 "checkpoint_epoch1.pt", "checkpoint_epoch1.pending.pt", "recovery")
 
 
 def existing_run_artifacts(out_dir: Path) -> list[str]:
@@ -1590,7 +1591,7 @@ def _scalar_metric_record(metrics: Any) -> dict[str, Any]:
 def _train_multiple_game_epochs(
     trainer: Trainer, first: GameAwareEpochBuffer, *, buffer_kwargs: dict[str, Any],
     epochs: int, seed: int, batch_size: int, window_steps: int,
-    epoch_one_pending: Path,
+    epoch_one_pending: Path, recovery: Any = None,
 ) -> tuple[Any, int, list[dict[str, Any]], dict[str, Any]]:
     """Uninterrupted trajectory; fresh sampling order, continuous augmentation RNG."""
     buf = first
@@ -1600,6 +1601,7 @@ def _train_multiple_game_epochs(
     records: list[dict[str, Any]] = []
     windows: list[dict[str, Any]] = []
     steps_done = 0
+    rows_done = 0
     metrics: Any = None
     try:
         for epoch_index in range(epochs):
@@ -1633,6 +1635,14 @@ def _train_multiple_game_epochs(
                     "steps_requested": requested, "steps_cumulative": steps_done,
                     "epoch_steps_cumulative": epoch_steps, **values,
                 })
+                rows_done += int(values["train_samples_seen"])
+                if recovery is not None:
+                    recovery.maybe_save(trainer, progress={
+                        "epoch_index": epoch_index + 1, "epoch_seed": seed + epoch_index,
+                        "window_index": len(windows), "window_steps": requested,
+                        "epoch_steps_completed": epoch_steps, "run_steps_completed": steps_done,
+                        "run_rows_completed": rows_done, "corpus_sha256": corpus_sha,
+                    }, metrics=values, sampler_rng=buf.rng)
                 print(f"[train] epoch {epoch_index + 1}/{epochs}, "
                       f"{epoch_steps}/{epoch_batches} steps; total {steps_done}", flush=True)
             receipt = dict(buf.receipt())
@@ -2030,9 +2040,14 @@ def main(argv: list[str] | None = None) -> int:
              "recorded as not a valid control: nothing then ties the trained "
              "corpus to the held-out purity check.",
     )
+    parser.add_argument("--recovery-checkpoint-seconds", type=float, default=3600,
+                        help="Save full recovery state after the first window, then hourly; 0 disables.")
+    parser.add_argument("--recovery-checkpoint-keep", type=int, default=2)
     parser.add_argument("--overlay-storage-qualification", type=Path)
     parser.add_argument("--expected-overlay-storage-qualification-sha256")
     args = parser.parse_args(argv)
+    if not math.isfinite(args.recovery_checkpoint_seconds) or args.recovery_checkpoint_seconds < 0 or args.recovery_checkpoint_keep < 1:
+        parser.error("recovery interval must be finite/nonnegative and keep positive")
     if args.epoch_host_batch_overlap and args.sampling_mode != "game_epoch":
         raise SystemExit("--epoch-host-batch-overlap requires --sampling-mode game_epoch")
     overlay_ref = None
@@ -2427,6 +2442,9 @@ def main(argv: list[str] | None = None) -> int:
     if planned_problems:
         print("⚑⚑ --allow-invalid-control: THIS RUN IS NOT A VALID CONTROL and "
               "its artifact cannot be quoted:\n  " + "\n  ".join(planned_problems))
+    from scripts.bootstrap_recovery import RollingRecoveryCheckpoints
+    recovery = RollingRecoveryCheckpoints(out_dir / "recovery",
+        interval_seconds=args.recovery_checkpoint_seconds, keep=args.recovery_checkpoint_keep)
     train_window_metrics: list[dict[str, Any]] = []
     multi_sampling_receipt: dict[str, Any] | None = None
     with CaptureRealizedLosses(
@@ -2473,10 +2491,11 @@ def main(argv: list[str] | None = None) -> int:
             metrics, steps_done, train_window_metrics, multi_sampling_receipt = _train_multiple_game_epochs(
                 trainer, buf, buffer_kwargs=epoch_buffer_kwargs, epochs=args.epochs,
                 seed=int(args.seed), batch_size=batch_size, window_steps=window_steps,
-                epoch_one_pending=out_dir / "checkpoint_epoch1.pending.pt",
+                epoch_one_pending=out_dir / "checkpoint_epoch1.pending.pt", recovery=recovery,
             )
         else:
             steps_done = 0
+            rows_done = 0
             for window_index in range(n_windows):
                 this_window = min(int(window_steps), int(args.steps) - steps_done)
                 if this_window <= 0:
@@ -2492,6 +2511,14 @@ def main(argv: list[str] | None = None) -> int:
                     "steps_cumulative": int(steps_done),
                     **_scalar_metric_record(metrics),
                 })
+                rows_done += int(getattr(metrics, "train_samples_seen", 0))
+                recovery.maybe_save(trainer, progress={
+                    "epoch_index": 1, "epoch_seed": int(args.seed),
+                    "window_index": window_index + 1, "window_steps": this_window,
+                    "epoch_steps_completed": steps_done, "run_steps_completed": steps_done,
+                    "run_rows_completed": rows_done,
+                    "corpus_sha256": getattr(getattr(buf, "plan", None), "corpus_sha256", None),
+                }, metrics=_scalar_metric_record(metrics), sampler_rng=getattr(buf, "rng", None))
                 if n_windows > 1:
                     # flush=True is load-bearing: stdout redirected to a file is
                     # 8KB block-buffered, and at ~60 bytes/line ~136 windows sat
