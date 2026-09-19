@@ -360,3 +360,18 @@ CI. Only cheap rule/ACK/retirement contracts are added; native play remains an
 explicit qualification command. See the experiment record for actual tested
 revisions and results. No live configuration, perft depth or production code is
 changed. This is self-reviewed, not independently reviewed or formally proven.
+
+## Automatic rule draws before neural evaluation
+
+The batched Actor now reconstructs each requested leaf's exact played-plus-search
+history before feature encoding. Confirmed automatic draws are replied to locally:
+Bend stores a terminal zero instead of a neural estimate, and repeated visits use
+its cache. No input row is encoded, padded, queued or forwarded for such a leaf.
+Request identity is still consumed, so replay and cancelled-old-batch protections
+remain in effect. Game reports list the rule-draw decisions explicitly.
+
+This covers fivefold repetition, 75 moves, and conservative insufficient material.
+Mate/stalemate are native decisions. It does not solve general dead positions or
+add optional threefold/50-move claim actions to search; the controller's optional
+played-root claim policy is unchanged. See the [terminal reply contract](../session_probe/README.md#automatic-draw-leaves-host-history-native-terminal-cache).
+Additional Python history/rules work is not an end-to-end speedup claim.
