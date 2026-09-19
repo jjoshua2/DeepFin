@@ -20,28 +20,24 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Apply source-checked draw semantics and typed test peer
+      - name: Apply source-checked semantics and autospecced test transport
         run: |
           echo 'bb0a8b14660548f0e737da95346419cae5ca394f8b2e7c83c7585522f467f56d  .github/draw-core.patch' | sha256sum -c -
+          echo '6980d0c1e71be66f43530ae3b0eeec05d0de074e258d0f9d123ea3b43a4c8c56  .github/draw-test-peer.patch' | sha256sum -c -
           git apply --check .github/draw-core.patch
           git apply .github/draw-core.patch
+          git apply --check .github/draw-test-peer.patch
+          git apply .github/draw-test-peer.patch
           python - <<'PY'
           import hashlib
           from pathlib import Path
           expected = {
             'native/bend_engine/session_probe/search_draws.py': 'd0b14786593f172065559337d46a3d463f755e4671cd5e3bb43faa753cf2f0a5',
             'native/bend_engine/session_probe/draw_probe.py': '808a14a3bd50d2defc7f31ee0f4917d33ca5ef1575d9d061d8292273d1e0bee1',
-            'tests/test_bend_search_draws.py': '581f4314aa7539601883af72b1536498804105cae7b6f7701e4b95251d0f1bd1',
+            'tests/test_bend_search_draws.py': '1fa92e0b6c0e5a270d20796fa24acb3385c495f9029f4074a1b7cf260b77d909',
           }
           for path, sha in expected.items():
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == sha, path
-          p = Path('tests/test_bend_search_draws.py')
-          s = p.read_text()
-          for old, new in [('from typing import cast\n', ''), ('    class Peer:\n', '    class Peer(sessions.Peer):\n'), ('Actor(cast(sessions.Peer, peer),', 'Actor(peer,')]:
-              assert s.count(old) == 1, old
-              s = s.replace(old, new)
-          p.write_text(s)
-          assert hashlib.sha256(p.read_bytes()).hexdigest() == '0ea7c0cfd5608ba826d6334e5246f13c9d7f3114405406e4c8078e6c0dc0b66f'
           PY
           git diff --check
       - name: Install isolated CPU environment and pinned compiler
