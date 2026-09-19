@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 
-static unsigned read_words(const char *tag, u32 *out, unsigned max, int eof_ok) {
+static unsigned read_record(char tag[16], u32 *out, unsigned max, int eof_ok) {
     char line[4096];
     fflush(stdout);
     if (!fgets(line, sizeof(line), stdin)) {
@@ -13,7 +13,8 @@ static unsigned read_words(const char *tag, u32 *out, unsigned max, int eof_ok) 
     }
     if (!strchr(line, '\n')) { fputs("unterminated transport record\n", stderr); exit(2); }
     char *token = strtok(line, " \t\r\n");
-    if (!token || strcmp(token, tag)) { fputs("wrong transport record\n", stderr); exit(2); }
+    if (!token || strlen(token) >= 16) { fputs("wrong transport record\n", stderr); exit(2); }
+    strcpy(tag, token);
     unsigned n = 0;
     while ((token = strtok(NULL, " \t\r\n"))) {
         if (n == max || !*token || strlen(token) > 8 || strspn(token, "0123456789abcdefABCDEF") != strlen(token)) {
@@ -27,19 +28,39 @@ static unsigned read_words(const char *tag, u32 *out, unsigned max, int eof_ok) 
     return n;
 }
 
-static Term config_read_run(Env e, Term *f, IoWork *w) {
-    (void)f; (void)w;
-    u32 x[4] = {0};
-    unsigned n = read_words("config", x, 4, 1);
-    if (n != UINT32_MAX && (n != 4 || (!x[0] && (x[1] || x[2] || x[3])) ||
-        (x[0] && (!x[1] || x[1] > 256 || !x[2] || x[2] > 4096 || !x[3] || x[3] > 32)))) {
-        fputs("invalid session config\n", stderr); exit(2);
+static unsigned read_words(const char *expected, u32 *out, unsigned max, int eof_ok) {
+    char tag[16] = {0};
+    unsigned n = read_record(tag, out, max, eof_ok);
+    if (n != UINT32_MAX && strcmp(expected, tag)) {
+        fputs("wrong transport record\n", stderr); exit(2);
     }
-    if (cid_arity(CID_CONFIG) != 4) err_fail("Config ABI changed");
-    Loc loc = heap_alloc(e, cls_fit(4));
-    if (err_seen(e.mem)) err_fail("config allocation failed");
-    for (unsigned i = 0; i < 4; i++) e.mem[loc+i] = x[i];
-    return term_ctr(CID_CONFIG, loc);
+    return n;
+}
+
+static Term command_read_run(Env e, Term *f, IoWork *w) {
+    (void)f; (void)w;
+    u32 x[4] = {0}, fields[7] = {0};
+    char tag[16] = {0};
+    unsigned n = read_record(tag, x, 4, 1);
+    if (n == UINT32_MAX) {
+        /* Clean EOF at the command boundary means quit, as before. */
+    } else if (!strcmp(tag, "config")) {
+        if (n != 4 || (!x[0] && (x[1] || x[2] || x[3])) ||
+            (x[0] && (!x[1] || x[1] > 256 || !x[2] || x[2] > 4096 || !x[3] || x[3] > 32))) {
+            fputs("invalid session config\n", stderr); exit(2);
+        }
+        for (unsigned i = 0; i < 4; i++) fields[i+2] = x[i];
+    } else if (!strcmp(tag, "advance")) {
+        if (n != 3 || !x[1]) { fputs("invalid advance command\n", stderr); exit(2); }
+        fields[0] = 1; fields[1] = x[0]; fields[2] = x[1]; fields[6] = x[2];
+    } else {
+        fputs("wrong transport record\n", stderr); exit(2);
+    }
+    if (cid_arity(CID_COMMAND) != 7) err_fail("Command ABI changed");
+    Loc loc = heap_alloc(e, cls_fit(7));
+    if (err_seen(e.mem)) err_fail("command allocation failed");
+    for (unsigned i = 0; i < 7; i++) e.mem[loc+i] = fields[i];
+    return term_ctr(CID_COMMAND, loc);
 }
 
 static Term reply_read_run(Env e, Term *f, IoWork *w) {
@@ -60,6 +81,6 @@ static Term reply_read_run(Env e, Term *f, IoWork *w) {
 }
 
 static void __attribute__((constructor)) session_effects_use(void) {
-    io_eff(CID_CONFIG_READ, config_read_run, 0);
+    io_eff(CID_COMMAND_READ, command_read_run, 0);
     io_eff(CID_REPLY_READ, reply_read_run, 0);
 }
