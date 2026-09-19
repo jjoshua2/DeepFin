@@ -96,6 +96,28 @@ Each job allows 2,500 seconds plus 30 seconds of outer termination cleanup, with
 32 GiB available RAM and 150 GiB disk floors and an exclusive GPU lease. Independent
 review corrected exited-leader cleanup before adoption.
 
+## First expanded-corpus pass: completed result
+
+The first exact 50,548,069-row pass completed 98,727 additional optimizer updates,
+continuing the 35M epoch-4 checkpoint from step 275,896 to 374,623 with seed 105.
+Its fixed 400-simulation match against that donor completed all 256 games:
+**53.125% score, +21.74 Elo, nominal 95% interval [−9.66, +53.51]**.
+Pentanomial counts were WW 14, WD/DW 28, DD/WL 54, LD/DL 24 and LL 8.
+The match took 1,034.2 seconds; there was no truncation or extra-game extension.
+
+This is a positive point estimate with substantial uncertainty, sufficient to keep
+the selected longer-training comparison useful. It does not establish that the
+expanded data caused the gain: additional optimizer updates changed too. No equal-
+update 35M control has run. This is also not a policy/value mixing experiment.
+The already registered three-pass continuation and later-boundary readouts remain
+pending; the single completed match is not evidence that they succeeded.
+
+The candidate hash is
+`43786945252e746a6e646a21663f798e1dff224e8c48c6dac757d8398a4ee015`.
+[Completed receipt and bank identity](evidence/expanded50m-epoch1-result-20260918.json)
+retain exact lineage. Independent review verified all 128 color-swapped pairs,
+score, bank hash and successful outer terminal from the existing files.
+
 ## Evidence and verification
 
 [Compact bank evidence](evidence/v50-horizon-20260918.json) records all four
