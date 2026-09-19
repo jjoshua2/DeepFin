@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
 import json
@@ -24,6 +25,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 MODES = rules.MODES
 SENTINEL = (1 << 32) - 1
+RequestObserver = Callable[[rules.Position, list[int], list[int]], None]
 
 
 def f32(x: float) -> float:
@@ -294,7 +296,8 @@ def evaluation(board: rules.Position, actions: list[int], variant: int = 0) -> t
 
 
 def session(peer: Peer, oracle: Oracle, board: rules.Position, *, epoch: int, budget: int = 24,
-            cap: int = 4096, depth: int = 4, fault: str = '', fault_at: int = 3, variant: int = 0) -> dict[str, int | str]:
+            cap: int = 4096, depth: int = 4, fault: str = '', fault_at: int = 3, variant: int = 0,
+            on_request: RequestObserver | None = None) -> dict[str, int | str]:
     peer.write(f'config {epoch:x} {budget:x} {cap:x} {depth:x}\n')
     ref = Reference(board, oracle, cap=cap, depth=depth, budget=budget)
     exchanges = 0
@@ -330,6 +333,8 @@ def session(peer: Peer, oracle: Oracle, board: rules.Position, *, epoch: int, bu
         legal = oracle.moves(supplied)
         if len(set(actions)) != len(actions) or set(actions) != set(legal):
             raise AssertionError('request legal moves differ from CBoard')
+        if on_request is not None:
+            on_request(supplied, path, actions)
         wdl, policy = evaluation(supplied, actions, variant)
         fields = [epoch, ref.seq, wanted, 0, *(bits(v) for v in wdl), len(policy), *(bits(v) for v in policy)]
         exchanges += 1

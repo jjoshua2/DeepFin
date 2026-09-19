@@ -42,7 +42,8 @@ production paths are unchanged. No perft depth or timing test is added.
   during backup. Changed policy must observably change the selected root move.
 - Terminal leaves use mate/stalemate values without an evaluator request.
   Evaluated depth-cutoff leaves cache a value and can receive repeat visits.
-- An epoch resets the tree but retains the same root position and attack tables.
+- A search epoch resets the tree and retains the current root and attack tables.
+  The separate idle-boundary `advance` command can change that root.
   Epochs must increase; request and node IDs must match the outstanding ticket.
 - Cancellation, explicit backend errors, stale/mismatched replies, malformed
   probabilities and zero policy mass do not partially expand or back up a node.
@@ -66,7 +67,8 @@ The private startup record is the existing legal probe's numeric board record.
 Then `config EPOCH SIMULATIONS CAPACITY DEPTH` uses hexadecimal U32 words:
 1-256 simulations, 1-4096 logical nodes, depth 1-32. `config 0 0 0 0` or EOF
 between sessions exits. The connection has a finite 1024-command fuel budget.
-It is not UCI, and a reset does not accept a different FEN in the same process yet.
+It is not UCI. A search reset does not accept a different FEN; an idle-boundary
+`advance` command can play one exact legal move before the next search.
 
 For each leaf the engine prints decimal `eval EPOCH REQUEST NODE COUNT`, a
 `board` record, a `path LENGTH KEY...` record, COUNT `action KEY` records and
@@ -115,3 +117,68 @@ is compatible with this design; rewriting every component in Bend is not a goal.
 Tests are path-scoped in Actions or explicit locally. Ordinary pytest only runs
 small parser/evaluator contract tests. Self-review only; these checks are not a
 universal theorem, an independent human review, or evidence of playing strength.
+
+
+## Play a move, then search the new root
+
+At `ready`, send `advance EXPECTED_EPOCH NEW_EPOCH KEY` (hexadecimal U32 words).
+The expected epoch must equal the last acknowledged search/advance epoch, and
+NEW_EPOCH must be greater. KEY is the complete private move key including its
+promotion and special-move flags. It may be any legal move, not just the best move
+or an expanded child. C only parses this command; Bend generates the complete
+legal set and applies exactly the matching move.
+
+The reply is decimal `advance_result EXPECTED_EPOCH NEW_EPOCH KEY STATUS CURRENT_EPOCH`,
+then a complete `board` record, then `ready`. Status 0 means accepted, 1 rejects a
+stale/non-increasing epoch, and 2 rejects an unmatched legal move key. Rejection
+changes neither root nor epoch. Success consumes NEW_EPOCH; a subsequent `config`
+must use a higher epoch. The counter never wraps: after U32_MAX, quit and establish
+a new connection. Malformed transport exits 2. An advance sent while waiting for
+an evaluator reply is not an asynchronous stop: it is rejected as a wrong record.
+Cancel/complete the search and consume its final snapshot/`ready` first.
+
+Example from a newly loaded starting position (epoch zero):
+
+```text
+advance 0 1 70c
+advance_result 0 1 1804 0 1
+board ...
+ready
+config 2 4 1000 2
+```
+
+That plays e2e4, then starts four diagnostic simulations from Black's new root.
+The previous tree has already been discarded; this is deliberately **not subtree
+reuse**. The same immutable attack-table owner and process are retained. Request
+paths in the following search start at the new root, rather than at game start.
+
+`root_protocol.advance_root` validates transaction identity, status, the complete
+returned board and `ready` before returning a stack-preserving host board copy.
+The caller adopts that copy only on success. No input history is mutated on
+rejection. A corrupt/lost acknowledgement leaves remote state uncertain: close
+the peer rather than retrying blindly. An evaluator coordinator must also retire
+old work and advance its epoch before using the new root; this helper does not
+silently migrate existing batching actors or encode with an old HistoryEncoder.
+Construct the next encoder from the returned board including its move stack.
+
+The opt-in lifecycle gate includes the original session suite and new-root
+searches, all promotions, castling, EP, played mate, stale/replayed commands,
+cancellation/recovery, and atomic semantic rejection:
+
+```sh
+python -m native.bend_engine.session_probe.root_probe \
+  --report artifacts/bend-root-advance.json
+
+# Requires the CPU encoding extension; compares actual subsequent leaf/history
+# inputs too, but does not compile or execute a neural model:
+python -m native.bend_engine.session_probe.root_probe --modes native --check-encoding \
+  --report artifacts/bend-root-encoding.json
+```
+
+This still uses the deterministic diagnostic evaluator, not trained weights or
+production Gumbel. Pre-root history/clocks live in the host; Bend does not yet
+adjudicate repetition, the 50/75-move rules or dead positions. Scripted repetition
+therefore tests history preservation, not a complete tournament game result.
+Perft and the production board/search/evaluator paths are unchanged. The existing
+path-scoped session job adds these bounded shallow lifecycle checks; ordinary
+pytest only gains ACK/history tests with a fake wire, no subprocess or search.

@@ -11,7 +11,13 @@ def Job.load() -> IO(Job):
 type Config is Data:
   Config{epoch: U32, simulations: U32, capacity: U32, depth: U32}
 
-def Config.read() -> IO(Config):
+# Transport only decodes commands. Bend checks the epoch and move semantics.
+# kind: 0=config/quit, 1=advance. The old config wire is unchanged.
+type Command is Data:
+  Command{kind: U32, expected: U32, epoch: U32, simulations: U32,
+    capacity: U32, depth: U32, key: U32}
+
+def Command.read() -> IO(Command):
   import "./transport.c"
 
 def Reply.read() -> IO(Search.Reply):
@@ -212,6 +218,67 @@ def command(quit: Bool, conn: Connection, config: Config) -> IO(Connection & Boo
 def dispatch(conn: Connection, +config: Config) -> IO(Connection & Bool):
   command(U32.is_zero(config_epoch(config)), conn, config)
 
+# Advance only between epochs, after the previous tree/pending reply is gone.
+# Match the exact generated key (including promotion/flags), never a truncated
+# or host-decoded move. The host retains pre-root neural history separately.
+type AdvanceMove is Data:
+  NoMove{}
+  ChosenMove{move: Chess.Ply}
+
+def advance_choose(equal: Bool, move: Chess.Ply, rest: AdvanceMove) -> AdvanceMove:
+  match equal:
+    case True{}: ChosenMove{move}
+    case False{}: rest
+
+def advance_find(ms: List<&2, Chess.Ply>, +key: U32) -> AdvanceMove:
+  match ms:
+    case Nil{}: NoMove{}
+    case Con{+move, rest}:
+      advance_choose(U32.is_eq(Search.key(move), key), move, advance_find(rest, key))
+
+def advance_apply(board: Chess.Board, choice: AdvanceMove) -> Chess.Board & Bool:
+  match choice:
+    case NoMove{}: (board, False{})
+    case ChosenMove{move}: (Chess.make_move(board, move), True{})
+
+def advance_emit(expected: U32, epoch: U32, key: U32, status: U32, c: Connection) -> IO(Connection & Bool):
+  Connection{+board, table, +last} = c
+  do IO<Connection & Bool>:
+    IO.print("advance_result " ++ U32.show(expected) ++ " " ++ U32.show(epoch)
+      ++ " " ++ U32.show(key) ++ " " ++ U32.show(status) ++ " " ++ U32.show(last))
+    IO.print("board " ++ board_text(board))
+    return (Connection{board, table, last}, False{})
+
+def advance_selected(expected: U32, +epoch: U32, key: U32, last: U32,
+  table: Array<U64>, r: Chess.Board & Bool) -> IO(Connection & Bool):
+  (board, +accepted) = r
+  advance_emit(expected, epoch, key, Bool.pick(U32, accepted, 0, 2),
+    Connection{board, table, Bool.pick(U32, accepted, epoch, last)})
+
+def advance_generated(expected: U32, epoch: U32, +key: U32, last: U32,
+  board: Chess.Board, r: Array<U64> & List<&2, Chess.Ply>) -> IO(Connection & Bool):
+  (table, moves) = r
+  advance_selected(expected, epoch, key, last, table, advance_apply(board, advance_find(moves, key)))
+
+def advance_valid(valid: Bool, expected: U32, epoch: U32, key: U32, c: Connection) -> IO(Connection & Bool):
+  match valid:
+    case False{}: advance_emit(expected, epoch, key, 1, c)
+    case True{}:
+      Connection{+board, table, last} = c
+      advance_generated(expected, epoch, key, last, board, Chess.legal_moves(table, board))
+
+def advance(+expected: U32, +epoch: U32, key: U32, c: Connection) -> IO(Connection & Bool):
+  Connection{board, table, +last} = c
+  advance_valid(Bool.and(U32.is_eq(expected, last), U32.is_gt(epoch, last)),
+    expected, epoch, key, Connection{board, table, last})
+
+def command_dispatch(conn: Connection, command: Command) -> IO(Connection & Bool):
+  Command{kind, expected, epoch, simulations, capacity, depth, key} = command
+  match kind:
+    case 0: dispatch(conn, Config{epoch, simulations, capacity, depth})
+    case 1: advance(expected, epoch, key, conn)
+    case _: IO.die(Connection & Bool, 2, "unknown session command")
+
 def serve(n: Nat, r: Connection & Bool) -> IO(Unit):
   match n:
     case 0n: IO.print("session_limit")
@@ -222,8 +289,8 @@ def serve(n: Nat, r: Connection & Bool) -> IO(Unit):
         case False{}:
           do IO<Unit>:
             IO.print("ready")
-            config : Config <- Config.read()
-            next : Connection & Bool <- dispatch(conn, config)
+            command : Command <- Command.read()
+            next : Connection & Bool <- command_dispatch(conn, command)
             serve(p, next)
 
 def validated(board: Chess.Board, r: Array<U64> & Bool) -> IO(Unit):
