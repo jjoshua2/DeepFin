@@ -202,6 +202,15 @@ class Reference:
         self.backup(index, value)
         self.seq += 1
 
+    def accept_draw(self, index: int) -> None:
+        """Reference transition for a validated, host-adjudicated terminal draw."""
+        a = self.nodes[index]
+        if a.status != 0 or a.n or a.count:
+            raise ValueError('draw reply requires a fresh selected leaf')
+        a.status, a.value, a.first, a.count = 2, 0.0, 0, 0
+        self.backup(index, 0.0)
+        self.seq += 1
+
     def check_snapshot(self, rows: list[list[int]], result: list[int], best: int, epoch: int) -> None:
         expected = [epoch, self.completed, len(self.nodes), self.stop, 4096, self.seq]
         if result != expected or len(rows) != len(self.nodes):

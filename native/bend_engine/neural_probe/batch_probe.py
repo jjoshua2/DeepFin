@@ -18,6 +18,7 @@ import torch
 
 from native.bend_engine.legal_probe import run_probe as rules
 from native.bend_engine.session_probe import run_probe as sessions
+from native.bend_engine.session_probe.search_draws import automatic_draw, draw_reply, reconstruct_leaf
 from .adapter import HistoryEncoder, board_position, decode_key
 from .backend import BATCHES, NativeEvaluator, build_worker
 from .batching import Batch, Batcher, Completion, Key
@@ -43,6 +44,7 @@ class Actor:
         self.actions: list[int] = []
         self.done = False
         self.results: list[Observation] = []
+        self.draw_leaves: list[dict[str, object]] = []
         self.start()
 
     def start(self) -> None:
@@ -81,6 +83,16 @@ class Actor:
             raise AssertionError('batched search path/board mismatch')
         actions = [sessions.numbers(self.peer.line(), 'action', 1)[0] for _ in range(header[3])]
         self.peer.expect('end_eval')
+        board = reconstruct_leaf(self.root, path, supplied, actions)
+        reason = automatic_draw(board)
+        if reason is not None:
+            key = Key(self.session, self.epoch, header[1], wanted)
+            broker.record_local(key)
+            self.ref.accept_draw(wanted)
+            self.peer.write(draw_reply(self.epoch, header[1], wanted))
+            self.draw_leaves.append({'epoch': self.epoch, 'request': header[1],
+                                     'node': wanted, 'path': path, 'reason': reason})
+            return
         x, full, board = self.encoder.encode(path, supplied, actions)
         check_encoding(x, board, self.encoder.encoding)
         key = Key(self.session, self.epoch, header[1], wanted)
