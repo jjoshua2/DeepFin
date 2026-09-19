@@ -1,0 +1,51 @@
+{
+  "status": "QUEUED_AFTER_ACTIVE_TRAINING",
+  "adoption": {
+    "status": "QUEUED_AFTER_ACTIVE_TRAINING",
+    "unix": 1789615231.4982247,
+    "queue_item": {
+      "id": "ceres_tails08_11_12_after_training_v2",
+      "kind": "registered_command",
+      "status": "queued",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_fast_remaining_v2/scheduler_run",
+      "max_seconds": 13070,
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_fast_remaining_v2/registered_batch.json",
+      "command_sha256": "f913c6073c5dbdfcc4a464c3a4e0bad8d42ed16bd6d9971c1e55ba6f0e6c54de"
+    },
+    "active_predecessor": "v50_continue_epochs2_4_v2",
+    "review": "PASS independent recovery delta",
+    "partial01_qualification": "PASS527604rows; no recollection"
+  },
+  "rows": 2643373,
+  "cohorts": [
+    {
+      "id": "ceres_union_partial08",
+      "new_rows": 827007,
+      "reused_rows": 98304,
+      "new_shards": 101,
+      "reused_shards": 12,
+      "new_invocations": 26
+    },
+    {
+      "id": "ceres_union_partial11",
+      "new_rows": 759400,
+      "reused_rows": 294912,
+      "new_shards": 93,
+      "reused_shards": 36,
+      "new_invocations": 24
+    },
+    {
+      "id": "ceres_union_whole12",
+      "new_rows": 1056966,
+      "reused_rows": 0,
+      "new_shards": 130,
+      "reused_shards": 0,
+      "new_invocations": 33
+    }
+  ],
+  "descriptor": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_fast_remaining_v2/registered_batch.json",
+    "sha256": "f913c6073c5dbdfcc4a464c3a4e0bad8d42ed16bd6d9971c1e55ba6f0e6c54de"
+  },
+  "validation": "Independent recovery review PASS; all83 host no-execute preflights passed. Appended under queue lock after active V50 continuation; no GPU overlap or repeated rows."
+}

@@ -1,0 +1,143 @@
+{
+  "status": "CHARACTERIZED_AND_SELECTED_FOR_STREAMING_CHECK",
+  "result": {
+    "batch": 512,
+    "rows": 8192,
+    "pass_seconds": 4.161950287998479,
+    "rows_per_second": 1968.307988594359,
+    "session_run_seconds": 3.980923890041595,
+    "per_call_seconds": [
+      0.2882169040021836,
+      0.24591698400035966,
+      0.24639601000671973,
+      0.2459707640009583,
+      0.24616045100265183,
+      0.2461283810043824,
+      0.24529520000214688,
+      0.24553337800170993,
+      0.24646585200389381,
+      0.2458602550032083,
+      0.24916694000421558,
+      0.2463754290001816,
+      0.24540741900273133,
+      0.2450889730025665,
+      0.24536274999991292,
+      0.2475782000037725
+    ],
+    "shape_wall_seconds": 10.864341188003891,
+    "error_vs32": {
+      "passed": false,
+      "tolerance": {
+        "target_TV_max": 0.001,
+        "rationale": "Precommitted dynamic-shape screen: raw max absolute<=0.03125 and every normalized target TV<=0.001. No production admission; ranks and all errors reported.",
+        "raw_absolute_max": 0.03125,
+        "interpretation": "Diagnostic flags only, no numeric-threshold stop."
+      },
+      "metrics": {
+        "policy": {
+          "max_absolute": 0.19775390625,
+          "p99_absolute": 0.00927734375,
+          "mean_absolute": 0.0016027363017201424,
+          "bitwise_equal": false
+        },
+        "value": {
+          "max_absolute": 0.122314453125,
+          "p99_absolute": 0.015625,
+          "mean_absolute": 0.0030473992228507996,
+          "bitwise_equal": false
+        },
+        "value2": {
+          "max_absolute": 0.214111328125,
+          "p99_absolute": 0.017578125,
+          "mean_absolute": 0.003761445404961705,
+          "bitwise_equal": false
+        },
+        "legal_policy_T0.5": {
+          "max_TV": 0.03673751277783022,
+          "p99_TV": 0.010416550359155992,
+          "top1_agreement": 0.9970703125,
+          "top3_overlap_mean": 0.9973958333333333,
+          "reference_probability_lost_at_candidate_top1_max": 0.01867168260494828
+        },
+        "legal_policy_T1.0": {
+          "max_TV": 0.018239603012267798,
+          "p99_TV": 0.006397941208153079,
+          "top1_agreement": 0.9970703125,
+          "top3_overlap_mean": 0.9973958333333333,
+          "reference_probability_lost_at_candidate_top1_max": 0.006405120413534249
+        },
+        "value_T1.0": {
+          "max_TV": 0.024414068871114095,
+          "p99_TV": 0.0031170757275800934
+        },
+        "value_T0.55": {
+          "max_TV": 0.03666859620950705,
+          "p99_TV": 0.004108901362408964
+        },
+        "value2_T1.0": {
+          "max_TV": 0.036721751501532514,
+          "p99_TV": 0.0038498266137908747
+        },
+        "value2_T1.5": {
+          "max_TV": 0.036198737574505174,
+          "p99_TV": 0.003367689624685
+        }
+      }
+    },
+    "provider": {
+      "CUDA_neural_kernel_events": 403,
+      "CPU_shape_events": [
+        {
+          "op": "Concat",
+          "outputs": [
+            {
+              "int64": [
+                3
+              ]
+            }
+          ]
+        },
+        {
+          "op": "Concat",
+          "outputs": [
+            {
+              "int64": [
+                5
+              ]
+            }
+          ]
+        },
+        {
+          "op": "Concat",
+          "outputs": [
+            {
+              "int64": [
+                3
+              ]
+            }
+          ]
+        },
+        {
+          "op": "Concat",
+          "outputs": [
+            {
+              "int64": [
+                4
+              ]
+            }
+          ]
+        }
+      ],
+      "scope": "First batch512 call; same session for shape pass"
+    }
+  },
+  "source": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_throughput/dynamic_batch_continuation_v1/result_batch512.json",
+    "sha256": "a5c0c7cf89a8874b1eefbbf7fb85e49178747001387fdb8f93a8fb43d4c9c13c"
+  },
+  "completion": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_throughput/dynamic_batch_continuation_v1/complete.json",
+    "sha256": "e3f7bfe065c3b1a91a6ee1497e2ac54e6804e19dd8f4bee1a39c85a73b03eaad"
+  },
+  "interpretation": "Numeric comparison flags did not pass the original equivalence thresholds. Selection uses measured cost and reported numerical differences; fixed32 is not an independently established accuracy oracle. Full collector throughput remains pending."
+}

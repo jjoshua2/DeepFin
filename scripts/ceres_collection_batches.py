@@ -36,7 +36,8 @@ MIN_CHUNK_SECONDS = int(CLEANUP_SECONDS + POLL_SECONDS) + 1
 MAX_CHUNK_TIMEOUT_SECONDS = 1800
 MAX_OVERALL_SECONDS = 108000
 MIN_FREE_GIB = 150
-MIN_PAUSE_SECONDS = 30
+# A pause is an explicit scheduling choice, not a substitute for resource guards.
+MIN_PAUSE_SECONDS = 0
 FIXED32_BATCH = 32
 COMPLETION_FIXED = "fixed_path"
 COMPLETION_CERES = "ceres_invocations"
