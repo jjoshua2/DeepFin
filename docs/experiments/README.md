@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Bend root advancement](2026-09-19-bend-root-advancement.md) | Same-process legal play/search, transactional epoch-bound root changes and retained host history; fresh trees, no subtree reuse or GPU claim |
 | [Bend checkpoint preflight and retention](2026-09-18-bend-checkpoint-preflight.md) | Fail-closed readiness, exact-checkpoint package reuse and retained failure evidence; no trained/CUDA execution claim |
 | [Bend checkpoint qualification](2026-09-18-bend-checkpoint-qualification.md) | Explicit checkpoint architecture/weights, native transformer CPU qualification, guarded CUDA BF16 path; no trained/GPU performance claim |
 | [Bend evaluator batching](2026-09-18-bend-evaluator-batching.md) | Bounded cross-search CPU batches, cancellation and epoch isolation; no trained/CUDA or throughput claim |
