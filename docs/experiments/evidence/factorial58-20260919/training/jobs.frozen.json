@@ -1,0 +1,59 @@
+{
+  "status": "FROZEN_REVIEWED_NOT_QUEUED",
+  "runtime": "/tmp/deepfin-factorial58-runtime",
+  "runtime_head": "502cd02e072471c901255f3fdb580d6ea7b826d0",
+  "jobs": [
+    {
+      "id": "factorial58_fresh_A",
+      "kind": "registered_command",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/scheduler_run",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/registered_command.json",
+      "command_sha256": "b0344facf6a1a4d4c97356629b5ad2ed9053f892d415ad7466dda70f2db2f708",
+      "max_seconds": 79860,
+      "status": "queued",
+      "arm": "A",
+      "expected_rows": 58090688,
+      "seed": 121,
+      "estimated_active_seconds": 36000
+    },
+    {
+      "id": "factorial58_fresh_B",
+      "kind": "registered_command",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/scheduler_run",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/registered_command.json",
+      "command_sha256": "d7c1004a036d8934832ee481e63eeea0698c0c45e52a2b3e5d57768b3de94dbc",
+      "max_seconds": 79860,
+      "status": "queued",
+      "arm": "B",
+      "expected_rows": 58090688,
+      "seed": 121,
+      "estimated_active_seconds": 36000
+    },
+    {
+      "id": "factorial58_fresh_C",
+      "kind": "registered_command",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/scheduler_run",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/registered_command.json",
+      "command_sha256": "cb24dec72207414ebcd1a89638637350aee2843f2139be2599d6762cf3d4a666",
+      "max_seconds": 79860,
+      "status": "queued",
+      "arm": "C",
+      "expected_rows": 58090688,
+      "seed": 121,
+      "estimated_active_seconds": 36000
+    },
+    {
+      "id": "factorial58_fresh_D",
+      "kind": "registered_command",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/scheduler_run",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/registered_command.json",
+      "command_sha256": "def804a1a17a26c28322928361ca942f8982f38d9a8ebed9c9fec2746a958fd5",
+      "max_seconds": 79860,
+      "status": "queued",
+      "arm": "D",
+      "expected_rows": 58090688,
+      "seed": 121,
+      "estimated_active_seconds": 36000
+    }
+  ]
+}

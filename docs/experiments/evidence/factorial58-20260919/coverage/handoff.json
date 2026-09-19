@@ -1,0 +1,11 @@
+{
+  "collector_commit": "28f9eab29",
+  "collector_worktree": "/tmp/deepfin-ceres-audited-source",
+  "tests": "Focused Ceres producer, batch driver, audited admission suite passed; 2 audited produce-path cases rerun after stat-cache guard optimization passed. Initial missing native extension resolved by matching existing runtime symlinks.",
+  "source_preflight": "14 audited sources accepted via real source_inventory; no inference",
+  "driver_validation": "14 exact driver plans +703 grouped invocation contracts pass",
+  "registered_max_seconds_total": 50185,
+  "estimate_seconds_at_1006rps": 22640.269383697814,
+  "assemble_sha256": "451eef75d5df6125c5dced2169e6ecf68afaf77d8795927e86ae18c6da74d2bb",
+  "status": "PREPARED_NOT_QUEUED_REVIEW_PENDING"
+}

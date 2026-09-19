@@ -103,3 +103,51 @@ Bulk artifacts: scratchpad/bt4_joint20/factorial58_20260919/. Current base plan:
 scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/plan.json.
 Current queue revalidation: takeover_20260919/queue_revalidation_20260919.json.
 Completion evidence and exact runtime adoption will be added here as they occur.
+
+## September 19: reviewed pipeline adopted
+
+The existing supervisor now holds 23 new stages: 14 missing-Ceres collections,
+one CPU overlay preparation, four fresh training arms, and four direct arenas.
+The active earlier 58M continuation is preserved. Its two additional queued passes
+were cancelled in favor of this factorial. Order after collection/preparation is
+A, B, B-A, C, C-A, D, D-C, D-B. The bounded queue deadline is September 26 at
+17:46:46 UTC; this is an execution allowance, not an estimate of required time.
+
+Coverage is 35,314,577 existing Ceres policy/dual-value rows plus 22,776,111 missing
+rows in 2,787 shards. Fourteen actual audited-source admissions passed. The latter
+collection uses batch512/group4, two CPU threads and a 16GiB ONNX arena; previous
+production throughput suggests approximately6.3h, while registered caps total13.9h.
+
+Training/preparation runtime is frozen in a detached checkout at
+`502cd02e072471c901255f3fdb580d6ea7b826d0`. Collection runtime is
+`28f9eab293a445db21c77c8452b8c23f451e4a15`; arena runtime remains
+`82298a5d4010e7097f473712e3720de229522427`. Publication changes do not mutate these
+execution checkouts. Each fresh training has20h active allowance and2h bounded disk
+pauses, hourly full-state recovery and retention of the latest two bundles. Actual
+pre-optimizer model tensor fingerprints must match across arms.
+
+Independent review covered protocol, collector integration, target formulas,
+immutable overlays, preparation, training and arena runners. Final readback checked
+1,195 distinct source/plan pins and all9 preparation/train/arena descriptors through
+the actual scheduler validator. The14 collection descriptors were separately reviewed
+and validated. The oversized opening-book pin is checked inside pinned arena plans,
+not passed to the scheduler's small-file pin list.
+
+Validation includes real tiny cohort construction, changed-teacher and missing-chunk
+rejection, policy/value-only inheritance, multi-root sampler parity, real CPU training
+parity with physically materialized targets, initialization RNG preservation and hourly
+recovery. The integrated21-test run passed, followed by18 affected tests after the
+missing-fill-chunk hardening. Scoped repository lint passed. Owned-child runner tests
+cover incorrect initialization, incomplete epochs, memory/deadline/STOP interruption;
+both-checkpoint arena binding has seven passing cases.
+
+[Adoption receipt](evidence/factorial58-20260919/pipeline_adoption.json),
+[final independent readback](evidence/factorial58-20260919/review_frozen.json),
+[coverage](evidence/factorial58-20260919/coverage/coverage.json), and the accompanying
+frozen plans and operating-script snapshots preserve the operational handoff. Bulk
+labels, model files, optimizer states and game banks remain in host storage.
+
+No factorial model or match has completed at this adoption snapshot. CPU target
+preparation remains a real stage, not implied by completed label collection. Broader
+500M generation/label throughput work remains separate; this experiment does not
+require repeating these58M rows indefinitely before scaling.
