@@ -1,8 +1,9 @@
-// CPU-only external evaluator. No Python runtime, no chess/search logic.
+// CPU or explicit CUDA external evaluator. No Python runtime, no chess/search logic.
 // Private wire format: little-endian U32 headers and IEEE F32 tensor payloads.
 #include <ATen/ATen.h>
 #include <ATen/Parallel.h>
 #include <c10/core/InferenceMode.h>
+#include <c10/core/DeviceGuard.h>
 #include <torch/csrc/inductor/aoti_package/model_package_loader.h>
 #include <cmath>
 #include <cstdint>
@@ -29,11 +30,12 @@ static void word(uint32_t x) {
                        static_cast<unsigned char>(x >> 16), static_cast<unsigned char>(x >> 24)};
   std::cout.write(reinterpret_cast<char*>(b), 4);
 }
-static void tensor(const at::Tensor& output, uint32_t batch, uint32_t size) {
-  if (output.device().type() != at::kCPU || output.scalar_type() != at::kFloat
+static void tensor(const at::Tensor& output, uint32_t batch, uint32_t size, const c10::Device& device) {
+  if (output.device() != device || output.scalar_type() != at::kFloat
       || output.dim() != 2 || output.size(0) != batch || output.size(1) != size)
     throw std::runtime_error("wrong evaluator output shape, dtype or device");
-  auto values = output.contiguous();
+  // Blocking copy completes CUDA work before returning F32 wire values.
+  auto values = output.cpu().contiguous();
   for (uint32_t i = 0; i < batch * size; ++i) {
     float value = values.data_ptr<float>()[i];
     if (!std::isfinite(value)) throw std::runtime_error("nonfinite evaluator output");
@@ -42,17 +44,26 @@ static void tensor(const at::Tensor& output, uint32_t batch, uint32_t size) {
 }
 int main(int argc, char** argv) {
   try {
-    if ((argc != 3 && argc != 4) || (std::string(argv[2]) != "146" && std::string(argv[2]) != "175"))
-      throw std::runtime_error("usage: aoti_worker PACKAGE.pt2 {146|175} [1|2|4|8|16]");
-    const std::string batch_arg = argc == 4 ? argv[3] : "1";
+    if ((argc != 3 && argc != 4 && argc != 6) || (std::string(argv[2]) != "146" && std::string(argv[2]) != "175"))
+      throw std::runtime_error("usage: aoti_worker PACKAGE.pt2 {146|175} [1|2|4|8|16] [cpu|cuda:N float32|bfloat16]");
+    const std::string batch_arg = argc >= 4 ? argv[3] : "1";
     if (batch_arg != "1" && batch_arg != "2" && batch_arg != "4" && batch_arg != "8" && batch_arg != "16")
       throw std::runtime_error("unsupported fixed evaluator batch");
     const uint32_t batch = std::stoul(batch_arg);
     const uint32_t channels = std::stoul(argv[2]), count = batch * channels * 64;
+    const std::string device_arg = argc == 6 ? argv[4] : "cpu";
+    const std::string dtype_arg = argc == 6 ? argv[5] : "float32";
+    const c10::Device device(device_arg);
+    if ((device_arg != "cpu" && (device.type() != at::kCUDA || !device.has_index()))
+        || (dtype_arg != "float32" && dtype_arg != "bfloat16")
+        || (device.is_cpu() && dtype_arg != "float32"))
+      throw std::runtime_error("unsupported evaluator device/dtype");
+    const auto dtype = dtype_arg == "bfloat16" ? at::kBFloat16 : at::kFloat;
+    c10::DeviceGuard device_guard(device);
     at::set_num_threads(2);
     at::set_num_interop_threads(1);
     c10::InferenceMode inference;
-    torch::inductor::AOTIModelPackageLoader loader(argv[1]);
+    torch::inductor::AOTIModelPackageLoader loader(argv[1], "model", false, 1, device.index());
     word(MAGIC); word(0); std::cout.flush();
     uint32_t sequence = 1;
     for (unsigned commands = 0; commands < 65536; ++commands) {
@@ -66,13 +77,13 @@ int main(int argc, char** argv) {
         if (!std::isfinite(v)) throw std::runtime_error("nonfinite evaluator input");
         x.data_ptr<float>()[i] = v;
       }
-      std::vector<at::Tensor> inputs = {x};
+      std::vector<at::Tensor> inputs = {x.to(device, dtype)};
       auto outputs = loader.run(inputs);
       if (outputs.size() != 2) throw std::runtime_error("expected tuple (policy_logits, wdl_logits)");
       // This endpoint intentionally only accepts the exported compact-policy wrapper.
       // Output order/encoding is pinned by the checked sidecar manifest.
       word(MAGIC); word(request); word(batch * 1858); word(batch * 3);
-      tensor(outputs[0], batch, 1858); tensor(outputs[1], batch, 3);
+      tensor(outputs[0], batch, 1858, device); tensor(outputs[1], batch, 3, device);
       std::cout.flush();
       if (!std::cout) throw std::runtime_error("evaluator output failed");
     }
