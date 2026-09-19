@@ -98,3 +98,15 @@ and all 14 queued statuses under the scheduler lock. The actual collector/cache 
 driver completion paths passed a small fixture beforehand; no plan hashes changed.
 See `operations/factorial58-storage-audit-20260919/` for fixture evidence and
 `operations/factorial58-ceres-bank-storage.jsonl` for adoption receipts.
+
+The four future factorial training outputs have now been explicitly rebound to
+`/home/josh/chess-artifacts/runs/factorial58_20260919_<arm>`. Their four matches
+reference those external checkpoints. The independent review verified all 30 file
+changes and all eight queued records; only output paths and dependent hashes changed.
+Adoption rechecked every hash/status under the scheduler lock, validated all eight
+actual operator descriptors, and preserved the active job.
+
+[Published migration evidence](experiments/evidence/workspace-storage-20260919/)
+contains the exact diff, before/after hashes, independent reviews, fixtures and
+adoption receipts. This amends the host storage paths of PR #786, not its experiment
+recipe, training horizon or evaluation settings.

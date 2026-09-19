@@ -1,0 +1,128 @@
+[
+  {
+    "source": "/home/josh/projects/chess/data/desync_quarantine_20260801",
+    "destination": "/home/josh/chess-artifacts/corpora/desync_quarantine_20260801",
+    "device": 2096,
+    "inode": 77188216,
+    "method": "same-filesystem rename; no data copy",
+    "time": 1789842062.289158,
+    "status": "PREPARED"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/desync_quarantine_20260801",
+    "destination": "/home/josh/chess-artifacts/corpora/desync_quarantine_20260801",
+    "device": 2096,
+    "inode": 77188216,
+    "method": "same-filesystem rename; no data copy",
+    "time": 1789842062.289158,
+    "status": "COMPLETE"
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/preserved_corpora_20260802",
+    "destination": "/home/josh/chess-artifacts/corpora/preserved_corpora_20260802",
+    "device": 2096,
+    "inode": 77948393,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842181.0992393,
+    "status": "PREPARED"
+  },
+  {
+    "source": "/home/josh/projects/chess/scratchpad/preserved_corpora_20260802",
+    "destination": "/home/josh/chess-artifacts/corpora/preserved_corpora_20260802",
+    "device": 2096,
+    "inode": 77948393,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842181.0992393,
+    "status": "COMPLETE"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/best_regret_checkpoints",
+    "destination": "/home/josh/chess-artifacts/models/best_regret_checkpoints",
+    "device": 2096,
+    "inode": 1611149,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842417.170818,
+    "status": "PREPARED"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/best_regret_checkpoints",
+    "destination": "/home/josh/chess-artifacts/models/best_regret_checkpoints",
+    "device": 2096,
+    "inode": 1611149,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842417.170818,
+    "status": "COMPLETE"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/salvage_pre_v2layer",
+    "destination": "/home/josh/chess-artifacts/models/salvage_pre_v2layer",
+    "device": 2096,
+    "inode": 2666127,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842468.4432254,
+    "status": "PREPARED"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/salvage_pre_v2layer",
+    "destination": "/home/josh/chess-artifacts/models/salvage_pre_v2layer",
+    "device": 2096,
+    "inode": 2666127,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842468.4432254,
+    "status": "COMPLETE"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/salvage_ba920_iter475",
+    "destination": "/home/josh/chess-artifacts/models/salvage_ba920_iter475",
+    "device": 2096,
+    "inode": 1225059,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842468.5401459,
+    "status": "PREPARED"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/salvage_ba920_iter475",
+    "destination": "/home/josh/chess-artifacts/models/salvage_ba920_iter475",
+    "device": 2096,
+    "inode": 1225059,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842468.5401459,
+    "status": "COMPLETE"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/salvage/rolling",
+    "destination": "/home/josh/chess-artifacts/models/salvage_rolling",
+    "device": 2096,
+    "inode": 75357231,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842676.6646838,
+    "status": "PREPARED"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/salvage/rolling",
+    "destination": "/home/josh/chess-artifacts/models/salvage_rolling",
+    "device": 2096,
+    "inode": 75357231,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842676.6646838,
+    "status": "COMPLETE"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/salvage",
+    "destination": "/home/josh/chess-artifacts/models/salvage",
+    "device": 2096,
+    "inode": 67877173,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842809.4709902,
+    "status": "PREPARED"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/salvage",
+    "destination": "/home/josh/chess-artifacts/models/salvage",
+    "device": 2096,
+    "inode": 67877173,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789842809.4709902,
+    "status": "COMPLETE"
+  }
+]
