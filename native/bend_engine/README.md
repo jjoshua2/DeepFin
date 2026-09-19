@@ -13,12 +13,15 @@ Nothing here is on a production UCI, selfplay, training, or inference path.
 
 ## Bend toolchain
 
-CI installs whatever Bend `https://bend-lang.com/dl/latest.json` currently
-names (sha256-checked). The parity probe is the compatibility gate; a new
-Bend patch should fail that test rather than a version-string pin.
+CI reads `https://bend-lang.com/dl/latest.json` for the current version and
+still sha256-checks the archive. The old feed carried `{ver, sha256, url}`.
+The current feed is `{ver, notice}` only; the installer then uses the matching
+`bendlang/bend` GitHub release asset and its `digest`. The parity probe is the
+compatibility gate; a new Bend patch should fail that test rather than a
+version-string pin.
 
 ```bash
-# bun is required to run the Bend compiler
+# bun is required only for a source tarball; official releases ship a binary
 curl -fsSL https://bun.sh/install | bash
 native/bend_engine/install_bend.sh
 export PATH="$PWD/build/bend_toolchain/bin:$PATH"
@@ -124,3 +127,12 @@ can emit a `.so` this host cannot dlopen.
 This proves the C++ AOTI deployment mechanism and Bend/native data path. It does
 **not** yet prove that a production DeepFin CUDA package runs correctly or at
 the desired throughput. A CUDA DeepFin-package parity test is the next gate.
+
+## Pinned-U64 bitboard experiment
+
+[`bitboard_probe/`](bitboard_probe/README.md) is a separate CPU-only integration
+gate using the tested U64 compiler fork, pinned and source-verified rather than
+installed from the moving release feed. Bend computes PEXT/magic slider indices
+and reads `Array<U64>` attack tables, compared exhaustively with the existing
+CBoard ray walker and production magic tables. It does not change the compiler
+used by the earlier probes, and it does not replace production move generation.
