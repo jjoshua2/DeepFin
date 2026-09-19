@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import chess
 import numpy as np
@@ -30,11 +31,6 @@ FIXTURE_FENS = (
     "k3r3/8/8/8/8/8/8/4K3 w - - 0 1",
 )
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("bend") is None or shutil.which("clang") is None,
-    reason="Bend/clang native toolchain is not installed",
-)
-
 _CFG = GumbelConfig(
     c_scale=0.1,
     c_visit=50.0,
@@ -44,6 +40,42 @@ _CFG = GumbelConfig(
     halving_div=2,
 )
 _ROOT_Q = 0.125
+_PROBE_TOOLCHAIN_REASON = "Bend/clang native toolchain is not installed"
+
+
+def _first_executable(candidates: list[str | None]) -> str | None:
+    for raw in candidates:
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+        found = shutil.which(raw)
+        if found:
+            return found
+    return None
+
+
+def _bend_bin() -> str | None:
+    return _first_executable(
+        [
+            os.environ.get("BEND_BIN"),
+            "bend",
+            str(ROOT / "build" / "bend_toolchain" / "bin" / "bend"),
+            str(Path.home() / ".bend" / "bin" / "bend"),
+        ]
+    )
+
+
+def _cc_bin() -> str | None:
+    return _first_executable(
+        [os.environ.get("BEND_SEARCH_CC"), os.environ.get("CC"), "clang", "cc"]
+    )
+
+
+def _require_bend_gumbel_probe() -> bool:
+    raw = os.environ.get("CAE_REQUIRE_BEND_GUMBEL_PROBE", "").strip().lower()
+    return raw not in {"", "0", "false", "no", "n", "off"}
 
 
 def _f32(value: float | int | np.floating) -> np.float32:
@@ -98,7 +130,7 @@ def _expected(fen: str) -> dict[str, int]:
     ranked = sorted(legal, key=_initial_score, reverse=True)
     active = ranked[:8]
     sampled = len(active)
-    visits = {action: 0 for action in legal}
+    visits = dict.fromkeys(legal, 0)
     budget = 64
 
     for _ in range(3):
@@ -162,10 +194,25 @@ def _parse(stdout: str) -> dict[int, dict[str, int]]:
     return rows
 
 
+def _require_probe_rows(
+    observed: dict[int, dict[str, int]],
+    *,
+    stdout: str,
+    stderr: str,
+) -> None:
+    detail = f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+    assert observed, (
+        "native eval exited 0 with empty results (no fixture= lines)\n"
+        + detail
+    )
+    assert set(observed) == set(range(len(FIXTURE_FENS))), detail
+
+
 def _run_checked(
     args: list[str],
     *,
     env: dict[str, str] | None = None,
+    require_stdout: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         args,
@@ -181,20 +228,100 @@ def _run_checked(
             f"--- stdout ---\n{result.stdout}\n"
             f"--- stderr ---\n{result.stderr}"
         )
+    if require_stdout and not result.stdout.strip():
+        pytest.fail(
+            "native eval exited 0 with empty stdout: "
+            f"{' '.join(args)}\n--- stderr ---\n{result.stderr}"
+        )
     return result
 
 
+@pytest.mark.parametrize(
+    ("raw", "required"),
+    [
+        ("1", True),
+        ("true", True),
+        ("YES", True),
+        ("on", True),
+        ("  1  ", True),
+        ("", False),
+        ("0", False),
+        ("false", False),
+        ("no", False),
+        ("n", False),
+        ("off", False),
+    ],
+)
+def test_require_gumbel_probe_truthy_parse(
+    raw: str, required: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CAE_REQUIRE_BEND_GUMBEL_PROBE", raw)
+    assert _require_bend_gumbel_probe() is required
+
+
+def test_require_gumbel_probe_unset_is_optional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CAE_REQUIRE_BEND_GUMBEL_PROBE", raising=False)
+    assert _require_bend_gumbel_probe() is False
+
+
+def test_empty_native_stdout_is_failure() -> None:
+    observed = _parse("")
+    with pytest.raises(AssertionError, match="empty results"):
+        _require_probe_rows(observed, stdout="", stderr="")
+
+
+def test_build_script_does_not_ignore_python(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["PYTHON"] = str(tmp_path / "missing-python")
+    env["BEND_SEARCH_PROBE_BUILD_DIR"] = str(tmp_path / "build")
+    result = subprocess.run(
+        [str(BUILD_SCRIPT)],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "PYTHON is set but not executable" in result.stderr
+
+
+def test_gumbel_oracle_covers_claimed_fixtures() -> None:
+    for fen in FIXTURE_FENS:
+        row = _expected(fen)
+        assert row["legal"] > 0
+        assert row["sampled"] == min(8, row["legal"])
+        assert row["active"] == 1
+        assert row["total_visits"] > 0
+
+
+@pytest.mark.skipif(
+    (not _require_bend_gumbel_probe())
+    and (_bend_bin() is None or _cc_bin() is None),
+    reason=_PROBE_TOOLCHAIN_REASON,
+)
 def test_bend_gumbel_halving_matches_deepfin_reference(tmp_path: Path) -> None:
+    bend = _bend_bin()
+    cc = _cc_bin()
+    assert bend is not None, _PROBE_TOOLCHAIN_REASON
+    assert cc is not None, "clang/cc is required to compile Bend-emitted C"
+
     env = os.environ.copy()
     env["BEND_SEARCH_PROBE_BUILD_DIR"] = str(tmp_path / "build")
+    env["BEND_BIN"] = bend
+    env["BEND_SEARCH_CC"] = cc
+    env["CC"] = cc
+    env["PYTHON"] = sys.executable
+    env["BEND_NO_TELEMETRY"] = "1"
 
     built = _run_checked([str(BUILD_SCRIPT)], env=env)
     binary = Path(built.stdout.strip().splitlines()[-1])
     assert binary.is_file(), built.stdout
 
-    run = _run_checked([str(binary)])
+    run = _run_checked([str(binary)], require_stdout=True)
     observed = _parse(run.stdout)
-
-    assert set(observed) == set(range(len(FIXTURE_FENS))), run.stdout
+    _require_probe_rows(observed, stdout=run.stdout, stderr=run.stderr)
     for fixture, fen in enumerate(FIXTURE_FENS):
-        assert observed[fixture] == _expected(fen)
+        assert observed[fixture] == _expected(fen), run.stdout

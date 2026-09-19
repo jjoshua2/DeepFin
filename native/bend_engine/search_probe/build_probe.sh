@@ -4,8 +4,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 PROBE_DIR="$ROOT/native/bend_engine/search_probe"
 BUILD_DIR="${BEND_SEARCH_PROBE_BUILD_DIR:-$ROOT/build/bend_search_probe}"
+# Do not default to `python` on PATH. The test passes PYTHON=$sys.executable;
+# honor a set value by requiring it to exist rather than ignoring it.
+if [ -n "${PYTHON:-}" ]; then
+  command -v "$PYTHON" >/dev/null 2>&1 || {
+    echo "error: PYTHON is set but not executable: $PYTHON" >&2
+    exit 2
+  }
+fi
 BEND_BIN="${BEND_BIN:-bend}"
-CC_BIN="${BEND_SEARCH_CC:-clang}"
+CC_BIN="${BEND_SEARCH_CC:-${CC:-clang}}"
 
 command -v "$BEND_BIN" >/dev/null 2>&1 || {
   echo "error: Bend compiler not found: $BEND_BIN" >&2
