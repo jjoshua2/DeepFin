@@ -19,7 +19,7 @@ import torch
 from native.bend_engine.legal_probe import run_probe as rules
 from native.bend_engine.session_probe import run_probe as sessions
 from .adapter import HistoryEncoder, board_position, decode_key
-from .backend import NativeEvaluator, build_worker
+from .backend import BATCHES, NativeEvaluator, build_worker
 from .batching import Batch, Batcher, Completion, Key
 from .package import export_smoke
 from .run_probe import check_encoding, worker_failures
@@ -119,10 +119,22 @@ def roots() -> list[chess.Board]:
             chess.Board('4k3/8/8/8/8/8/p7/4K3 b - - 0 1'), history]
 
 
+def group_limits(batch: int, max_rows: int | None) -> tuple[int, int]:
+    """Match the package bucket without losing the bounded queue contract."""
+    if type(batch) is not int or batch not in BATCHES:
+        raise ValueError('unsupported group batch')
+    limit = batch if max_rows is None else max_rows
+    if type(limit) is not int or not 1 <= limit <= batch:
+        raise ValueError('invalid group row limit')
+    return limit, max(8, batch)
+
+
 def group(binary: Path, oracle: sessions.Oracle, evaluator: NativeEvaluator,
-          eager: torch.nn.Module, *, max_rows: int = 4, faults: bool = False
+          eager: torch.nn.Module, *, max_rows: int | None = None, faults: bool = False,
+          atol: float = 2e-6, rtol: float = 2e-5
           ) -> tuple[dict[str, object], list[Observation]]:
-    broker = Batcher(evaluator.batch, evaluator.encoding.channels, max_wait=0.002)
+    max_rows, capacity = group_limits(evaluator.batch, max_rows)
+    broker = Batcher(evaluator.batch, evaluator.encoding.channels, capacity=capacity, max_wait=0.002)
     actors: list[Actor] = []
     peer_pool: list[sessions.Peer] = []
     future: Future[tuple[np.ndarray, np.ndarray]] | None = None
@@ -177,7 +189,7 @@ def group(binary: Path, oracle: sessions.Oracle, evaluator: NativeEvaluator,
                             expected = eager(torch.from_numpy(job.x.copy()))
                         for actual, name in ((policy[i:i+1], 'policy'), (wdl[i:i+1], 'wdl')):
                             want = expected[name].detach().numpy()
-                            np.testing.assert_allclose(actual, want, atol=2e-6, rtol=2e-5)
+                            np.testing.assert_allclose(actual, want, atol=atol, rtol=rtol)
                             max_error = max(max_error, float(np.abs(actual - want).max()))
                     for reply in broker.complete(flight, policy, wdl, now=time.monotonic()):
                         actors[reply.key.session].deliver(reply)

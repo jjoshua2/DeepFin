@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
+from typing import BinaryIO
 
 import torch
 
@@ -26,17 +27,25 @@ class LoadedCheckpoint:
     identity: dict[str, object]
 
 
+def stream_hash(source: BinaryIO) -> str:
+    # Keep the repository's Python 3.10 type/API contract (file_digest is newer).
+    digest = hashlib.sha256()
+    while block := source.read(1 << 20):
+        digest.update(block)
+    return digest.hexdigest()
+
+
 def load_checkpoint(path: Path, *, weights_key: str = 'model') -> LoadedCheckpoint:
     if weights_key not in ('model', 'swa_model'):
         raise ValueError('weights_key must be model or swa_model')
     path = path / 'trainer.pt' if path.is_dir() else path
     # One descriptor: atomic replacement of the original path cannot mix versions.
     with path.open('rb') as source:
-        digest = hashlib.file_digest(source, 'sha256').hexdigest()
+        digest = stream_hash(source)
         source.seek(0)
         checkpoint = torch.load(source, map_location='cpu', weights_only=True)
         source.seek(0)
-        if hashlib.file_digest(source, 'sha256').hexdigest() != digest:
+        if stream_hash(source) != digest:
             raise ValueError('checkpoint changed while loading; use an immutable copy')
     if not isinstance(checkpoint, dict) or not isinstance(checkpoint.get('arch'), dict):
         raise ValueError('checkpoint requires embedded arch; re-save with current Trainer')

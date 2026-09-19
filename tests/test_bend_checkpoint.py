@@ -27,8 +27,8 @@ def test_explicit_saved_weights_and_directory(monkeypatch, tmp_path: Path) -> No
     torch.save(data, path)
     normal = cp.load_checkpoint(tmp_path)
     swa = cp.load_checkpoint(path, weights_key='swa_model')
-    assert torch.equal(normal.model.weight, torch.ones(2, 2))
-    assert torch.equal(swa.model.weight, torch.full((2, 2), 2.0))
+    assert torch.equal(normal.model.state_dict()['weight'], torch.ones(2, 2))
+    assert torch.equal(swa.model.state_dict()['weight'], torch.full((2, 2), 2.0))
     assert normal.identity['checkpoint_sha256'] == swa.identity['checkpoint_sha256']
     assert normal.identity['weights_key'] != swa.identity['weights_key']
     assert normal.identity['checkpoint_step'] == 7
@@ -125,3 +125,19 @@ def test_cuda_never_falls_back_to_cpu(monkeypatch) -> None:
 def test_tolerances_are_validated(value: float) -> None:
     with pytest.raises(ValueError, match='finite and nonnegative'):
         tolerances('cpu', value, 0)
+
+
+@pytest.mark.parametrize('batch', [1, 2, 4, 8, 16])
+def test_group_limits_follow_package_bucket(batch: int) -> None:
+    from native.bend_engine.neural_probe.batch_probe import group_limits
+    limit, capacity = group_limits(batch, None)
+    assert limit == batch
+    assert batch <= capacity <= 16
+    assert group_limits(batch, 1) == (1, capacity)
+
+
+@pytest.mark.parametrize(('batch', 'rows'), [(3, None), (True, None), (1, 4), (4, 0), (4, True)])
+def test_group_limits_reject_invalid_requests(batch: int, rows: int | None) -> None:
+    from native.bend_engine.neural_probe.batch_probe import group_limits
+    with pytest.raises(ValueError, match=r'group batch|row limit'):
+        group_limits(batch, rows)
