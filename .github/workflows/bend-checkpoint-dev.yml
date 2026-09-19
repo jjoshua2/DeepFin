@@ -20,18 +20,21 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Apply exactly tested shared evaluator changes
+      - name: Apply exact shared evaluator and reviewed bucket/type fixes
         run: |
           echo '9c57874f110a141d8b14e58927083330ccea73ee19ea06e988ce1b33e9725e42  .github/checkpoint-changes.patch' | sha256sum -c -
+          echo '2cbb123f68f96d33b327302233f16d4e5199cb5c4472cf73c4c2248b3da79639  .github/checkpoint-refinements.patch' | sha256sum -c -
           git apply --check .github/checkpoint-changes.patch
           git apply .github/checkpoint-changes.patch
+          git apply --check .github/checkpoint-refinements.patch
+          git apply .github/checkpoint-refinements.patch
           python - <<'PY'
           from pathlib import Path
           import hashlib
           expected = {
-            'native/bend_engine/neural_probe/checkpoint.py': '79cfcaf9474024f73c6539eff9a4280cf50fc26b892b9116e5e50a9598a80c85',
+            'native/bend_engine/neural_probe/checkpoint.py': '3c9a9e7238e3668d14374a9fd02be8208b9edd0dc85aeffcaad73508e684d9c6',
             'native/bend_engine/neural_probe/checkpoint_probe.py': '035b5c448ca492e8c0585463e7b3450d8b74bda3bf7d9bc3be70161ca32c56b1',
-            'tests/test_bend_checkpoint.py': '43474fb5fed81f322263a8fe64c48af5439df5799667528a9ea9f4351229d053',
+            'tests/test_bend_checkpoint.py': 'd314858539f18043fa6ba89b19629232a4b64de100fd4e25f520efee1920a30f',
           }
           for name, wanted in expected.items():
               assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == wanted, name
@@ -53,6 +56,8 @@ jobs:
         run: |
           python -m native.bend_engine.neural_probe.checkpoint_probe --fixture-checkpoint \
             --modes generic portable native ubsan --report artifacts/bend-checkpoint-transformer.json
+          python -m native.bend_engine.neural_probe.checkpoint_probe --fixture-checkpoint --batch 1 \
+            --report artifacts/bend-checkpoint-batch1.json
       - name: Preserve earlier session and neural contracts
         run: |
           python -m native.bend_engine.session_probe.run_probe --python-chess --report artifacts/bend-checkpoint-sessions.json
