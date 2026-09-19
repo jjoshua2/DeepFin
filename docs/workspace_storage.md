@@ -67,3 +67,34 @@ A disposable model-free test of the installed Grok workspace creation endpoint
 confirmed that its copy strategy preserves a nonignored absolute directory symlink
 to external data. That evidence applies to this copier/version; recheck before
 using a different copy implementation or options that dereference links.
+
+Legacy model stores `data/best_regret_checkpoints`, `data/salvage_pre_v2layer`,
+`data/salvage_ba920_iter475` and `data/salvage` now link to the corresponding
+`/home/josh/chess-artifacts/models/` directories. `data/salvage/rolling` separately
+links to `models/salvage_rolling`. Internal links were checked before migration.
+
+The future factorial target `factorial58_20260919/outputs` parent now links to
+`/home/josh/chess-artifacts/labels/factorial58_20260919/outputs`. A real small
+producer fixture validated creation, resume checks, qualification and loader access
+through this link. The destination remains on the same filesystem, preserving
+the existing disk-space guard's applicability. Frozen plans were not edited.
+
+The 35 active training input roots must stay at their current canonical paths
+until the running epoch completes. The sampler hashes resolved shard paths into
+the schedule and checks them again while loading; a mid-epoch relocation could
+fail the final schedule check despite identical data. Likewise, future training
+output leaves cannot simply be precreated as links: the runner requires a fresh
+nonexistent output. Those output paths need explicit plan and queue repinning.
+
+Nine inactive clean review worktrees were retired after rechecking live references
+and dirty files. Their commits remain under `refs/archive/workspace-cleanup-20260919/`;
+`operations/retired-workspaces-20260919.jsonl` in the shared artifact root records
+each former path and retained commit. Dirty and unpublished worktrees remain intact.
+
+All 14 still-empty Ceres collection bank parents now link to
+`/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/<cohort>`.
+Adoption rechecked empty directories, unchanged driver-plan hashes, same filesystem
+and all 14 queued statuses under the scheduler lock. The actual collector/cache and
+driver completion paths passed a small fixture beforehand; no plan hashes changed.
+See `operations/factorial58-storage-audit-20260919/` for fixture evidence and
+`operations/factorial58-ceres-bank-storage.jsonl` for adoption receipts.
