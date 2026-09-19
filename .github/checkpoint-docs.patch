@@ -1,0 +1,28 @@
+diff --git a/docs/experiments/README.md b/docs/experiments/README.md
+index b82d751..9f2c6f5 100644
+--- a/docs/experiments/README.md
++++ b/docs/experiments/README.md
+@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
+ 
+ | Record | Scope |
+ | --- | --- |
++| [Bend checkpoint/device contract](2026-09-18-bend-checkpoint-contract.md) | Strict supplied-checkpoint export and batched search; reduced-transformer CPU qualification, trained/CUDA execution pending |
+ | [Bend evaluator batching](2026-09-18-bend-evaluator-batching.md) | Bounded cross-search CPU batches, cancellation and epoch isolation; no trained/CUDA or throughput claim |
+ | [Bend neural boundary](2026-09-18-bend-neural-boundary.md) | Real history/policy encoding and persistent native CPU AOTI smoke joined to Bend search; untrained TinyNet, no CUDA or production claim |
+ | [Bend search sessions](2026-09-18-bend-search-sessions.md) | Persistent bounded Bend PUCT with external test policy/WDL, cancellation/reply validation and reset; CPU functionality gate, no neural or production claim |
+diff --git a/native/bend_engine/neural_probe/README.md b/native/bend_engine/neural_probe/README.md
+index 3370d4b..b45b8a2 100644
+--- a/native/bend_engine/neural_probe/README.md
++++ b/native/bend_engine/neural_probe/README.md
+@@ -161,3 +161,11 @@ path-scoped native-neural workflow covers this test; ordinary pytest only tests
+ broker and manifest contracts. Real trained/CUDA batching and throughput remain
+ separate gates. Evidence is in
+ [`docs/experiments/2026-09-18-bend-evaluator-batching.md`](../../../docs/experiments/2026-09-18-bend-evaluator-batching.md).
++
++## A specified checkpoint rather than the smoke model
++
++See [the checkpoint/device contract](CHECKPOINTS.md) for strict loading of an
++embedded-architecture checkpoint, frozen CPU/CUDA export, and its explicit
++batched-search qualification command. This is a separate v3 package contract;
++existing v1/v2 TinyNet commands remain unchanged. No trained or CUDA pass is
++implied by the reduced-transformer CPU fixture.
