@@ -1,0 +1,293 @@
+diff --git a/.github/workflows/bend-neural-boundary.yml b/.github/workflows/bend-neural-boundary.yml
+index 167379c..def6a46 100644
+--- a/.github/workflows/bend-neural-boundary.yml
++++ b/.github/workflows/bend-neural-boundary.yml
+@@ -12,6 +12,7 @@ on:
+       - 'chess_anti_engine/moves/**'
+       - 'chess_anti_engine/model.py'
+       - 'chess_anti_engine/model/**'
++      - 'tests/test_bend_checkpoint.py'
+       - 'tests/test_bend_batching.py'
+       - 'tests/test_bend_neural_boundary.py'
+ permissions:
+@@ -40,9 +41,9 @@ jobs:
+           bash native/bend_engine/bitboard_probe/install_toolchain.sh
+       - name: Static checks and cheap boundary contracts
+         run: |
+-          ruff check native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py tests/test_bend_batching.py
+-          basedpyright native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py tests/test_bend_batching.py
+-          python -m pytest -q tests/test_bend_neural_boundary.py tests/test_bend_search_sessions.py tests/test_bend_batching.py
++          ruff check native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py tests/test_bend_batching.py tests/test_bend_checkpoint.py
++          basedpyright native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py tests/test_bend_batching.py tests/test_bend_checkpoint.py
++          python -m pytest -q tests/test_bend_neural_boundary.py tests/test_bend_search_sessions.py tests/test_bend_batching.py tests/test_bend_checkpoint.py
+       - name: Preserve session fault and cancellation behavior with path records
+         run: |
+           python -m native.bend_engine.session_probe.run_probe --python-chess \
+@@ -55,6 +56,10 @@ jobs:
+         run: |
+           python -m native.bend_engine.neural_probe.batch_probe \
+             --report artifacts/bend-neural-batching.json
++      - name: Saved transformer checkpoint through native inference and Bend search
++        run: |
++          python -m native.bend_engine.neural_probe.checkpoint_probe --fixture-checkpoint \
++            --modes generic portable native ubsan --report artifacts/bend-neural-checkpoint.json
+       - uses: actions/upload-artifact@v4
+         if: always()
+         with:
+diff --git a/docs/experiments/README.md b/docs/experiments/README.md
+index b82d751..34f7228 100644
+--- a/docs/experiments/README.md
++++ b/docs/experiments/README.md
+@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
+ 
+ | Record | Scope |
+ | --- | --- |
++| [Bend checkpoint qualification](2026-09-18-bend-checkpoint-qualification.md) | Explicit checkpoint architecture/weights, native transformer CPU qualification, guarded CUDA BF16 path; no trained/GPU performance claim |
+ | [Bend evaluator batching](2026-09-18-bend-evaluator-batching.md) | Bounded cross-search CPU batches, cancellation and epoch isolation; no trained/CUDA or throughput claim |
+ | [Bend neural boundary](2026-09-18-bend-neural-boundary.md) | Real history/policy encoding and persistent native CPU AOTI smoke joined to Bend search; untrained TinyNet, no CUDA or production claim |
+ | [Bend search sessions](2026-09-18-bend-search-sessions.md) | Persistent bounded Bend PUCT with external test policy/WDL, cancellation/reply validation and reset; CPU functionality gate, no neural or production claim |
+diff --git a/native/bend_engine/neural_probe/README.md b/native/bend_engine/neural_probe/README.md
+index 3370d4b..b375ed3 100644
+--- a/native/bend_engine/neural_probe/README.md
++++ b/native/bend_engine/neural_probe/README.md
+@@ -161,3 +161,62 @@ path-scoped native-neural workflow covers this test; ordinary pytest only tests
+ broker and manifest contracts. Real trained/CUDA batching and throughput remain
+ separate gates. Evidence is in
+ [`docs/experiments/2026-09-18-bend-evaluator-batching.md`](../../../docs/experiments/2026-09-18-bend-evaluator-batching.md).
++
++## Explicit checkpoint qualification
++
++`checkpoint_probe` removes the seeded-TinyNet restriction. It requires a trusted,
++immutable `trainer.pt` (or its directory) with embedded `arch`, explicit encoding
++metadata and canonical `model` weights. `--weights-key swa_model` selects SWA
++explicitly; it never silently falls back to normal weights. Missing/extra/shape-
++mismatched tensors, nonfinite weights, conflicting tied tensors, unknown fields
++and unsupported architecture versions fail before export. No nearby params.json,
++architecture override, tolerant migration, or random replacement layers are used.
++
++```sh
++# A COPIED self-describing checkpoint; no production process is changed.
++uv run python -m native.bend_engine.neural_probe.checkpoint_probe \
++  --checkpoint /path/to/copied/trainer.pt --device cpu --batch 4 \
++  --report artifacts/bend-neural-checkpoint.json
++
++# Explicit UNTRAINED two-layer transformer fixture, not TinyNet or a learned net.
++uv run python -m native.bend_engine.neural_probe.checkpoint_probe \
++  --fixture-checkpoint --modes generic portable native ubsan \
++  --report artifacts/bend-neural-checkpoint-fixture.json
++```
++
++The transformer returns `policy_own`, unlike TinyNet's `policy`. The wrapper uses
++the existing production `_policy_output` helper and WDL logits, sets the existing
++inference-only flag, and does not substitute auxiliary policy heads. The original
++model architecture is reconstructed from the file, not a guessed current YAML.
++A SHA-256 and the selected state key bind the package/report to that checkpoint;
++step metadata is reported, never treated as proof of training provenance.
++
++Each command exports one static package, checks native outputs against eager
++singleton forwards, and runs five actual Bend searches with the existing batched
++coordinator/control and cancellation recovery. Per-reply reference checks and
++full final tree/visit/move comparisons remain mandatory. A numerical or search
++mismatch remains a failure; this runner does not automatically increase tolerance.
++
++CPU runs use F32 and the previous 2e-6 absolute / 2e-5 relative logit tolerances.
++The v3 package format also supports an **experimental CUDA BF16 execution path**:
++append `--device cuda --device-index 0 --atol A --rtol R`, replacing A/R with
++numerical tolerances chosen BEFORE the experiment for that model. Neither
++missing hardware nor missing explicit CUDA tolerances falls back to CPU. Run only
++on an NVIDIA host with compatible CUDA PyTorch/LibTorch, during a budgeted or
++training-paused window. No GPU is reserved by this command and no live training
++is paused automatically. Compilation/inference can consume significant GPU memory.
++
++The package and native worker are built from the same Torch version. Input wire
++payloads remain F32; CUDA transfers/casts to BF16 before inference and returns F32
++policy/WDL logits via a blocking host copy. Device identity and output dtype/shape
++are checked. This is NOT zero-copy, CUDA graph, overlapping-transfer or latency
++qualification. Existing BF16 dictionary-output packages are not interchangeable:
++the v3 exporter creates the explicit tuple-output contract from the checkpoint.
++The previous native CUDA parity command remains unchanged and independent.
++
++Export alone does not qualify row independence or real chess strength. Tiny and
++transformer model families are accepted, but only actually exercised shapes,
++weights, targets and batch buckets are qualified by a successful report. Partial
++batches, one-real-row controls and cancellation continue using the same physical
++batch package. No end-to-end speedup is inferred. Failure reports record the stage;
++no trained-weight or GPU pass is inferred from the synthetic CPU fixture.
+diff --git a/native/bend_engine/neural_probe/aoti_worker.cpp b/native/bend_engine/neural_probe/aoti_worker.cpp
+index 5b16f0b..6be34fc 100644
+--- a/native/bend_engine/neural_probe/aoti_worker.cpp
++++ b/native/bend_engine/neural_probe/aoti_worker.cpp
+@@ -1,6 +1,8 @@
+-// CPU-only external evaluator. No Python runtime, no chess/search logic.
++// CPU F32 / optional CUDA BF16 external evaluator. No Python runtime, no chess/search logic.
+ // Private wire format: little-endian U32 headers and IEEE F32 tensor payloads.
+ #include <ATen/ATen.h>
++#include <ATen/Context.h>
++#include <c10/core/DeviceGuard.h>
+ #include <ATen/Parallel.h>
+ #include <c10/core/InferenceMode.h>
+ #include <torch/csrc/inductor/aoti_package/model_package_loader.h>
+@@ -29,11 +31,11 @@ static void word(uint32_t x) {
+                        static_cast<unsigned char>(x >> 16), static_cast<unsigned char>(x >> 24)};
+   std::cout.write(reinterpret_cast<char*>(b), 4);
+ }
+-static void tensor(const at::Tensor& output, uint32_t batch, uint32_t size) {
+-  if (output.device().type() != at::kCPU || output.scalar_type() != at::kFloat
++static void tensor(const at::Tensor& output, uint32_t batch, uint32_t size, const at::Device& device) {
++  if (output.device() != device || output.scalar_type() != at::kFloat
+       || output.dim() != 2 || output.size(0) != batch || output.size(1) != size)
+     throw std::runtime_error("wrong evaluator output shape, dtype or device");
+-  auto values = output.contiguous();
++  auto values = output.to(at::kCPU).contiguous(); // blocking copy before publishing a reply
+   for (uint32_t i = 0; i < batch * size; ++i) {
+     float value = values.data_ptr<float>()[i];
+     if (!std::isfinite(value)) throw std::runtime_error("nonfinite evaluator output");
+@@ -42,17 +44,30 @@ static void tensor(const at::Tensor& output, uint32_t batch, uint32_t size) {
+ }
+ int main(int argc, char** argv) {
+   try {
+-    if ((argc != 3 && argc != 4) || (std::string(argv[2]) != "146" && std::string(argv[2]) != "175"))
+-      throw std::runtime_error("usage: aoti_worker PACKAGE.pt2 {146|175} [1|2|4|8|16]");
+-    const std::string batch_arg = argc == 4 ? argv[3] : "1";
++    if ((argc != 3 && argc != 4 && argc != 6) || (std::string(argv[2]) != "146" && std::string(argv[2]) != "175"))
++      throw std::runtime_error("usage: aoti_worker PACKAGE.pt2 {146|175} [1|2|4|8|16 [cpu-float32|cuda-bfloat16 INDEX]]");
++    const std::string batch_arg = argc >= 4 ? argv[3] : "1";
+     if (batch_arg != "1" && batch_arg != "2" && batch_arg != "4" && batch_arg != "8" && batch_arg != "16")
+       throw std::runtime_error("unsupported fixed evaluator batch");
+     const uint32_t batch = std::stoul(batch_arg);
+     const uint32_t channels = std::stoul(argv[2]), count = batch * channels * 64;
++    const std::string target = argc == 6 ? argv[4] : "cpu-float32";
++    const std::string index_arg = argc == 6 ? argv[5] : "0";
++    if (index_arg.empty() || index_arg.size() > 3 || index_arg.find_first_not_of("0123456789") != std::string::npos)
++      throw std::runtime_error("invalid evaluator device index");
++    const auto index = std::stoul(index_arg);
++    if (index > 127 || (target == "cpu-float32" && index != 0))
++      throw std::runtime_error("invalid evaluator device index");
++    if (target != "cpu-float32" && target != "cuda-bfloat16")
++      throw std::runtime_error("unsupported evaluator device/dtype");
++    const bool cuda = target == "cuda-bfloat16";
++    if (cuda && !at::hasCUDA()) throw std::runtime_error("CUDA evaluator requires a CUDA LibTorch build");
++    const at::Device device = cuda ? at::Device(at::kCUDA, static_cast<c10::DeviceIndex>(index)) : at::Device(at::kCPU);
++    c10::DeviceGuard guard(device);
+     at::set_num_threads(2);
+     at::set_num_interop_threads(1);
+     c10::InferenceMode inference;
+-    torch::inductor::AOTIModelPackageLoader loader(argv[1]);
++    torch::inductor::AOTIModelPackageLoader loader(argv[1], "model", false, 1, cuda ? static_cast<c10::DeviceIndex>(index) : -1);
+     word(MAGIC); word(0); std::cout.flush();
+     uint32_t sequence = 1;
+     for (unsigned commands = 0; commands < 65536; ++commands) {
+@@ -66,13 +81,14 @@ int main(int argc, char** argv) {
+         if (!std::isfinite(v)) throw std::runtime_error("nonfinite evaluator input");
+         x.data_ptr<float>()[i] = v;
+       }
++      if (cuda) x = x.to(device, at::kBFloat16);
+       std::vector<at::Tensor> inputs = {x};
+       auto outputs = loader.run(inputs);
+       if (outputs.size() != 2) throw std::runtime_error("expected tuple (policy_logits, wdl_logits)");
+       // This endpoint intentionally only accepts the exported compact-policy wrapper.
+       // Output order/encoding is pinned by the checked sidecar manifest.
+       word(MAGIC); word(request); word(batch * 1858); word(batch * 3);
+-      tensor(outputs[0], batch, 1858); tensor(outputs[1], batch, 3);
++      tensor(outputs[0], batch, 1858, device); tensor(outputs[1], batch, 3, device);
+       std::cout.flush();
+       if (!std::cout) throw std::runtime_error("evaluator output failed");
+     }
+diff --git a/native/bend_engine/neural_probe/backend.py b/native/bend_engine/neural_probe/backend.py
+index 83986cc..7ae580d 100644
+--- a/native/bend_engine/neural_probe/backend.py
++++ b/native/bend_engine/neural_probe/backend.py
+@@ -25,13 +25,14 @@ if TYPE_CHECKING:
+ MAGIC = 0x44464E31
+ FORMAT = 'deepfin-tuple-policy-wdl-cpu-f32-v1'
+ BATCH_FORMAT = 'deepfin-tuple-policy-wdl-cpu-f32-batched-v2'
++CHECKPOINT_FORMAT = 'deepfin-tuple-policy-wdl-checkpoint-v3'
+ BATCHES = (1, 2, 4, 8, 16)
+ HERE = Path(__file__).resolve().parent
+ 
+ 
+ def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
+     data = json.loads(package.with_suffix('.json').read_text())
+-    if not isinstance(data, dict) or data.get('format') not in (FORMAT, BATCH_FORMAT):
++    if not isinstance(data, dict) or data.get('format') not in (FORMAT, BATCH_FORMAT, CHECKPOINT_FORMAT):
+         raise ValueError('unsupported evaluator manifest format')
+     import torch
+     if data.get('torch_version') != str(torch.__version__):
+@@ -43,7 +44,7 @@ def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
+         raise ValueError('unsupported evaluator policy width or batch')
+     if data['format'] == FORMAT and data['batch'] != 1:
+         raise ValueError('v1 evaluator requires batch one')
+-    if data['format'] == BATCH_FORMAT and data.get('row_independent') is not True:
++    if data['format'] in (BATCH_FORMAT, CHECKPOINT_FORMAT) and data.get('row_independent') is not True:
+         raise ValueError('batched manifest must declare independent rows')
+     history, extra, fix = (data.get(k) for k in ('input_history_encoding', 'input_extra_features', 'history_rep_fix'))
+     if not isinstance(history, str) or not isinstance(extra, str) or type(fix) is not bool:
+@@ -51,9 +52,30 @@ def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
+     encoding = Encoding(history, extra, fix)
+     if type(data.get('channels')) is not int or data.get('channels') != encoding.channels:
+         raise ValueError('manifest channels disagree with encoding')
++    execution_spec(data)
+     return data, encoding
+ 
+ 
++def execution_spec(data: dict[str, object]) -> tuple[str, str, int]:
++    """Old CPU packages retain their ABI; v3 never guesses a device or dtype."""
++    if data.get('format') != CHECKPOINT_FORMAT:
++        return 'cpu', 'float32', 0
++    device, dtype, index = (data.get(k) for k in ('device', 'dtype', 'device_index'))
++    if (device, dtype) not in (('cpu', 'float32'), ('cuda', 'bfloat16')):
++        raise ValueError('unsupported checkpoint device/dtype contract')
++    if type(index) is not int or not 0 <= index <= 127 or (device == 'cpu' and index != 0):
++        raise ValueError('invalid checkpoint device index')
++    digest = data.get('checkpoint_sha256')
++    if (not isinstance(digest, str) or len(digest) != 64
++            or any(c not in '0123456789abcdef' for c in digest)):
++        raise ValueError('missing checkpoint fingerprint')
++    if data.get('weights_key') not in ('model', 'swa_model'):
++        raise ValueError('invalid checkpoint weights key')
++    assert isinstance(device, str)
++    assert isinstance(dtype, str)
++    return device, dtype, index
++
++
+ def build_worker(directory: Path, cxx: str) -> Path:
+     import torch
+     directory.mkdir(parents=True, exist_ok=True)
+@@ -111,9 +133,13 @@ class NativeEvaluator:
+             raise ValueError('invalid evaluator batch')
+         self.batch = batch
+         self.lock = Lock()
++        device, dtype, index = execution_spec(self.manifest)
++        arguments = [str(binary), str(package), str(self.encoding.channels), str(self.batch)]
++        if self.manifest['format'] == CHECKPOINT_FORMAT:
++            arguments += [device + '-' + dtype, str(index)]
+         with ExitStack() as resources:
+             self.errors = resources.enter_context(tempfile.TemporaryFile(mode='w+'))
+-            self.proc = subprocess.Popen([str(binary), str(package), str(self.encoding.channels), str(self.batch)],
++            self.proc = subprocess.Popen(arguments,
+                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors, bufsize=0)
+             self.resources = resources.pop_all()
+         assert self.proc.stdin is not None
+diff --git a/native/bend_engine/neural_probe/batch_probe.py b/native/bend_engine/neural_probe/batch_probe.py
+index 0d86de0..604aa32 100644
+--- a/native/bend_engine/neural_probe/batch_probe.py
++++ b/native/bend_engine/neural_probe/batch_probe.py
+@@ -120,7 +120,8 @@ def roots() -> list[chess.Board]:
+ 
+ 
+ def group(binary: Path, oracle: sessions.Oracle, evaluator: NativeEvaluator,
+-          eager: torch.nn.Module, *, max_rows: int = 4, faults: bool = False
++          eager: torch.nn.Module, *, max_rows: int = 4, faults: bool = False,
++          atol: float = 2e-6, rtol: float = 2e-5
+           ) -> tuple[dict[str, object], list[Observation]]:
+     broker = Batcher(evaluator.batch, evaluator.encoding.channels, max_wait=0.002)
+     actors: list[Actor] = []
+@@ -177,7 +178,7 @@ def group(binary: Path, oracle: sessions.Oracle, evaluator: NativeEvaluator,
+                             expected = eager(torch.from_numpy(job.x.copy()))
+                         for actual, name in ((policy[i:i+1], 'policy'), (wdl[i:i+1], 'wdl')):
+                             want = expected[name].detach().numpy()
+-                            np.testing.assert_allclose(actual, want, atol=2e-6, rtol=2e-5)
++                            np.testing.assert_allclose(actual, want, atol=atol, rtol=rtol)
+                             max_error = max(max_error, float(np.abs(actual - want).max()))
+                     for reply in broker.complete(flight, policy, wdl, now=time.monotonic()):
+                         actors[reply.key.session].deliver(reply)
