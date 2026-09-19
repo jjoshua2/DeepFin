@@ -13,6 +13,7 @@ on:
       - 'chess_anti_engine/encoding/_cboard_impl.h'
       - 'chess_anti_engine/encoding/_slider_attacks_impl.h'
       - 'tests/test_bend_search_sessions.py'
+      - 'tests/test_bend_root_advance.py'
 permissions:
   contents: read
 jobs:
@@ -35,15 +36,15 @@ jobs:
           python -m pip install 'python-chess==1.999' 'pytest==9.1.1' 'ruff==0.15.20' 'basedpyright==1.39.9'
       - name: Focused static and cheap contracts
         run: |
-          ruff check native/bend_engine/session_probe/run_probe.py tests/test_bend_search_sessions.py
-          basedpyright native/bend_engine/session_probe/run_probe.py tests/test_bend_search_sessions.py
+          ruff check native/bend_engine/session_probe/*.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py
+          basedpyright native/bend_engine/session_probe/*.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py
           mkdir -p /tmp/session-contract-tests
-          cp tests/test_bend_search_sessions.py /tmp/session-contract-tests/
+          cp tests/test_bend_search_sessions.py tests/test_bend_root_advance.py /tmp/session-contract-tests/
           PYTHONPATH="$PWD" python -m pytest -q /tmp/session-contract-tests --confcutdir=/tmp/session-contract-tests
-      - name: Persistent search, evaluator faults and reset recovery
+      - name: Persistent search, evaluator faults, root advancement and recovery
         run: |
-          python -m native.bend_engine.session_probe.run_probe \
-            --python-chess --report artifacts/bend-search-sessions.json
+          python -m native.bend_engine.session_probe.root_probe \
+            --report artifacts/bend-search-sessions.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
