@@ -161,3 +161,11 @@ path-scoped native-neural workflow covers this test; ordinary pytest only tests
 broker and manifest contracts. Real trained/CUDA batching and throughput remain
 separate gates. Evidence is in
 [`docs/experiments/2026-09-18-bend-evaluator-batching.md`](../../../docs/experiments/2026-09-18-bend-evaluator-batching.md).
+
+## A specified checkpoint rather than the smoke model
+
+See [the checkpoint/device contract](CHECKPOINTS.md) for strict loading of an
+embedded-architecture checkpoint, frozen CPU/CUDA export, and its explicit
+batched-search qualification command. This is a separate v3 package contract;
+existing v1/v2 TinyNet commands remain unchanged. No trained or CUDA pass is
+implied by the reduced-transformer CPU fixture.

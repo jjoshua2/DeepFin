@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Bend checkpoint/device contract](2026-09-18-bend-checkpoint-contract.md) | Strict supplied-checkpoint export and batched search; reduced-transformer CPU qualification, trained/CUDA execution pending |
 | [Bend evaluator batching](2026-09-18-bend-evaluator-batching.md) | Bounded cross-search CPU batches, cancellation and epoch isolation; no trained/CUDA or throughput claim |
 | [Bend neural boundary](2026-09-18-bend-neural-boundary.md) | Real history/policy encoding and persistent native CPU AOTI smoke joined to Bend search; untrained TinyNet, no CUDA or production claim |
 | [Bend search sessions](2026-09-18-bend-search-sessions.md) | Persistent bounded Bend PUCT with external test policy/WDL, cancellation/reply validation and reset; CPU functionality gate, no neural or production claim |
