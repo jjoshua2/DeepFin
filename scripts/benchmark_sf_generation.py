@@ -4,7 +4,7 @@ A plan supplies exact generation commands, source pins and limits. Default mode
 validates without launching. No active corpus is resumed or mutated.
 """
 from __future__ import annotations
-import argparse,hashlib,json,os,resource,shutil,signal,subprocess,time
+import argparse,ctypes,hashlib,json,os,resource,shutil,signal,subprocess,time
 from pathlib import Path
 from typing import Any
 
@@ -29,12 +29,20 @@ def snapshot()->dict[int,dict[str,Any]]:
             result[int(path.name)]={'parent':int(fields[1]),'start':int(fields[19]),'ticks':int(fields[11])+int(fields[12]),'state':fields[0]}
         except (FileNotFoundError,ProcessLookupError,PermissionError,IndexError):continue
     return result
+def child_baseline()->dict[int,int]:
+    # Enable before spawning: setsid does not escape Linux subreaper adoption.
+    libc=ctypes.CDLL(None,use_errno=True)
+    require(libc.prctl(36,1,0,0,0)==0,'cannot enable child subreaper')
+    return {pid:item['start'] for pid,item in snapshot().items() if item['parent']==os.getpid()}
 class OwnedProcesses:
     """Track escaped engine sessions by ancestry and guard against PID reuse."""
-    def __init__(self,pid:int):
+    def __init__(self,pid:int,baseline:dict[int,int]|None=None):
+        self.baseline=baseline
         self.root=pid;self.root_start=snapshot().get(pid,{}).get('start');self.known:dict[int,int]={};self.peaks:dict[tuple[int,int],int]={}
     def sample(self)->float:
         current=snapshot();selected={self.root} if self.root in current and current[self.root]['start']==self.root_start else set()
+        if self.baseline is not None:
+            selected.update(pid for pid,item in current.items() if item['parent']==os.getpid() and self.baseline.get(pid)!=item['start'])
         selected.update(pid for pid,start in self.known.items() if pid in current and current[pid]['start']==start)
         while True:
             extra={pid for pid,item in current.items() if item['parent'] in selected}
@@ -56,6 +64,11 @@ class OwnedProcesses:
         self.sample();self.signal(signal.SIGKILL)
         child.wait(timeout=5)
         time.sleep(.1)
+        self.sample()
+        for pid in self.known:
+            if pid==child.pid:continue
+            try:os.waitpid(pid,os.WNOHANG)
+            except ChildProcessError:pass
         current=snapshot()
         require(not any(pid in current and current[pid]['start']==start and current[pid]['state']!='Z' for pid,start in self.known.items()),'owned process survived cleanup')
 def output_bytes(path:Path)->int:return sum(p.stat().st_size for p in path.rglob('*') if p.is_file())
@@ -80,13 +93,15 @@ def validate(plan:dict[str,Any])->None:
     subprocess.run(['git','-C',plan['runtime'],'diff','--exit-code','HEAD','--'],check=True)
     for pin in plan['pins']:require(sha(Path(pin['path']))==pin['sha256'],'changed pin '+pin['path'])
 
-def closed_readout(root:Path,depth:int)->dict[str,Any]:
+def closed_readout(root:Path,depth:int,checkpoint=lambda:None)->dict[str,Any]:
+    checkpoint()
     # Decoder is production code; no GPU and no derived arrays are written.
     from dataclasses import replace
     from scripts import gen_sf_rooted_corpus as corpus,derive_corpus_targets as derive
     manifest=json.loads((root/'manifest.json').read_text())
     records=[]
     for path in sorted(root.glob('w*.progress.jsonl')):
+        checkpoint()
         lines=path.read_text().splitlines()
         for index,line in enumerate(lines):
             try:record=json.loads(line)
@@ -108,8 +123,10 @@ def closed_readout(root:Path,depth:int)->dict[str,Any]:
     inspector=derive.TargetDeriver(derive.DeriveOptions(scheme,.0005,1.,1.,0,0,8192,0))
     counts={'banked_rows':0,'eligible_rows':0,'no_result_rows':0,'invalid_rows':0,'closed_shards':len(shards)};failures={}
     for entry in shards:
+        checkpoint()
         path=root/entry['path'];require(path.is_file() and path.resolve().parent==root.resolve(),'closed shard absent/foreign');seen=0
         for row in corpus.iter_shard_rows(path):
+            if seen%32==0:checkpoint()
             seen+=1;counts['banked_rows']+=1
             derive._check_row_identity(row,manifest['config_sha256'])
             if row.get('result') is None:counts['no_result_rows']+=1;continue
@@ -124,6 +141,7 @@ def closed_readout(root:Path,depth:int)->dict[str,Any]:
                 counts['invalid_rows']+=1;kind=type(exc).__name__+':'+str(exc)[:120];failures[kind]=failures.get(kind,0)+1
             else:counts['eligible_rows']+=1
         require(seen==entry['rows'],'closed shard rowcount differs')
+        checkpoint()
     return {**counts,'failures':failures,'manifest_sha256':sha(root/'manifest.json'),'scope':'Closed-game rows passing result, stored-input, phase0 policy and latest-phase value support checks; no cross-corpus dedup or teacher labeling.'}
 
 def execute(plan:dict[str,Any])->dict[str,Any]:
@@ -137,17 +155,25 @@ def execute(plan:dict[str,Any])->dict[str,Any]:
     usage=resource.getrusage(resource.RUSAGE_SELF);controller_start=usage.ru_utime+usage.ru_stime
     def controller_cpu():
         usage=resource.getrusage(resource.RUSAGE_SELF);return usage.ru_utime+usage.ru_stime-controller_start
+    def checkpoint():
+        require(time.monotonic()-start<plan['wall_budget_seconds'],'wall budget')
+        require(cpu_used+controller_cpu()<plan['cpu_budget_seconds'],'CPU budget exhausted')
+        require(memory()>=plan['memory_gib']*2**30,'memory reserve')
+        require(shutil.disk_usage(root).free>=96*2**30,'running disk reserve')
+        require(not (root/'STOP').exists() and not (root.parent/'STOP').exists(),'STOP')
     def stop(sig,frame):raise InterruptedError(f'signal{sig}')
     for sig in [signal.SIGTERM,signal.SIGINT]:signal.signal(sig,stop)
     try:
         for cell in plan['cells']:
+            checkpoint()
             require(shutil.disk_usage(root).free>=plan['launch_disk_gib']*2**30,'next-cell disk reserve')
             require(cpu_used+controller_cpu()<plan['cpu_budget_seconds'],'CPU budget exhausted')
             began=time.monotonic();out=root/cell['id'];samples=[]
             env={**os.environ,**plan['env']};env['CUDA_VISIBLE_DEVICES']=''
             def setup():os.sched_setaffinity(0,plan['affinity']);os.nice(19)
             with (root/(cell['id']+'.log')).open('x') as stream:
-                child=subprocess.Popen(cell['command'],cwd=plan['runtime'],env=env,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True,preexec_fn=setup);owned=OwnedProcesses(child.pid)
+                baseline=child_baseline()
+                child=subprocess.Popen(cell['command'],cwd=plan['runtime'],env=env,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True,preexec_fn=setup);owned=OwnedProcesses(child.pid,baseline)
                 reason='natural_completion'
                 while child.poll() is None:
                     used=owned.sample();now=time.monotonic();size=output_bytes(root)
@@ -163,7 +189,9 @@ def execute(plan:dict[str,Any])->dict[str,Any]:
                 owned.stop(child);used=owned.sample();cpu_used+=used;elapsed=time.monotonic()-began
             require(output_bytes(root)<=plan['output_limit_bytes'],'output cap exceeded')
             require(reason!='natural_completion' or child.returncode==0,'generator failed before bounded stop')
-            bank=closed_readout(out,8 if cell['policy']=='d8' else 9)
+            checkpoint()
+            bank=closed_readout(out,8 if cell['policy']=='d8' else 9,checkpoint)
+            checkpoint()
             result={'id':cell['id'],'policy':cell['policy'],'concurrency':cell['concurrency'],'elapsed_seconds':elapsed,'cpu_seconds_observed':used,'stop_reason':reason,'returncode':child.returncode,'samples':samples,**bank,'eligible_rows_per_wall_second':bank['eligible_rows']/elapsed,'banked_rows_per_wall_second':bank['banked_rows']/elapsed}
             dump(root/(cell['id']+'.result.json'),result);results.append(result);owned=None;child=None
             if reason=='cpu_budget' or cpu_used+controller_cpu()>=plan['cpu_budget_seconds']:break

@@ -38,3 +38,29 @@ def test_tracker_does_not_adopt_reused_root_pid(monkeypatch):
     replacement={10:{'parent':1,'start':999,'ticks':80,'state':'S'}}
     monkeypatch.setattr(tool,'snapshot',lambda:replacement);assert owned.sample()==1/os.sysconf('SC_CLK_TCK')
     monkeypatch.setattr(tool.os,'kill',lambda *a:pytest.fail('reused root signalled'));owned.signal(signal.SIGTERM)
+
+
+def test_adopts_engine_that_escapes_before_first_sample(tmp_path):
+    import subprocess,sys,time
+    baseline=tool.child_baseline()
+    pidfile=tmp_path/'pid'
+    code="import subprocess,os,pathlib; p=subprocess.Popen(['sleep','60'],start_new_session=True); pathlib.Path(%r).write_text(str(p.pid))" % str(pidfile)
+    worker=subprocess.Popen([sys.executable,'-c',code],start_new_session=True)
+    owned=tool.OwnedProcesses(worker.pid,baseline)
+    worker.wait(timeout=5)
+    engine=int(pidfile.read_text())
+    try:
+        owned.sample()
+        assert engine in owned.known
+        owned.stop(worker)
+        assert engine not in tool.snapshot()
+    finally:
+        try:os.kill(engine,signal.SIGKILL)
+        except ProcessLookupError:pass
+        try:os.waitpid(engine,0)
+        except ChildProcessError:pass
+
+def test_readout_checks_budget_before_opening_inputs(tmp_path):
+    def stop():raise InterruptedError('STOP')
+    with pytest.raises(InterruptedError,match='STOP'):
+        tool.closed_readout(tmp_path,8,stop)
