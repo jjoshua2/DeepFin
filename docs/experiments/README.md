@@ -1,5 +1,7 @@
 # Experiment records
 
+- [2026-09-19: Workspace storage migration and queued-job adoption](2026-09-19-workspace-storage.md)
+
 Start here for experiment planning and readouts. [Project guidance](../../CLAUDE.md)
 holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.
