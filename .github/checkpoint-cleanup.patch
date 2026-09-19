@@ -1,0 +1,56 @@
+--- a/native/bend_engine/neural_probe/checkpoint.py
++++ b/native/bend_engine/neural_probe/checkpoint.py
+@@ -23,8 +23,11 @@
+ 
+ 
+ def fingerprint(path: Path) -> str:
++    digest = hashlib.sha256()
+     with path.open('rb') as stream:
+-        return hashlib.file_digest(stream, 'sha256').hexdigest()
++        for block in iter(lambda: stream.read(1024 * 1024), b''):
++            digest.update(block)
++    return digest.hexdigest()
+ 
+ 
+ def digest_json(value: object) -> str:
+@@ -44,7 +47,7 @@
+ 
+ def require_device(device: torch.device) -> None:
+     if device.type == 'cuda' and (not torch.cuda.is_available()
+-            or device.index is None or device.index >= torch.cuda.device_count()):
++            or device.index >= torch.cuda.device_count()):
+         raise RuntimeError(f'{device} requires an available CUDA device; no CPU fallback')
+ 
+ 
+--- a/native/bend_engine/neural_probe/checkpoint_probe.py
++++ b/native/bend_engine/neural_probe/checkpoint_probe.py
+@@ -47,7 +47,7 @@
+         self.dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
+         self.eager = TupleOutputs(eager).eval()
+         self.packaged = torch._inductor.aoti_load_package(
+-            str(package), device_index=self.target.index if self.target.index is not None else -1)
++            str(package), device_index=self.target.index if self.target.type == 'cuda' else -1)
+         self.policy_tv_limit, self.wdl_tv_limit = policy_tv_limit, wdl_tv_limit
+         self.rows = 0
+         self.logit_error = self.policy_tv = self.wdl_tv = 0.0
+@@ -120,7 +120,7 @@
+                     results.append({'mode': mode, **report})
+                 results.append({'mode': mode, **control_report})
+             evaluator.finish()
+-            report = {'scope': 'checkpoint-specific native inference and diagnostic Bend PUCT; not strength/throughput',
++            final_report: dict[str, object] = {'scope': 'checkpoint-specific native inference and diagnostic Bend PUCT; not strength/throughput',
+                       'package': evaluator.manifest, 'compiler': pin, 'results': results,
+                       'native_calls': evaluator.sequence - 1, 'real_rows_compared': comparator.rows,
+                       'native_vs_python_package': 'bit-exact for every batch including padding',
+@@ -134,9 +134,9 @@
+         if fingerprint(checkpoint) != loaded.sha256:
+             raise ValueError('source checkpoint changed before qualification completed')
+         with (output / 'qualification.json').open('x') as stream:
+-            json.dump(report, stream, indent=2, allow_nan=False)
++            json.dump(final_report, stream, indent=2, allow_nan=False)
+             stream.write('\n')
+-        return report
++        return final_report
+ 
+ 
+ def main() -> None:
