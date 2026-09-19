@@ -131,3 +131,17 @@ def test_real_training_matches_materialized_targets(tmp_path: Path) -> None:
     left = torch.load(a / 'checkpoint.pt', map_location='cpu', weights_only=False)
     right = torch.load(b / 'checkpoint.pt', map_location='cpu', weights_only=False)
     assert all(torch.equal(value, right['model'][key]) for key, value in left['model'].items())
+
+
+def test_normalized_fill_does_not_hide_missing_replacement_chunk(tmp_path: Path) -> None:
+    base, shard, _ = _write_source(tmp_path)
+    seal = tmp_path / 'seal.json'
+    cli.seal_base(base, seal)
+    ref = {'path': str(seal), 'sha256': storage.sha(seal)}
+    out = tmp_path / 'overlay'
+    targets.begin_target_shard(shard, out, ref, replacements=('search_wdl',))
+    group: Any = zarr.open_group(str(out), mode='a')
+    del group['search_wdl']
+    group.create_dataset('search_wdl', shape=(2, 3), chunks=(2, 3), dtype='float16', fill_value=1/3)
+    with pytest.raises(ValueError, match='missing replacement target chunk'):
+        targets.finish_target_shard(shard, out, ref, recipe={'test': 'missing'})

@@ -376,7 +376,8 @@ def _validate_local(path: Path, base: Path, names: list[str]) -> dict[str, Any]:
                     'replacement layout differs')
         require(len(a.shape) == 2 and (name != 'search_wdl' or a.shape[1] == 3),
                     'invalid target shape')
-        # A missing Zarr chunk reads as fill values; validate every row before sealing.
+        require(a.nchunks_initialized == a.nchunks, "missing replacement target chunk")
+        # Validate values as well as chunk presence; a nonzero fill can look normalized.
         for start in range(0, a.shape[0], 8192):
             values = np.asarray(a[start:start + 8192], dtype=np.float64)
             require(bool(np.isfinite(values).all() and (values >= 0).all()

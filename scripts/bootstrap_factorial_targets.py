@@ -31,8 +31,8 @@ RECIPE = {
 
 def normalized(a: np.ndarray) -> np.ndarray:
     a = np.asarray(a, dtype=np.float64)
-    policy.require(a.ndim == 2 and a.shape[1] == 3 and np.isfinite(a).all()
-                   and (a >= 0).all(), 'invalid base WDL')
+    policy.require(a.ndim == 2 and a.shape[1] == 3 and bool(np.isfinite(a).all())
+                   and bool((a >= 0).all()), 'invalid base WDL')
     mass = a.sum(axis=1, keepdims=True)
     policy.require(bool((mass > 0).all()), 'zero base WDL mass')
     return a / mass
