@@ -25,13 +25,14 @@ if TYPE_CHECKING:
 MAGIC = 0x44464E31
 FORMAT = 'deepfin-tuple-policy-wdl-cpu-f32-v1'
 BATCH_FORMAT = 'deepfin-tuple-policy-wdl-cpu-f32-batched-v2'
+CHECKPOINT_FORMAT = 'deepfin-tuple-policy-wdl-checkpoint-v3'
 BATCHES = (1, 2, 4, 8, 16)
 HERE = Path(__file__).resolve().parent
 
 
 def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
     data = json.loads(package.with_suffix('.json').read_text())
-    if not isinstance(data, dict) or data.get('format') not in (FORMAT, BATCH_FORMAT):
+    if not isinstance(data, dict) or data.get('format') not in (FORMAT, BATCH_FORMAT, CHECKPOINT_FORMAT):
         raise ValueError('unsupported evaluator manifest format')
     import torch
     if data.get('torch_version') != str(torch.__version__):
@@ -43,7 +44,7 @@ def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
         raise ValueError('unsupported evaluator policy width or batch')
     if data['format'] == FORMAT and data['batch'] != 1:
         raise ValueError('v1 evaluator requires batch one')
-    if data['format'] == BATCH_FORMAT and data.get('row_independent') is not True:
+    if data['format'] in (BATCH_FORMAT, CHECKPOINT_FORMAT) and data.get('row_independent') is not True:
         raise ValueError('batched manifest must declare independent rows')
     history, extra, fix = (data.get(k) for k in ('input_history_encoding', 'input_extra_features', 'history_rep_fix'))
     if not isinstance(history, str) or not isinstance(extra, str) or type(fix) is not bool:
@@ -51,7 +52,28 @@ def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
     encoding = Encoding(history, extra, fix)
     if type(data.get('channels')) is not int or data.get('channels') != encoding.channels:
         raise ValueError('manifest channels disagree with encoding')
+    execution_spec(data)
     return data, encoding
+
+
+def execution_spec(data: dict[str, object]) -> tuple[str, str, int]:
+    """Old CPU packages retain their ABI; v3 never guesses a device or dtype."""
+    if data.get('format') != CHECKPOINT_FORMAT:
+        return 'cpu', 'float32', 0
+    device, dtype, index = (data.get(k) for k in ('device', 'dtype', 'device_index'))
+    if (device, dtype) not in (('cpu', 'float32'), ('cuda', 'bfloat16')):
+        raise ValueError('unsupported checkpoint device/dtype contract')
+    if type(index) is not int or not 0 <= index <= 127 or (device == 'cpu' and index != 0):
+        raise ValueError('invalid checkpoint device index')
+    digest = data.get('checkpoint_sha256')
+    if (not isinstance(digest, str) or len(digest) != 64
+            or any(c not in '0123456789abcdef' for c in digest)):
+        raise ValueError('missing checkpoint fingerprint')
+    if data.get('weights_key') not in ('model', 'swa_model'):
+        raise ValueError('invalid checkpoint weights key')
+    assert isinstance(device, str)
+    assert isinstance(dtype, str)
+    return device, dtype, index
 
 
 def build_worker(directory: Path, cxx: str) -> Path:
@@ -111,9 +133,13 @@ class NativeEvaluator:
             raise ValueError('invalid evaluator batch')
         self.batch = batch
         self.lock = Lock()
+        device, dtype, index = execution_spec(self.manifest)
+        arguments = [str(binary), str(package), str(self.encoding.channels), str(self.batch)]
+        if self.manifest['format'] == CHECKPOINT_FORMAT:
+            arguments += [device + '-' + dtype, str(index)]
         with ExitStack() as resources:
             self.errors = resources.enter_context(tempfile.TemporaryFile(mode='w+'))
-            self.proc = subprocess.Popen([str(binary), str(package), str(self.encoding.channels), str(self.batch)],
+            self.proc = subprocess.Popen(arguments,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors, bufsize=0)
             self.resources = resources.pop_all()
         assert self.proc.stdin is not None
