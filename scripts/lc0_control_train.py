@@ -2040,13 +2040,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.overlay_storage_qualification is not None or args.expected_overlay_storage_qualification_sha256 is not None:
         if (args.overlay_storage_qualification is None
                 or args.expected_overlay_storage_qualification_sha256 is None
-                or args.sampling_mode != "game_epoch" or len(args.shards) != 1):
-            parser.error("overlay qualification requires both receipt pins, game_epoch and exactly one corpus")
-        from chess_anti_engine.replay.target_overlay import verify_qualification
+                or args.sampling_mode != "game_epoch"):
+            parser.error("overlay qualification requires both receipt pins and game_epoch")
+        from chess_anti_engine.replay.target_overlay import qualified_paths
         overlay_ref = {"path": str(args.overlay_storage_qualification.resolve()),
                        "sha256": args.expected_overlay_storage_qualification_sha256}
-        overlay_qualification = verify_qualification(overlay_ref, Path(args.shards[0]))
-        overlay_seal = BaseSeal(overlay_qualification["base_seal"])
+        overlay_paths = [path for root in args.shards for path in iter_shard_paths(Path(root))]
+        _, overlay_seal = qualified_paths(overlay_ref, overlay_paths)
     if args.epochs < 1 or (args.epochs > 1 and (
         args.sampling_mode != "game_epoch" or args.steps != 0
     )):
