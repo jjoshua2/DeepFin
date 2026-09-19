@@ -141,3 +141,22 @@ def test_group_limits_reject_invalid_requests(batch: int, rows: int | None) -> N
     from native.bend_engine.neural_probe.batch_probe import group_limits
     with pytest.raises(ValueError, match=r'group batch|row limit'):
         group_limits(batch, rows)
+
+
+@pytest.mark.parametrize('alias', ['same', 'directory', 'hardlink', 'symlink'])
+def test_report_cannot_overwrite_checkpoint(tmp_path: Path, alias: str) -> None:
+    from native.bend_engine.neural_probe.checkpoint_probe import validate_report_destination
+    checkpoint = tmp_path / 'trainer.pt'
+    checkpoint.write_bytes(b'preserve checkpoint')
+    report = checkpoint
+    source = tmp_path if alias == 'directory' else checkpoint
+    if alias in ('hardlink', 'symlink'):
+        report = tmp_path / 'report.json'
+        if alias == 'hardlink':
+            report.hardlink_to(checkpoint)
+        else:
+            report.symlink_to(checkpoint)
+    with pytest.raises(ValueError, match='must differ'):
+        validate_report_destination(report, source)
+    assert checkpoint.read_bytes() == b'preserve checkpoint'
+    validate_report_destination(tmp_path / 'different.json', source)

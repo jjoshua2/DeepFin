@@ -48,6 +48,16 @@ def tolerances(device: str, atol: float | None, rtol: float | None) -> tuple[flo
     return a, r
 
 
+def validate_report_destination(report: Path, checkpoint: Path | None) -> None:
+    """Never let a mistaken --report argument overwrite the source checkpoint."""
+    if checkpoint is None:
+        return
+    source = checkpoint / 'trainer.pt' if checkpoint.is_dir() else checkpoint
+    if (report.resolve() == source.resolve()
+            or (report.exists() and source.exists() and report.samefile(source))):
+        raise ValueError('report destination must differ from the source checkpoint')
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -68,6 +78,8 @@ def main() -> None:
     args = parser.parse_args()
     if not args.bun or not args.cc or not args.cxx:
         parser.error('Bun, Clang and Clang++ are required')
+    # Outside the reporting finally block: a rejected destination must not be written.
+    validate_report_destination(args.report, args.checkpoint)
     report: dict[str, object] = {'status': 'failed', 'device': args.device,
                                'scope': 'checkpoint-native-search qualification, not playing strength or throughput'}
     torch.set_num_threads(2)
