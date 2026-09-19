@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 import json
@@ -120,7 +121,8 @@ def roots() -> list[chess.Board]:
 
 
 def group(binary: Path, oracle: sessions.Oracle, evaluator: NativeEvaluator,
-          eager: torch.nn.Module, *, max_rows: int = 4, faults: bool = False
+          eager: torch.nn.Module, *, max_rows: int = 4, faults: bool = False,
+          compare_batch: Callable[[Batch, np.ndarray, np.ndarray], float] | None = None
           ) -> tuple[dict[str, object], list[Observation]]:
     broker = Batcher(evaluator.batch, evaluator.encoding.channels, max_wait=0.002)
     actors: list[Actor] = []
@@ -172,13 +174,16 @@ def group(binary: Path, oracle: sessions.Oracle, evaluator: NativeEvaluator,
                         raise
                     # Check every real row against independent eager SINGLETON inference,
                     # including cancelled rows. This catches wrong lanes/padding effects.
-                    for i, job in enumerate(flight.jobs):
-                        with torch.no_grad():
-                            expected = eager(torch.from_numpy(job.x.copy()))
-                        for actual, name in ((policy[i:i+1], 'policy'), (wdl[i:i+1], 'wdl')):
-                            want = expected[name].detach().numpy()
-                            np.testing.assert_allclose(actual, want, atol=2e-6, rtol=2e-5)
-                            max_error = max(max_error, float(np.abs(actual - want).max()))
+                    if compare_batch is not None:
+                        max_error = max(max_error, compare_batch(flight, policy, wdl))
+                    else:
+                        for i, job in enumerate(flight.jobs):
+                            with torch.no_grad():
+                                expected = eager(torch.from_numpy(job.x.copy()))
+                            for actual, name in ((policy[i:i+1], 'policy'), (wdl[i:i+1], 'wdl')):
+                                want = expected[name].detach().numpy()
+                                np.testing.assert_allclose(actual, want, atol=2e-6, rtol=2e-5)
+                                max_error = max(max_error, float(np.abs(actual - want).max()))
                     for reply in broker.complete(flight, policy, wdl, now=time.monotonic()):
                         actors[reply.key.session].deliver(reply)
                     future, flight = None, None

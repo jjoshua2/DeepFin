@@ -23,8 +23,11 @@ BATCHES = (1, 2, 4, 8, 16)
 
 
 def fingerprint(path: Path) -> str:
+    digest = hashlib.sha256()
     with path.open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def digest_json(value: object) -> str:
@@ -44,7 +47,7 @@ def device_contract(device: str, dtype: str) -> torch.device:
 
 def require_device(device: torch.device) -> None:
     if device.type == 'cuda' and (not torch.cuda.is_available()
-            or device.index is None or device.index >= torch.cuda.device_count()):
+            or device.index >= torch.cuda.device_count()):
         raise RuntimeError(f'{device} requires an available CUDA device; no CPU fallback')
 
 

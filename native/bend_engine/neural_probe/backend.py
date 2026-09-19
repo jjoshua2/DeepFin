@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
-import hashlib
 import json
 import math
 import os
@@ -18,6 +17,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .adapter import Encoding
+from .checkpoint import BATCHES, CHECKPOINT_FORMAT, fingerprint, validate_checkpoint_manifest
 
 if TYPE_CHECKING:
     from typing import IO
@@ -25,18 +25,17 @@ if TYPE_CHECKING:
 MAGIC = 0x44464E31
 FORMAT = 'deepfin-tuple-policy-wdl-cpu-f32-v1'
 BATCH_FORMAT = 'deepfin-tuple-policy-wdl-cpu-f32-batched-v2'
-BATCHES = (1, 2, 4, 8, 16)
 HERE = Path(__file__).resolve().parent
 
 
 def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
     data = json.loads(package.with_suffix('.json').read_text())
-    if not isinstance(data, dict) or data.get('format') not in (FORMAT, BATCH_FORMAT):
+    if not isinstance(data, dict) or data.get('format') not in (FORMAT, BATCH_FORMAT, CHECKPOINT_FORMAT):
         raise ValueError('unsupported evaluator manifest format')
     import torch
     if data.get('torch_version') != str(torch.__version__):
         raise ValueError('AOTI package/runtime Torch version mismatch')
-    if data.get('sha256') != hashlib.sha256(package.read_bytes()).hexdigest():
+    if data.get('sha256') != fingerprint(package):
         raise ValueError('evaluator package fingerprint mismatch')
     if (type(data.get('policy_width')) is not int or data.get('policy_width') != 1858
             or type(data.get('batch')) is not int or data.get('batch') not in BATCHES):
@@ -45,6 +44,8 @@ def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
         raise ValueError('v1 evaluator requires batch one')
     if data['format'] == BATCH_FORMAT and data.get('row_independent') is not True:
         raise ValueError('batched manifest must declare independent rows')
+    if data['format'] == CHECKPOINT_FORMAT:
+        validate_checkpoint_manifest(data)
     history, extra, fix = (data.get(k) for k in ('input_history_encoding', 'input_extra_features', 'history_rep_fix'))
     if not isinstance(history, str) or not isinstance(extra, str) or type(fix) is not bool:
         raise ValueError('missing or invalid model encoding in evaluator manifest')
@@ -113,7 +114,10 @@ class NativeEvaluator:
         self.lock = Lock()
         with ExitStack() as resources:
             self.errors = resources.enter_context(tempfile.TemporaryFile(mode='w+'))
-            self.proc = subprocess.Popen([str(binary), str(package), str(self.encoding.channels), str(self.batch)],
+            command = [str(binary), str(package), str(self.encoding.channels), str(self.batch)]
+            if self.manifest['format'] == CHECKPOINT_FORMAT:
+                command += [str(self.manifest['device']), str(self.manifest['dtype'])]
+            self.proc = subprocess.Popen(command,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors, bufsize=0)
             self.resources = resources.pop_all()
         assert self.proc.stdin is not None

@@ -47,7 +47,7 @@ class Comparator:
         self.dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
         self.eager = TupleOutputs(eager).eval()
         self.packaged = torch._inductor.aoti_load_package(
-            str(package), device_index=self.target.index if self.target.index is not None else -1)
+            str(package), device_index=self.target.index if self.target.type == 'cuda' else -1)
         self.policy_tv_limit, self.wdl_tv_limit = policy_tv_limit, wdl_tv_limit
         self.rows = 0
         self.logit_error = self.policy_tv = self.wdl_tv = 0.0
@@ -120,7 +120,7 @@ def qualify(checkpoint: Path, output: Path, compiler_root: Path, *, device: str 
                     results.append({'mode': mode, **report})
                 results.append({'mode': mode, **control_report})
             evaluator.finish()
-            report = {'scope': 'checkpoint-specific native inference and diagnostic Bend PUCT; not strength/throughput',
+            final_report: dict[str, object] = {'scope': 'checkpoint-specific native inference and diagnostic Bend PUCT; not strength/throughput',
                       'package': evaluator.manifest, 'compiler': pin, 'results': results,
                       'native_calls': evaluator.sequence - 1, 'real_rows_compared': comparator.rows,
                       'native_vs_python_package': 'bit-exact for every batch including padding',
@@ -134,9 +134,9 @@ def qualify(checkpoint: Path, output: Path, compiler_root: Path, *, device: str 
         if fingerprint(checkpoint) != loaded.sha256:
             raise ValueError('source checkpoint changed before qualification completed')
         with (output / 'qualification.json').open('x') as stream:
-            json.dump(report, stream, indent=2, allow_nan=False)
+            json.dump(final_report, stream, indent=2, allow_nan=False)
             stream.write('\n')
-        return report
+        return final_report
 
 
 def main() -> None:
