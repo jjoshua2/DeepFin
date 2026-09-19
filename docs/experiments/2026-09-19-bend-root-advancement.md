@@ -22,8 +22,9 @@ commands, epoch exhaustion, invalid flags and cancellation before advancing.
 Semantic rejection must preserve board/epoch; malformed commands and an advance
 while a reply is pending fail closed. Old config/reply/quit syntax stays valid.
 
-Hosted confirmation is bounded by the existing ten-minute path-scoped session
-job. No timing gate, GPU allocation, training or default perft-depth increase.
+The permanent session job retains its ten-minute bound. The one-off full CPU
+environment and optional encoding confirmation uses a fifteen-minute cap.
+No timing gate, GPU allocation, training or default perft-depth increase.
 Only fake-wire/parser/history unit checks join ordinary pytest. No compiler or
 production model/encoder/search change. Recovery: discard this isolated branch,
 not earlier work. Self-review, not an independent review or universal proof.
@@ -72,12 +73,61 @@ The complete native sources were unchanged between four-mode correctness and
 encoding checks; a later Python-only observer hook enables the optional per-leaf
 encoding assertions without affecting default search/evaluator semantics.
 
-## Hosted readout
+## Hosted readout: PASS
 
-Pending at feature preparation. The PR-triggered native session job runs the
-four modes and original contracts. The existing neural workflow also exercises
-the unchanged config/reply protocol through the new command decoder. The optional
-460-comparison history check is local evidence until independently run in CI.
+[Run 35421672830](https://github.com/jjoshua2/DeepFin/actions/runs/35421672830),
+job **105840416140**, passed every stage, including source-hash verification,
+Ruff, Basedpyright, 49 cheap tests, all four native builds, the separate history
+check and clean source publication. No tests, numerical checks or compiler
+fingerprints were suppressed. The tested non-workflow source was published as
+`16f532239b1c8286b68ef131135178956a8e1c5b`, directly on #782. The final follow-up
+adds this readout and the already-tested path-scoped session workflow; executable
+source bytes are unchanged and their published blobs match the local sources.
+
+| Bend mode | New-root searches | Accepted advances | Semantic rejections | Invalid/out-of-phase records |
+| --- | ---: | ---: | ---: | ---: |
+| Generic C | 66 | 52 | 29 | 9 |
+| Portable U64 | 66 | 52 | 29 | 9 |
+| Native CPU | 66 | 52 | 29 | 9 |
+| UBSan C | 66 | 52 | 29 | 9 |
+
+The new four-mode lifecycle checks cover **264 search epochs and 208 accepted
+moves**. The original 38-session suite also passes in each mode, including its
+bad evaluator replies, cancellation, capacity and terminal behavior. Its CBoard/
+python-chess reference visits 207 unique positions; the new root-advance suite
+visits 166. These are separate suites, not 373 asserted unique positions.
+
+The additional native-mode encoding run passes **460 comparisons**: 204 played
+root-format/feature combinations and 256 actual leaf requests after advancing.
+It repeats the same 66/52/29/9 lifecycle counts and the original session suite.
+No model export or neural forward is performed by this check. The first 112
+history planes are exact and the existing narrow graded-feature tolerance is
+unchanged. Same-board FEN reconstruction cannot substitute for played history.
+
+Both acknowledgements and subsequent complete request/node snapshots are checked.
+The ability to change roots is established, but no subtree preservation or
+learned chess quality is implied. There is no end-to-end performance measurement,
+trained checkpoint, CUDA execution or all-Bend history encoder in this run.
+
+Evidence artifact **bend-root-confirmation**, ID **10576854028**, 30-day retention.
+ZIP SHA-256: `9178ae0be3b837d5f911c836a1b55e5755398d1113d75d203d88b7aeef436ede`.
+- Four-mode report: `3757a80e2c63cf3dbd4231ed9dfd4d474db048c97bd8c89c0496aa727ba9d112`.
+- History report: `6f456e81131683896e086bc8468861223fcef204f87a3d31b289781f6be922c6`.
+- Exact applied patch: `92b8d1b1de11d1b5566ba5c66d9335657ec56884e6e6f2e571a83f57c7931c55`.
+Only compact JSON and commit identity are uploaded, not generated binaries,
+compiler source, model packages or weights.
+
+The permanent session workflow replaces its old command with a root lifecycle
+command that includes the old suite. Its ten-minute bound and existing shallow
+search budgets remain; the optional encoding check is not an additional recurring
+neural export. Ordinary pytest gains only 34 cheap fake-wire/parser/history tests.
+No perft-depth change or benchmark is introduced. The final PR-triggered neural
+workflow separately exercises the old config/reply ABI with native model inference;
+its result is not inferred from this deterministic-evaluator confirmation.
+
+Parent #782's ordinary CPU, capped, lint and PEXT jobs were observed green, as was
+its native-neural job. Its old moving-release Bend installer still fails separately.
+The new PR's wider checks are reported separately, not assumed green from this run.
 
 ## Reproduction / remaining limits
 
