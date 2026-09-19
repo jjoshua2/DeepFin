@@ -2161,6 +2161,9 @@ def main(argv: list[str] | None = None) -> int:
 
     model_cfg = model_config_from_flat_config(cfg)
     model = build_model(model_cfg)
+    # Bank the actual pre-optimizer initialization for matched recipe comparisons.
+    from scripts.bootstrap_initial_state import record_initial_state
+    record_initial_state(model, out_dir / "initial_state.json", seed=int(args.seed))
   # ⚑ model_config is not decoration: the trainer derives its input-history
   # encoding from it, and without it `select_input_history_arrays` refuses
   # every LC0-root row in the corpus. Same construction as tune/trainable.py.
