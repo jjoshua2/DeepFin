@@ -106,9 +106,9 @@ class SessionResult(TypedDict):
     max_logit_absolute_error: float
 
 
-def worker_failures(binary: Path, package: Path, channels: int) -> int:
+def worker_failures(binary: Path, package: Path, channels: int, *, batch: int = 1) -> int:
     """Native input guards, separate from model outputs and Bend reply guards."""
-    count = channels * 64
+    count = batch * channels * 64
     cases = [
         (struct.pack('<3I', 0, 1, count), 'magic'),
         (struct.pack('<3I', MAGIC, 2, count), 'sequence'),
@@ -118,7 +118,7 @@ def worker_failures(binary: Path, package: Path, channels: int) -> int:
         (struct.pack('<3If', MAGIC, 1, count, float('inf')), 'nonfinite'),
     ]
     for payload, message in cases:
-        run = subprocess.run([str(binary), str(package), str(channels)], input=payload,
+        run = subprocess.run([str(binary), str(package), str(channels), str(batch)], input=payload,
                              capture_output=True, timeout=30, check=False)
         if run.returncode != 2 or message not in run.stderr.decode(errors='replace'):
             raise AssertionError(f'native worker did not reject {message}: {run.stderr!r}')
@@ -236,7 +236,7 @@ def main() -> None:
         package = args.smoke_package or work / 'smoke.pt2'
         if args.smoke_package:
             manifest, encoding = package_manifest(package)
-            if encoding != DEFAULT_ENCODING or manifest.get('weights') != 'seeded-untrained' or manifest.get('seed') != SEED:
+            if manifest.get('batch') != 1 or encoding != DEFAULT_ENCODING or manifest.get('weights') != 'seeded-untrained' or manifest.get('seed') != SEED:
                 raise ValueError('qualification requires the default seeded smoke model and encoding')
             eager = smoke_model(encoding)
         else:

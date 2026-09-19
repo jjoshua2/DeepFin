@@ -113,3 +113,51 @@ stop/backpressure, root advance/subtree reuse, draw adjudication, throughput,
 playing strength, and full all-native integration. Export/runtime APIs are
 version-sensitive; both the package and C++ worker are built from the same Torch.
 Self-review is not independent review or a universal proof.
+
+## Bounded batching across searches
+
+The next opt-in gate uses **five independent native Bend search processes** and
+one persistent native C++ batch-four evaluator. The external Python coordinator
+owns `Batcher`; Bend's existing one-pending-request contract is unchanged. This
+is not multiple simultaneous leaves from the same tree and adds no virtual loss.
+
+```sh
+uv run python -m native.bend_engine.neural_probe.batch_probe \
+  --report artifacts/bend-neural-batching.json
+```
+
+The test runs a one-real-row padded control, ordinary batched sessions, and
+queued/in-flight cancellation followed by reset in the same Bend processes. It
+compares each real output row to eager singleton inference, then checks each
+search against its independent diagnostic reference. All four Bend build modes
+are exercised by default (`--modes native` is a smaller explicit run). The
+control still executes batch four; call counts are **not** speed measurements.
+
+`package.py --batch 4 --out PATH` exports the new static-batch smoke contract.
+Existing v1 manifests stay batch-one only. Batched v2 manifests require explicit
+row independence; zero padding is unsafe for a model that mixes across rows.
+The package fingerprint, Torch version and encoding checks still apply. Supported
+buckets are 1/2/4/8/16, but execution qualification currently covers only 1/4.
+Existing BF16/CUDA packages cannot be passed to this CPU tuple-output interface.
+
+`Batcher` has a fixed queue bound and one batch in flight, snapshots input tensors
+and legal indices, and routes by `(session, epoch, request, node)`. Register a
+new epoch only after its old pending request is completed/cancelled. One owner
+thread calls `register`, `submit`, `expire`, `dispatch`, `complete` or `fail`;
+only `NativeEvaluator.evaluate` runs on the worker thread. Concurrent calls on
+that native stream fail rather than corrupt framing. Cancelled in-flight slots
+remain reserved until the old batch returns, but its results cannot remove or
+complete a newer epoch's request. Malformed output cannot partially commit.
+
+The sample coordinator flushes partial batches after 2 ms, expires requests at
+30 seconds, and retains the existing native IO deadlines. Verification and
+encoding are not real-time tasks, so these settings are not latency guarantees.
+Cancellation can deliver a cancellation reply while native work is outstanding;
+it does not interrupt the native forward. The driver has a bounded set of
+sessions and a group deadline; it is not a network-facing production server.
+
+No change to perft depth, board/search implementation or compiler pin. The existing
+path-scoped native-neural workflow covers this test; ordinary pytest only tests
+broker and manifest contracts. Real trained/CUDA batching and throughput remain
+separate gates. Evidence is in
+[`docs/experiments/2026-09-18-bend-evaluator-batching.md`](../../../docs/experiments/2026-09-18-bend-evaluator-batching.md).
