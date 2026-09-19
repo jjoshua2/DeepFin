@@ -1,0 +1,1594 @@
+{
+  "runtime": "/tmp/deepfin-bootstrap-continuation",
+  "runtime_head": "64e34a5e5f7bdcc1a3475c7e484458f19183948d",
+  "command_prefix": [
+    "/usr/bin/python3",
+    "-m",
+    "scripts.lc0_control_train",
+    "--config",
+    "/tmp/deepfin-bootstrap-continuation/configs/lc0_positive_control.yaml",
+    "--out-dir",
+    "/home/josh/projects/chess/runs/expanded50548069_v50_from35m_epoch4_seed105",
+    "--steps",
+    "0",
+    "--batch-size",
+    "512",
+    "--sampling-mode",
+    "game_epoch",
+    "--epoch-plan-workers",
+    "2",
+    "--epoch-load-workers",
+    "2",
+    "--seed",
+    "105",
+    "--device",
+    "cuda",
+    "--train-window-steps",
+    "88",
+    "--allow-invalid-control",
+    "--allow-partial-corpus",
+    "--epochs",
+    "1"
+  ],
+  "out": "/home/josh/projects/chess/runs/expanded50548069_v50_from35m_epoch4_seed105",
+  "gpu_lock": "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock",
+  "env": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "OMP_NUM_THREADS": "2",
+    "OPENBLAS_NUM_THREADS": "2",
+    "MKL_NUM_THREADS": "2",
+    "NUMEXPR_NUM_THREADS": "2",
+    "PYTHONUNBUFFERED": "1",
+    "TORCHINDUCTOR_COMPILE_THREADS": "2",
+    "TORCHINDUCTOR_CACHE_DIR": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/v50_continue_epochs2_4_v2/compile_cache",
+    "PYTHONPATH": "/tmp/deepfin-bootstrap-continuation"
+  },
+  "pins": [
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_transfer_v1/Combined35M_V50/training/training/process.json",
+      "sha256": "3e32fc433c970fafa56a70679accf4adc529413962727e4e08ccfce58b4848b7"
+    },
+    {
+      "path": "/tmp/deepfin-bootstrap-continuation/scripts/lc0_control_train.py",
+      "sha256": "5844b7714dfd59b379641907052805c708540d5705de739dad066c44919f5e4c"
+    },
+    {
+      "path": "/tmp/deepfin-bootstrap-continuation/scripts/bootstrap_checkpoint_resume.py",
+      "sha256": "155f4bbd00079403f47ad07f33496adac124187345a61bfd7e6a16efb8f520c6"
+    },
+    {
+      "path": "/tmp/deepfin-bootstrap-continuation/configs/lc0_positive_control.yaml",
+      "sha256": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/v50_continue_epochs2_4_v2/run.py",
+      "sha256": "c7369bc230519f1e9eef94b8a5932c15652c741bab095060657e55de30a79cd4"
+    },
+    {
+      "path": "/tmp/deepfin-ceres-output-scan/scripts/bootstrap_experiment_operator.py",
+      "sha256": "11654fde13ff37b68c9d3a2dbcd971f4d81add98bb84132dc7f0c4fdf16e2341"
+    },
+    {
+      "path": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c"
+    },
+    {
+      "path": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df"
+    },
+    {
+      "path": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "9d8cc4ba5ab20e78cfc0d183c62801765002ca49d56dbf10010f16a95291e01d"
+    },
+    {
+      "path": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/derive_targets_summary.json",
+      "sha256": "a09a94ca1f78d1cd1d0ce589a74b206ddaeee51da70c2e5a5ba3220d51476426"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/bt4_value_rewrite_summary.json",
+      "sha256": "562542891f733989997a561e3204143abe5402d7c08d62a3c9e6e0377c6f2194"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/bt4_policy_mix_summary.json",
+      "sha256": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/derive_targets_summary.json",
+      "sha256": "492a4fbe5d3b9a1d7ede6aab4757729a069d68d7c2b6f1aa95d13ebff1154fb7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/bt4_value_rewrite_summary.json",
+      "sha256": "e43fce3951075dab58a21e76ff767e404d111e90ee94d1520701bd9dd48837a6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/bt4_policy_mix_summary.json",
+      "sha256": "6f156df79de8e89e40dc2f9a56e670fd0602bdb35fe84b17e64e35aa69c94a6a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/derive_targets_summary.json",
+      "sha256": "b48fd7fb4f89296df73ab100541a4c6d67185609da3f0ef4b9b6a4f770be71b9"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/bt4_value_rewrite_summary.json",
+      "sha256": "4f5cdb34fd2a9be37aa18abce10c822e5076c129ed4bdc6b3be25c77c2a11427"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/bt4_policy_mix_summary.json",
+      "sha256": "aeaf0cd523d272aeec7adb6b66cfef385d2e6e4389759f2bb19c89eb60ecf7f8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control/derive_targets_summary.json",
+      "sha256": "16ee167a80c63266e9ac90e0706c09399dfff39165a1c808da923219cf741f78"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control/bt4_value_rewrite_summary.json",
+      "sha256": "4b69ec356662bdd26a5973bd3cea6f640796d7e7ead75d786bf9617731477f17"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control/bt4_policy_mix_summary.json",
+      "sha256": "ee5491701674b821bcb65deecaecd1b780e8cebaa444759c4829a8f9f60bc5e4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/derive_targets_summary.json",
+      "sha256": "9817825f8df24354b1c2d08928e2bd3772987d605fa5ec33f0cd93c057b892aa"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/bt4_value_rewrite_summary.json",
+      "sha256": "56ab848735f6e1c8384debb426e82128eed181d06aa68c3e5867b218356b9bb2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/bt4_policy_mix_summary.json",
+      "sha256": "1b28ef3dad0c70f6bd0cd5cd99108ee6b8d155d95fc8e8d198db87121a189f61"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10/derive_targets_summary.json",
+      "sha256": "38f4871ac59ed4f523815200674c85e53bfe5037385607c8497ee5d2ef9492e6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10/bt4_value_rewrite_summary.json",
+      "sha256": "c625fb91643f7c5995291ac986d124950d116b1636c9f4cb3d78784fcb269673"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10/bt4_policy_mix_summary.json",
+      "sha256": "0b56d999f7e0dc039995295600c24a3e209d087963c47d3c99789e842553f5e7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/derive_targets_summary.json",
+      "sha256": "1accbed0aa96c91f995649f6b2ed7d12f65761bc05766bccb41392fa8d61f470"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/bt4_value_rewrite_summary.json",
+      "sha256": "75e71183302b52a2e18012a5d13b11a4478e279921e0aaf1ae71ad7bb3b55351"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/bt4_policy_mix_summary.json",
+      "sha256": "9ce06c426df24deec2d5edd4cbd2e730fe07dd12917d8be129f5a45905314d4c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10/derive_targets_summary.json",
+      "sha256": "fcd5ed92ff9bbef92e5b0d117260ec66835d8b5bbd636d30334f94041d2ef0cd"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10/bt4_value_rewrite_summary.json",
+      "sha256": "5241192ec03e5ce9dda17b6c4a44415be91fd6112200e15caf905b5bc2a553c4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10/bt4_policy_mix_summary.json",
+      "sha256": "7eeffc6632c0852d856b5db8a71103a0f3309c0126f77e28cfdb091a52b6b837"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/derive_targets_summary.json",
+      "sha256": "cd69946f55597f2a308d5578e70cb95600498ed8cabc6453b69d786e4e1dfc5f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/bt4_value_rewrite_summary.json",
+      "sha256": "7806fa10b0d84d1a102bd85c23611596e23463678be92247a26e85aa830580a8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/bt4_policy_mix_summary.json",
+      "sha256": "c7d6881364ee7d09c5cfc8f624fabcb7d4a903a1db9452afdaf43c07f6afd61a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/derive_targets_summary.json",
+      "sha256": "34a2155cbae09b1ee564dfb402ae1e60bfdf3e982e761fee585ebacdf798b8db"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/bt4_value_rewrite_summary.json",
+      "sha256": "c3313435fa1d472888a3ce961663523554554afbb93f334cc3cc324159f42f44"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/bt4_policy_mix_summary.json",
+      "sha256": "0b713d24c804a9a4351ac2888816c6c69fac8fd00f90cbba93945f925dc1f505"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/derive_targets_summary.json",
+      "sha256": "9785af69e238c6c534e4a5c87920170a103a7d90a12d2b491acc49f97446816f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/bt4_value_rewrite_summary.json",
+      "sha256": "3b1abc47aa63167cd71d6c6a5d382f012a3d5c2f1b37b6b12323c489930bcb4f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/bt4_policy_mix_summary.json",
+      "sha256": "c8675358386f8fb3683903783fb9c75def7724a03e83f1dfaa407498786ebbf7"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/derive_targets_summary.json",
+      "sha256": "266bd965aaacf4522ffc2dc5d3c252863040642d1e5150e9477102115f8cc062"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/bt4_value_rewrite_summary.json",
+      "sha256": "a44499fb333d51eb9c407e6b3a6b53559a1efb2ec5bce280fe68639d055e3c61"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/bt4_policy_mix_summary.json",
+      "sha256": "44a7e1e7e68f278cbfaa7d48a374f243e3ffb1886983113d18b5462ae95dde59"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/derive_targets_summary.json",
+      "sha256": "d1da77dc5590e5a10373f69784436f12cdc54a526efda968288c5bf734ba9533"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/bt4_value_rewrite_summary.json",
+      "sha256": "68c84cab5b5069c8814111d7a02605798b15ddae69b312b91d7a8bc4c78a7e67"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/bt4_policy_mix_summary.json",
+      "sha256": "29bead0b4f5f684b7e836184ffa390ef319b2eb5768223b3fe439ba90f84bfec"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/derive_targets_summary.json",
+      "sha256": "ed442db6dd45e10f07ec2ac352d236f327125441fd415a093e5e487eae277f3d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/bt4_value_rewrite_summary.json",
+      "sha256": "73f1c1ebed6c07fa03ad1547649cc15f29c44a61f7dbf3e7caf96772b84b5840"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/bt4_policy_mix_summary.json",
+      "sha256": "df7dc00fd1e3a1b3c9564e023c90fb8c9eefefcff4a0d5a1f7402bd124ee695d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/derive_targets_summary.json",
+      "sha256": "7015769328bf061e01dcb699065f8a19ddf4cef78cbb00b12e27a61cc2b49c4d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/bt4_value_rewrite_summary.json",
+      "sha256": "0b0d2fecca0f3f6931afce52443087450114e4096d2a1636e3abea58ce44e7e4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/bt4_policy_mix_summary.json",
+      "sha256": "0c60a69a8df0ccb5169e40e4f72427693477ae0e3ee6891c7aadca2095f6cdd3"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10/derive_targets_summary.json",
+      "sha256": "a0a0982d9a53e6fd74cc98fa1083d98d19e95958de6327938ce1bb2c3145321f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10/bt4_value_rewrite_summary.json",
+      "sha256": "abcc374cbcf0ed4483777cd55688aa1543f5d006fa140b66318d3d967a6addec"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10/bt4_policy_mix_summary.json",
+      "sha256": "2ca877aecb97ea72434dc3d87dcc7f4370f956c3d32aa92f99e4063e5dcc33fb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/derive_targets_summary.json",
+      "sha256": "99a76f22b69375cff153119fc0100243831bfe0671c37a9ad1cd8205236b6cd2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/bt4_value_rewrite_summary.json",
+      "sha256": "ca4247d40358dfc422677001c01c2faa88edc3247c7c99fa8a694522c42acc18"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/bt4_policy_mix_summary.json",
+      "sha256": "1046898a9a7d6f6a38f4047bb6fb19d768fbd01f544cd59faa70b4c17d4511a0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/derive_targets_summary.json",
+      "sha256": "74a4c12cba005140b4c8cb03968cfa284ede6ec2f39bb3f7d88b52e480744307"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/bt4_value_rewrite_summary.json",
+      "sha256": "a98b5cfbc57a35aa08cd740b00d04060851f5f3ab73658fee9702075f9776a4b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/bt4_policy_mix_summary.json",
+      "sha256": "c49e6ce415983a21c9c227e1a316b1c5a5daf7cdefa7f8625a09bf63f1988fb4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/derive_targets_summary.json",
+      "sha256": "9a9eb8e43154ae164c3ef083a82d78396f73cea8e1325ebc07b9a453cadf49b0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/bt4_value_rewrite_summary.json",
+      "sha256": "2d7e3164ad9fe25c084d016e1be616cd39a3304bb09175750b0e67d04d80857e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/bt4_policy_mix_summary.json",
+      "sha256": "9fcb5aeda11a154378ad7e677f0b5245e091efa47e7a8fee839b3966932ce401"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/derive_targets_summary.json",
+      "sha256": "f88365b16f05532773ff7f29b8785b450fc0efe29e1aa0e7e0b947d7beb989ff"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/bt4_value_rewrite_summary.json",
+      "sha256": "c8c2ccf974d5220febf5d47a9067fad8e2e30f9696bc26a34b4c0019519005b2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/bt4_policy_mix_summary.json",
+      "sha256": "8538fe8213c72117318f182a91ec3cfa84b7e4c6db5d2025f4a01e76e7fb6a70"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/derive_targets_summary.json",
+      "sha256": "1e0408cdfed473e291235a76b7e4b73bf75b9e81af9e7d9d4801c396eeda1d54"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/bt4_value_rewrite_summary.json",
+      "sha256": "39e1dd6331f5ac554570c298b12c0f6b4f01c3f6027be16fc9118593fecfd36f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/bt4_policy_mix_summary.json",
+      "sha256": "bfb7b2fb7f604ecadff770b0af19e6910c05dec7620b55c010a8601be6508082"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/v50_continue_epochs2_4_v2/plan.json",
+      "sha256": "65282c9222fb2ac0e7dc5d52fb62e6e45b3a42dbc35c4968889c238ab0e6560d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/plan.json",
+      "sha256": "673a794cc8df673d45da73927677a381d6c5b911aec9621140ec04eb65533e1d"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/run.py",
+      "sha256": "023488e7cd6879c9b1ac12ff596c2654cf7bc35f5c993c27234617644eb3ad70"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260917/expanded50m_continue_v1/run.py",
+      "sha256": "e6007ff41753d97b3589e5a9734d8c421c3829c092645b6a4fe59bda52fadf43"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260917/expanded50m_continue_v1/bind.py",
+      "sha256": "8d5b15f9b86964e2d7e22739d5050250b9a6adc8373f51db4763dcc1926466e8"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/audited_source_admission.py",
+      "sha256": "19af3f8c0f0e569254e3232ed1caf4877100fa461db82e211e49c9840fc0a238"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/baseline_row_exclusions.py",
+      "sha256": "d9f34ff105328dea6ebfa429d9b9ab47fd2752010078e41b1bf31020f30b1482"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/combined_corpus_schedule.py",
+      "sha256": "5e16c548103a452ee6be9f0b7f6eff9294ddeac9416aa280e43aa3aeb11eb107"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/manifest.draft.json",
+      "sha256": "18830f7e403035cb8b0a2303d5c3877a792e7f3d28e894a2d1bd0680a49fcec6"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/training_handoff_counts.json",
+      "sha256": "1b19ec7921ac969c91a8339f0e53107049f901c93f59be48fa87a0e169051b2c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/plan.json",
+      "sha256": "a9001fe969fca81c6fca681f16634a37251543de5d4eeb41a9d22ddcc50ce858"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/cpu_pipeline_v1/run.py",
+      "sha256": "c2b3cc75d14f65ab3c7c49cd150cdc89b9c24f73a8c81bd9360f778239635107"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/foreign_net_audit.py",
+      "sha256": "70d440b91e3fab6177264f437463c151c8f59157d9df105d7534d69402b072eb"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/status.py",
+      "sha256": "feafd60f38fc74a2cb59cbbaa4e1ec5eb778580e5b39b1b51e4f6717f6710d9e"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/fastq_reference_arm.py",
+      "sha256": "b2f60409654b5e742bb74144bd561b5e37042371f673b7a88be2037e66ffeabe"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blindspot_deepsf_scaling.py",
+      "sha256": "581eec514340f22972bd45de0491ed3cc60b197f97c028fb1ca5cd7ec578eeaf"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blindspot_netside_vet.py",
+      "sha256": "87f94d7e7909b8004b23a7eeb6c2804e4b51af173f8602402f72752e69fca49f"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/audit_replay_window.py",
+      "sha256": "24167f9f3dc2b00f2876e76209470a310639a24d867ccc3eb6c44efef90bc709"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/shrink_ffn_checkpoint.py",
+      "sha256": "2978fab4d38b966e7d23f62385d3acb2ee5dc5c1907ff13f11fe3206392dced0"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_inference_context.py",
+      "sha256": "ba1b3be72e8511696d1ca2c97b036b0790acf421a8a690b90e201aee27c332db"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/match_multi_gpu.py",
+      "sha256": "8560058b4804c961a7981d02e960391da96808e68a6f98a6139341d45bb05575"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnose_future_eval_weights.py",
+      "sha256": "5b6ebdd1ae34e184b1958401640312e3687c81441cc2da2b4ab3af08ec4a3f69"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_compile_modes.py",
+      "sha256": "f37c55c2a244e364a394c508069e197ea51779bc663611e52ff80ce4ec5eff04"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/corpus_row_provenance.py",
+      "sha256": "12ce81249102c6c3165774f768ce51b3ba4887ad4179d62b0420313b5b9c0009"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/fuzz_batch_encode_diff.py",
+      "sha256": "e870f27b43db5c7cacb10da9bde3f9c28185d19303259ea11c937ba730616e51"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blindspot_continuation.py",
+      "sha256": "e79184a5b43be7772d461566f241e00d9ac22a51d35a4f6cb9f9631396f2eeb0"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blindspot_resolution.py",
+      "sha256": "2e22e541a52e67e361dc4f16fef4d5d9fcec312340662840ed545f626c12b8b8"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/expand_opening_policybeam.py",
+      "sha256": "50430f247ead7ed0f0ce543624441ce4b0272d466ae19c3bcacc6fa7f249de65"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_recipe_readout.py",
+      "sha256": "d038b197ddf4737c29d4e6f81c7a391688211878ce62456dee80b35580cdb68b"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_sf_starvation_polling.py",
+      "sha256": "2851faae0899e19e60e764b7e2b17192ac8ccf1b404e881765b3618aab7d6188"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/profile_selfplay.py",
+      "sha256": "ff690b866529b1480e4c4a01c0222348abce1112debe23460c03213c222f5ab2"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_vs_sf.py",
+      "sha256": "df3ce03b5a82382edb7759b3a2c229cc7ad9f7ca979fc4fbc082e8ab20f29c1c"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/derive_corpus_targets.py",
+      "sha256": "2fffebcf8284a82e4179fb0d7f8395d39e16677e86d3bd5cf2eac0e9a56e79ad"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/match_audit_rows.py",
+      "sha256": "ff90ffba3ca90ecd93395b21b790be5b8758e9caaedbdb73ffa1869abd5dff20"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/validate_time_mgmt.py",
+      "sha256": "bec6ceca58f2043eee7ebd28c224d47951bf0feee27800776e48dea726cc7a4e"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/rvg_label_pass.py",
+      "sha256": "df4aa4bda7509715e22e016befa185c5e20b19b77064d737d319a4bf9f1ed18c"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/inspect_onnx.py",
+      "sha256": "01835ff05bee004b2d7a07ba8d40d3a829b7f66c6f6eeba86f51935404a2ad79"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/adapt_raw_bt4_sidecars.py",
+      "sha256": "86c7b78eb5a767c97873bc9881874cd6c93d88634ba298f3246b8ec2fa0c649f"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/score_audit_v2.py",
+      "sha256": "27c3c7348352c8f4d988724072ce236fe9c29f63509b5f842d01b1d988803b15"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_coalescer_singleton_pack.py",
+      "sha256": "f0ace3468d55a5693e1922a490540369158758c744316698e3dbf1d67eefc76c"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/verify_audit_history_transform.py",
+      "sha256": "34c667b3e3ad062ca3cca0451e0564408abb737007faf9f6ff036d977fef3227"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/e2e_strength_test.py",
+      "sha256": "e34755a28810a7ff6a984c82901b00c8d864891bffa36803575190160d8cec49"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/ceres_target_mix.py",
+      "sha256": "f681ac67b19d9dadab540c8377d9ed116e35c4726f65070fd113f1c391b7e356"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_loss_scalar_collection.py",
+      "sha256": "e65c236bf30f91492fdebb4d85a5f7e562a22dd7b59423f80e1e98b93effaa01"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/search_gain_probe.py",
+      "sha256": "0d6141461fa2e583965947427b077239293b5feb0a20b067d9520418993d0948"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/nnue_gumbel_readout.py",
+      "sha256": "95865ea36960de84f2161644c2ce76595749db65f0f06144dbb99ad44fd477f3"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_value_rewrite.py",
+      "sha256": "39ee62f3b9de35bafa1f13db207b24e9ffb7e5c74b7fb63999a5243207715e26"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/lc0_data_to_rows.py",
+      "sha256": "3d12da9d83ba182530d4bc1060b4d54937ac9b9c5166a1aa3eec0ca0c7004c93"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_slot_broker_fallback_metadata.py",
+      "sha256": "01f3de38cc53a7fe3a97f381aa63801b4f2fbf8918d6fd7811af49b5aa3854c3"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/gumbel_scale_probe.py",
+      "sha256": "ff93d8cf9d86414e1584cf50c5a6b73cca00b9646611b758c446e1a6d5abbe73"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/nnue_bench.py",
+      "sha256": "3de546bc9af3fdd4f800d0ba7cfc524ea3592f4ae69d318450102fbbc7c6dda7"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_slot_broker_legal_metadata.py",
+      "sha256": "4809e771981778c1974d2544db6a5a659adfd2e508e5db1e0337a75a2db4e46e"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/audit_external_engine.py",
+      "sha256": "fa15a5ba46805e30a2ea6f0d7c82fb0cd05697b5ba2269c5798f2dbbd3f31158"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blindspot_value_gap.py",
+      "sha256": "1927da391bbbea16cd3cf0c217d84f57f4ecef343a7ee253d027464c67de7412"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/combined_corpus_arena.py",
+      "sha256": "57024affbd7ea2bd0ab3ca3595a7730b19f43b038f3538931abc02af84512e38"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/combined_corpus_arena_probe.py",
+      "sha256": "32eb81acdaed24836e6a955183a31de60b0d6af8444d97a9187663fda7451cc7"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_pending_group_filter.py",
+      "sha256": "70a1a3dd069be8911f4b35b7cf4c9faf3bd3e72a012ce1b2b15a16eecf33ced9"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/mpv6_tail_panel.py",
+      "sha256": "d39f0ee53401aa705983da86a0bb67628d2ae0164798ec03ca5cb018373812cf"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/match_vs_handicapped_sf.py",
+      "sha256": "9fb1e1c2d3945f091d2f5f135449bca88036f280a0dacc81a127753d4677a98c"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/train_watchdog.py",
+      "sha256": "1eb7164c0546f9cade71ca2e9d8943a2b65e9d5f30e859ecaeeb8d91b7cdefec"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/lc0_control_arch_pin.py",
+      "sha256": "fa1cd84e76793d77b894336793d517d030d86e6e13a2e95daf78bcbd09e91421"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/matched_sf_value.py",
+      "sha256": "f7c8782b1b6a3d0eebb068cc6cd77acbeb706abf2dcab03e212ca32039e7f809"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_gil_probe.py",
+      "sha256": "0b4632042bae3bde2fe20acac9a0971cbe835ac51138ddf34acaefcacb5e7cba"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_raw_corpus_sidecar.py",
+      "sha256": "65d476618b2cf752b28547322935cf6d4eef37922337ba360d4546989ea850b9"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnose_arch.py",
+      "sha256": "0c3879fd8121927afaff64ccff7a2aa197c324ddf82f9e240f1a7245b884e2a4"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_production_sf_workers.py",
+      "sha256": "3c203a6755641c500a9a066a48978578744c05a7a294e3c7bd8d1d7bcb726ca1"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/reinit_value_heads.py",
+      "sha256": "71b4b8a0df3aa22b5f60396e602e906ba994c6850c5c2df07d3404317bae6ce9"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/repair_corpus_history.py",
+      "sha256": "1a4076b16d35be3a972d79c98a5a275672a9b88969436209f6eb30665e8dba97"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_aot_gumbel_bf16.py",
+      "sha256": "8303daf70ed7996af33b2a459e2dc5db74cc4738f7f824cc00c6fac7907f110c"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/profile_worker_inference.py",
+      "sha256": "29c270b5edd04e456af7a74a90c7b3d2ab1bd948d28bffa8ce9e5725d48f9236"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/analyze_varying_budget_controller.py",
+      "sha256": "65b59ed3f9d7a0865102a9a966b5b778767cadae05e138c69543654577df28bb"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/lc0_control_train.py",
+      "sha256": "a666297ca3bda4c141b41bf28fabd8529492a0a4b3af091d62dc746676e13528"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/value_loss_scorer.py",
+      "sha256": "a082c86e3e6eeb156614078bd7fd7c68f1ec98adafd273e3cd7b18061616652e"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/train_bootstrap.py",
+      "sha256": "152ebf7693645bd7d1737297c9847c2c0929bdd02fc2e7326e9c4dec4825cfac"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blindspot_deepsf_gate.py",
+      "sha256": "5eef7bd93633256010decc58e4e86bcc296181f28e26d5aba3fa9e15ae197a71"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/match_checkpoints.py",
+      "sha256": "64ec6cb5ebf6e59b262eea4142332d2ae6530a53d1ffce3d5496395ea8bb185e"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_uci_engine.py",
+      "sha256": "d28528624e82f002817082cd7830b006d80625cf0dfeed16f179c642642e0214"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/value_component_drift.py",
+      "sha256": "6adde3bb83224d774122acf3da35fa3e6788a454485612927e900ef0362dc5d7"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnose.py",
+      "sha256": "330f6922c3a90ead8ff662650776b6e2cfb736907878d473e488f656db30d358"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/nnue_incremental_bench.py",
+      "sha256": "601fa1678db0be1cd884c099a0ba04f93e168412fecdd1b1a94a1e71fcc7dac1"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_worker_legal_policy.py",
+      "sha256": "450facd3c92e2a85b5e0dcc80359450e62d713a7f179695821ae8c723b24682f"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/probe_policy_targets.py",
+      "sha256": "22c1305ee64939fdb2641e0e139ac7119840429eb75c6637f330c461fef6ff1d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_replay_policy_mirror.py",
+      "sha256": "36dc6a49299f093b55abfbb0f279a3c92569a6ea64e95d2962fd9d20c9d364d5"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/merge_pgn_books.py",
+      "sha256": "dc3fdb7fbec769e44a7ee52101df5fe2b63866eb29e90b829374b3b0399823b6"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnose_sf_eval_head_blend.py",
+      "sha256": "6f1288bd1c96444324ff241b47cf23d3cf4556ed736ab4e373887efd4d554d75"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/sf_downside_g10.py",
+      "sha256": "1f383b7ae54bfa228d4179a8d4ad6a9c9849bb8d0931be088001723375c5da23"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_threaded_selfplay.py",
+      "sha256": "032e629ee1d121331d8e76e5625f1c7d6704a982b35e465d16a7a8071a0322dc"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/uci_prewarm.py",
+      "sha256": "ff225ed2e98b469bf0d8afe913f4e333946729fe21ecc560ecc9f31e1d796b72"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_aurora_update_graph.py",
+      "sha256": "32e3d4227bf1ec11ed733773de84e91ede7aa8a942bfc7b1933f018a7cc12cac"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_package_readout.py",
+      "sha256": "9e6a8cf0a83717c01393ad8d9381f4faab3d1950b38fbd15b7166303bfe018ca"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_stockfish_pool_work_stealing.py",
+      "sha256": "4e6d5111acb328df8d0450538489a078f9967a640f91981d662a5ee1c14aa20b"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_pipeline.py",
+      "sha256": "882da1e8d03baaf0dc2abc3fc9b0826eb767273b6dd40afae320589854afe96f"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_confirmation.py",
+      "sha256": "bec63c46489e56d761fee010f3b41cdac07c809d4b9b301a275209e480de2ffd"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_pending_future_scan.py",
+      "sha256": "5eb38cdb010bcbbe28e9c700e0b10e6d62d5293593f947120cb23189f9c0bb00"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_dispatcher_gumbel.py",
+      "sha256": "6d418ace61d29a1dc97e8cef98d1fddadb4908f706541670aa83cb1099120195"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/harvest_gate_step.py",
+      "sha256": "ab7ca56869e6f9ce9fac2e57d08cc7e82a9f4bcb289b75c862b8c5bdf92a04cf"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnose_wdl_by_age.py",
+      "sha256": "6ed87336761f2d0b3663a3b972efc76d7e2f24c49d471ff953e46bf124e23106"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_aurora_stats_cuda.py",
+      "sha256": "5a19883891c03fddaa29935da1a2a5b0af9aa3e4c4aab00057d7e7f2ec296c4b"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/ceres_collection_batches.py",
+      "sha256": "af2875b4c1fb4187eeafde29dd79098c64251126f7c9f5e191e27961c867d9fc"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_direct_screen.py",
+      "sha256": "99506413c900da41d8a8f9c069676f4fe12f1f69f1393a69f707b69afa54cb88"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/corpus_selection_schema.py",
+      "sha256": "1837aca122cba9c09f4e67779e0eb1c2ae71fbe314e234fcbd5725fd15ed3567"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/lc0_control_heldout.py",
+      "sha256": "ddebfaf30f50ca3549e6881a7639fc2e59abffc3be434e035f5193423bb35d07"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/net_source.py",
+      "sha256": "ce97292e2c0abf7823dd03be25e91f9a826f78310ff06dd7540f19437483065d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/trace_sf_search_disagreement_regret.py",
+      "sha256": "d1db10adf5918d4d621a04d8b45771ae3d7b8b0b298eb5dace3e74ad266be398"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_policy_mix.py",
+      "sha256": "931a7b83a85182d76a8aeff3515b41235df7f975f750bcea5c011b81009a0d47"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/eval_puzzles.py",
+      "sha256": "2be074e62df06733aff3cc051f2501c831f63964220d8973256a349e3afa25cd"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_aurora_finite_checks.py",
+      "sha256": "808c9de3eb2fbe2ee096d50db61bc97509dd96ed482df9e59535db1ac7a81a30"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/monitor_sf_refute_outcomes.py",
+      "sha256": "765f352ba677154dfc0e7c06aa3ad4966d34d8b2b4166d935b3ca0065e4bda38"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/relaunch_proof_battery.py",
+      "sha256": "9009341f499847d29fd080c580f6b914aaaa459ef198039181f480768a295e0c"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/offline_replay_epoch.py",
+      "sha256": "bec8cbf738eb5be05a138a1f74d32e9ea7841cc6abcf7123b1fa9a0cfcbd0e55"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnostic_replay_utils.py",
+      "sha256": "c4894d2d357c7bcfe047759c9b0f3de7216ddaaa725e6a3cca87ecd9c79f97aa"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/nnue_reference.py",
+      "sha256": "bef1a32ec6e76d8d508fb38cc58241ecb183d1e83b4b83a87aa22931af2d163b"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blindspot_feed_step.py",
+      "sha256": "c79ef638281e0d241ee99f4b2cd996b585d2ce0c88290528a6537c81beb1dbf1"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_classify_terminal_check.py",
+      "sha256": "ae74d35d86f3c32067c20ff8269ac3a2dc01080eed92361529e0630d5930f09a"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_aurora_optimizer_graph.py",
+      "sha256": "3d5a328aab1702aecdcefe7fd0fa9bf333ddaf841853770c69ea5255ae2a786e"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/audit_targets.py",
+      "sha256": "53cfb91185346b4442bca1b401cce640963183fdbe022789fbb48cf8ac2827d6"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_aot_multi.py",
+      "sha256": "4a7b3bd8b88f0da8147b96c3571dc2095e60a809c300820026578c3b2fbb02b9"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/nnue_fens.py",
+      "sha256": "77549e31f06e9cdf568e2cf287b8275e22b554c7f1684e772b9b772fb1460c80"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/raw_wdl_adaptation.py",
+      "sha256": "11b8732b5abbedd5f96aeb5dfabc542519cd76fc7f69c28adb61556e85035cb6"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/g10_wdl_admission.py",
+      "sha256": "b13b0e20f7ae8ccad46c391f00aa93a135ad8bdf1a3260126dfebedaf4b82098"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_joint_readout.py",
+      "sha256": "c2524a2ff590bc69eb05ff6d48c39acfdcaf425b20bb7c29d708df11b3194f3f"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnose_future_value_targets.py",
+      "sha256": "fe5d80fcce4fe6340b9737feff228fb78d1c0580b7f41966950ec546eb455450"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_checkpoint_inference_ab.py",
+      "sha256": "738bbfea77236e958cd7e8e4f3f7aa3e6e5b2e37eacd5f9b01f8028191ab6176"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_multi_worker.py",
+      "sha256": "dd32957466362bc6c87147649552ad7c2fae2df27fa2389ff24ddf38244a593b"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_stockfish_build.py",
+      "sha256": "16184bd72173767a6e0493da0a0d93b8ddcca060367518e90a45f4153bc5da67"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_aot_input_staging.py",
+      "sha256": "6952755b0b82d69acd40660a9ba83399338ba29fe215268bb8b2132eff54bfab"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_aot_gumbel_inplace.py",
+      "sha256": "439bb5469cdf67219ad915b4ad46bdfda8d951a9e33f2549cee4de2784816f02"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_aot_threaded.py",
+      "sha256": "5d4a9403e2425479bf083ae8adf207ce6b912820e3df071e8e75084be62f02c7"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/adaptive_sf_value.py",
+      "sha256": "4179cf3711280cdea7bdf0d18758c87947a78737282bf7fb84062e5228a8a049"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_slot_broker_pinned_metadata.py",
+      "sha256": "67686867726d96c611a20aaecaf1d55a867d940d66e94d2b9bf90a30a148a4e1"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/profile_distributed.py",
+      "sha256": "d8cd6781a36de14980b7aa2591a1eed36c29e9e7849be79c93e92a58584ebeb2"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/pbt_30m_poll.py",
+      "sha256": "18d40486a7b460307b21b45d7aa615bd20178b0771e48a5f4b4f078538367cf2"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/feature_prescreen.py",
+      "sha256": "de218e1cc4d15f1b1faf9825e2e441e394927fa30c238d08d022bb5b230a12bf"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/match_vs_uci.py",
+      "sha256": "0ce0419eee1f6a07de848f721b6e2944c03059ea18009ff9780f657cec90bd88"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blunder_check.py",
+      "sha256": "d9c68c1fcf5f37a53029f40ec31703d5bebb44870202a4e7a713f6ff9ddeede6"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnose_replay.py",
+      "sha256": "d98f29447b50a481b321b5c2f3d738c71d56188b3f182f1f8c97389dbd06b65b"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/arena_standard.py",
+      "sha256": "c7df9061d119f0f53de90b529a38a641b4fabce88f3eab9afb37a80f11cd6a96"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/widen_ffn_aligned.py",
+      "sha256": "4908fb5b2b0943a41087d64203e7ac46b516f65fac5bad63c5487600935394cf"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blindspot_panel.py",
+      "sha256": "be1015ed5fb81d32e7988459e0771a78466811d2245ad4a147ed7ebb9829cfd1"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_aot_bf16_input.py",
+      "sha256": "eacf8f7a8dec56a507186b19f0a479e0a7564fa0ddb6de831dc7d68dda74e393"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/common_input_batch.py",
+      "sha256": "339f5923c32cdfd2a84e19d3f6b644be6030bef62ccac74b9a9c2511f842627a"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/pid_replay_backtest_nodes.py",
+      "sha256": "c5d65383738cddf252af9010b7d46d508687f99dd9b292cf3f5bda5add2b62b9"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_threaded_legal_length.py",
+      "sha256": "3761b0ff32f9386d7fe4e6fc87d5c1990229fa23bbab5831023315b037761273"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/check_c_extensions_fresh.py",
+      "sha256": "5342b0fd33f08bfcde1327fa78c9c687d6c55a4503e616d20fa9d0aa0010ca04"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/paired_compare.py",
+      "sha256": "db527f8cf8cc3a69400c60e2adf66d0a56867a709351ae5c139b2241032526f7"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/train_native_pgo.py",
+      "sha256": "f132067896c757d57338e8ec18790ba7059ae08f5f3e39940ef56aab27f787d1"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blindspot_retire_step.py",
+      "sha256": "384c6222c911df9c7748efc4a430fb96c3be6cb4c5c1e9178ba963de0d36ed01"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/backtest_time_value.py",
+      "sha256": "888b57e65ef5418b16a0eb5c8e247c50f0aafb16b5f0ed1b2038dce8c9d2ba3d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/sf_d9_rank_sidecar.py",
+      "sha256": "53c2d1d1638c9e0646e68430c56a413c2b0b78a5ca815996eda770eecd8d3def"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/broker_pos_rate.py",
+      "sha256": "48944d26a2f8138ba911d53c9c017f81d8eec3224a8c506cd814da72f0ab7732"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/nnue_parity.py",
+      "sha256": "4e741cc13287935ae69d60e71d2520fdf18848072af337284418e7310aa1a269"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_joint_experiment.py",
+      "sha256": "c56bacae0faa6ff663a4aaef37e3c77e7f4167421705908e32a403d980549c0c"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/audit_raw_baseline.py",
+      "sha256": "e2ab7b5bc1e62c94479cfc1d30c409294932190f54288d2b10ec0b08aeb57829"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/ceres_derived_sidecar.py",
+      "sha256": "c6209ba3bab212eac1d140511d3da01152d7f05ccc229aa56990eed3d2c2428e"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blunder_check_cp.py",
+      "sha256": "0370c6aced06e512992fb42492822cb64cf811bd53cde6994ded7bae0880d4d4"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/pbt_hourly_audit.py",
+      "sha256": "d880b3749d6e56efe18ab39f35f626047ce7cff24226eb1a524d1cec714ea037"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/gpu_telemetry.py",
+      "sha256": "617550a1c8a208ae459f9ff27bdfb81c41249cde721dc07f6eeeba3a0ae57391"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_native_build_flags.py",
+      "sha256": "c95609850774908a0a570c0b6a6ec1fc2d151812e41a3a600f3b42fa26084e35"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/nnue_pack.py",
+      "sha256": "a7bbb73d867d5f7ff53ff37fb5f4ee2e933d08f07caaee7beb3e44f613757c2f"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_derived_wdl_sidecar.py",
+      "sha256": "37e19fb0d21e2d14d02f6e9647d377a588aea532cd698f57f19220718e6ccf6d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_policy_dump.py",
+      "sha256": "d6b62559952aee3b0baeeadfdb584aeb9a6fd88b0d2285ab162ee39776be2cf8"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/elo_vs_sims.py",
+      "sha256": "8f4ccb1380edb524d01cb00af93ca940a27bc229a98abc0dda69c1ac66595e0c"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/quarantine_desync_shards.py",
+      "sha256": "08f4d8461606e6a21e1eb32ede0e38d4d5aabc292385de48e028eebeca7b8336"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/build_aot_packages.py",
+      "sha256": "550d25d0da1e975ec41a2d12bac94d824219746937dac9545f0444b2593baf36"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/holdout_paired_ci.py",
+      "sha256": "d98beb7848c378203176082a84be733a84f27cd79521b5336117ae156a334328"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_finalize_label_overlap.py",
+      "sha256": "dd527cf45d9a66adc8379dd31e53751b6514caa6abcc88bf2cc403102fb06374"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_aurora_cuda_graph.py",
+      "sha256": "ac4cf24e5c570ba58ff7e3c65c61a9a11ef3e188d977fc43b595bf2b82cd4c2d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnose_gumbel_roots.py",
+      "sha256": "650f3897dcbb3d43bf689451462b2b64f23eb84945eb1d0f52fcba09c098c4d0"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/gen_sf_rooted_corpus.py",
+      "sha256": "4389dd2af99fadf1574f0f7209baf87f340a223612b2bf9f27dee4e6b4ce3404"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/calibrate_difficulty.py",
+      "sha256": "2e7d7908f6e57981904c1d5c671473342d5588079030f684e15691b6a99f0b64"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/generate_bootstrap.py",
+      "sha256": "7543071eeda4f100c09422107b82b8bb4e797bcfac360cb0ea7f8debf9ccead0"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/audit_row_integrity.py",
+      "sha256": "56f2dd277158b23fe3cafa183f6eb12bf86b0268885994e8eac9881c12b96cd5"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/profile_mcts.py",
+      "sha256": "ac9be1042ec9608ee88abcd2340e36618ee06e5c5bc93433402d159380d12e3f"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_worker_shard_codecs.py",
+      "sha256": "bea442a3aa949bee10c74f53cb11249dffa00edc32f9fa3e429cfd1fdef091ea"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/lc0_adapter_probe.py",
+      "sha256": "b3325ee57147def01bf2c4917b47d5b58554ede2911d8cad857eeeca6482f6fa"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/nnue_shadow_label_readout.py",
+      "sha256": "f7a623f09b3789be9dd051b6bde676a58dfb6eb19a8ca7de78307b935cf2c521"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/runtime_smoke.py",
+      "sha256": "04a1adc8cec59daeea3732dfba3fa6e7dd80a0d183a2e3f1e9a624507002e765"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/holdout_policy_screen.py",
+      "sha256": "6460fe5aa727fa082a5b20e0bb38c9a5a0ea5f41fc61e8a9a71cff5a3d82d3c5"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_two_epoch_train.py",
+      "sha256": "4aed2068722c365960a67fbc8a7e109c3bc94a63922f800392eb5ce5464e7218"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/target_overlay_storage.py",
+      "sha256": "b4ec4c9554909af71b5f48108609a4de04e8d719ae21f3a137b04f8505e9c993"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/analyze_sf_wdl_calibration.py",
+      "sha256": "c372fe71ecb70898938479609d1715e06209ef798b7f35e2f18e7dc9eeade18b"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/_c17_patch_yaml.py",
+      "sha256": "ed9a541c13f2d2a5f2a5487860aedf7c2800c98c6367ab9993d9470862ea0561"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/check_free_threading_compat.py",
+      "sha256": "e3a7a884e9deaf1f2c996c35369dc4b3a1fa725693e8a394f4fcac49c641250d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/audit_realized_config.py",
+      "sha256": "7bed2dd2cd1dc9dc0f396e622ee202d348e3cfd8a17166eccb2a74981e98765a"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/scan_blindspots.py",
+      "sha256": "1c8cf43b363acd662f01974c59bb582949418ade11a0ec3f9d19282ee777dc29"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_stockfish_pool_scheduling.py",
+      "sha256": "8eae3b939edd232fefac0166c804914f947f592c99f1be0604c948a4ae5971f7"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/probe_head_grad_share.py",
+      "sha256": "5738b288cf3060bcafa80df489de6d1b869be1c3493c73ba9970aa17f1714a3c"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/profile_training.py",
+      "sha256": "7a18b4ff06bc147593b49b62925c6c9319d9899c1cbd928972d025851b714dfb"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/sf_policy_rewrite.py",
+      "sha256": "5770e3949c65fe9d9634a8893923bff0aacc4106efd7b4749c40e6b7646b5520"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/validate.py",
+      "sha256": "0930df258bbed185542f868985001b0a379ed2fce23177a516ec2019a208e9cc"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnose_target_calibration.py",
+      "sha256": "850ce36d9ec663c86b43d814d6fe9be8addeaf75703cf54aa94d94212483fa70"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/ceres_selected_bank.py",
+      "sha256": "1f1468bf0b29b88edcab8e1b0ea8d6945ced1d59f9e37bfb69f1129e99492aed"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/build_seed_manifest.py",
+      "sha256": "350d19a0dbeb472144f863ecdb3de1c7f4dc2e255a1ac0e22d3cb75dbb31b74f"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/analyze_time_value.py",
+      "sha256": "af0a378cd1834d1c7f75fb14b930967c62c2521a801bc3062f1f4826b26068e4"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_cross_step_prefetch.py",
+      "sha256": "ca8edf848956528994af1f394b0b2c2046f79b9883a1a1710c1cc81730d5bafd"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/rare_sound_move_coverage.py",
+      "sha256": "5a233920651fd4f2daa84629ec6adc8a49c25f8f40aa21b875b5c7fbe09848f1"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/sidecar_cache.py",
+      "sha256": "c2a75c9b40f5c7e7787f6349d54997942cb3afc84dbecf4323ea6e9ac4633ff7"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/tail_censor_screen.py",
+      "sha256": "8a5c8a3c25f6275a92ab2ec1c3a027f9e547dea51d8eb5d3a51dfce1815f7fb0"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/profile_python_native_candidates.py",
+      "sha256": "f0d71da77104a7cc7da5027a13dbf70572862d9948d299e961698ebf42dc7496"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_multi_threaded.py",
+      "sha256": "ae4681455c1f71db8d47ec51f5f057394965e0b45d25196ad248d7e1d700dd91"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_pending_slot_filter.py",
+      "sha256": "42ce6d5b6348b100144bff469823d339e9130c75aaaf5967f2125e5a45c3b977"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/build_native_pgo.py",
+      "sha256": "e160f1c3ce087eab51c5cc353370fab5ef9524545511baeda909ee0f0bfed62b"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/audit_label_candidates.py",
+      "sha256": "c929fea0f89e0ef35dad3c51317c3a2830debae7f152fd59dd919a6e141c88be"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/sim_gather_policy.py",
+      "sha256": "11a6ba8deb603a82f45f022ff52f7044b5b118b91d4c06dbbf143c4e70998059"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/feed_bootstrap_shards.py",
+      "sha256": "00c1cf1f4508bab89059fb3b8a55ecda802cf868078e6963048b34966b40d819"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_worker_shard_pipeline.py",
+      "sha256": "3b53f92fe2bd0a22f5e0dbe3d2e6c63e677b1b0e684d1093c991f632b76a4a1e"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/build_uho_opening_book.py",
+      "sha256": "6da3c24c4dbefec80fd46ed1ba5280e7ad799e9c4848e481461a33a0cadb5b4d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/training_host_memory.py",
+      "sha256": "94e074f17104bc1aa3ca9b6be99f715d9a906ff3e5546892ffe94612fd21dfdc"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/build_production_extensions.py",
+      "sha256": "864f41b94c684c92ff06b593962f23bf3a2c1db21a473767bfc3be40e9836392"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_maxautotune.py",
+      "sha256": "f973afab95a350abe131497c17ff2d2f64d0d3abd54564807175b4e9ca748893"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_collate_deferred_cast.py",
+      "sha256": "88e9debe62aeb80541514ce95b3d0e2a2b54c77acc45d634e61d81b1bc19cccf"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_stockfish_info_parser.py",
+      "sha256": "48eb772c9d7bb6f0447bb744de8cccd71aca01133d1995a1b035f70026931117"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_threaded_singleton_legal_pack.py",
+      "sha256": "b202efe37f683c7ac9b5e8e00c3bd175d0b03cd9fa16b422124721deb02da337"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/build_era_probe_set.py",
+      "sha256": "c3a063972fe65e52d0421e9d05c7ca29ab66be135ac8a8f46ef594611c89c9ff"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_one_epoch_screen.py",
+      "sha256": "ba7c0fc37bba16dd40882c8cc090eca14048d092e272dcae16227a926a0fbf33"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/gumbel_halving_baseline_sweep.py",
+      "sha256": "790de3703044570c092d464d6a9cdca8bd2a1d0ce0989a7dd48cad8a4703b034"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bootstrap_memcap_wrapper.py",
+      "sha256": "37f205d0a75d7d62a83b642d1b1fca8d5a20c9b0b39433c9b23b4034526d705f"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/cast_probe.py",
+      "sha256": "8cf396796a5de7caf5acc6b712bc25ca4e0f2fcdca03e35f6984cf474cf17220"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/backtest_pid_half_life.py",
+      "sha256": "117e7f06760fcc42486d6839fcbfd04311c21379c55bd933e1fbea043d13baa3"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/value_regret.py",
+      "sha256": "2748b34f881887789e36355997d997a8173ead41f870faab92b4ba299f3e5372"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/probe_holdout_split_leak.py",
+      "sha256": "153d35a704edfecfff4d3ed6e01b74adb759bcafd4091650c832bba6cdc7e20e"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_slider_backends.py",
+      "sha256": "cdc591149c4e9925b1950882d394fc7fddcd42215aeaddc8b39dc584f52111bb"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/value_optimism.py",
+      "sha256": "d6b58325121a22a07afe6fd122ebedc40f8fda50257c01f459a5f490ca8af55b"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_replay_x_mirror.py",
+      "sha256": "0cc4a8f0a890704822e6f207fe43685cb32cbfe9fee62b894a6a0149f7a47867"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/graceful_restart.py",
+      "sha256": "1d412f93ee7706c0c8d5e984a90b12984f84e1b80cdae48e1fa1608ab6abf763"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/gen_random_selfplay_shards.py",
+      "sha256": "28453729b6a5b3a28b3e4e429f41a05cab3d74cecb68fd9eae9e111dbbce7397"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/gap_resolution.py",
+      "sha256": "388ee1eedbd56d2936f3f46ba9fe1169ecb3afe185462aafc67e15fb4c246e6d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/profile_uci_search.py",
+      "sha256": "ae172c40f8a3c7f89e928f50e8ba8350057999f8e0f0df4b61d70f850728d7dd"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/ratchet_slope.py",
+      "sha256": "53941d7e43b09a10090ce359f7b2f8d645cb952ce0c255ebbec334da75fd5fc4"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/sf_no_multipv_probe.py",
+      "sha256": "eb75c27ff03a04379e203dca7df54e82a9bf7e8fade068afa6d042002d2a2e92"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/profile_mcts_detail.py",
+      "sha256": "8554d0fa2cc7c48100d5030de578ddabe04868387229dc39cea0c40c4caf90a7"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/backtest_chunk_trajectory.py",
+      "sha256": "9b899a2fb819f3d6c5ec16320d00b39d38f13f0dda5b52d98f8d4b985c00c240"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/profile_play_batch.py",
+      "sha256": "c7439594a6902d0fed4d2be1c8079f5dc3fc42c316df88a2120cc6d4da0cdd23"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/tail_stats.py",
+      "sha256": "0b55fe8cb21fd0656819e9509f926eca89fae3ca5bd05510cef9f7ce10e0b242"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/combined_corpus_train.py",
+      "sha256": "f22a54d963e6b74c0cea87359c5be48982ccbd6c0278e8b8e5baa8f921fcce02"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_recipe_screen.py",
+      "sha256": "ea815de4d674817581780612c0890777ced772c21857d45d575f7d8eb4f3f5bc"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_collate_compact_masks.py",
+      "sha256": "34b678173155caa367addfc0aa563dea00a421b33c9f83b4a54853e8011fc0ff"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnose_sf_search_disagreements.py",
+      "sha256": "4afa041747ffb2921a76902621785144c474d100641033f57a035ddc80b99a17"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/lc0_control_eval.py",
+      "sha256": "e423ac9128c422c2de752922c637ceb37b559e7eeb4afe447c8e838e40f62886"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/ordo_pooled_fit.py",
+      "sha256": "1b170c7a31c5239a132fb17e891422ec0255a54fea0a8a0b1b2420e24c640e2e"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/cuda_sanity_check.py",
+      "sha256": "46ab1d28deba39caebd1f16a7469fa888dc1dcc82a618e8c86421f2e0adca3ee"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/nnue_parse.py",
+      "sha256": "98c6dd1916697a4ef8fc05949056263816f51ab9f6848e3e54c1abcc67140dbc"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/convert_shards_v2_threats.py",
+      "sha256": "b8ee48d1e40c3922c16200569d802879563738aa3d6b016f336b9cea96c941b8"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/g10_native_wdl_reuse.py",
+      "sha256": "b154595569ab3adfcc8c972c913dcec4b6124ee9a4cb9ecef1a57187455160d0"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/diagnose_future_eval_bucketed.py",
+      "sha256": "81fb2318caf5760432bc7966afd962fe4e254bfabfd43059d2ccadf2026d9772"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/ceres_materialize.py",
+      "sha256": "a6cfbf5cd3df279cc5a3fbcc6e9ab62bc6eaa3145e2fd4fe89430b6b305c5952"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/loop_health.py",
+      "sha256": "14a30bb94b9a0be173571057482481cd677aaff05f5a75f5b42572de92f17179"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_multi_eager.py",
+      "sha256": "78cd0eda91c8ed550e4d93283946339d512e9fff7bc5a6eb2db56eae0c10be1d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/build_audit_set.py",
+      "sha256": "23938a34c74cfb6b12133451d38f93651cd0566a6c4c1cc1a721ecdd34646152"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/nnue_resolver_bench.py",
+      "sha256": "c0e47a62865bfe7b37bc03fe9d806177c034ee0fdf8744a5beebd5d086d4822d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_threading_cpu.py",
+      "sha256": "eb04fbce5e7fd144fa60994ed38bd5fc84a64d85a1f72505a3d143920b9632da"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blindspot_deepsf_calibrate.py",
+      "sha256": "4f4623e8bf4d99bd0bea9973f300fd5637697e3d16a9f719bb283ee0af0ce0c8"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/mine_blindspot_seeds.py",
+      "sha256": "f130da58f4719596e979e1150148c5e604edeed1d53bb27eab3bd35fdd6023e6"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bt4_history_sensitivity.py",
+      "sha256": "22795dad0badf9bde6f0c938a37ae3b1613191ba0150ea776dbff77dea010cc6"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_stockfish_hash.py",
+      "sha256": "e43644890dfc39a92957ce4fc10723be4dce11fba40f91e7152c848beb55fda6"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/trial_paths.py",
+      "sha256": "b7b5efaf8cb1321b22137c3888f94b943a8f826f0cd61c51d89f958d51b9077b"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/collect_varying_budget_trajectories.py",
+      "sha256": "61e2286b8d7fadd32d5547dac452cd43bfc8af16dca6a286d3bf28969e352f15"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/extract_aurora_momentum_spectra.py",
+      "sha256": "140267bc916166ffa33188ecf0542e4eff1cb1d112b6e4efd7578b0a709be576"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/pid_replay_backtest.py",
+      "sha256": "6d763d90ed11c256a2d4fda5354391e264411152de8d6df9fc5b0b360901c191"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_gumbel_root_state.py",
+      "sha256": "4906ec85b43f7e433b627b9bc7738124ef94ca97fd9b25931aed6285e94c395c"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/ceres_corpus_qualification.py",
+      "sha256": "f93272ac8ae2c793d93d9db3065060708b47eac055217dabc9fd8129d9b443d5"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/audit_compare_buckets.py",
+      "sha256": "7e677f999f30103d98c7a869c8791ba1955cf51dbc7234fa1d858a747c040049"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/gate_shadow_readout.py",
+      "sha256": "57129a4d1543fd98ea034fa545bee11b302c6cb6d4a696066542e305e37bf568"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/fuzz_cboard_diff.py",
+      "sha256": "acb46138222d234cdb752f7bac4948a4741d55c342dfffe8168954761971661d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/ceres_value_mix.py",
+      "sha256": "fc51dde1a21f84fb96118cc0858c7ef5db7223d9c66364b6fa6c65755d537a66"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/bench_shard_stack_dtype.py",
+      "sha256": "bfdcb5327692d04beefbaa181b0c2737ded727956ef76b5d3093fe7bc465047c"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/retarget_retrain.py",
+      "sha256": "1951bbc0c2f9b5112efd2722329a7ad049a82b0fd07aaa9dd401bb540f0bf451"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/blindspot_prefilter_calib.py",
+      "sha256": "2f988e51df3759a9b0f53cf4979f1e4c1a088e4e0c61c1d535af15ebc3a40bde"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/dq_free_dataset_screen.py",
+      "sha256": "6e10dc7b81476847b739ab9388ba1f7a94a1384f9baec89870bcf960e3143510"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/scripts/analyze_winrate_calibration.py",
+      "sha256": "950e4c431cd8c540d6431ab91c3025b4e8af18c3d4164e04d8453b2e995854ac"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/chess_anti_engine/encoding/_features_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "6f4bb0ec267a4ebd73ffe0a0d699a427f4e1a29d261b3a21658033056567722d"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/chess_anti_engine/encoding/_lc0_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "73798b545d5351ca3cde0f1221bf3008675ef459d6765c62ba8193120299ab84"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/chess_anti_engine/nnue/_nnue_ext.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "b9cb9a26ff7c017f995a6ce6d7852ff90ec3e43cf2772bc14dafff8c1836f8fc"
+    },
+    {
+      "path": "/tmp/deepfin-audited-scale-bootstrap/chess_anti_engine/mcts/_mcts_tree.cpython-313-x86_64-linux-gnu.so",
+      "sha256": "7dad156c2793b60f685582ebacdbaa51eb5ecc22fd462865da203955c28fd49a"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run06_g10/process/process.json",
+      "sha256": "c1236e73119a6faef788bbc0af81364ca76b644894a7ddbb1874a7d79fca26c8"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10/process/process.json",
+      "sha256": "daec03e05808b098881d4191c17c6af28a6efdb030e09886b12817945e4bc8d0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10.manifest.json",
+      "sha256": "433a517569d049cc69e67a340a0211404638acadc03bafee70d0ac2b300ef2ec"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run06_g10/derived/derive_targets_summary.json",
+      "sha256": "d3c1ef575d14265378d7ca9f9a3e237158000b065c4a530986d6d283e5d7b441"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run06_g10/adapted/bt4_policy_sidecar_summary.json",
+      "sha256": "68a03d06f75dba366643b594d48b2b665592b369101ee604caf0e9c9e2f7244b"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/execution/run06_g10/derive_targets_summary.json",
+      "sha256": "28a493eb33bffae53bb12e6e9e026ec14225779ba4c1d6fea89c874602be1f9c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/execution/run06_g10/bt4_policy_mix_summary.json",
+      "sha256": "478cae5591578899665323b2b94080b8ed8bf132dc9342e639561bf9e2db7154"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/process/process.json",
+      "sha256": "30a2076ae4e8244d6a8ee93d91198012cae8d330c9d2da309cbd4d53c8aa003e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run07_g10_companion4/process/process.json",
+      "sha256": "752629ec7872459b1c31cb1ecc47ef7c1d1815380ea501ef84e749d508a02b37"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run07_g10_companion4.manifest.json",
+      "sha256": "361ee944158201f5d532b1801a699ba4d38e53b36421c27b869b7447556d318f"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/row_exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/derived/derive_targets_summary.json",
+      "sha256": "15869433ef066e61ee1114329a9a49a9c75177d5a09913decd2d2cd85783f3b2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_joint_adapter_v1/run07_g10_companion4/adapted/bt4_policy_sidecar_summary.json",
+      "sha256": "ddc75d42f4ad683c36fc35aca6dd1db0dd3b02e8ee6598bab62efd22e329a75e"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/execution/run07_g10_companion4/derive_targets_summary.json",
+      "sha256": "2e18d43d81ccb9bfc19d46463257e4ae8202c4170a428f5696a2f800fca6de63"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/new_raw_b100_preparation_v1/execution/run07_g10_companion4/bt4_policy_mix_summary.json",
+      "sha256": "d295f5650356bfeee17ff507208090355e8d1aa0a2aa28c9f9d6e534768f7c44"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/run06_g10/process/process.json",
+      "sha256": "1ee8730ad1c43fc73538f16feaf5f900769a159aae0724a796d6acf12915a6b2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/saved512_joint_adapter_20260916/run06_g10/process/process.json",
+      "sha256": "59251baefe75b3ce0784f045a9b80366ced0de0188306dbaeb2a145914f54060"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/saved512_joint_adapter_20260916/run06_g10.manifest.json",
+      "sha256": "1fe180f9b0ef748d5e9aa65e4be6c332d1d1b1ab7d404d13ea5038157f8b7ac1"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/run06_g10/derived/derive_targets_summary.json",
+      "sha256": "6adb45f04984c33f2336a8ec726fef23026066e83d53d016a1ab6a02ecda04a4"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/saved512_joint_adapter_20260916/run06_g10/adapted/bt4_policy_sidecar_summary.json",
+      "sha256": "1b1b48edb1aee0fb7e0b0117351189eeb33bed1b180e2592a283968820f0e3cb"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/process/process.json",
+      "sha256": "79ef4bb71757ed53f7065bfb67967bad54117ac96fe0a9f6337f21e925236cec"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/saved512_joint_adapter_20260916/run07_g10_companion4/process/process.json",
+      "sha256": "3c37aa67fc31e1315a7746e17cff192b42d5be064ac2d4d3cb4c5edee09126e0"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/saved512_joint_adapter_20260916/run07_g10_companion4.manifest.json",
+      "sha256": "39ae951add19cb86b44cbaf80a5f186239afab28cbd994b61e377786ae9cf490"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_joint_512_eligibility_v1/exclusion_preparation_v1/derive_plan_v1/run07_g10_companion4/derived/derive_targets_summary.json",
+      "sha256": "54904b400cf35a6fda57013c49008522f5337f83d03473dd07deb11389563571"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/saved512_joint_adapter_20260916/run07_g10_companion4/adapted/bt4_policy_sidecar_summary.json",
+      "sha256": "ad64327acb48f02162040bed440ebdcefed8469129ea9695cc7b3877a119669c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100_preparation_v1/audit_B100T05.json",
+      "sha256": "4f3f204439b3f6cd900b2754df83c60d5bb3dd18efdce70d5656382757c776fa"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/prereg.md",
+      "sha256": "e7003c65cad50d81fe5d28d4878dc3ddfd342a95248b03edd961564d67fc72f6"
+    }
+  ],
+  "donor_terminal": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/v50_continue_epochs2_4_v2/scheduler_run/parent_outer_terminal.json",
+  "donor_complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/v50_continue_epochs2_4_v2/complete.json",
+  "donor_checkpoint": "/home/josh/projects/chess/runs/combined35m_v50_seed101_continue_epochs2_4/checkpoint.pt",
+  "donor_plan_sha256": "65282c9222fb2ac0e7dc5d52fb62e6e45b3a42dbc35c4968889c238ab0e6560d",
+  "expected_donor_step": 275896,
+  "dataset_complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/complete.json",
+  "dataset_failed": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/failed.json",
+  "union_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/union.json",
+  "schedule_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/union_admission.json",
+  "prior_union": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_value_scale_feasibility_v1/admission_preparation_v1/manifest.draft.json",
+    "sha256": "18830f7e403035cb8b0a2303d5c3877a792e7f3d28e894a2d1bd0680a49fcec6"
+  },
+  "schedule_helper": "/tmp/deepfin-audited-scale-bootstrap/scripts/combined_corpus_schedule.py",
+  "expected_roots": [
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/control",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run06_g10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run06_g10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run06_g10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run06_g10/V50",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra184_run07_g10_companion4/V50",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run06_g10/V50",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/extra512_run07_g10_companion4/V50",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run06_g10/V50",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block00_run07_g10_companion4/V50",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run06_g10/V50",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block01_run07_g10_companion4/V50",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run06_g10/V50",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream_v1/execution/block02_run07_g10_companion4/V50"
+  ],
+  "dependency_seconds": 21600,
+  "training_seconds": 28800,
+  "internal_seconds": 50500
+}

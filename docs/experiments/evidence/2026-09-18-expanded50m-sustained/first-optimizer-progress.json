@@ -1,0 +1,8 @@
+{
+  "status": "OBSERVED_OPTIMIZER_PROGRESS",
+  "unix": 1789736261.564374,
+  "line": "[train] window 13/1122 (88 steps) done, 1144 of 98727",
+  "observed_updates": 1144,
+  "donor_step": 275896,
+  "scope": "First recorded observation, not timestamp of first individual optimizer update."
+}

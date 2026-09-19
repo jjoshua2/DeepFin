@@ -1,0 +1,17 @@
+{
+  "status": "QUEUED_CONDITIONAL_RECOVERY_NOT_LAUNCHED",
+  "queued_unix": 1789687532.7914536,
+  "item": {
+    "id": "expanded50548069_v50_from35m_epoch4_recovery_v2",
+    "kind": "registered_command",
+    "status": "queued",
+    "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260917/expanded50m_continue_v2/scheduler_run",
+    "max_seconds": 50570,
+    "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260917/expanded50m_continue_v2/registered_command.json",
+    "command_sha256": "77a49241b87ce1fb2f1a9f152aadc64dfe02dd5d7374d56bc623833be61ffced"
+  },
+  "deadline_utc": "2026-09-18T16:59:37.454890Z",
+  "deadline_extended_seconds": 0.0,
+  "preserved_donor_sha256": "e579bd08f90009924941bb5c773d01af836f6500f95a0250eca2918d7b58679c",
+  "reason": "Retry after producer schedule import isolation repair; no training occurred in failedv1; completed donor/corpus preserved; epoch arenas remain ahead."
+}
