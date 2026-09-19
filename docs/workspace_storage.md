@@ -7,31 +7,17 @@ ignored files.
 
 ## Creating workspaces
 
-Use `git worktree add` from the intended revision. For review snapshots, use
-`git archive` plus the specific source changes being reviewed. Do not use recursive
-checkout copies, including tools that fall back to copying when Git setup fails.
-If isolation cannot be created without copying runtime data, fail and fix the setup.
+Workspace copying, Git worktrees and tracked-file review snapshots are all valid.
+Keep bulk data outside the source workspace so creating another workspace cannot
+duplicate it. Disabling agent delegation is not a storage-layout solution.
 
-The repository Grok implementation wrapper creates a Git worktree and disables
-nested subagents. The review wrapper starts from a Git archive and includes
-nonignored untracked changes for worktree reviews; inspect that file set before
-launch. Direct interactive Grok sessions have their own workspace implementation
-and require separate configuration.
-
-The host now sets the documented `~/.grok/config.toml` option:
-
-```toml
-[subagents]
-enabled = false
-```
-
-This disables automatic Grok child sessions by default; explicit Grok implementer
-and reviewer jobs in code-only workspaces remain available. Do not override it
-with `--subagents` or `GROK_SUBAGENTS=1` until child workspace creation is verified
-to exclude runtime data. Already-running sessions may retain their loaded settings.
-The original host config is preserved as `config.toml.before-code-only-20260919`.
+The temporary September 19 Grok subagent restriction was reverted to the exact
+previous host configuration. Automatic workspace creation remains available.
 
 ## Runtime artifacts
+
+The host shared artifact root is `/home/josh/chess-artifacts/`, with `corpora/`,
+`labels/`, `models/`, `runs/`, `cache/` and `operations/` subdirectories.
 
 Give corpus, teacher labels, checkpoints, caches and run output explicit paths
 outside the development checkout. Keep artifact identities and compact experiment
@@ -43,7 +29,10 @@ The pinned live checkout currently owns legacy `scratchpad/` and `runs/` paths.
 These are existing shared artifact locations, not templates to copy. Moving them
 requires checking active and queued job manifests, overlay dependencies and recovery
 paths. Do not relocate them underneath a running experiment just to satisfy the
-new layout. New standalone artifact stores should live outside all code checkouts.
+new layout. Migrate inactive artifacts first. Any temporary compatibility links
+must be checked against the actual workspace copier: a copier that follows them
+would reproduce the same duplication. New jobs should reference the external paths
+directly.
 
 ## Existing workspace cleanup
 

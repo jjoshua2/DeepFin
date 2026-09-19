@@ -46,10 +46,9 @@ switch or reset that checkout underneath it: the live YAML is re-read during tra
 A merged PR does not update Python already loaded by a process or its native extension
 image. Plan adoption and any restart separately from merging.
 
-Keep development and agent workspaces code-only. Create them with `git worktree`
-or a tracked-file snapshot, never a recursive copy of a populated checkout. Datasets,
-labels, weights, checkpoints, caches and run output use explicit shared paths outside
-those workspaces. Preserve existing live artifact paths until their readers and queued
+Keep development and agent workspaces code-only so they can be copied freely.
+Datasets, labels, weights, checkpoints, caches and run output use explicit shared
+paths outside every checkout, including the source workspace. Preserve existing live artifact paths until their readers and queued
 jobs have migrated; see [workspace storage](docs/workspace_storage.md).
 
 A live YAML edit is a production change. Trace schema → validation → consumer →
