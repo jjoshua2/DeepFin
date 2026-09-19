@@ -1,0 +1,32 @@
+name: Bend neural play development
+on:
+  push:
+    branches: [feat/bend-neural-play-dev]
+    paths: ['.github/workflows/bend-neural-play-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: |
+          mkdir -p /tmp/bend-play-source
+          git archive --format=tar.gz HEAD > /tmp/bend-play-source/deepfin.tgz
+          git rev-parse HEAD > /tmp/bend-play-source/revision.txt
+          bash native/bend_engine/bitboard_probe/install_toolchain.sh
+          tar -czf /tmp/bend-play-source/compiler.tgz -C build/bend_u64_toolchain source
+          cp "$(command -v bun)" /tmp/bend-play-source/bun
+          python -m pip download --no-deps --no-binary=:all: chess==1.11.2 -d /tmp/bend-play-source
+          python -m pip download --no-deps ruff==0.15.20 -d /tmp/bend-play-source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-play-source
+          path: /tmp/bend-play-source/
+          retention-days: 2
