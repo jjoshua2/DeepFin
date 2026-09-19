@@ -20,7 +20,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Apply exact locally tested readiness changes
+      - name: Apply exact readiness changes and reviewed annotation correction
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -37,6 +37,17 @@ jobs:
           PY
           git apply --check /tmp/bend-readiness.patch
           git apply /tmp/bend-readiness.patch
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path('native/bend_engine/neural_probe/qualification.py')
+          s = p.read_text()
+          for old, new in [('from collections.abc import Iterator', 'from collections.abc import Generator'), ('-> Iterator[Path]:', '-> Generator[Path, None, None]:'), ('-> Iterator[None]:', '-> Generator[None, None, None]:')]:
+              assert s.count(old) == 1
+              s = s.replace(old, new)
+          p.write_text(s)
+          assert hashlib.sha256(p.read_bytes()).hexdigest() == 'de1d6081bcb20b7a9a36fb9736a888b73e7fd800c0f8e2c609322388b69e977c'
+          PY
           git diff --check
       - name: Install locked CPU tools and source-pinned Bend
         run: |
