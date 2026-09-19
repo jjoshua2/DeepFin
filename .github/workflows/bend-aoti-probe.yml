@@ -6,7 +6,9 @@ on:
       - "native/bend_engine/aoti_probe/**"
       - "native/bend_engine/cuda_parity/**"
       - "native/bend_engine/install_bend.sh"
+      - "native/bend_engine/resolve_latest.py"
       - "tests/test_bend_aoti_probe.py"
+      - "tests/test_bend_latest_manifest.py"
       - "tests/test_bend_cuda_parity_harness.py"
       - ".github/workflows/bend-aoti-probe.yml"
       - "pyproject.toml"
@@ -43,6 +45,7 @@ jobs:
       - name: Install latest Bend
         env:
           BEND_NO_TELEMETRY: "1"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: native/bend_engine/install_bend.sh
 
       - name: Build .pt2 and verify Bend/native AOTI parity

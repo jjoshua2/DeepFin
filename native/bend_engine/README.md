@@ -13,12 +13,15 @@ Nothing here is on a production UCI, selfplay, training, or inference path.
 
 ## Bend toolchain
 
-CI installs whatever Bend `https://bend-lang.com/dl/latest.json` currently
-names (sha256-checked). The parity probe is the compatibility gate; a new
-Bend patch should fail that test rather than a version-string pin.
+CI reads `https://bend-lang.com/dl/latest.json` for the current version and
+still sha256-checks the archive. The old feed carried `{ver, sha256, url}`.
+The current feed is `{ver, notice}` only; the installer then uses the matching
+`bendlang/bend` GitHub release asset and its `digest`. The parity probe is the
+compatibility gate; a new Bend patch should fail that test rather than a
+version-string pin.
 
 ```bash
-# bun is required to run the Bend compiler
+# bun is required only for a source tarball; official releases ship a binary
 curl -fsSL https://bun.sh/install | bash
 native/bend_engine/install_bend.sh
 export PATH="$PWD/build/bend_toolchain/bin:$PATH"
