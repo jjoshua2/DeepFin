@@ -5,7 +5,7 @@ on:
     paths:
       - "native/bend_engine/search_probe/**"
       - "native/bend_engine/install_bend.sh"
-      - "native/bend_engine/resolve_bend_release.py"
+      - "native/bend_engine/resolve_latest.py"
       - "native/bend_engine/probe/chess_bridge.c"
       - "native/bend_engine/probe/chess_call.c"
       - "tests/test_bend_gumbel_halving_probe.py"
