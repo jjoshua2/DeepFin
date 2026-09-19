@@ -25,7 +25,7 @@ best move, and a quarter-unit root-W code.
 
 The Python oracle drives **DeepFin's real C `MCTSTree`** using
 `add_root`, `expand`, `select_leaves`, `backprop`,
-`get_children_visits`, `find_child`, and `is_expanded`.
+`get_children_visits`, `find_child`, `is_expanded`, and `node_q`.
 
 This probe deliberately uses functional reusable Bend lists. It answers the
 semantic question first. A later PR can replace the representation with arrays

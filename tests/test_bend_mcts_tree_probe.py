@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import inspect
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import chess
 import numpy as np
 import pytest
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.mcts import _mcts_tree
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 
 
@@ -24,27 +27,72 @@ FIXTURE_FENS = (
     "k3r3/8/8/8/8/8/8/4K3 w - - 0 1",
 )
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("bend") is None or shutil.which("clang") is None,
-    reason="Bend/clang native toolchain is not installed",
-)
-
 CPUCT = 1.5
 FPU_ROOT = 0.25
 FPU_TREE = 0.15
 SIMS = 24
+_PROBE_TOOLCHAIN_REASON = "Bend/clang native toolchain is not installed"
+_PRODUCTION_TREE_METHODS = (
+    "add_root",
+    "expand",
+    "select_leaves",
+    "backprop",
+    "get_children_visits",
+    "find_child",
+    "is_expanded",
+    "node_q",
+)
+
+
+def _first_executable(candidates: list[str | None]) -> str | None:
+    for raw in candidates:
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+        found = shutil.which(raw)
+        if found:
+            return found
+    return None
+
+
+def _bend_bin() -> str | None:
+    return _first_executable(
+        [
+            os.environ.get("BEND_BIN"),
+            "bend",
+            str(ROOT / "build" / "bend_toolchain" / "bin" / "bend"),
+            str(Path.home() / ".bend" / "bin" / "bend"),
+        ]
+    )
+
+
+def _cc_bin() -> str | None:
+    return _first_executable(
+        [os.environ.get("BEND_TREE_CC"), os.environ.get("CC"), "clang", "cc"]
+    )
+
+
+def _require_bend_tree_probe() -> bool:
+    raw = os.environ.get("CAE_REQUIRE_BEND_TREE_PROBE", "").strip().lower()
+    return raw not in {"", "0", "false", "no", "n", "off"}
 
 
 def _prior(action: int) -> float:
     return ((action % 4) + 1) / 8.0
 
 
+def _dyadic(action: int) -> float:
+    return (action % 16) / 256.0
+
+
 def _child_value(action: int) -> float:
-    return (((action * 5) % 7) - 3) / 4.0
+    return (((action * 5) % 7) - 3) / 4.0 + _dyadic(action)
 
 
 def _grand_value(root_action: int, kid_action: int) -> float:
-    return (((root_action * 3 + kid_action) % 7) - 3) / 4.0
+    return (((root_action * 3 + kid_action) % 7) - 3) / 4.0 + _dyadic(kid_action)
 
 
 def _legal4(board: CBoard) -> list[int]:
@@ -61,6 +109,11 @@ def _path_word(actions: list[int]) -> int:
             ^ 2
         )
     raise AssertionError(f"unexpected path depth {len(actions)}: {actions}")
+
+
+def _root_w_q4(root_w: float) -> int:
+    coded = np.float32(np.float32(root_w) + np.float32(64.0)) * np.float32(4.0)
+    return int(coded)
 
 
 def _reference(fen: str) -> dict[str, int]:
@@ -151,7 +204,7 @@ def _reference(fen: str) -> dict[str, int]:
     return {
         "root_moves": len(root_actions),
         "root_n": SIMS,
-        "root_w_q4": int(round((root_w + 64.0) * 4.0)),
+        "root_w_q4": _root_w_q4(root_w),
         "best": actions_i[best_idx],
         "expanded": expanded,
         "visit_xor": visit_xor,
@@ -171,10 +224,25 @@ def _parse(stdout: str) -> dict[int, dict[str, int]]:
     return rows
 
 
+def _require_probe_rows(
+    observed: dict[int, dict[str, int]],
+    *,
+    stdout: str,
+    stderr: str,
+) -> None:
+    detail = f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+    assert observed, (
+        "native eval exited 0 with empty results (no fixture= lines)\n"
+        + detail
+    )
+    assert set(observed) == set(range(len(FIXTURE_FENS))), detail
+
+
 def _run_checked(
     args: list[str],
     *,
     env: dict[str, str] | None = None,
+    require_stdout: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         args,
@@ -190,20 +258,109 @@ def _run_checked(
             f"--- stdout ---\n{result.stdout}\n"
             f"--- stderr ---\n{result.stderr}"
         )
+    if require_stdout and not result.stdout.strip():
+        pytest.fail(
+            "native eval exited 0 with empty stdout: "
+            f"{' '.join(args)}\n--- stderr ---\n{result.stderr}"
+        )
     return result
 
 
+@pytest.mark.parametrize(
+    ("raw", "required"),
+    [
+        ("1", True),
+        ("true", True),
+        ("YES", True),
+        ("on", True),
+        ("  1  ", True),
+        ("", False),
+        ("0", False),
+        ("false", False),
+        ("no", False),
+        ("n", False),
+        ("off", False),
+    ],
+)
+def test_require_tree_probe_truthy_parse(
+    raw: str, required: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CAE_REQUIRE_BEND_TREE_PROBE", raw)
+    assert _require_bend_tree_probe() is required
+
+
+def test_require_tree_probe_unset_is_optional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CAE_REQUIRE_BEND_TREE_PROBE", raising=False)
+    assert _require_bend_tree_probe() is False
+
+
+def test_empty_native_stdout_is_failure() -> None:
+    observed = _parse("")
+    with pytest.raises(AssertionError, match="empty results"):
+        _require_probe_rows(observed, stdout="", stderr="")
+
+
+def test_build_script_does_not_ignore_python(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["PYTHON"] = str(tmp_path / "missing-python")
+    env["BEND_TREE_PROBE_BUILD_DIR"] = str(tmp_path / "build")
+    result = subprocess.run(
+        [str(BUILD_SCRIPT)],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "PYTHON is set but not executable" in result.stderr
+
+
+def test_oracle_drives_production_c_mcts_tree() -> None:
+    assert MCTSTree is _mcts_tree.MCTSTree
+    assert MCTSTree.__module__ == "_mcts_tree"
+    assert Path(_mcts_tree.__file__).suffix == ".so"
+    src = inspect.getsource(_reference)
+    for name in _PRODUCTION_TREE_METHODS:
+        assert f"tree.{name}(" in src, f"oracle lost production C call {name}"
+
+
+def test_c_tree_oracle_covers_claimed_fixtures() -> None:
+    for fen in FIXTURE_FENS:
+        row = _reference(fen)
+        assert row["root_moves"] > 0
+        assert row["root_n"] == SIMS
+        assert 0 <= row["root_w_q4"] <= 512
+        assert row["expanded"] > 0
+
+
+@pytest.mark.skipif(
+    (not _require_bend_tree_probe())
+    and (_bend_bin() is None or _cc_bin() is None),
+    reason=_PROBE_TOOLCHAIN_REASON,
+)
 def test_bend_two_ply_mcts_matches_production_c_tree(tmp_path: Path) -> None:
+    bend = _bend_bin()
+    cc = _cc_bin()
+    assert bend is not None, _PROBE_TOOLCHAIN_REASON
+    assert cc is not None, "clang/cc is required to compile Bend-emitted C"
+
     env = os.environ.copy()
     env["BEND_TREE_PROBE_BUILD_DIR"] = str(tmp_path / "build")
+    env["BEND_BIN"] = bend
+    env["BEND_TREE_CC"] = cc
+    env["CC"] = cc
+    env["PYTHON"] = sys.executable
+    env["BEND_NO_TELEMETRY"] = "1"
 
     built = _run_checked([str(BUILD_SCRIPT)], env=env)
     binary = Path(built.stdout.strip().splitlines()[-1])
     assert binary.is_file(), built.stdout
 
-    run = _run_checked([str(binary)])
+    run = _run_checked([str(binary)], require_stdout=True)
     observed = _parse(run.stdout)
-
-    assert set(observed) == set(range(len(FIXTURE_FENS))), run.stdout
+    _require_probe_rows(observed, stdout=run.stdout, stderr=run.stderr)
     for fixture, fen in enumerate(FIXTURE_FENS):
-        assert observed[fixture] == _reference(fen)
+        assert observed[fixture] == _reference(fen), run.stdout

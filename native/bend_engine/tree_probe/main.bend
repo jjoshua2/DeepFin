@@ -51,6 +51,9 @@ type VisitStats is Data:
     expanded: U32
   }
 
+type CappedMoves is Data:
+  CappedMoves{moves: List<&2, U32>, count: U32}
+
 # Existing native chess substrate from PR 1.
 def Chess.call(op: U32, a: U32, b: U32) -> IO(U32):
   import "../probe/chess_call.c"
@@ -65,32 +68,43 @@ def Chess.push(handle: U32, action: U32) -> IO(U32):
   Chess.call(3, handle, action)
 
 # Exact binary fractions keep C-double and Bend-F32 search decisions stable.
+# The /256 term is also dyadic; it breaks algebraic PUCT ties that F32 and
+# F64 would otherwise split (same Q and prior/(n+1), different rounding).
 def fake_prior(+action: U32) -> F32:
   F32.div(U32.to_f32(U32.add(U32.mod(action, 4), 1)), 8.0)
 
+def fake_dyadic(+action: U32) -> F32:
+  F32.div(U32.to_f32(U32.mod(action, 16)), 256.0)
+
 # Value from the ROOT CHILD's side-to-move perspective.
 def fake_child_value(+action: U32) -> F32:
-  F32.div(
-    F32.sub(
-      U32.to_f32(U32.mod(U32.mul(action, 5), 7)),
-      3.0
+  F32.add(
+    F32.div(
+      F32.sub(
+        U32.to_f32(U32.mod(U32.mul(action, 5), 7)),
+        3.0
+      ),
+      4.0
     ),
-    4.0
+    fake_dyadic(action)
   )
 
 # Value from the GRANDCHILD's side-to-move perspective.
 def fake_grand_value(+root_action: U32, +kid_action: U32) -> F32:
-  F32.div(
-    F32.sub(
-      U32.to_f32(
-        U32.mod(
-          U32.add(U32.mul(root_action, 3), kid_action),
-          7
-        )
+  F32.add(
+    F32.div(
+      F32.sub(
+        U32.to_f32(
+          U32.mod(
+            U32.add(U32.mul(root_action, 3), kid_action),
+            7
+          )
+        ),
+        3.0
       ),
-      3.0
+      4.0
     ),
-    4.0
+    fake_dyadic(kid_action)
   )
 
 def take_n(xs: List<&2, U32>, n: Nat) -> List<&2, U32>:
@@ -102,12 +116,19 @@ def take_n(xs: List<&2, U32>, n: Nat) -> List<&2, U32>:
     case Con{item, rest} 1n+p:
       Con{item, take_n(rest, p)}
 
-def list_len(xs: List<&2, U32>, acc: U32) -> U32:
-  match xs:
-    case Nil{}:
-      acc
-    case Con{item, rest}:
-      list_len(rest, U32.add(acc, 1))
+def prepend_capped(+item: U32, capped: CappedMoves) -> CappedMoves:
+  match capped:
+    case CappedMoves{tail, count}:
+      CappedMoves{Con{item, tail}, count}
+
+def take_n_counted(xs: List<&2, U32>, n: Nat, acc: U32) -> CappedMoves:
+  match xs n:
+    case Nil{} k:
+      CappedMoves{Nil{}, acc}
+    case Con{item, rest} 0n:
+      CappedMoves{Nil{}, acc}
+    case Con{+item, rest} 1n+p:
+      prepend_capped(item, take_n_counted(rest, p, U32.add(acc, 1)))
 
 def kids_from_moves(xs: List<&2, U32>) -> List<&2, Kid>:
   match xs:
@@ -792,15 +813,23 @@ def run_tree(
     run_sims(24n, Run{Tree{0, 0.0, children}, 0})
   )
 
+def after_capped(
+  +fixture: U32,
+  +root: U32,
+  capped: CappedMoves
+) -> IO(Unit):
+  match capped:
+    case CappedMoves{moves, count}:
+      do IO<Unit>:
+        children : List<&2, RootChild> <- build_children(root, moves, 4n)
+        run_tree(fixture, count, children)
+
 def after_root_moves(
   +fixture: U32,
   +root: U32,
-  +moves: List<&2, U32>
+  moves: List<&2, U32>
 ) -> IO(Unit):
-  capped = take_n(moves, 4n)
-  do IO<Unit>:
-    children : List<&2, RootChild> <- build_children(root, capped, 4n)
-    run_tree(fixture, list_len(capped, 0), children)
+  after_capped(fixture, root, take_n_counted(moves, 4n, 0))
 
 def after_root(+fixture: U32, +root: U32) -> IO(Unit):
   do IO<Unit>:
