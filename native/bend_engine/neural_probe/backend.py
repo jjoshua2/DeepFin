@@ -149,9 +149,19 @@ class NativeEvaluator:
         try:
             if struct.unpack('<2I', read_exact(self.output, 8, time.monotonic() + timeout)) != (MAGIC, 0):
                 raise ValueError('invalid evaluator handshake')
+        except Exception as error:
+            details = self.diagnostics()
+            self.close()
+            raise RuntimeError('native evaluator startup failed: ' + str(error) + '\n' + details) from error
         except BaseException:
             self.close()
             raise
+
+    def diagnostics(self) -> str:
+        # Preserve a bounded stderr tail before close destroys the temporary file.
+        # pread does not race the child's write position or require text seek cookies.
+        size = os.fstat(self.errors.fileno()).st_size
+        return os.pread(self.errors.fileno(), 8192, max(0, size - 8192)).decode('utf-8', errors='replace')
 
     def evaluate(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         # One stream and sequence per process. Concurrent callers must batch upstream.
