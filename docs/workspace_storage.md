@@ -17,7 +17,7 @@ previous host configuration. Automatic workspace creation remains available.
 ## Runtime artifacts
 
 The host shared artifact root is `/home/josh/chess-artifacts/`, with `corpora/`,
-`labels/`, `models/`, `runs/`, `cache/` and `operations/` subdirectories.
+`labels/`, `models/`, `tablebases/`, `runs/`, `cache/` and `operations/` subdirectories.
 
 Give corpus, teacher labels, checkpoints, caches and run output explicit paths
 outside the development checkout. Keep artifact identities and compact experiment

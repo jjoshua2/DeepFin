@@ -124,5 +124,77 @@
     "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
     "time": 1789842809.4709902,
     "status": "COMPLETE"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/syzygy_6",
+    "destination": "/home/josh/chess-artifacts/tablebases/syzygy_6",
+    "device": 2096,
+    "inode": 70961079,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789843621.3000014,
+    "status": "PREPARED"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/syzygy_6",
+    "destination": "/home/josh/chess-artifacts/tablebases/syzygy_6",
+    "device": 2096,
+    "inode": 70961079,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789843621.3000014,
+    "status": "COMPLETE"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/syzygy_3-4-5",
+    "destination": "/home/josh/chess-artifacts/tablebases/syzygy_3-4-5",
+    "device": 2096,
+    "inode": 1098911,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789843621.3789418,
+    "status": "PREPARED"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/syzygy_3-4-5",
+    "destination": "/home/josh/chess-artifacts/tablebases/syzygy_3-4-5",
+    "device": 2096,
+    "inode": 1098911,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789843621.3789418,
+    "status": "COMPLETE"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/syzygy_3-4man",
+    "destination": "/home/josh/chess-artifacts/tablebases/syzygy_3-4man",
+    "device": 2096,
+    "inode": 1872792,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789843621.4515529,
+    "status": "PREPARED"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/syzygy_3-4man",
+    "destination": "/home/josh/chess-artifacts/tablebases/syzygy_3-4man",
+    "device": 2096,
+    "inode": 1872792,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789843621.4515529,
+    "status": "COMPLETE"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/syzygy_3man",
+    "destination": "/home/josh/chess-artifacts/tablebases/syzygy_3man",
+    "device": 2096,
+    "inode": 1265293,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789843621.5214014,
+    "status": "PREPARED"
+  },
+  {
+    "source": "/home/josh/projects/chess/data/syzygy_3man",
+    "destination": "/home/josh/chess-artifacts/tablebases/syzygy_3man",
+    "device": 2096,
+    "inode": 1265293,
+    "compatibility": "absolute directory symlink; actual Grok copy probe preserved link",
+    "time": 1789843621.5214014,
+    "status": "COMPLETE"
   }
 ]

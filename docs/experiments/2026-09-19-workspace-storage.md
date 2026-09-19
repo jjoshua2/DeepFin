@@ -65,3 +65,16 @@ actual operator descriptors, and preserved the active job.
 contains the exact diff, before/after hashes, independent reviews, fixtures and
 adoption receipts. This amends the host storage paths of PR #786, not its experiment
 recipe, training horizon or evaluation settings.
+
+The four Syzygy stores now live under `chess-artifacts/tablebases/`, still on local
+NVMe, with their former paths retained as absolute links. The two large stores
+contain 150.76 GiB and 68.75 GiB. The combined relative alias remains valid. Post-move
+Python-chess probes through the old and external 3-man paths returned identical
+table counts, WDL and DTZ. This moves payloads out of the workspace without changing
+their storage device or duplicating them.
+
+Duplicate-only cleanup continues at low I/O priority with a 360 GiB/two-hour bound
+for its second pass. A reviewed process-exit trigger then starts the bounded CPU-only
+SF generation throughput screen; it waits through a pidfd rather than model polling.
+The screen writes to external corpus storage and preserves the running GPU training.
+Trigger launch/control receipts live at `chess-artifacts/operations/sf_trigger_20260919/`.
