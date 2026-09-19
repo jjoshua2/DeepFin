@@ -1,0 +1,26 @@
+name: Bend trained-model development
+on:
+  push:
+    branches: [feat/bend-trained-model-contract]
+    paths: ['.github/workflows/bend-trained-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir -p /tmp/bend-trained-source
+          git archive --format=tar.gz HEAD > /tmp/bend-trained-source/deepfin.tgz
+          git rev-parse HEAD > /tmp/bend-trained-source/revision.txt
+          python -m pip download --no-deps --no-binary=:all: chess==1.11.2 -d /tmp/bend-trained-source
+          python -m pip download --no-deps ruff==0.15.20 -d /tmp/bend-trained-source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-trained-source
+          path: /tmp/bend-trained-source/
+          retention-days: 2
