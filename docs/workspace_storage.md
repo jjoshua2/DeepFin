@@ -47,3 +47,23 @@ experiment payloads. Its process recorded roughly 1.19 TB of cumulative writes;
 this is process I/O, not a measurement of unique duplicated data. The cleanup receipt
 is `scratchpad/bt4_joint20/efficiency500m_20260919/workspace_duplicate_cleanup.jsonl`
 on the pinned host. Active training and frozen queued runtimes remain in place.
+
+## Migration receipt, 2026-09-19
+
+- `data/desync_quarantine_20260801` moved to
+  `/home/josh/chess-artifacts/corpora/desync_quarantine_20260801` (499 MiB).
+  It is inactive quarantine data; no compatibility link was needed.
+- `scratchpad/preserved_corpora_20260802` moved to
+  `/home/josh/chess-artifacts/corpora/preserved_corpora_20260802` (65 GiB).
+  Its old location is an absolute directory link. Active/queued references and
+  open handles were checked before relocation.
+
+Both were same-filesystem renames preserving the original directory inode, without
+copying or deleting payloads. This reduces what workspace creation can duplicate;
+it does not itself reclaim disk space. The complete relocation journal is
+`/home/josh/chess-artifacts/operations/relocations-20260919.jsonl`.
+
+A disposable model-free test of the installed Grok workspace creation endpoint
+confirmed that its copy strategy preserves a nonignored absolute directory symlink
+to external data. That evidence applies to this copier/version; recheck before
+using a different copy implementation or options that dereference links.
