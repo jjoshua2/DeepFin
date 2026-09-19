@@ -161,3 +161,65 @@ path-scoped native-neural workflow covers this test; ordinary pytest only tests
 broker and manifest contracts. Real trained/CUDA batching and throughput remain
 separate gates. Evidence is in
 [`docs/experiments/2026-09-18-bend-evaluator-batching.md`](../../../docs/experiments/2026-09-18-bend-evaluator-batching.md).
+
+## Explicit checkpoint qualification
+
+`checkpoint_probe` removes the seeded-TinyNet restriction. It requires a trusted,
+immutable `trainer.pt` (or its directory) with embedded `arch`, explicit encoding
+metadata and canonical `model` weights. `--weights-key swa_model` selects SWA
+explicitly; it never silently falls back to normal weights. Missing/extra/shape-
+mismatched tensors, nonfinite weights, conflicting tied tensors, unknown fields
+and unsupported architecture versions fail before export. No nearby params.json,
+architecture override, tolerant migration, or random replacement layers are used.
+
+```sh
+# A COPIED self-describing checkpoint; no production process is changed.
+uv run python -m native.bend_engine.neural_probe.checkpoint_probe \
+  --checkpoint /path/to/copied/trainer.pt --device cpu --batch 4 \
+  --report artifacts/bend-neural-checkpoint.json
+
+# Explicit UNTRAINED two-layer transformer fixture, not TinyNet or a learned net.
+uv run python -m native.bend_engine.neural_probe.checkpoint_probe \
+  --fixture-checkpoint --modes generic portable native ubsan \
+  --report artifacts/bend-neural-checkpoint-fixture.json
+```
+
+The transformer returns `policy_own`, unlike TinyNet's `policy`. The wrapper uses
+the existing production `_policy_output` helper and WDL logits, sets the existing
+inference-only flag, and does not substitute auxiliary policy heads. The original
+model architecture is reconstructed from the file, not a guessed current YAML.
+A SHA-256 and the selected state key bind the package/report to that checkpoint;
+step metadata is reported, never treated as proof of training provenance.
+
+The coordinator derives its real-row limit from the selected bucket, with bounded
+reservation `max(8, batch)`; the one-real-row control still pads that same package.
+
+Each command exports one static package, checks native outputs against eager
+singleton forwards, and runs five actual Bend searches with the existing batched
+coordinator/control and cancellation recovery. Per-reply reference checks and
+full final tree/visit/move comparisons remain mandatory. A numerical or search
+mismatch remains a failure; this runner does not automatically increase tolerance.
+
+CPU runs use F32 and the previous 2e-6 absolute / 2e-5 relative logit tolerances.
+The v3 package format also supports an **experimental CUDA BF16 execution path**:
+append `--device cuda --device-index 0 --atol A --rtol R`, replacing A/R with
+numerical tolerances chosen BEFORE the experiment for that model. Neither
+missing hardware nor missing explicit CUDA tolerances falls back to CPU. Run only
+on an NVIDIA host with compatible CUDA PyTorch/LibTorch, during a budgeted or
+training-paused window. No GPU is reserved by this command and no live training
+is paused automatically. Compilation/inference can consume significant GPU memory.
+
+The package and native worker are built from the same Torch version. Input wire
+payloads remain F32; CUDA transfers/casts to BF16 before inference and returns F32
+policy/WDL logits via a blocking host copy. Device identity and output dtype/shape
+are checked. This is NOT zero-copy, CUDA graph, overlapping-transfer or latency
+qualification. Existing BF16 dictionary-output packages are not interchangeable:
+the v3 exporter creates the explicit tuple-output contract from the checkpoint.
+The previous native CUDA parity command remains unchanged and independent.
+
+Export alone does not qualify row independence or real chess strength. Tiny and
+transformer model families are accepted, but only actually exercised shapes,
+weights, targets and batch buckets are qualified by a successful report. Partial
+batches, one-real-row controls and cancellation continue using the same physical
+batch package. No end-to-end speedup is inferred. Failure reports record the stage;
+no trained-weight or GPU pass is inferred from the synthetic CPU fixture.

@@ -12,6 +12,7 @@ on:
       - 'chess_anti_engine/moves/**'
       - 'chess_anti_engine/model.py'
       - 'chess_anti_engine/model/**'
+      - 'tests/test_bend_checkpoint.py'
       - 'tests/test_bend_batching.py'
       - 'tests/test_bend_neural_boundary.py'
 permissions:
@@ -40,9 +41,9 @@ jobs:
           bash native/bend_engine/bitboard_probe/install_toolchain.sh
       - name: Static checks and cheap boundary contracts
         run: |
-          ruff check native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py tests/test_bend_batching.py
-          basedpyright native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py tests/test_bend_batching.py
-          python -m pytest -q tests/test_bend_neural_boundary.py tests/test_bend_search_sessions.py tests/test_bend_batching.py
+          ruff check native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py tests/test_bend_batching.py tests/test_bend_checkpoint.py
+          basedpyright native/bend_engine/neural_probe native/bend_engine/session_probe/run_probe.py tests/test_bend_neural_boundary.py tests/test_bend_batching.py tests/test_bend_checkpoint.py
+          python -m pytest -q tests/test_bend_neural_boundary.py tests/test_bend_search_sessions.py tests/test_bend_batching.py tests/test_bend_checkpoint.py
       - name: Preserve session fault and cancellation behavior with path records
         run: |
           python -m native.bend_engine.session_probe.run_probe --python-chess \
@@ -55,6 +56,10 @@ jobs:
         run: |
           python -m native.bend_engine.neural_probe.batch_probe \
             --report artifacts/bend-neural-batching.json
+      - name: Saved transformer checkpoint through native inference and Bend search
+        run: |
+          python -m native.bend_engine.neural_probe.checkpoint_probe --fixture-checkpoint \
+            --modes generic portable native ubsan --report artifacts/bend-neural-checkpoint.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
