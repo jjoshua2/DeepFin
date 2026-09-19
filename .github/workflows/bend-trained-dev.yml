@@ -20,19 +20,22 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Apply reviewable delta and verify exact tested sources
+      - name: Apply reviewed patches and verify exact final sources
         run: |
           echo 'b5e19ed528a8212beee3d0a14fb43e89a7e1754deca0797774f7856f70c35ea7  .github/checkpoint-code.patch' | sha256sum -c -
+          echo '906b095aba6c39ce1cd0f7de21f5b7ed6bbbe8f204edf6356d6a10857cbf4adc  .github/checkpoint-cleanup.patch' | sha256sum -c -
           git apply --check .github/checkpoint-code.patch
           git apply .github/checkpoint-code.patch
           git apply --check .github/checkpoint-docs.patch
           git apply .github/checkpoint-docs.patch
+          git apply --check .github/checkpoint-cleanup.patch
+          git apply .github/checkpoint-cleanup.patch
           python - <<'PY'
           import hashlib
           from pathlib import Path
           expected = {
-            'native/bend_engine/neural_probe/checkpoint.py': 'db5128ca1694a09390ce07c6314277a07b7fbca2df51a4b3fec5efb5ee035aba',
-            'native/bend_engine/neural_probe/checkpoint_probe.py': '44421bbaf9013590e30bdba305ab92cd89877d2de0f416eaa72a1787e33dbf5d',
+            'native/bend_engine/neural_probe/checkpoint.py': '644acc4b3bb859be4dbfb4d170ae424f7353b69ce353067faf4b184d700a0a24',
+            'native/bend_engine/neural_probe/checkpoint_probe.py': '0212afc93617df5f044d25b5591b589afe8b3569ba7e0e788a870937d21f6ebc',
             'native/bend_engine/neural_probe/checkpoint_smoke.py': '77894f27697d815c0bc97813cf8fb75f59ca5483543810f93744e0e07efa7bab',
             'native/bend_engine/neural_probe/backend.py': 'a7bebcd829b4021bde4454a143792cae72149acf61ee513dc4241cf256d8bbe9',
             'native/bend_engine/neural_probe/aoti_worker.cpp': 'f41c8bac08016eeb4eb1bec7ee08772791860da4c50f878b7fd5f649733777bb',
@@ -46,7 +49,7 @@ jobs:
           for name, expected_sha in expected.items():
               actual = hashlib.sha256(Path(name).read_bytes()).hexdigest()
               assert actual == expected_sha, (name, actual, expected_sha)
-          print('All 11 feature files match locally tested source bytes')
+          print('All 11 feature files match the final reviewed source bytes')
           PY
           git diff --check
       - name: Install isolated CPU environment and pinned compiler
@@ -81,7 +84,7 @@ jobs:
       - name: Publish only the tested feature on a clean branch
         run: |
           git fetch --no-tags --depth=1 origin 4ab0836c69f7d60ae41c84fa069527a8c731f047
-          git rm .github/workflows/bend-trained-dev.yml .github/checkpoint-part-0.txt .github/checkpoint-code.patch .github/checkpoint-docs.patch
+          git rm .github/workflows/bend-trained-dev.yml .github/checkpoint-part-0.txt .github/checkpoint-code.patch .github/checkpoint-docs.patch .github/checkpoint-cleanup.patch
           git add native/bend_engine/neural_probe tests/test_bend_checkpoint_contract.py docs/experiments/README.md docs/experiments/2026-09-18-bend-checkpoint-contract.md
           git diff --cached --check
           git config user.name 'github-actions[bot]'
