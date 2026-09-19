@@ -282,3 +282,81 @@ a mismatch still fails; no automatic tolerance adjustment or stale-code reuse.
 `--reuse-package` requires a real `--checkpoint`, not a regenerated fixture.
 
 See [the preflight/retention record](../../../docs/experiments/2026-09-18-bend-checkpoint-preflight.md).
+
+
+## Sustained neural play (opt-in)
+
+`play_probe` composes the qualified native evaluator and bounded cross-search
+queue with acknowledged root advancement. Each native Bend process persists
+through played moves, and each new root gets a fresh tree and a new HistoryEncoder
+from the **entire played move stack**. No compiler or Bend source change is needed.
+The small `Actor.after_search` hook leaves the original single-root reset test
+behavior unchanged.
+
+Use a trusted copied checkpoint and the exact retained v3 package created by
+`checkpoint_probe --work-dir`. This command verifies their identity/encoding/batch
+and target, rebuilds the native peers, and checks real model outputs while playing;
+it does not re-export, silently swap weights, or treat an earlier PASS as current.
+
+```sh
+# Prepare/qualify once, retaining the model package (CPU example):
+python -m native.bend_engine.neural_probe.checkpoint_probe \
+  --checkpoint /path/to/copied/trainer.pt --device cpu --batch 4 \
+  --work-dir artifacts/bend-export-01 --report artifacts/bend-export-01/report.json
+
+# A bounded, checked game using that exact model; defaults are intentionally small:
+python -m native.bend_engine.neural_probe.play_probe \
+  --checkpoint /path/to/copied/trainer.pt \
+  --reuse-package artifacts/bend-export-01/checkpoint.pt2 --batch 4 \
+  --max-plies 16 --simulations 8 --claims automatic \
+  --report artifacts/bend-neural-game.json
+```
+
+`--fen` supplies a starting FEN and `--moves e2e4 e7e5 ...` supplies played pre-root
+moves. The PGN in each game report preserves both these moves and newly played
+moves. Limits are 1..128 newly played plies and 2..64 simulations per search;
+every tree uses the prior depth-four/4096-node diagnostic search. A single-game
+call uses one real row in its fixed package; it is NOT a batching speed benchmark.
+CUDA retains the prior explicit target/index/tolerance contract, but actual CUDA
+and trained-checkpoint play are not qualified by the CPU fixture.
+
+For the bounded multi-game/control/cancellation suite, use `--qualification-suite`.
+Do not combine it with custom root/ply/claim flags. Up to eight native peers share
+one native forward stream. The test compares one-real-row padding, ordinary
+batching, and cancelled queued/submitted requests followed by scripted moves.
+One cancelled old-root output is deliberately held until its replacement root
+has queued an evaluation. It must not complete that newer request. Only retired
+requests permit a root change. Full ACK/board checks precede host history commit,
+and the next encoder is reconstructed before any new-root evaluation. A corrupt
+ACK closes the run rather than being retried. Cancellation cannot interrupt a
+model kernel, and this is not asynchronous UCI stop or within-tree virtual loss.
+
+### Game results are explicit
+
+At each **played root**, before another search, the host uses python-chess's
+`Board.outcome` to check mate, stalemate, material-based insufficient material,
+fivefold repetition and the 75-move rule. Checkmate takes precedence over the
+move clock. `--claims automatic` does not claim threefold/50-move draws;
+`--claims claim_available` explicitly elects to claim when eligible. Claims by an
+intended move record that legal witness but **do not play it**. A ply cap is `*`
+(unfinished), not a draw; cancellation/errors do not become chess results.
+
+This is not a complete FIDE arbiter: time forfeits and arbitrary dead/fortress
+positions are not solved. More importantly, draw adjudication is **not yet inside
+Bend's search tree**. A legal leaf can be evaluated beyond a draw threshold, even
+though the played game stops correctly at that root. Do not claim production
+search semantics or tournament strength from this controller. FEN alone cannot
+recover unknown pre-root repetition history.
+
+The fixture combines neural-selected continuations with clearly labeled scripted
+opponent/rule-test moves. Scripted mate/repetition are not claims that an untrained
+network learned those sequences. Every real evaluator row matches eager singleton
+inference; every tree snapshot and acknowledged move is checked with the existing
+reference/CBoard and python-chess, and PGNs are parsed and replayed. Numerical
+validation cost makes elapsed time unsuitable as an engine-throughput measurement.
+
+No game execution or extra model export is added to default pytest or recurring
+CI. Only cheap rule/ACK/retirement contracts are added; native play remains an
+explicit qualification command. See the experiment record for actual tested
+revisions and results. No live configuration, perft depth or production code is
+changed. This is self-reviewed, not independently reviewed or formally proven.
