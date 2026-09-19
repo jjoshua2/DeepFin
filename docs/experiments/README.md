@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [BT4 labeling throughput and scale costs](2026-09-17-bt4-label-throughput.md) | Verified1.527M fresh joint rows at578.76 outer rows/s;48h/100M and20days/1B linear estimates; bounded batch-tuning and metadata-cost priorities |
 | [Ceres CPU semantics oracle](2026-09-13-ceres-cpu-semantics.md) | CPU oracle complete after comparator-only recovery: 144 histories match bytes; 131 value cases quantify FP16 getter differences, no neural parity claim |
 | [Saved joint raw-label eligibility](2026-09-13-saved-joint-raw-eligibility.md) | 21.40M saved joint-label raw candidates outside covered rosters; 512-shard audit complete: 4,219,426 eligible / 4,249,935 raw rows; 88 exact exclusions qualified; 4,219,426-row / 516-shard derivation launched, no completion or training admission |
 | [Bounded raw scale labels](2026-09-13-bounded-raw-scale-labels.md) | Completed 184 raw shards / 1,527,153 rows in 2638.682s; 12-group limit exhausted; baseline audit complete: 1,517,925 eligible rows, 30 phase-zero support failures and 9,198 no-result drops; exact filtered derivation complete: 1,517,925 rows / 186 derived shards; joint saved-policy/native-WDL adapter complete; B100 materialization complete after a preserved pre-writer command failure; metadata establishes 1,517,925 additional physical-source rows beyond existing 35M; potential 36,832,502-row union remains unadmitted |
