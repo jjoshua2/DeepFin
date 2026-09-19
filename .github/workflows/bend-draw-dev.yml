@@ -1,0 +1,32 @@
+name: Bend search draw development
+on:
+  push:
+    branches: [feat/bend-search-draws-dev]
+    paths: ['.github/workflows/bend-draw-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: |
+          mkdir -p /tmp/bend-draw-source
+          git archive --format=tar.gz HEAD > /tmp/bend-draw-source/deepfin.tgz
+          git rev-parse HEAD > /tmp/bend-draw-source/revision.txt
+          bash native/bend_engine/bitboard_probe/install_toolchain.sh
+          tar -czf /tmp/bend-draw-source/compiler.tgz -C build/bend_u64_toolchain source
+          cp "$(command -v bun)" /tmp/bend-draw-source/bun
+          python -m pip download --no-deps --no-binary=:all: chess==1.11.2 -d /tmp/bend-draw-source
+          python -m pip download --no-deps ruff==0.15.20 -d /tmp/bend-draw-source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-search-draw-source
+          path: /tmp/bend-draw-source/
+          retention-days: 2
