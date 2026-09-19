@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import time
 from typing import Any
@@ -26,15 +27,19 @@ TEACHER = '1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0'
 ARMS = ('source', 'B100', 'V50')
 
 V100_KIND = 'matched-b100-sf-native100-corpus-set'
+EXPANSION_KIND = 'audited-expanded-b100-native50-corpus-set'
+EXPANSION_ROLE = 'Expanded50M_V50'
 
 
 def corpus_arms(manifest: dict[str, Any]) -> tuple[str, str, str]:
     kind = manifest['kind']
-    require(kind in {'matched-b100-sf-native50-corpus-set', V100_KIND}, 'unknown corpus recipe kind')
+    require(kind in {'matched-b100-sf-native50-corpus-set', V100_KIND, EXPANSION_KIND}, 'unknown corpus recipe kind')
     return ('source', 'B100', 'V100') if kind == V100_KIND else ARMS
 
 
 def role_map(manifest: dict[str, Any]) -> dict[str, str]:
+    if manifest['kind'] == EXPANSION_KIND:
+        return {EXPANSION_ROLE: 'V50'}
     return ({'Combined35M_V100': 'V100'} if corpus_arms(manifest)[-1] == 'V100'
             else {'Combined35M_SF100': 'B100', 'Combined35M_V50': 'V50'})
 
@@ -148,7 +153,17 @@ def admit(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         require(bool(qualification), 'missing source qualification')
         require(re.fullmatch(r'[0-9a-f]{64}', c['source_namespace']) is not None,
                 'invalid source namespace')
-        if c['identity_kind'] == 'qualified-g10-selection':
+        if c['identity_kind'] == 'audited-g10-selection':
+            from scripts import audited_source_admission as audited
+            require(manifest['kind'] == EXPANSION_KIND, 'audited sources need the expansion profile')
+            proof = audited.admit(Path(c['source_qualification']['path']), c['source_qualification']['sha256'],
+                                  root_path(c, 'source'), read_pin(summary_ref(c, 'source')))
+            subset(proof, {'rows': c['rows'], 'source_namespace': c['source_namespace'],
+                           'raw_shards': c['raw_shards']}, 'audited source identity')
+            value = read_pin(c['value_recipe'])
+            require(same_json(value.get('audited_source_admission'), proof),
+                    'V50 does not inherit audited source admission')
+        elif c['identity_kind'] == 'qualified-g10-selection':
             # This is the existing metadata assessment, including its historical
             # source-version caveat, not a fabricated generation attestation.
             identity = read_pin(c['identity_receipt'])
@@ -299,6 +314,62 @@ def prospective(manifest: dict[str, Any], mapping: list[dict[str, Any]], guard: 
             'proof': 'Equal canonical planner records and full ordered game columns under the pinned sampler; row-offset equality is code-backed inference, not a realized training observation.'}
 
 
+def prospective_isolated(manifest: dict[str, Any], mapping: list[dict[str, Any]],
+                         output: Path, deadline: float, guard: Any) -> dict[str, Any]:
+    """Keep admission imports out of the historical sampler's interpreter."""
+    work = output.with_name(output.name + '.prospective')
+    work.mkdir(exist_ok=False)
+    bundle = work / 'input.json'
+    bundle.write_text(json.dumps({'manifest': manifest, 'mapping': mapping}))
+    result = work / 'result.json'
+    command = [sys.executable, str(Path(__file__).resolve()), '--prospective-worker',
+               str(bundle), sha(bundle), str(result), str(deadline)]
+    with (work / 'worker.log').open('xb') as log:
+        child = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            while child.poll() is None:
+                guard()
+                require(time.time() < deadline, 'prospective worker deadline')
+                try:
+                    child.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+            require(child.returncode == 0,
+                    f'prospective worker failed ({child.returncode}); see {work / "worker.log"}')
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait()
+    guard()
+    return json.loads(result.read_text())
+
+
+def prospective_worker(argv: list[str]) -> None:
+    require(len(argv) == 4, 'invalid prospective worker arguments')
+    bundle, digest, output, end = argv
+    source, target = Path(bundle), Path(output)
+    deadline = float(end)
+    require(sha(source) == digest, 'prospective input pin differs')
+    data = json.loads(source.read_text())
+    sampled_at = 0.0
+    def guard() -> None:
+        nonlocal sampled_at
+        require(time.time() < deadline, 'prospective worker deadline')
+        require(not (target.parent.parent / 'STOP').exists(), 'STOP requested')
+        if time.monotonic() - sampled_at >= 5:
+            resource_guard(target.parent)
+            sampled_at = time.monotonic()
+    guard()
+    report = prospective(data['manifest'], data['mapping'], guard)
+    require(sha(source) == digest, 'prospective input changed')
+    with target.open('x') as handle:
+        json.dump(report, handle)
+
+
 def resource_guard(output_parent: Path) -> None:
     available = next(int(line.split()[1]) * 1024 for line in Path('/proc/meminfo').read_text().splitlines()
                      if line.startswith('MemAvailable:'))
@@ -338,7 +409,7 @@ def main() -> None:
                          'No feature/target read or full training admission; trainer history/value gates remain required.',
                          'Whole-game equivalence inherits the qualified generator contract and exact disjoint rosters; historical per-shard source-code attestation was not added.']}
     if args.execute:
-        report.update(prospective(manifest, mapping, guard))
+        report.update(prospective_isolated(manifest, mapping, args.output, args.deadline_unix, guard))
         report['status'] = 'PASS_CORPUS_SET_PROSPECTIVE_NOT_TRAINING'
     guard()
     require(sha(args.manifest) == args.expected_manifest_sha256, 'manifest changed')
@@ -350,4 +421,7 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    main()
+    if sys.argv[1:2] == ['--prospective-worker']:
+        prospective_worker(sys.argv[2:])
+    else:
+        main()

@@ -283,3 +283,81 @@ def test_native100_cannot_relabel_half_dose_or_change_lineage(tmp_path: Path, mu
     m['kind'] = tool.V100_KIND
     with pytest.raises(ValueError, match='V100 recipe'):
         tool.admit(m)
+
+
+def test_audited_expansion_preserves_identity_and_rejects_overlap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts import audited_source_admission as audited
+
+    old = cohort(tmp_path, 'old')
+    new = cohort(tmp_path, 'new', 'w00-00002.jsonl.zst')
+    new['identity_kind'] = 'audited-g10-selection'
+    proof = {'rows': 3, 'source_namespace': new['source_namespace'], 'raw_shards': new['raw_shards']}
+    monkeypatch.setattr(audited, 'admit', lambda *args: proof)
+    recipe = tool.read_pin(new['value_recipe'])
+    recipe['audited_source_admission'] = proof
+    new['value_recipe'] = write(Path(new['value_recipe']['path']), recipe)
+    value = tool.read_pin(new['roots']['V50']['summary'])
+    value['value_target_postprocess'] = {k: v for k, v in recipe.items() if k != 'outputs'}
+    new['roots']['V50']['summary'] = write(Path(new['roots']['V50']['summary']['path']), value)
+    m = manifest([old, new])
+    m['kind'] = tool.EXPANSION_KIND
+    assert tool.role_map(m) == {tool.EXPANSION_ROLE: 'V50'}
+    assert sum(row['rows'] for row in tool.admit(m)) == 6
+    new['source_namespace'] = old['source_namespace']
+    new['raw_shards'] = old['raw_shards']
+    proof.update(source_namespace=new['source_namespace'], raw_shards=new['raw_shards'])
+    recipe['audited_source_admission'] = proof
+    new['value_recipe'] = write(Path(new['value_recipe']['path']), recipe)
+    with pytest.raises(ValueError, match='overlapping physical raw shard'):
+        tool.admit(m)
+
+
+def test_old_union_profile_cannot_silently_admit_new_source(tmp_path: Path) -> None:
+    c = cohort(tmp_path, 'new')
+    c['identity_kind'] = 'audited-g10-selection'
+    with pytest.raises(ValueError, match='expansion profile'):
+        tool.admit(manifest([c]))
+
+
+def test_prospective_runs_in_clean_interpreter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import types
+    worker = tmp_path / 'worker.py'
+    worker.write_text('import sys,json,hashlib\nfrom pathlib import Path\n'
+        'assert "chess_anti_engine.replay.game_epoch" not in sys.modules\n'
+        'assert sys.argv[1]=="--prospective-worker"\n'
+        'source,digest,result,end=sys.argv[2:]\n'
+        'assert hashlib.sha256(Path(source).read_bytes()).hexdigest()==digest\n'
+        'Path(result).write_text(json.dumps({"isolated":True}))\n')
+    monkeypatch.setitem(sys.modules, 'chess_anti_engine.replay.game_epoch', types.ModuleType('already_loaded'))
+    monkeypatch.setattr(tool, '__file__', str(worker))
+    result = tool.prospective_isolated({}, [], tmp_path / 'report.json', time.time() + 20, lambda: None)
+    assert result == {'isolated': True}
+    assert sys.modules['chess_anti_engine.replay.game_epoch'].__name__ == 'already_loaded'
+
+
+def test_prospective_guard_failure_reaps_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    events = []
+    class Child:
+        returncode = None
+        def poll(self):
+            return self.returncode
+        def terminate(self):
+            events.append('terminate')
+            self.returncode = -15
+        def wait(self, timeout=None):
+            events.append(('wait', timeout))
+            return self.returncode
+    monkeypatch.setattr(tool.subprocess, 'Popen', lambda *a, **kw: Child())
+    def fail():
+        raise RuntimeError('resource floor')
+    with pytest.raises(RuntimeError, match='resource floor'):
+        tool.prospective_isolated({}, [], tmp_path / 'report.json', time.time() + 20, fail)
+    assert events == ['terminate', ('wait', 10)]
+    assert (tmp_path / 'report.json.prospective/input.json').is_file()
+
+
+def test_prospective_worker_rejects_changed_bundle(tmp_path: Path) -> None:
+    bundle = tmp_path / 'input.json'
+    bundle.write_text('{}')
+    with pytest.raises(ValueError, match='input pin differs'):
+        tool.prospective_worker([str(bundle), '0' * 64, str(tmp_path / 'result.json'), str(time.time()+20)])
