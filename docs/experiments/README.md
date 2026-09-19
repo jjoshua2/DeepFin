@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Bend checkpoint preflight and retention](2026-09-18-bend-checkpoint-preflight.md) | Fail-closed readiness, exact-checkpoint package reuse and retained failure evidence; no trained/CUDA execution claim |
 | [Bend checkpoint qualification](2026-09-18-bend-checkpoint-qualification.md) | Explicit checkpoint architecture/weights, native transformer CPU qualification, guarded CUDA BF16 path; no trained/GPU performance claim |
 | [Bend evaluator batching](2026-09-18-bend-evaluator-batching.md) | Bounded cross-search CPU batches, cancellation and epoch isolation; no trained/CUDA or throughput claim |
 | [Bend neural boundary](2026-09-18-bend-neural-boundary.md) | Real history/policy encoding and persistent native CPU AOTI smoke joined to Bend search; untrained TinyNet, no CUDA or production claim |

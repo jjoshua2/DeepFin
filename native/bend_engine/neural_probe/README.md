@@ -223,3 +223,62 @@ weights, targets and batch buckets are qualified by a successful report. Partial
 batches, one-real-row controls and cancellation continue using the same physical
 batch package. No end-to-end speedup is inferred. Failure reports record the stage;
 no trained-weight or GPU pass is inferred from the synthetic CPU fixture.
+
+
+## Preflight, retained evidence and package reuse
+
+Before spending target-GPU time, use a trusted immutable copy of the checkpoint
+and a separate development checkout. `--preflight-only` performs the strict CPU
+weight load, encoding/config checks, source-pinned compiler verification, native
+executable discovery and requested-device checks. It does **not** export, execute
+a model forward, start a native worker, or search. A CUDA preflight may initialize
+a CUDA context to query the device and free-memory snapshot; it neither reserves
+memory nor guarantees that compilation/inference will fit beside another job.
+Its report says `status: preflight_passed`, `qualification: not_run`, never a
+neural/GPU PASS. CUDA still requires explicit tolerances even for this preflight.
+
+```sh
+# Run in the CUDA environment with a safe compute window; no automatic fallback.
+# CHECKPOINT, ATOL and RTOL must be chosen before the experiment.
+python -m native.bend_engine.neural_probe.checkpoint_probe \
+  --checkpoint "$CHECKPOINT" --weights-key model \
+  --device cuda --device-index 0 --batch 4 --atol "$ATOL" --rtol "$RTOL" \
+  --preflight-only --report artifacts/bend-preflight.json
+
+# Full qualification. This directory MUST NOT already exist.
+python -m native.bend_engine.neural_probe.checkpoint_probe \
+  --checkpoint "$CHECKPOINT" --weights-key model \
+  --device cuda --device-index 0 --batch 4 --atol "$ATOL" --rtol "$RTOL" \
+  --work-dir build/bend-qualification/run1 --report artifacts/bend-run1.json
+
+# After correcting a later build/runtime problem, keep the exact exported model.
+# Native worker and Bend executables are still rebuilt from the current checkout.
+python -m native.bend_engine.neural_probe.checkpoint_probe \
+  --checkpoint "$CHECKPOINT" --weights-key model \
+  --device cuda --device-index 0 --batch 4 --atol "$ATOL" --rtol "$RTOL" \
+  --reuse-package build/bend-qualification/run1/checkpoint.pt2 \
+  --work-dir build/bend-qualification/run2 --report artifacts/bend-run2.json
+```
+
+The default without `--work-dir` remains disposable. Explicit work directories
+retain exports, manifests, CMake/Bend builds and Inductor caches on both success
+and failure; they can contain model weights and should not be committed or uploaded
+indiscriminately. Existing directories are refused, not reset. Report aliases to
+checkpoint/package/sidecar inputs and planned model artifacts are rejected before
+writing. Progress is atomically saved at stage boundaries; completed groups survive
+later failures. Stage times include checking/build/reference work and are diagnostics,
+**not inference-throughput benchmarks**. Worker startup failures retain a bounded
+stderr tail instead of merely reporting an EOF. Library calls restore the prior
+Inductor cache environment after the run.
+
+Reuse is opt-in and only for an immutable, trusted v3 package. The sidecar and
+package SHA-256, exact Torch version, checkpoint file SHA-256, selected normal/SWA
+weights, resolved model config, encoding, batch, device index and dtype must match.
+A sidecar is not a signature or proof of training. Use compatible hardware (normally
+the same host): these fields do not prove portability of generated machine code.
+Reuse skips **export only**, not eager singleton comparison, full search/control
+checks or cancellation recovery. The same numerical tolerances are recorded, and
+a mismatch still fails; no automatic tolerance adjustment or stale-code reuse.
+`--reuse-package` requires a real `--checkpoint`, not a regenerated fixture.
+
+See [the preflight/retention record](../../../docs/experiments/2026-09-18-bend-checkpoint-preflight.md).
