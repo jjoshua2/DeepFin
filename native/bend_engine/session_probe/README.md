@@ -182,3 +182,50 @@ therefore tests history preservation, not a complete tournament game result.
 Perft and the production board/search/evaluator paths are unchanged. The existing
 path-scoped session job adds these bounded shallow lifecycle checks; ordinary
 pytest only gains ACK/history tests with a fake wire, no subprocess or search.
+
+## Automatic draw leaves (host history, native terminal cache)
+
+A history-owning coordinator can answer a selected leaf with reply status **3**,
+W/D/L exactly `0 / 1 / 0`, and zero policy entries. Example hex record:
+
+```
+reply EPOCH REQUEST NODE 3 0 3f800000 0 0
+```
+
+This is a rule-adjudication assertion, **not a neural prediction**. The same epoch,
+request, pending node and active-search checks apply before a reply can commit.
+A noncanonical WDL or nonempty policy rejects the reply with stop 4 and leaves
+all node statistics unchanged. Bend marks the leaf terminal with value zero,
+allocates no children, and backs up zero. Repeated visits use that cached terminal
+value without another host request. Normal status-0 WDL `(0,1,0)` still expands
+or caches a depth-cutoff evaluation; it is never promoted to a rules proof.
+
+`search_draws.reconstruct_leaf` copies the complete played-root history and applies
+the exact ancestor keys, then checks the full leaf board and complete legal set.
+The host recognizes fivefold repetition, 75 moves without a pawn move/capture, and
+python-chess's conservative insufficient-material cases. Checkmate takes precedence;
+Bend still handles mate/stalemate itself before making an evaluator request.
+The batching Actor sends these replies before feature encoding or queue admission,
+and consumes the sequence identity without reserving a neural row. The game report
+includes `automatic_draw_leaves` with epoch, node, path and rule reason.
+
+Threefold repetition and the 50-move rule are **claim options**, not forced endings.
+They remain unmodeled as search actions here; a winning continuation must not be
+removed merely because a draw could be claimed. The played-root `claim_available`
+policy remains separate. General dead-position solving is also not implemented.
+The history-owning host is part of the trusted chess boundary; Bend does not verify
+its repetition evidence. A board-only cache cannot stand in for that history.
+This protocol does not change the existing resource stop: exhaustion can stop a
+search before it asks the host to adjudicate an unexpanded leaf.
+
+The opt-in command checks native caching/backups, below-root boundaries, historyless
+controls, invalid replies, and the original session suite in all four CPU modes:
+
+```sh
+python -m native.bend_engine.session_probe.draw_probe \
+  --report artifacts/bend-search-draws.json
+```
+
+No perft depth or recurring benchmark is added. Direct synthetic session callers
+that do not send status 3 retain their old behavior. The native-neural batching
+Actor (and its game-controller subclass) enable the history-aware check by default.

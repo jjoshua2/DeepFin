@@ -113,6 +113,19 @@ class Batcher:
         self.queue[key] = job
         self.epochs[key.session] = (epoch, key.request)
 
+    def record_local(self, key: Key) -> None:
+        """Consume a rule-adjudication identity without reserving an inference row.
+
+        Sequence gaps are allowed for cached terminal visits. A previous cancelled
+        batch may still own storage, but no live pending request may be bypassed.
+        """
+        epoch, previous = self.epochs.get(key.session, (0, 0))
+        if key.epoch != epoch or key.request <= previous:
+            raise ValueError('stale or duplicate local request identity')
+        if key.session in self.pending:
+            raise ValueError('local reply would bypass an outstanding request')
+        self.epochs[key.session] = (epoch, key.request)
+
     def cancel(self, key: Key, *, status: str = 'cancelled') -> Completion:
         if status not in ('cancelled', 'expired'):
             raise ValueError('invalid cancellation status')
