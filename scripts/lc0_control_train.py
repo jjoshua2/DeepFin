@@ -192,6 +192,7 @@ from chess_anti_engine.replay.game_epoch import (
     GameAwareEpochBuffer,
 )
 from chess_anti_engine.replay.shard import iter_shard_paths
+from chess_anti_engine.replay import packed_zarr
 from chess_anti_engine.train import trainer as trainer_module
 from chess_anti_engine.train.losses import normalize_value_blend_fracs
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
@@ -638,7 +639,9 @@ def _as_replay_buffer(sampler: Any) -> ReplayBuffer:
     return cast(ReplayBuffer, sampler)
 
 
-def stage_shards(shard_dirs: list[Path], staging: Path) -> int:
+def stage_shards(
+    shard_dirs: list[Path], staging: Path, *, allow_packed_zarr: bool = False,
+) -> int:
     """Symlink every shard into ONE flat directory with unique indices.
 
     ``DiskReplayBuffer`` reads a single directory and ``iter_shard_paths``
@@ -678,11 +681,12 @@ def stage_shards(shard_dirs: list[Path], staging: Path) -> int:
             stale.unlink()
     index = 0
     for shard_dir in shard_dirs:
-        paths = iter_shard_paths(shard_dir)
+        paths = _identity_paths(shard_dir, allow_packed_zarr)
         if not paths:
             raise ValueError(f"no shards under {shard_dir}")
         for path in paths:
-            (staging / f"shard_{index:06d}.zarr").symlink_to(path.resolve())
+            suffix = ".zarr.zip" if packed_zarr.is_packed(path) else ".zarr"
+            (staging / f"shard_{index:06d}{suffix}").symlink_to(path.resolve())
             index += 1
     if index == 0:
         raise ValueError("no shards found in any --shards directory")
@@ -769,6 +773,7 @@ def preflight(
     cfg: dict[str, Any], shard_dirs: list[Path], *, allow_leak: bool,
     allow_mixed_history: bool = False, allow_partial_corpus: bool = False,
     allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None,
+    allow_packed_zarr: bool = False,
 ) -> dict[str, dict[str, int]]:
     """The two LAUNCH-level value-blend guards. Returns the measured coverage.
 
@@ -818,7 +823,8 @@ def preflight(
         for shard_dir in shard_dirs:
             dir_labelled, dir_rows = (
                 measure(Path(shard_dir), allow_target_overlay=True, overlay_seal=overlay_seal)
-                if allow_target_overlay else measure(Path(shard_dir))
+                if allow_target_overlay else (measure(Path(shard_dir), allow_packed_zarr=True)
+                if allow_packed_zarr else measure(Path(shard_dir)))
             )
             labelled += dir_labelled
             rows += dir_rows
@@ -854,20 +860,20 @@ def preflight(
   # corpus is wrong under every blend, including the shipped one), and the
   # blend gate is about what THIS config would add on top. Folding them into one
   # function is what hid the mixing hazard behind the blend's early return.
-    for message in value_scheme_identity_problems(shard_dirs):
+    for message in value_scheme_identity_problems(shard_dirs, allow_packed_zarr=allow_packed_zarr):
         fail(message)
     # ⚑ NOT downgraded by --allow-leak: mixing input histories is not a value
     # leak, and it has its own explicit opt-in.
     for message in history_identity_problems(
-        shard_dirs, allow_mixed_history=allow_mixed_history,
+        shard_dirs, allow_mixed_history=allow_mixed_history, allow_packed_zarr=allow_packed_zarr,
     ):
         raise SystemExit(f"REFUSING TO LAUNCH — {message}")
     # ⚑ Same shape: a partial corpus is not a leak either.
     for message in partial_corpus_problems(
-        shard_dirs, allow_partial_corpus=allow_partial_corpus,
+        shard_dirs, allow_partial_corpus=allow_partial_corpus, allow_packed_zarr=allow_packed_zarr,
     ):
         raise SystemExit(f"REFUSING TO LAUNCH — {message}")
-    for message in baked_value_blend_problems(cfg, shard_dirs):
+    for message in baked_value_blend_problems(cfg, shard_dirs, allow_packed_zarr=allow_packed_zarr):
         fail(message)
     return {
         flag: {"labelled_rows": labelled, "rows": rows}
@@ -940,14 +946,29 @@ class ShardValueStamps:
     sources: dict[str, str]
 
 
-def read_value_stamps(shard_dirs: Sequence[Path]) -> ShardValueStamps:
+def _shard_attrs(path: Path) -> dict[str, Any]:
+    if packed_zarr.is_packed(path):
+        with packed_zarr.open_store(path) as store:
+            return dict(zarr.open_group(store=store, mode="r").attrs)
+    return dict(zarr.open_group(str(path), mode="r").attrs)
+
+
+def _identity_paths(root: Path, allow_packed_zarr: bool) -> list[Path]:
+    if not allow_packed_zarr and next(root.glob("shard_*.zarr.zip"), None) is not None:
+        raise ValueError("packed shards require --allow-packed-zarr: " + str(root))
+    return packed_zarr.shard_paths(root) if allow_packed_zarr else iter_shard_paths(root)
+
+
+def read_value_stamps(
+    shard_dirs: Sequence[Path], *, allow_packed_zarr: bool = False,
+) -> ShardValueStamps:
     """Read every shard's value-identity attrs.  No policy, just the reading."""
     schemes: dict[str, str] = {}
     schemas: dict[int, str] = {}
     sources: dict[str, str] = {}
     for shard_dir in shard_dirs:
-        for path in iter_shard_paths(Path(shard_dir)):
-            attrs = zarr.open_group(str(path), mode="r").attrs
+        for path in _identity_paths(Path(shard_dir), allow_packed_zarr):
+            attrs = _shard_attrs(path)
             where = f"{Path(shard_dir).name}/{path.name}"
             scheme = str(attrs.get("derive_value_scheme", UNBAKED_VALUE_SCHEME))
             schemes.setdefault(scheme, where)
@@ -1039,15 +1060,17 @@ class ShardHistoryStamps:
         )
 
 
-def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
+def read_history_stamps(
+    shard_dirs: Sequence[Path], *, allow_packed_zarr: bool = False,
+) -> ShardHistoryStamps:
     """Read every shard's history-identity attrs.  No policy, just the reading."""
     row_schemas: dict[str, str] = {}
     zero_history: dict[bool, str] = {}
     mixed_within: dict[str, str] = {}
     unidentified: dict[str, str] = {}
     for shard_dir in shard_dirs:
-        for path in iter_shard_paths(Path(shard_dir)):
-            attrs = zarr.open_group(str(path), mode="r").attrs
+        for path in _identity_paths(Path(shard_dir), allow_packed_zarr):
+            attrs = _shard_attrs(path)
             where = f"{Path(shard_dir).name}/{path.name}"
             problem = marked_shard_problem(attrs)
             if problem is not None:
@@ -1072,6 +1095,7 @@ def read_history_stamps(shard_dirs: Sequence[Path]) -> ShardHistoryStamps:
 
 def history_identity_problems(
     shard_dirs: Sequence[Path], *, allow_mixed_history: bool,
+    allow_packed_zarr: bool = False,
 ) -> list[str]:
     """⚑⚑ ONE input-history identity across ``--shards`` (Grok D3, round 2).
 
@@ -1084,7 +1108,7 @@ def history_identity_problems(
     distributions no summary names.  ``--allow-mixed-history`` is the explicit
     opt-in, and the run's summary then records the mix.
     """
-    stamps = read_history_stamps(shard_dirs)
+    stamps = read_history_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr)
     problems: list[str] = []
     if stamps.unidentified:
         listed = "; ".join(f"{w} ({why})" for w, why in sorted(stamps.unidentified.items()))
@@ -1125,12 +1149,14 @@ def history_identity_problems(
 UNSTAMPED_CORPUS_COMPLETE = True
 
 
-def read_partial_corpus_stamps(shard_dirs: Sequence[Path]) -> dict[str, dict[str, Any]]:
+def read_partial_corpus_stamps(
+    shard_dirs: Sequence[Path], *, allow_packed_zarr: bool = False,
+) -> dict[str, dict[str, Any]]:
     """``{shard: its corpus_* stamps}`` for every shard stamped INCOMPLETE."""
     incomplete: dict[str, dict[str, Any]] = {}
     for shard_dir in shard_dirs:
-        for path in iter_shard_paths(Path(shard_dir)):
-            attrs = zarr.open_group(str(path), mode="r").attrs
+        for path in _identity_paths(Path(shard_dir), allow_packed_zarr):
+            attrs = _shard_attrs(path)
             if marked_shard_problem(attrs) is not None:
                 # Refused by name in `history_identity_problems`; never read
                 # here through a default.
@@ -1155,6 +1181,7 @@ def read_partial_corpus_stamps(shard_dirs: Sequence[Path]) -> dict[str, dict[str
 
 def partial_corpus_problems(
     shard_dirs: Sequence[Path], *, allow_partial_corpus: bool,
+    allow_packed_zarr: bool = False,
 ) -> list[str]:
     """⚑⚑ A derived shard from a corpus that was NOT WHOLE (#498 rebase).
 
@@ -1166,7 +1193,7 @@ def partial_corpus_problems(
     subset that launched without a word is the failure this refuses.
     ``--allow-partial-corpus`` is the explicit opt-in, recorded in the summary.
     """
-    incomplete = read_partial_corpus_stamps(shard_dirs)
+    incomplete = read_partial_corpus_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr)
     if not incomplete or allow_partial_corpus:
         return []
     listed = "; ".join(
@@ -1213,7 +1240,9 @@ def history_identity_record(
     }
 
 
-def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
+def value_scheme_identity_problems(
+    shard_dirs: Sequence[Path], *, allow_packed_zarr: bool = False,
+) -> list[str]:
     """⚑⚑ ONE value-target identity across ``--shards``, whatever the blend is.
 
     This is NOT the ``game_frac`` guard below and must not be folded into it.
@@ -1249,7 +1278,7 @@ def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
     the value round's own gate, invisible (Codex review of PR #494).  The
     source string spells the realized depth, so the pair separates them.
     """
-    stamps = read_value_stamps(shard_dirs)
+    stamps = read_value_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr)
     problems: list[str] = []
     unknown = sorted(s for s in stamps.schemas if s not in KNOWN_DERIVE_SCHEMAS)
     if unknown:
@@ -1296,7 +1325,8 @@ def value_scheme_identity_problems(shard_dirs: Sequence[Path]) -> list[str]:
 
 
 def baked_value_blend_problems(
-    cfg: Mapping[str, Any], shard_dirs: Sequence[Path],
+    cfg: Mapping[str, Any], shard_dirs: Sequence[Path], *,
+    allow_packed_zarr: bool = False,
 ) -> list[str]:
     """⚑⚑ ``game_frac > 0`` against shards that already baked the outcome in.
 
@@ -1352,7 +1382,7 @@ def baked_value_blend_problems(
         return []
     baked = {
         scheme: where
-        for scheme, where in read_value_stamps(shard_dirs).schemes.items()
+        for scheme, where in read_value_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr).schemes.items()
         if scheme != UNBAKED_VALUE_SCHEME
     }
     if not baked:
@@ -2032,7 +2062,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--overlay-storage-qualification", type=Path)
     parser.add_argument("--expected-overlay-storage-qualification-sha256")
+    parser.add_argument(
+        "--allow-packed-zarr", action="store_true",
+        help="allow immutable ordinary .zarr.zip shards in game_epoch mode; overlays are unsupported",
+    )
     args = parser.parse_args(argv)
+    if args.allow_packed_zarr and (
+        args.sampling_mode != "game_epoch"
+        or args.overlay_storage_qualification is not None
+        or args.expected_overlay_storage_qualification_sha256 is not None
+    ):
+        parser.error("--allow-packed-zarr requires game_epoch without overlay qualification")
+    allow_packed_zarr = bool(args.allow_packed_zarr)
     if args.epoch_host_batch_overlap and args.sampling_mode != "game_epoch":
         raise SystemExit("--epoch-host-batch-overlap requires --sampling-mode game_epoch")
     overlay_ref = None
@@ -2088,13 +2129,14 @@ def main(argv: list[str] | None = None) -> int:
             cfg, shard_dirs, allow_leak=bool(args.allow_leak),
             allow_mixed_history=bool(args.allow_mixed_history),
             allow_partial_corpus=bool(args.allow_partial_corpus),
+            allow_packed_zarr=allow_packed_zarr,
         )
     history_identity = history_identity_record(
-        read_history_stamps(shard_dirs),
+        read_history_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr),
         allow_mixed_history=bool(args.allow_mixed_history),
     )
     partial_corpus = partial_corpus_record(
-        read_partial_corpus_stamps(shard_dirs),
+        read_partial_corpus_stamps(shard_dirs, allow_packed_zarr=allow_packed_zarr),
         allow_partial_corpus=bool(args.allow_partial_corpus),
     )
 
@@ -2145,7 +2187,7 @@ def main(argv: list[str] | None = None) -> int:
             "here deletes a checkpoint).",
         )
     out_dir.mkdir(parents=True, exist_ok=True)
-    staged = stage_shards(shard_dirs, out_dir / "staged_shards")
+    staged = stage_shards(shard_dirs, out_dir / "staged_shards", allow_packed_zarr=allow_packed_zarr)
     print(f"[data] staged {staged} shard(s) from {len(shard_dirs)} directory(ies)")
 
     kwargs = trainer_kwargs_from_config(cfg)
@@ -2242,6 +2284,7 @@ def main(argv: list[str] | None = None) -> int:
             "max_working_set_bytes": epoch_max_working_set_bytes,
             "objective_mask_counter": trainer.exact_objective_mask_counter,
             "host_batch_overlap": bool(args.epoch_host_batch_overlap),
+            "allow_packed_zarr": allow_packed_zarr,
         }
         if overlay_ref is not None:
             epoch_buffer_kwargs["overlay_storage_qualification"] = overlay_ref
@@ -2272,6 +2315,7 @@ def main(argv: list[str] | None = None) -> int:
         realized_replay = {
             "sampling_mode": "game_epoch",
             "applied": {
+                "allow_packed_zarr": bool(buf.allow_packed_zarr),
                 "input_planes": epoch_input_planes,
                 "input_history_encoding": buf.plan.input_history_encoding,
                 "history_rep_fix": bool(buf.plan.history_rep_fix),

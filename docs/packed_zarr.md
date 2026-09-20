@@ -61,3 +61,22 @@ full training throughput; mirror/collation execution is not exercised. The CLI
 uses two allowed CPU cores, nice19, no GPU, a 16GiB RSS cap and 32GiB host-memory
 reserve. It observes `STOP` beside the fresh result file. No corpus files are
 written, and a matching result does not adopt the format in a live job.
+
+## Offline training CLI
+
+`lc0_control_train.py --sampling-mode game_epoch --allow-packed-zarr` admits
+ordinary directory and `.zarr.zip` shards. Staging preserves each resolved source
+parent and the archive suffix; source-local game namespaces stay separate.
+Archives in a CLI input require this explicit flag, including mixed directories,
+so omitting it cannot silently omit archived rows. Replacement sampling and
+qualified target overlays reject the option.
+
+All three corpus identity readers and both value-label coverage scans include
+archives. They close archive stores after reading attrs or narrow label flags;
+wide inputs/policies remain lazy until the sampler admits the working set.
+The same flag reaches every later exact epoch, and
+`realized_replay_after_guard.applied.allow_packed_zarr` records the realized mode.
+The loss, optimizer, training tensor path and directory-only defaults are unchanged.
+This main-based launcher does not yet expose the frozen runtime's recovery CLI;
+future recovery integration must carry this option into its sampler reconstruction.
+No existing frozen run is converted by this option.

@@ -75,3 +75,17 @@ BasedPyright pass (zero type errors or warnings).
 The independent root agent reviewed storage ownership, discovery, hash/decoder
 integration and qualification code, found no actionable blockers, then ran the
 real matched qualification above. That review is distinct from the author's tests.
+
+## Training CLI follow-up
+
+The opt-in reader now reaches the main-based offline launcher through
+`--sampling-mode game_epoch --allow-packed-zarr`. Identity stamps and label
+coverage include packed shards, staging preserves suffixes/source parents, and
+all later epochs inherit the option. Replacement sampling and overlays refuse it;
+a mixed CLI roster without the flag cannot silently omit its ZIP rows.
+
+The follow-up passed 218 driver, converter, packed-reader and packed-CLI tests,
+including a real two-epoch CPU training run and bad identity/partial-label
+refusals. Root independently reviewed the CLI propagation and found no actionable
+issues. No GPU training or frozen job adoption occurred. Main currently lacks the
+frozen successor's recovery CLI; that integration remains separate.

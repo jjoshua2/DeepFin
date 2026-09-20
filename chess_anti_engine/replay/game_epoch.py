@@ -1158,6 +1158,9 @@ class GameAwareEpochBuffer:
         overlay_storage_qualification: dict[str, str] | None = None,
         allow_packed_zarr: bool = False,
     ) -> None:
+        if allow_packed_zarr and overlay_storage_qualification is not None:
+            raise ValueError("packed ordinary shards do not support overlay qualification")
+        self.allow_packed_zarr = bool(allow_packed_zarr)
         if allow_packed_zarr:
             from .packed_zarr import shard_paths
             paths = shard_paths(Path(shard_dir))
