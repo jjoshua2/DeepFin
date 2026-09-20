@@ -1,32 +1,98 @@
-name: Bend claims development
+name: Bend optional claim confirmation
 on:
   push:
     branches: [feat/bend-claim-options-dev]
     paths: ['.github/workflows/bend-claims-dev.yml']
 permissions:
-  contents: read
+  contents: write
 jobs:
-  snapshot:
+  confirm:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          persist-credentials: false
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          activate-environment: true
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - run: |
-          mkdir -p /tmp/bend-claims-source
-          git archive --format=tar.gz HEAD > /tmp/bend-claims-source/deepfin.tgz
-          git rev-parse HEAD > /tmp/bend-claims-source/revision.txt
+      - name: Apply exact locally validated optional-claim sources
+        run: |
+          python - <<'PY'
+          import base64, hashlib, json, lzma, urllib.request
+          from pathlib import Path
+          shas = ['2179c45de2bef22fe6684e73b27d9f8cffd083ec', '66de3b0912dd15416c43a5223aa2f1409ac5dc2a', '3db091d20f8ea736966b762c61bd972dc2fbc163', 'c33b39e6bfa1155554b2e6b43e0722aebdef2d9f']
+          parts = []
+          for sha in shas:
+              with urllib.request.urlopen('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/' + sha, timeout=30) as response:
+                  data = json.load(response)
+              part = base64.b64decode(data['content'])
+              assert hashlib.sha1(f'blob {len(part)}\0'.encode() + part).hexdigest() == sha
+              parts.append(part)
+          patch = lzma.decompress(base64.b64decode(b''.join(parts), validate=True))
+          assert hashlib.sha256(patch).hexdigest() == 'a359d7abaa764f968b696f71e051c2356e1f0c97061c063dfddf5d91f062a7c2'
+          Path('/tmp/bend-claims.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/bend-claims.patch
+          git apply /tmp/bend-claims.patch
+          git diff --check
+      - name: Install locked CPU tools and pinned compiler
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          python -c "import torch; assert torch.version.cuda is None; print(torch.__version__)"
           bash native/bend_engine/bitboard_probe/install_toolchain.sh
-          tar -czf /tmp/bend-claims-source/compiler.tgz -C build/bend_u64_toolchain source
-          cp "$(command -v bun)" /tmp/bend-claims-source/bun
-          python -m pip download --no-deps --no-binary=:all: chess==1.11.2 -d /tmp/bend-claims-source
-          python -m pip download --no-deps ruff==0.15.20 -d /tmp/bend-claims-source
+      - name: Focused static checks and all inexpensive contracts
+        run: |
+          status=0
+          ruff check native/bend_engine/session_probe/*.py native/bend_engine/neural_probe tests/test_bend_claim_options.py || status=1
+          basedpyright native/bend_engine/session_probe/*.py native/bend_engine/neural_probe tests/test_bend_claim_options.py || status=1
+          python -m pytest -q tests/test_bend_claim_options.py tests/test_bend_search_draws.py tests/test_bend_neural_play.py tests/test_bend_qualification.py tests/test_bend_checkpoint.py tests/test_bend_batching.py tests/test_bend_neural_boundary.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py || status=1
+          exit "$status"
+      - name: Four-mode claim choices, old sessions and automatic-draw regressions
+        run: |
+          python -m native.bend_engine.session_probe.claim_probe --report artifacts/bend-claims-native.json
+      - name: Preserve saved-checkpoint neural search and played-root history
+        run: |
+          python -m native.bend_engine.neural_probe.checkpoint_probe --fixture-checkpoint --modes native \
+            --work-dir /tmp/bend-claims-model --report artifacts/bend-claims-checkpoint.json
+          python -m native.bend_engine.session_probe.root_probe --modes native --check-encoding \
+            --report artifacts/bend-claims-history.json
+      - name: Actual neural play with current and prospective claim options
+        run: |
+          common=(--checkpoint /tmp/bend-claims-model/untrained-transformer.pt --reuse-package /tmp/bend-claims-model/checkpoint.pt2 --claims search_choice --simulations 4 --max-plies 2)
+          python -m native.bend_engine.neural_probe.play_probe "${common[@]}" \
+            --fen '4k3/8/8/8/8/8/8/R3K3 w - - 100 1' --report artifacts/bend-claims-fifty.json
+          python -m native.bend_engine.neural_probe.play_probe "${common[@]}" \
+            --fen '4k3/8/8/8/8/8/8/R3K3 w - - 99 1' --report artifacts/bend-claims-prospective.json
+          python -m native.bend_engine.neural_probe.play_probe "${common[@]}" \
+            --moves g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8 --report artifacts/bend-claims-repetition.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for name in ('fifty', 'prospective', 'repetition'):
+              report = json.loads(Path(f'artifacts/bend-claims-{name}.json').read_text())
+              assert report['status'] == 'passed' and report['claims'] == 'search_choice'
+              games = [g for r in report['results'] for g in r['games']]
+              assert games and all(g['optional_claim_leaves'] for g in games)
+          PY
+      - name: Publish only tested feature sources on a clean stacked branch
+        run: |
+          git fetch --no-tags --depth=1 origin 9e4a8a6db0693d2bcccfd1dfb73ffc63cd969619
+          git read-tree 9e4a8a6db0693d2bcccfd1dfb73ffc63cd969619
+          git add native/bend_engine/session_probe native/bend_engine/neural_probe tests/test_bend_claim_options.py docs/experiments/README.md docs/experiments/2026-09-20-bend-claim-options.md
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          commit="$(git commit-tree "$(git write-tree)" -p 9e4a8a6db0693d2bcccfd1dfb73ffc63cd969619 -m 'Add optional zero-valued draw choices without removing chess continuations')"
+          git push origin "$commit":refs/heads/feat/bend-claim-options-reviewed
+          printf '%s\n' "$commit" > artifacts/bend-claims-commit.txt
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: bend-claims-source
-          path: /tmp/bend-claims-source/
-          retention-days: 2
+          name: bend-claim-options-confirmation
+          path: artifacts/bend-claims-*
+          retention-days: 30
