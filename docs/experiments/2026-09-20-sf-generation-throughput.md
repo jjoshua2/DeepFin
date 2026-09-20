@@ -181,3 +181,36 @@ reserve, wall<=1800s, available RAM>=40GiB, launch disk>=100GiB/running>=96GiB,
 and output<=128MiB with an early75% stop margin. The reviewed subreaper tracks
 owned engine sessions and cleans them on normal completion, STOP or failure.
 Plans and outputs remain external; launch follows independent review.
+
+### Completed matched-row value-cost screen
+
+All **192 searches on 64 matched rows** completed without dropped rows, depth
+fallbacks or support failures. The bound supervisor took 10.17 wall seconds and
+observed 9.18 child CPU-seconds. Per-arm rates below include fresh-TT reset and
+UCI search, but exclude shared startup, sample parsing and artifact writes.
+
+| Label operation | 64-label seconds | Labels/search-second | Median nodes |
+|---|---:|---:|---:|
+| Root d8, MultiPV1 | 1.750 | 36.57 | 780.5 |
+| Root d10, MultiPV1 | 1.791 | 35.74 | 1,497.5 |
+| All-move d8 | 2.859 | 22.38 | 17,974.5 |
+
+The median all-move width was 21. Scalar d8 was 1.63x faster than all-move d8
+on these fixed positions. Scalar d10 cost almost the same as d8 despite more
+search nodes. This suggests reset/protocol or other fixed overhead may matter;
+it is a hypothesis until the timing is split. No superiority of d10 value
+labels, and no training or playing-strength gain, follows from this cost result.
+
+The earlier 64.23 rows/s d8 generation result used four concurrent workers,
+sequential-game warm tables and a different sampled position stream. Comparing
+that rate directly with this serial, fresh-table scalar-label rate would
+confound concurrency, caching and positions. The matched-row arm comparison is
+the appropriate local estimate of avoiding full-width work.
+
+Published evidence: [summary and source/sample hashes](artifacts/2026-09-20-sf-value-cost-summary.json)
+and [all 192 records, including effective UCI commands and raw info](artifacts/2026-09-20-sf-value-cost-records.jsonl.gz).
+The gzip is deterministic and expands to the exact JSONL whose SHA256 is in the
+summary. Frozen source was `80e50a06e`; the parent independently reviewed the
+code and plan before launch. Ten focused tests passed, including real UCI
+subprocess-pipe protocol coverage. This remains cost evidence on one sample,
+not an adopted labeling contract.

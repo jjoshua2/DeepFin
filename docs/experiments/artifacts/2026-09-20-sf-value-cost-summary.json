@@ -1,0 +1,308 @@
+{
+  "status": "COMPLETE_BOUNDED_VALUE_COST",
+  "wall_seconds": 10.169781239004806,
+  "observed_child_cpu_seconds": 9.18,
+  "worker": {
+    "status": "COMPLETE_MATCHED_VALUE_COST",
+    "rows": 64,
+    "arms": {
+      "root_d8": {
+        "labels": 64,
+        "search_and_reset_seconds": 1.7502850789460354,
+        "labels_per_search_second": 36.56547197359342,
+        "max_seconds": 0.03932329500094056,
+        "median_seconds": 0.02691663202131167
+      },
+      "root_d10": {
+        "labels": 64,
+        "search_and_reset_seconds": 1.7909214477986097,
+        "labels_per_search_second": 35.73579403980472,
+        "max_seconds": 0.038635879987850785,
+        "median_seconds": 0.02751169999828562
+      },
+      "all_d8": {
+        "labels": 64,
+        "search_and_reset_seconds": 2.8592767250956967,
+        "labels_per_search_second": 22.383282960433988,
+        "max_seconds": 0.10913623200030997,
+        "median_seconds": 0.04184716899180785
+      }
+    },
+    "interpretation": "Same existing history-bearing positions; scalar versus full-width label cost only. No generation rate, value-quality or Elo claim."
+  },
+  "runtime_head": "80e50a06e",
+  "plan_sha256": "ede17ea9afa195302ee963e6fb56e29c79c89b97c858f9deac62be98115e44a5",
+  "records_sha256": "044963da48b6d579a6c4181ce7be5958d015bb2d3c0fc567e241ac117edb6f51",
+  "records_gzip_sha256": "218b2bde49fa20697e91e56f089237c42135f44dcfb428319d1a56d70e932526",
+  "sample_manifest": {
+    "rows": 64,
+    "games": 64,
+    "available_closed_games": 200,
+    "selection": "64 midpoint-spaced indices from sorted(worker progress filename,game_id,source shard), then midpoint row within each selected closed game",
+    "sample_sha256": "2a2e811e50c3aad7c974871473ed5190c34dfb7cecce3136efd2a5a9fcbd0610",
+    "sources": [
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00000.jsonl.zst",
+        "sha256": "2cafb680e19a1c13515ff799c17bc2d6ecd780c141b639a94b9fed7777cd05dd"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00002.jsonl.zst",
+        "sha256": "70a9c361ebd3e736804d09b2047c7be056939f450f39d2c2d0449669c3df6e86"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00004.jsonl.zst",
+        "sha256": "3307fc9bd3a6d29436452f30689c04482636462479c98216db824f5cb2275a25"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00006.jsonl.zst",
+        "sha256": "cce9060665f5da61cc8210f8b7cc2fb95f20be43fecdad89f24132309265679a"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00007.jsonl.zst",
+        "sha256": "b0b1f4bb2bb7a926df288b9c9bdf3b5974774e7d274fbc459b0e43301db9e3e0"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00009.jsonl.zst",
+        "sha256": "eb0d6f1088277698bacd25dda83d4c83137e770f0b152151c28c3684275a5c59"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00010.jsonl.zst",
+        "sha256": "062fb30c14925197266888802c3960e7bafbf6f8e36a77880e03e547fbd5da0b"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00012.jsonl.zst",
+        "sha256": "fb28ea81e89919cfc00e0be49c2d91526afc7b4ecd32fd98b67c5263c05428e3"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00013.jsonl.zst",
+        "sha256": "94cb62bf753d378b53e79b6013670bd854058a030b6eb7579ca44374d25fb39a"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00014.jsonl.zst",
+        "sha256": "a38013a3efc1d28e574812c863c1269de09f3de8794ac5260fe0afef9028db68"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00016.jsonl.zst",
+        "sha256": "e4d871e84457942082452e56fc7a60867bfda04aea8b47e9265c6751ed04ecfb"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00018.jsonl.zst",
+        "sha256": "ac64182ebafe6412f810acf2e3624aaa54ab7b224da51b67f612a0a439f4b24c"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00020.jsonl.zst",
+        "sha256": "f9247d8138da86f293e4ba76f2cb10ff45061da0724b728e977e5338132319f0"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00022.jsonl.zst",
+        "sha256": "f620785f78b89e0484f0bfb12cef2aeb16df8041fb71eb7db88ed7492610c60e"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00023.jsonl.zst",
+        "sha256": "29ed50cedb67f2c194a6e2a72b9ea78576b759b9865b65757136cae5abf6bd48"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w00-00025.jsonl.zst",
+        "sha256": "b6a0e31453aa28e50033aea3804ff0a8010132a6088062fb766936042ee590a5"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00000.jsonl.zst",
+        "sha256": "c2c6223610cba65a9c5ed41bd620600bf037fdfb8af01fa1a30b40a627ee9c3b"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00001.jsonl.zst",
+        "sha256": "e3f7e55060dcce6d516af566b4562869933bc9b27c01ba49d12ea002d7084ac1"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00003.jsonl.zst",
+        "sha256": "d3339b4254580f2b717f06e02e074348e64896460bdbcf6c378cfa06282a62b5"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00005.jsonl.zst",
+        "sha256": "d04636ea2d1b110e631bc80847ac3e217215f72dd3aa76cbf2d27c259ece698f"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00007.jsonl.zst",
+        "sha256": "047cd5a9f2d7abddc2e463d65bdb62586e9d87f3c58860d0c09a1ef84e3b1e04"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00008.jsonl.zst",
+        "sha256": "bb5d80ca4c5761d0c1a424b19a69d88c1a9f998c36296cb462656d0923c97673"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00010.jsonl.zst",
+        "sha256": "3882f1cbd5a960b7bbd018807bbfb54d104e87b4755b87c0d267a527bb1b1d36"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00011.jsonl.zst",
+        "sha256": "ebbf18d55f28c3a8412550a92b6c26f9e71d3335d837c0debe14de540c54cd56"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00013.jsonl.zst",
+        "sha256": "d3d5b4c28bb0db4ed0d523f9b650a78027d4a962eb2c856dd27023e6aa5a4f54"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00015.jsonl.zst",
+        "sha256": "747c1de3060319c4fb0ae419f393c5014308235c44b2d2f54659079e59e5249e"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00016.jsonl.zst",
+        "sha256": "80d203ebc87632e594446266ec4f2a8c11215d7abb36b4c8973f98c3be4edeb7"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00019.jsonl.zst",
+        "sha256": "b10c7932b73610b26a6a92dc4a76474a9614043366e929f6234f5ecb4c7fd811"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00022.jsonl.zst",
+        "sha256": "1009e136efa39658981ae87077e5e34f307481144b63d602c32f9b4d0499905f"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w01-00024.jsonl.zst",
+        "sha256": "059e389016c4c312134c5863bb01d54493e95eb698f1643f08dc5a7295448550"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00000.jsonl.zst",
+        "sha256": "bbfddafac12bee2255f926b9880025cb4caf8066e2d14d5a03eb777ec0d03b0e"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00001.jsonl.zst",
+        "sha256": "a32cca4bf3a09a29ae827dba2cf0f538882360d908bed11c01a9eee592abba04"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00003.jsonl.zst",
+        "sha256": "c4344afd95384e560669102c0b8052f99acb9e9a4af80f952d414d7da8f07712"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00004.jsonl.zst",
+        "sha256": "47ffeffe82e081ab5836f6fc7042a7592fb275027f79eb6e8d49e113f8c1c9f7"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00006.jsonl.zst",
+        "sha256": "ed20e59b52c600207431b8fb753dcdaefb8b499d1ed7ed188a24d517664d5bd0"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00007.jsonl.zst",
+        "sha256": "d1e6dccb9373fbf95f14bd222fc09a56942dafb2a5bd8dd34e3280fa94ff954c"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00009.jsonl.zst",
+        "sha256": "f7254fd83ef47285d10ee7c7466125235107b35cb895f32f02c7bdb7571225b0"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00011.jsonl.zst",
+        "sha256": "801710e01d15a3741cfb6c9ae401af447902d3153370c570e0c988f67cf1f733"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00012.jsonl.zst",
+        "sha256": "ba1e403b8c8b55fbd5fd50128ad4b7a2642d2120940e8bba4567b39932b2da27"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00014.jsonl.zst",
+        "sha256": "ff68b43a5a86f972b82d22e1f66f593132112ff83e680d11b7f22bdfe817ebcd"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00015.jsonl.zst",
+        "sha256": "98b658bb76573bdea5f327a8d5e93e1d4378f56d8fb9a597c5d8a4d047403379"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00017.jsonl.zst",
+        "sha256": "7098b39a27bbc57af34fffbc6bd15f233909230c049512df820226d7d107bdfb"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00018.jsonl.zst",
+        "sha256": "4da5402e35f984c933bc9b9383d6a9ca1868a5b59b124fe47e63c83cf4cf4b05"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00019.jsonl.zst",
+        "sha256": "eb9d778e8ee604d60180e0f756bc171c7fc12a83fead7494fb5540beace0e295"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00021.jsonl.zst",
+        "sha256": "e79073be70bacda7c44b293bd89af18cf1fb3f1dd295e5daffc288b92953b388"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00023.jsonl.zst",
+        "sha256": "2e4db9bb2292bf84e7c0b8035b71905a7beb1d869c2395a450e9e86bfb1350be"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00024.jsonl.zst",
+        "sha256": "d490fe8d7df3564ce429e8aae2b5306d227e7d2f00fdfc5fe921509744d8dc49"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w02-00026.jsonl.zst",
+        "sha256": "52a061e29a903d652b7068eb7df13f7240149c089a103602b38a7dd14528793a"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00000.jsonl.zst",
+        "sha256": "e11cde32a0b27ec948a5225d0b25f5f707082d4610631390c50c6a1ce1a1f355"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00002.jsonl.zst",
+        "sha256": "f59c5ecccc5cf67032006af68c0cb50b1c6f8d9f7fe495213525800630ea9e2b"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00003.jsonl.zst",
+        "sha256": "3899492a11563e225146457cc0beb9cb386d4d57a91f95aa1f1fb16c2952d9cf"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00005.jsonl.zst",
+        "sha256": "ea7acbca802114fb037e17d94367e630964565e741248cd27aafeedce45f0184"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00007.jsonl.zst",
+        "sha256": "0e0ba5fd52beffa2395fadec83ec43ac23d6b9a2be3aed012bda1759578db7c4"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00009.jsonl.zst",
+        "sha256": "e7c43e40e5fd27b0cf64f61649358924336a74768f58f9cdffc614a8365052b3"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00011.jsonl.zst",
+        "sha256": "aa894a7243abd2ab422490f746be4af0c73f387a5f018c4fa337c5bb0475d6a1"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00012.jsonl.zst",
+        "sha256": "54f83cd2754d39e6846b23be5ac3eaa883ff43fd1f2d11102eb9f98f6ac9eeed"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00014.jsonl.zst",
+        "sha256": "87c2996026b2dd9a5e2d6417ba8f9dc438e905a3e0a6fe9a8aa85908e4d28345"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00015.jsonl.zst",
+        "sha256": "29622180438938440f336dc55935bf143db403f909a59c0c3fba50984f152ef8"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00017.jsonl.zst",
+        "sha256": "f4d3bdc7e069dafa684139eedf4b028e3a163096bf8f862929434e4c3f956e6f"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00018.jsonl.zst",
+        "sha256": "6e65bcdb8fcf3ff28825f4c67fcc30fb7b19e8cb309082a804a0a67ac26e89f7"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00020.jsonl.zst",
+        "sha256": "35924b6bee952331c907bbfef56dd90067319bc997752caae5f8631558a28825"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00022.jsonl.zst",
+        "sha256": "b94549e06ca4561b537ebbc2a7869bbda9f89a34da46baa0bd012b14b4259f48"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00023.jsonl.zst",
+        "sha256": "3ab7396377ffcef63ca8063ed7b38bd638b89e22fcb31a30a48d350a3cb0357c"
+      },
+      {
+        "path": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/d8_c4/w03-00025.jsonl.zst",
+        "sha256": "a2a0da9c680bd76bf6e06722d2ab7efe05cbf17040238948b5e6851559a32af0"
+      }
+    ],
+    "qualified_confirmation": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation/complete.json",
+    "qualified_confirmation_sha256": "e6dfff02a4db148bc39274f2cec582b2088449ce6e8d8c8f4f6938ff07b8e7d0"
+  },
+  "artifact_paths": {
+    "operations": "/home/josh/chess-artifacts/operations/sf_value_cost_20260920",
+    "results": "/home/josh/chess-artifacts/corpora/sf_value_cost_20260920/run_v1"
+  }
+}
