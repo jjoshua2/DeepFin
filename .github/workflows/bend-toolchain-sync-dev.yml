@@ -1,39 +1,100 @@
-name: Bend toolchain sync development
+name: Bend September 20 U64 adoption
 on:
   push:
     branches: [feat/bend-20200920-toolchain-dev]
     paths: ['.github/workflows/bend-toolchain-sync-dev.yml']
 permissions:
-  contents: read
+  contents: write
 jobs:
-  snapshot:
+  confirm:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Snapshot exact source revisions for isolated development
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Validate exact build changes and cheap pin contracts
         run: |
           set -euo pipefail
-          mkdir -p /tmp/bend-sync-source
-          git archive --format=tar.gz HEAD > /tmp/bend-sync-source/deepfin.tgz
-          git rev-parse HEAD > /tmp/bend-sync-source/deepfin-revision.txt
-          git init /tmp/bend-sync-compiler
-          git -C /tmp/bend-sync-compiler remote add origin https://github.com/jjoshua2/bend.git
-          git -C /tmp/bend-sync-compiler fetch --depth=1 origin fd1df81707fd758f749a9570ccb5b12b1bb2fea3
-          git -C /tmp/bend-sync-compiler checkout --detach FETCH_HEAD
-          git -C /tmp/bend-sync-compiler archive --format=tar.gz HEAD > /tmp/bend-sync-source/compiler.tgz
-          git -C /tmp/bend-sync-compiler rev-parse HEAD > /tmp/bend-sync-source/compiler-revision.txt
-          cp "$(command -v bun)" /tmp/bend-sync-source/bun
-          python -m pip download --no-deps --no-binary=:all: chess==1.11.2 -d /tmp/bend-sync-source
-          python -m pip download --no-deps ruff==0.15.20 -d /tmp/bend-sync-source
-          (cd /tmp/bend-sync-source; sha256sum *.tgz bun > manifest.sha256)
+          cat <<'HASHES' | sha256sum -c -
+          ed168ba280a1c7faa3a62903d3d4d2560d31a5119a789315aca0aa8c21423a2a  native/bend_engine/standalone/build.sh
+          ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141  native/bend_engine/standalone/verify_compiler.js
+          661f819e7cec9af85f89e5c22f8be40b3fc683873512f75d7e361a5e1fc6c014  native/bend_engine/standalone/toolchain.json
+          6ba2251a20ac90633f8bae2a2210191dd15ad0972d31d452c33843ac72656193  native/bend_engine/standalone/verify_compiler.test.js
+          HASHES
+          mkdir -p artifacts
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee artifacts/bend-adoption-pin-tests.txt
+          bash -n native/bend_engine/standalone/build.sh
+          python -m pip install 'python-chess==1.999'
+      - name: Build unchanged Bend application using the new default pin and cache
+        run: |
+          bash native/bend_engine/standalone/build.sh /tmp/bend-adoption
+          compiler="$PWD/build/bend_standalone_toolchain/fd1df81707fd758f749a9570ccb5b12b1bb2fea3/source"
+          test "$(git -C "$compiler" rev-parse HEAD)" = fd1df81707fd758f749a9570ccb5b12b1bb2fea3
+          BEND_NO_TELEMETRY=1 bun "$compiler/bend2/main.ts" version
+          cp /tmp/bend-adoption/build.txt artifacts/bend-adoption-build.txt
+          python native/bend_engine/standalone/verify.py --report artifacts/bend-adoption-generic.json --command /tmp/bend-adoption/deepfin-bend --threads 1
+      - name: Portable native and UBSan integration with identical generated source
+        run: |
+          for mode in portable native ubsan; do
+            case "$mode" in
+              portable) flags=(-DBEND_U64_PORTABLE) ;;
+              native) flags=(-march=native) ;;
+              ubsan) flags=(-fsanitize=undefined -fno-sanitize-recover=all) ;;
+            esac
+            clang -std=c11 -O1 -ffp-contract=off -Werror=shift-count-overflow "${flags[@]}" /tmp/bend-adoption/engine.c -pthread -lm -o "/tmp/bend-adoption/$mode"
+            python native/bend_engine/standalone/verify.py --report "artifacts/bend-adoption-$mode.json" --command "/tmp/bend-adoption/$mode" --threads 1
+          done
+      - name: Interpreter-free runtime with only a static executable
+        run: |
+          clang -std=c11 -O1 -ffp-contract=off -Werror=shift-count-overflow -static /tmp/bend-adoption/engine.c -pthread -lm -o /tmp/bend-adoption/static
+          if readelf -l /tmp/bend-adoption/static | grep -q INTERP; then exit 1; fi
+          runtime="$(mktemp -d /tmp/bend-runtime.XXXXXX)"
+          cp /tmp/bend-adoption/static "$runtime/deepfin-bend"
+          test "$(find "$runtime" -mindepth 1 | wc -l)" = 1
+          python native/bend_engine/standalone/verify.py --report artifacts/bend-adoption-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          { file "$runtime/deepfin-bend"; find "$runtime" -mindepth 1 -printf '%P\n'; sha256sum "$runtime/deepfin-bend"; } > artifacts/bend-adoption-isolation.txt
+      - name: Attack-table equality and updated fork U64 regressions
+        run: |
+          compiler="$PWD/build/bend_standalone_toolchain/fd1df81707fd758f749a9570ccb5b12b1bb2fea3/source"
+          BEND_NO_TELEMETRY=1 bun "$compiler/bend2/main.ts" native/bend_engine/standalone/table_dump.bend -o /tmp/bend-adoption/tables.c
+          clang -std=c11 -O1 -Werror=shift-count-overflow /tmp/bend-adoption/tables.c -pthread -lm -o /tmp/bend-adoption/tables-bend
+          clang -O1 -I. native/bend_engine/standalone/table_reference.c native/bend_engine/legal_probe/support.c -lm -o /tmp/bend-adoption/tables-reference
+          /tmp/bend-adoption/tables-bend --threads 1 > /tmp/bend-adoption/tables-bend.txt
+          /tmp/bend-adoption/tables-reference > /tmp/bend-adoption/tables-reference.txt
+          cmp /tmp/bend-adoption/tables-bend.txt /tmp/bend-adoption/tables-reference.txt
+          test "$(wc -l < /tmp/bend-adoption/tables-bend.txt)" = 108160
+          sha256sum /tmp/bend-adoption/tables-*.txt > artifacts/bend-adoption-tables.txt
+          (cd "$compiler"; BEND_NO_TELEMETRY=1 U64_CASES=256 bun tests/run/u64_verify.js --regressions) 2>&1 | tee artifacts/bend-adoption-u64.txt
+      - name: Stale compiler refusal does not overwrite source or produce output
+        run: |
+          git init /tmp/bend-adoption-stale
+          git -C /tmp/bend-adoption-stale fetch --depth=1 https://github.com/jjoshua2/bend.git d9b9bce9ce4c02583ca1a548cfd239b368c3fc77
+          git -C /tmp/bend-adoption-stale checkout --detach FETCH_HEAD
+          if bash native/bend_engine/standalone/build.sh /tmp/bend-adoption-rejected /tmp/bend-adoption-stale > artifacts/bend-adoption-stale.txt 2>&1; then exit 1; fi
+          grep 'compiler source mismatch' artifacts/bend-adoption-stale.txt
+          test ! -e /tmp/bend-adoption-rejected
+          test "$(git -C /tmp/bend-adoption-stale rev-parse HEAD)" = d9b9bce9ce4c02583ca1a548cfd239b368c3fc77
+          test -z "$(git -C /tmp/bend-adoption-stale status --porcelain)"
+      - name: Publish only the tested feature without the temporary workflow
+        run: |
+          git fetch --no-tags --depth=1 origin 43bfad24787bd94f37b4884bf7b8617b02a3ce3d
+          git read-tree 43bfad24787bd94f37b4884bf7b8617b02a3ce3d
+          git add native/bend_engine/standalone/build.sh native/bend_engine/standalone/verify_compiler.js native/bend_engine/standalone/verify_compiler.test.js native/bend_engine/standalone/toolchain.json docs/experiments/2026-09-20-bend-compiler-adoption.md
+          git diff --cached --check
+          test -z "$(git diff --cached --name-only -- '*.bend' '*.c')"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          commit="$(git commit-tree "$(git write-tree)" -p 43bfad24787bd94f37b4884bf7b8617b02a3ce3d -m 'Pin standalone Bend engine to September 20 upstream-synced U64 compiler')"
+          git push origin "$commit":refs/heads/feat/bend-2.0.20-standalone
+          printf '%s\n' "$commit" > artifacts/bend-adoption-commit.txt
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: bend-september20-sync-source
-          path: /tmp/bend-sync-source/
-          retention-days: 2
+          name: bend-september20-adoption
+          path: artifacts/bend-adoption-*
+          retention-days: 30
