@@ -23,7 +23,7 @@ original preparation wall budget. No unmeasured handoff ETA is implied. STOP,
 resource exhaustion, or a wall deadline may leave a partial cohort: preserve it
 for explicit recovery; never mark it complete or delete it automatically.
 
-The sidecar uses two allowed CPUs, nice15, idle I/O priority, no GPU, and the
+The sidecar uses two allowed CPUs, nice 15, idle I/O priority, no GPU, and the
 original RAM/disk limits. It processes the smallest already pinned cohorts first;
 missing-teacher cohorts are sealed only. Existing final preparation revalidates
 all completed work and performs final qualification. Do not relocate sealed base
@@ -48,9 +48,9 @@ A `max_build_rows` limit can leave unusually large cohort builds to the final
 coordinator while still sealing every base. The sidecar starts no further stage
 when its remaining wall allowance is shorter than the configured stage cap.
 
-The initial 262,079-row/32-shard probe on two CPUs measured17.57s sealing and
-119.68s building/verifying B/C/D, with106,098,688 allocated output bytes. These
-measurements support a bounded initial overlap of ready cohorts up to2.1M rows,
-a40-minute per-stage cap, and45-minute handoff allowance; they are extrapolation
-inputs, not guaranteed full-corpus runtimes. Larger19M builds remain on the final
+The initial 262,079-row/32-shard probe on two CPUs measured 17.57s sealing and
+119.68s building/verifying B/C/D, with 106,098,688 allocated output bytes. These
+measurements support a bounded initial overlap of ready cohorts up to 2.1M rows,
+a 40-minute per-stage cap, and 45-minute handoff allowance; they are extrapolation
+inputs, not guaranteed full-corpus runtimes. Larger 19M builds remain on the final
 coordinator. Preserve the raw probe receipt with each concrete adoption record.
