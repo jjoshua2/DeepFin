@@ -157,5 +157,7 @@ ZIP planning/consumption took 4.08/25.88 seconds, including tensor-digest overhe
 This is sufficient to prioritize lossless packing over implementing an NVMe cache
 now. It is still a small, cache-affected CPU sampler result, not full GPU training
 or cold multi-terabyte qualification. Existing runs retain their frozen directory
-inputs. Trainer CLI admission and a bounded training comparison are separate
-requirements before future runs adopt the new representation.
+inputs. PR #795 now also wires the opt-in through training CLI discovery,
+metadata and label-coverage validation; a real two-epoch CPU test verifies the
+executing path. Full-size GPU training and cold working-set qualification remain
+separate from these CPU results, and the frozen recovery launcher has not adopted it.
