@@ -64,3 +64,24 @@ def test_readout_checks_budget_before_opening_inputs(tmp_path):
     def stop():raise InterruptedError('STOP')
     with pytest.raises(InterruptedError,match='STOP'):
         tool.closed_readout(tmp_path,8,stop)
+
+
+def test_registered_python_direct_script_readout_routes_local_package(tmp_path):
+    """Real process with no PYTHONPATH, unlike pytest's injected repo imports."""
+    import subprocess
+    from tests.test_sf_policy_rewrite import raw_row
+    row=raw_row(game_id=1)
+    row['phases'][0]['per_depth'][0]['depth']=8
+    bank=tmp_path/'bank';bank.mkdir()
+    shard=bank/'w00-00000.jsonl.gz'
+    with gzip.open(shard,'wt') as stream:stream.write(json.dumps(row)+'\n')
+    (bank/'manifest.json').write_text(json.dumps({'config_sha256':row['run']['config_sha256'],'staircase_parsed':[{'width':'all','depth':8}],'staircase_gate':{'policy':'fixed'}}))
+    (bank/'w00.progress.jsonl').write_text(json.dumps({'path':str(shard),'rows':1})+'\n')
+    runtime=Path(tool.__file__).resolve().parents[1]
+    # Simulate the registered absolute script entry point from a foreign cwd;
+    # the host has a conflicting user-site package named scripts.
+    program="import runpy,json; m=runpy.run_path(%r,run_name='readout_smoke'); print(json.dumps(m['closed_readout'](__import__('pathlib').Path(%r),8)))" % (str(runtime/'scripts/benchmark_sf_generation.py'),str(bank))
+    env={**os.environ,'PYTHONPATH':'','CUDA_VISIBLE_DEVICES':'','OMP_NUM_THREADS':'2','OPENBLAS_NUM_THREADS':'2','MKL_NUM_THREADS':'2'}
+    result=subprocess.run(['/usr/bin/python3','-c',program],cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60,check=True)
+    counts=json.loads(result.stdout.strip().splitlines()[-1])
+    assert counts['eligible_rows']==1 and counts['invalid_rows']==0

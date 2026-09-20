@@ -4,9 +4,17 @@ A plan supplies exact generation commands, source pins and limits. Default mode
 validates without launching. No active corpus is resumed or mutated.
 """
 from __future__ import annotations
-import argparse,ctypes,hashlib,json,os,resource,shutil,signal,subprocess,time
+import argparse,ctypes,hashlib,json,os,resource,shutil,signal,subprocess,sys,time
 from pathlib import Path
 from typing import Any
+
+# Registered commands execute this file directly. Python then places scripts/
+# (not its parent) on sys.path, and changing os.environ["PYTHONPATH"] later
+# cannot repair this process. Bind local package imports before the readout.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) in sys.path:
+    sys.path.remove(str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT))
 
 def require(ok: bool,message: str)->None:
     if not ok:raise ValueError(message)
@@ -97,6 +105,9 @@ def closed_readout(root:Path,depth:int,checkpoint=lambda:None)->dict[str,Any]:
     checkpoint()
     # Decoder is production code; no GPU and no derived arrays are written.
     from dataclasses import replace
+    import scripts
+    require(Path(scripts.__file__).resolve()==REPO_ROOT/'scripts/__init__.py',
+            'scripts package is not from the pinned benchmark runtime')
     from scripts import gen_sf_rooted_corpus as corpus,derive_corpus_targets as derive
     manifest=json.loads((root/'manifest.json').read_text())
     records=[]
