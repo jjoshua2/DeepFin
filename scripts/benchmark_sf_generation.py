@@ -79,7 +79,14 @@ class OwnedProcesses:
             except ChildProcessError:pass
         current=snapshot()
         require(not any(pid in current and current[pid]['start']==start and current[pid]['state']!='Z' for pid,start in self.known.items()),'owned process survived cleanup')
-def output_bytes(path:Path)->int:return sum(p.stat().st_size for p in path.rglob('*') if p.is_file())
+def output_bytes(path:Path)->int:
+    total=0
+    for child in path.rglob('*'):
+        try:
+            if child.is_file():total+=child.stat().st_size
+        except FileNotFoundError:
+            pass  # A live writer may atomically publish between list and stat.
+    return total
 def flag(command:list[str],name:str)->str:
     require(command.count(name)==1,'missing/duplicate '+name);return command[command.index(name)+1]
 def validate(plan:dict[str,Any])->None:
@@ -121,7 +128,13 @@ def closure_snapshot(root:Path)->dict[str,Any]:
                 require(str(path) not in paths,'duplicate progress shard')
                 paths.add(str(path));rows+=int(record['rows'])
     unlisted=[p for p in root.glob('w*.jsonl*') if not p.name.endswith('progress.jsonl') and str(p) not in paths]
-    return {'listed_closed_rows_unvalidated':rows,'closed_games':len(games),'closed_shards':len(paths),'unlisted_file_bytes':sum(p.stat().st_size for p in unlisted if p.is_file()),'unclosed_in_memory_rows':'unknown_not_counted'}
+    unlisted_bytes=0
+    for path in unlisted:
+        try:
+            if path.is_file():unlisted_bytes+=path.stat().st_size
+        except FileNotFoundError:
+            pass  # Atomic shard publication can rename a live temporary file.
+    return {'listed_closed_rows_unvalidated':rows,'closed_games':len(games),'closed_shards':len(paths),'unlisted_file_bytes':unlisted_bytes,'unclosed_in_memory_rows':'unknown_not_counted'}
 
 def closed_readout(root:Path,depth:int,checkpoint=lambda:None)->dict[str,Any]:
     checkpoint()
