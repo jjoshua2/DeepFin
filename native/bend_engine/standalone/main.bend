@@ -8,6 +8,7 @@ import ./Position.bend as Pos
 import ./Protocol.bend as Protocol
 import ./Rules.bend as Rules
 import ./SearchHistory.bend as History
+import ./EncodingDiagnostic.bend as EncodingDiagnostic
 
 type Packet is Data:
   Packet{kind: U32, text: String}
@@ -285,6 +286,11 @@ def rules_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO
     case Nil{}: rules_done(root, Rules.inspect(root, table))
     case _: message(State{root, table, Idle{}, False{}}, "rules takes no arguments")
 
+def encoding_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO(State):
+  do IO<State>:
+    table : Array<U64> <- EncodingDiagnostic.run(args, root, table)
+    return State{root, table, Idle{}, False{}}
+
 def idle_command(code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>) -> IO(State):
   match code:
     case 3: replace(root, Protocol.position(Protocol.parse_position(args), table))
@@ -292,6 +298,7 @@ def idle_command(code: U32, args: List<&2, String>, root: Pos.Game, table: Array
     case 7: IO.pure(State, State{Pos.start(), table, Idle{}, False{}})
     case 9: perft_args(args, root, table)
     case 10: rules_args(args, root, table)
+    case 11: encoding_args(args, root, table)
     case _: message(State{root, table, Idle{}, False{}}, "unsupported command")
 
 def available(code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):

@@ -207,3 +207,66 @@ and neural encoding), rather than adding another Python orchestration layer.
 
 Self-reviewed, not independently reviewed or formally proven. No production entry
 point, prior branch, compiler kernel, perft depth or existing test is replaced.
+
+## Bend-owned 112-plane neural history block (partial model input)
+
+`HistoryEncoding.bend` constructs the common **112 x 8 x 8 float32 block** directly
+from `Position.Game`, including all available prior positions. Both supported
+layouts keep every history slot in the evaluated position's side-to-move point
+of view (black flips ranks, not files):
+
+- `lc0_root`: eight 13-plane history slots, castling Q/K us/them, black flag,
+  raw halfmove clock, reserved zero plane, and ones.
+- `lc0_root_legacy_meta`: the same layout except plane 109 is min(halfmove,100)/100
+  and plane 110 is the FEN EP file. EP metadata is present even when no legal EP
+  capture exists; **repetition identity**, separately, uses only legally available EP.
+
+Repetition flags describe whether that individual frame had occurred previously
+at its own point in history. A later irreversible move does not erase older
+visible flags. This implements **history_rep_fix=true only**. Missing pre-FEN
+frames stay zero, rather than repeating the first available board. Unknown layouts
+and compatibility requests are rejected, not defaulted or approximated.
+
+This is **not a complete 146/175-plane input**: the additional 34 v1 or 63
+v2_threats classical-feature planes are not implemented here. They are NOT appended
+as zeros. Policy-head index mapping, model execution and batching remain separate.
+The existing material evaluator and default search path do not invoke this encoder.
+There is no neural-play or throughput claim from comparing input values.
+
+The typed `encode(layout, game, table)` returns the table owner and a native
+`Array<F32>` with 8192 capacity; **only its first 7168 elements are the logical
+[112,8,8] block**. Future inference integration must supply an explicit complete
+model shape, not use the physical Array capacity as its channel count.
+
+A read-only command exposes exact IEEE float32 bits for the external oracle:
+
+```text
+position startpos moves e2e4 e7e5
+encode_history lc0_root_legacy_meta
+encode_history lc0_root moves g1f3 b8c6
+```
+
+It returns one `history_encoding` header marked `partial_input`, 112 `history_plane`
+rows of 64 decimal U32 bit patterns, and `history_encoding_end`. This is diagnostic
+text, not a neural input wire ABI. Optional hypothetical moves are legality-checked,
+limited to 32, and leave the accepted root/history unchanged. An invalid late move
+rejects the whole request with no partial plane block. Busy searches reject the
+command. Diagnostic replay can inspect analysis sequences after an automatic draw;
+it does not redefine played-game adjudication. This synchronous diagnostic output
+is not preemptible and may delay processing stop/readiness until it finishes.
+
+Build/run still needs **no Python**. Tests use the original Python and optionally
+C encoders outside the candidate executable, and never feed it reference planes:
+
+```sh
+python -m native.bend_engine.standalone.verify_encoding --require-c \
+  --report artifacts/bend-history-encoding.json \
+  --command ./build/bend_owned_encoding/deepfin-bend --threads 1
+```
+
+`--require-c` needs the existing `_lc0_ext` extension built in the external test
+environment. It sets the repetition fix before CBoard construction. Every logical
+F32 bit must match both oracles; positions beyond CBoard's uint8 clock range are
+checked against Python only and counted explicitly. Omit `--require-c` for a
+Python-only reference check, which the report labels accordingly. Native encoding
+traversals remain opt-in; ordinary pytest/perft depths and workflows are unchanged.
