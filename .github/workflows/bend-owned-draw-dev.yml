@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Apply exactly tested Bend rule and history sources
+      - name: Apply exact sources and explicit verifier-module correction
         run: |
           python - <<'PY'
           import base64, gzip, hashlib, json, urllib.request
@@ -35,6 +35,20 @@ jobs:
           PY
           git apply --check /tmp/bend-owned-draw.patch
           git apply /tmp/bend-owned-draw.patch
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          changes = [
+              ('native/bend_engine/standalone/verify_rules.py', 'from verify import Client, assert_state', 'from .verify import Client, assert_state', 'c593dffe9f561af09305e4481dae980a97f077dc4229c6b6a5a4dcc0356d250c'),
+              ('native/bend_engine/standalone/README.md', 'python native/bend_engine/standalone/verify_rules.py', 'python -m native.bend_engine.standalone.verify_rules', '99de1551ac9131c82f894ff02493ca9bb9bf0f65da93414d24af4e9138f84d9c'),
+          ]
+          for filename, old, new, expected in changes:
+              p = Path(filename)
+              text = p.read_text()
+              assert text.count(old) == 1
+              p.write_text(text.replace(old, new))
+              assert hashlib.sha256(p.read_bytes()).hexdigest() == expected
+          PY
           git diff --check
       - name: External oracle and static checks only
         run: |
@@ -49,7 +63,7 @@ jobs:
           cp /tmp/bend-owned-draws/build.txt artifacts/bend-draw-build.txt
       - name: Generic rules and unchanged standalone regression
         run: |
-          python native/bend_engine/standalone/verify_rules.py --report artifacts/bend-draw-generic.json --command /tmp/bend-owned-draws/deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify_rules --report artifacts/bend-draw-generic.json --command /tmp/bend-owned-draws/deepfin-bend --threads 1
           python native/bend_engine/standalone/verify.py --report artifacts/bend-original-generic.json --command /tmp/bend-owned-draws/deepfin-bend --threads 1
       - name: Portable native and UBSan rules and original regressions
         run: |
@@ -60,7 +74,7 @@ jobs:
               ubsan) flags=(-fsanitize=undefined -fno-sanitize-recover=all) ;;
             esac
             clang -std=c11 -O1 -ffp-contract=off -Werror=shift-count-overflow "${flags[@]}" /tmp/bend-owned-draws/engine.c -pthread -lm -o "/tmp/bend-owned-draws/$mode"
-            python native/bend_engine/standalone/verify_rules.py --report "artifacts/bend-draw-$mode.json" --command "/tmp/bend-owned-draws/$mode" --threads 1
+            python -m native.bend_engine.standalone.verify_rules --report "artifacts/bend-draw-$mode.json" --command "/tmp/bend-owned-draws/$mode" --threads 1
             python native/bend_engine/standalone/verify.py --report "artifacts/bend-original-$mode.json" --command "/tmp/bend-owned-draws/$mode" --threads 1
           done
       - name: Same tests with only a static executable inside the runtime
@@ -70,7 +84,7 @@ jobs:
           runtime="$(mktemp -d /tmp/bend-draw-runtime.XXXXXX)"
           cp /tmp/bend-owned-draws/static "$runtime/deepfin-bend"
           test "$(find "$runtime" -mindepth 1 | wc -l)" = 1
-          python native/bend_engine/standalone/verify_rules.py --report artifacts/bend-draw-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify_rules --report artifacts/bend-draw-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
           python native/bend_engine/standalone/verify.py --report artifacts/bend-original-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
           {
             file "$runtime/deepfin-bend"
