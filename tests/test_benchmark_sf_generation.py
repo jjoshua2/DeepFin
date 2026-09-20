@@ -25,8 +25,8 @@ def test_closed_rows_are_checked_for_actual_policy_depth_and_results(tmp_path,de
     config=rows[0]['run']['config_sha256'];shard=tmp_path/'w00-00000.jsonl.gz'
     with gzip.open(shard,'wt') as stream:
         for row in rows:stream.write(json.dumps(row)+'\n')
-    phases=[{'width':'all','depth':8}] if depth==8 else [{'width':'all','depth':9},{'width':8,'depth':10},{'width':4,'depth':12}]
-    (tmp_path/'manifest.json').write_text(json.dumps({'config_sha256':config,'staircase_parsed':phases,'staircase_gate':{'policy':'fixed' if depth==8 else 'g10'}}))
+    from scripts import gen_sf_rooted_corpus as corpus
+    corpus.write_launch_manifest(tmp_path, requested={'staircase_policy':'fixed' if depth==8 else 'g10'}, config_sha=config, staircase=corpus.parse_staircase('all:8' if depth==8 else 'all:9,8:10,4:12'), engine_record={}, engine_id_name='fixture')
     (tmp_path/'w00.progress.jsonl').write_text(json.dumps({'path':str(shard),'rows':3})+'\n'+json.dumps({'path':None,'rows':0,'games':[4]})+'\n'+ '{"torn":')
     (tmp_path/'unlisted.jsonl.gz').write_bytes(b'not a valid shard')
     result=tool.closed_readout(tmp_path,depth)

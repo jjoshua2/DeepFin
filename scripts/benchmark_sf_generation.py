@@ -126,7 +126,7 @@ def closed_readout(root:Path,depth:int,checkpoint=lambda:None)->dict[str,Any]:
     if records and not shards:
         # Current writer records shard fields directly, without a kind discriminator.
         shards=[r for r in records if r.get('path') is not None and r.get('rows',0)>0]
-    expected=[{'width':'all','depth':8}] if depth==8 else [{'width':'all','depth':9},{'width':8,'depth':10},{'width':4,'depth':12}]
+    expected=[{'width':'all','depth':8}] if depth==8 else [{'width':'all','depth':9},{'width':'8','depth':10},{'width':'4','depth':12}]
     require(manifest['staircase_parsed']==expected,'realized staircase differs')
     require(manifest['staircase_gate']['policy']==('fixed' if depth==8 else 'g10'),'realized gate differs')
     require(len({e['path'] for e in shards})==len(shards),'duplicate closed shard')
