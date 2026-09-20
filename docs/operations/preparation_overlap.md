@@ -43,3 +43,14 @@ Config fields are explicit: pinned `prep_plan` and `prep_runner`, `python`,
 `disk_floor_gib`, `stage_seconds`, `handoff_seconds`, `sidecar_seconds`, and
 `queued_seconds`. Resource validation rejects relaxed original bounds; queued
 seconds must equal original preparation seconds plus the handoff allowance.
+
+A `max_build_rows` limit can leave unusually large cohort builds to the final
+coordinator while still sealing every base. The sidecar starts no further stage
+when its remaining wall allowance is shorter than the configured stage cap.
+
+The initial 262,079-row/32-shard probe on two CPUs measured17.57s sealing and
+119.68s building/verifying B/C/D, with106,098,688 allocated output bytes. These
+measurements support a bounded initial overlap of ready cohorts up to2.1M rows,
+a40-minute per-stage cap, and45-minute handoff allowance; they are extrapolation
+inputs, not guaranteed full-corpus runtimes. Larger19M builds remain on the final
+coordinator. Preserve the raw probe receipt with each concrete adoption record.

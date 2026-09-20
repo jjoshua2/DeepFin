@@ -247,10 +247,17 @@ def run_queued(config: dict[str, Any], prefix: list[str], lock_fd: int) -> None:
         sys.argv = previous
 
 
-def stages(plan: dict[str, Any]) -> list[tuple[str, int]]:
+def stages(
+    plan: dict[str, Any], max_build_rows: int | None = None
+) -> list[tuple[str, int]]:
     """Small complete cohorts first; finish largest last to bound first measurement."""
     ready = sorted(
-        (i for i, c in enumerate(plan["cohorts"]) if c["ceres_manifest"].get("sha256")),
+        (
+            i
+            for i, c in enumerate(plan["cohorts"])
+            if c["ceres_manifest"].get("sha256")
+            and (max_build_rows is None or c["rows"] <= max_build_rows)
+        ),
         key=lambda i: plan["cohorts"][i]["rows"],
     )
     rest = sorted(
@@ -334,7 +341,13 @@ def run(config: dict[str, Any], ref: dict[str, str], mode: str) -> None:
             require(fd is not None, "queued ownership missing")
             run_queued(config, prefix, fd)
         return
-    for stage, index in stages(plan):
+    for stage, index in stages(plan, config.get("max_build_rows")):
+        if deadline - time.monotonic() < config["stage_seconds"]:
+            append(
+                state / "events.jsonl",
+                {"status": "BUDGET_BOUNDARY", "unix": time.time()},
+            )
+            return
         with stage_lock(state, config, deadline, queued=False) as fd:
             if fd is None:
                 append(

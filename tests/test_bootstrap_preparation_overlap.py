@@ -110,7 +110,10 @@ def test_killed_sidecar_parent_cannot_release_live_writer_lock(tmp_path):
         child = int((tmp_path / "child.pid").read_text())
         p.kill()
         p.join(5)
-        with (tmp_path / "ownership.lock").open("a") as f, pytest.raises(BlockingIOError):
+        with (
+            (tmp_path / "ownership.lock").open("a") as f,
+            pytest.raises(BlockingIOError),
+        ):
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     finally:
         if child:
@@ -227,7 +230,10 @@ def test_queued_new_session_worker_retains_lock_after_parent_sigkill(tmp_path):
         child = int((tmp_path / "queued-child.pid").read_text())
         p.kill()
         p.join(5)
-        with (tmp_path / "ownership.lock").open("a") as f, pytest.raises(BlockingIOError):
+        with (
+            (tmp_path / "ownership.lock").open("a") as f,
+            pytest.raises(BlockingIOError),
+        ):
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     finally:
         if child:
@@ -246,3 +252,19 @@ def test_probe_import_does_not_capture_frozen_scripts_namespace(tmp_path):
     probe = Path(tool.__file__).with_name("bootstrap_preparation_probe.py")
     code = "import runpy,sys; runpy.run_path(sys.argv[1]); assert 'scripts' not in sys.modules"
     subprocess.run([sys.executable, "-c", code, str(probe)], cwd=tmp_path, check=True)
+
+
+def test_build_limit_defers_large_cohort_but_keeps_its_seal():
+    plan = {
+        "cohorts": [
+            {"rows": 100, "ceres_manifest": {"sha256": "a"}},
+            {"rows": 10, "ceres_manifest": {"sha256": "b"}},
+            {"rows": 5, "ceres_manifest": {}},
+        ]
+    }
+    assert tool.stages(plan, 20) == [
+        ("seal", 1),
+        ("cohort", 1),
+        ("seal", 2),
+        ("seal", 0),
+    ]
