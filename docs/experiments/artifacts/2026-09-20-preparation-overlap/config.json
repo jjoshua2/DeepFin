@@ -1,0 +1,35 @@
+{
+  "prep_plan": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/plan.json",
+    "sha256": "b3da27e09c704b7c6b5330f5ec17423f4dd5cf0f8f83d31152a7eed456beab65"
+  },
+  "prep_runner": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/run.py",
+    "sha256": "9c1f2a39e0a41a61dfa8206821f4e0bab21f8ad945c4d7f772e4942793ce459d"
+  },
+  "python": "/usr/bin/python3",
+  "runtime": "/tmp/deepfin-factorial58-runtime",
+  "env": {
+    "PYTHONPATH": "/tmp/deepfin-factorial58-runtime"
+  },
+  "state": "/home/josh/chess-artifacts/operations/factorial58-preparation-overlap-20260920/ownership",
+  "queue_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/autonomous_loop_20260914/queue.json",
+  "queue_id": "factorial58_target_preparation",
+  "stop_paths": [
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/STOP",
+    "/home/josh/chess-artifacts/operations/factorial58-preparation-overlap-20260920/STOP"
+  ],
+  "disk_paths": [
+    "/home/josh/chess-artifacts",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation"
+  ],
+  "memory_floor_gib": 32,
+  "rss_cap_gib": 32,
+  "disk_floor_gib": 80,
+  "stage_seconds": 2400,
+  "handoff_seconds": 2700,
+  "sidecar_seconds": 57600,
+  "queued_seconds": 60300,
+  "max_build_rows": 2100000
+}

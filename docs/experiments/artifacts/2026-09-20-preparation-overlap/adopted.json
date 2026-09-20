@@ -1,0 +1,27 @@
+{
+  "status": "ADOPTED_QUEUE_WRAPPER_NOT_SIDECAR_LAUNCH",
+  "unix": 1789878263.1143734,
+  "queue_sha256": "3701f92baa9dce385ffadf156a56fef0e570f41b005846267216117307703524",
+  "descriptor_sha256": "ff0b1215a9a57b85bcf6b74f129f56717bb18d4fc9583c83e1ec64bc6a831721",
+  "config": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-preparation-overlap-20260920/config.json",
+    "sha256": "f2a7e186a3b8add91a65c592347060c1e25a8c03c944a938a4cf7eec83e6c9d8"
+  },
+  "wrapper": {
+    "path": "/tmp/deepfin-preparation-overlap/scripts/bootstrap_preparation_overlap.py",
+    "sha256": "6af0b06e16bc704e4406bfe0031ed6da24218716c596e6ea70e6288026d114cf",
+    "commit": "3995e6471"
+  },
+  "changed_queue_id": "factorial58_target_preparation",
+  "inserted_before_preparation": {
+    "id": "bt4_batch128_256_512_v2",
+    "kind": "registered_command",
+    "status": "queued",
+    "out": "/home/josh/chess-artifacts/operations/bt4-batch-benchmark-v2-20260920/scheduler_run",
+    "max_seconds": 900,
+    "estimated_active_seconds": 600,
+    "command_file": "/home/josh/chess-artifacts/operations/bt4-batch-benchmark-v2-20260920/registered_command.json",
+    "command_sha256": "328e9b76af3815e3de962187d50c1b0eec2e8c1df1db01ed3e0799161cfe9c04"
+  },
+  "other_queue_items_preserved": true
+}
