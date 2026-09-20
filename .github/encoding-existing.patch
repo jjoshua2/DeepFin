@@ -1,0 +1,125 @@
+diff --git a/docs/experiments/README.md b/docs/experiments/README.md
+index 7a7b2c4..90dc4e2 100644
+--- a/docs/experiments/README.md
++++ b/docs/experiments/README.md
+@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
+ 
+ | Record | Scope |
+ | --- | --- |
++| [Bend neural history encoding](2026-09-20-bend-history-encoding.md) | Bend-authored 112-plane history/metadata block with exact Python/C comparisons; partial input, no neural inference |
+ | [Bend-owned draw rules](2026-09-20-bend-owned-draws.md) | Standalone native history identity and automatic root/leaf draws, no Python runtime; claims/encoding remain separate |
+ | [September 20 standalone compiler adoption](2026-09-20-bend-compiler-adoption.md) | Pin the Bend-owned engine to upstream-synced U64 2.0.20; immutable source/cache contract and runtime requalification |
+ | [Bend-owned standalone](2026-09-20-bend-standalone.md) | Bend UCI/FEN/history/table/evaluator ownership; static interpreter-free runtime, diagnostic only |
+diff --git a/native/bend_engine/standalone/Protocol.bend b/native/bend_engine/standalone/Protocol.bend
+index 8da3580..aa3e8a1 100644
+--- a/native/bend_engine/standalone/Protocol.bend
++++ b/native/bend_engine/standalone/Protocol.bend
+@@ -143,4 +143,4 @@ def command(+s: String) -> U32:
+   Bool.pick(U32, String.eq(s, "uci"), 1, Bool.pick(U32, String.eq(s, "isready"), 2,
+     Bool.pick(U32, String.eq(s, "position"), 3, Bool.pick(U32, String.eq(s, "go"), 4,
+       Bool.pick(U32, String.eq(s, "stop"), 5, Bool.pick(U32, String.eq(s, "quit"), 6,
+-        Bool.pick(U32, String.eq(s, "ucinewgame"), 7, Bool.pick(U32, String.eq(s, "d"), 8, Bool.pick(U32, String.eq(s, "perft"), 9, Bool.pick(U32, String.eq(s, "rules"), 10, 0))))))))))
++        Bool.pick(U32, String.eq(s, "ucinewgame"), 7, Bool.pick(U32, String.eq(s, "d"), 8, Bool.pick(U32, String.eq(s, "perft"), 9, Bool.pick(U32, String.eq(s, "rules"), 10, Bool.pick(U32, String.eq(s, "encode_history"), 11, 0)))))))))))
+diff --git a/native/bend_engine/standalone/README.md b/native/bend_engine/standalone/README.md
+index 2b0cf47..7ccd8ae 100644
+--- a/native/bend_engine/standalone/README.md
++++ b/native/bend_engine/standalone/README.md
+@@ -207,3 +207,66 @@ and neural encoding), rather than adding another Python orchestration layer.
+ 
+ Self-reviewed, not independently reviewed or formally proven. No production entry
+ point, prior branch, compiler kernel, perft depth or existing test is replaced.
++
++## Bend-owned 112-plane neural history block (partial model input)
++
++`HistoryEncoding.bend` constructs the common **112 x 8 x 8 float32 block** directly
++from `Position.Game`, including all available prior positions. Both supported
++layouts keep every history slot in the evaluated position's side-to-move point
++of view (black flips ranks, not files):
++
++- `lc0_root`: eight 13-plane history slots, castling Q/K us/them, black flag,
++  raw halfmove clock, reserved zero plane, and ones.
++- `lc0_root_legacy_meta`: the same layout except plane 109 is min(halfmove,100)/100
++  and plane 110 is the FEN EP file. EP metadata is present even when no legal EP
++  capture exists; **repetition identity**, separately, uses only legally available EP.
++
++Repetition flags describe whether that individual frame had occurred previously
++at its own point in history. A later irreversible move does not erase older
++visible flags. This implements **history_rep_fix=true only**. Missing pre-FEN
++frames stay zero, rather than repeating the first available board. Unknown layouts
++and compatibility requests are rejected, not defaulted or approximated.
++
++This is **not a complete 146/175-plane input**: the additional 34 v1 or 63
++v2_threats classical-feature planes are not implemented here. They are NOT appended
++as zeros. Policy-head index mapping, model execution and batching remain separate.
++The existing material evaluator and default search path do not invoke this encoder.
++There is no neural-play or throughput claim from comparing input values.
++
++The typed `encode(layout, game, table)` returns the table owner and a native
++`Array<F32>` with 8192 capacity; **only its first 7168 elements are the logical
++[112,8,8] block**. Future inference integration must supply an explicit complete
++model shape, not use the physical Array capacity as its channel count.
++
++A read-only command exposes exact IEEE float32 bits for the external oracle:
++
++```text
++position startpos moves e2e4 e7e5
++encode_history lc0_root_legacy_meta
++encode_history lc0_root moves g1f3 b8c6
++```
++
++It returns one `history_encoding` header marked `partial_input`, 112 `history_plane`
++rows of 64 decimal U32 bit patterns, and `history_encoding_end`. This is diagnostic
++text, not a neural input wire ABI. Optional hypothetical moves are legality-checked,
++limited to 32, and leave the accepted root/history unchanged. An invalid late move
++rejects the whole request with no partial plane block. Busy searches reject the
++command. Diagnostic replay can inspect analysis sequences after an automatic draw;
++it does not redefine played-game adjudication. This synchronous diagnostic output
++is not preemptible and may delay processing stop/readiness until it finishes.
++
++Build/run still needs **no Python**. Tests use the original Python and optionally
++C encoders outside the candidate executable, and never feed it reference planes:
++
++```sh
++python -m native.bend_engine.standalone.verify_encoding --require-c \
++  --report artifacts/bend-history-encoding.json \
++  --command ./build/bend_owned_encoding/deepfin-bend --threads 1
++```
++
++`--require-c` needs the existing `_lc0_ext` extension built in the external test
++environment. It sets the repetition fix before CBoard construction. Every logical
++F32 bit must match both oracles; positions beyond CBoard's uint8 clock range are
++checked against Python only and counted explicitly. Omit `--require-c` for a
++Python-only reference check, which the report labels accordingly. Native encoding
++traversals remain opt-in; ordinary pytest/perft depths and workflows are unchanged.
+diff --git a/native/bend_engine/standalone/main.bend b/native/bend_engine/standalone/main.bend
+index 7fd3dd6..e0061e8 100644
+--- a/native/bend_engine/standalone/main.bend
++++ b/native/bend_engine/standalone/main.bend
+@@ -8,6 +8,7 @@ import ./Position.bend as Pos
+ import ./Protocol.bend as Protocol
+ import ./Rules.bend as Rules
+ import ./SearchHistory.bend as History
++import ./EncodingDiagnostic.bend as EncodingDiagnostic
+ 
+ type Packet is Data:
+   Packet{kind: U32, text: String}
+@@ -285,6 +286,11 @@ def rules_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO
+     case Nil{}: rules_done(root, Rules.inspect(root, table))
+     case _: message(State{root, table, Idle{}, False{}}, "rules takes no arguments")
+ 
++def encoding_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO(State):
++  do IO<State>:
++    table : Array<U64> <- EncodingDiagnostic.run(args, root, table)
++    return State{root, table, Idle{}, False{}}
++
+ def idle_command(code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>) -> IO(State):
+   match code:
+     case 3: replace(root, Protocol.position(Protocol.parse_position(args), table))
+@@ -292,6 +298,7 @@ def idle_command(code: U32, args: List<&2, String>, root: Pos.Game, table: Array
+     case 7: IO.pure(State, State{Pos.start(), table, Idle{}, False{}})
+     case 9: perft_args(args, root, table)
+     case 10: rules_args(args, root, table)
++    case 11: encoding_args(args, root, table)
+     case _: message(State{root, table, Idle{}, False{}}, "unsupported command")
+ 
+ def available(code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
