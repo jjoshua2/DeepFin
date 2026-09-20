@@ -1,0 +1,125 @@
+{
+  "candidate": "/home/josh/projects/chess/runs/expanded58m_pressure_v1/checkpoint.pt",
+  "reference": "/home/josh/projects/chess/runs/expanded50548069_v50_from35m_epoch4_seed105_recovery_v3/checkpoint.pt",
+  "reference_sha256": "43786945252e746a6e646a21663f798e1dff224e8c48c6dac757d8398a4ee015",
+  "donor_complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/complete.json",
+  "donor_terminal": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/scheduler_run/parent_outer_terminal.json",
+  "donor_status": "PASS_EXPANDED58M_V50_CONTINUATION",
+  "donor_plan_sha256": "f27bb872305e9eb101e880804d2baa5f0cf6c65ef80f3316ffa5e032de994bd2",
+  "runtime_head": "82298a5d4010e7097f473712e3720de229522427",
+  "out": "/home/josh/chess-artifacts/runs/expanded58m_vs50m_20260920",
+  "command": [
+    "/usr/bin/python3",
+    "-m",
+    "scripts.arena_standard",
+    "--candidate",
+    "/home/josh/projects/chess/runs/expanded58m_pressure_v1/checkpoint.pt",
+    "--reference",
+    "/home/josh/projects/chess/runs/expanded50548069_v50_from35m_epoch4_seed105_recovery_v3/checkpoint.pt",
+    "--games",
+    "256",
+    "--mode",
+    "matched_sims",
+    "--sims",
+    "400",
+    "--seed",
+    "2026092001",
+    "--openings",
+    "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+    "--opening-plies",
+    "16",
+    "--max-plies",
+    "300",
+    "--temperature",
+    "0.1",
+    "--search-shape",
+    "training",
+    "--cand-gumbel",
+    "policy_temp=1.0",
+    "--ref-gumbel",
+    "policy_temp=1.0",
+    "--compile",
+    "on",
+    "--device",
+    "cuda",
+    "--max-concurrent-games",
+    "128",
+    "--eval-max-batch",
+    "4096",
+    "--max-seconds",
+    "2400",
+    "--syzygy-max-pieces",
+    "0",
+    "--games-out",
+    "/home/josh/chess-artifacts/runs/expanded58m_vs50m_20260920/arena.games.jsonl",
+    "--out",
+    "/home/josh/chess-artifacts/runs/expanded58m_vs50m_20260920/arena.results.jsonl"
+  ],
+  "pins": [
+    {
+      "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c"
+    },
+    {
+      "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df"
+    },
+    {
+      "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "9d8cc4ba5ab20e78cfc0d183c62801765002ca49d56dbf10010f16a95291e01d"
+    },
+    {
+      "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/run.py",
+      "sha256": "527bae15f1b572b8201b67e4c0a3fb3170d3b4cc652d5f972cc263010fc3ceaf"
+    },
+    {
+      "path": "/tmp/deepfin-bootstrap-operator/scripts/bootstrap_experiment_operator.py",
+      "sha256": "11654fde13ff37b68c9d3a2dbcd971f4d81add98bb84132dc7f0c4fdf16e2341"
+    },
+    {
+      "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/scripts/arena_standard.py",
+      "sha256": "c7df9061d119f0f53de90b529a38a641b4fabce88f3eab9afb37a80f11cd6a96"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/plan.json",
+      "sha256": "f27bb872305e9eb101e880804d2baa5f0cf6c65ef80f3316ffa5e032de994bd2"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/complete.json",
+      "sha256": "9901370a47749934390b5a795dae2d014e0ac7641f3da9930bda7080e138eb41"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/scheduler_run/parent_outer_terminal.json",
+      "sha256": "2b42de66814590274c6dcdf3c250e561917457282915ed0a34f463d990643ed0"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+      "sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_continue_v3/complete.json",
+      "sha256": "6376b86e73dd069528320bead6d24e86d8b1cf8cb6501be36bbc4cea3043b748"
+    },
+    {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_continue_v3/scheduler_run/parent_outer_terminal.json",
+      "sha256": "7c4ccc5e3618d1a3a5449e5c2b3288af95e28071558cdf7a0fd193504ab5747f"
+    },
+    {
+      "path": "/home/josh/projects/chess/runs/expanded50548069_v50_from35m_epoch4_seed105_recovery_v3/summary.json",
+      "sha256": "7adf8f499183aaf90ef99c0a4f13ae03752fd05bda8db87e439add7149e36407"
+    }
+  ],
+  "env": {
+    "PYTHONPATH": "/tmp/deepfin-ordered-arena-lookahead-runtime",
+    "PYTHONUNBUFFERED": "1",
+    "OMP_NUM_THREADS": "2",
+    "MKL_NUM_THREADS": "2",
+    "OPENBLAS_NUM_THREADS": "2",
+    "NUMEXPR_NUM_THREADS": "2",
+    "TORCHINDUCTOR_COMPILE_THREADS": "2"
+  }
+}
