@@ -85,3 +85,26 @@ def test_registered_python_direct_script_readout_routes_local_package(tmp_path):
     result=subprocess.run(['/usr/bin/python3','-c',program],cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60,check=True)
     counts=json.loads(result.stdout.strip().splitlines()[-1])
     assert counts['eligible_rows']==1 and counts['invalid_rows']==0
+
+
+def test_live_closure_counters_exclude_unlisted_and_in_memory_rows(tmp_path):
+    listed=tmp_path/'w00-00000.jsonl.zst';listed.write_bytes(b'listed')
+    partial=tmp_path/'w00-00001.jsonl.zst.partial';partial.write_bytes(b'unclosed')
+    records=[{'path':str(listed),'rows':10,'games':[1,2]},{'path':None,'rows':0,'games':[3]}]
+    (tmp_path/'w00.progress.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in records)+'{"unfinished":')
+    counts=tool.closure_snapshot(tmp_path)
+    assert counts['listed_closed_rows_unvalidated']==10
+    assert counts['closed_games']==3 and counts['closed_shards']==1
+    assert counts['unlisted_file_bytes']==len(b'unclosed')
+    assert counts['unclosed_in_memory_rows']=='unknown_not_counted'
+
+
+def test_confirmation_budget_is_explicit_and_cannot_expand_pilot(monkeypatch,tmp_path):
+    def command(policy):return ['python','--out-dir',str(tmp_path/policy),'--workers','4','--worker-concurrency','4','--nice','19','--shard-rows','256','--staircase','all:8' if policy=='d8' else 'all:9,8:10,4:12','--staircase-policy','fixed' if policy=='d8' else 'g10']
+    p={'status':'READY_BOUNDED_CPU_SCREEN','profile':'confirmation','cpu_budget_seconds':5000,'wall_budget_seconds':1800,'affinity':list(range(8)),'launch_disk_gib':100,'memory_gib':40,'output_limit_bytes':2*2**30,'out':str(tmp_path),'runtime':str(tmp_path),'runtime_head':'head','pins':[],'cells':[{'id':t,'policy':t,'concurrency':4,'seconds':600,'command':command(t)} for t in ['g10','d8']]}
+    monkeypatch.setattr(tool.subprocess,'check_output',lambda *a,**k:'head\n');monkeypatch.setattr(tool.subprocess,'run',lambda *a,**k:None)
+    tool.validate(p)
+    p['cpu_budget_seconds']=5001
+    with pytest.raises(ValueError,match='budget'):tool.validate(p)
+    p['cpu_budget_seconds']=5000;p['profile']='pilot'
+    with pytest.raises(ValueError,match='budget'):tool.validate(p)

@@ -84,11 +84,15 @@ def flag(command:list[str],name:str)->str:
     require(command.count(name)==1,'missing/duplicate '+name);return command[command.index(name)+1]
 def validate(plan:dict[str,Any])->None:
     require(plan['status']=='READY_BOUNDED_CPU_SCREEN','plan not ready')
-    require(plan['cpu_budget_seconds']<=1500 and plan['wall_budget_seconds']<=1800,'budget too large')
+    profile=plan.get('profile','pilot')
+    require(profile in {'pilot','confirmation'},'unknown benchmark profile')
+    cpu_limit=1500 if profile=='pilot' else 5000
+    require(0<plan['cpu_budget_seconds']<=cpu_limit and 0<plan['wall_budget_seconds']<=1800,'budget too large')
     require(len(plan['affinity'])<=8 and len(set(plan['affinity']))==len(plan['affinity']),'CPU affinity exceeds8')
     require(plan['launch_disk_gib']>=100 and plan['memory_gib']>=40 and plan['output_limit_bytes']<=2*2**30,'resource contract differs')
-    require(len(plan['cells'])==6,'expected six comparisons')
-    require({(c['policy'],c['concurrency']) for c in plan['cells']}=={(p,n) for p in ['d8','g10'] for n in [1,2,4]},'grid differs')
+    expected={(p,n) for p in ['d8','g10'] for n in ([1,2,4] if profile=='pilot' else [4])}
+    require(len(plan['cells'])==len(expected),'cell count differs')
+    require({(c['policy'],c['concurrency']) for c in plan['cells']}==expected,'grid differs')
     for cell in plan['cells']:
         cmd=cell['command'];require('--resume' not in cmd,'fresh corpora only')
         require(flag(cmd,'--out-dir')==str(Path(plan['out'])/cell['id']),'foreign output namespace')
@@ -96,10 +100,28 @@ def validate(plan:dict[str,Any])->None:
         require(flag(cmd,'--nice')=='19' and flag(cmd,'--shard-rows')=='256','benchmark execution shape differs')
         require(flag(cmd,'--staircase')==('all:8' if cell['policy']=='d8' else 'all:9,8:10,4:12'),'staircase differs')
         require(flag(cmd,'--staircase-policy')==('fixed' if cell['policy']=='d8' else 'g10'),'gate differs')
-        require(0<cell['seconds']<=100,'cell exceeds budget')
+        require(0<cell['seconds']<=(100 if profile=='pilot' else 600),'cell exceeds budget')
     require(subprocess.check_output(['git','-C',plan['runtime'],'rev-parse','HEAD'],text=True).strip()==plan['runtime_head'],'runtime HEAD changed')
     subprocess.run(['git','-C',plan['runtime'],'diff','--exit-code','HEAD','--'],check=True)
     for pin in plan['pins']:require(sha(Path(pin['path']))==pin['sha256'],'changed pin '+pin['path'])
+
+def closure_snapshot(root:Path)->dict[str,Any]:
+    """Cheap progress-only counts. No eligibility claim before final validation."""
+    paths=set();games=set();rows=0
+    for progress in sorted(root.glob('w*.progress.jsonl')):
+        lines=progress.read_text().splitlines()
+        for index,line in enumerate(lines):
+            try:record=json.loads(line)
+            except json.JSONDecodeError:
+                require(index==len(lines)-1,'nonfinal torn progress record');continue
+            for game in record.get('games',[]):games.add((progress.name,game))
+            if record.get('path') is not None and record.get('rows',0)>0:
+                path=Path(record['path']);path=path if path.is_absolute() else root/path
+                require(path.resolve().parent==root.resolve(),'foreign progress shard')
+                require(str(path) not in paths,'duplicate progress shard')
+                paths.add(str(path));rows+=int(record['rows'])
+    unlisted=[p for p in root.glob('w*.jsonl*') if not p.name.endswith('progress.jsonl') and str(p) not in paths]
+    return {'listed_closed_rows_unvalidated':rows,'closed_games':len(games),'closed_shards':len(paths),'unlisted_file_bytes':sum(p.stat().st_size for p in unlisted if p.is_file()),'unclosed_in_memory_rows':'unknown_not_counted'}
 
 def closed_readout(root:Path,depth:int,checkpoint=lambda:None)->dict[str,Any]:
     checkpoint()
@@ -179,7 +201,7 @@ def execute(plan:dict[str,Any])->dict[str,Any]:
             checkpoint()
             require(shutil.disk_usage(root).free>=plan['launch_disk_gib']*2**30,'next-cell disk reserve')
             require(cpu_used+controller_cpu()<plan['cpu_budget_seconds'],'CPU budget exhausted')
-            began=time.monotonic();out=root/cell['id'];samples=[]
+            began=time.monotonic();out=root/cell['id'];samples=[];closures=[];last_closure=-30.
             env={**os.environ,**plan['env']};env['CUDA_VISIBLE_DEVICES']=''
             def setup():os.sched_setaffinity(0,plan['affinity']);os.nice(19)
             with (root/(cell['id']+'.log')).open('x') as stream:
@@ -194,6 +216,8 @@ def execute(plan:dict[str,Any])->dict[str,Any]:
                     require(now-start<plan['wall_budget_seconds'],'wall budget')
                     require(size<plan['output_limit_bytes']*.75,'output stop margin')
                     samples.append({'elapsed':now-began,'cpu_seconds':used,'bytes':size})
+                    if now-began-last_closure>=30:
+                        closures.append({'elapsed':now-began,**closure_snapshot(out)});last_closure=now-began
                     if cpu_used+used+controller_cpu()>=plan['cpu_budget_seconds']:reason='cpu_budget';break
                     if now-began>=cell['seconds']:reason='cell_budget';break
                     time.sleep(1)
@@ -201,12 +225,13 @@ def execute(plan:dict[str,Any])->dict[str,Any]:
             require(output_bytes(root)<=plan['output_limit_bytes'],'output cap exceeded')
             require(reason!='natural_completion' or child.returncode==0,'generator failed before bounded stop')
             checkpoint()
+            closures.append({'elapsed':elapsed,**closure_snapshot(out)})
             bank=closed_readout(out,8 if cell['policy']=='d8' else 9,checkpoint)
             checkpoint()
-            result={'id':cell['id'],'policy':cell['policy'],'concurrency':cell['concurrency'],'elapsed_seconds':elapsed,'cpu_seconds_observed':used,'stop_reason':reason,'returncode':child.returncode,'samples':samples,**bank,'eligible_rows_per_wall_second':bank['eligible_rows']/elapsed,'banked_rows_per_wall_second':bank['banked_rows']/elapsed}
+            result={'id':cell['id'],'policy':cell['policy'],'concurrency':cell['concurrency'],'elapsed_seconds':elapsed,'cpu_seconds_observed':used,'stop_reason':reason,'returncode':child.returncode,'samples':samples,'closure_snapshots':closures,**bank,'eligible_rows_per_wall_second':bank['eligible_rows']/elapsed,'banked_rows_per_wall_second':bank['banked_rows']/elapsed}
             dump(root/(cell['id']+'.result.json'),result);results.append(result);owned=None;child=None
             if reason=='cpu_budget' or cpu_used+controller_cpu()>=plan['cpu_budget_seconds']:break
-        report={'status':'COMPLETE_SCREEN' if len(results)==6 else 'BOUNDED_PARTIAL_SCREEN','cells':results,'cpu_seconds_observed':cpu_used,'controller_cpu_seconds':controller_cpu(),'elapsed_seconds':time.monotonic()-start,'limitations':['Short cold-start closed-shard rates are conservative and may have high opening/game-length variance.','Proc CPU accounting may miss very short children;1500s observed cap reserves300s under30core-minute allocation.','No strength conclusion, no production corpus mutation, and no500M rate guarantee.']};dump(root/'complete.json',report);return report
+        report={'status':'COMPLETE_SCREEN' if len(results)==len(plan['cells']) else 'BOUNDED_PARTIAL_SCREEN','cells':results,'cpu_seconds_observed':cpu_used,'controller_cpu_seconds':controller_cpu(),'elapsed_seconds':time.monotonic()-start,'limitations':['Short cold-start closed-shard rates are conservative and may have high opening/game-length variance.',f"Proc CPU accounting may miss very short children; observed cap{plan['cpu_budget_seconds']}s. Pilot reserves300s within30core-minutes; confirmation reserves400s within90core-minutes.",'No strength conclusion, no production corpus mutation, and no500M rate guarantee.']};dump(root/'complete.json',report);return report
     except BaseException as exc:
         dump(root/'failed.json',{'status':'FAILED_BOUNDED_SCREEN','error':repr(exc),'completed_cells':results,'cpu_seconds_observed':cpu_used,'elapsed_seconds':time.monotonic()-start})
         raise

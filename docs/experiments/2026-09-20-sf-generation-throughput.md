@@ -103,3 +103,24 @@ The corpus and operations siblings for v1/v2 preserve the failed attempts.
 A longer follow-up is authorized and being prepared: two 10-minute cells, G10
 and d8 at four concurrent workers, within the same eight-CPU affinity and disk/
 RAM limits. Its increased CPU budget will be explicit and independently reviewed.
+
+### Longer confirmation protocol
+
+The explicit `confirmation` profile runs G10 first, then d8, each with four
+workers and a 600-second maximum. The ordering is fixed and unreplicated;
+thermal drift and changes in the concurrent Ceres workload remain possible
+confounds. Both request 256 games with the original seed, book and teacher
+settings so the game quota should not end the faster cell prematurely.
+
+The observed CPU cap increases to 5,000 seconds, reserving 400 seconds within
+a 90 CPU-minute allocation for accounting uncertainty and cleanup. The overall
+wall cap remains 1,800 seconds, affinity remains CPUs 8–15, and RAM/disk/output
+limits are unchanged. This is a new explicit allocation, not a silent expansion
+of the pilot's 30 CPU-minute limit.
+
+Every 30 seconds, record progress-listed closed rows/games/shards separately
+from unlisted file bytes. These live counts are explicitly unvalidated; final
+eligible rows still require full production identity/support validation. Rows
+still in worker memory are unknown and never counted. Compare early and later
+closure increments to diagnose completion censoring; even the longer test does
+not supply independent order/seed replication or a trained-strength result.
