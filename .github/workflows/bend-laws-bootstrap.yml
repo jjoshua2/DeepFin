@@ -1,0 +1,35 @@
+name: Prepare isolated Bend slider proof environment
+on:
+  push:
+    branches: [work/bend-slider-laws-20260920]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Package pinned source for proof development
+        run: |
+          mkdir -p /tmp/bend-slider-env
+          git clone --no-checkout --depth 1 --branch feat/u64-compact-reviewed https://github.com/jjoshua2/bend.git /tmp/bend-slider-compiler
+          git -C /tmp/bend-slider-compiler fetch --depth 1 origin aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          git -C /tmp/bend-slider-compiler checkout --detach aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          tar -czf /tmp/bend-slider-env/bend.tar.gz -C /tmp/bend-slider-compiler .git bend2 demos/proof_u64 tests/run/u64_proofs.js tests/run/u64_verify.js tests/base tests/compile tests/proof tests/check guide README.md AGENTS.md
+          tar -czf /tmp/bend-slider-env/deepfin.tar.gz --exclude=.git/objects/pack/*.promisor .
+          cp "$(command -v bun)" /tmp/bend-slider-env/bun
+          git rev-parse HEAD > /tmp/bend-slider-env/deepfin-head.txt
+          git -C /tmp/bend-slider-compiler rev-parse HEAD > /tmp/bend-slider-env/compiler-head.txt
+          sha256sum /tmp/bend-slider-env/*.gz /tmp/bend-slider-env/bun
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-slider-proof-environment
+          path: /tmp/bend-slider-env
+          retention-days: 1
