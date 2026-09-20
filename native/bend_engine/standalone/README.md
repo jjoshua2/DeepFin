@@ -14,6 +14,7 @@ is needed at runtime.
 | UCI tokens, decimal limits, command/state dispatch | Text.bend, Protocol.bend, main.bend |
 | FEN, castling/EP metadata, exact legal move replay | Position.bend and existing Chess.bend |
 | Played board/move history and both clocks | Position.bend; retained in Bend state |
+| Repetition identity, automatic draw rules, search-leaf history | Rules.bend and SearchHistory.bend |
 | Slider masks/subsets/PEXT table entries, leapers | Tables.bend, generated once at startup |
 | Legal moves, king safety, promotions, perft | Existing pure Chess.bend |
 | PUCT tree and uniform-policy/material replies | Existing Search.bend and main.bend |
@@ -25,7 +26,7 @@ is needed at runtime.
 application controller. It reads at most 8192 bytes per invocation and returns a
 packet tagged empty/line/EOF/invalid. Partial lines do not block computation.
 The compiler-generated C implementing Bend definitions is not a handwritten
-C replacement for the Python application. `table_reference.c` and `verify.py`
+C replacement for the Python application. `table_reference.c`, `verify.py` and `verify_rules.py`
 are external tests; neither is imported or linked into the engine.
 
 ## Build and run (Linux x86-64)
@@ -63,7 +64,7 @@ later moves preserve the previous root/history. FEN structural/king-safety check
 are not an exhaustive reachability proof. Clocks in FEN must be <=1000000, fullmove
 positive; played histories are capped at 512 plies. Records are bounded to 4096
 ASCII bytes. Overflow, NUL and invalid records are rejected with subsequent input
-still usable. Diagnostics `d` and `perft 0..5` are not part of standard UCI.
+still usable. Diagnostics `d`, `rules` and `perft 0..5` are not part of standard UCI.
 
 `d` prints the full current bitboards/clocks/history plus each prior board/move,
 for external exact comparisons. `perft` is explicit and synchronous: it does NOT
@@ -144,17 +145,65 @@ and strict TypeScript checking reports an upstream kernel diagnostic. Targeted U
 and standalone executable checks are distinct from those failing repository gates.
 No kernel change, budget relaxation, or upstream merge is implied.
 
+## Automatic draws are Bend-owned
+
+`Rules.bend` compares complete piece/color/turn/castling identity, ignoring clocks
+for repetition and normalizing en-passant to a square only when an actual legal
+EP capture exists. In particular, pinned EP is not a different repetition state.
+Counting includes the current board plus stored history within the reversible
+halfmove window. A FEN-only root cannot invent earlier repetitions. The parser
+can load analysis histories beyond an outcome; that is not a claim that such a
+game could legally continue in a tournament.
+
+The automatic rules are fivefold repetition, 150 halfmoves without a pawn move
+or capture, and a conservative material subset (bare kings, a sole minor, or only
+same-color bishops). This is not exhaustive dead-position detection. The two-knight
+and opposite-color-bishop cases are not collapsed to a draw. Native mate/stalemate
+checks precede these tests, so a mate on halfmove 150 stays a win.
+
+`SearchHistory.bend` walks the selected node's actual parent chain with 32-step
+fuel, checks bounds/decreasing IDs, replays moves into the Bend-owned full history,
+and verifies the resulting full board equals the requested leaf. No Python/CBoard
+history reconstruction or C rules callback is involved. A confirmed rule draw uses
+the existing Search terminal-zero reply; no children or material evaluation are
+needed, and later visits use the cached value. Cached states are local to one
+history path and fresh tree; transposition/subtree reuse would require a separate
+history-safety review. Arena exhaustion can still stop before the rule query.
+
+An optional threefold or fifty-move claim is NOT an automatic ending. This port
+does not silently remove winning continuations by forcing such claims. It also
+does not yet implement the Python prototype's optional search claim policy.
+
+The read-only `rules` diagnostic prints `info string rules REASON REPETITIONS
+HALFMOVE`. Each newly confirmed automatic search leaf prints `info string
+rule_draw NODE REASON REPETITIONS HALFMOVE`. An automatically drawn root can still
+have legal moves: its UCI response is explicitly labeled as a legal protocol
+fallback, not a searched continuation or a claim. `bestmove 0000` remains reserved
+for no-legal-move positions. The GUI owns final adjudication.
+
+```sh
+python -m native.bend_engine.standalone.verify_rules \
+  --report artifacts/bend-owned-rules.json \
+  --command ./build/bend_standalone/deepfin-bend --threads 1
+```
+
+This is an opt-in external oracle; neither Python nor a helper executable is
+linked or launched by the engine. Use the same empty-chroot command prefix as
+above for interpreter-free execution. `perft` remains strictly a legal-move count
+and deliberately ignores draw adjudication. The extra history work has not been
+performance-qualified, and does not imply a speedup or a complete rules proof.
+
 ## What is NOT ported yet
 
-This is not feature parity with the Python scaffolding. Bend retains game history
-and clocks, but this executable does not yet apply automatic draw adjudication or
-optional claims from that scaffolding. Mate/stalemate are handled by the existing
-native search; the GUI remains responsible for played-game adjudication here.
+This is not feature parity with the Python scaffolding. Automatic history draws
+now run in Bend; optional claim choices are not yet migrated into this entry point.
+Mate/stalemate are handled by the existing native search. The GUI remains
+responsible for played-game results/claims: UCI has no claim-action encoding.
 There is no neural encoder, model loading/inference, batching, training, PGN export,
 subtree reuse, production Gumbel parity, advanced time management, strength or speed
 claim. A material evaluator makes this initial runtime-isolation test independent
-of model export infrastructure. The next migration work belongs in Bend (history
-rules and encoding), rather than adding another Python orchestration layer.
+of model export infrastructure. The next migration work belongs in Bend (claim choices
+and neural encoding), rather than adding another Python orchestration layer.
 
 Self-reviewed, not independently reviewed or formally proven. No production entry
 point, prior branch, compiler kernel, perft depth or existing test is replaced.
