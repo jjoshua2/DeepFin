@@ -141,12 +141,10 @@ def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypa
             "batches_realized": 1,
         },
     }
-    code = (
-        "from pathlib import Path;import json; p=Path({!r});p.mkdir();(p/'initial_state.json').write_text({!r});(p/'summary.json').write_text({!r});(p/'checkpoint.pt').write_bytes(b'test')".format(
-            str(out),
-            json.dumps({"seed": 121, "tensor_sha256": "a" * 64}),
-            json.dumps(summary),
-        )
+    code = "from pathlib import Path;import json; p=Path({!r});p.mkdir();(p/'initial_state.json').write_text({!r});(p/'summary.json').write_text({!r});(p/'checkpoint.pt').write_bytes(b'test')".format(
+        str(out),
+        json.dumps({"seed": 121, "tensor_sha256": "a" * 64}),
+        json.dumps(summary),
     )
     plan = {
         "status": "FROZEN_READY",
@@ -209,3 +207,30 @@ def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypa
     assert receipt["bound_inputs"][0] == module.ref(targets)
     command = json.loads((tmp_path / "actual_command.json").read_text())["command"]
     assert command == plan["command_prefix"] + ["--shards", *plan["base_roots"]]
+
+
+def test_subreaper_cleans_worker_after_child_supervisor_sigkill(tmp_path):
+    source = Path(__file__).parents[1] / "scripts/factorial_prepare_and_train.py"
+    script = tmp_path / "subreaper.py"
+    script.write_text("""import ctypes,importlib.util,subprocess,sys,time,os
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('coordinator',sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+assert ctypes.CDLL(None).prctl(36,1,0,0,0)==0
+pidfile=Path(sys.argv[2])
+code="import subprocess,sys,time;from pathlib import Path;p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'],start_new_session=True);Path(sys.argv[1]).write_text(str(p.pid));time.sleep(120)"
+p=subprocess.Popen([sys.executable,'-c',code,str(pidfile)],start_new_session=True)
+while not pidfile.exists():time.sleep(.01)
+p.kill();p.wait()
+time.sleep(.05)
+m.cleanup([p],grace=.1,adopted=True)
+try:
+ worker=m.psutil.Process(int(pidfile.read_text()))
+ assert worker.status()==m.psutil.STATUS_ZOMBIE
+except m.psutil.NoSuchProcess:pass
+""")
+    result = subprocess.run(
+        [sys.executable, str(script), str(source), str(tmp_path / "pid")],
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0

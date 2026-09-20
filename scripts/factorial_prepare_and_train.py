@@ -128,9 +128,12 @@ def descendants(child):
         return []
 
 
-def cleanup(children, grace=35):
+def cleanup(children, grace=35, adopted=False):
     """Capture separately sessioned workers before terminating their supervisors."""
     owned = {}
+    if adopted:
+        for process in psutil.Process().children(recursive=True):
+            owned[(process.pid, process.create_time())] = process
     for child in children:
         for process in descendants(child):
             owned[(process.pid, process.create_time())] = process
@@ -178,6 +181,8 @@ def resources(config, children, started, startup=False):
 
 
 def run(config, config_ref):
+    libc = ctypes.CDLL(None, use_errno=True)
+    require(libc.prctl(36, 1, 0, 0, 0) == 0, "cannot enable child subreaper")
     prep_plan = pin(config["preparation_plan"])
     a_plan = pin(config["a_plan"])
     prep_desc = pin(config["preparation_descriptor"])
@@ -315,7 +320,7 @@ def run(config, config_ref):
             result["error"] = repr(exc)
             raise
         finally:
-            cleanup(children)
+            cleanup(children, adopted=True)
             for stream in streams:
                 stream.close()
             result["ended_unix"] = time.time()
