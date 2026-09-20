@@ -7,7 +7,7 @@ unchanged. This is not a playing-strength result.
 
 ## Measured probe
 
-A disjoint probe used the existing frozen preparation functions on cohort03:
+A disjoint probe used the existing frozen preparation functions on cohort 03:
 262,079 rows across 32 shards, CPUs 2–3, nice 15 and idle I/O priority. Limits were
 30 minutes,32 GiB process RSS,32 GiB available-memory floor,80 GiB free-disk floor,
 and no GPU visibility.
@@ -66,3 +66,9 @@ registration binding, cohort-size admission and isolated probe imports. Ruff
 passes. An independent reviewer reran the tests and validated the actual operator
 against the proposed 113-pin descriptor before adoption. No claim of final
 factorial preparation completion is made by this launch record.
+
+Initial production readback: cohort 03 sealed in 15.95s and completed target
+construction plus verification in 111.06s; cohort 01 then sealed in 19.55s.
+[Initial stage receipts](artifacts/2026-09-20-preparation-overlap/initial-production-stages.jsonl)
+confirm useful production work beyond the disjoint probe. The final 35-root
+qualification remains pending.
