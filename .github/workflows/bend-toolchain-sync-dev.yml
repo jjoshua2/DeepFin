@@ -1,0 +1,39 @@
+name: Bend toolchain sync development
+on:
+  push:
+    branches: [feat/bend-20200920-toolchain-dev]
+    paths: ['.github/workflows/bend-toolchain-sync-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Snapshot exact source revisions for isolated development
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bend-sync-source
+          git archive --format=tar.gz HEAD > /tmp/bend-sync-source/deepfin.tgz
+          git rev-parse HEAD > /tmp/bend-sync-source/deepfin-revision.txt
+          git init /tmp/bend-sync-compiler
+          git -C /tmp/bend-sync-compiler remote add origin https://github.com/jjoshua2/bend.git
+          git -C /tmp/bend-sync-compiler fetch --depth=1 origin fd1df81707fd758f749a9570ccb5b12b1bb2fea3
+          git -C /tmp/bend-sync-compiler checkout --detach FETCH_HEAD
+          git -C /tmp/bend-sync-compiler archive --format=tar.gz HEAD > /tmp/bend-sync-source/compiler.tgz
+          git -C /tmp/bend-sync-compiler rev-parse HEAD > /tmp/bend-sync-source/compiler-revision.txt
+          cp "$(command -v bun)" /tmp/bend-sync-source/bun
+          python -m pip download --no-deps --no-binary=:all: chess==1.11.2 -d /tmp/bend-sync-source
+          python -m pip download --no-deps ruff==0.15.20 -d /tmp/bend-sync-source
+          (cd /tmp/bend-sync-source; sha256sum *.tgz bun > manifest.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-september20-sync-source
+          path: /tmp/bend-sync-source/
+          retention-days: 2
