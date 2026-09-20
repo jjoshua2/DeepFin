@@ -1,0 +1,93 @@
+[
+  {
+    "cohort": 0,
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000000.zarr",
+    "rows": 8192,
+    "bytes": 5247140,
+    "bytes_per_row": 640.52001953125
+  },
+  {
+    "cohort": 0,
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_001154.zarr",
+    "rows": 8192,
+    "bytes": 5198291,
+    "bytes_per_row": 634.5570068359375
+  },
+  {
+    "cohort": 0,
+    "path": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_002308.zarr",
+    "rows": 3348,
+    "bytes": 2137027,
+    "bytes_per_row": 638.2995818399045
+  },
+  {
+    "cohort": 1,
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/shard_000000.zarr",
+    "rows": 8192,
+    "bytes": 5675215,
+    "bytes_per_row": 692.7752685546875
+  },
+  {
+    "cohort": 1,
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/shard_000016.zarr",
+    "rows": 8192,
+    "bytes": 5628501,
+    "bytes_per_row": 687.0728759765625
+  },
+  {
+    "cohort": 1,
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_common_batch_v3__run06_g10/shard_000032.zarr",
+    "rows": 1772,
+    "bytes": 1238586,
+    "bytes_per_row": 698.9762979683973
+  },
+  {
+    "cohort": 20,
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/shard_000000.zarr",
+    "rows": 8192,
+    "bytes": 5707181,
+    "bytes_per_row": 696.6773681640625
+  },
+  {
+    "cohort": 20,
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/shard_000065.zarr",
+    "rows": 8192,
+    "bytes": 5712280,
+    "bytes_per_row": 697.2998046875
+  },
+  {
+    "cohort": 20,
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_native_value50_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/shard_000129.zarr",
+    "rows": 198,
+    "bytes": 135824,
+    "bytes_per_row": 685.979797979798
+  },
+  {
+    "cohort": 34,
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50/shard_000000.zarr",
+    "rows": 8192,
+    "bytes": 5750647,
+    "bytes_per_row": 701.9832763671875
+  },
+  {
+    "cohort": 34,
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50/shard_000010.zarr",
+    "rows": 8192,
+    "bytes": 5681473,
+    "bytes_per_row": 693.5391845703125
+  },
+  {
+    "cohort": 34,
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50/shard_000019.zarr",
+    "rows": 1375,
+    "bytes": 972592,
+    "bytes_per_row": 707.3396363636364
+  },
+  {
+    "kind": "raw_run06",
+    "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst",
+    "rows": 8236,
+    "bytes": 21154455,
+    "bytes_per_row": 2568.5350898494416
+  }
+]

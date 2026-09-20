@@ -71,8 +71,8 @@ Bulk artifacts:
 - NVMe: `/home/josh/chess-artifacts/operations/storage-loader-pilot-v2-20260920/`
 - External: `/mnt/e/chess_storage_loader_pilot_v2_20260920/`
 
-Results will be appended after the complete sequence-equivalence check. Early copy
-timings are not a training-throughput verdict.
+The complete readout below passed sequence-equivalence checks. Early copy
+timings remain separate from training-throughput measurements.
 
 ## Validation
 
@@ -91,3 +91,41 @@ recorded recovery states. `--json` includes five compact completed records in
 queue order. It takes the existing scheduler read lock, performs no dispatch or
 polling, and deliberately makes no process/GPU-health claim. Historical failed
 experiments remain in status counts but are not all treated as current incidents.
+
+## Completed sampler/NPZ pilot
+
+All16shards (131,072rows) completed. All four exact-sampler passes produced the
+same tensor-sequence digest, and all packed NPZ decodes matched original shard
+array digests. [Full receipts](evidence/storage-loader-20260920/sampler-and-npz.json).
+
+| Medium | Pass | Planning seconds | Consume seconds including digest | Positions/second including digest |
+| --- | --- | ---: | ---: | ---: |
+| NVMe directory | first | 0.72 | 11.19 | 11,715 |
+| External directory | first | 72.40 | 127.74 | 1,026 |
+| External directory | repeat | 87.88 | 139.63 | 939 |
+| NVMe directory | repeat | 0.79 | 11.65 | 11,253 |
+
+Maximum batch waits were43.39s on the first external traversal versus3.17s locally.
+The completed58M continuation processed58,090,688rows in29,211.84s (~1,989rows/s),
+including its run overhead. This is a planning comparison across different workloads,
+not a measured GPU slowdown, but current direct external-directory loading lacks
+headroom. A larger cold-working-set test would not rescue that observed metadata cost.
+
+Packed NPZ validated decoding of the same131,072rows took10.46s on NVMe and15.11s
+externally (16.58/20.03s including digest verification). This strongly motivates
+packed storage but does not establish exact-sampler performance: NPZ ignores lazy
+loading and expands full arrays during planning. The next candidate is ZIP_STORED
+Zarr, retaining compressed chunk bytes and lazy metadata/game-column reads.
+
+## Capacity sample
+
+Twelve sampled derived shards across four cohorts used635–707bytes/row. A closed
+raw G10 shard used2,569bytes/row. These are selected samples, not corpus-wide bounds.
+At unchanged density,500M derived rows would occupy roughly318–354GB decimal;
+the raw corpus would add roughly1.28TB before other teachers, variants, metadata
+allocation, and checkpoint retention. [Samples](evidence/storage-loader-20260920/size-samples.json).
+
+This supports keeping raw history on the external drive while potentially fitting
+an entire selected500M training representation in a1TB NVMe budget. The exact
+required capacity still depends on teacher representation and retained variants;
+there is no reason to assume every raw artifact must be staged for training.

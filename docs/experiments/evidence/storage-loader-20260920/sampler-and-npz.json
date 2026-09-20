@@ -1,0 +1,232 @@
+{
+  "scope": "CPU exact-sampler pilot; caches uncontrolled; no GPU measurement",
+  "source": "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50",
+  "runtime": "/tmp/deepfin-factorial58-runtime",
+  "copies": [
+    {
+      "shard": "shard_000000.zarr",
+      "decoded_sha256": "978cd8173020caa51705c532d21d43ae4087ef2d86c3f2169f89271409dba8f8",
+      "prepare_seconds": 4.102896199037787,
+      "zarr_external_copy_seconds": 11.513678314979188,
+      "npz_external_copy_seconds": 0.09705047297757119,
+      "npz_bytes": 5305867,
+      "zarr_bytes": 5247140
+    },
+    {
+      "shard": "shard_000001.zarr",
+      "decoded_sha256": "8a379944c026c5f7247e35235efdcdafc46179fe000a68d64cb7c3f7fe9f6bdf",
+      "prepare_seconds": 4.331951669009868,
+      "zarr_external_copy_seconds": 12.173249847022817,
+      "npz_external_copy_seconds": 0.09429499204270542,
+      "npz_bytes": 5305970,
+      "zarr_bytes": 5223348
+    },
+    {
+      "shard": "shard_000002.zarr",
+      "decoded_sha256": "858e50a191b710d381d8f6af9ded60de63e69a1597b08e9ce36973fb6808d5fb",
+      "prepare_seconds": 5.458598002966028,
+      "zarr_external_copy_seconds": 13.072928235982545,
+      "npz_external_copy_seconds": 0.0833096060086973,
+      "npz_bytes": 5263627,
+      "zarr_bytes": 5210137
+    },
+    {
+      "shard": "shard_000003.zarr",
+      "decoded_sha256": "a5cdbe48f6323f47df61a1e07c2931715b8919df06e9e90b8fcadf1b94a4b9e2",
+      "prepare_seconds": 3.773520176007878,
+      "zarr_external_copy_seconds": 11.39597444201354,
+      "npz_external_copy_seconds": 0.0817568909842521,
+      "npz_bytes": 5191170,
+      "zarr_bytes": 5123434
+    },
+    {
+      "shard": "shard_000004.zarr",
+      "decoded_sha256": "371cf9d7d70e8d965258e57dd909ffbfd32cc3167ca2168900dd3b2a551be7a2",
+      "prepare_seconds": 3.876042237970978,
+      "zarr_external_copy_seconds": 11.805617494974285,
+      "npz_external_copy_seconds": 0.08080744300968945,
+      "npz_bytes": 5248759,
+      "zarr_bytes": 5182573
+    },
+    {
+      "shard": "shard_000005.zarr",
+      "decoded_sha256": "50f3e51a1bd3f740b134d75b348983035e4bc8fa56bf9e0c2e74cb3634570f12",
+      "prepare_seconds": 3.4630991260055453,
+      "zarr_external_copy_seconds": 13.63086186896544,
+      "npz_external_copy_seconds": 0.07629077997989953,
+      "npz_bytes": 5186588,
+      "zarr_bytes": 5115266
+    },
+    {
+      "shard": "shard_000006.zarr",
+      "decoded_sha256": "5fba5491bbbcc948c2c6cb2c1763dfb0d2ce770db64a10098dce927858625e4d",
+      "prepare_seconds": 3.3982832800247706,
+      "zarr_external_copy_seconds": 12.151062324992381,
+      "npz_external_copy_seconds": 0.07675832504173741,
+      "npz_bytes": 5263488,
+      "zarr_bytes": 5175220
+    },
+    {
+      "shard": "shard_000007.zarr",
+      "decoded_sha256": "aea127a1d0d8409fa86b90bca42f66387105c4c7f19e1974d09c82f81637ae88",
+      "prepare_seconds": 3.4002405279898085,
+      "zarr_external_copy_seconds": 11.337541741027962,
+      "npz_external_copy_seconds": 0.07925020798575133,
+      "npz_bytes": 5264386,
+      "zarr_bytes": 5215365
+    },
+    {
+      "shard": "shard_000008.zarr",
+      "decoded_sha256": "1b6cfa2201e4e8e415154ab3b73ed5e8a5762a1b49ad7dfca0b18429fbdd0b50",
+      "prepare_seconds": 3.772469802002888,
+      "zarr_external_copy_seconds": 11.349655097990762,
+      "npz_external_copy_seconds": 0.07200970395933837,
+      "npz_bytes": 5142214,
+      "zarr_bytes": 5081857
+    },
+    {
+      "shard": "shard_000009.zarr",
+      "decoded_sha256": "b7d5cf0e74ae976a3f786849d94c4d3e2bfd7aa2d11b694238ebe39608198d15",
+      "prepare_seconds": 3.3418123660376295,
+      "zarr_external_copy_seconds": 12.67616915103281,
+      "npz_external_copy_seconds": 0.08249177597463131,
+      "npz_bytes": 5278046,
+      "zarr_bytes": 5207241
+    },
+    {
+      "shard": "shard_000010.zarr",
+      "decoded_sha256": "8b833a116a4e939516f074c67f61eff362d8c312fd695be1f2f3b15bb2103ddb",
+      "prepare_seconds": 3.5907908320077695,
+      "zarr_external_copy_seconds": 12.570573050994426,
+      "npz_external_copy_seconds": 0.08411335799610242,
+      "npz_bytes": 5219422,
+      "zarr_bytes": 5156024
+    },
+    {
+      "shard": "shard_000011.zarr",
+      "decoded_sha256": "3fed74503013fbb34f07113f769343ca4c6252b417ff6b3dfeef34c3c3fd92db",
+      "prepare_seconds": 3.377283618960064,
+      "zarr_external_copy_seconds": 11.691316536976956,
+      "npz_external_copy_seconds": 0.07463791698683053,
+      "npz_bytes": 5308063,
+      "zarr_bytes": 5246074
+    },
+    {
+      "shard": "shard_000012.zarr",
+      "decoded_sha256": "78ede87d4f860dfa706d8617b5f2b18d4ab4a2e2b0c0d3545bdbbc304688d09b",
+      "prepare_seconds": 3.241326647985261,
+      "zarr_external_copy_seconds": 12.229436175955925,
+      "npz_external_copy_seconds": 0.08736424299422652,
+      "npz_bytes": 5334952,
+      "zarr_bytes": 5270334
+    },
+    {
+      "shard": "shard_000013.zarr",
+      "decoded_sha256": "d9b625b6a6bbd81ca4bf92f4106be38d9174949c10d75ba87374612b6cd59549",
+      "prepare_seconds": 3.6069425080204383,
+      "zarr_external_copy_seconds": 11.913587004004512,
+      "npz_external_copy_seconds": 0.08530949696432799,
+      "npz_bytes": 5297287,
+      "zarr_bytes": 5218668
+    },
+    {
+      "shard": "shard_000014.zarr",
+      "decoded_sha256": "c89d1284b56f20c4f8f4d7d5a46070f723dbf503a978ecbc0b88c0caad1e31c7",
+      "prepare_seconds": 3.6108920100377873,
+      "zarr_external_copy_seconds": 11.878699586028233,
+      "npz_external_copy_seconds": 0.09214386495295912,
+      "npz_bytes": 5295973,
+      "zarr_bytes": 5224782
+    },
+    {
+      "shard": "shard_000015.zarr",
+      "decoded_sha256": "01eb1db8421a5a90e685889d9d7b2184d88a46265b3bfa028ea7ea4ca4f78c9d",
+      "prepare_seconds": 3.6528178119915538,
+      "zarr_external_copy_seconds": 11.678018407954369,
+      "npz_external_copy_seconds": 0.08662014198489487,
+      "npz_bytes": 5368291,
+      "zarr_bytes": 5304358
+    }
+  ],
+  "runs": [
+    {
+      "medium": "nvme",
+      "layout": "zarr",
+      "trial": 0,
+      "planning_seconds": 0.7206453990074806,
+      "loader_seconds": 8.967586029553786,
+      "rows": 131072,
+      "consumer_loop_seconds": 11.188758003991097,
+      "digest_seconds": 2.219787517504301,
+      "rows_per_consumer_second_including_digest": 11714.615684175655,
+      "batch_wait_p50": 0.0031920819892548025,
+      "batch_wait_p95": 0.007603192480746657,
+      "batch_wait_max": 3.1723290809895843,
+      "sequence_sha256": "461ad75fe7d195d39478bc6be45a101d068c27ced5e79fcd957a3949e4b0255c"
+    },
+    {
+      "medium": "external",
+      "layout": "zarr",
+      "trial": 0,
+      "planning_seconds": 72.39838385896292,
+      "loader_seconds": 125.63188721524784,
+      "rows": 131072,
+      "consumer_loop_seconds": 127.74187698401511,
+      "digest_seconds": 2.1082860163296573,
+      "rows_per_consumer_second_including_digest": 1026.0691567605634,
+      "batch_wait_p50": 0.004075973003637046,
+      "batch_wait_p95": 0.009123198740417131,
+      "batch_wait_max": 43.38820360403042,
+      "sequence_sha256": "461ad75fe7d195d39478bc6be45a101d068c27ced5e79fcd957a3949e4b0255c"
+    },
+    {
+      "medium": "external",
+      "layout": "zarr",
+      "trial": 1,
+      "planning_seconds": 87.8795175239793,
+      "loader_seconds": 137.36375086510088,
+      "rows": 131072,
+      "consumer_loop_seconds": 139.6345783540164,
+      "digest_seconds": 2.2685253165545873,
+      "rows_per_consumer_second_including_digest": 938.6786678847724,
+      "batch_wait_p50": 0.004199216520646587,
+      "batch_wait_p95": 0.012395044561708346,
+      "batch_wait_max": 50.40704141999595,
+      "sequence_sha256": "461ad75fe7d195d39478bc6be45a101d068c27ced5e79fcd957a3949e4b0255c"
+    },
+    {
+      "medium": "nvme",
+      "layout": "zarr",
+      "trial": 1,
+      "planning_seconds": 0.7850769200013019,
+      "loader_seconds": 9.41519311023876,
+      "rows": 131072,
+      "consumer_loop_seconds": 11.647497344994918,
+      "digest_seconds": 2.229976126924157,
+      "rows_per_consumer_second_including_digest": 11253.232872066148,
+      "batch_wait_p50": 0.004300005501136184,
+      "batch_wait_p95": 0.011748894050833757,
+      "batch_wait_max": 2.546223658020608,
+      "sequence_sha256": "461ad75fe7d195d39478bc6be45a101d068c27ced5e79fcd957a3949e4b0255c"
+    }
+  ],
+  "complete": true,
+  "batch_size": 256,
+  "reused_prepared_copies": true,
+  "packed_decoder_runs": [
+    {
+      "medium": "nvme",
+      "rows": 131072,
+      "decode_seconds": 10.461773292918224,
+      "wall_seconds_including_digest": 16.58484539599158,
+      "scope": "Validated shard decoder only; packed exact-sampler support is not implemented"
+    },
+    {
+      "medium": "external",
+      "rows": 131072,
+      "decode_seconds": 15.11139653500868,
+      "wall_seconds_including_digest": 20.032301380997524,
+      "scope": "Validated shard decoder only; packed exact-sampler support is not implemented"
+    }
+  ]
+}
