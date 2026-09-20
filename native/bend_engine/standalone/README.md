@@ -31,7 +31,7 @@ are external tests; neither is imported or linked into the engine.
 ## Build and run (Linux x86-64)
 
 Bun 1.4.2, Clang, Git and standard shell/hash tools are build dependencies, not
-runtime dependencies. The build uses its OWN compiler pin and checks all 74
+runtime dependencies. The build uses its OWN compiler pin and checks all 84
 compiler/effect source files. Older probes and their pin are left unchanged.
 
 ```sh
@@ -42,7 +42,7 @@ bash native/bend_engine/standalone/build.sh
 The optional arguments are NEW_OUTPUT_DIRECTORY COMPILER_SOURCE_DIRECTORY MODE,
 where MODE is generic (default), portable, native, ubsan or static. Existing output
 directories are refused. A missing compiler checkout is fetched at the pinned
-commit; an existing one must match `verify_compiler.js`'s complete source fingerprint exactly. BUN and CC can point
+commit; an existing one must match `toolchain.json`'s complete source fingerprint exactly. BUN and CC can point
 to explicit executables. Builds use -O1 and no floating-point contraction for this
 correctness gate; no performance claim is made. Native-target binaries are not
 hardware portable. Static needs the host's static C/maths libraries.
@@ -111,8 +111,38 @@ Startup table construction exposed a native `U64.from_u32(variable)` bug: alias
 reuse could leave the operand as C u32 and generate `variable >> 32`. Fork PR #3
 fixes this by explicitly widening first, with a reproducer that fails strict C
 compilation before the patch and passes generic/portable/native/UBSan afterward.
-This entry point pins `d9b9bce9ce4c02583ca1a548cfd239b368c3fc77`; it does not silently
-modify the pinned compiler used by the older probes. No Bend checker change.
+The September 20 fork update includes that fix and upstream Bend 2.0.20.
+This entry point now pins **`fd1df81707fd758f749a9570ccb5b12b1bb2fea3`**, from
+`jjoshua2/bend`'s `feat/u64-compact-reviewed` branch. The fork's `main` is
+upstream-only; it does **not** contain the native U64 extension. Installing a
+moving upstream release or copying just Base definitions is not equivalent.
+
+`toolchain.json` is the single revision/fingerprint contract for this entry point.
+The default source cache is `build/bend_standalone_toolchain/REVISION/source`, so
+the old `d9b9bce9...` cache is neither reused nor reset. Explicit source directories
+must match all 84 pinned compiler/effect files; stale or modified contents are
+rejected before compilation/output creation. `build.txt` records the revision and
+source fingerprint actually checked. Existing output directories remain protected.
+To keep an old executable while building this update:
+
+```sh
+bash native/bend_engine/standalone/build.sh build/bend_standalone_20260920
+./build/bend_standalone_20260920/deepfin-bend --threads 1
+
+# Build-time contract tests, not deployed engine dependencies:
+bun test native/bend_engine/standalone/verify_compiler.test.js
+```
+
+The older bitboard/legal/session/neural probes still use their explicit
+`57bc84ed...` pin in `bitboard_probe/toolchain.json`; the release-based probes use
+their separate installer. They are preserved historical integration references,
+not the standalone engine's compiler. This update does not claim to have migrated
+or requalified those other entry points against Bend 2.0.20.
+
+Fork PR #2 remains draft: its unchanged source-size gate is exceeded in `comp.ts`,
+and strict TypeScript checking reports an upstream kernel diagnostic. Targeted U64
+and standalone executable checks are distinct from those failing repository gates.
+No kernel change, budget relaxation, or upstream merge is implied.
 
 ## What is NOT ported yet
 
