@@ -100,9 +100,8 @@ plans, logs and recovered-failure readouts are under
 `/home/josh/chess-artifacts/operations/sf_generation_throughput_v3_20260920`.
 The corpus and operations siblings for v1/v2 preserve the failed attempts.
 
-A longer follow-up is authorized and being prepared: two 10-minute cells, G10
-and d8 at four concurrent workers, within the same eight-CPU affinity and disk/
-RAM limits. Its increased CPU budget will be explicit and independently reviewed.
+The independently reviewed longer follow-up has now completed; its prespecified
+protocol and results follow.
 
 ### Longer confirmation protocol
 
@@ -124,3 +123,32 @@ eligible rows still require full production identity/support validation. Rows
 still in worker memory are unknown and never counted. Compare early and later
 closure increments to diagnose completion censoring; even the longer test does
 not supply independent order/seed replication or a trained-strength result.
+
+### Completed longer confirmation
+
+| Policy | Wall seconds | Eligible rows | Closed games | Closed shards | Eligible rows/s |
+|---|---:|---:|---:|---:|---:|
+| G10, four workers | 600.54 | 10,431 | 53 | 28 | 17.37 |
+| d8, four workers | 601.18 | 38,615 | 200 | 106 | 64.23 |
+
+All 49,046 banked rows passed eligibility; no invalid or missing-result rows.
+The complete run used 1,240.0 wall seconds, 4,486.7 observed child CPU-seconds
+and 42.9 controller CPU-seconds, within its explicit bounds. Frozen source was
+`93537e6b0`. [Full compact evidence](artifacts/2026-09-20-sf-throughput-confirmation.json)
+includes 30-second closure counters and exact plan/receipt hashes.
+
+D8 achieved **3.70x** G10's eligible generation throughput in this comparison.
+During approximately the final five minutes, closed-row increments were 20.82/s
+for G10 and 74.16/s for d8. This confirms that the original 100-second pilot was
+strongly censored and supplies substantially more closed-game evidence. It does
+not remove the fixed-order, single-seed or concurrent-workload limitations.
+The observed average d8 rate is about 231k rows/hour, or 166M rows in 30 days
+if maintained continuously. That is a planning extrapolation from ten minutes,
+not proof of month-long throughput or linear scaling to additional CPUs.
+
+Crucially, both arms generate new positions **and** score every legal move.
+Neither measures the cheaper task of adding one root SF value to an already
+banked position. The next planned cost screen compares root d8, root d10 and
+full-width d8 on identical history-preserving rows, keeping that question
+separate from generation distribution and target quality. Existing bootstrap
+contracts and the GPU queue remain unchanged.
