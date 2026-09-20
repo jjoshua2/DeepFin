@@ -238,3 +238,11 @@ def test_queued_new_session_worker_retains_lock_after_parent_sigkill(tmp_path):
         if p.is_alive():
             p.kill()
             p.join()
+
+
+def test_probe_import_does_not_capture_frozen_scripts_namespace(tmp_path):
+    import subprocess
+
+    probe = Path(tool.__file__).with_name("bootstrap_preparation_probe.py")
+    code = "import runpy,sys; runpy.run_path(sys.argv[1]); assert 'scripts' not in sys.modules"
+    subprocess.run([sys.executable, "-c", code, str(probe)], cwd=tmp_path, check=True)
