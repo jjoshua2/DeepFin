@@ -152,3 +152,32 @@ banked position. The next planned cost screen compares root d8, root d10 and
 full-width d8 on identical history-preserving rows, keeping that question
 separate from generation distribution and target quality. Existing bootstrap
 contracts and the GPU queue remain unchanged.
+
+## Planned matched-row scalar-value cost screen
+
+The separate `benchmark_sf_values.py` screen fixes 64 midpoint-spaced games
+from the 200 closed d8 confirmation games, selecting each game's midpoint row.
+Selection is deterministic in `(worker-progress-file, game_id, source-shard)`
+order. The external sample preserves the full raw row and history, source-row
+index, canonical row hash, source-shard hashes and qualification receipt hash.
+This measures a d8-selfplay-derived position sample, not a population estimate.
+
+On those identical rows, compare root MultiPV1 at depth8, root MultiPV1 at
+depth10, and full-legal-width depth8. Three independent SF engines use Hash64MiB,
+one thread and the same Syzygy files. Every row/arm resets its own TT; rotate
+arm order by row. The stored history is sent as `position fen ... moves ...`.
+Record effective UCI commands, raw info including mate/cp/bounds, requested and
+realized depth/width, nodes, per-label search-plus-reset time and complete
+supervised wall time. Final-depth support must match the requested width.
+
+No policy-complete training corpus is created and no target recipe changes.
+Scalar-root scores can differ from a full-width search's best score; this cost
+screen does not measure which value is more accurate or which trains better.
+The existing all-move generation measurement and this existing-row post-label
+measurement answer different questions.
+
+Bounded allocation: CPUs8–9 only, nice19, no GPU, observed CPU<=1500s plus300s
+reserve, wall<=1800s, available RAM>=40GiB, launch disk>=100GiB/running>=96GiB,
+and output<=128MiB with an early75% stop margin. The reviewed subreaper tracks
+owned engine sessions and cleans them on normal completion, STOP or failure.
+Plans and outputs remain external; launch follows independent review.
