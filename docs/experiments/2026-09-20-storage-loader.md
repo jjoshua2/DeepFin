@@ -143,3 +143,19 @@ This isolates a practical metadata-access improvement while preserving lazy read
 It remains a fixed-order, cache-affected decoder pilot. Opt-in integration into the
 exact-epoch sampler is being tested separately; no current training inputs have
 been migrated and these numbers are not a measured training speedup.
+
+## Exact-sampler integration result
+
+[PR #795](https://github.com/jjoshua2/DeepFin/pull/795) adds opt-in ordinary packed
+Zarr support with explicit file ownership, unchanged lazy memory qualification,
+and source-partition preservation. Independent real-data checks passed at both
+batch256 (131,072 rows) and the actual batch512 (262,144 rows). Every ordered
+tensor matched the directory control.
+
+At batch512, NVMe directory planning/consumption took 1.49/24.43 seconds; external
+ZIP planning/consumption took 4.08/25.88 seconds, including tensor-digest overhead.
+This is sufficient to prioritize lossless packing over implementing an NVMe cache
+now. It is still a small, cache-affected CPU sampler result, not full GPU training
+or cold multi-terabyte qualification. Existing runs retain their frozen directory
+inputs. Trainer CLI admission and a bounded training comparison are separate
+requirements before future runs adopt the new representation.
