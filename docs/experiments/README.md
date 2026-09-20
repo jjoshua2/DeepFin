@@ -99,3 +99,5 @@ For durable knowledge, use [model heads](../model_heads.md),
 [the loop audit](../rl_loop_audit.md) and [operations](../operations.md), following their
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
+
+- [2026-09-20: overlap target preparation with fresh factorial A](2026-09-20-factorial-prep-train-overlap.md) — independent base admission preserves scientific settings.
