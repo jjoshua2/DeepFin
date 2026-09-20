@@ -1,0 +1,24 @@
+name: Bend UCI development snapshot
+on:
+  push:
+    branches: [feat/bend-uci-interface-dev]
+    paths: ['.github/workflows/bend-uci-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir -p /tmp/bend-uci-source
+          git archive --format=tar.gz HEAD > /tmp/bend-uci-source/deepfin.tgz
+          git rev-parse HEAD > /tmp/bend-uci-source/revision.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-uci-source
+          path: /tmp/bend-uci-source/
+          retention-days: 2
