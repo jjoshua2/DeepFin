@@ -1,0 +1,32 @@
+name: Bend encoding development snapshot
+on:
+  push:
+    branches: [feat/bend-owned-encoding-dev]
+    paths: ['.github/workflows/bend-owned-encoding-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: |
+          mkdir -p /tmp/bend-encoding-source
+          git archive --format=tar.gz HEAD > /tmp/bend-encoding-source/deepfin.tgz
+          git clone --filter=blob:none --no-checkout https://github.com/jjoshua2/bend.git /tmp/bend-compiler
+          git -C /tmp/bend-compiler checkout --detach fd1df81707fd758f749a9570ccb5b12b1bb2fea3
+          git -C /tmp/bend-compiler archive --format=tar.gz HEAD > /tmp/bend-encoding-source/compiler.tgz
+          cp "$(command -v bun)" /tmp/bend-encoding-source/bun
+          python -m pip download --no-deps --no-binary=:all: chess==1.11.2 -d /tmp/bend-encoding-source
+          python -m pip download --no-deps ruff==0.15.20 -d /tmp/bend-encoding-source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-encoding-source
+          path: /tmp/bend-encoding-source/
+          retention-days: 2
