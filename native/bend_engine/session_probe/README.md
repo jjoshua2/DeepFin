@@ -229,3 +229,42 @@ python -m native.bend_engine.session_probe.draw_probe \
 No perft depth or recurring benchmark is added. Direct synthetic session callers
 that do not send status 3 retain their old behavior. The native-neural batching
 Actor (and its game-controller subclass) enable the history-aware check by default.
+
+## Optional claim action (explicit opt-in)
+
+A status-4 reply is a normal, fully validated policy/WDL evaluation plus a
+host-certified optional draw claim. Count is still the number of REAL legal
+moves; a missing/malformed policy is invalid, not a terminal draw. Bend reserves
+one additional node atomically before expansion and appends a known terminal-zero
+claim child. Every ordinary child and its normalized prior remain available.
+This differs from status 3, which asserts an automatic ending with no children.
+
+The claim action's key is **131072**, outside the legal packed-move domain. It
+has zero prior, a known Q of zero even before visits, and an unchanged board. It
+is never applied as a chess move, encoded as a network action, or sent for neural
+evaluation. Zero backup is independent of the unchanged side to move. At a depth
+cutoff, max(0, the neural estimate) is a heuristic cutoff value, not a rule-based
+terminal declaration. No extra node is allocated at that cutoff.
+
+At an expanded root with a claim, final selection takes a visited real child
+with positive empirical value, ranked by visits then key, or chooses the claim
+when none qualifies. Roots without a claim retain the prior visit/key rule.
+Positive estimates are not proofs of winning, and internal PUCT averages are not
+minimax lower bounds. The added action is not production Gumbel-policy parity.
+
+`claims.claim_option` supplies current/prospective threefold or fifty-move
+proof evidence from the exact host history. A prospective witness move is NOT
+played when claiming. Automatic endings retain priority. The host remains trusted
+for chess adjudication; Bend validates the identity/payload and transition, not
+the repetition evidence. Cached choices are safe only within this unique-history
+epoch/tree; do not reuse them by board hash alone.
+
+```sh
+python -m native.bend_engine.session_probe.claim_probe \
+  --report artifacts/bend-claim-options.json
+```
+
+This opt-in controlled-evaluator probe includes the original sessions and automatic
+draw suite. It performs no model export, neural forward or perft. Ordinary tests
+only add cheap evidence/Actor/controller contracts. No permanent native test depth
+or default game/search policy changes.

@@ -25,6 +25,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 MODES = rules.MODES
 SENTINEL = (1 << 32) - 1
+CLAIM_KEY = 1 << 17  # Non-board action, never a neural policy index.
 RequestObserver = Callable[[rules.Position, list[int], list[int]], None]
 
 
@@ -150,7 +151,7 @@ class Reference:
             scale = f32(1.5 * f32(math.sqrt(max(1, parent.n))))
             def score(i: int, fpu: float = fpu, scale: float = scale) -> tuple[float, int]:
                 a = self.nodes[i]
-                q = -f32(a.w / a.n) if a.n else fpu
+                q = 0.0 if a.key == CLAIM_KEY else (-f32(a.w / a.n) if a.n else fpu)
                 u = f32(f32(scale * a.prior) / (1 + a.n))
                 return f32(q + u), -a.key
             index = max(children, key=score)
@@ -184,10 +185,15 @@ class Reference:
             return index
         return None
 
-    def accept(self, index: int, actions: list[int], wdl: list[float], policy: list[float]) -> None:
+    def accept(self, index: int, actions: list[int], wdl: list[float], policy: list[float], *, claim: bool = False) -> None:
         a = self.nodes[index]
         total = f32(f32(wdl[0] + wdl[1]) + wdl[2])
         value = f32(f32(wdl[0] - wdl[2]) / total)
+        if a.depth < self.depth and len(self.nodes) + len(actions) + int(claim) > self.cap:
+            self.stop = 1
+            return
+        if claim and a.depth >= self.depth:
+            value = max(0.0, value)
         a.value = value
         if a.depth >= self.depth:
             a.status = 3
@@ -199,6 +205,10 @@ class Reference:
             successors = self.oracle.moves(a.board)
             self.nodes.extend(Node(successors[k], key=k, parent=index, depth=a.depth + 1,
                                    prior=f32(p / total_policy)) for k, p in zip(actions, policy, strict=True))
+            if claim:
+                self.nodes.append(Node(a.board, key=CLAIM_KEY, parent=index, depth=a.depth + 1,
+                                       status=2, prior=0.0, value=0.0))
+                a.count += 1
         self.backup(index, value)
         self.seq += 1
 
@@ -225,6 +235,9 @@ class Reference:
                 raise AssertionError(f'node board mismatch: {i}')
         root_children = [a for i, a in enumerate(self.nodes) if i and a.parent == 0]
         expected_best = min(root_children, key=lambda a: (-a.n, a.key)).key if root_children else SENTINEL
+        if any(a.key == CLAIM_KEY for a in root_children):
+            positive = [a for a in root_children if a.key != CLAIM_KEY and a.n and -f32(a.w / a.n) > 0]
+            expected_best = min(positive, key=lambda a: (-a.n, a.key)).key if positive else CLAIM_KEY
         if best != expected_best or self.nodes[0].n != self.completed:
             raise AssertionError('best-move/root visit mismatch')
 
