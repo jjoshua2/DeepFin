@@ -7,11 +7,15 @@ import json
 import os
 from pathlib import Path
 import signal
-import sys
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts import bootstrap_preparation_overlap as owner
+owner_spec = importlib.util.spec_from_file_location(
+    "preparation_overlap_owner", Path(__file__).with_name("bootstrap_preparation_overlap.py")
+)
+assert owner_spec is not None
+assert owner_spec.loader is not None
+owner = importlib.util.module_from_spec(owner_spec)
+owner_spec.loader.exec_module(owner)
 
 
 def main():
