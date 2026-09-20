@@ -26,8 +26,8 @@ must return identical ordered batch tensors. The first16shards cannot support
 batch512 under the sampler's one-position-per-game rule; its refusal was retained.
 Packed NPZ uses the actual validated shard decoder in a separate measurement,
 with full tensors checked against source digests. The exact sampler currently
-discovers only directory shards; packed training support is not implemented. Reverse-order repeated traversal provides a warm/cache-
-affected comparison, not independent replicates. Initialization, consumer wall
+discovers only directory shards; packed training support was not available to this pilot. Reverse-order repeated
+traversal provides a warm/cache-affected comparison, not independent replicates. Initialization, consumer wall
 clock, digest overhead and batch wait percentiles are recorded separately.
 
 Limits: two CPU affinity cores, nice19, 16GiB process RSS, 32GiB available RAM,
@@ -129,3 +129,17 @@ This supports keeping raw history on the external drive while potentially fittin
 an entire selected500M training representation in a1TB NVMe budget. The exact
 required capacity still depends on teacher representation and retained variants;
 there is no reason to assume every raw artifact must be staged for training.
+
+## Lossless Zarr ZIP follow-up
+
+[PR #793](https://github.com/jjoshua2/DeepFin/pull/793) preserves every original
+Zarr metadata and compressed chunk byte inside one ZIP_STORED file per shard.
+All six validated decoder arms matched the source tensor digests. On the same
+131,072 rows, external ZIP decoding took 6.86 seconds versus 56.18 seconds for
+external directories; local ZIP decoding took 6.50 seconds. These measurements
+exclude digest time and use a different harness from the sampler table above.
+
+This isolates a practical metadata-access improvement while preserving lazy reads.
+It remains a fixed-order, cache-affected decoder pilot. Opt-in integration into the
+exact-epoch sampler is being tested separately; no current training inputs have
+been migrated and these numbers are not a measured training speedup.
