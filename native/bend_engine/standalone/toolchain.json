@@ -1,8 +1,8 @@
 {
   "repository": "https://github.com/jjoshua2/bend.git",
-  "revision": "fd1df81707fd758f749a9570ccb5b12b1bb2fea3",
+  "revision": "806b373a7a4509479054da74a82271c6a4c25014",
   "upstream_revision": "7561656155a4285c1e4ccfcb3505ab59524de973",
   "upstream_version": "2.0.20",
   "source_files": 84,
-  "source_sha256": "88f7505294c77f8187396aaeefd4d1845a6194d7e64b0ab9a982455bf2d8d38b"
+  "source_sha256": "5c8949a6d84f3365108e7182e70e3fc1bb8d378ff7a9db884d0a3d4611c62135"
 }

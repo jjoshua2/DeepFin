@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Bend-owned policy boundary](2026-09-20-bend-owned-policy.md) | Geometry-built 4672/1858 maps and strict legal resolution; current U64 source-law pin, no neural inference |
 | [Bend neural history encoding](2026-09-20-bend-history-encoding.md) | Bend-authored 112-plane history/metadata block with exact Python/C comparisons; partial input, no neural inference |
 | [Bend-owned draw rules](2026-09-20-bend-owned-draws.md) | Standalone native history identity and automatic root/leaf draws, no Python runtime; claims/encoding remain separate |
 | [September 20 standalone compiler adoption](2026-09-20-bend-compiler-adoption.md) | Pin the Bend-owned engine to upstream-synced U64 2.0.20; immutable source/cache contract and runtime requalification |

@@ -113,7 +113,8 @@ reuse could leave the operand as C u32 and generate `variable >> 32`. Fork PR #3
 fixes this by explicitly widening first, with a reproducer that fails strict C
 compilation before the patch and passes generic/portable/native/UBSan afterward.
 The September 20 fork update includes that fix and upstream Bend 2.0.20.
-This entry point now pins **`fd1df81707fd758f749a9570ccb5b12b1bb2fea3`**, from
+This entry point now pins **`806b373a7a4509479054da74a82271c6a4c25014`**, adding
+the subsequent September 20 U64 source-law update to `fd1df817...`, from
 `jjoshua2/bend`'s `feat/u64-compact-reviewed` branch. The fork's `main` is
 upstream-only; it does **not** contain the native U64 extension. Installing a
 moving upstream release or copying just Base definitions is not equivalent.
@@ -270,3 +271,67 @@ F32 bit must match both oracles; positions beyond CBoard's uint8 clock range are
 checked against Python only and counted explicitly. Omit `--require-c` for a
 Python-only reference check, which the report labels accordingly. Native encoding
 traversals remain opt-in; ordinary pytest/perft depths and workflows are unchanged.
+
+## Bend-owned policy indices (no model execution)
+
+`Policy.bend` builds DeepFin's exact policy vocabulary from board geometry:
+4,672 full action slots, the ordered 1,858-slot compact subset, inverse lookup,
+square-pair lookup and file-mirror permutations. No table file, Python/NumPy
+initializer, CBoard or foreign encoder supplies these maps. The current standalone
+compiler pin is **806b373a7a4509479054da74a82271c6a4c25014** (September 20's U64
+source-law update, still Bend 2.0.20). Its 84 compiler/Base/effect files are checked
+against `5c8949a6d84f3365108e7182e70e3fc1bb8d378ff7a9db884d0a3d4611c62135`.
+The pin reader, revision-keyed build cache and existing refusal of mismatched
+checkouts remain unchanged. This does not assert the policy code is formally proved.
+
+**Three different identifiers must not be interchanged:** Bend's packed key
+(including special-move flags), the full AZ action ID, and the compact model slot.
+For example, e2e4 at the initial root is key **1804**, full action **877**, compact
+slot **304**. A geometric slot is not automatically legal in the current position.
+The diagnostic resolves only against the complete Bend-generated legal list,
+preserving castling/EP/promotion flags. Unknown/nonlegal IDs produce an explicit
+error, never the first legal move. Neither a private draw-claim key nor the UCI
+null move belongs to the neural vocabulary.
+
+```text
+policy legal
+policy encode e2e4
+policy key 1804
+policy decode az_4672 877
+policy decode lc0_1858 304
+policy tables
+```
+
+`policy_move` records contain UCI text, private key, full ID, and compact ID.
+`policy tables` emits every full/compact/mirror and square-pair entry; its invalid
+sentinel is 4294967295, not a tensor index. Commands are read-only and rejected
+while search is busy. Malformed commands produce no partial result block. These
+synchronous diagnostics can delay input processing when output is backpressured;
+they are not an inference wire protocol or latency guarantee.
+
+The typed `Policy.Maps` owns three native arrays; `Policy.Space` distinguishes
+full versus compact lookup. Logical bounds, not physical array capacities, govern
+lookup. `encode_generated` expects a generated legal move and defensively checks
+fields/geometry; it is not a substitute for legality checking. Reverse resolution
+uses entries for the current board, not a guessed promotion reconstructed from a
+numeric ID. The diagnostic builds disposable maps per request. A later inference
+controller can retain the typed map owner; no caching/performance claim is made here.
+
+All promotion pieces/directions and both side-to-move perspectives are covered.
+Black flips ranks only; file mirroring is a separate augmentation permutation.
+Different move orders reaching the same board have identical policy maps, even
+though their history input tensors may differ.
+
+The opt-in external oracle compares all table entries and legal mappings to the
+existing Python reference, and optionally legal IDs to CBoard:
+
+```sh
+python -m native.bend_engine.standalone.verify_policy --require-c \
+  --report artifacts/bend-policy.json \
+  --command ./build/bend_owned_policy/deepfin-bend --threads 1
+```
+
+The engine/build itself still needs no Python. This component does not append the
+missing classical feature planes, normalize logits, connect a model, replace the
+material evaluator, or enable the standalone claim-choice policy. Existing
+encoding/rules/UCI/perft checks and normal search behavior are unchanged.

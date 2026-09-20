@@ -19,10 +19,10 @@ function fixture() {
 }
 
 test("fetch and source verifier share the exact documented U64 pin", () => {
-  expect(PIN.revision).toBe("fd1df81707fd758f749a9570ccb5b12b1bb2fea3");
+  expect(PIN.revision).toBe("806b373a7a4509479054da74a82271c6a4c25014");
   expect(PIN.upstream_version).toBe("2.0.20");
   expect(PIN.source_files).toBe(84);
-  expect(PIN.source_sha256).toBe("88f7505294c77f8187396aaeefd4d1845a6194d7e64b0ab9a982455bf2d8d38b");
+  expect(PIN.source_sha256).toBe("5c8949a6d84f3365108e7182e70e3fc1bb8d378ff7a9db884d0a3d4611c62135");
 });
 test("fingerprint is independent of checkout location", () => {
   expect(fingerprint(fixture())).toEqual(fingerprint(fixture()));
