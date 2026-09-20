@@ -2,7 +2,7 @@
 
 Keep workspaces freely copyable by externalizing bulk data. This is an operational
 storage change; it does not alter bootstrap training recipes. Migration is partial:
-active dataset roots stay fixed until the running epoch completes.
+the 35 pinned dataset roots remain at their existing paths pending qualified rebinding.
 
 
 - `data/desync_quarantine_20260801` moved to
@@ -44,7 +44,7 @@ nonexistent output. Those output paths need explicit plan and queue repinning.
 Nine inactive clean review worktrees were retired after rechecking live references
 and dirty files. Their commits remain under `refs/archive/workspace-cleanup-20260919/`;
 `operations/retired-workspaces-20260919.jsonl` in the shared artifact root records
-each former path and retained commit. Dirty and unpublished worktrees remain intact.
+each former path and retained commit. Dirty worktrees remain intact. Retired heads, including unpublished commits, are retained by archive refs.
 
 All 14 still-empty Ceres collection bank parents now link to
 `/home/josh/chess-artifacts/labels/factorial58_20260919/ceres_banks/<cohort>`.
@@ -73,8 +73,50 @@ Python-chess probes through the old and external 3-man paths returned identical
 table counts, WDL and DTZ. This moves payloads out of the workspace without changing
 their storage device or duplicating them.
 
-Duplicate-only cleanup continues at low I/O priority with a 360 GiB/two-hour bound
-for its second pass. A reviewed process-exit trigger then starts the bounded CPU-only
-SF generation throughput screen; it waits through a pidfd rather than model polling.
-The screen writes to external corpus storage and preserves the running GPU training.
-Trigger launch/control receipts live at `chess-artifacts/operations/sf_trigger_20260919/`.
+The two bounded duplicate-only cleanup passes completed: 1,328 files / 75.41 GiB
+and 9,050,614 files / 364.33 GiB, respectively. Each removed payload was verified
+against a retained canonical copy. About 439.74 GiB of duplicate payload was removed;
+this is separate from same-filesystem relocations, which do not reclaim space.
+The second pass journal is `operations/workspace-duplicate-payloads-20260919.jsonl`.
+These were scoped passes, not a claim that every workspace is now data-free.
+
+The process-exit trigger attempted the CPU-only SF generation throughput screen,
+but its readout failed because a foreign installed `scripts` package shadowed the
+repository package. The failed run remains preserved. A corrected v2 runtime and
+plan are staged and independently reviewed; no completed benchmark is claimed.
+See `operations/sf_trigger_20260919/` and
+`operations/sf_generation_throughput_v2_20260919/` for the receipts.
+
+## Sibling and nested workspace retirement
+
+There were 167 `~/projects/chess-*` sibling folders: 161 registered worktrees and
+six other folders, including two containers of nested worktrees. We retired 132
+clean direct sibling worktrees and 34 clean nested worktrees. The top-level count
+is now 35. Across all locations, 550 registered worktrees remain at this snapshot;
+this cleanup does not establish that the global workspace inventory is clean.
+
+Before each retirement, the operation rechecked HEAD, full tracked/untracked status,
+hidden index flags, Git metadata backreferences, ignored artifacts and live process
+references. It held the scheduler lock and required the queue hash to match the
+independent dependency audit. Removal used normal `git worktree remove`, without
+force. All 166 removals were subsequently checked against their retained refs.
+
+Branches were retained. Each head additionally lives under
+`refs/archive/workspace-cleanup-20260919/`. Ignored local outputs were moved to
+`/home/josh/chess-artifacts/retired-workspaces/<name>/local-artifacts/`, with a
+`retirement.json` recording provenance. Nested names include the former parent to
+avoid collisions. These artifact moves preserve data and do not themselves free space.
+The compact per-worktree receipts are published alongside this record:
+
+- [132 sibling retirements](evidence/workspace-storage-20260919/retired-siblings.jsonl)
+- [34 nested retirements](evidence/workspace-storage-20260919/retired-nested.jsonl)
+
+To restore source, create a worktree from the receipt's retained ref into a new
+path. Consult its archive before restoring any local output. Dirty checkouts,
+three differing non-Git snapshots, the ambiguous `chess-instr-436` /
+`chess-mergetest-436` metadata pair, and historically referenced `chess-armf` /
+`chess-sfgate` remain preserved. `chess-wt/eval-race` retains its 18 staged changes.
+
+Independent review passed the retirement safeguards and the nested-scope adaptation.
+Future manual worktrees use `~/projects/chess-worktrees/<task>`; independent writers
+still receive separate worktrees. Workspace copying and Grok delegation remain enabled.

@@ -8,6 +8,15 @@ ignored files.
 ## Creating workspaces
 
 Workspace copying, Git worktrees and tracked-file review snapshots are all valid.
+On this host, group new manual worktrees under
+`/home/josh/projects/chess-worktrees/<task>` rather than creating more top-level
+`chess-*` siblings. Tool-managed worktree directories are also fine. Keep new
+worktrees outside other checkouts so copying a workspace does not copy its neighbors.
+
+Assign independent code-writing agents different worktrees. Read-only reviews can
+share a checkout. Agent tools do not all create isolated worktrees automatically;
+the caller must establish that isolation before parallel edits.
+
 Keep bulk data outside the source workspace so creating another workspace cannot
 duplicate it. Disabling agent delegation is not a storage-layout solution.
 
