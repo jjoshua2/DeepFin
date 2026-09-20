@@ -1,30 +1,135 @@
-name: Bend policy development snapshot
+name: Bend-owned policy confirmation
 on:
   push:
     branches: [feat/bend-owned-policy-dev]
     paths: ['.github/workflows/bend-policy-dev.yml']
 permissions:
-  contents: read
+  contents: write
 jobs:
-  snapshot:
+  confirm:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - run: |
-          mkdir -p /tmp/bend-policy-source
-          git archive --format=tar.gz HEAD > /tmp/bend-policy-source/deepfin.tgz
-          git clone --filter=blob:none --no-checkout https://github.com/jjoshua2/bend.git /tmp/bend-policy-compiler
-          git -C /tmp/bend-policy-compiler checkout --detach 806b373a7a4509479054da74a82271c6a4c25014
-          git -C /tmp/bend-policy-compiler archive --format=tar.gz HEAD > /tmp/bend-policy-source/compiler.tgz
-          cp "$(command -v bun)" /tmp/bend-policy-source/bun
-      - uses: actions/upload-artifact@v4
+      - uses: actions/setup-python@v5
         with:
-          name: bend-policy-source
-          path: /tmp/bend-policy-source/
-          retention-days: 2
+          python-version: '3.13'
+      - name: Apply exact locally tested source
+        run: |
+          python - <<'PY'
+          import base64, gzip, hashlib, json, urllib.request
+          from pathlib import Path
+          shas = ['6cc5fd8706d51fbee3849378a3e2a217685d4168', '9404ed23cf38051f8c8942bf73cb0c9cff03d85c', '67dafbfb6af2e24e26d25a4592235ecaff1e20e7', '6c7f59d133385dbb2b231e1226f880bfca5d51fc', '01e926bc7e89423ba967fe2d53692a990f4531a5', '3fb256009118ef79e6b91887b14de881c1f356a7']
+          chunks = []
+          for sha in shas:
+              with urllib.request.urlopen('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/' + sha, timeout=30) as response:
+                  data = json.load(response)
+              chunk = base64.b64decode(data['content'])
+              assert hashlib.sha1(f'blob {len(chunk)}\0'.encode() + chunk).hexdigest() == sha
+              chunks.append(chunk)
+          patch = gzip.decompress(b''.join(chunks))
+          assert hashlib.sha256(patch).hexdigest() == 'd99b8384b1d6bd99fac931cf677a1bb00cc52e2117cbc9c9ad7f69c13a92bfe7'
+          Path('/tmp/bend-policy.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/bend-policy.patch
+          git apply /tmp/bend-policy.patch
+          git diff --check
+      - name: External reference tools only
+        run: |
+          python -m pip install 'python-chess==1.999' 'numpy==2.2.6' 'ruff==0.15.20' 'basedpyright==1.39.9'
+          python - <<'PY'
+          import ast, subprocess, sysconfig
+          from pathlib import Path
+          import numpy
+          module = ast.parse(Path('setup.py').read_text())
+          macros = next(ast.literal_eval(n.value) for n in module.body
+                        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name)
+                        and n.target.id == '_CBOARD_FAST_SLIDER_MACROS')
+          subprocess.run(['cc', '-shared', '-fPIC', '-O1', '-I' + sysconfig.get_paths()['include'],
+                          '-I' + numpy.get_include(), *[f'-D{k}={v}' for k, v in macros],
+                          'chess_anti_engine/encoding/_lc0_ext.c', '-pthread', '-lm', '-o',
+                          'chess_anti_engine/encoding/_lc0_ext' + sysconfig.get_config_var('EXT_SUFFIX')], check=True)
+          PY
+          ruff check native/bend_engine/standalone/verify_policy.py
+          basedpyright native/bend_engine/standalone/verify_policy.py
+          bun test native/bend_engine/standalone/verify_compiler.test.js
+      - name: Build and verify the newer U64 source-law revision
+        run: |
+          bash native/bend_engine/standalone/build.sh /tmp/bend-owned-policy
+          mkdir -p artifacts
+          cp /tmp/bend-owned-policy/build.txt artifacts/bend-policy-build.txt
+          compiler="$PWD/build/bend_standalone_toolchain/806b373a7a4509479054da74a82271c6a4c25014/source"
+          (cd "$compiler" && bun tests/run/u64_proofs.js) > artifacts/bend-policy-source-proofs.json
+      - name: Generic exact policy and inherited encoding rules and UCI
+        run: |
+          python -m native.bend_engine.standalone.verify_policy --require-c --report artifacts/bend-policy-generic.json --command /tmp/bend-owned-policy/deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify_encoding --require-c --report artifacts/bend-encoding-generic.json --command /tmp/bend-owned-policy/deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify_rules --report artifacts/bend-rules-generic.json --command /tmp/bend-owned-policy/deepfin-bend --threads 1
+          python native/bend_engine/standalone/verify.py --report artifacts/bend-original-generic.json --command /tmp/bend-owned-policy/deepfin-bend --threads 1
+      - name: Portable native and UBSan exact mappings and original regressions
+        run: |
+          for mode in portable native ubsan; do
+            case "$mode" in
+              portable) flags=(-DBEND_U64_PORTABLE) ;;
+              native) flags=(-march=native) ;;
+              ubsan) flags=(-fsanitize=undefined -fno-sanitize-recover=all) ;;
+            esac
+            clang -std=c11 -O1 -ffp-contract=off -Werror=shift-count-overflow "${flags[@]}" /tmp/bend-owned-policy/engine.c -pthread -lm -o "/tmp/bend-owned-policy/$mode"
+            python -m native.bend_engine.standalone.verify_policy --require-c --report "artifacts/bend-policy-$mode.json" --command "/tmp/bend-owned-policy/$mode" --threads 1
+            python -m native.bend_engine.standalone.verify_encoding --require-c --report "artifacts/bend-encoding-$mode.json" --command "/tmp/bend-owned-policy/$mode" --threads 1
+            python -m native.bend_engine.standalone.verify_rules --report "artifacts/bend-rules-$mode.json" --command "/tmp/bend-owned-policy/$mode" --threads 1
+            python native/bend_engine/standalone/verify.py --report "artifacts/bend-original-$mode.json" --command "/tmp/bend-owned-policy/$mode" --threads 1
+          done
+      - name: All checks with only a static executable inside the runtime
+        run: |
+          clang -std=c11 -O1 -ffp-contract=off -Werror=shift-count-overflow -static /tmp/bend-owned-policy/engine.c -pthread -lm -o /tmp/bend-owned-policy/static
+          if readelf -l /tmp/bend-owned-policy/static | grep -q INTERP; then echo 'dynamic interpreter remains'; exit 1; fi
+          runtime="$(mktemp -d /tmp/bend-policy-runtime.XXXXXX)"
+          cp /tmp/bend-owned-policy/static "$runtime/deepfin-bend"
+          test "$(find "$runtime" -mindepth 1 | wc -l)" = 1
+          python -m native.bend_engine.standalone.verify_policy --require-c --report artifacts/bend-policy-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify_encoding --require-c --report artifacts/bend-encoding-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify_rules --report artifacts/bend-rules-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          python native/bend_engine/standalone/verify.py --report artifacts/bend-original-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          {
+            file "$runtime/deepfin-bend"
+            find "$runtime" -mindepth 1 -printf '%P\n'
+            sha256sum "$runtime/deepfin-bend" /tmp/bend-owned-policy/engine.c
+            printf 'Only static executable in runtime; Python and C oracles remain external.\n'
+          } > artifacts/bend-policy-isolation.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          reports = [json.loads(Path(f'artifacts/bend-policy-{mode}.json').read_text())
+                     for mode in ('generic', 'portable', 'native', 'ubsan', 'isolated')]
+          assert all(r == reports[0] for r in reports)
+          r = reports[0]
+          assert r['status'] == 'passed' and r['legal_move_comparisons'] == r['c_legal_move_comparisons'] == 2963
+          assert r['exact_resolution_checks'] == 2156 and r['rejected_requests'] == 663 and r['distinct_promotion_moves'] == 176
+          assert r['table_sha256'] == '2f4c0524e2b7d3a2c81d6c53b770f97c07dc246dc2c776a937b1e6d05f82f618'
+          assert r['ordered_legal_sha256'] == '95137e609a695f1b22f981b9cb5d00db3326cc17d13d966ed88e98f1a32516b1'
+          PY
+      - name: Publish only the clean tested feature
+        run: |
+          git fetch --no-tags --depth=1 origin fe658a2680ec7941742c045feff0ccb806a898ad
+          git read-tree fe658a2680ec7941742c045feff0ccb806a898ad
+          git add native/bend_engine/standalone/Policy.bend native/bend_engine/standalone/PolicyDiagnostic.bend native/bend_engine/standalone/Protocol.bend native/bend_engine/standalone/main.bend native/bend_engine/standalone/verify_policy.py native/bend_engine/standalone/toolchain.json native/bend_engine/standalone/verify_compiler.test.js native/bend_engine/standalone/README.md docs/experiments/README.md docs/experiments/2026-09-20-bend-owned-policy.md
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          commit="$(git commit-tree "$(git write-tree)" -p fe658a2680ec7941742c045feff0ccb806a898ad -m 'Generate and validate chess policy mappings directly in Bend')"
+          git push origin "$commit":refs/heads/feat/bend-owned-policy
+          printf '%s\n' "$commit" > artifacts/bend-policy-commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-owned-policy-confirmation
+          path: |
+            artifacts/bend-policy-*
+            artifacts/bend-encoding-*
+            artifacts/bend-rules-*
+            artifacts/bend-original-*
+          retention-days: 30
