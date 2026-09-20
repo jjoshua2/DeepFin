@@ -1,0 +1,118 @@
+name: Qualify DeepFin slider laws and updated compiler
+on:
+  push:
+    branches: [work/bend-slider-laws-20260920]
+permissions:
+  contents: read
+jobs:
+  source:
+    if: ${{ !startsWith(github.event.head_commit.message, 'Save qualified slider candidate') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: python3 .github/prepare-slider.py
+      - run: bun test native/bend_engine/standalone/verify_compiler.test.js
+      - name: Full source proof and 15 rejection controls
+        run: |
+          if bun native/bend_engine/standalone/verify_laws.js /tmp/deepfin-slider-compiler --report /tmp/slider-validation/proofs.json > /tmp/slider-validation/proofs.log 2>&1; then
+            cat /tmp/slider-validation/proofs.log
+          else
+            cat /tmp/slider-validation/proofs.log
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: slider-law-source-qualification
+          path: |
+            /tmp/slider-validation/*.json
+            /tmp/slider-validation/*.log
+            /tmp/slider-validation/*.patch
+          retention-days: 14
+  native:
+    if: ${{ !startsWith(github.event.head_commit.message, 'Save qualified slider candidate') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      BEND_NO_TELEMETRY: '1'
+      CC: clang
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python .github/prepare-slider.py
+      - run: python -m pip install python-chess==1.999 numpy==2.2.6
+      - name: Five native builds with unchanged engine, rules, encoding and table checks
+        run: |
+          if bash native/bend_engine/standalone/qualify_toolchain.sh /tmp/slider-native /tmp/deepfin-slider-compiler > /tmp/slider-validation/native.log 2>&1; then
+            cat /tmp/slider-validation/native.log
+          else
+            cat /tmp/slider-validation/native.log
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: slider-law-native-qualification
+          path: |
+            /tmp/slider-native/reports
+            /tmp/slider-native/*.json
+            /tmp/slider-native/build.txt
+            /tmp/slider-native/runtime-inventory.txt
+            /tmp/slider-validation/*.json
+            /tmp/slider-validation/*.log
+          retention-days: 14
+  publish:
+    needs: [source, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: python3 .github/prepare-slider.py
+      - name: Save tested source on isolated work branch only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, subprocess
+          files = json.loads(Path('/tmp/slider-validation/source-identity.json').read_text())['files']
+          subprocess.run(['git','add','--',*files],check=True)
+          subprocess.run(['git','rm','.github/slider-part0.b64','.github/slider-part1.b64','.github/prepare-slider.py'],check=True)
+          PY
+          git diff --cached --check
+          test -z "$(git diff --cached --name-only HEAD -- .github/workflows)"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Save qualified slider candidate'
+          git rev-parse HEAD > /tmp/slider-validation/work-commit.txt
+          git rev-parse HEAD^{tree} > /tmp/slider-validation/work-tree.txt
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c core.hooksPath=/dev/null -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/work/bend-slider-laws-20260920
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: slider-law-published-identity
+          path: |
+            /tmp/slider-validation/source-identity.json
+            /tmp/slider-validation/work-*.txt
+          retention-days: 14

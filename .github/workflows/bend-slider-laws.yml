@@ -1,0 +1,60 @@
+name: Bend slider source laws
+on:
+  pull_request:
+    paths:
+      - 'native/bend_engine/standalone/**'
+      - 'native/bend_engine/bitboard_probe/Sliders.bend'
+      - '.github/workflows/bend-slider-laws.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'native/bend_engine/standalone/**'
+      - 'native/bend_engine/bitboard_probe/Sliders.bend'
+      - '.github/workflows/bend-slider-laws.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bend-laws-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-laws:
+    name: Production slider laws and rejection controls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Fetch the manifest's exact compiler revision
+        run: |
+          here=native/bend_engine/standalone
+          revision="$(bun "$here/verify_compiler.js" --revision)"
+          repository="$(bun "$here/verify_compiler.js" --repository)"
+          git init /tmp/deepfin-laws-compiler
+          git -C /tmp/deepfin-laws-compiler fetch --depth 1 "$repository" "$revision"
+          git -C /tmp/deepfin-laws-compiler checkout --detach FETCH_HEAD
+          bun "$here/verify_compiler.js" /tmp/deepfin-laws-compiler
+      - run: bun test native/bend_engine/standalone/verify_compiler.test.js
+      - name: Check complete source laws, not compiled test answers
+        run: |
+          mkdir -p artifacts/bend-slider-laws
+          git rev-parse HEAD > artifacts/bend-slider-laws/commit.txt
+          git rev-parse HEAD^{tree} > artifacts/bend-slider-laws/tree.txt
+          if bun native/bend_engine/standalone/verify_laws.js /tmp/deepfin-laws-compiler --report artifacts/bend-slider-laws/proofs.json > artifacts/bend-slider-laws/checker.log 2>&1; then
+            cat artifacts/bend-slider-laws/checker.log
+          else
+            cat artifacts/bend-slider-laws/checker.log
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-slider-source-laws
+          path: artifacts/bend-slider-laws
+          retention-days: 14
