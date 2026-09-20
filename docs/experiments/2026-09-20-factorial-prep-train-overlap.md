@@ -1,6 +1,6 @@
 # Overlap factorial target preparation with baseline A training
 
-Status: independently reviewed and approved; safe stage handoff requested, queue adoption pending its completion.
+Status: adopted on 2026-09-20 after independent review and a completed whole-stage handoff. The composite job is queued; no fresh A training or full B/C/D preparation result is claimed yet.
 
 The serial queue otherwise waits for all B/C/D targets before starting A, although A uses the existing unchanged 58,090,688-row, 7,108-shard V50 corpus. A combined coordinator runs CPU target preparation and fresh baseline A concurrently. This changes scheduling only: A retains its exact trainer arguments, seed 121, output path, initialization anchor, one-epoch row order, frozen runtime and hourly recovery checkpoints. B/C/D still require the original full target-preparation completion and their overlay qualifications.
 
@@ -15,3 +15,5 @@ Independent review checked command equality, donor bindings, lock/cleanup behavi
 Adoption requires all four affected items still queued. Under the operator lock it checks their exact old definitions and writes/fsyncs the permanent handoff marker; it releases that lock while waiting for the current whole stage. Only after acquiring preparation ownership and rechecking the queue does it replace preparation and the two arena descriptors, remove the standalone A item, and preserve every other entry. If original preparation starts first, adoption aborts.
 
 [Staged identities](artifacts/2026-09-20-factorial-prep-train-overlap/staging.json), [configuration](artifacts/2026-09-20-factorial-prep-train-overlap/config.json), [registered descriptor](artifacts/2026-09-20-factorial-prep-train-overlap/registered_command.json), and [exact queue changes](artifacts/2026-09-20-factorial-prep-train-overlap/queue_replacements.json). Host controls: `/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920`. Bulk inputs and all frozen active runtimes remain in place.
+
+[Adoption receipt](artifacts/2026-09-20-factorial-prep-train-overlap/adopted.json): post-transaction readback verifies all three exact replacements, removal of standalone A, and equality of every unaffected queue item. No active worker was interrupted. Final independent source review passed `65186f01feba8da0fe80d2c6728f3846ed8722f0`; later commits only publish documentation and receipts.

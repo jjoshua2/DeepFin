@@ -1,0 +1,81 @@
+{
+  "status": "ADOPTED_AFTER_REVIEWED_STAGE_HANDOFF",
+  "unix": 1789880817.648691,
+  "changes": {
+    "replacements": {
+      "factorial58_target_preparation": {
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/registered_command.json",
+        "command_sha256": "d6819f7aa03e892cd972a5a9be4521db1894cd1b206bab255d56b1841948ee1d",
+        "id": "factorial58_target_preparation",
+        "kind": "registered_command",
+        "max_seconds": 140220,
+        "out": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/scheduler_run",
+        "status": "queued",
+        "estimated_active_seconds": 39600
+      },
+      "factorial58_B_A_400sims": {
+        "id": "factorial58_B_A_400sims",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/scheduler_run",
+        "max_seconds": 3660,
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/arenas/B_A/registered_command.json",
+        "command_sha256": "a8427c8cad55e863e6ba74682aaee8ba25c79a0d9f951c92b8a7e006651bdce5"
+      },
+      "factorial58_C_A_400sims": {
+        "id": "factorial58_C_A_400sims",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/scheduler_run",
+        "max_seconds": 3660,
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/arenas/C_A/registered_command.json",
+        "command_sha256": "4aff3d1a9ae718d194cf57abce87dec163c3e361177c708821169fde50e7a700"
+      }
+    },
+    "remove": "factorial58_fresh_A",
+    "expected_before": {
+      "factorial58_target_preparation": {
+        "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/registered_command.json",
+        "command_sha256": "ff0b1215a9a57b85bcf6b74f129f56717bb18d4fc9583c83e1ec64bc6a831721",
+        "id": "factorial58_target_preparation",
+        "kind": "registered_command",
+        "max_seconds": 60420,
+        "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/scheduler_run",
+        "status": "queued"
+      },
+      "factorial58_fresh_A": {
+        "id": "factorial58_fresh_A",
+        "kind": "registered_command",
+        "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/scheduler_run",
+        "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/registered_command.json",
+        "command_sha256": "a4a5b3b8dc1f84f9f4da4dd12ef887a1fb0bed615423e83ddba6584af9706206",
+        "max_seconds": 79860,
+        "status": "queued",
+        "arm": "A",
+        "expected_rows": 58090688,
+        "seed": 121,
+        "estimated_active_seconds": 36000
+      },
+      "factorial58_B_A_400sims": {
+        "id": "factorial58_B_A_400sims",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/scheduler_run",
+        "max_seconds": 3660,
+        "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/registered_command.json",
+        "command_sha256": "f7eb8a7c50065a5bd82ea8effd4f806a7da6f4941608b44678e4b39518eda54f"
+      },
+      "factorial58_C_A_400sims": {
+        "id": "factorial58_C_A_400sims",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/scheduler_run",
+        "max_seconds": 3660,
+        "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/registered_command.json",
+        "command_sha256": "bdb268ea9f0472e8930eda1598a4e51378276aa069a458a3c6442e240e2bc623"
+      }
+    }
+  },
+  "other_items_preserved": true,
+  "handoff": "/home/josh/chess-artifacts/operations/factorial58-preparation-overlap-20260920/ownership/handoff.request"
+}
