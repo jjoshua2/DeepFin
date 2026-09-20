@@ -1,31 +1,99 @@
-name: Bend-owned draw development
+name: Bend-owned draw confirmation
 on:
   push:
     branches: [feat/bend-owned-draw-rules-dev]
     paths: ['.github/workflows/bend-owned-draw-dev.yml']
 permissions:
-  contents: read
+  contents: write
 jobs:
-  snapshot:
+  confirm:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - run: |
-          mkdir -p /tmp/bend-draw-source
-          git archive --format=tar.gz HEAD > /tmp/bend-draw-source/deepfin.tgz
-          git clone --filter=blob:none --no-checkout https://github.com/jjoshua2/bend.git /tmp/bend-compiler
-          git -C /tmp/bend-compiler checkout --detach fd1df81707fd758f749a9570ccb5b12b1bb2fea3
-          git -C /tmp/bend-compiler archive --format=tar.gz HEAD > /tmp/bend-draw-source/compiler.tgz
-          cp "$(command -v bun)" /tmp/bend-draw-source/bun
-          python -m pip download --no-deps --no-binary=:all: chess==1.11.2 -d /tmp/bend-draw-source
-      - uses: actions/upload-artifact@v4
+      - uses: actions/setup-python@v5
         with:
-          name: bend-owned-draw-source
-          path: /tmp/bend-draw-source/
-          retention-days: 2
+          python-version: '3.13'
+      - name: Apply exactly tested Bend rule and history sources
+        run: |
+          python - <<'PY'
+          import base64, gzip, hashlib, json, urllib.request
+          from pathlib import Path
+          parts = []
+          for sha in ['be070b496bd0072ed0a71b8b5f428a1567161c82', '94b0da2d08c26d4785c5134d1a701f734b4becad', '70169c51dcb7597a85f5fe86aedc6022f83916c8']:
+              with urllib.request.urlopen('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/' + sha, timeout=30) as response:
+                  data = json.load(response)
+              part = base64.b64decode(data['content'])
+              assert hashlib.sha1(f'blob {len(part)}\0'.encode() + part).hexdigest() == sha
+              parts.append(part)
+          patch = gzip.decompress(base64.b64decode(b''.join(parts), validate=True))
+          assert hashlib.sha256(patch).hexdigest() == 'cda3986f47af92efc1e43194634125b11ebd19d8d277b3599eadcc5a015098d1'
+          Path('/tmp/bend-owned-draw.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/bend-owned-draw.patch
+          git apply /tmp/bend-owned-draw.patch
+          git diff --check
+      - name: External oracle and static checks only
+        run: |
+          python -m pip install 'python-chess==1.999' 'ruff==0.15.20' 'basedpyright==1.39.9'
+          ruff check native/bend_engine/standalone/verify_rules.py native/bend_engine/standalone/verify.py
+          basedpyright native/bend_engine/standalone/verify_rules.py native/bend_engine/standalone/verify.py
+          bun test native/bend_engine/standalone/verify_compiler.test.js
+      - name: Build using today's manifest-pinned U64 fork
+        run: |
+          bash native/bend_engine/standalone/build.sh /tmp/bend-owned-draws
+          mkdir -p artifacts
+          cp /tmp/bend-owned-draws/build.txt artifacts/bend-draw-build.txt
+      - name: Generic rules and unchanged standalone regression
+        run: |
+          python native/bend_engine/standalone/verify_rules.py --report artifacts/bend-draw-generic.json --command /tmp/bend-owned-draws/deepfin-bend --threads 1
+          python native/bend_engine/standalone/verify.py --report artifacts/bend-original-generic.json --command /tmp/bend-owned-draws/deepfin-bend --threads 1
+      - name: Portable native and UBSan rules and original regressions
+        run: |
+          for mode in portable native ubsan; do
+            case "$mode" in
+              portable) flags=(-DBEND_U64_PORTABLE) ;;
+              native) flags=(-march=native) ;;
+              ubsan) flags=(-fsanitize=undefined -fno-sanitize-recover=all) ;;
+            esac
+            clang -std=c11 -O1 -ffp-contract=off -Werror=shift-count-overflow "${flags[@]}" /tmp/bend-owned-draws/engine.c -pthread -lm -o "/tmp/bend-owned-draws/$mode"
+            python native/bend_engine/standalone/verify_rules.py --report "artifacts/bend-draw-$mode.json" --command "/tmp/bend-owned-draws/$mode" --threads 1
+            python native/bend_engine/standalone/verify.py --report "artifacts/bend-original-$mode.json" --command "/tmp/bend-owned-draws/$mode" --threads 1
+          done
+      - name: Same tests with only a static executable inside the runtime
+        run: |
+          clang -std=c11 -O1 -ffp-contract=off -Werror=shift-count-overflow -static /tmp/bend-owned-draws/engine.c -pthread -lm -o /tmp/bend-owned-draws/static
+          if readelf -l /tmp/bend-owned-draws/static | grep -q INTERP; then echo 'dynamic interpreter remains'; exit 1; fi
+          runtime="$(mktemp -d /tmp/bend-draw-runtime.XXXXXX)"
+          cp /tmp/bend-owned-draws/static "$runtime/deepfin-bend"
+          test "$(find "$runtime" -mindepth 1 | wc -l)" = 1
+          python native/bend_engine/standalone/verify_rules.py --report artifacts/bend-draw-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          python native/bend_engine/standalone/verify.py --report artifacts/bend-original-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          {
+            file "$runtime/deepfin-bend"
+            find "$runtime" -mindepth 1 -printf '%P\n'
+            sha256sum "$runtime/deepfin-bend" /tmp/bend-owned-draws/engine.c
+            printf 'Only this static executable is inside the runtime root; Python oracle/client remains outside.\n'
+          } > artifacts/bend-draw-isolation.txt
+      - name: Publish the exact tested source without development workflow history
+        run: |
+          git fetch --no-tags --depth=1 origin 496284b233de9cc3727ddd4b79dc5720d6ed945e
+          git read-tree 496284b233de9cc3727ddd4b79dc5720d6ed945e
+          git add native/bend_engine/standalone/Rules.bend native/bend_engine/standalone/SearchHistory.bend native/bend_engine/standalone/main.bend native/bend_engine/standalone/Protocol.bend native/bend_engine/standalone/README.md native/bend_engine/standalone/verify_rules.py docs/experiments/README.md docs/experiments/2026-09-20-bend-owned-draws.md
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          commit="$(git commit-tree "$(git write-tree)" -p 496284b233de9cc3727ddd4b79dc5720d6ed945e -m 'Move standalone history rules and automatic draw decisions into Bend')"
+          git push origin "$commit":refs/heads/feat/bend-owned-draw-rules
+          printf '%s\n' "$commit" > artifacts/bend-draw-commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-owned-draw-confirmation
+          path: |
+            artifacts/bend-draw-*
+            artifacts/bend-original-*
+          retention-days: 30
