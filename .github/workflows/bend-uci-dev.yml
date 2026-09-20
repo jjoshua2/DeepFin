@@ -20,7 +20,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Apply the exact locally checked UCI implementation
+      - name: Apply source-checked implementation and nullable-client guards
         run: |
           python - <<'PY'
           import base64, gzip, hashlib, json, urllib.request
@@ -39,6 +39,22 @@ jobs:
           PY
           git apply --check /tmp/bend-uci.patch
           git apply /tmp/bend-uci.patch
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path('native/bend_engine/uci_probe/run_probe.py')
+          s = p.read_text()
+          changes = [
+              ('                assert (result.move in root.legal_moves) if any(root.legal_moves) else result.move == chess.Move.null()', '                assert result.move is not None\n                assert (result.move in root.legal_moves) if any(root.legal_moves) else result.move == chess.Move.null()'),
+              ('            assert analysis.wait().move in chess.Board().legal_moves', '            stopped = analysis.wait()\n            assert stopped.move is not None\n            assert stopped.move in chess.Board().legal_moves'),
+              ('            assert clocked.move in chess.Board().legal_moves', '            assert clocked.move is not None\n            assert clocked.move in chess.Board().legal_moves'),
+          ]
+          for old, new in changes:
+              assert s.count(old) == 1
+              s = s.replace(old, new)
+          p.write_text(s)
+          assert hashlib.sha256(p.read_bytes()).hexdigest() == '021e06cec08adb95d1b5c3605b2e6a81899ef526dda9ebf24abf7b3adac4adee'
+          PY
           git diff --check
       - name: Install isolated CPU environment and source-pinned compiler
         run: |
