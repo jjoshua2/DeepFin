@@ -45,5 +45,61 @@ core-minutes. Total wall cap30min. Shutdown authenticates owned PID start times,
 including Stockfish's separate sessions, and checks no live owned process survives.
 No resume, in-place source rewrite, or GPU launch is permitted.
 
-Local artifacts: `scratchpad/bt4_joint20/generation_throughput_20260920/`.
-Current status: preparation only; launch held until disk reserve restored.
+## Completed short screen
+
+Run v3 completed all six cells in 611.1 seconds: 1,345.1 observed descendant
+CPU-seconds plus 7.47 controller CPU-seconds. All 4,513 banked rows passed the
+production eligibility checks; none lacked results or failed validation.
+
+| Policy | Active workers | Closed rows | Closed shards | Eligible rows/s |
+|---|---:|---:|---:|---:|
+| G10 | 1 | 261 | 1 | 2.59 |
+| d8 | 1 | 383 | 1 | 3.80 |
+| G10 | 2 | 261 | 1 | 2.58 |
+| d8 | 2 | 1,285 | 3 | 12.74 |
+| G10 | 4 | 261 | 1 | 2.58 |
+| d8 | 4 | 2,062 | 5 | 20.40 |
+
+D8 with four workers supplied about 73.5k eligible rows/hour during this short
+window. That is a useful measured direction, but the apparent 7.9x advantage
+over G10 at four workers is **not an established steady-state speedup**. Every
+G10 cell closed exactly the same one-game, 261-row shard before the 100-second
+cutoff. Additional workers spent their budget on games that had not closed.
+These results cannot establish G10 concurrency scaling. D8 concurrency results
+also mix execution scaling with game-completion boundaries.
+
+A longer equal-concurrency comparison that closes several games per worker is
+the next informative measurement; do not extrapolate the G10 denominator or
+claim this screen establishes a monthly 500M-generation rate. Even d8's measured
+20.4 rows/s is below the approximately 161 rows/s planning target. This is
+whole generation plus full-width SF banking, not just labeling previously
+available positions, and does not measure eventual network strength.
+
+## Failure recovery and validation
+
+The first attempt failed in readout because direct-file Python execution found
+a user-site `scripts` package. Setting `PYTHONPATH` inside the already running
+interpreter did not repair its import path. The second failed because readout
+expected numeric staircase widths, while the production manifest writes string
+width labels. Both failed runs remain preserved. Their first G10 cells each
+contain 261 closed rows, all recoverable and valid under the corrected reader;
+neither failed attempt is counted as a completed comparison.
+
+The fixes bind imports to the pinned runtime and test manifests produced by the
+actual generator. Seven focused tests passed and were independently rerun. They
+include a real registered-interpreter readout with blank PYTHONPATH and foreign
+working directory, plus escaped-process ownership/cleanup. The trigger separately
+passed stubborn-root, setsid-grandchild, unrelated-child preservation, and natural
+root-exit cleanup checks. No GPU queue or existing corpus was changed.
+
+Frozen benchmark source: `401a93bf8`. Compact full cell evidence, plan hash and
+receipt hash: [JSON artifact](artifacts/2026-09-20-sf-throughput-v3.json).
+Raw results are under
+`/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v3`;
+plans, logs and recovered-failure readouts are under
+`/home/josh/chess-artifacts/operations/sf_generation_throughput_v3_20260920`.
+The corpus and operations siblings for v1/v2 preserve the failed attempts.
+
+A longer follow-up is authorized and being prepared: two 10-minute cells, G10
+and d8 at four concurrent workers, within the same eight-CPU affinity and disk/
+RAM limits. Its increased CPU budget will be explicit and independently reviewed.
