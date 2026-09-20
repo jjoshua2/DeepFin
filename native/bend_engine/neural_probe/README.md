@@ -375,3 +375,26 @@ Mate/stalemate are native decisions. It does not solve general dead positions or
 add optional threefold/50-move claim actions to search; the controller's optional
 played-root claim policy is unchanged. See the [terminal reply contract](../session_probe/README.md#automatic-draw-leaves-host-history-native-terminal-cache).
 Additional Python history/rules work is not an end-to-end speedup claim.
+
+## Let search choose whether to claim a draw
+
+`play_probe --claims search_choice` enables optional threefold/fifty-move choices
+at all requested leaves, including prospective claims with an intended-move
+witness. Unlike `claim_available`, it does not automatically end a claimable root
+before searching: winning continuations remain legal candidates. The default
+`automatic` policy is unchanged; ordinary batched Actor callers are unchanged
+unless constructed with `allow_claims=True`.
+
+A selected claim has reserved action key 131072, NOT a neural policy index or UCI
+move. The controller rechecks the current root's claim evidence and ends the PGN
+as a claimed draw, without advancing the root or pushing an intended witness.
+The JSON end record includes that witness and `optional_claim_leaves` records
+the evidence offered to search. Cancellation never converts pending claim metadata
+into an accepted option; the next epoch resets that metadata.
+
+Use the existing trusted, matched checkpoint and package, for example append
+`--claims search_choice` to the single-game play command above. This is an opt-in
+experimental decision policy, not a proven guarantee of optimal claim behavior.
+A positive sampled continuation can be wrong. No trained/CUDA or strength result
+is implied. The exact native representation and tests are documented in the
+[session claim contract](../session_probe/README.md#optional-claim-action-explicit-opt-in).
