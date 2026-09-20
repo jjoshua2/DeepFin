@@ -30,6 +30,7 @@ an arbitrary skewed corpus.
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 import math
 import struct
 from collections import deque
@@ -38,6 +39,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+from collections.abc import Generator
 
 import numpy as np
 
@@ -50,6 +52,7 @@ from .shard import (
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
     iter_shard_paths,
     load_shard_arrays,
+    open_shard_arrays,
     validate_active_optional_values_present,
 )
 
@@ -151,6 +154,7 @@ class GameEpochPlan:
     batch_rows: np.ndarray = field(repr=False)
     resident_bytes_after_batch: np.ndarray = field(repr=False)
     host_overlap_reserve_bytes: int = 0
+    corpus_identity: str = CORPUS_IDENTITY
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -186,7 +190,7 @@ class GameEpochPlan:
             "validated_load_payload_copies": int(
                 self.validated_load_payload_copies
             ),
-            "corpus_identity": CORPUS_IDENTITY,
+            "corpus_identity": self.corpus_identity,
             "corpus_sha256": self.corpus_sha256,
             "objective_mask_weights": {
                 name: float(weight) for name, weight in self.objective_mask_weights
@@ -272,6 +276,9 @@ def _seeded_rng(seed: int, stream: int) -> np.random.Generator:
 
 
 def _shard_content_sha256(path: Path) -> str:
+    from .packed_zarr import is_packed, content_sha256
+    if is_packed(path):
+        return content_sha256(path)
     from .target_overlay import has_overlay, plain_content_sha256
     if has_overlay(path):
         raise ValueError("overlay requires explicit exact-epoch storage admission")
@@ -279,6 +286,9 @@ def _shard_content_sha256(path: Path) -> str:
 
 
 def _storage_hash(path: Path, allow_target_overlay: bool, overlay_seal: BaseSeal | None = None) -> str:
+    from .packed_zarr import is_packed, content_sha256
+    if is_packed(path):
+        return content_sha256(path)
     from .target_overlay import has_overlay, overlay_content_sha256
     if allow_target_overlay and has_overlay(path):
         return overlay_content_sha256(path, seal=overlay_seal)
@@ -289,6 +299,18 @@ def _storage_load(path: Path, allow_target_overlay: bool, *, lazy: bool, overlay
     if allow_target_overlay:
         return load_shard_arrays(path, lazy=lazy, allow_target_overlay=True, overlay_seal=overlay_seal)
     return load_shard_arrays(path, lazy=lazy)
+
+
+@contextmanager
+def _storage_arrays(path: Path, allow_target_overlay: bool, *, overlay_seal: BaseSeal | None = None
+                    ) -> Generator[tuple[dict[str, Any], dict[str, Any]], None, None]:
+    from .packed_zarr import is_packed
+    if is_packed(path):
+        with open_shard_arrays(path, lazy=True, allow_target_overlay=allow_target_overlay,
+                               overlay_seal=overlay_seal) as result:
+            yield result
+    else:
+        yield _storage_load(path, allow_target_overlay, lazy=True, overlay_seal=overlay_seal)
 
 
 def _corpus_sha256(records: Sequence[_ShardGames]) -> str:
@@ -398,86 +420,85 @@ def _scan_shard(path: Path, *, allow_target_overlay: bool = False, overlay_seal:
     # link later could otherwise move an exact plan to another source tree.
     path = path.resolve(strict=True)
     content_sha256 = _storage_hash(path, allow_target_overlay, overlay_seal)
-    arrs, _ = _storage_load(path, allow_target_overlay, lazy=True, overlay_seal=overlay_seal)
-    input_history_encoding, history_rep_fix = _input_history_identity(
-        arrs, path=path,
-    )
-    if "x" not in arrs:
-        raise ValueError(f"{path} carries no x array")
-    x_shape = tuple(int(dim) for dim in arrs["x"].shape)
-    if len(x_shape) < 2:
-        raise ValueError(f"{path} x shape {x_shape} has no input-plane axis")
-    rows = int(x_shape[0])
-    input_planes = int(x_shape[1])
-    if "policy_target" not in arrs:
-        raise ValueError(f"{path} carries no policy_target array")
-    policy_shape = tuple(int(dim) for dim in arrs["policy_target"].shape)
-    if len(policy_shape) != 2 or policy_shape[0] != rows:
-        raise ValueError(
-            f"{path} policy_target shape {policy_shape} does not match {rows} rows",
+    with _storage_arrays(path, allow_target_overlay, overlay_seal=overlay_seal) as (arrs, _):
+        input_history_encoding, history_rep_fix = _input_history_identity(
+            arrs, path=path,
         )
-    policy_size = int(policy_shape[1])
-    if rows == 0:
-        # A quarantine index reservation is intentionally rowless. Optional
-        # per-row columns are pruned when it is written, so recognize the
-        # marker before requiring game identity that no row could consume.
+        if "x" not in arrs:
+            raise ValueError(f"{path} carries no x array")
+        x_shape = tuple(int(dim) for dim in arrs["x"].shape)
+        if len(x_shape) < 2:
+            raise ValueError(f"{path} x shape {x_shape} has no input-plane axis")
+        rows = int(x_shape[0])
+        input_planes = int(x_shape[1])
+        if "policy_target" not in arrs:
+            raise ValueError(f"{path} carries no policy_target array")
+        policy_shape = tuple(int(dim) for dim in arrs["policy_target"].shape)
+        if len(policy_shape) != 2 or policy_shape[0] != rows:
+            raise ValueError(
+                f"{path} policy_target shape {policy_shape} does not match {rows} rows",
+            )
+        policy_size = int(policy_shape[1])
+        if rows == 0:
+            # A quarantine index reservation is intentionally rowless. Optional
+            # per-row columns are pruned when it is written, so recognize the
+            # marker before requiring game identity that no row could consume.
+            return _ShardGames(
+                path=path,
+                rows=0,
+                input_planes=input_planes,
+                policy_size=policy_size,
+                input_history_encoding=input_history_encoding,
+                history_rep_fix=history_rep_fix,
+                game_ids=np.empty(0, dtype=np.int64),
+                game_keys=np.empty(0, dtype=np.int64),
+                game_counts=np.empty(0, dtype=np.int64),
+                row_bytes=0,
+                scalar_bytes=0,
+                row_field_bytes=(),
+                content_sha256=content_sha256,
+            )
+        validate_active_optional_values_present(arrs)
+        if "game_id" not in arrs or "has_game_id" not in arrs:
+            raise ValueError(
+                f"{path} carries {rows} rows but no game_id/has_game_id columns; "
+                "game-aware sampling cannot guess the independence unit",
+            )
+        has_game = np.asarray(arrs["has_game_id"], dtype=bool)
+        if has_game.shape != (rows,):
+            raise ValueError(
+                f"{path} has_game_id shape {has_game.shape}, expected ({rows},)",
+            )
+        missing = int(rows - np.count_nonzero(has_game))
+        if missing:
+            raise ValueError(
+                f"{path} has {missing}/{rows} rows without game_id; exact game-aware "
+                "sampling refuses a partially identified corpus",
+            )
+        game_id = np.asarray(arrs["game_id"], dtype=np.int64)
+        if game_id.shape != (rows,):
+            raise ValueError(
+                f"{path} game_id shape {game_id.shape}, expected ({rows},)",
+            )
+        games, counts = np.unique(game_id, return_counts=True)
+        row_bytes, scalar_bytes, row_field_bytes = _declared_storage_bytes(
+            arrs, rows=rows,
+        )
         return _ShardGames(
             path=path,
-            rows=0,
+            rows=rows,
             input_planes=input_planes,
             policy_size=policy_size,
             input_history_encoding=input_history_encoding,
             history_rep_fix=history_rep_fix,
-            game_ids=np.empty(0, dtype=np.int64),
-            game_keys=np.empty(0, dtype=np.int64),
-            game_counts=np.empty(0, dtype=np.int64),
-            row_bytes=0,
-            scalar_bytes=0,
-            row_field_bytes=(),
+            game_ids=np.asarray(games, dtype=np.int64),
+            game_keys=np.asarray(games, dtype=np.int64),
+            game_counts=np.asarray(counts, dtype=np.int64),
+            row_bytes=row_bytes,
+            scalar_bytes=scalar_bytes,
+            row_field_bytes=row_field_bytes,
             content_sha256=content_sha256,
         )
-    validate_active_optional_values_present(arrs)
-    if "game_id" not in arrs or "has_game_id" not in arrs:
-        raise ValueError(
-            f"{path} carries {rows} rows but no game_id/has_game_id columns; "
-            "game-aware sampling cannot guess the independence unit",
-        )
-    has_game = np.asarray(arrs["has_game_id"], dtype=bool)
-    if has_game.shape != (rows,):
-        raise ValueError(
-            f"{path} has_game_id shape {has_game.shape}, expected ({rows},)",
-        )
-    missing = int(rows - np.count_nonzero(has_game))
-    if missing:
-        raise ValueError(
-            f"{path} has {missing}/{rows} rows without game_id; exact game-aware "
-            "sampling refuses a partially identified corpus",
-        )
-    game_id = np.asarray(arrs["game_id"], dtype=np.int64)
-    if game_id.shape != (rows,):
-        raise ValueError(
-            f"{path} game_id shape {game_id.shape}, expected ({rows},)",
-        )
-    games, counts = np.unique(game_id, return_counts=True)
-    row_bytes, scalar_bytes, row_field_bytes = _declared_storage_bytes(
-        arrs, rows=rows,
-    )
-    return _ShardGames(
-        path=path,
-        rows=rows,
-        input_planes=input_planes,
-        policy_size=policy_size,
-        input_history_encoding=input_history_encoding,
-        history_rep_fix=history_rep_fix,
-        game_ids=np.asarray(games, dtype=np.int64),
-        game_keys=np.asarray(games, dtype=np.int64),
-        game_counts=np.asarray(counts, dtype=np.int64),
-        row_bytes=row_bytes,
-        scalar_bytes=scalar_bytes,
-        row_field_bytes=row_field_bytes,
-        content_sha256=content_sha256,
-    )
-
 
 def _scan_shards(paths: Sequence[Path], workers: int, *, allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None) -> list[_ShardGames]:
     resolved_paths: list[Path] = []
@@ -567,8 +588,8 @@ def _attach_objective_mask_weights(
     for record in records:
         weights: tuple[tuple[str, float], ...] = ()
         if counter is not None:
-            arrs, _ = _storage_load(record.path, allow_target_overlay, lazy=True, overlay_seal=overlay_seal)
-            raw = counter(arrs)
+            with _storage_arrays(record.path, allow_target_overlay, overlay_seal=overlay_seal) as (arrs, _):
+                raw = counter(arrs)
             weights = tuple(
                 (str(name), float(value)) for name, value in raw.items()
             )
@@ -1135,8 +1156,13 @@ class GameAwareEpochBuffer:
         objective_mask_counter: ObjectiveMaskCounter | None = None,
         host_batch_overlap: bool = False,
         overlay_storage_qualification: dict[str, str] | None = None,
+        allow_packed_zarr: bool = False,
     ) -> None:
-        paths = iter_shard_paths(shard_dir)
+        if allow_packed_zarr:
+            from .packed_zarr import shard_paths
+            paths = shard_paths(Path(shard_dir))
+        else:
+            paths = iter_shard_paths(shard_dir)
         allow_target_overlay = overlay_storage_qualification is not None
         qualified: dict[Path, str] | None = None
         self._overlay_seal: BaseSeal | None = None
@@ -1202,6 +1228,11 @@ class GameAwareEpochBuffer:
             mirror_augmentation=bool(mirror_augmentation),
             host_batch_overlap=bool(host_batch_overlap),
         )
+        if any(record.path.name.endswith(".zarr.zip") for record in records):
+            self.plan = replace(self.plan, corpus_identity=(
+                "sha256(resolved shard paths + per-shard sha256: ordinary tree names/sizes/bytes "
+                "or complete ZIP_STORED archive bytes)"
+            ))
         self.host_batch_overlap = bool(host_batch_overlap)
         self._batch_size = int(batch_size)
         self._input_planes = required_input_planes

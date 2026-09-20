@@ -849,3 +849,6 @@ record the exclusion evidence pins, and completed coverage must equal the audit'
 physical, eligible, no-result and exclusion counts. Use a fresh output directory.
 A filtered corpus needs its own later schedule qualification; this command does
 not reuse a previous corpus's training schedule or allocate training.
+
+Packed ordinary Zarr has an explicit exact-epoch API and read-only qualification
+command; see [packed Zarr](packed_zarr.md). Directory replay remains the default.

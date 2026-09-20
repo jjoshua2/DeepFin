@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from contextlib import contextmanager
 import json
 import os
 import secrets
@@ -10,6 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from collections.abc import Callable, Mapping
 from typing import Any
+from collections.abc import Generator
 
 import numpy as np
 import zarr
@@ -1868,13 +1870,53 @@ def save_local_shard_arrays(
     return p
 
 
+@contextmanager
+def open_shard_arrays(
+    path: str | Path, *, lazy: bool = False, validate: bool = True,
+    allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None,
+) -> Generator[tuple[dict[str, Any], dict[str, Any]], None, None]:
+    """Scope lazy archive arrays to an explicit owner; directory reads are unchanged."""
+    from .packed_zarr import is_packed, open_store
+    p = Path(path)
+    if is_packed(p):
+        if overlay_seal is not None:
+            raise ValueError("packed ordinary shards cannot carry an overlay seal")
+        with open_store(p) as store:
+            yield _load_shard_arrays(p, lazy=lazy, validate=validate,
+                                     allow_target_overlay=allow_target_overlay,
+                                     overlay_seal=overlay_seal, _store=store)
+    else:
+        yield _load_shard_arrays(p, lazy=lazy, validate=validate,
+                                 allow_target_overlay=allow_target_overlay,
+                                 overlay_seal=overlay_seal)
+
+
 def load_shard_arrays(
+    path: str | Path, *, lazy: bool = False, validate: bool = True,
+    allow_target_overlay: bool = False, overlay_seal: BaseSeal | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load ordinary/qualified overlay shards; packed lazy reads require ownership.
+
+    Use ``with open_shard_arrays(..., lazy=True)`` for packed Zarr declarations.
+    Eager archives close before return, including on decoder/validation errors.
+    """
+    from .packed_zarr import is_packed
+    if lazy and is_packed(Path(path)):
+        raise ValueError("lazy packed Zarr requires the open_shard_arrays context")
+    with open_shard_arrays(path, lazy=lazy, validate=validate,
+                           allow_target_overlay=allow_target_overlay,
+                           overlay_seal=overlay_seal) as result:
+        return result
+
+
+def _load_shard_arrays(
     path: str | Path,
     *,
     lazy: bool = False,
     validate: bool = True,
     allow_target_overlay: bool = False,
     overlay_seal: BaseSeal | None = None,
+    _store: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load a shard's arrays + meta, dispatching on suffix.
 
@@ -1924,7 +1966,7 @@ def load_shard_arrays(
     if is_overlay:
         proxies, meta = overlay_proxies(p, _SHARD_FIELDS, seal=overlay_seal)
     else:
-        g = zarr.open_group(str(p), mode="r")
+        g = zarr.open_group(_store if _store is not None else str(p), mode="r")
         meta = dict(g.attrs.asdict())
         proxies = {name: g[name] for name in _SHARD_FIELDS if name in g}
     # Untrusted-deserialization guard (issue #411): reject object dtypes and
