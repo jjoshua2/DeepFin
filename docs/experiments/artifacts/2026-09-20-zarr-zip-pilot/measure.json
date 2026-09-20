@@ -1,0 +1,137 @@
+{
+  "phase": "measure",
+  "complete": true,
+  "scope": "Validated eager decoder only; no sampler integration; uncontrolled caches; fixed-order single pass",
+  "copy_receipt_sha256": "116c6753e907cc1ed257af9044a62024bacf793e52e9bf449a104edc193413d4",
+  "runtime": "/tmp/deepfin-factorial58-runtime",
+  "runtime_head": "502cd02e072471c901255f3fdb580d6ea7b826d0",
+  "loader_sha256": "2af196fdd669eb1fe050ce4fe7f5a68c479aa0b3736d7a86b902abc4cc141d8c",
+  "script_sha256": "091a3d6a88f53af7d7fa94824d6328c691ed64ccb4147c559aab341e416bfc23",
+  "records": [
+    {
+      "medium": "nvme",
+      "layout": "zarr",
+      "rows": 131072,
+      "validated_decode_seconds": 6.399765478039626,
+      "wall_seconds_including_digest": 11.563102435029577
+    },
+    {
+      "medium": "nvme",
+      "layout": "zip",
+      "rows": 131072,
+      "validated_decode_seconds": 6.498577422986273,
+      "wall_seconds_including_digest": 12.045139425026719
+    },
+    {
+      "medium": "nvme",
+      "layout": "npz",
+      "rows": 131072,
+      "validated_decode_seconds": 10.784264235931914,
+      "wall_seconds_including_digest": 15.677866752026603
+    },
+    {
+      "medium": "external",
+      "layout": "zarr",
+      "rows": 131072,
+      "validated_decode_seconds": 56.182854539947584,
+      "wall_seconds_including_digest": 61.725204329006374
+    },
+    {
+      "medium": "external",
+      "layout": "zip",
+      "rows": 131072,
+      "validated_decode_seconds": 6.856092213187367,
+      "wall_seconds_including_digest": 11.786558702995535
+    },
+    {
+      "medium": "external",
+      "layout": "npz",
+      "rows": 131072,
+      "validated_decode_seconds": 14.601738212979399,
+      "wall_seconds_including_digest": 19.57578883098904
+    }
+  ],
+  "transfers": [
+    {
+      "shard": "shard_000000.zarr",
+      "copy_seconds": 0.22438342700479552,
+      "bytes": 5277714
+    },
+    {
+      "shard": "shard_000001.zarr",
+      "copy_seconds": 0.09084181900834665,
+      "bytes": 5253922
+    },
+    {
+      "shard": "shard_000002.zarr",
+      "copy_seconds": 0.0889717799727805,
+      "bytes": 5240711
+    },
+    {
+      "shard": "shard_000003.zarr",
+      "copy_seconds": 0.0875683450140059,
+      "bytes": 5154008
+    },
+    {
+      "shard": "shard_000004.zarr",
+      "copy_seconds": 0.08857095299754292,
+      "bytes": 5213147
+    },
+    {
+      "shard": "shard_000005.zarr",
+      "copy_seconds": 0.08655510499374941,
+      "bytes": 5145840
+    },
+    {
+      "shard": "shard_000006.zarr",
+      "copy_seconds": 0.08819925598800182,
+      "bytes": 5205794
+    },
+    {
+      "shard": "shard_000007.zarr",
+      "copy_seconds": 0.08678825001697987,
+      "bytes": 5245939
+    },
+    {
+      "shard": "shard_000008.zarr",
+      "copy_seconds": 0.08330471900990233,
+      "bytes": 5112431
+    },
+    {
+      "shard": "shard_000009.zarr",
+      "copy_seconds": 0.08399994997307658,
+      "bytes": 5237815
+    },
+    {
+      "shard": "shard_000010.zarr",
+      "copy_seconds": 0.08474537305301055,
+      "bytes": 5186598
+    },
+    {
+      "shard": "shard_000011.zarr",
+      "copy_seconds": 0.08602347900159657,
+      "bytes": 5276648
+    },
+    {
+      "shard": "shard_000012.zarr",
+      "copy_seconds": 0.0854181069880724,
+      "bytes": 5300908
+    },
+    {
+      "shard": "shard_000013.zarr",
+      "copy_seconds": 0.08591715199872851,
+      "bytes": 5249242
+    },
+    {
+      "shard": "shard_000014.zarr",
+      "copy_seconds": 0.08476077602244914,
+      "bytes": 5255356
+    },
+    {
+      "shard": "shard_000015.zarr",
+      "copy_seconds": 0.0874083680100739,
+      "bytes": 5334932
+    }
+  ],
+  "elapsed_seconds": 136.05660892801825
+}
