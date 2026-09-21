@@ -1,0 +1,32 @@
+name: Bend subset index source workspace
+on:
+  push:
+    branches: [feat/bend-subset-index-dev-20260921]
+    paths: ['.github/workflows/bend-subset-index-dev.yml']
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d6503d8d6a0c2b8fa938477b755e8303c0af49f1
+          persist-credentials: false
+      - name: Preserve the exact existing proof and instruction bytes
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/subset-index"
+          git archive --format=tar HEAD CLAUDE.md AGENTS.md docs/development.md docs/branch_lifecycle.md docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-21-bend-subset-source-laws.md native/bend_engine/standalone > "$RUNNER_TEMP/subset-index/continuation-source.tar"
+          git rev-parse HEAD > "$RUNNER_TEMP/subset-index/source-commit.txt"
+          cd "$RUNNER_TEMP/subset-index"
+          sha256sum continuation-source.tar > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-subset-index-source
+          path: ${{ runner.temp }}/subset-index/
+          retention-days: 3
