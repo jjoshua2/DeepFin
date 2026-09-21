@@ -20,7 +20,7 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           activate-environment: true
-      - name: Reconcile the exact reviewed base and apply the tested fixes
+      - name: Reconcile exact base and verify each corrected source
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -45,13 +45,21 @@ jobs:
           assert hashlib.sha1(f'blob {len(raw)}\0'.encode()+raw).hexdigest() == sha
           Path('/tmp/apply-landing-review.py').write_bytes(raw)
           subprocess.run(['python','/tmp/apply-landing-review.py'],check=True)
-          patch = subprocess.check_output(['git','diff','--binary'])
-          assert hashlib.sha256(patch).hexdigest() == 'e5a0c910f8eba99fdaee866aa02b366170b9c8d2ddc666cff74d3e19e2fe7b92'
-          paths = ['native/bend_engine/neural_probe/backend.py','native/bend_engine/neural_probe/checkpoint.py','tests/test_bend_checkpoint.py','tests/test_derive_parallel.py']
-          subprocess.run(['git','add','--',*paths],check=True)
-          assert git('write-tree') == '5a4ceec54269ca365f561689823e52ee0d58e344'
+          expected = {
+              'native/bend_engine/neural_probe/backend.py': 'a7659f688059bc68893639a3d7257aa2cfec6f69',
+              'native/bend_engine/neural_probe/checkpoint.py': '3cb1f7e90bfb54346e72a606e52cee1c552b32c8',
+              'tests/test_bend_checkpoint.py': 'b7e455b437af6fd0960f47537cf038d406f8806a',
+              'tests/test_derive_parallel.py': '573ec7e9b544375df0e1234e37651271490b3e2a',
+          }
+          actual = {path: git('hash-object',path) for path in expected}
           Path('artifacts').mkdir(exist_ok=True)
+          Path('artifacts/landing-source-blobs.json').write_text(json.dumps(actual,indent=2)+'\n')
+          patch = subprocess.check_output(['git','diff','--full-index','--binary'])
           Path('artifacts/landing-review.patch').write_bytes(patch)
+          assert actual == expected, actual
+          assert hashlib.sha256(patch).hexdigest() == '12c0e23d04060c744749975cee2123e2e71c46c2a52f65f2dd44881c5f56c158'
+          subprocess.run(['git','add','--',*expected],check=True)
+          assert git('write-tree') == '5a4ceec54269ca365f561689823e52ee0d58e344'
           PY
           git diff --cached --check
       - name: Locked dependencies and focused static validation
