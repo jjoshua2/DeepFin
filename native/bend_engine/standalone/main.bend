@@ -192,7 +192,7 @@ def finish(hold: Bool, root: Pos.Game, table: Array<U64>, fallback: U32, tree: S
   Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
   picked(hold, root, table, fallback, n, stop, pick(U32.to_nat(used), 0, Pick{pool, 4294967295, 0}))
 
-def stop(root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
+def stop_search(root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
   match mode:
     case Idle{}: IO.pure(State, State{root, table, Idle{}, False{}})
     case Held{key, n, code}: output(root, table, key, n, code)
@@ -342,7 +342,7 @@ def handle(code: U32, args: List<&2, String>, s: State) -> IO(State):
         return s
     case 5:
       State{root, table, mode, quit} = s
-      stop(root, table, mode)
+      stop_search(root, table, mode)
     case 6:
       State{root, table, mode, quit} = s
       IO.pure(State, State{root, table, Idle{}, True{}})
