@@ -1,19 +1,23 @@
-name: Bend subset-law workspace
+name: Bend subset-law confirmation
 on:
   push:
     branches: [feat/bend-subset-laws-dev-20260921]
     paths: ['.github/workflows/bend-subset-laws-dev.yml']
 permissions:
-  contents: read
+  contents: write
 jobs:
-  prepare:
+  qualify:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
     steps:
       - uses: actions/checkout@v4
         with:
           ref: f1e4037b89314a1f787508d7bd0bb60a1dc6e96c
-          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: jjoshua2/bend
@@ -23,25 +27,136 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Verify and package exact source-only workspaces
-        run: |
-          mkdir -p artifacts
-          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee artifacts/compiler-identity.txt
-          git archive --format=tar --prefix=DeepFin/ HEAD | gzip > artifacts/DeepFin-source.tar.gz
-          git -C .compiler archive --format=tar --prefix=bend/ HEAD bend2 tests demos/proof_u64 guide AGENTS.md | gzip > artifacts/bend-source.tar.gz
-          cp "$(readlink -f "$(command -v bun)")" artifacts/bun
-          chmod 755 artifacts/bun
-          git ls-tree -r --name-only HEAD | grep -Ei '(^|/)(LAWS|PROOF)\.bend$|proof|migration' > artifacts/engine-proof-paths.txt || test "$?" = 1
-          (cd artifacts && sha256sum DeepFin-source.tar.gz bend-source.tar.gz bun > SHA256SUMS)
-      - name: Recheck existing U64 source laws and negative controls
+      - name: Apply the exact locally verified source patch
         env:
-          BEND_NO_TELEMETRY: '1'
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/subset-evidence"
+          export EVIDENCE="$RUNNER_TEMP/subset-evidence"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/patch.b64"
+          for blob in f835573590335ce2c59ba4e28d4e5fb0393a91c0 f0a4c3b5fb6fa17ed47ac6e53b8acb4666b7c80d ba411bc9545672c8dfa444bd167e5689418a3d7d; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode >> "$RUNNER_TEMP/patch.b64"
+          done
+          base64 --decode "$RUNNER_TEMP/patch.b64" | gzip -d > "$RUNNER_TEMP/subset.patch"
+          echo "630f5e7d0158cc77ef5a38769559fda2835b9882600eefad742cdf8b5b948c72  $RUNNER_TEMP/subset.patch" | sha256sum --check
+          test "$(git rev-parse HEAD)" = f1e4037b89314a1f787508d7bd0bb60a1dc6e96c
+          git apply --check "$RUNNER_TEMP/subset.patch"
+          git apply --index "$RUNNER_TEMP/subset.patch"
+          git diff --cached --check
+          git diff --cached --stat | tee "$EVIDENCE/change-stat.txt"
+          git diff --cached --name-only > "$EVIDENCE/changed-files.txt"
+          test "$(wc -l < "$EVIDENCE/changed-files.txt")" = 20
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, subprocess
+          files = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines()
+          allowed = {'docs/bend_migration_proofs.md', 'docs/experiments/2026-09-21-bend-subset-source-laws.md', 'docs/experiments/README.md', 'native/bend_engine/standalone/README.md', 'native/bend_engine/standalone/Subsets.bend', 'native/bend_engine/standalone/Tables.bend'}
+          assert all(f in allowed or f.startswith('docs/experiments/evidence/bend-subset-source-laws/') or f.startswith('native/bend_engine/standalone/proofs/') for f in files), files
+          code = [f for f in files if f.startswith('native/') and not f.endswith('.md')]
+          result = subprocess.check_output(['sha256sum', *code], text=True)
+          Path(os.environ['EVIDENCE'], 'candidate-source-sha256.txt').write_text(result)
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Check eight source laws and eleven negative controls
+        id: source
+        run: bun native/bend_engine/standalone/proofs/verify.js "$PWD/.compiler" --report "$EVIDENCE/subset-proofs.json"
+      - name: Compare bounded native enumeration and complete tables in four modes
+        id: native
+        run: bun native/bend_engine/standalone/proofs/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/subset-native.json"
+      - name: Check unchanged compiler-pin contracts and inherited source laws
+        id: inherited_source
+        run: |
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/compiler-pin-tests.txt"
+          cd .compiler
+          bun tests/run/u64_proofs.js | tee "$EVIDENCE/inherited-u64-proofs.json"
+      - name: Retry full inherited U64 native and regression gate
+        id: inherited_native
+        timeout-minutes: 7
         run: |
           cd .compiler
-          bun tests/run/u64_proofs.js | tee ../artifacts/inherited-u64-proofs.json
-      - uses: actions/upload-artifact@v4
-        if: always()
+          U64_CASES=1024 bun tests/run/u64_verify.js --regressions | tee "$EVIDENCE/inherited-u64-native.json"
+      - uses: actions/setup-python@v5
         with:
-          name: bend-subset-law-workspace
-          path: artifacts/
-          retention-days: 3
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install the locked CPU development environment
+        run: uv sync --locked --extra dev --extra cpu
+      - name: Run whole-repository lint once on the final candidate
+        id: lint
+        continue-on-error: true
+        run: ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/whole-repository-lint.txt"
+      - name: Build the actual static material engine with the refactored table step
+        id: build
+        run: |
+          /usr/bin/time -v bash native/bend_engine/standalone/build.sh "$RUNNER_TEMP/subset-material" "$PWD/.compiler" static 2>&1 | tee "$EVIDENCE/static-build.txt"
+          cp "$RUNNER_TEMP/subset-material/build.txt" "$EVIDENCE/material-build-identity.txt"
+          file "$RUNNER_TEMP/subset-material/deepfin-bend" | tee "$EVIDENCE/material-file.txt"
+          ! readelf -l "$RUNNER_TEMP/subset-material/deepfin-bend" | grep -q 'INTERP'
+      - name: Run unchanged material UCI and perft fixtures normally and in an empty runtime
+        id: material
+        run: |
+          .venv/bin/python -m native.bend_engine.standalone.verify --report "$EVIDENCE/material-normal.json" --command "$RUNNER_TEMP/subset-material/deepfin-bend" --threads 1
+          mkdir "$RUNNER_TEMP/subset-empty"
+          cp "$RUNNER_TEMP/subset-material/deepfin-bend" "$RUNNER_TEMP/subset-empty/deepfin-bend"
+          test "$(find "$RUNNER_TEMP/subset-empty" -type f | wc -l)" = 1
+          sudo "$PWD/.venv/bin/python" -m native.bend_engine.standalone.verify --report "$EVIDENCE/material-empty.json" --command chroot "$RUNNER_TEMP/subset-empty" /deepfin-bend --threads 1
+          cmp "$EVIDENCE/material-normal.json" "$EVIDENCE/material-empty.json"
+      - name: Publish exact tested source on a fresh clean branch without merging
+        id: publish
+        env:
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          TARGET_BRANCH: feat/bend-subset-source-laws-20260921
+        run: |
+          sha256sum --check "$EVIDENCE/candidate-source-sha256.txt"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          git diff --exit-code
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET_BRANCH" > "$RUNNER_TEMP/target-ref.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          git switch -c "$TARGET_BRANCH"
+          python3 - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+          e = Path(os.environ['EVIDENCE'])
+          source = json.loads((e/'subset-proofs.json').read_text())
+          native = json.loads((e/'subset-native.json').read_text())
+          inherited = json.loads((e/'inherited-u64-native.json').read_text())
+          assert source['proof_gate'] == 'PASS' and native['native_gate'] == 'PASS'
+          d = Path('docs/experiments/evidence/bend-subset-source-laws')
+          for name in ['subset-proofs.json','subset-native.json','compiler-pin-tests.txt','inherited-u64-proofs.json','inherited-u64-native.json','material-normal.json','material-empty.json','candidate-source-sha256.txt']:
+              shutil.copyfile(e/name, d/('hosted-'+name))
+          p = Path('docs/experiments/2026-09-21-bend-subset-source-laws.md')
+          text = '\n\n## Hosted confirmation\n\n'
+          text += f"Run **{os.environ['GITHUB_RUN_ID']}**, development workflow commit `{os.environ['GITHUB_SHA']}`: new source and four-mode native gates, 12 compiler-pin contracts, inherited source laws/negative controls, and the full `U64_CASES=1024 --regressions` gate completed successfully. This resolves the local execution-time-limit gap without weakening the inherited test.\n\n"
+          text += f"Whole-repository `./scripts/lint.sh` outcome: **{os.environ['LINT_OUTCOME']}**. Its unabridged log is retained in the workflow artifact; a failed lint outcome is propagated to the final workflow verdict, not suppressed.\n\n"
+          text += "The actual static material engine was rebuilt from the refactored table source. Both the unchanged normal-runtime verifier and the same verifier against an otherwise empty chroot containing only that executable passed, with identical reports. Existing perft fixtures/budgets are unchanged. This is renewed material-runtime evidence, not a requalification of PR #804's neural executable.\n\n"
+          text += "Compact hosted reports and exact candidate source hashes are committed alongside local evidence. Build usage and complete logs remain in the 30-day artifact `bend-subset-laws-confirmation`. The clean branch excludes this temporary development workflow and transport payload. Publication is create-only: no force push, merge, deployment, model export or production change.\n"
+          p.write_text(p.read_text()+text)
+          PY
+          git add docs/experiments/2026-09-21-bend-subset-source-laws.md docs/experiments/evidence/bend-subset-source-laws
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove initial production subset laws and qualify table refinement tests'
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          git log -1 --format='%H%n%s%n%b' | tee "$EVIDENCE/published-commit.txt"
+          printf '%s\n' "$TARGET_BRANCH" > "$EVIDENCE/published-branch.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone > "$EVIDENCE/published-source-blobs.txt"
+      - name: Preserve the unmodified lint gate verdict
+        if: steps.publish.outcome == 'success'
+        env:
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+        run: test "$LINT_OUTCOME" = success
+      - name: Upload source identities and all available reports, not binaries or models
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bend-subset-laws-confirmation
+          path: ${{ runner.temp }}/subset-evidence/
+          retention-days: 30
