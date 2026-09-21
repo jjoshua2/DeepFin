@@ -1,14 +1,12 @@
-name: Verify repaired Bend PRs
+name: Inspect Bend stack conflict
 on:
   push:
     branches: [fix/bend-ci-audit-20260921]
     paths: [.github/workflows/bend-ci-stage.yml]
 permissions:
   contents: read
-  actions: read
-  pull-requests: read
 jobs:
-  audit:
+  inspect:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -17,55 +15,33 @@ jobs:
           ref: 6eaeab31233316fc012226ee25696e0806271d5b
           fetch-depth: 0
           persist-credentials: false
-      - name: Report actual PR heads and inspect merge conflicts without writing branches
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Inspect parent integration without changing any branches
         run: |
-          mkdir -p /tmp/bend-ci-final
+          git fetch --no-tags https://github.com/jjoshua2/DeepFin.git df768c90897beb01b98f4b0bdf5f58e5a928c96d
+          mkdir -p /tmp/stack-conflict
           python - <<'PY'
-          import datetime,json,os,subprocess,urllib.request
+          import subprocess
           from pathlib import Path
-          root=Path('/tmp/bend-ci-final')
-          def get(path):
-              req=urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/'+path,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-              with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)
-          result={'as_of':datetime.datetime.now(datetime.timezone.utc).isoformat(),'prs':[]}
-          for n in (777,778,779,780,781,784,788,792,797,798,799,800,801,802,803,804):
-              p=get(f'pulls/{n}');sha=p['head']['sha']
-              row={'number':n,'head':sha,'branch':p['head']['ref'],'base':p['base']['sha'],'mergeable':p['mergeable'],'checks':[]}
-              seen=set()
-              for run in get('actions/runs?event=pull_request&per_page=30&head_sha='+sha)['workflow_runs']:
-                  if run['workflow_id'] in seen:continue
-                  seen.add(run['workflow_id'])
-                  check={k:run[k] for k in ('id','name','status','conclusion','html_url')}
-                  if run['conclusion']=='failure':
-                      jobs=get(f"actions/runs/{run['id']}/jobs?per_page=100")['jobs']
-                      check['failed_jobs']=[{'id':j['id'],'name':j['name'],'steps':[s['name'] for s in j['steps'] if s['conclusion']=='failure']} for j in jobs if j['conclusion']=='failure']
-                  row['checks'].append(check)
-              print(n,row['mergeable'],[(x['name'],x['status'],x['conclusion'],x.get('failed_jobs')) for x in row['checks']],flush=True)
-              result['prs'].append(row)
-              (root/'status.json').write_text(json.dumps(result,indent=2)+'\n')
-              if p['mergeable'] is False:
-                  subprocess.run(['git','fetch','--no-tags','https://github.com/jjoshua2/DeepFin.git',p['base']['sha'],sha],check=True)
-                  merge=subprocess.run(['git','merge-tree','--write-tree','--messages',sha,p['base']['sha']],text=True,capture_output=True,check=False)
-                  (root/f'merge-{n}.txt').write_text(merge.stdout+'\nSTDERR\n'+merge.stderr)
-                  print('MERGE',n,merge.returncode,merge.stdout,flush=True)
-                  tree=merge.stdout.splitlines()[0] if merge.stdout else ''
-                  if len(tree)==40:
-                      delta=subprocess.run(['git','diff','--stat',sha,tree],text=True,capture_output=True,check=True)
-                      (root/f'merge-{n}-diff.txt').write_text(delta.stdout)
-                      for line in merge.stdout.splitlines():
-                          fields=line.split('\t',1)
-                          if len(fields)==2 and len(fields[0].split())==3:
-                              mode,blob,stage=fields[0].split();path=fields[1]
-                              if mode not in ('100644','100755') or not all(c in '0123456789abcdef' for c in blob):continue
-                              raw=subprocess.check_output(['git','cat-file','blob',blob])
-                              filename=root/f'conflict-{n}-{stage}-{Path(path).name}'
-                              filename.write_bytes(raw)
+          root=Path('/tmp/stack-conflict')
+          result=subprocess.run(['git','merge-tree','--write-tree','--messages','6eaeab31233316fc012226ee25696e0806271d5b','df768c90897beb01b98f4b0bdf5f58e5a928c96d'],text=True,capture_output=True,check=False)
+          (root/'merge.txt').write_text(result.stdout+'\nSTDERR\n'+result.stderr)
+          print(result.returncode,result.stdout,result.stderr)
+          assert result.returncode in (0,1)
+          tree=result.stdout.splitlines()[0]
+          assert len(tree)==40
+          patch=subprocess.check_output(['git','diff','6eaeab31233316fc012226ee25696e0806271d5b',tree])
+          (root/'merge.patch').write_bytes(patch)
+          subprocess.run(['git','diff','--stat','6eaeab31233316fc012226ee25696e0806271d5b',tree],check=True)
+          for line in result.stdout.splitlines():
+              fields=line.split('\t',1)
+              if len(fields)!=2 or len(fields[0].split())!=3:continue
+              mode,sha,stage=fields[0].split();path=fields[1]
+              if mode not in ('100644','100755'):continue
+              (root/f'{stage}-{Path(path).name}').write_bytes(subprocess.check_output(['git','cat-file','blob',sha]))
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bend-ci-final-status
-          path: /tmp/bend-ci-final/
-          retention-days: 14
+          name: bend-stack-conflict
+          path: /tmp/stack-conflict/
+          retention-days: 7
