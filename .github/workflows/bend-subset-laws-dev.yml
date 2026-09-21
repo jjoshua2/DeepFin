@@ -1,0 +1,47 @@
+name: Bend subset-law workspace
+on:
+  push:
+    branches: [feat/bend-subset-laws-dev-20260921]
+    paths: ['.github/workflows/bend-subset-laws-dev.yml']
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: f1e4037b89314a1f787508d7bd0bb60a1dc6e96c
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Verify and package exact source-only workspaces
+        run: |
+          mkdir -p artifacts
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee artifacts/compiler-identity.txt
+          git archive --format=tar --prefix=DeepFin/ HEAD | gzip > artifacts/DeepFin-source.tar.gz
+          git -C .compiler archive --format=tar --prefix=bend/ HEAD bend2 tests demos/proof_u64 guide AGENTS.md | gzip > artifacts/bend-source.tar.gz
+          cp "$(readlink -f "$(command -v bun)")" artifacts/bun
+          chmod 755 artifacts/bun
+          git ls-tree -r --name-only HEAD | grep -Ei '(^|/)(LAWS|PROOF)\.bend$|proof|migration' > artifacts/engine-proof-paths.txt || test "$?" = 1
+          (cd artifacts && sha256sum DeepFin-source.tar.gz bend-source.tar.gz bun > SHA256SUMS)
+      - name: Recheck existing U64 source laws and negative controls
+        env:
+          BEND_NO_TELEMETRY: '1'
+        run: |
+          cd .compiler
+          bun tests/run/u64_proofs.js | tee ../artifacts/inherited-u64-proofs.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-subset-law-workspace
+          path: artifacts/
+          retention-days: 3
