@@ -45,10 +45,25 @@ jobs:
           assert hashlib.sha1(f'blob {len(raw)}\0'.encode()+raw).hexdigest() == sha
           Path('/tmp/apply-landing-review.py').write_bytes(raw)
           subprocess.run(['python','/tmp/apply-landing-review.py'],check=True)
+          # Keep the typed dictionaries when mutating a deliberately bad fixture.
+          p=Path('tests/test_bend_checkpoint.py');s=p.read_text()
+          a=s.index('def test_checkpoint_package_rejects_conflicting_metadata_before_execution(')
+          b=s.index('\ndef test_noncompact_checkpoint',a)
+          x=s[a:b]
+          old="    data = {**spec(), 'arch': arch, 'resolved_model_config': asdict(cfg),"
+          assert x.count(old)==1
+          x=x.replace(old,"    resolved = asdict(cfg)\n    data = {**spec(), 'arch': arch, 'resolved_model_config': resolved,")
+          for key in ('history_rep_fix','unknown_architecture_field','_schema_version'):
+              old=f"data['arch']['{key}']";assert x.count(old)==1
+              x=x.replace(old,f"arch['{key}']")
+          for key in ('policy_encoding','num_layers'):
+              old=f"data['resolved_model_config']['{key}']";assert x.count(old)==1
+              x=x.replace(old,f"resolved['{key}']")
+          p.write_text(s[:a]+x+s[b:])
           expected = {
               'native/bend_engine/neural_probe/backend.py': 'a7659f688059bc68893639a3d7257aa2cfec6f69',
               'native/bend_engine/neural_probe/checkpoint.py': '3cb1f7e90bfb54346e72a606e52cee1c552b32c8',
-              'tests/test_bend_checkpoint.py': 'b7e455b437af6fd0960f47537cf038d406f8806a',
+              'tests/test_bend_checkpoint.py': '20690dbfe87f77dd79f941bd7920d2ffbb7088a8',
               'tests/test_derive_parallel.py': '573ec7e9b544375df0e1234e37651271490b3e2a',
           }
           actual = {path: git('hash-object',path) for path in expected}
@@ -57,9 +72,9 @@ jobs:
           patch = subprocess.check_output(['git','diff','--full-index','--binary'])
           Path('artifacts/landing-review.patch').write_bytes(patch)
           assert actual == expected, actual
-          assert hashlib.sha256(patch).hexdigest() == '12c0e23d04060c744749975cee2123e2e71c46c2a52f65f2dd44881c5f56c158'
+          assert hashlib.sha256(patch).hexdigest() == '91920c8ea962d1d2ebd975b62e8889c0422d04eb9575969c0192d3eb4b05e021'
           subprocess.run(['git','add','--',*expected],check=True)
-          assert git('write-tree') == '5a4ceec54269ca365f561689823e52ee0d58e344'
+          assert git('write-tree') == '5c30f11225056987bd4a381a9f549dd5c66775ba'
           PY
           git diff --cached --check
       - name: Locked dependencies and focused static validation
@@ -98,7 +113,7 @@ jobs:
           from pathlib import Path
           def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
           full=git('write-tree')
-          assert full == '5a4ceec54269ca365f561689823e52ee0d58e344'
+          assert full == '5c30f11225056987bd4a381a9f549dd5c66775ba'
           flows=['.github/workflows/bend-search-probe.yml','.github/workflows/bend-tree-probe.yml']
           entries=[{'path':p,'mode':'100644','type':'blob','sha':git('rev-parse',':'+p)} for p in flows]
           subprocess.run(['git','restore','--staged','--source=9ae8f810cbc22fa0b7d9af76e1af4c1afe0b51c9','--',*flows],check=True)
