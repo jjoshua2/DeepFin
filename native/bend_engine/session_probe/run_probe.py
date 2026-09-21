@@ -55,6 +55,15 @@ def numbers(line: str, tag: str, count: int | None = None) -> list[int]:
     return values
 
 
+def parse_path(line: str) -> list[int]:
+    words = numbers(line, 'path')
+    if not words or not 0 <= words[0] <= 32 or len(words) != words[0] + 1:
+        raise ValueError('invalid root-to-leaf path length')
+    if any(k >= 1 << 17 for k in words[1:]):
+        raise ValueError('invalid packed path key')
+    return words[1:]
+
+
 def position(words: list[int]) -> rules.Position:
     if len(words) != 19 or any(not 0 <= x <= SENTINEL for x in words):
         raise ValueError('invalid position words')
@@ -308,6 +317,14 @@ def session(peer: Peer, oracle: Oracle, board: rules.Position, *, epoch: int, bu
             raise AssertionError('request carries wrong board')
         if not 1 <= header[3] <= 256:
             raise AssertionError('invalid legal action count')
+        path = parse_path(peer.line())
+        expected_path = []
+        ancestor = wanted
+        while ancestor:
+            expected_path.append(ref.nodes[ancestor].key)
+            ancestor = ref.nodes[ancestor].parent
+        if path != list(reversed(expected_path)):
+            raise AssertionError('request carries wrong history path')
         actions = [numbers(peer.line(), 'action', 1)[0] for _ in range(header[3])]
         peer.expect('end_eval')
         legal = oracle.moves(supplied)
