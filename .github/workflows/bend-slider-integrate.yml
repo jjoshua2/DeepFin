@@ -21,7 +21,7 @@ jobs:
           bun-version: 1.4.2
       - run: python3 .github/prepare-slider.py
       - run: bun test native/bend_engine/standalone/verify_compiler.test.js
-      - name: Full source proof and 15 rejection controls
+      - name: Full source proof and 17 rejection controls
         run: |
           if bun native/bend_engine/standalone/verify_laws.js /tmp/deepfin-slider-compiler --report /tmp/slider-validation/proofs.json > /tmp/slider-validation/proofs.log 2>&1; then
             cat /tmp/slider-validation/proofs.log
@@ -99,7 +99,7 @@ jobs:
           import json, subprocess
           files = json.loads(Path('/tmp/slider-validation/source-identity.json').read_text())['files']
           subprocess.run(['git','add','--',*files],check=True)
-          subprocess.run(['git','rm','.github/slider-part0.b64','.github/slider-part1.b64','.github/prepare-slider.py'],check=True)
+          subprocess.run(['git','rm','.github/slider-part0.b64','.github/slider-part1.b64','.github/slider-repair.b64','.github/prepare-slider.py'],check=True)
           PY
           git diff --cached --check
           test -z "$(git diff --cached --name-only HEAD -- .github/workflows)"

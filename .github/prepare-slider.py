@@ -31,20 +31,31 @@ for name in ['LAWS.bend','PROOF.bend','Words.bend','LICENSE']:
     files.append(str(vendor/name))
 files.append('.github/workflows/bend-slider-laws.yml')
 assert len(files) == len(set(files)) == 20
-subprocess.run(['git','diff','--check'], check=True)
-# Prove the original runtime Bend files did not change, not just a claim in prose.
-original = run('git','ls-tree','-r','--name-only',BASE,'native/bend_engine').splitlines()
-for name in original:
-    if name.endswith('.bend'):
-        assert Path(name).read_bytes() == subprocess.check_output(['git','show',BASE+':'+name]), name
 index = REPORT/'candidate-index'
 index.unlink(missing_ok=True)
 env = dict(os.environ, GIT_INDEX_FILE=str(index))
 subprocess.run(['git','read-tree',BASE], env=env, check=True)
 subprocess.run(['git','add','--',*files], env=env, check=True)
+old = run('git','write-tree',env=env)
+assert old == '00bb12ce6f6baf4f2a0b3ddc485d96085bf6f064', old
+# Repair only proof evaluation and its documentation. Original eight conditions
+# are retained and an additional universal theorem proves reflection agreement.
+repair = gzip.decompress(base64.b64decode(Path('.github/slider-repair.b64').read_text()))
+assert hashlib.sha256(repair).hexdigest() == 'b39fe7f8c70a4b5e66389da87abfaa0cf13f688dd3e223facc3211231de81efd'
+(REPORT/'repair.patch').write_bytes(repair)
+subprocess.run(['git','apply','--check',str(REPORT/'repair.patch')], check=True)
+subprocess.run(['git','apply',str(REPORT/'repair.patch')], check=True)
+files.append('native/bend_engine/standalone/proofs/Fast.bend')
+assert len(files) == len(set(files)) == 21
+subprocess.run(['git','diff','--check'], check=True)
+original = run('git','ls-tree','-r','--name-only',BASE,'native/bend_engine').splitlines()
+for name in original:
+    if name.endswith('.bend'):
+        assert Path(name).read_bytes() == subprocess.check_output(['git','show',BASE+':'+name]), name
+subprocess.run(['git','add','--',*files], env=env, check=True)
 tree = run('git','write-tree',env=env)
-assert tree == '00bb12ce6f6baf4f2a0b3ddc485d96085bf6f064', tree
-identity = {'candidate_tree':tree, 'base_commit':BASE, 'compiler_commit':PIN,
+assert tree == 'a7640c87ee9d6955f873f458a4cdcd25e8981f6d', tree
+identity = {'candidate_tree':tree, 'prior_candidate_tree':old, 'base_commit':BASE, 'compiler_commit':PIN,
             'original_engine_bend_files_unchanged':True, 'files':sorted(files)}
 (REPORT/'source-identity.json').write_text(json.dumps(identity,indent=2)+'\n')
 print(json.dumps(identity,indent=2))
