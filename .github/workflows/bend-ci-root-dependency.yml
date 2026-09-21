@@ -1,0 +1,53 @@
+name: Bend PR784 dependency confirmation
+on:
+  push:
+    branches: [fix/bend-ci-audit-20260921]
+    paths: [.github/workflows/bend-ci-root-dependency.yml]
+permissions:
+  contents: read
+jobs:
+  sessions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 389cb8561599f54b98a6aa86be73218ade2ff426
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Apply only the missing workflow dependency
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/bend-search-sessions.yml')
+          s=p.read_text()
+          old="python -m pip install 'python-chess==1.999' 'pytest==9.1.1'"
+          assert s.count(old)==1 and "'numpy==2.2.6'" not in s
+          p.write_text(s.replace(old,"python -m pip install 'python-chess==1.999' 'numpy==2.2.6' 'pytest==9.1.1'"))
+          PY
+          git diff --check
+      - name: Same pinned compiler and test tools as PR784, plus NumPy
+        run: |
+          bash native/bend_engine/bitboard_probe/install_toolchain.sh
+          python -m pip install 'python-chess==1.999' 'numpy==2.2.6' 'pytest==9.1.1' 'ruff==0.15.20' 'basedpyright==1.39.9'
+      - name: Unchanged static checks and inexpensive contracts
+        run: |
+          ruff check native/bend_engine/session_probe/*.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py
+          basedpyright native/bend_engine/session_probe/*.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py
+          mkdir -p /tmp/session-contract-tests
+          cp tests/test_bend_search_sessions.py tests/test_bend_root_advance.py /tmp/session-contract-tests/
+          PYTHONPATH="$PWD" python -m pytest -q /tmp/session-contract-tests --confcutdir=/tmp/session-contract-tests
+      - name: Unchanged persistent search and root-advance qualification
+        run: |
+          python -m native.bend_engine.session_probe.root_probe --report artifacts/bend-search-sessions.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-ci-pr784-confirmation
+          path: artifacts/bend-search-sessions.json
+          retention-days: 14
