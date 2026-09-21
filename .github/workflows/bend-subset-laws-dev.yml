@@ -1,19 +1,21 @@
-name: Bend subset-law confirmation
+name: Bend subset-law source publication
 on:
   push:
     branches: [feat/bend-subset-laws-dev-20260921]
     paths: ['.github/workflows/bend-subset-laws-dev.yml']
 permissions:
   contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
 jobs:
-  qualify:
+  publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     env:
       BEND_NO_TELEMETRY: '1'
-      OMP_NUM_THREADS: '2'
-      MKL_NUM_THREADS: '2'
-      OPENBLAS_NUM_THREADS: '2'
+      TARGET_BRANCH: feat/bend-subset-source-laws-20260921
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,13 +29,25 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Apply the exact locally verified source patch
+      - name: Recover exact qualification evidence and source patch without rebuilding
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p "$RUNNER_TEMP/subset-evidence"
-          export EVIDENCE="$RUNNER_TEMP/subset-evidence"
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/subset-publication"
+          mkdir -p "$EVIDENCE" "$RUNNER_TEMP/qualification"
           echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          curl --fail --silent --show-error --location -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' https://api.github.com/repos/jjoshua2/DeepFin/actions/artifacts/10652088703/zip -o "$RUNNER_TEMP/qualification.zip"
+          echo "8a0f3be1a16c9a1f4e5197c0a7578b061304e00fb359cebba13bd6fdbe12f7ac  $RUNNER_TEMP/qualification.zip" | sha256sum --check
+          python3 - <<'PY'
+          import os, zipfile
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          with zipfile.ZipFile(root/'qualification.zip') as z:
+              assert all('/' not in n and '..' not in n for n in z.namelist())
+              z.extractall(root/'qualification')
+          PY
+          gh api repos/jjoshua2/DeepFin/actions/jobs/106422981932 > "$EVIDENCE/qualification-job.json"
           : > "$RUNNER_TEMP/patch.b64"
           for blob in f835573590335ce2c59ba4e28d4e5fb0393a91c0 f0a4c3b5fb6fa17ed47ac6e53b8acb4666b7c80d ba411bc9545672c8dfa444bd167e5689418a3d7d; do
             gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode >> "$RUNNER_TEMP/patch.b64"
@@ -44,76 +58,67 @@ jobs:
           git apply --check "$RUNNER_TEMP/subset.patch"
           git apply --index "$RUNNER_TEMP/subset.patch"
           git diff --cached --check
-          git diff --cached --stat | tee "$EVIDENCE/change-stat.txt"
-          git diff --cached --name-only > "$EVIDENCE/changed-files.txt"
-          test "$(wc -l < "$EVIDENCE/changed-files.txt")" = 20
-          python3 - <<'PY'
-          from pathlib import Path
-          import os, subprocess
-          files = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines()
-          allowed = {'docs/bend_migration_proofs.md', 'docs/experiments/2026-09-21-bend-subset-source-laws.md', 'docs/experiments/README.md', 'native/bend_engine/standalone/README.md', 'native/bend_engine/standalone/Subsets.bend', 'native/bend_engine/standalone/Tables.bend'}
-          assert all(f in allowed or f.startswith('docs/experiments/evidence/bend-subset-source-laws/') or f.startswith('native/bend_engine/standalone/proofs/') for f in files), files
-          code = [f for f in files if f.startswith('native/') and not f.endswith('.md')]
-          result = subprocess.check_output(['sha256sum', *code], text=True)
-          Path(os.environ['EVIDENCE'], 'candidate-source-sha256.txt').write_text(result)
-          PY
-          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
-      - name: Check eight source laws and eleven negative controls
-        id: source
-        run: bun native/bend_engine/standalone/proofs/verify.js "$PWD/.compiler" --report "$EVIDENCE/subset-proofs.json"
-      - name: Compare bounded native enumeration and complete tables in four modes
-        id: native
-        run: bun native/bend_engine/standalone/proofs/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/subset-native.json"
-      - name: Check unchanged compiler-pin contracts and inherited source laws
-        id: inherited_source
-        run: |
-          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/compiler-pin-tests.txt"
-          cd .compiler
-          bun tests/run/u64_proofs.js | tee "$EVIDENCE/inherited-u64-proofs.json"
-      - name: Retry full inherited U64 native and regression gate
-        id: inherited_native
-        timeout-minutes: 7
-        run: |
-          cd .compiler
-          U64_CASES=1024 bun tests/run/u64_verify.js --regressions | tee "$EVIDENCE/inherited-u64-native.json"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: '0.12.10'
-          enable-cache: false
-      - name: Install the locked CPU development environment
-        run: uv sync --locked --extra dev --extra cpu
-      - name: Run whole-repository lint once on the final candidate
-        id: lint
-        continue-on-error: true
-        run: ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/whole-repository-lint.txt"
-      - name: Build the actual static material engine with the refactored table step
-        id: build
-        run: |
-          /usr/bin/time -v bash native/bend_engine/standalone/build.sh "$RUNNER_TEMP/subset-material" "$PWD/.compiler" static 2>&1 | tee "$EVIDENCE/static-build.txt"
-          cp "$RUNNER_TEMP/subset-material/build.txt" "$EVIDENCE/material-build-identity.txt"
-          file "$RUNNER_TEMP/subset-material/deepfin-bend" | tee "$EVIDENCE/material-file.txt"
-          ! readelf -l "$RUNNER_TEMP/subset-material/deepfin-bend" | grep -q 'INTERP'
-      - name: Run unchanged material UCI and perft fixtures normally and in an empty runtime
-        id: material
-        run: |
-          .venv/bin/python -m native.bend_engine.standalone.verify --report "$EVIDENCE/material-normal.json" --command "$RUNNER_TEMP/subset-material/deepfin-bend" --threads 1
-          mkdir "$RUNNER_TEMP/subset-empty"
-          cp "$RUNNER_TEMP/subset-material/deepfin-bend" "$RUNNER_TEMP/subset-empty/deepfin-bend"
-          test "$(find "$RUNNER_TEMP/subset-empty" -type f | wc -l)" = 1
-          sudo "$PWD/.venv/bin/python" -m native.bend_engine.standalone.verify --report "$EVIDENCE/material-empty.json" --command chroot "$RUNNER_TEMP/subset-empty" /deepfin-bend --threads 1
-          cmp "$EVIDENCE/material-normal.json" "$EVIDENCE/material-empty.json"
-      - name: Publish exact tested source on a fresh clean branch without merging
-        id: publish
-        env:
-          LINT_OUTCOME: ${{ steps.lint.outcome }}
-          TARGET_BRANCH: feat/bend-subset-source-laws-20260921
-        run: |
-          sha256sum --check "$EVIDENCE/candidate-source-sha256.txt"
+          test "$(git diff --cached --name-only | wc -l)" = 20
+          sha256sum --check "$RUNNER_TEMP/qualification/candidate-source-sha256.txt"
           bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+      - name: Validate qualification outcomes and compare behavior while retaining both timings
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, math, os, re
+          from pathlib import Path
+          e = Path(os.environ['EVIDENCE'])
+          q = Path(os.environ['RUNNER_TEMP'])/'qualification'
+          job = json.loads((e/'qualification-job.json').read_text())
+          assert job['id'] == 106422981932 and job['run_id'] == 35626785060
+          assert job['head_sha'] == '1e47d4a807c876a2a3192b3ef0c73b47074f5a57'
+          assert job['status'] == 'completed' and job['conclusion'] == 'failure'
+          steps = {s['number']: s for s in job['steps']}
+          assert all(steps[i]['conclusion'] == 'success' for i in range(1,15))
+          assert steps[15]['conclusion'] == 'failure'
+          assert steps[16]['conclusion'] == 'skipped'
+          assert steps[18]['conclusion'] == 'success'
+          p = json.loads((q/'subset-proofs.json').read_text())
+          n = json.loads((q/'subset-native.json').read_text())
+          assert p['proof_gate'] == 'PASS' and p['universal_laws'] == 4 and p['closed_boundary_equalities'] == 4
+          assert len(p['negative_controls']) == 11 and all(x['rejected'] for x in p['negative_controls'])
+          assert n['native_gate'] == 'PASS' and n['total_state_rows'] == 112953
+          assert len(n['modes']) == 4 and all(x['table_entries'] == 108160 and x['state_rows'] == 112953 for x in n['modes'])
+          inherited = json.loads((q/'inherited-u64-native.json').read_text())['report']
+          assert any(x.get('existing_regression_files') == 38 for x in inherited)
+          assert any(x.get('independent_oracle_values') == 45182 and x.get('random_pairs') == 1024 for x in inherited)
+          assert json.loads((q/'inherited-u64-proofs.json').read_text())['proof_gate'] == 'PASS'
+          assert '12 pass' in (q/'compiler-pin-tests.txt').read_text() and '0 fail' in (q/'compiler-pin-tests.txt').read_text()
+          assert (q/'whole-repository-lint.txt').read_text().strip().endswith('lint: OK')
+          build = (q/'static-build.txt').read_text()
+          assert re.search(r'Exit status:\s+0', build)
+          assert 'statically linked' in (q/'material-file.txt').read_text()
+          a = json.loads((q/'material-normal.json').read_text())
+          b = json.loads((q/'material-empty.json').read_text())
+          differing = [k for k in a.keys() | b.keys() if a.get(k) != b.get(k)]
+          assert differing == ['observed_stop_seconds'], differing
+          timings = [a.pop('observed_stop_seconds'), b.pop('observed_stop_seconds')]
+          assert all(isinstance(t, (float, int)) and math.isfinite(t) and t >= 0 for t in timings)
+          assert a == b
+          assert a['positions'] == 10 and a['exact_children'] == 137 and a['searched_roots'] == 51
+          assert a['rejected_transactions'] == 23 and a['perft_counts'] == [8902,97862,43238]
+          assert a['partial_line_ready_and_single_stop'] is True and len(a['real_uci_client_moves']) == 8
+          result = {'comparison': 'PASS', 'qualification_run': 35626785060, 'qualification_job': 106422981932, 'qualification_overall': 'failure at overstrict byte comparison after both verifiers completed', 'excluded_from_equality_only': differing, 'observed_stop_seconds_normal': timings[0], 'observed_stop_seconds_empty': timings[1], 'behavior': a, 'original_reports_unchanged': True, 'new_engine_execution_in_publication': False}
+          (e/'material-behavior-comparison.json').write_text(json.dumps(result, indent=2)+'\n')
+          print(json.dumps(result, indent=2))
+          hashes = {f.name: hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(q.iterdir())}
+          (e/'qualification-report-sha256.json').write_text(json.dumps(hashes, indent=2)+'\n')
+          PY
+      - name: Recheck unchanged source-law gate and all candidate source hashes
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/verify.js "$PWD/.compiler" --report "$EVIDENCE/rechecked-source-proofs.json"
+          cmp "$EVIDENCE/rechecked-source-proofs.json" "$RUNNER_TEMP/qualification/subset-proofs.json"
+          sha256sum --check "$RUNNER_TEMP/qualification/candidate-source-sha256.txt"
           git diff --exit-code
+      - name: Publish clean source and durable evidence on a new branch only
+        run: |
+          set -euo pipefail
           set +e
           git ls-remote --exit-code --heads origin "refs/heads/$TARGET_BRANCH" > "$RUNNER_TEMP/target-ref.txt"
           found=$?
@@ -121,42 +126,88 @@ jobs:
           test "$found" = 2
           git switch -c "$TARGET_BRANCH"
           python3 - <<'PY'
-          import json, os, shutil
+          import os, shutil
           from pathlib import Path
           e = Path(os.environ['EVIDENCE'])
-          source = json.loads((e/'subset-proofs.json').read_text())
-          native = json.loads((e/'subset-native.json').read_text())
-          inherited = json.loads((e/'inherited-u64-native.json').read_text())
-          assert source['proof_gate'] == 'PASS' and native['native_gate'] == 'PASS'
+          q = Path(os.environ['RUNNER_TEMP'])/'qualification'
           d = Path('docs/experiments/evidence/bend-subset-source-laws')
-          for name in ['subset-proofs.json','subset-native.json','compiler-pin-tests.txt','inherited-u64-proofs.json','inherited-u64-native.json','material-normal.json','material-empty.json','candidate-source-sha256.txt']:
-              shutil.copyfile(e/name, d/('hosted-'+name))
+          for name in ['subset-proofs.json','subset-native.json','compiler-pin-tests.txt','inherited-u64-proofs.json','inherited-u64-native.json','material-normal.json','material-empty.json','candidate-source-sha256.txt','whole-repository-lint.txt','material-build-identity.txt','static-build.txt','material-file.txt']:
+              shutil.copyfile(q/name, d/('hosted-'+name))
+          for name in ['material-behavior-comparison.json','qualification-report-sha256.json']:
+              shutil.copyfile(e/name, d/name)
           p = Path('docs/experiments/2026-09-21-bend-subset-source-laws.md')
-          text = '\n\n## Hosted confirmation\n\n'
-          text += f"Run **{os.environ['GITHUB_RUN_ID']}**, development workflow commit `{os.environ['GITHUB_SHA']}`: new source and four-mode native gates, 12 compiler-pin contracts, inherited source laws/negative controls, and the full `U64_CASES=1024 --regressions` gate completed successfully. This resolves the local execution-time-limit gap without weakening the inherited test.\n\n"
-          text += f"Whole-repository `./scripts/lint.sh` outcome: **{os.environ['LINT_OUTCOME']}**. Its unabridged log is retained in the workflow artifact; a failed lint outcome is propagated to the final workflow verdict, not suppressed.\n\n"
-          text += "The actual static material engine was rebuilt from the refactored table source. Both the unchanged normal-runtime verifier and the same verifier against an otherwise empty chroot containing only that executable passed, with identical reports. Existing perft fixtures/budgets are unchanged. This is renewed material-runtime evidence, not a requalification of PR #804's neural executable.\n\n"
-          text += "Compact hosted reports and exact candidate source hashes are committed alongside local evidence. Build usage and complete logs remain in the 30-day artifact `bend-subset-laws-confirmation`. The clean branch excludes this temporary development workflow and transport payload. Publication is create-only: no force push, merge, deployment, model export or production change.\n"
+          text = '''
+
+## Hosted qualification and publication recovery
+
+Qualification run **35626785060**, job **106422981932**, development workflow
+commit `1e47d4a807c876a2a3192b3ef0c73b47074f5a57`, passed the new source laws and
+all eleven negative controls, all four native modes, twelve compiler-pin contracts,
+and the original U64 proof/negative-control suite. The full unchanged
+`U64_CASES=1024 ... u64_verify.js --regressions` completed: 38 existing regression
+files and 45,182 independent-oracle values, JS and four C variants at one/four
+threads. This resolves the local timeout without altering the inherited gate.
+
+Whole-repository `./scripts/lint.sh`: **PASS**, including Ruff, Basedpyright
+(0 errors/warnings/notes), and Vulture. Linux x86-64, Bun 1.4.2, Clang 18.1.3;
+locked Python 3.13 CPU development environment for external checks only.
+
+The actual static material executable was rebuilt with the refactored table step.
+Both executions of the unchanged verifier passed: normal runtime and an otherwise
+empty chroot containing only that executable. Each reports 10 fixture positions,
+137 exact legal children, 51 searched roots, 23 rejected transactions, perft
+**8,902 / 97,862 / 43,238 at depths 3/3/4**, readiness/single-stop behavior and the
+same eight real-client moves. No perft budget or fixture changed.
+
+**The qualification workflow is nevertheless red:** its final raw `cmp` incorrectly
+required a measured timing field to be identical. The sole difference is
+`observed_stop_seconds`: **0.010093326999992769** normally versus
+**0.010102630000005774** in the empty runtime. Both original reports remain intact.
+A publication-only check verifies every other field is exactly equal, confirms
+both timings are finite/nonnegative, and records the explicit exclusion from
+cross-run equality. The unchanged verifier assertions were not weakened; this
+corrects an invalid report-comparison requirement, not an engine implementation.
+
+The static build took **65.30 seconds** with peak RSS **13,411,580 KiB**, about
+12.79 GiB. This is build resource usage, not engine runtime memory or a comparative
+benchmark. Its normal source compilation warns about 17 definitions depending on
+existing foreign effects; this is distinct from the proof suite, which has no
+unsafe/foreign proof dependencies and requires exactly `All terms check.`.
+The material binary SHA-256 is
+`8fa531dccd91fb679931a6c764bb622c861af9cec0681da351d26bcf75cfa61e`.
+No neural engine or model was rebuilt/re-exported/requalified in this increment.
+
+Qualification artifact **10652088703**, `bend-subset-laws-confirmation`, has ZIP
+SHA-256 `8a0f3be1a16c9a1f4e5197c0a7578b061304e00fb359cebba13bd6fdbe12f7ac`.
+Compact hosted reports, original timing reports, lint/build logs, source hashes,
+and a separate behavioral comparison are committed under the evidence directory.
+The source patch SHA-256 is
+`630f5e7d0158cc77ef5a38769559fda2835b9882600eefad742cdf8b5b948c72`.
+'''
+          text += f"\nPublication-only recovery run **{os.environ['GITHUB_RUN_ID']}**, workflow commit `{os.environ['GITHUB_SHA']}`, retrieves that exact artifact, checks its digest and recorded step outcomes, reapplies the exact patch to PR #804's parent, matches all candidate source hashes, and rechecks the eight source laws/eleven negative controls. It performs no native rebuild, model export, lint rerun or production operation. Publication is create-only on `{os.environ['TARGET_BRANCH']}`; no force push, merge or deployment. This temporary workflow and transport payload are excluded from the clean branch.\n"
           p.write_text(p.read_text()+text)
+          m = Path('docs/bend_migration_proofs.md')
+          m.write_text(m.read_text()+'''\n## Latest qualification record\n\nThe subset increment has renewed hosted source/native, whole-repository lint,
+full inherited U64-regression, and static material normal/empty-runtime evidence.
+See the dated readout for exact source and report identities. The first hosted
+workflow failed only its overstrict comparison of measured stop times; original
+reports and the corrected behavioral comparison are preserved. No trained-model,
+CUDA, neural-executable rebuild, new formal ordering theorem or performance
+improvement follows from these material-engine tests.\n''')
           PY
-          git add docs/experiments/2026-09-21-bend-subset-source-laws.md docs/experiments/evidence/bend-subset-source-laws
+          git add docs/experiments/2026-09-21-bend-subset-source-laws.md docs/bend_migration_proofs.md docs/experiments/evidence/bend-subset-source-laws
           git diff --cached --check
+          sha256sum --check "$RUNNER_TEMP/qualification/candidate-source-sha256.txt"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'native: prove initial production subset laws and qualify table refinement tests'
           git push origin "HEAD:refs/heads/$TARGET_BRANCH"
-          git log -1 --format='%H%n%s%n%b' | tee "$EVIDENCE/published-commit.txt"
+          git log -1 --format='%H%n%s' | tee "$EVIDENCE/published-commit.txt"
           printf '%s\n' "$TARGET_BRANCH" > "$EVIDENCE/published-branch.txt"
           git ls-tree -r HEAD native/bend_engine/standalone > "$EVIDENCE/published-source-blobs.txt"
-      - name: Preserve the unmodified lint gate verdict
-        if: steps.publish.outcome == 'success'
-        env:
-          LINT_OUTCOME: ${{ steps.lint.outcome }}
-        run: test "$LINT_OUTCOME" = success
-      - name: Upload source identities and all available reports, not binaries or models
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: bend-subset-laws-confirmation
-          path: ${{ runner.temp }}/subset-evidence/
+          name: bend-subset-laws-publication
+          path: ${{ runner.temp }}/subset-publication/
           retention-days: 30
