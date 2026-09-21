@@ -17,7 +17,7 @@ Term nn_run_run(Env e, Term* f, IoWork* w) {
   }
   Term xs = term_pak(CID_NIL, 0);
   for (uint32_t i = count; i > 0; i--) {
-    xs = io_node(e, CID_CON, (Term)values[i - 1], xs, 0);
+    xs = io_node(e, CID_CON, (Term)values[i - 1], xs);
   }
   return xs;
 }
