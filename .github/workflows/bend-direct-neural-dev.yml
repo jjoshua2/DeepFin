@@ -1,0 +1,156 @@
+name: Bend direct neural qualification
+on:
+  push:
+    branches: [feat/bend-direct-native-neural-dev]
+    paths: ['.github/workflows/bend-direct-neural-dev.yml']
+permissions:
+  contents: write
+jobs:
+  confirm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OMP_NUM_THREADS: '2'
+      TORCHINDUCTOR_COMPILE_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          activate-environment: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Apply reviewed import and verifier-local name corrections
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('native/bend_engine/standalone/main.bend')
+          text = p.read_text()
+          for old, new in [('def stop(root:', 'def stop_search(root:'), ('      stop(root, table, mode)', '      stop_search(root, table, mode)')]:
+              assert text.count(old) == 1
+              text = text.replace(old, new)
+          p.write_text(text)
+          p = Path('native/bend_engine/standalone/neural/verify.py')
+          s = p.read_text()
+          s = s.replace('p, w = model(torch.from_numpy(tensor.copy()[None]))', 'eager_policy, eager_wdl = model(torch.from_numpy(tensor.copy()[None]))')
+          s = s.replace('eager = np.concatenate((p[0].cpu().numpy(), w[0].cpu().numpy()))', 'eager = np.concatenate((eager_policy[0].cpu().numpy(), eager_wdl[0].cpu().numpy()))')
+          s = s.replace("fields = list(map(int, text[i].split()[3:]))\n                assert text[i].startswith('info string neural_prob ') and len(fields) == 5\n                status, wb, db, lb, count = fields", "prob_fields = list(map(int, text[i].split()[3:]))\n                assert text[i].startswith('info string neural_prob ') and len(prob_fields) == 5\n                status, wb, db, lb, count = prob_fields")
+          s = s.replace('from chess_anti_engine.encoding import rep_fix', 'from chess_anti_engine.encoding import rep_fix\nfrom chess_anti_engine.encoding.features import extra_feature_planes_fast\nfrom chess_anti_engine.encoding.lc0 import encode_lc0_full')
+          s = s.replace('                raw = []\n', '                python_tensor = np.concatenate((encode_lc0_full(board, input_history_encoding=loaded.encoding.input_history_encoding),\n                                                extra_feature_planes_fast(board, version=loaded.encoding.input_extra_features)), axis=0)\n                exact_planes = min(channels, 173)\n                np.testing.assert_array_equal(tensor[:exact_planes].view(np.uint32), python_tensor[:exact_planes].view(np.uint32))\n                if channels == 175:\n                    np.testing.assert_allclose(tensor[173:], python_tensor[173:], atol=1.2e-7, rtol=0)\n                raw = []\n')
+          p.write_text(s)
+          PY
+          test "$(git hash-object native/bend_engine/standalone/main.bend)" = 5827e1f8cb71f1c6ba4df6d44a04eff4049f7941
+          test "$(git hash-object native/bend_engine/standalone/neural/verify.py)" = 38c00580394a94d2837cbd98589970e4e45008d6
+          git diff --check
+      - name: Locked external CPU tools and inexpensive contracts
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          python -c "import torch; assert torch.version.cuda is None; print(torch.__version__)"
+          ruff check native/bend_engine/standalone/neural/*.py
+          basedpyright native/bend_engine/standalone/neural/*.py
+          bun test native/bend_engine/standalone/neural/contract.test.js native/bend_engine/standalone/verify_compiler.test.js
+      - name: Export only the existing untrained transformer fixture
+        run: |
+          mkdir -p /tmp/bend-direct-model artifacts
+          python - <<'PY'
+          from pathlib import Path
+          import torch
+          from native.bend_engine.neural_probe.checkpoint_probe import fixture_checkpoint
+          from native.bend_engine.neural_probe.checkpoint import load_checkpoint, export_checkpoint
+          torch.set_num_threads(2)
+          root = Path('/tmp/bend-direct-model')
+          fixture_checkpoint(root / 'fixture.pt')
+          export_checkpoint(load_checkpoint(root / 'fixture.pt'), root / 'model.pt2')
+          Path('/tmp/torch-prefix').write_text(torch.utils.cmake_prefix_path)
+          PY
+      - name: Compile the actual no-Python neural executable
+        run: |
+          /usr/bin/time -v -o artifacts/bend-direct-build-resource.txt timeout 300s bash native/bend_engine/standalone/neural/build.sh \
+            /tmp/bend-direct-model/model.pt2 /tmp/bend-direct-build "$(cat /tmp/torch-prefix)"
+          cp /tmp/bend-direct-build/build.txt artifacts/bend-direct-build.txt
+          cp /tmp/bend-direct-build/linked-libraries.txt artifacts/bend-direct-libraries.txt
+      - name: Pure Bend output conversions and native negative cases
+        run: |
+          compiler="build/bend_standalone_toolchain/$(bun native/bend_engine/standalone/verify_compiler.js --revision)/source"
+          bun "$compiler/bend2/main.ts" native/bend_engine/standalone/neural/reply_probe.bend -o /tmp/bend-direct-reply.c
+          for mode in generic portable ubsan; do
+            flags=()
+            case "$mode" in portable) flags=(-DBEND_U64_PORTABLE);; ubsan) flags=(-fsanitize=undefined -fno-sanitize-recover=all);; esac
+            clang -O1 -ffp-contract=off "${flags[@]}" /tmp/bend-direct-reply.c -pthread -lm -o /tmp/bend-direct-reply
+            python -m native.bend_engine.standalone.neural.verify_reply --report "artifacts/bend-direct-reply-$mode.json" --command /tmp/bend-direct-reply --threads 1
+          done
+          python - <<'PY'
+          from pathlib import Path
+          import os, subprocess, json
+          wrong=Path('/tmp/bend-direct-model/wrong.pt2'); wrong.write_bytes(b'not the bound package')
+          checks=[]
+          for path in (wrong, Path('/tmp/bend-direct-model/missing.pt2')):
+              r=subprocess.run(['/tmp/bend-direct-build/deepfin-bend-neural','--threads','1'], input='uci\nisready\n', text=True, capture_output=True, timeout=20, env={**os.environ,'DEEPFIN_BEND_PACKAGE':str(path)})
+              assert r.returncode != 0 and 'uciok' not in r.stdout and 'bestmove' not in r.stdout
+              assert 'native model startup failed' in r.stderr
+              checks.append({'package':path.name,'exit':r.returncode,'stderr':r.stderr})
+          Path('artifacts/bend-direct-negative.json').write_text(json.dumps(checks,indent=2))
+          PY
+      - name: Actual leaf tensors, model logits, Bend probabilities and complete trees
+        run: |
+          clang -std=c11 -O1 -DLEGAL_ORACLE -I. native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/cboard-reference
+          DEEPFIN_BEND_PACKAGE=/tmp/bend-direct-model/model.pt2 python -m native.bend_engine.standalone.neural.verify \
+            --checkpoint /tmp/bend-direct-model/fixture.pt --oracle /tmp/cboard-reference \
+            --report artifacts/bend-direct-neural.json --command /tmp/bend-direct-build/deepfin-bend-neural --threads 1
+      - name: Prepare a runtime containing model and libraries but no Python or shell
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess, shutil, zipfile, json
+          root=Path('/tmp/bend-direct-runtime'); root.mkdir()
+          (root/'tmp').mkdir(mode=0o777)
+          shutil.copy2('/tmp/bend-direct-build/deepfin-bend-neural',root/'deepfin-bend-neural')
+          shutil.copy2('/tmp/bend-direct-model/model.pt2',root/'model.pt2')
+          unpack=Path('/tmp/bend-direct-inspect'); unpack.mkdir()
+          with zipfile.ZipFile('/tmp/bend-direct-model/model.pt2') as z:
+              z.extractall(unpack)
+          todo=[Path('/tmp/bend-direct-build/deepfin-bend-neural'),*unpack.rglob('*.so')]; seen=set()
+          while todo:
+              src=todo.pop()
+              if src in seen: continue
+              seen.add(src)
+              r=subprocess.run(['ldd',str(src)],text=True,capture_output=True,check=True)
+              assert 'not found' not in r.stdout and 'libpython' not in r.stdout.lower(),r.stdout
+              for token in r.stdout.split():
+                  if not token.startswith('/'): continue
+                  p=Path(token)
+                  if not p.is_file(): continue
+                  dest=root/str(p).lstrip('/'); dest.parent.mkdir(parents=True,exist_ok=True)
+                  if not dest.exists(): shutil.copy2(p,dest)
+                  todo.append(p)
+          files=[str(p.relative_to(root)) for p in root.rglob('*') if p.is_file()]
+          assert not any(Path(p).name.startswith(('python','bun')) or Path(p).suffix in ('.py','.pyc') for p in files)
+          Path('artifacts/bend-direct-runtime.json').write_text(json.dumps({'files':sorted(files),'claim':'engine plus model and native libraries; no Python interpreter/packages, shell or compiler'},indent=2))
+          PY
+          DEEPFIN_BEND_PACKAGE=/model.pt2 python -m native.bend_engine.standalone.neural.verify \
+            --checkpoint /tmp/bend-direct-model/fixture.pt --oracle /tmp/cboard-reference \
+            --report artifacts/bend-direct-isolated.json --command sudo -E chroot /tmp/bend-direct-runtime /deepfin-bend-neural --threads 1
+      - name: Preserve the material control and its existing perft and UCI checks
+        run: |
+          bash native/bend_engine/standalone/build.sh /tmp/bend-direct-material
+          python native/bend_engine/standalone/verify.py --report artifacts/bend-direct-material.json --command /tmp/bend-direct-material/deepfin-bend --threads 1
+      - name: Publish the exact tested feature without the temporary workflow
+        run: |
+          git fetch --no-tags --depth=1 origin dfa0cda0498d45494e1c52e8271fbf20ebf37871
+          git read-tree dfa0cda0498d45494e1c52e8271fbf20ebf37871
+          git add native/bend_engine/standalone/neural native/bend_engine/standalone/main.bend docs/experiments/2026-09-21-bend-direct-neural.md
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          commit="$(git commit-tree "$(git write-tree)" -p dfa0cda0498d45494e1c52e8271fbf20ebf37871 -m 'Connect actual Bend search leaves to native model inference and Bend probability conversion')"
+          git push origin "$commit":refs/heads/feat/bend-direct-native-neural
+          printf '%s\n' "$commit" > artifacts/bend-direct-commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-direct-neural-confirmation
+          path: artifacts/bend-direct-*
+          retention-days: 30
