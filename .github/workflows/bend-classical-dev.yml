@@ -1,0 +1,27 @@
+name: Bend classical development snapshot
+on:
+  push:
+    branches: [feat/bend-owned-classical-dev]
+    paths: ['.github/workflows/bend-classical-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir -p /tmp/bend-classical-source
+          git archive --format=tar.gz HEAD > /tmp/bend-classical-source/deepfin.tgz
+          git clone --filter=blob:none --no-checkout https://github.com/jjoshua2/bend.git /tmp/bend-classical-compiler
+          git -C /tmp/bend-classical-compiler checkout --detach aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          git -C /tmp/bend-classical-compiler archive --format=tar.gz HEAD > /tmp/bend-classical-source/current-compiler.tgz
+          git -C /tmp/bend-classical-compiler log -8 --format='%H %s' > /tmp/bend-classical-source/compiler-history.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-classical-source
+          path: /tmp/bend-classical-source/
+          retention-days: 2
