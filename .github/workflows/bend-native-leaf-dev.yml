@@ -1,31 +1,128 @@
-name: Bend native leaf development snapshot
+name: Bend native leaf confirmation
 on:
   push:
     branches: [feat/bend-native-leaf-evaluation-dev]
     paths: ['.github/workflows/bend-native-leaf-dev.yml']
 permissions:
-  contents: read
+  contents: write
 jobs:
-  snapshot:
+  confirm:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          persist-credentials: false
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          activate-environment: true
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - run: |
-          mkdir -p /tmp/bend-native-leaf-source
-          git archive --format=tar.gz HEAD > /tmp/bend-native-leaf-source/deepfin.tgz
-          git rev-parse HEAD > /tmp/bend-native-leaf-source/revision.txt
-          git clone --filter=blob:none --no-checkout https://github.com/jjoshua2/bend.git /tmp/bend-leaf-compiler
-          git -C /tmp/bend-leaf-compiler checkout --detach aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
-          git -C /tmp/bend-leaf-compiler archive --format=tar.gz HEAD > /tmp/bend-native-leaf-source/compiler.tgz
-          cp "$(command -v bun)" /tmp/bend-native-leaf-source/bun
+      - name: Apply exact reviewed implementation and predeclared gate
+        run: |
+          python - <<'PY'
+          import base64, gzip, hashlib, json, urllib.request
+          from pathlib import Path
+          parts = []
+          for sha in ['bcf24d6d61c6633dbdb081674e2eaf7778087b61', '7cfe2cdacc3e4d908757347e8275afd3645a25b0', '33773a9b6bd84dcc609c9bf81d011118cf7b6b6f']:
+              with urllib.request.urlopen('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/' + sha, timeout=30) as response:
+                  data = json.load(response)
+              part = base64.b64decode(data['content'])
+              assert hashlib.sha1(f'blob {len(part)}\0'.encode() + part).hexdigest() == sha
+              parts.append(part)
+          patch = gzip.decompress(base64.b64decode(b''.join(parts), validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '5c29099945999351f1cacb20eb653e2df7e69a506d1da493081126cdfb4a9e55'
+          Path('/tmp/bend-leaf.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/bend-leaf.patch
+          git apply /tmp/bend-leaf.patch
+          git diff --check
+      - name: External CPU export and reference tools
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          python -c "import torch; assert torch.version.cuda is None; print(torch.__version__)"
+          ruff check native/bend_engine/standalone/verify_neural.py native/bend_engine/standalone/verify_logits.py native/bend_engine/standalone/isolate_neural.py
+          basedpyright native/bend_engine/standalone/verify_neural.py native/bend_engine/standalone/verify_logits.py native/bend_engine/standalone/isolate_neural.py
+          bun test native/bend_engine/standalone/bind_model.test.js native/bend_engine/standalone/verify_compiler.test.js
+      - name: Export the existing untrained transformer once at batch one
+        run: |
+          mkdir -p artifacts /tmp/bend-leaf-model
+          TORCHINDUCTOR_CACHE_DIR=/tmp/bend-leaf-export-cache python - <<'PY'
+          from pathlib import Path
+          import torch
+          from native.bend_engine.neural_probe.checkpoint_probe import fixture_checkpoint
+          from native.bend_engine.neural_probe.checkpoint import load_checkpoint, export_checkpoint
+          torch.set_num_threads(2)
+          p = Path('/tmp/bend-leaf-model/fixture.pt')
+          fixture_checkpoint(p)
+          export_checkpoint(load_checkpoint(p), p.with_name('checkpoint.pt2'), batch=1)
+          PY
+      - name: Compile material and bound-native products with the verified U64 compiler
+        run: |
+          prefix="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+          /usr/bin/time -v -o artifacts/bend-leaf-build-resource.txt timeout 240s bash native/bend_engine/standalone/build_neural.sh /tmp/bend-native-leaf /tmp/bend-leaf-model/checkpoint.pt2 "$prefix"
+          cp /tmp/bend-native-leaf/build.txt /tmp/bend-native-leaf/model-binding.json /tmp/bend-native-leaf/neural-libraries.txt artifacts/
+          clang -std=c11 -O1 -DLEGAL_ORACLE -I. native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/cboard-reference
+      - name: Native Bend legal-only softmax and malformed-output gate in four modes
+        run: |
+          compiler="build/bend_standalone_toolchain/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae/source"
+          compiler="$(sed -n 's/^compiler_root=//p' /tmp/bend-native-leaf/build.txt)"
+          test -f "$compiler/bend2/main.ts"
+          bun "$compiler/bend2/main.ts" native/bend_engine/standalone/logit_probe.bend -o /tmp/bend-logits.c
+          for mode in generic portable native ubsan; do
+            case "$mode" in
+              generic) flags=() ;;
+              portable) flags=(-DBEND_U64_PORTABLE) ;;
+              native) flags=(-march=native) ;;
+              ubsan) flags=(-fsanitize=undefined -fno-sanitize-recover=all) ;;
+            esac
+            clang -std=c11 -O1 -ffp-contract=off -Werror=shift-count-overflow "${flags[@]}" /tmp/bend-logits.c -pthread -lm -o "/tmp/bend-logits-$mode"
+            python -m native.bend_engine.standalone.verify_logits --report "artifacts/bend-logits-$mode.json" --command "/tmp/bend-logits-$mode" --threads 1
+          done
+      - name: Actual native neural UCI leaves against input logit prior and search references
+        run: |
+          python -m native.bend_engine.standalone.verify_neural --checkpoint /tmp/bend-leaf-model/fixture.pt --package /tmp/bend-leaf-model/checkpoint.pt2 --oracle /tmp/cboard-reference --report artifacts/bend-leaf-native.json --command /tmp/bend-native-leaf/neural/deepfin-bend-neural --threads 1
+      - name: Repeat actual inference with UBSan on Bend and transport code
+        run: |
+          prefix="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+          cmake -S native/bend_engine/standalone -B /tmp/bend-native-leaf/ubsan -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH="$prefix" -DBEND_GENERATED_C=/tmp/bend-native-leaf/engine.c -DBEND_CONTRACT_DIR=/tmp/bend-native-leaf -DCMAKE_C_FLAGS='-fsanitize=undefined -fno-sanitize-recover=all -Werror=shift-count-overflow' -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=undefined
+          cmake --build /tmp/bend-native-leaf/ubsan --parallel 1
+          python -m native.bend_engine.standalone.verify_neural --checkpoint /tmp/bend-leaf-model/fixture.pt --package /tmp/bend-leaf-model/checkpoint.pt2 --oracle /tmp/cboard-reference --report artifacts/bend-leaf-ubsan.json --command /tmp/bend-native-leaf/ubsan/deepfin-bend-neural --threads 1
+      - name: Actual model execution in a runtime without Python or an application source tree
+        run: |
+          python -m native.bend_engine.standalone.isolate_neural --root /tmp/bend-neural-runtime --executable /tmp/bend-native-leaf/neural/deepfin-bend-neural --package /tmp/bend-leaf-model/checkpoint.pt2 --report artifacts/bend-leaf-runtime.json
+          python -m native.bend_engine.standalone.verify_neural --checkpoint /tmp/bend-leaf-model/fixture.pt --package /tmp/bend-leaf-model/checkpoint.pt2 --oracle /tmp/cboard-reference --skip-startup-failures --trace-path /tmp/bend-neural-runtime/actual.trace --runtime-package /model.pt2 --runtime-trace /actual.trace --report artifacts/bend-leaf-isolated.json --command sudo --preserve-env=DEEPFIN_BEND_MODEL_PACKAGE,DEEPFIN_BEND_MODEL_TRACE chroot /tmp/bend-neural-runtime /deepfin-bend-neural --threads 1
+          test -z "$(find /tmp/bend-neural-runtime -type f \( -name '*.py' -o -name '*.pyc' -o -name 'python*' -o -name 'libpython*' -o -name 'bun' \) -print -quit)"
+          test -z "$(find /tmp/bend-neural-runtime/tmp -mindepth 1 -print -quit)"
+      - name: Preserve all existing material-path component and UCI regressions
+        run: |
+          exe=/tmp/bend-native-leaf/deepfin-bend
+          for suite in policy request classical encoding; do
+            python -m "native.bend_engine.standalone.verify_$suite" --require-c --report "artifacts/bend-original-$suite.json" --command "$exe" --threads 1
+          done
+          python -m native.bend_engine.standalone.verify_rules --report artifacts/bend-original-rules.json --command "$exe" --threads 1
+          python native/bend_engine/standalone/verify.py --report artifacts/bend-original-uci.json --command "$exe" --threads 1
+          clang -std=c11 -O1 -ffp-contract=off -static /tmp/bend-native-leaf/engine.c -pthread -lm -o /tmp/bend-native-leaf/material-static
+          root="$(mktemp -d /tmp/bend-material-runtime.XXXXXX)"
+          cp /tmp/bend-native-leaf/material-static "$root/deepfin-bend"
+          test "$(find "$root" -mindepth 1 | wc -l)" = 1
+          python native/bend_engine/standalone/verify.py --report artifacts/bend-original-static.json --command sudo chroot "$root" /deepfin-bend --threads 1
+      - name: Publish only tested non-workflow sources
+        run: |
+          git fetch --no-tags --depth=1 origin dfa0cda0498d45494e1c52e8271fbf20ebf37871
+          git read-tree dfa0cda0498d45494e1c52e8271fbf20ebf37871
+          git add native/bend_engine/standalone docs/experiments/2026-09-21-bend-native-leaf.md
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          commit="$(git commit-tree "$(git write-tree)" -p dfa0cda0498d45494e1c52e8271fbf20ebf37871 -m 'Connect Bend-owned search leaves to bound native model execution')"
+          git push origin "$commit":refs/heads/feat/bend-native-leaf-evaluation
+          printf '%s\n' "$commit" > artifacts/bend-leaf-commit.txt
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: bend-native-leaf-source
-          path: /tmp/bend-native-leaf-source/
-          retention-days: 2
+          name: bend-native-leaf-confirmation
+          path: artifacts/
+          retention-days: 30
