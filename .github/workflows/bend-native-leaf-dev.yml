@@ -20,24 +20,29 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Apply exact implementation and verifier-only import correction
+      - name: Apply exact implementation and reviewed corrections
         run: |
           python - <<'PY'
           import base64, gzip, hashlib, json, urllib.request
           from pathlib import Path
-          parts = []
-          for sha in ['bcf24d6d61c6633dbdb081674e2eaf7778087b61', '7cfe2cdacc3e4d908757347e8275afd3645a25b0', '33773a9b6bd84dcc609c9bf81d011118cf7b6b6f']:
+          def blob(sha):
               with urllib.request.urlopen('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/' + sha, timeout=30) as response:
                   data = json.load(response)
               part = base64.b64decode(data['content'])
               assert hashlib.sha1(f'blob {len(part)}\0'.encode() + part).hexdigest() == sha
-              parts.append(part)
+              return part
+          parts = [blob(sha) for sha in ['bcf24d6d61c6633dbdb081674e2eaf7778087b61', '7cfe2cdacc3e4d908757347e8275afd3645a25b0', '33773a9b6bd84dcc609c9bf81d011118cf7b6b6f']]
           patch = gzip.decompress(base64.b64decode(b''.join(parts), validate=True))
           assert hashlib.sha256(patch).hexdigest() == '5c29099945999351f1cacb20eb653e2df7e69a506d1da493081126cdfb4a9e55'
           Path('/tmp/bend-leaf.patch').write_bytes(patch)
+          correction = blob('68fc83d560203da3c0ac3607483e7acb0fcc6bc1')
+          assert hashlib.sha256(correction).hexdigest() == '16d26dd93e6f8065bcb005d6dcb9869fd2941fb4d9191b4042627b4b9a646b53'
+          Path('/tmp/bend-leaf-correction.patch').write_bytes(correction)
           PY
           git apply --check /tmp/bend-leaf.patch
           git apply /tmp/bend-leaf.patch
+          git apply --check /tmp/bend-leaf-correction.patch
+          git apply /tmp/bend-leaf-correction.patch
           python - <<'PY'
           from pathlib import Path
           import hashlib
@@ -45,7 +50,12 @@ jobs:
           text = p.read_text()
           assert text.count('import chess.engine\n') == 1
           p.write_text(text.replace('import chess.engine\n', ''))
-          assert hashlib.sha256(p.read_bytes()).hexdigest() == 'b77333ba52c9a65a169298f49470e7558b2b803a40c3a78c88476dfa741da523'
+          for name, sha in {
+              'verify_neural.py': 'b77333ba52c9a65a169298f49470e7558b2b803a40c3a78c88476dfa741da523',
+              'main.bend': '207f849dfddffc81bae54b47a98a0720b4830da1c37d95628c64ec064be954fd',
+              'isolate_neural.py': '55628e6a8d5255134ec444fd86c1d2554694e3b3ea456ab3f312bf225d99bc89',
+          }.items():
+              assert hashlib.sha256((p.parent / name).read_bytes()).hexdigest() == sha, name
           PY
           git diff --check
       - name: External CPU export and reference tools
