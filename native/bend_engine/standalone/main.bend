@@ -162,8 +162,8 @@ def move_key(+key: U32) -> String:
 
 def result_label(n: U32) -> String:
   match n:
-    case 0: "unsearched legal fallback; diagnostic material PUCT"
-    case _: "diagnostic material PUCT"
+    case 0: "unsearched legal fallback; experimental PUCT"
+    case _: "experimental PUCT"
 
 def output(root: Pos.Game, table: Array<U64>, key: U32, +n: U32, stop: U32) -> IO(State):
   do IO<State>:
@@ -326,7 +326,7 @@ def available(code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U6
   match mode:
     case Idle{}: idle_command(code, args, root, table)
     case Running{t, n, inf, start, ms, fb}: message(State{root, table, Running{t, n, inf, start, ms, fb}, False{}}, "busy; stop before changing position or search")
-    case Held{k, n, stop}: message(State{root, table, Held{k, n, stop}, False{}}, "busy; stop before changing position or search")
+    case Held{k, n, code}: message(State{root, table, Held{k, n, code}, False{}}, "busy; stop before changing position or search")
 
 def handle(code: U32, args: List<&2, String>, s: State) -> IO(State):
   match code:
