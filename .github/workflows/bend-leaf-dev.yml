@@ -20,7 +20,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Apply exact source after verified transport repair
+      - name: Apply exact source and checked affine and import-name corrections
         run: |
           python - <<'PY'
           import base64,gzip,hashlib
@@ -40,11 +40,13 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import hashlib
-          p=Path('native/bend_engine/standalone/neural/main.bend')
-          s=p.read_text()
-          assert s.count('Rules.Facts{code, count, half}')==1
-          p.write_text(s.replace('Rules.Facts{code, count, half}', 'Rules.Facts{+code, count, half}'))
-          assert hashlib.sha256(p.read_bytes()).hexdigest()=='f9ceceea73171ce36e9aaf8ac301d4e93acd20be0f1ae0f834fdfd026c0a45be'
+          changes=[
+            ('native/bend_engine/standalone/neural/main.bend','Rules.Facts{code, count, half}','Rules.Facts{+code, count, half}','f9ceceea73171ce36e9aaf8ac301d4e93acd20be0f1ae0f834fdfd026c0a45be'),
+            ('native/bend_engine/standalone/main.bend','case Held{k, n, stop}: message(State{root, table, Held{k, n, stop},','case Held{k, n, code}: message(State{root, table, Held{k, n, code},','0c71977c8c53cb3eea3910c34365638226490c686ecea111578c8b969d998897')]
+          for filename,old,new,want in changes:
+              p=Path(filename);s=p.read_text();assert s.count(old)==1
+              p.write_text(s.replace(old,new))
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==want
           PY
           git diff --check
       - name: Locked CPU tools and static contracts
