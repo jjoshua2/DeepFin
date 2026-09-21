@@ -1,0 +1,75 @@
+name: Bend CI repair audit
+on:
+  push:
+    branches: [fix/bend-ci-audit-20260921]
+    paths: [.github/workflows/bend-ci-repair-dev.yml]
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Snapshot exact sources and current release metadata
+        run: |
+          mkdir -p /tmp/bend-ci-audit/logs
+          git archive --format=tar.gz HEAD > /tmp/bend-ci-audit/deepfin.tgz
+          curl --fail --silent --show-error --max-time 30 https://bend-lang.com/dl/latest.json > /tmp/bend-ci-audit/latest.json
+          curl --fail --silent --show-error --max-time 30 https://bend-lang.com/install.sh > /tmp/bend-ci-audit/upstream-install.sh
+      - name: Audit open Bend PR checks without changing them
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          from pathlib import Path
+          root = Path('/tmp/bend-ci-audit')
+          repo = 'jjoshua2/DeepFin'
+          def get(path):
+              req = urllib.request.Request('https://api.github.com/repos/' + repo + '/' + path,
+                headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.load(response)
+          prs = []
+          for page in range(1, 11):
+              rows = get(f'pulls?state=open&per_page=100&page={page}')
+              prs.extend(p for p in rows if 'bend' in p['title'].lower())
+              if len(rows) < 100: break
+          report = []
+          log_count = 0
+          for p in sorted(prs, key=lambda p:p['number']):
+              row = {'number':p['number'], 'title':p['title'], 'head':p['head']['ref'],
+                     'sha':p['head']['sha'], 'base':p['base']['ref'], 'base_sha':p['base']['sha'], 'checks':[]}
+              runs = get('actions/runs?event=pull_request&per_page=30&head_sha=' + p['head']['sha'])['workflow_runs']
+              seen = set()
+              for run in runs:
+                  if run['name'] in seen: continue
+                  seen.add(run['name'])
+                  check = {k:run[k] for k in ('id','name','status','conclusion','html_url')}
+                  if run['conclusion'] == 'failure':
+                      jobs = get(f"actions/runs/{run['id']}/jobs?per_page=100")['jobs']
+                      check['failed_jobs'] = [{'id':j['id'],'name':j['name'], 'steps':[s['name'] for s in j['steps'] if s['conclusion']=='failure']} for j in jobs if j['conclusion']=='failure']
+                      # Preserve representative full logs for non-installer failures.
+                      for j in jobs:
+                          if j['conclusion'] != 'failure' or run['name']=='Bend chess probe' or log_count >= 12: continue
+                          req = urllib.request.Request(f"https://api.github.com/repos/{repo}/actions/jobs/{j['id']}/logs", headers={'Authorization':'Bearer '+os.environ['GH_TOKEN']})
+                          with urllib.request.urlopen(req,timeout=30) as response:
+                              (root/'logs'/f"pr{p['number']}-{j['id']}.log").write_bytes(response.read())
+                          log_count += 1
+                  row['checks'].append(check)
+              report.append(row)
+          (root/'prs.json').write_text(json.dumps(report, indent=2)+'\n')
+          for p in report:
+              print(p['number'],p['head'],[(c['name'],c['conclusion'],c.get('failed_jobs',[])) for c in p['checks']])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-ci-audit
+          path: /tmp/bend-ci-audit/
+          retention-days: 7
