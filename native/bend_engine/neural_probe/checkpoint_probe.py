@@ -9,10 +9,9 @@ import argparse
 from dataclasses import asdict
 import json
 import math
-import os
 from pathlib import Path
 import shutil
-import tempfile
+import time
 
 import torch
 
@@ -20,7 +19,11 @@ from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig, build_mode
 from native.bend_engine.session_probe import run_probe as sessions
 from .backend import BATCHES, NativeEvaluator, build_worker
 from .batch_probe import group
-from .checkpoint import export_checkpoint, load_checkpoint, target
+from .checkpoint import export_checkpoint, load_checkpoint
+from .qualification import (
+    compilation_cache, device_snapshot, protect_inputs, reuse_reference,
+    tools, verified_package, workspace, write_report,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -75,62 +78,120 @@ def main() -> None:
     parser.add_argument('--cxx', default=shutil.which('clang++'))
     parser.add_argument('--modes', nargs='+', choices=list(sessions.MODES), default=['native'])
     parser.add_argument('--report', type=Path, required=True)
+    parser.add_argument('--preflight-only', action='store_true',
+                        help='Check CPU weights, toolchain and target readiness without export, forward or search')
+    parser.add_argument('--work-dir', type=Path,
+                        help='NEW directory retaining packages, builds and caches on success or failure')
+    parser.add_argument('--reuse-package', type=Path,
+                        help='Trusted immutable v3 package from this EXACT checkpoint/weights/target; skip export')
     args = parser.parse_args()
-    if not args.bun or not args.cc or not args.cxx:
-        parser.error('Bun, Clang and Clang++ are required')
+    if args.fixture_checkpoint and args.reuse_package:
+        parser.error('--reuse-package requires --checkpoint, not a newly generated fixture')
+    if args.preflight_only and args.work_dir:
+        parser.error('--preflight-only does not create a --work-dir')
     # Outside the reporting finally block: a rejected destination must not be written.
     validate_report_destination(args.report, args.checkpoint)
-    report: dict[str, object] = {'status': 'failed', 'device': args.device,
-                               'scope': 'checkpoint-native-search qualification, not playing strength or throughput'}
+    if args.reuse_package:
+        protect_inputs(args.report, [args.reuse_package, args.reuse_package.with_suffix('.json')])
+    report: dict[str, object] = {
+        'status': 'running', 'device': args.device, 'qualification': 'not_run',
+        'scope': 'checkpoint-native-search qualification, not playing strength or throughput',
+        'fixture_untrained': args.fixture_checkpoint,
+    }
+    results: list[dict[str, object]] = []
+    report['results'] = results
+    timings: dict[str, float] = {}
+    report['stage_seconds'] = timings
     torch.set_num_threads(2)
-    stage = 'preflight'
-    try:
-        atol, rtol = tolerances(args.device, args.atol, args.rtol)
-        target(args.device, args.device_index)
-        with tempfile.TemporaryDirectory(prefix='bend-checkpoint-') as temp:
-            work = Path(temp)
-            os.environ['TORCHINDUCTOR_CACHE_DIR'] = str(work / 'inductor')
+    stage, stage_start = 'preflight', time.monotonic()
+
+    def enter(name: str) -> None:
+        nonlocal stage, stage_start
+        now = time.monotonic()
+        timings[stage] = timings.get(stage, 0.0) + now - stage_start
+        stage, stage_start = name, now
+        report['stage'] = stage
+        write_report(args.report, report)
+
+    with workspace(args.work_dir) as work:
+        protect_inputs(args.report, [work / 'checkpoint.pt2', work / 'checkpoint.json', work / 'untrained-transformer.pt'])
+        report['artifacts'] = {'directory': str(work), 'retained': args.work_dir is not None}
+        try:
+            atol, rtol = tolerances(args.device, args.atol, args.rtol)
+            report.update(atol=atol, rtol=rtol, batch=args.batch, modes=args.modes)
+            report['environment'] = device_snapshot(args.device, args.device_index)
+            # Validate the pin and native tools BEFORE paying for checkpoint export.
+            report['compiler_revision'] = sessions.check_compiler(args.compiler_root)['revision']
+            commands = tools(args.bun, args.cc, args.cxx)
+            report['tools'] = commands
             path = args.checkpoint
             if args.fixture_checkpoint:
                 path = work / 'untrained-transformer.pt'
                 fixture_checkpoint(path)
-            stage = 'checkpoint-load'
+            enter('checkpoint-load')
             loaded = load_checkpoint(path, weights_key=args.weights_key)
-            report.update({'checkpoint': loaded.identity, 'fixture_untrained': args.fixture_checkpoint,
-                           'atol': atol, 'rtol': rtol, 'torch_version': str(torch.__version__)})
-            stage = 'export'
-            package = work / 'checkpoint.pt2'
-            eager = export_checkpoint(loaded, package, batch=args.batch, device=args.device, device_index=args.device_index)
-            stage = 'native-build'
-            worker = build_worker(work / 'worker', args.cxx)
-            binaries = sessions.build(args.compiler_root, work / 'bend', args.bun, args.cc, args.modes)
-            stage = 'native-search'
-            evaluator = NativeEvaluator(worker, package)
-            try:
-                results = []
-                oracle = sessions.Oracle(binaries['reference'], with_python_chess=True)
-                for mode in args.modes:
-                    control, original = group(binaries[mode], oracle, evaluator, eager, max_rows=1, atol=atol, rtol=rtol)
-                    results.append({'mode': mode, **control})
-                    for faults in (False, True):
-                        observed, final = group(binaries[mode], oracle, evaluator, eager, faults=faults, atol=atol, rtol=rtol)
-                        for a, b in zip(original, final, strict=True):
-                            if a.structure != b.structure or any(a.summary[k] != b.summary[k] for k in ('best', 'nodes', 'completed', 'stop')):
-                                raise AssertionError('checkpoint batching/recovery changed search; retain the mismatch')
-                        results.append({'mode': mode, **observed})
-                evaluator.finish()
-                report.update({'status': 'passed', 'package': evaluator.manifest, 'results': results,
-                               'native_calls': evaluator.sequence - 1,
-                               'compiler_revision': sessions.check_compiler(args.compiler_root)['revision']})
-            finally:
-                evaluator.close()
-    except Exception as error:
-        report.update({'failed_stage': stage, 'error': str(error)})
-        raise
-    finally:
-        args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(json.dumps(report, indent=2) + '\n')
-    print(json.dumps(report, indent=2))
+            report.update(checkpoint=loaded.identity, torch_version=str(torch.__version__),
+                          input_shape=[args.batch, loaded.encoding.channels, 8, 8])
+            package = args.reuse_package.resolve() if args.reuse_package else work / 'checkpoint.pt2'
+            if args.reuse_package:
+                enter('package-verification')
+                report['package'] = verified_package(package, loaded, batch=args.batch,
+                    device=args.device, device_index=args.device_index)
+            if args.preflight_only:
+                report['status'] = 'preflight_passed'
+                # No export, model forward, native worker or search was executed.
+                enter('complete')
+            else:
+                with compilation_cache(work):
+                    if args.reuse_package:
+                        enter('reference-prepare')
+                        eager = reuse_reference(loaded, device=args.device, device_index=args.device_index)
+                    else:
+                        enter('export')
+                        eager = export_checkpoint(loaded, package, batch=args.batch,
+                            device=args.device, device_index=args.device_index)
+                        report['package'] = verified_package(package, loaded, batch=args.batch,
+                            device=args.device, device_index=args.device_index)
+                    report.update(package_path=str(package), reused_package=args.reuse_package is not None)
+                    enter('native-build')
+                    worker = build_worker(work / 'worker', commands['cxx'])
+                    binaries = sessions.build(args.compiler_root, work / 'bend', commands['bun'], commands['cc'], args.modes)
+                    report['qualification'] = 'running'
+                    enter('native-start')
+                    evaluator = NativeEvaluator(worker, package)
+                    try:
+                        oracle = sessions.Oracle(binaries['reference'], with_python_chess=True)
+                        for mode in args.modes:
+                            enter(mode + '-control')
+                            control, original = group(binaries[mode], oracle, evaluator, eager, max_rows=1, atol=atol, rtol=rtol)
+                            results.append({'mode': mode, **control})
+                            for faults in (False, True):
+                                enter(mode + ('-recovery' if faults else '-batched'))
+                                observed, final = group(binaries[mode], oracle, evaluator, eager, faults=faults, atol=atol, rtol=rtol)
+                                # Bank completed groups even if a later comparison fails.
+                                results.append({'mode': mode, **observed})
+                                for a, b in zip(original, final, strict=True):
+                                    if a.structure != b.structure or any(a.summary[k] != b.summary[k] for k in ('best', 'nodes', 'completed', 'stop')):
+                                        raise AssertionError('checkpoint batching/recovery changed search; retain the mismatch')
+                        evaluator.finish()
+                        report.update(status='passed', qualification='passed')
+                    finally:
+                        report['native_calls'] = evaluator.sequence - 1
+                        try:
+                            report['native_stderr_tail'] = evaluator.diagnostics()
+                        finally:
+                            # Diagnostic IO must never prevent worker cleanup.
+                            evaluator.close()
+                    enter('complete')
+        except Exception as error:
+            if report['qualification'] == 'running':
+                report['qualification'] = 'failed'
+            report.update(status='failed', failed_stage=stage, error=str(error), error_type=type(error).__name__)
+            raise
+        finally:
+            timings[stage] = timings.get(stage, 0.0) + time.monotonic() - stage_start
+            write_report(args.report, report)
+        print(json.dumps(report, indent=2))
 
 
 if __name__ == '__main__':

@@ -175,13 +175,27 @@ class NativeEvaluator:
         assert self.proc.stdin is not None
         assert self.proc.stdout is not None
         self.input, self.output = self.proc.stdin, self.proc.stdout
-        os.set_blocking(self.input.fileno(), False)
         try:
+            os.set_blocking(self.input.fileno(), False)
             if struct.unpack('<2I', read_exact(self.output, 8, time.monotonic() + timeout)) != (MAGIC, 0):
                 raise ValueError('invalid evaluator handshake')
+        except Exception as error:
+            try:
+                details = self.diagnostics()
+            except (OSError, ValueError) as diagnostic_error:
+                details = 'native stderr unavailable: ' + str(diagnostic_error)
+            finally:
+                self.close()
+            raise RuntimeError('native evaluator startup failed: ' + str(error) + '\n' + details) from error
         except BaseException:
             self.close()
             raise
+
+    def diagnostics(self) -> str:
+        # Preserve a bounded stderr tail before close destroys the temporary file.
+        # pread does not race the child's write position or require text seek cookies.
+        size = os.fstat(self.errors.fileno()).st_size
+        return os.pread(self.errors.fileno(), 8192, max(0, size - 8192)).decode('utf-8', errors='replace')
 
     def evaluate(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         # One stream and sequence per process. Concurrent callers must batch upstream.
