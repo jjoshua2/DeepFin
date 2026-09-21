@@ -12,6 +12,7 @@ import struct
 import subprocess
 import tempfile
 import time
+from threading import Lock
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -23,12 +24,14 @@ if TYPE_CHECKING:
 
 MAGIC = 0x44464E31
 FORMAT = 'deepfin-tuple-policy-wdl-cpu-f32-v1'
+BATCH_FORMAT = 'deepfin-tuple-policy-wdl-cpu-f32-batched-v2'
+BATCHES = (1, 2, 4, 8, 16)
 HERE = Path(__file__).resolve().parent
 
 
 def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
     data = json.loads(package.with_suffix('.json').read_text())
-    if not isinstance(data, dict) or data.get('format') != FORMAT:
+    if not isinstance(data, dict) or data.get('format') not in (FORMAT, BATCH_FORMAT):
         raise ValueError('unsupported evaluator manifest format')
     import torch
     if data.get('torch_version') != str(torch.__version__):
@@ -36,8 +39,12 @@ def package_manifest(package: Path) -> tuple[dict[str, object], Encoding]:
     if data.get('sha256') != hashlib.sha256(package.read_bytes()).hexdigest():
         raise ValueError('evaluator package fingerprint mismatch')
     if (type(data.get('policy_width')) is not int or data.get('policy_width') != 1858
-            or type(data.get('batch')) is not int or data.get('batch') != 1):
+            or type(data.get('batch')) is not int or data.get('batch') not in BATCHES):
         raise ValueError('unsupported evaluator policy width or batch')
+    if data['format'] == FORMAT and data['batch'] != 1:
+        raise ValueError('v1 evaluator requires batch one')
+    if data['format'] == BATCH_FORMAT and data.get('row_independent') is not True:
+        raise ValueError('batched manifest must declare independent rows')
     history, extra, fix = (data.get(k) for k in ('input_history_encoding', 'input_extra_features', 'history_rep_fix'))
     if not isinstance(history, str) or not isinstance(extra, str) or type(fix) is not bool:
         raise ValueError('missing or invalid model encoding in evaluator manifest')
@@ -87,6 +94,8 @@ def write_all(stream: IO[bytes], data: bytes, deadline: float) -> None:
             written = os.write(stream.fileno(), view)
         except BlockingIOError:
             continue
+        if written <= 0:
+            raise RuntimeError("native evaluator input closed")
         view = view[written:]
 
 
@@ -97,9 +106,14 @@ class NativeEvaluator:
             raise ValueError('evaluator timeout must be finite and positive')
         self.manifest, self.encoding = package_manifest(package)
         self.timeout, self.sequence, self.failed = timeout, 1, False
+        batch = self.manifest['batch']
+        if not isinstance(batch, int):
+            raise ValueError('invalid evaluator batch')
+        self.batch = batch
+        self.lock = Lock()
         with ExitStack() as resources:
             self.errors = resources.enter_context(tempfile.TemporaryFile(mode='w+'))
-            self.proc = subprocess.Popen([str(binary), str(package), str(self.encoding.channels)],
+            self.proc = subprocess.Popen([str(binary), str(package), str(self.encoding.channels), str(self.batch)],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.errors, bufsize=0)
             self.resources = resources.pop_all()
         assert self.proc.stdin is not None
@@ -114,27 +128,38 @@ class NativeEvaluator:
             raise
 
     def evaluate(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        # One stream and sequence per process. Concurrent callers must batch upstream.
+        if not self.lock.acquire(blocking=False):
+            raise RuntimeError('native evaluator already has an in-flight call')
+        try:
+            return self._evaluate(x)
+        finally:
+            self.lock.release()
+
+    def _evaluate(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if self.failed:
             raise RuntimeError('failed evaluator cannot be reused')
-        if x.shape != (1, self.encoding.channels, 8, 8) or not np.isfinite(x).all():
+        if x.shape != (self.batch, self.encoding.channels, 8, 8) or not np.isfinite(x).all():
             raise ValueError('invalid evaluator input tensor')
         data = np.asarray(x, dtype='<f4').tobytes()
         deadline = time.monotonic() + self.timeout
         try:
             write_all(self.input, struct.pack('<3I', MAGIC, self.sequence, x.size) + data, deadline)
             header = struct.unpack('<4I', read_exact(self.output, 16, deadline))
-            if header != (MAGIC, self.sequence, 1858, 3):
+            if header != (MAGIC, self.sequence, self.batch * 1858, self.batch * 3):
                 raise ValueError('invalid evaluator sequence or output header')
-            result = np.frombuffer(read_exact(self.output, (1858 + 3) * 4, deadline), dtype='<f4').copy()
+            result = np.frombuffer(read_exact(self.output, self.batch * (1858 + 3) * 4, deadline), dtype='<f4').copy()
             if not np.isfinite(result).all():
                 raise ValueError('nonfinite native evaluator response')
             self.sequence += 1
-            return result[:1858][None], result[1858:][None]
+            split = self.batch * 1858
+            return result[:split].reshape(self.batch, 1858), result[split:].reshape(self.batch, 3)
         except BaseException:
             self.failed = True
             raise
 
     def close(self) -> None:
+        self.failed = True
         if self.proc.poll() is None:
             self.proc.kill()
         self.proc.wait(timeout=5)
