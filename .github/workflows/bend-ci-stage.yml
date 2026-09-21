@@ -1,12 +1,12 @@
-name: Inspect Bend stack conflict
+name: Reconcile Bend stacked PR
 on:
   push:
     branches: [fix/bend-ci-audit-20260921]
     paths: [.github/workflows/bend-ci-stage.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  inspect:
+  stage:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -14,34 +14,76 @@ jobs:
         with:
           ref: 6eaeab31233316fc012226ee25696e0806271d5b
           fetch-depth: 0
-          persist-credentials: false
-      - name: Inspect parent integration without changing any branches
+      - name: Resolve the seven inspected conflicts without updating the PR branch
         run: |
-          git fetch --no-tags https://github.com/jjoshua2/DeepFin.git df768c90897beb01b98f4b0bdf5f58e5a928c96d
-          mkdir -p /tmp/stack-conflict
+          git fetch --no-tags origin df768c90897beb01b98f4b0bdf5f58e5a928c96d
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           python - <<'PY'
-          import subprocess
+          import json,subprocess
           from pathlib import Path
-          root=Path('/tmp/stack-conflict')
-          result=subprocess.run(['git','merge-tree','--write-tree','--messages','6eaeab31233316fc012226ee25696e0806271d5b','df768c90897beb01b98f4b0bdf5f58e5a928c96d'],text=True,capture_output=True,check=False)
-          (root/'merge.txt').write_text(result.stdout+'\nSTDERR\n'+result.stderr)
-          print(result.returncode,result.stdout,result.stderr)
-          assert result.returncode in (0,1)
-          tree=result.stdout.splitlines()[0]
-          assert len(tree)==40
-          patch=subprocess.check_output(['git','diff','6eaeab31233316fc012226ee25696e0806271d5b',tree])
-          (root/'merge.patch').write_bytes(patch)
-          subprocess.run(['git','diff','--stat','6eaeab31233316fc012226ee25696e0806271d5b',tree],check=True)
-          for line in result.stdout.splitlines():
-              fields=line.split('\t',1)
-              if len(fields)!=2 or len(fields[0].split())!=3:continue
-              mode,sha,stage=fields[0].split();path=fields[1]
-              if mode not in ('100644','100755'):continue
-              (root/f'{stage}-{Path(path).name}').write_bytes(subprocess.check_output(['git','cat-file','blob',sha]))
+          head='6eaeab31233316fc012226ee25696e0806271d5b';base='df768c90897beb01b98f4b0bdf5f58e5a928c96d'
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          def run(*args):subprocess.run(['git',*args],check=True)
+          result=subprocess.run(['git','merge','--no-commit','--no-ff',base],text=True,capture_output=True,check=False)
+          assert result.returncode==1,result.stdout
+          conflicts=set(git('diff','--name-only','--diff-filter=U').splitlines())
+          ours={'native/bend_engine/session_probe/main.bend','native/bend_engine/session_probe/run_probe.py','native/bend_engine/session_probe/README.md'}
+          theirs={'native/bend_engine/legal_probe/input.c','native/bend_engine/legal_probe/support.h','native/bend_engine/resolve_latest.py'}
+          index='docs/experiments/README.md'
+          assert conflicts==ours|theirs|{index},conflicts
+          # PR778's main/parser/docs contain the new root-to-leaf neural history.
+          for p in ours:run('checkout','--ours','--',p)
+          # Base adds a derived array-depth guard; both resolver versions have
+          # identical content and only differ in executable mode.
+          for p in theirs:run('checkout','--theirs','--',p)
+          a=git('show',head+':'+index).splitlines();b=git('show',base+':'+index).splitlines()
+          p=Path(index);lines=p.read_text().splitlines();merged=[];i=0
+          while i<len(lines):
+              line=lines[i]
+              if not line.startswith('<<<<<<< '):merged.append(line);i+=1;continue
+              i+=1;left=[];right=[]
+              while i<len(lines) and lines[i]!='=======':left.append(lines[i]);i+=1
+              assert i<len(lines);i+=1
+              while i<len(lines) and not lines[i].startswith('>>>>>>> '):right.append(lines[i]);i+=1
+              assert i<len(lines);i+=1
+              assert all(not x or x.startswith('|') for x in left+right),(left,right)
+              for x in left+right:
+                  if x not in merged:merged.append(x)
+          p.write_text('\n'.join(merged)+'\n')
+          assert all(x in merged for x in a+b if x.startswith('|')), 'experiment index entry lost'
+          run('add','--',*conflicts)
+          assert not git('diff','--name-only','--diff-filter=U')
+          run('diff','--cached','--check')
+          for p in ours:assert git('rev-parse',':'+p)==git('rev-parse',head+':'+p),p
+          for p in theirs:assert git('rev-parse',':'+p)==git('rev-parse',base+':'+p),p
+          changed=git('diff','--cached','--name-only').splitlines()
+          allowed={'.github/workflows/bend-search-probe.yml','.github/workflows/bend-tree-probe.yml',index,'native/bend_engine/README.md',*theirs,
+              'native/bend_engine/search_probe/README.md','native/bend_engine/search_probe/build_probe.sh','native/bend_engine/search_probe/main.bend',
+              'native/bend_engine/tree_probe/README.md','native/bend_engine/tree_probe/build_probe.sh','native/bend_engine/tree_probe/main.bend',
+              'tests/test_bend_gumbel_halving_probe.py','tests/test_bend_mcts_tree_probe.py'}
+          assert set(changed)<=allowed,changed
+          # All added probes are the base's actual source, not fresh rewrites.
+          for p in changed:
+              if p not in (index,'native/bend_engine/README.md'):
+                  assert git('rev-parse',':'+p)==git('rev-parse',base+':'+p),p
+          out=Path('/tmp/bend-stack-resolved');out.mkdir()
+          (out/'resolution.patch').write_text(subprocess.check_output(['git','diff','--cached','--binary'],text=True))
+          flows=[p for p in changed if p.startswith('.github/workflows/')]
+          entries=[{'path':p,'mode':'100644','type':'blob','sha':git('rev-parse',':'+p)} for p in flows]
+          complete=git('write-tree')
+          run('restore','--staged','--source='+head,'--',*flows)
+          source=git('write-tree');commit=git('commit-tree',source,'-p',head,'-m','Stage inspected PR778 stack-conflict resolution')
+          target='refs/heads/fix/bend-ci-pr778-reconciled-sources'
+          assert not git('ls-remote','--heads','origin',target)
+          run('push','origin',commit+':'+target)
+          result={'head':head,'base':base,'source_tree':source,'final_tree':complete,'workflow_entries':entries,'source_commit':commit,'changed_files':changed}
+          (out/'manifest.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bend-stack-conflict
-          path: /tmp/stack-conflict/
-          retention-days: 7
+          name: bend-stack-resolved
+          path: /tmp/bend-stack-resolved/
+          retention-days: 14
