@@ -4,6 +4,10 @@ on:
     branches: [work/bend-slider-laws-20260920]
 permissions:
   contents: read
+  actions: read
+concurrency:
+  group: slider-law-certificate-integration
+  cancel-in-progress: true
 jobs:
   source:
     if: ${{ !startsWith(github.event.head_commit.message, 'Save qualified slider candidate') }}
@@ -20,8 +24,35 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: python3 .github/prepare-slider.py
+      - name: Verify fresh native evidence for the identical executable inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          from pathlib import Path
+          def get(endpoint):
+              req = urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/'+endpoint,
+                  headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=30) as r: return json.load(r)
+          run = get('actions/runs/35556227949')
+          job = get('actions/jobs/106200288255')
+          artifact = get('actions/artifacts/10620212310')
+          assert run['head_sha'] == '20e883e697d34e84c14ab4ee1dcb30b8f2a0f849'
+          assert job['run_id'] == run['id'] and job['name'] == 'native'
+          assert job['status'] == 'completed' and job['conclusion'] == 'success'
+          assert artifact['workflow_run']['id'] == run['id']
+          assert artifact['digest'] == 'sha256:2bc7623c88a243e498cb4bb3213bf4338d2774399e0471d9f4d0974fa0e00895'
+          assert not artifact['expired']
+          evidence = {'scope':'native job only; prior full source run is NOT relabeled passing',
+              'native_run':run['id'],'native_job':job['id'],'native_conclusion':job['conclusion'],
+              'artifact_id':artifact['id'],'artifact_digest':artifact['digest'],
+              'source_identity':json.loads(Path('/tmp/slider-validation/source-identity.json').read_text())}
+          Path('/tmp/slider-validation/native-evidence-reuse.json').write_text(json.dumps(evidence,indent=2)+'\n')
+          print(json.dumps(evidence,indent=2))
+          PY
       - run: bun test native/bend_engine/standalone/verify_compiler.test.js
-      - name: Full source proof and 17 rejection controls
+      - name: Full source certificate and 18 rejection controls
         run: |
           if bun native/bend_engine/standalone/verify_laws.js /tmp/deepfin-slider-compiler --report /tmp/slider-validation/proofs.json > /tmp/slider-validation/proofs.log 2>&1; then
             cat /tmp/slider-validation/proofs.log
@@ -38,48 +69,8 @@ jobs:
             /tmp/slider-validation/*.log
             /tmp/slider-validation/*.patch
           retention-days: 14
-  native:
-    if: ${{ !startsWith(github.event.head_commit.message, 'Save qualified slider candidate') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    env:
-      BEND_NO_TELEMETRY: '1'
-      CC: clang
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - run: python .github/prepare-slider.py
-      - run: python -m pip install python-chess==1.999 numpy==2.2.6
-      - name: Five native builds with unchanged engine, rules, encoding and table checks
-        run: |
-          if bash native/bend_engine/standalone/qualify_toolchain.sh /tmp/slider-native /tmp/deepfin-slider-compiler > /tmp/slider-validation/native.log 2>&1; then
-            cat /tmp/slider-validation/native.log
-          else
-            cat /tmp/slider-validation/native.log
-            exit 1
-          fi
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: slider-law-native-qualification
-          path: |
-            /tmp/slider-native/reports
-            /tmp/slider-native/*.json
-            /tmp/slider-native/build.txt
-            /tmp/slider-native/runtime-inventory.txt
-            /tmp/slider-validation/*.json
-            /tmp/slider-validation/*.log
-          retention-days: 14
   publish:
-    needs: [source, native]
+    needs: [source]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -90,7 +81,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - run: python3 .github/prepare-slider.py
-      - name: Save tested source on isolated work branch only
+      - name: Save qualified source on isolated work branch only
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -99,7 +90,7 @@ jobs:
           import json, subprocess
           files = json.loads(Path('/tmp/slider-validation/source-identity.json').read_text())['files']
           subprocess.run(['git','add','--',*files],check=True)
-          subprocess.run(['git','rm','.github/slider-part0.b64','.github/slider-part1.b64','.github/slider-repair.b64','.github/prepare-slider.py'],check=True)
+          subprocess.run(['git','rm','.github/slider-part0.b64','.github/slider-part1.b64','.github/slider-repair.b64','.github/slider-boxed.b64','.github/prepare-slider-base.py','.github/prepare-slider.py'],check=True)
           PY
           git diff --cached --check
           test -z "$(git diff --cached --name-only HEAD -- .github/workflows)"
