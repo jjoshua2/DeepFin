@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [500M continuation and partial factorial readout](2026-09-21-500m-continuation.md) | A/B/C exact epochs complete; policy +6.79 and value +21.74 Elo with intervals crossing zero; recovered arena bookkeeping, D ongoing; packed storage and bounded SF reset optimization |
 | [Bend perft native baseline](2026-09-18-bend-perft-baseline.md) | Paired old/new Bend versus CBoard, conservative king-safety filter; CPU-only, no production adoption |
 | [Ceres CPU semantics oracle](2026-09-13-ceres-cpu-semantics.md) | CPU oracle complete after comparator-only recovery: 144 histories match bytes; 131 value cases quantify FP16 getter differences, no neural parity claim |
 | [Saved joint raw-label eligibility](2026-09-13-saved-joint-raw-eligibility.md) | 21.40M saved joint-label raw candidates outside covered rosters; 512-shard audit complete: 4,219,426 eligible / 4,249,935 raw rows; 88 exact exclusions qualified; 4,219,426-row / 516-shard derivation launched, no completion or training admission |
