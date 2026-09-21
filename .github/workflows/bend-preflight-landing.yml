@@ -20,61 +20,87 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           activate-environment: true
-      - name: Reconcile the exact reviewed checkpoint base and preserve source evidence
+      - name: Reconcile exact base and verify the reviewed correction
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git fetch --no-tags origin b939d7d6acc3bfe3b4610248527790fb24d29bfe
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           mkdir -p artifacts/preflight-review
           python - <<'PY'
-          import json, subprocess
+          import base64,hashlib,json,os,subprocess,urllib.request
           from pathlib import Path
-          head='0ff37d197eda2b389129083f7b2cdcca91872d7a'
-          base='b939d7d6acc3bfe3b4610248527790fb24d29bfe'
-          def git(*args): return subprocess.check_output(['git', *args],text=True).strip()
-          result=subprocess.run(['git','merge','--no-commit','--no-ff',base],check=False)
-          assert result.returncode in (0,1)
-          conflicts=git('diff','--name-only','--diff-filter=U').splitlines()
-          if conflicts:
-              assert conflicts==['native/bend_engine/resolve_latest.py'],conflicts
-              p=conflicts[0]
-              assert git('rev-parse',':2:'+p)==git('rev-parse',':3:'+p)=='f5c8addd250dad2410079a11d780e3f460368663'
-              subprocess.run(['git','checkout','--theirs','--',p],check=True)
-              subprocess.run(['git','add','--',p],check=True)
-          assert not git('diff','--name-only','--diff-filter=U')
-          subprocess.run(['git','diff','--cached','--check'],check=True)
-          tree=git('write-tree')
+          head='0ff37d197eda2b389129083f7b2cdcca91872d7a';base='b939d7d6acc3bfe3b4610248527790fb24d29bfe'
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          subprocess.run(['git','merge','--no-commit','--no-ff',base],check=True)
+          assert git('write-tree')=='104596c6e8edc15f49479a915fb32cd010f11530'
+          for name in ('backend.py','checkpoint_probe.py'):
+              Path('/tmp/before-'+name).write_bytes(Path('native/bend_engine/neural_probe',name).read_bytes())
+          sha='2e8427782451bd9ff37ad8c0fec508967e6fcf4b'
+          req=urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/'+sha,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN']})
+          with urllib.request.urlopen(req,timeout=30) as r:raw=base64.b64decode(json.load(r)['content'])
+          assert hashlib.sha1(f'blob {len(raw)}\0'.encode()+raw).hexdigest()==sha
+          Path('/tmp/apply-preflight-fixes.py').write_bytes(raw)
+          subprocess.run(['python','/tmp/apply-preflight-fixes.py'],check=True)
+          expected={'tests/test_bend_qualification.py':'d4f80372235da1cc973949ff9e922d80cc1d5b2c',
+                    'native/bend_engine/neural_probe/backend.py':'e90c1658e528b3f50ec96b6a820139ee9d34cbc2',
+                    'native/bend_engine/neural_probe/checkpoint_probe.py':'d7967406038c7ccc1566ce62b3ab688d014be3f7'}
+          assert {p:git('hash-object',p) for p in expected}==expected
+          patch=subprocess.check_output(['git','diff','--full-index','--binary'])
+          assert hashlib.sha256(patch).hexdigest()=='2b3ccfc5614839762252bf504c37caefe28b459a4362e415cfaab252bec786d7'
+          subprocess.run(['git','add','--',*expected],check=True)
+          tree=git('write-tree');assert tree=='d393c0dff6877a1a4feea3bc3ecb79071514040b'
           out=Path('artifacts/preflight-review')
-          (out/'identity.json').write_text(json.dumps({'head':head,'base':base,'tree':tree,'conflicts':conflicts},indent=2)+'\n')
+          (out/'identity.json').write_text(json.dumps({'head':head,'base':base,'tree':tree,'corrected_blobs':expected},indent=2)+'\n')
+          (out/'review-fixes.patch').write_bytes(patch)
           (out/'integration.patch').write_bytes(subprocess.check_output(['git','diff','--cached','--full-index','--binary',head]))
           (out/'feature.patch').write_bytes(subprocess.check_output(['git','diff','--cached','--full-index','--binary',base]))
-          with (out/'source.tgz').open('wb') as stream:
-              subprocess.run(['git','archive','--format=tar.gz',tree],stdout=stream,check=True)
-          print('COMBINED_TREE',tree,flush=True)
           PY
-      - name: Locked environment and focused static checks
+          git diff --cached --check
+      - name: Locked environment and whole-repository static validation
         run: |
           uv sync --locked --extra dev --extra cpu
           ruff check native/bend_engine/neural_probe tests/test_bend_checkpoint.py tests/test_bend_qualification.py
           basedpyright native/bend_engine/neural_probe tests/test_bend_checkpoint.py tests/test_bend_qualification.py
-      - name: Real qualification, checkpoint, batching and boundary contracts
+          python scripts/validate.py lint --require-cpu-wheel
+      - name: Qualification, checkpoint, batching and boundary contracts
         run: |
           python -m pytest -q tests/test_bend_qualification.py tests/test_bend_checkpoint.py tests/test_bend_batching.py tests/test_bend_neural_boundary.py tests/test_bend_search_sessions.py --junitxml=artifacts/preflight-review/contracts.xml
+      - name: Before-fix controls reproduce the three cleanup failures
+        run: |
+          cp native/bend_engine/neural_probe/backend.py /tmp/tested-backend.py
+          cp native/bend_engine/neural_probe/checkpoint_probe.py /tmp/tested-checkpoint_probe.py
+          cp /tmp/before-backend.py native/bend_engine/neural_probe/backend.py
+          cp /tmp/before-checkpoint_probe.py native/bend_engine/neural_probe/checkpoint_probe.py
+          set +e
+          python -m pytest -q tests/test_bend_qualification.py -k 'startup_setup_failures or qualifier_diagnostics_fault' --junitxml=artifacts/preflight-review/before-fix.xml > artifacts/preflight-review/before-fix.txt 2>&1
+          status=$?
+          set -e
+          cp /tmp/tested-backend.py native/bend_engine/neural_probe/backend.py
+          cp /tmp/tested-checkpoint_probe.py native/bend_engine/neural_probe/checkpoint_probe.py
+          test "$status" = 1
+          python - <<'PY'
+          import xml.etree.ElementTree as E
+          root=E.parse('artifacts/preflight-review/before-fix.xml').getroot()
+          assert len(root.findall('.//testcase'))==3
+          assert len(root.findall('.//failure'))==3
+          assert not root.findall('.//error')
+          PY
+          git diff --exit-code
       - name: Stage passing source without editing PR branches or workflow permissions
         run: |
           python - <<'PY'
           import json,subprocess
           from pathlib import Path
-          def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
-          out=Path('artifacts/preflight-review'); data=json.loads((out/'identity.json').read_text())
-          assert git('write-tree')==data['tree']
-          assert not git('diff','--name-only')
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          out=Path('artifacts/preflight-review');data=json.loads((out/'identity.json').read_text())
+          assert git('write-tree')==data['tree'];assert not git('diff','--name-only')
           changes=git('diff','--cached','--name-only',data['head']).splitlines()
           flows=[p for p in changes if p.startswith('.github/workflows/')]
           entries=[{'path':p,'mode':'100644','type':'blob','sha':git('rev-parse',':'+p)} for p in flows]
-          if flows: subprocess.run(['git','restore','--staged','--source='+data['head'],'--',*flows],check=True)
-          tree=git('write-tree')
-          commit=git('commit-tree',tree,'-p',data['head'],'-m','Stage checked checkpoint-preflight base integration')
+          if flows:subprocess.run(['git','restore','--staged','--source='+data['head'],'--',*flows],check=True)
+          tree=git('write-tree');commit=git('commit-tree',tree,'-p',data['head'],'-m','Stage reviewed preflight integration and worker-cleanup fixes')
           ref='refs/heads/review/bend-preflight-ready-sources-20260921'
           assert not git('ls-remote','--heads','origin',ref)
           subprocess.run(['git','push','origin',commit+':'+ref],check=True)
