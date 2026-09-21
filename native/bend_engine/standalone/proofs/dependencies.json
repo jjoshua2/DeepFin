@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/jjoshua2/bend.git",
+  "revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "files": {
+    "u64/LAWS.bend": {
+      "source": "demos/proof_u64/LAWS.bend",
+      "sha256": "e4b1f1b3bf993574e5daca56b3d729e7980232786ba4cf4438e61e95951adbaf"
+    },
+    "u64/PROOF.bend": {
+      "source": "demos/proof_u64/PROOF.bend",
+      "sha256": "d4cd7e9934cd8f42bcea72da8f5d3035508ea47b5ec9ba34139808b5dffd3c71"
+    },
+    "u64/Words.bend": {
+      "source": "demos/proof_u64/Words.bend",
+      "sha256": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba"
+    },
+    "u64/LICENSE": {
+      "source": "LICENSE",
+      "sha256": "0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35"
+    }
+  }
+}
