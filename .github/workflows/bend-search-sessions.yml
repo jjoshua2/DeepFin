@@ -33,7 +33,7 @@ jobs:
       - name: Install pinned compiler and test-time tools
         run: |
           bash native/bend_engine/bitboard_probe/install_toolchain.sh
-          python -m pip install 'python-chess==1.999' 'pytest==9.1.1' 'ruff==0.15.20' 'basedpyright==1.39.9'
+          python -m pip install 'python-chess==1.999' 'numpy==2.2.6' 'pytest==9.1.1' 'ruff==0.15.20' 'basedpyright==1.39.9'
       - name: Focused static and cheap contracts
         run: |
           ruff check native/bend_engine/session_probe/*.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py
