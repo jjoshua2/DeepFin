@@ -43,14 +43,22 @@ jobs:
           assert hashlib.sha1(f'blob {len(raw)}\0'.encode()+raw).hexdigest()==sha
           Path('/tmp/apply-preflight-fixes.py').write_bytes(raw)
           subprocess.run(['python','/tmp/apply-preflight-fixes.py'],check=True)
-          expected={'tests/test_bend_qualification.py':'d4f80372235da1cc973949ff9e922d80cc1d5b2c',
+          p=Path('tests/test_bend_qualification.py');s=p.read_text()
+          for old,new in [
+              ('        assert child.stdin.closed and child.stdout.closed','        assert child.stdin.closed\n        assert child.stdout.closed'),
+              ("    assert result['status'] == 'failed' and result['qualification'] == 'failed'","    assert result['status'] == 'failed'\n    assert result['qualification'] == 'failed'"),
+          ]:
+              assert s.count(old)==1
+              s=s.replace(old,new)
+          p.write_text(s)
+          expected={'tests/test_bend_qualification.py':'7c773be81fc059d34188d1fc7ccf1c8775b3a3a0',
                     'native/bend_engine/neural_probe/backend.py':'e90c1658e528b3f50ec96b6a820139ee9d34cbc2',
                     'native/bend_engine/neural_probe/checkpoint_probe.py':'d7967406038c7ccc1566ce62b3ab688d014be3f7'}
           assert {p:git('hash-object',p) for p in expected}==expected
           patch=subprocess.check_output(['git','diff','--full-index','--binary'])
-          assert hashlib.sha256(patch).hexdigest()=='2b3ccfc5614839762252bf504c37caefe28b459a4362e415cfaab252bec786d7'
+          assert hashlib.sha256(patch).hexdigest()=='abb17722bbd5e4ba2de5634d953a8c159dcb9bf427f3f64401cebd1357bb25eb'
           subprocess.run(['git','add','--',*expected],check=True)
-          tree=git('write-tree');assert tree=='d393c0dff6877a1a4feea3bc3ecb79071514040b'
+          tree=git('write-tree');assert tree=='8b8fd2d8e508d34544ab1a17d0daa20b34abab4a'
           out=Path('artifacts/preflight-review')
           (out/'identity.json').write_text(json.dumps({'head':head,'base':base,'tree':tree,'corrected_blobs':expected},indent=2)+'\n')
           (out/'review-fixes.patch').write_bytes(patch)
