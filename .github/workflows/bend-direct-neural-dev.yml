@@ -91,7 +91,7 @@ jobs:
       - name: Pure Bend output conversions and native negative cases
         run: |
           compiler="build/bend_standalone_toolchain/$(bun native/bend_engine/standalone/verify_compiler.js --revision)/source"
-          bun "$compiler/bend2/main.ts" native/bend_engine/standalone/neural/reply_probe.bend -o /tmp/bend-direct-reply.c
+          BEND_NO_TELEMETRY=1 bun "$compiler/bend2/main.ts" native/bend_engine/standalone/neural/reply_probe.bend -o /tmp/bend-direct-reply.c
           for mode in generic portable ubsan; do
             flags=()
             case "$mode" in portable) flags=(-DBEND_U64_PORTABLE);; ubsan) flags=(-fsanitize=undefined -fno-sanitize-recover=all);; esac
@@ -120,7 +120,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import subprocess, shutil, zipfile, json
+          import subprocess, shutil, zipfile, json, os
           root=Path('/tmp/bend-direct-runtime'); root.mkdir()
           (root/'tmp').mkdir(mode=0o777)
           shutil.copy2('/tmp/bend-direct-build/deepfin-bend-neural',root/'deepfin-bend-neural')
@@ -128,12 +128,17 @@ jobs:
           unpack=Path('/tmp/bend-direct-inspect'); unpack.mkdir()
           with zipfile.ZipFile('/tmp/bend-direct-model/model.pt2') as z:
               z.extractall(unpack)
+          # A package DSO uses the already-loaded LibTorch in the running engine.
+          # Standalone ldd needs that explicit search path during packaging too.
+          libdir=Path(Path('/tmp/torch-prefix').read_text()).parents[1] / 'lib'
+          assert (libdir/'libtorch_cpu.so').is_file()
+          ldd_env={**os.environ, 'LD_LIBRARY_PATH':str(libdir)}
           todo=[Path('/tmp/bend-direct-build/deepfin-bend-neural'),*unpack.rglob('*.so')]; seen=set()
           while todo:
               src=todo.pop()
               if src in seen: continue
               seen.add(src)
-              r=subprocess.run(['ldd',str(src)],text=True,capture_output=True,check=True)
+              r=subprocess.run(['ldd',str(src)],text=True,capture_output=True,check=True,env=ldd_env)
               assert 'not found' not in r.stdout and 'libpython' not in r.stdout.lower(),r.stdout
               for token in r.stdout.split():
                   if not token.startswith('/'): continue
@@ -149,6 +154,27 @@ jobs:
           DEEPFIN_BEND_PACKAGE=/model.pt2 python -m native.bend_engine.standalone.neural.verify \
             --checkpoint /tmp/bend-direct-model/fixture.pt --oracle /tmp/cboard-reference \
             --report artifacts/bend-direct-isolated.json --command sudo -E chroot /tmp/bend-direct-runtime /deepfin-bend-neural --threads 1
+      - name: Independent standard UCI client without diagnostic trace
+        run: |
+          DEEPFIN_BEND_PACKAGE=/model.pt2 DEEPFIN_BEND_TRACE=0 python - <<'PY'
+          from pathlib import Path
+          import chess, chess.engine, json
+          root=chess.Board()
+          for uci in ['g1f3','g8f6','f3g1','f6g8']*2: root.push_uci(uci)
+          expected=json.loads(Path('artifacts/bend-direct-neural.json').read_text())['searches'][:4]
+          actual=[]
+          engine=chess.engine.SimpleEngine.popen_uci(['sudo','-E','chroot','/tmp/bend-direct-runtime','/deepfin-bend-neural','--threads','1'],timeout=30)
+          try:
+              for row in expected:
+                  result=engine.play(root,chess.engine.Limit(nodes=4,depth=2),info=chess.engine.INFO_ALL)
+                  assert result.move is not None and result.move in root.legal_moves
+                  assert result.move.uci() == row['bestmove']
+                  assert result.info['nodes'] == 4 and 'fallback' not in str(result.info)
+                  actual.append(result.move.uci()); root.push(result.move)
+              engine.ping()
+          finally: engine.quit()
+          Path('artifacts/bend-direct-uci.json').write_text(json.dumps({'status':'passed','trace':False,'isolated_runtime':True,'moves':actual,'initial_history_plies':8},indent=2))
+          PY
       - name: Preserve the material control and its existing perft and UCI checks
         run: |
           bash native/bend_engine/standalone/build.sh /tmp/bend-direct-material
