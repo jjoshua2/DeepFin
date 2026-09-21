@@ -27,7 +27,7 @@ Term chess_legal_moves_run(Env e, Term* f, IoWork* w) {
   uint32_t count = deepfin_bend_probe_legal_moves((uint32_t)f[0], moves, 256);
   Term xs = term_pak(CID_NIL, 0);
   for (uint32_t i = count; i > 0; i--) {
-    xs = io_node(e, CID_CON, (Term)moves[i - 1], xs, 0);
+    xs = io_node(e, CID_CON, (Term)moves[i - 1], xs);
   }
   return xs;
 }
