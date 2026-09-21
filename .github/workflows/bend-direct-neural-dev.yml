@@ -2,7 +2,6 @@ name: Bend direct neural qualification
 on:
   push:
     branches: [feat/bend-direct-native-neural-dev]
-    paths: ['.github/workflows/bend-direct-neural-dev.yml']
 permissions:
   contents: write
 jobs:
@@ -23,10 +22,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Apply reviewed import and verifier-local name corrections
+      - name: Apply exact import and verifier corrections without weakening checks
         run: |
           python - <<'PY'
           from pathlib import Path
+          import ast, subprocess
           p = Path('native/bend_engine/standalone/main.bend')
           text = p.read_text()
           for old, new in [('def stop(root:', 'def stop_search(root:'), ('      stop(root, table, mode)', '      stop_search(root, table, mode)')]:
@@ -41,9 +41,25 @@ jobs:
           s = s.replace('from chess_anti_engine.encoding import rep_fix', 'from chess_anti_engine.encoding import rep_fix\nfrom chess_anti_engine.encoding.features import extra_feature_planes_fast\nfrom chess_anti_engine.encoding.lc0 import encode_lc0_full')
           s = s.replace('                raw = []\n', '                python_tensor = np.concatenate((encode_lc0_full(board, input_history_encoding=loaded.encoding.input_history_encoding),\n                                                extra_feature_planes_fast(board, version=loaded.encoding.input_extra_features)), axis=0)\n                exact_planes = min(channels, 173)\n                np.testing.assert_array_equal(tensor[:exact_planes].view(np.uint32), python_tensor[:exact_planes].view(np.uint32))\n                if channels == 175:\n                    np.testing.assert_allclose(tensor[173:], python_tensor[173:], atol=1.2e-7, rtol=0)\n                raw = []\n')
           p.write_text(s)
+          assert subprocess.check_output(['git','hash-object',str(p)],text=True).strip() == '38c00580394a94d2837cbd98589970e4e45008d6'
+          expected = {'verify.py':'8eb3405f0770fec061e02185b45a389e0da4d517', 'verify_reply.py':'3afb6ffd3b28a144260302117c54596f97ccc85a'}
+          for name, sha in expected.items():
+              p = Path('native/bend_engine/standalone/neural') / name
+              s = p.read_text()
+              lines = s.splitlines(keepends=True)
+              changes = []
+              for node in ast.walk(ast.parse(s)):
+                  if isinstance(node, ast.Assert) and isinstance(node.test, ast.BoolOp) and isinstance(node.test.op, ast.And):
+                      assert node.lineno == node.end_lineno
+                      msg = ', ' + ast.get_source_segment(s,node.msg) if node.msg else ''
+                      replacement = ''.join(' '*node.col_offset+'assert '+ast.get_source_segment(s,x)+msg+'\n' for x in node.test.values)
+                      changes.append((node.lineno-1,replacement))
+              for line,new in reversed(sorted(changes)):
+                  lines[line] = new
+              p.write_text(''.join(lines).replace('set(a[2] for a in actions)','{a[2] for a in actions}'))
+              assert subprocess.check_output(['git','hash-object',str(p)],text=True).strip() == sha
           PY
           test "$(git hash-object native/bend_engine/standalone/main.bend)" = 5827e1f8cb71f1c6ba4df6d44a04eff4049f7941
-          test "$(git hash-object native/bend_engine/standalone/neural/verify.py)" = 38c00580394a94d2837cbd98589970e4e45008d6
           git diff --check
       - name: Locked external CPU tools and inexpensive contracts
         run: |
