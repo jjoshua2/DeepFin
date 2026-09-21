@@ -20,7 +20,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Apply exact reviewed implementation and predeclared gate
+      - name: Apply exact implementation and verifier-only import correction
         run: |
           python - <<'PY'
           import base64, gzip, hashlib, json, urllib.request
@@ -38,6 +38,15 @@ jobs:
           PY
           git apply --check /tmp/bend-leaf.patch
           git apply /tmp/bend-leaf.patch
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path('native/bend_engine/standalone/verify_neural.py')
+          text = p.read_text()
+          assert text.count('import chess.engine\n') == 1
+          p.write_text(text.replace('import chess.engine\n', ''))
+          assert hashlib.sha256(p.read_bytes()).hexdigest() == 'b77333ba52c9a65a169298f49470e7558b2b803a40c3a78c88476dfa741da523'
+          PY
           git diff --check
       - name: External CPU export and reference tools
         run: |
@@ -67,9 +76,9 @@ jobs:
           clang -std=c11 -O1 -DLEGAL_ORACLE -I. native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/cboard-reference
       - name: Native Bend legal-only softmax and malformed-output gate in four modes
         run: |
-          compiler="build/bend_standalone_toolchain/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae/source"
-          compiler="$(sed -n 's/^compiler_root=//p' /tmp/bend-native-leaf/build.txt)"
-          test -f "$compiler/bend2/main.ts"
+          revision="$(bun native/bend_engine/standalone/verify_compiler.js --revision)"
+          compiler="$PWD/build/bend_standalone_toolchain/$revision/source"
+          bun native/bend_engine/standalone/verify_compiler.js "$compiler"
           bun "$compiler/bend2/main.ts" native/bend_engine/standalone/logit_probe.bend -o /tmp/bend-logits.c
           for mode in generic portable native ubsan; do
             case "$mode" in
