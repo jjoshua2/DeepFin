@@ -1,0 +1,26 @@
+name: Bend policy composition snapshot
+on:
+  push:
+    branches: [feat/bend-policy-complete-input-dev]
+    paths: ['.github/workflows/bend-policy-complete-dev.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir -p /tmp/bend-policy-composition
+          git archive --format=tar.gz HEAD > /tmp/bend-policy-composition/current.tgz
+          git fetch --no-tags --depth=1 origin bf2d50ada2d0b3d718a987c4d24de7a010ce1ad2
+          git archive --format=tar.gz bf2d50ada2d0b3d718a987c4d24de7a010ce1ad2 > /tmp/bend-policy-composition/policy.tgz
+          git rev-parse HEAD > /tmp/bend-policy-composition/current-revision.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-policy-composition-source
+          path: /tmp/bend-policy-composition/
+          retention-days: 2
