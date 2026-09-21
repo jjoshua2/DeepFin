@@ -1,0 +1,32 @@
+name: Bend chess-mask source workspace
+'on':
+  push:
+    branches: [feat/bend-chess-mask-bounds-dev-20260921]
+    paths: ['.github/workflows/bend-chess-mask-bounds-dev.yml']
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 2ad808cfe88881df00e5218f5b6d842ce89e6b02
+          persist-credentials: false
+      - name: Archive unchanged source only
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/mask-source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/mask-source/source.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/mask-source/commit.txt"
+          cd "$RUNNER_TEMP/mask-source"
+          sha256sum source.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-chess-mask-source
+          path: ${{ runner.temp }}/mask-source/
+          retention-days: 3
