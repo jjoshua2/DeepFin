@@ -20,39 +20,52 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           activate-environment: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
       - uses: actions/download-artifact@v4
         with:
           name: bend-ci-repair-confirmation
-          run-id: 35643553411
+          run-id: 35643818659
           github-token: ${{ github.token }}
           path: /tmp/previous-repair
-      - name: Reconstruct exact candidate and correct callback style
+      - name: Apply exact repairs and source-verified CI compiler selection
         run: |
-          echo '46d9860403973fcf1f1c7b8f21350889510c0aa558aeba4297586b6aac2995f4  /tmp/previous-repair/bend-ci-repair.patch' | sha256sum -c -
+          echo 'cb3636d84043243b2c859c3ccca282ac85be2ff2673029e6305974f37fb67fe9  /tmp/previous-repair/bend-ci-repair.patch' | sha256sum -c -
           git apply --check /tmp/previous-repair/bend-ci-repair.patch
           git apply /tmp/previous-repair/bend-ci-repair.patch
           python - <<'PY'
+          import base64,hashlib,json,urllib.request
           from pathlib import Path
-          p=Path('tests/test_bend_release_fallback.py')
-          s=p.read_text()
-          for name in ('SCRIPT','script'):
-              old=f'installer_fetch=lambda: {name}.encode()'
-              assert s.count(old)==1
-              s=s.replace(old,f'installer_fetch={name}.encode')
-          p.write_text(s)
+          sha='46f77088a0b4073fb317fa7e60250387c811f3b5'
+          with urllib.request.urlopen('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/'+sha,timeout=30) as r:
+              raw=base64.b64decode(json.load(r)['content'])
+          assert hashlib.sha1(f'blob {len(raw)}\0'.encode()+raw).hexdigest()==sha
+          assert hashlib.sha256(raw).hexdigest()=='a5a991bd15b4354f7899545c360ab5c82e262fec9859a7eaadec5b8a6524e56e'
+          Path('/tmp/source-ci.patch').write_bytes(raw)
           PY
-          git add native/bend_engine/install_bend.sh native/bend_engine/resolve_latest.py native/bend_engine/probe/chess_call.c native/bend_engine/probe/build_probe.sh native/bend_engine/aoti_probe/aoti_call.c native/bend_engine/aoti_probe/build_probe.sh native/bend_engine/cuda_parity/cuda_call.c native/bend_engine/cuda_parity/build_probe.sh tests/test_bend_latest_manifest.py tests/test_bend_installer.py tests/test_bend_release_fallback.py tests/test_pause_window.py .github/workflows/bend-probe.yml .github/workflows/bend-aoti-probe.yml
+          git apply --check /tmp/source-ci.patch
+          git apply /tmp/source-ci.patch
+          git add native/bend_engine/install_bend.sh native/bend_engine/install_ci_bend.sh native/bend_engine/resolve_latest.py native/bend_engine/probe/chess_call.c native/bend_engine/probe/build_probe.sh native/bend_engine/aoti_probe/aoti_call.c native/bend_engine/aoti_probe/build_probe.sh native/bend_engine/cuda_parity/cuda_call.c native/bend_engine/cuda_parity/build_probe.sh tests/test_bend_latest_manifest.py tests/test_bend_installer.py tests/test_bend_release_fallback.py tests/test_pause_window.py .github/workflows/bend-probe.yml .github/workflows/bend-aoti-probe.yml
           git diff --cached --check
           mkdir -p artifacts
           git diff --cached --binary > artifacts/bend-ci-repair.patch
-          echo 'cb3636d84043243b2c859c3ccca282ac85be2ff2673029e6305974f37fb67fe9  artifacts/bend-ci-repair.patch' | sha256sum -c -
-      - name: Verify actual latest installation without weakening checksum requirements
+          echo '26198f26bd62d50ad8e7bb81dde90f8b5a08768aa9af4e4c5df0f12d19968b26  artifacts/bend-ci-repair.patch' | sha256sum -c -
+      - name: Install the exact U64 compiler for reproducible PR checks
         env:
-          GITHUB_TOKEN: ${{ github.token }}
           BEND_NO_TELEMETRY: '1'
         run: |
-          native/bend_engine/install_bend.sh
+          native/bend_engine/install_ci_bend.sh
           build/bend_toolchain/bin/bend version | tee artifacts/bend-ci-version.txt
+          # Cache validation must reject modified sources without silently resetting them.
+          source=build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          cp "$source/bend2/base.bend" /tmp/base.original.bend
+          printf '\n# intentional validation mutation\n' >> "$source/bend2/base.bend"
+          if native/bend_engine/install_ci_bend.sh > artifacts/bend-ci-tamper.txt 2>&1; then exit 1; fi
+          grep 'compiler source mismatch' artifacts/bend-ci-tamper.txt
+          grep 'intentional validation mutation' "$source/bend2/base.bend"
+          cp /tmp/base.original.bend "$source/bend2/base.bend"
+          native/bend_engine/install_ci_bend.sh
       - name: Locked environment and all static checks
         run: |
           uv sync --locked --extra dev --extra cpu
@@ -75,7 +88,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git diff --cached --check
-          git commit -m 'Repair Bend release metadata, native effect ABI and watchdog teardown'
+          git commit -m 'Repair Bend CI toolchain, native effect ABI and watchdog teardown'
           target=refs/heads/fix/bend-ci-repair-validated
           test -z "$(git ls-remote --heads origin "$target")"
           git push origin HEAD:"$target"
