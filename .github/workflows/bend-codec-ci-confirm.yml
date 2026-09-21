@@ -1,104 +1,89 @@
-name: Bend CI codec-test repair confirmation
+name: Verify Bend codec-test backports
 on:
   push:
     branches: [fix/bend-ci-followup-audit-20260921]
     paths: [.github/workflows/bend-codec-ci-confirm.yml]
 permissions:
   contents: read
+  actions: read
   pull-requests: read
 jobs:
-  confirm:
+  audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 4
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          ref: c800fbb0c14622f311ca9a2bf7799adc18942ad9
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version-file: .python-version
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
-        with:
-          activate-environment: true
-      - name: Prepare existing main fix and deterministic reproduction
-        run: |
-          mkdir -p artifacts /tmp/codec-regression
-          git fetch --no-tags --depth=1 https://github.com/jjoshua2/DeepFin.git b939d7d6acc3bfe3b4610248527790fb24d29bfe
-          test "$(git hash-object tests/test_derive_parallel.py)" = a00c704c253cb833dafed983f00d1d7a7efb729a
-          git show b939d7d6acc3bfe3b4610248527790fb24d29bfe:tests/test_derive_parallel.py > /tmp/codec-regression/fixed.py
-          test "$(git hash-object /tmp/codec-regression/fixed.py)" = 573ec7e9b544375df0e1234e37651271490b3e2a
-          cat > /tmp/codec-regression/codec_repro_plugin.py <<'PY'
-          import numcodecs.blosc
-          import pytest
-          @pytest.fixture(autouse=True)
-          def known_valid_observation(request, monkeypatch):
-              if request.node.name == 'test_whether_the_shard_files_are_byte_reproducible_is_measured':
-                  # Reproduce the observed combination without relying on chance:
-                  # real writes are repeatable, while the independent larger-buffer
-                  # probe reports a negative observation. No output/data is mocked.
-                  monkeypatch.setattr(numcodecs.blosc, 'use_threads', False)
-                  monkeypatch.setattr(request.module, 'probe_roles', lambda: (False, False))
-          PY
-          uv sync --locked --extra dev --extra cpu
-      - name: Require the original test to fail for the observed false implication
-        run: |
-          set +e
-          PYTHONPATH="/tmp/codec-regression:$PWD" python -m pytest -q -p codec_repro_plugin tests/test_derive_parallel.py::test_whether_the_shard_files_are_byte_reproducible_is_measured --junitxml=artifacts/codec-before.xml > artifacts/codec-before.log 2>&1
-          code=$?
-          set -e
-          test "$code" = 1
-          grep 'assert False != False' artifacts/codec-before.log
-          grep 'wrote identical files' artifacts/codec-before.log
-      - name: Apply only the already-reviewed main test file
-        run: |
-          cp /tmp/codec-regression/fixed.py tests/test_derive_parallel.py
-          test "$(git hash-object tests/test_derive_parallel.py)" = 573ec7e9b544375df0e1234e37651271490b3e2a
-          test "$(git diff --name-only)" = tests/test_derive_parallel.py
-          git diff --check
-          git diff -- tests/test_derive_parallel.py > artifacts/codec-main-fix.patch
-      - name: Same deterministic case now passes with real corpus data
-        run: |
-          PYTHONPATH="/tmp/codec-regression:$PWD" python -m pytest -q -p codec_repro_plugin tests/test_derive_parallel.py::test_whether_the_shard_files_are_byte_reproducible_is_measured --junitxml=artifacts/codec-after.xml
-      - name: Complete parallel derivation and corpus-target tests with normal runtime behavior
-        run: |
-          python -m pytest -q tests/test_derive_parallel.py tests/test_derive_corpus_targets.py --junitxml=artifacts/codec-focused.xml
-      - name: Whole-repository static validation on the repaired proof-PR tree
-        run: |
-          python scripts/validate.py lint --require-cpu-wheel
-      - name: Inventory matching open PR heads without changing any branches
+          name: bend-codec-repair-confirmation
+          run-id: 35667545869
+          github-token: ${{ github.token }}
+          path: /tmp/codec-validated
+      - name: Verify exact single-file publications, proof preservation and current CI
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python - <<'PY'
-          import datetime, json, os, subprocess, urllib.request
+          mkdir -p /tmp/codec-published
+          python3 - <<'PY'
+          import datetime, hashlib, json, os, urllib.request
           from pathlib import Path
+          raw = Path('/tmp/codec-validated/codec-publication-plan.json').read_bytes()
+          assert hashlib.sha256(raw).hexdigest() == '1511ea76e7b3df046b19218db3a1e49eeee6520692457e374283dcedcb81ec45'
+          plan = json.loads(raw)
+          expected = {785:'093307ed8167e879b620733e26840fb60012330b',788:'4322cca38702e76421c73adb7a87f301c2f279e2',792:'e5561b2a16326e51d76b190085b5fcee911cdce8',797:'95b69e3ec6dbe18e87814d201d841935b5a069ea',798:'30beb6b5324e901908fc8bb6e8264282531428a6',799:'ac9913be6dc758c45c9b14cc8abb49c4b6878741',800:'0d98f5614e64fe04c05193065ceca9b0b3c69ba6',801:'0ac958c8f82c75314033452e575990d02eb30582',802:'7b2bf217de85491d9e231df2611ea4944ebd900d',803:'f25ab3f63c6cd708aef2e4b4f57a81a24c58b1ad',804:'8c74ea0faa42beb9f5864ffbaeaa86e217bf286f',805:'7b73b0bcede7b691c1e1fac45b7679ad52d14f94',806:'f0ebe265df93fe7ebdb1420d68318673961d693d',807:'33c363ba6715956fd9323a6032b1a6c4a2b916fe'}
           def get(path):
-              req = urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/' + path, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json'})
-              with urllib.request.urlopen(req, timeout=20) as response:
+              req = urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/' + path, headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=20) as response:
                   return json.load(response)
-          assert subprocess.check_output(['git','diff','--name-only'],text=True).strip() == 'tests/test_derive_parallel.py'
-          report = {'as_of': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'tested_base': 'c800fbb0c14622f311ca9a2bf7799adc18942ad9', 'source_main_commit': 'b939d7d6acc3bfe3b4610248527790fb24d29bfe', 'old_blob': 'a00c704c253cb833dafed983f00d1d7a7efb729a', 'fixed_blob': '573ec7e9b544375df0e1234e37651271490b3e2a', 'prs': []}
-          for page in range(1, 11):
-              rows = get(f'pulls?state=open&per_page=100&page={page}')
+          assert set(expected) == {p['number'] for p in plan['prs'] if p['action']=='eligible'}
+          report = {'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'scope':'Single-file source publication and existing CI status; not a new full-suite or proof run','prs':[]}
+          for old in sorted(plan['prs'],key=lambda p:p['number']):
+              n=old['number']; p=get(f'pulls/{n}')
+              row={'number':n,'state':p['state'],'branch':p['head']['ref'],'current_head':p['head']['sha'],'checks':[]}
+              if n in expected:
+                  sha=expected[n]
+                  commit=get('commits/'+sha)
+                  assert [parent['sha'] for parent in commit['parents']] == [old['head']],n
+                  assert len(commit['files'])==1 and commit['files'][0]['filename']=='tests/test_derive_parallel.py',n
+                  assert commit['files'][0]['sha']==plan['fixed_blob'] and commit['files'][0]['status']=='modified',n
+                  row.update(published_head=sha,parent=old['head'],only_test_file_changed=True,tree=commit['commit']['tree']['sha'])
+                  assert row['current_head']==sha and row['branch']==old['branch'],(n,'concurrent branch update; inspect before reporting')
+              blob=get('contents/tests/test_derive_parallel.py?ref='+row['current_head'])['sha']
+              assert blob==plan['fixed_blob'],n
+              row['test_blob']=blob
+              seen=set()
+              runs=get('actions/runs?event=pull_request&per_page=100&head_sha='+row['current_head'])['workflow_runs']
+              assert len(runs)<100
+              for run in runs:
+                  if run['workflow_id'] in seen:continue
+                  seen.add(run['workflow_id'])
+                  c={k:run[k] for k in ('id','name','status','conclusion','html_url','run_attempt')}
+                  jobs=get(f"actions/runs/{run['id']}/jobs?per_page=100")['jobs']
+                  assert len(jobs)<100
+                  c['jobs']=[{'name':j['name'],'id':j['id'],'status':j['status'],'conclusion':j['conclusion'],'failed_steps':[s['name'] for s in j['steps'] if s['conclusion']=='failure']} for j in jobs]
+                  row['checks'].append(c)
+              report['prs'].append(row)
+              Path('/tmp/codec-published/status.json').write_text(json.dumps(report,indent=2)+'\n')
+              print(n,[(c['name'],c['status'],c['conclusion']) for c in row['checks']],flush=True)
+          open_bend=[]
+          for page in range(1,11):
+              rows=get(f'pulls?state=open&per_page=100&page={page}')
               for p in rows:
-                  if 'bend' not in p['title'].lower() and 'bend' not in p['head']['ref'].lower():
-                      continue
-                  sha = p['head']['sha']
-                  blob = get('contents/tests/test_derive_parallel.py?ref=' + sha)['sha']
-                  tree = get('git/commits/' + sha)['tree']['sha']
-                  row = {'number':p['number'], 'head':sha, 'branch':p['head']['ref'], 'tree':tree, 'test_blob':blob, 'action':'already_fixed' if blob==report['fixed_blob'] else 'eligible' if blob==report['old_blob'] else 'inspect_separately'}
-                  report['prs'].append(row)
-              if len(rows)<100:
-                  break
-          else:
-              raise RuntimeError('Open-PR pagination incomplete')
-          Path('artifacts/codec-publication-plan.json').write_text(json.dumps(report,indent=2)+'\n')
-          print(json.dumps(report,indent=2))
+                  if 'bend' not in p['title'].lower() and 'bend' not in p['head']['ref'].lower():continue
+                  blob=get('contents/tests/test_derive_parallel.py?ref='+p['head']['sha'])['sha']
+                  open_bend.append({'number':p['number'],'head':p['head']['sha'],'fixed_codec_test':blob==plan['fixed_blob']})
+              if len(rows)<100:break
+          else:raise RuntimeError('incomplete open-PR listing')
+          report['open_bend_prs']=open_bend
+          report['all_open_bend_prs_have_fix']=bool(open_bend) and all(p['fixed_codec_test'] for p in open_bend)
+          report['finished_at']=datetime.datetime.now(datetime.timezone.utc).isoformat()
+          report['published_single_file_backports']=len(expected)
+          report['source_publication_verified']=True
+          Path('/tmp/codec-published/status.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('All open Bend heads have the fixed test:',report['all_open_bend_prs_have_fix'])
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bend-codec-repair-confirmation
-          path: artifacts/codec-*
+          name: bend-codec-backport-status
+          path: /tmp/codec-published/
           retention-days: 14
