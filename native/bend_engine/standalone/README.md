@@ -334,3 +334,59 @@ activates all 63 feature planes and checks invalid/busy/reset behavior. Existing
 history/rule/perft verifiers stay unchanged. No model export, native traversal or
 benchmark is added to ordinary pytest or recurring CI. See the complete-input
 experiment record for the exact tested revisions, counts and limitations.
+
+## Bend-owned policy maps and complete evaluation inputs
+
+`Policy.bend` generates DeepFin's full 4672 / compact 1858 tables and square-pair
+lookup from geometry. No generated Python lookup file is shipped. Native packed
+move keys (with promotion/castle/EP flags), full search actions and model slots
+are distinct spaces. Encoding consumes generated legal moves; reverse resolution
+only searches the current board's legal entries. Geometry alone does not authorize
+a move. Unknown IDs, padding slots, private claim keys and wrong flags fail instead
+of selecting a fallback. Both color orientations, promotions and file-mirror
+permutations follow the project's existing `moves/encode.py` ordering.
+
+Read-only diagnostics at idle:
+
+```text
+policy legal
+policy encode e2e4
+policy decode lc0_1858 0
+policy key 1804
+policy tables
+encode_request lc0_root_legacy_meta v2_threats moves e2e4 e7e5
+```
+
+`policy decode` may fail when that ID is not legal on the accepted board; it does
+not play anything. `tables` dumps every geometric forward/reverse/mirror/pair entry.
+These commands preserve the root/history and reject busy searches. Diagnostic
+maps are currently disposable and rebuilt per command, not a throughput design.
+
+`EvaluationInput.prepare(layout, version, game, table, maps)` is a typed pure-Bend
+composition boundary: generate exact legal policies and complete 146/175-plane
+features from the SAME validated `Position.Game`. Its returned value retains map
+and table owners for a future caller to reuse; array capacity is not model width.
+Terminal boards may have zero legal entries, not a synthetic move/claim. The API
+expects a Game already validated by Protocol or reconstructed by SearchHistory.
+
+`encode_request` exposes that paired value, with a legal-policy header/rows followed
+by the existing complete input block. Up to 32 hypothetical moves are replayed
+transactionally before any output. Bad layouts/versions or a late illegal move
+produce no partial request. It is read-only diagnostic text, not an inference ABI.
+No model runs, no logits are converted to probabilities, and normal material search
+is unchanged. Actual search-ticket scheduling and inference remain to be connected.
+
+The standalone keeps the checked aaeb9bc9 U64 pin from #802. Only application Bend
+and external oracle files are added; there is no Python runtime or new foreign C.
+Optional external checks (never loaded by the engine):
+
+```sh
+python -m native.bend_engine.standalone.verify_policy --require-c \
+  --report artifacts/bend-policy.json --command ./build/bend_policy/deepfin-bend --threads 1
+python -m native.bend_engine.standalone.verify_request --require-c \
+  --report artifacts/bend-request.json --command ./build/bend_policy/deepfin-bend --threads 1
+```
+
+The policy prototype was recovered from `bf2d50ada2d0b3d718a987c4d24de7a010ce1ad2`;
+its old compiler pin and older Protocol/Main were NOT copied over the complete
+input work. This combined version must be validated on its own exact source.
