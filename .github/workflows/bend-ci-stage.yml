@@ -12,50 +12,60 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          name: bend-ci-pr-repairs
-          run-id: 35645364725
-          github-token: ${{ github.token }}
-          path: /tmp/staged
-      - name: Verify exact publication and list actual checks on each head
+          ref: 6eaeab31233316fc012226ee25696e0806271d5b
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Report actual PR heads and inspect merge conflicts without writing branches
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          mkdir -p /tmp/bend-ci-final
           python - <<'PY'
-          import datetime, json, os, urllib.request
+          import datetime,json,os,subprocess,urllib.request
           from pathlib import Path
-          expected={777:'b238e47c1278953253e2687676c4d1e6a6e813d2',778:'6eaeab31233316fc012226ee25696e0806271d5b',779:'53e2f7f57ae7f8c6024a725f99b3f07ef152dc28',780:'e3dd04bc060c1cae057aaeedfcf1ece10924c071',781:'9ae8f810cbc22fa0b7d9af76e1af4c1afe0b51c9',784:'d4a42791379d8270a711cf16324865f543a3aafc',788:'4d4e823cebf2222c4edff687b6a0cab3f1dea832',792:'9cecd429658cd91ffd94de8ea14683c19b3332f4',797:'32f13f80c8968f83456a08fc49d06aee186081fa',798:'2127e8836c35cf7020227d19826c40d8478e6db3',799:'eb7610b994c28272d45b62f9c1f3652a5d67a275',800:'4334cc48926128f622b0ece79c13f6b8b2c382fb',801:'428ba8e0f6a5acde1c8da489bc3eaec89a053579',802:'c3858561a0c3f660b85be317a2f881aea2d5c6fd',803:'075b830f84a18bebe75c4494a41a4473867b2139',804:'1cb4db8b9eb0e882860aa51c0777ef0ee673beeb'}
+          root=Path('/tmp/bend-ci-final')
           def get(path):
               req=urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/'+path,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
               with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)
-          staged=json.loads(Path('/tmp/staged/manifest.json').read_text())
-          assert len(staged)==16
           result={'as_of':datetime.datetime.now(datetime.timezone.utc).isoformat(),'prs':[]}
-          for row in staged:
-              n=row['number'];sha=expected[n];p=get(f'pulls/{n}')
-              assert p['head']['sha']==sha and p['head']['ref']==row['branch'] and not p['merged'],n
-              c=get('git/commits/'+sha)
-              assert [x['sha'] for x in c['parents']]==[row['old_sha']],n
-              assert c['tree']['sha']==row['expected_final_tree'],n
-              report={'number':n,'head':sha,'branch':row['branch'],'tree':c['tree']['sha'],'mergeable':p['mergeable'],'checks':[]}
-              runs=get('actions/runs?event=pull_request&per_page=30&head_sha='+sha)['workflow_runs']
+          for n in (777,778,779,780,781,784,788,792,797,798,799,800,801,802,803,804):
+              p=get(f'pulls/{n}');sha=p['head']['sha']
+              row={'number':n,'head':sha,'branch':p['head']['ref'],'base':p['base']['sha'],'mergeable':p['mergeable'],'checks':[]}
               seen=set()
-              for run in runs:
+              for run in get('actions/runs?event=pull_request&per_page=30&head_sha='+sha)['workflow_runs']:
                   if run['workflow_id'] in seen:continue
                   seen.add(run['workflow_id'])
                   check={k:run[k] for k in ('id','name','status','conclusion','html_url')}
                   if run['conclusion']=='failure':
                       jobs=get(f"actions/runs/{run['id']}/jobs?per_page=100")['jobs']
                       check['failed_jobs']=[{'id':j['id'],'name':j['name'],'steps':[s['name'] for s in j['steps'] if s['conclusion']=='failure']} for j in jobs if j['conclusion']=='failure']
-                  report['checks'].append(check)
-              result['prs'].append(report)
-              print(n,[(x['name'],x['status'],x['conclusion'],x.get('failed_jobs')) for x in report['checks']],flush=True)
-              Path('/tmp/bend-ci-current.json').write_text(json.dumps(result,indent=2)+'\n')
+                  row['checks'].append(check)
+              print(n,row['mergeable'],[(x['name'],x['status'],x['conclusion'],x.get('failed_jobs')) for x in row['checks']],flush=True)
+              result['prs'].append(row)
+              (root/'status.json').write_text(json.dumps(result,indent=2)+'\n')
+              if p['mergeable'] is False:
+                  subprocess.run(['git','fetch','--no-tags','https://github.com/jjoshua2/DeepFin.git',p['base']['sha'],sha],check=True)
+                  merge=subprocess.run(['git','merge-tree','--write-tree','--messages',sha,p['base']['sha']],text=True,capture_output=True,check=False)
+                  (root/f'merge-{n}.txt').write_text(merge.stdout+'\nSTDERR\n'+merge.stderr)
+                  print('MERGE',n,merge.returncode,merge.stdout,flush=True)
+                  tree=merge.stdout.splitlines()[0] if merge.stdout else ''
+                  if len(tree)==40:
+                      delta=subprocess.run(['git','diff','--stat',sha,tree],text=True,capture_output=True,check=True)
+                      (root/f'merge-{n}-diff.txt').write_text(delta.stdout)
+                      for line in merge.stdout.splitlines():
+                          fields=line.split('\t',1)
+                          if len(fields)==2 and len(fields[0].split())==3:
+                              mode,blob,stage=fields[0].split();path=fields[1]
+                              if mode not in ('100644','100755') or not all(c in '0123456789abcdef' for c in blob):continue
+                              raw=subprocess.check_output(['git','cat-file','blob',blob])
+                              filename=root/f'conflict-{n}-{stage}-{Path(path).name}'
+                              filename.write_bytes(raw)
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bend-ci-repaired-status
-          path: /tmp/bend-ci-current.json
+          name: bend-ci-final-status
+          path: /tmp/bend-ci-final/
           retention-days: 14
