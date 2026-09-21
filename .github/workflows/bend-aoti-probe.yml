@@ -6,6 +6,9 @@ on:
       - "native/bend_engine/aoti_probe/**"
       - "native/bend_engine/cuda_parity/**"
       - "native/bend_engine/install_bend.sh"
+      - "native/bend_engine/install_ci_bend.sh"
+      - "native/bend_engine/resolve_latest.py"
+      - "tests/test_bend_latest_manifest.py"
       - "tests/test_bend_aoti_probe.py"
       - "tests/test_bend_cuda_parity_harness.py"
       - ".github/workflows/bend-aoti-probe.yml"
@@ -16,6 +19,12 @@ on:
       - "chess_anti_engine/moves/encode.py"
       - "chess_anti_engine/encoding/**"
   workflow_dispatch:
+    inputs:
+      compiler:
+        description: "PR checks use the pinned U64 fork; upstream latest is opt-in compatibility testing"
+        type: choice
+        default: pinned-fork
+        options: [pinned-fork, upstream-latest]
 
 jobs:
   probe:
@@ -33,17 +42,21 @@ jobs:
       - name: Install DeepFin CPU test environment
         run: uv sync --locked --extra dev --extra cpu
 
-      - name: Install bun
-        run: |
-          if ! command -v bun >/dev/null 2>&1; then
-            curl -fsSL https://bun.sh/install | bash
-          fi
-          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
 
-      - name: Install latest Bend
+      - name: Install explicitly selected Bend compiler
         env:
           BEND_NO_TELEMETRY: "1"
-        run: native/bend_engine/install_bend.sh
+          GITHUB_TOKEN: ${{ github.token }}
+          BEND_COMPILER: ${{ inputs.compiler || 'pinned-fork' }}
+        run: |
+          case "$BEND_COMPILER" in
+            pinned-fork) native/bend_engine/install_ci_bend.sh ;;
+            upstream-latest) native/bend_engine/install_bend.sh ;;
+            *) echo "error: unsupported compiler selection" >&2; exit 2 ;;
+          esac
 
       - name: Build .pt2 and verify Bend/native AOTI parity
         env:
