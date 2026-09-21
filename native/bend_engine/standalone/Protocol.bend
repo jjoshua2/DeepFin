@@ -143,4 +143,4 @@ def command(+s: String) -> U32:
   Bool.pick(U32, String.eq(s, "uci"), 1, Bool.pick(U32, String.eq(s, "isready"), 2,
     Bool.pick(U32, String.eq(s, "position"), 3, Bool.pick(U32, String.eq(s, "go"), 4,
       Bool.pick(U32, String.eq(s, "stop"), 5, Bool.pick(U32, String.eq(s, "quit"), 6,
-        Bool.pick(U32, String.eq(s, "ucinewgame"), 7, Bool.pick(U32, String.eq(s, "d"), 8, Bool.pick(U32, String.eq(s, "perft"), 9, Bool.pick(U32, String.eq(s, "rules"), 10, Bool.pick(U32, String.eq(s, "encode_history"), 11, 0)))))))))))
+        Bool.pick(U32, String.eq(s, "ucinewgame"), 7, Bool.pick(U32, String.eq(s, "d"), 8, Bool.pick(U32, String.eq(s, "perft"), 9, Bool.pick(U32, String.eq(s, "rules"), 10, Bool.pick(U32, String.eq(s, "encode_history"), 11, Bool.pick(U32, String.eq(s, "encode_input"), 12, 0))))))))))))
