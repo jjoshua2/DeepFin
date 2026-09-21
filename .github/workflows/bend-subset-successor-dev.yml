@@ -1,0 +1,32 @@
+name: Bend subset successor sources
+'on':
+  push:
+    branches: [feat/bend-subset-successor-dev-20260921]
+    paths: ['.github/workflows/bend-subset-successor-dev.yml']
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 1654a945e946440885675b5bc1f7d0ee80f80708
+          persist-credentials: false
+      - name: Archive exact existing source without executing models or tests
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/successor-source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/successor-source/DeepFin-source.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/successor-source/commit.txt"
+          cd "$RUNNER_TEMP/successor-source"
+          sha256sum DeepFin-source.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-successor-source
+          path: ${{ runner.temp }}/successor-source/
+          retention-days: 3
