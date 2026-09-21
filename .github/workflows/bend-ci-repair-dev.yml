@@ -53,13 +53,15 @@ jobs:
           echo "bend probe: installed $GOT_VERSION at $BIN/bend"''')
           for directory, filename, values in [('probe','chess_call.c','moves'), ('aoti_probe','aoti_call.c','words'), ('cuda_parity','cuda_call.c','values')]:
               replace(root + directory + '/' + filename, f'io_node(e, CID_CON, (Term){values}[i - 1], xs, 0)', f'io_node(e, CID_CON, (Term){values}[i - 1], xs)')
-              replace(root + directory + '/build_probe.sh', '"$BEND" --version', '"$BEND" version')
+              replace(root + directory + '/build_probe.sh', '"$BEND_BIN" --version', '"$BEND_BIN" version')
+          # Construct the literal expression, not the token value, in generated YAML.
+          token_expression = '$' + '{{ github.token }}'
           for filename in ('bend-probe.yml', 'bend-aoti-probe.yml'):
               p = Path('.github/workflows') / filename
               s = p.read_text()
               needle = '        run: native/bend_engine/install_bend.sh'
               assert s.count(needle) == 1
-              s = s.replace(needle, '          GITHUB_TOKEN: ${{ github.token }}\n' + needle)
+              s = s.replace(needle, '          GITHUB_TOKEN: ' + token_expression + '\n' + needle)
               if filename == 'bend-probe.yml':
                   s = s.replace('      - "tests/test_bend_chess_probe.py"\n', '      - "tests/test_bend_chess_probe.py"\n      - "tests/test_bend_latest_manifest.py"\n      - "tests/test_bend_installer.py"\n')
                   s = s.replace('      # bun.sh', '      - name: Verify installer and metadata without network\n        run: pytest -q tests/test_bend_latest_manifest.py tests/test_bend_installer.py\n\n      # bun.sh')
