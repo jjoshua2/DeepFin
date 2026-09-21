@@ -1,4 +1,4 @@
-name: Bend CI follow-up audit
+name: Bend CI follow-up verification
 on:
   push:
     branches: [fix/bend-ci-followup-audit-20260921]
@@ -8,75 +8,87 @@ permissions:
   actions: read
   pull-requests: read
 jobs:
-  audit:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - name: Audit current heads, not historical red runs
+          fetch-depth: 0
+      - name: Verify only the intended repairs and wait boundedly for existing PR checks
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p /tmp/bend-ci-followup
+          mkdir -p /tmp/bend-ci-followup-result
           python - <<'PY'
-          import datetime, json, os, subprocess, urllib.request
+          import datetime, json, os, subprocess, time, urllib.parse, urllib.request
           from pathlib import Path
-          out = Path('/tmp/bend-ci-followup')
+          out = Path('/tmp/bend-ci-followup-result')
+          expected = {
+              785: ('f905d39601eba9b7f013ed8f8bda08f6d25f0b56', '322c5064c2d977cba0ab7f47b791b6871130262a', 'd4a42791379d8270a711cf16324865f543a3aafc', '98fec6a793b734c4099c9817da896c52780b3b9f'),
+              805: ('b56ff7c71f5f3ede086e3b0e4d62419ad6fcbf22', 'd6503d8d6a0c2b8fa938477b755e8303c0af49f1', '1cb4db8b9eb0e882860aa51c0777ef0ee673beeb', '553ccd5b770b709884d2a08cb1acf81005d6e547'),
+              806: ('c800fbb0c14622f311ca9a2bf7799adc18942ad9', '1654a945e946440885675b5bc1f7d0ee80f80708', 'b56ff7c71f5f3ede086e3b0e4d62419ad6fcbf22', '5276785d0bb46ec3ebfe47b4316eb833abfb623e'),
+              807: ('7aad3d0dd3fe20ba1e5524ce99f3ed89b4fef2c1', '2ad808cfe88881df00e5218f5b6d842ce89e6b02', 'c800fbb0c14622f311ca9a2bf7799adc18942ad9', 'ddf37bbe3d3c4a6b90761361f4d51117c2441373'),
+          }
           def get(path):
-              url = 'https://api.github.com/repos/jjoshua2/DeepFin/' + path
-              req = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
-              with urllib.request.urlopen(req, timeout=30) as r:
+              req = urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/' + path, headers={'Authorization':'Bearer ' + os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=30) as r:
                   return json.load(r)
-          prs = []
-          for page in range(1, 11):
-              batch = get(f'pulls?state=open&per_page=100&page={page}')
-              prs.extend(p for p in batch if 'bend' in p['title'].lower() or 'bend' in p['head']['ref'].lower())
-              if len(batch) < 100:
-                  break
-          else:
-              raise RuntimeError('Open PR listing exceeded explicit audit bound')
-          main = get('git/ref/heads/main')['object']['sha']
-          report = {'as_of': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'main': main, 'prs': []}
-          refs = {'refs/audit/main': main}
-          for item in sorted(prs, key=lambda p: p['number']):
-              n = item['number']
-              p = get(f'pulls/{n}')
-              row = {k: p[k] for k in ('number','title','state','merged','mergeable','mergeable_state','merge_commit_sha')}
-              row.update(head=p['head']['sha'], branch=p['head']['ref'], base=p['base']['ref'], base_sha=p['base']['sha'], checks=[])
-              seen = set()
-              for run in get('actions/runs?event=pull_request&per_page=100&head_sha=' + row['head'])['workflow_runs']:
-                  if run['workflow_id'] in seen:
-                      continue
-                  seen.add(run['workflow_id'])
-                  check = {k: run[k] for k in ('id','name','status','conclusion','html_url','head_sha','run_attempt')}
-                  jobs = get(f"actions/runs/{run['id']}/jobs?per_page=100")['jobs']
-                  check['jobs'] = [{'id': j['id'], 'name': j['name'], 'status': j['status'], 'conclusion': j['conclusion'], 'failed_steps': [s['name'] for s in j['steps'] if s['conclusion'] == 'failure']} for j in jobs]
-                  row['checks'].append(check)
-              refs[f'refs/audit/pr{n}'] = row['head']
-              refs[f'refs/audit/base{n}'] = row['base_sha']
-              report['prs'].append(row)
-              (out/'status.json').write_text(json.dumps(report, indent=2) + '\n')
-              print(n, row['head'][:12], row['base'], row['mergeable'], [(c['name'], c['conclusion'], [(j['id'], j['failed_steps']) for j in c['jobs'] if j['conclusion']=='failure']) for c in row['checks']], flush=True)
-          # Git objects only: no checkout configuration, credentials, binaries or model data.
-          subprocess.run(['git','fetch','--no-tags','https://github.com/jjoshua2/DeepFin.git', *sorted(set(refs.values()))], check=True)
-          for ref, sha in refs.items():
-              subprocess.run(['git','update-ref',ref,sha],check=True)
-          subprocess.run(['git','bundle','create',str(out/'review.bundle'),*refs],check=True)
-          for row in report['prs']:
-              merged = subprocess.run(['git','merge-tree','--write-tree','--messages',row['head'],row['base_sha']], capture_output=True, text=True, check=False)
-              if merged.returncode not in (0,1):
-                  raise RuntimeError(merged.stderr)
-              row['local_merge_clean'] = merged.returncode == 0
-              if merged.returncode:
-                  (out/f"conflict-{row['number']}.txt").write_text(merged.stdout + '\n' + merged.stderr)
-          (out/'status.json').write_text(json.dumps(report,indent=2)+'\n')
+          def git(*args):
+              return subprocess.check_output(['git',*args],text=True).strip()
+          subprocess.run(['git','fetch','--no-tags','https://github.com/jjoshua2/DeepFin.git',*[v[0] for v in expected.values()]],check=True)
+          allowed = set(git('diff','--name-only','1cb4db8b^','1cb4db8b').splitlines())
+          publication = []
+          for n,(sha,old,base,tree) in expected.items():
+              assert git('show','-s','--format=%P',sha).split() == [old,base]
+              assert git('rev-parse',sha+'^{tree}') == tree
+              changed = set(git('diff','--name-only',old,sha).splitlines())
+              permitted = allowed | ({'.github/workflows/bend-search-sessions.yml'} if n==785 else set())
+              assert changed == permitted, (n,changed)
+              assert not any(p.endswith('.bend') or '/proofs/' in p for p in changed)
+              if n>=805:
+                  for path in ('native/bend_engine/standalone','docs/bend_migration_proofs.md'):
+                      assert git('rev-parse',old+':'+path) == git('rev-parse',sha+':'+path)
+              subprocess.run(['git','diff','--check',old,sha],check=True)
+              publication.append({'number':n,'head':sha,'parents':[old,base],'tree':tree,'changed_paths':sorted(changed),'proof_and_bend_sources_unchanged':True})
+          (out/'publication.json').write_text(json.dumps(publication,indent=2)+'\n')
+          deadline = time.monotonic()+300
+          while True:
+              report = {'as_of':datetime.datetime.now(datetime.timezone.utc).isoformat(),'prs':[]}
+              open_prs=[]
+              for page in range(1,11):
+                  batch=get(f'pulls?state=open&per_page=100&page={page}')
+                  open_prs.extend(p for p in batch if 'bend' in p['title'].lower() or 'bend' in p['head']['ref'].lower())
+                  if len(batch)<100: break
+              else: raise RuntimeError('incomplete PR enumeration')
+              pending=False
+              for p in sorted(open_prs,key=lambda p:p['number']):
+                  n=p['number']; sha=p['head']['sha']
+                  actual_base=get('git/ref/heads/'+urllib.parse.quote(p['base']['ref'],safe='/'))['object']['sha']
+                  row={'number':n,'head':sha,'branch':p['head']['ref'],'base':p['base']['ref'],'base_ref_sha':actual_base,'checks':[]}
+                  seen=set()
+                  for r in get('actions/runs?event=pull_request&per_page=100&head_sha='+sha)['workflow_runs']:
+                      if r['workflow_id'] in seen:continue
+                      seen.add(r['workflow_id'])
+                      check={k:r[k] for k in ('id','name','status','conclusion','html_url','run_attempt')}
+                      if r['conclusion']=='failure':
+                          jobs=get(f"actions/runs/{r['id']}/jobs?per_page=100")['jobs']
+                          check['failed_jobs']=[{'id':j['id'],'name':j['name'],'steps':[s['name'] for s in j['steps'] if s['conclusion']=='failure']} for j in jobs if j['conclusion']=='failure']
+                      row['checks'].append(check)
+                  row['all_observed_workflows_green']=bool(row['checks']) and all(c['status']=='completed' and c['conclusion']=='success' for c in row['checks'])
+                  if n in expected and (not row['checks'] or any(c['status']!='completed' for c in row['checks'])):
+                      pending=True
+                  report['prs'].append(row)
+              report['all_open_bend_prs_green']=bool(report['prs']) and all(p['all_observed_workflows_green'] for p in report['prs'])
+              (out/'status.json').write_text(json.dumps(report,indent=2)+'\n')
+              print(report['as_of'],[(p['number'],[(c['name'],c['status'],c['conclusion']) for c in p['checks']]) for p in report['prs']],flush=True)
+              if not pending or time.monotonic()>=deadline:break
+              time.sleep(20)
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bend-ci-followup-review
-          path: /tmp/bend-ci-followup/
-          retention-days: 7
+          name: bend-ci-followup-result
+          path: /tmp/bend-ci-followup-result/
+          retention-days: 14
