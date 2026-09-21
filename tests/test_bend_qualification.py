@@ -1,6 +1,7 @@
 """Cheap preflight/reuse/report contracts; no export, inference or chess traversal."""
 from __future__ import annotations
 
+from dataclasses import asdict
 import hashlib
 import json
 import os
@@ -11,7 +12,8 @@ import sys
 import pytest
 import torch
 
-from native.bend_engine.neural_probe import checkpoint_probe as probe
+from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
+from native.bend_engine.neural_probe import backend, checkpoint_probe as probe
 from native.bend_engine.neural_probe.adapter import Encoding
 from native.bend_engine.neural_probe.backend import CHECKPOINT_FORMAT, NativeEvaluator
 from native.bend_engine.neural_probe.checkpoint import LoadedCheckpoint
@@ -21,9 +23,15 @@ from native.bend_engine.neural_probe.qualification import (
 
 
 def loaded() -> LoadedCheckpoint:
+    # Keep a tiny test-only module, but use the real v3 architecture schema.
+    # No mocked package is passed to LibTorch or used for a model forward.
+    cfg = ModelConfig(kind='tiny', input_history_encoding='lc0_root',
+                      input_extra_features='v1', history_rep_fix=False)
+    resolved = asdict(cfg)
     return LoadedCheckpoint(torch.nn.Linear(2, 2), Encoding('lc0_root', 'v1', False),
         {'checkpoint_sha256': 'a' * 64, 'weights_key': 'model',
-         'resolved_model_config': {'kind': 'tiny'}, 'parameter_count': 6})
+         'arch': {'_schema_version': ARCH_SCHEMA_VERSION, **resolved},
+         'resolved_model_config': resolved, 'parameter_count': 6})
 
 
 def package_at(path: Path, value: LoadedCheckpoint) -> dict:
@@ -35,7 +43,8 @@ def package_at(path: Path, value: LoadedCheckpoint) -> dict:
                 'input_history_encoding': 'lc0_root', 'input_extra_features': 'v1',
                 'history_rep_fix': False, **value.identity}
     path.with_suffix('.json').write_text(json.dumps(manifest))
-    return manifest
+    # Match a deserialized sidecar, without aliasing the loaded checkpoint dicts.
+    return json.loads(path.with_suffix('.json').read_text())
 
 
 @pytest.mark.parametrize('key', ['checkpoint_sha256', 'weights_key', 'resolved_model_config',
@@ -49,13 +58,16 @@ def test_reuse_rejects_other_contracts(tmp_path: Path, key: str) -> None:
     elif key == 'weights_key':
         manifest[key] = 'swa_model'
     elif key == 'resolved_model_config':
-        manifest[key] = {'kind': 'transformer'}
+        # Internally valid package metadata for a DIFFERENT checkpoint config.
+        manifest['arch']['num_layers'] += 1
+        manifest[key]['num_layers'] += 1
     elif key == 'batch':
         manifest[key] = 1
     elif key == 'device':
         manifest.update(device='cuda', dtype='bfloat16')
     elif key == 'encoding':
-        manifest['input_history_encoding'] = 'lc0_root_legacy_meta'
+        for record in (manifest, manifest['arch'], manifest['resolved_model_config']):
+            record['input_history_encoding'] = 'lc0_root_legacy_meta'
     elif key == 'hash':
         package.write_bytes(b'changed after export')
     else:
@@ -67,9 +79,13 @@ def test_reuse_rejects_other_contracts(tmp_path: Path, key: str) -> None:
 
 def test_reuse_compares_serialized_configuration(tmp_path: Path) -> None:
     value = loaded()
-    value.identity['resolved_model_config'] = {'stages': (1, 2)}
+    resolved = value.identity['resolved_model_config']
+    assert isinstance(resolved, dict)
+    thresholds = resolved['phase_piece_thresholds']
+    assert isinstance(thresholds, tuple)
     package = tmp_path / 'saved.pt2'
-    package_at(package, value)
+    manifest = package_at(package, value)
+    assert manifest['resolved_model_config']['phase_piece_thresholds'] == list(thresholds)
     assert verified_package(package, value, batch=4, device='cpu', device_index=0)['batch'] == 4
 
 
@@ -255,3 +271,76 @@ def test_report_cannot_collide_with_planned_model_artifacts(monkeypatch, tmp_pat
     with pytest.raises(ValueError, match='protected input'):
         probe.main()
     assert not report.exists()
+
+
+@pytest.mark.parametrize('fault', ['pipe_setup', 'stderr'])
+def test_startup_setup_failures_still_reap_worker(monkeypatch, tmp_path: Path, fault: str) -> None:
+    value, package = loaded(), tmp_path / 'saved.pt2'
+    package_at(package, value)
+    binary = tmp_path / 'waiting-worker'
+    binary.write_text(f'#!{sys.executable}\nimport time\ntime.sleep(60)\n')
+    binary.chmod(0o755)
+    original = subprocess.Popen
+    spawned = []
+    def spawn(*args, **kwargs):
+        child = original(*args, **kwargs)
+        spawned.append(child)
+        return child
+    def pipe_failure(*_args):
+        raise OSError('injected pipe setup failure')
+    def handshake_failure(*_args):
+        raise RuntimeError('injected handshake failure')
+    def stderr_failure(_self):
+        raise OSError('injected stderr read failure')
+    monkeypatch.setattr(subprocess, 'Popen', spawn)
+    if fault == 'pipe_setup':
+        monkeypatch.setattr(backend.os, 'set_blocking', pipe_failure)
+    else:
+        monkeypatch.setattr(backend, 'read_exact', handshake_failure)
+        monkeypatch.setattr(NativeEvaluator, 'diagnostics', stderr_failure)
+    try:
+        with pytest.raises(RuntimeError, match='native evaluator startup failed: injected') as caught:
+            NativeEvaluator(binary, package, timeout=5)
+        if fault == 'stderr':
+            assert 'injected handshake failure' in str(caught.value)
+            assert 'injected stderr read failure' in str(caught.value)
+        assert len(spawned) == 1
+        child = spawned[0]
+        assert child.poll() is not None
+        assert child.stdin.closed
+        assert child.stdout.closed
+    finally:
+        # Also reap the before-fix negative control; do not orphan its worker.
+        for child in spawned:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+            child.stdin.close()
+            child.stdout.close()
+
+
+def test_qualifier_diagnostics_fault_still_closes_worker(monkeypatch, tmp_path: Path) -> None:
+    report, value = configure_main(monkeypatch, tmp_path, [])
+    closed = []
+    class Worker:
+        sequence = 1
+        def diagnostics(self):
+            raise OSError('injected final diagnostic failure')
+        def close(self):
+            closed.append(True)
+    def export(_loaded, path, **_kwargs):
+        package_at(path, value)
+        return value.model
+    def no_search(*_args, **_kwargs):
+        raise RuntimeError('injected search failure')
+    monkeypatch.setattr(probe, 'export_checkpoint', export)
+    monkeypatch.setattr(probe, 'build_worker', lambda *_args: tmp_path / 'worker')
+    monkeypatch.setattr(probe.sessions, 'build', lambda *_args: {'reference': tmp_path / 'oracle'})
+    monkeypatch.setattr(probe.sessions, 'Oracle', no_search)
+    monkeypatch.setattr(probe, 'NativeEvaluator', lambda *_args: Worker())
+    with pytest.raises(OSError, match='injected final diagnostic failure'):
+        probe.main()
+    assert closed == [True]
+    result = json.loads(report.read_text())
+    assert result['status'] == 'failed'
+    assert result['qualification'] == 'failed'
