@@ -75,6 +75,16 @@ jobs:
           test "$found" = 2
           git switch -c "$TARGET_BRANCH"
           python3 "$RUNNER_TEMP/publish_record.py"
+          python3 - <<'PYFIX'
+          import hashlib, json
+          from pathlib import Path
+          p = Path('docs/experiments/evidence/bend-subset-source-laws/hosted-material-build-identity.txt')
+          data = p.read_bytes()
+          p.with_suffix('.json').write_text(json.dumps({'original_filename': p.name, 'original_sha256': hashlib.sha256(data).hexdigest(), 'raw_text': data.decode()}, indent=2) + '\n')
+          p.unlink()
+          r = Path('docs/experiments/2026-09-21-bend-subset-source-laws.md')
+          r.write_text(r.read_text() + '\nPublication attempt 35627954139 passed evidence validation and source rechecks but stopped before committing because the copied raw build-identity log contains trailing whitespace. The build-identity record is now stored as a JSON string with its original SHA-256, preserving every original byte while leaving the normal Git whitespace check enabled. No implementation, proof, compiler or qualification result was changed.\n')
+          PYFIX
           git add docs/experiments/2026-09-21-bend-subset-source-laws.md docs/bend_migration_proofs.md docs/experiments/evidence/bend-subset-source-laws
           git diff --cached --check
           sha256sum --check "$QUALIFICATION/candidate-source-sha256.txt"
