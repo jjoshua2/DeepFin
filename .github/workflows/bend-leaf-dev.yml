@@ -10,22 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Preserve exact staged fragments for local comparison
-        run: |
-          mkdir -p /tmp/bend-fragments
-          python - <<'PY'
-          import base64,json,urllib.request,hashlib
-          from pathlib import Path
-          shas=['291c3e70b0260db27b52b88be8b74a937bcc6023','da99ec76f010f95b6f5f1d686eb233e3287bf1bb','fbcb1ae3ce577e819693f05e09fdbe9c6ae1da65']
-          for i,sha in enumerate(shas):
-              with urllib.request.urlopen('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/'+sha,timeout=30) as response:
-                  data=base64.b64decode(json.load(response)['content'])
-              assert hashlib.sha1(f'blob {len(data)}\0'.encode()+data).hexdigest()==sha
-              Path(f'/tmp/bend-fragments/part{i}.txt').write_bytes(data)
-              print(i,len(data),hashlib.sha256(data).hexdigest())
-          PY
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/upload-artifact@v4
         with:
           name: bend-leaf-fragments
-          path: /tmp/bend-fragments/
+          path: .github/leaf-fragment*.txt
+          include-hidden-files: true
           retention-days: 2
