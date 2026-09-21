@@ -1,54 +1,126 @@
-name: Bend CI repair audit
+name: Bend CI repair confirmation
 on:
   push:
     branches: [fix/bend-ci-audit-20260921]
     paths: [.github/workflows/bend-ci-repair-dev.yml]
 permissions:
-  contents: read
-  actions: read
-  pull-requests: read
+  contents: write
 jobs:
-  audit:
+  confirm:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
-      - name: Inventory all open Bend PR checks
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: actions/checkout@v4
+        with:
+          ref: f1e4037b89314a1f787508d7bd0bb60a1dc6e96c
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          activate-environment: true
+      - name: Reuse the existing manifest repair and fix the remaining failures
         run: |
-          mkdir -p /tmp/bend-ci-inventory
+          git fetch --no-tags --depth=1 origin 3244c3d25dc1d53153195cc433be0546c1d2c6ce
+          for path in native/bend_engine/install_bend.sh native/bend_engine/resolve_latest.py tests/test_bend_latest_manifest.py; do
+            git show "3244c3d25dc1d53153195cc433be0546c1d2c6ce:$path" > "$path"
+          done
           python - <<'PY'
-          import json, os, urllib.request
+          import base64, hashlib, json, urllib.request
           from pathlib import Path
-          repo = 'jjoshua2/DeepFin'
-          def get(path):
-              req = urllib.request.Request('https://api.github.com/repos/' + repo + '/' + path, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
-              with urllib.request.urlopen(req, timeout=30) as response: return json.load(response)
-          prs = []
-          for page in range(1, 11):
-              rows = get(f'pulls?state=open&per_page=100&page={page}')
-              prs.extend(p for p in rows if 'bend' in p['title'].lower())
-              if len(rows) < 100: break
-          report = []
-          for p in sorted(prs, key=lambda p:p['number']):
-              row = {'number':p['number'], 'title':p['title'], 'head':p['head']['ref'], 'sha':p['head']['sha'], 'base':p['base']['ref'], 'base_sha':p['base']['sha'], 'checks':[]}
-              runs = get('actions/runs?event=pull_request&per_page=30&head_sha=' + p['head']['sha'])['workflow_runs']
-              seen = set()
-              for run in runs:
-                  if run['name'] in seen: continue
-                  seen.add(run['name'])
-                  check = {k:run[k] for k in ('id','name','status','conclusion','html_url')}
-                  if run['conclusion'] == 'failure':
-                      jobs = get(f"actions/runs/{run['id']}/jobs?per_page=100")['jobs']
-                      check['failed_jobs'] = [{'id':j['id'],'name':j['name'], 'steps':[s['name'] for s in j['steps'] if s['conclusion']=='failure']} for j in jobs if j['conclusion']=='failure']
-                  row['checks'].append(check)
-              report.append(row)
-              Path('/tmp/bend-ci-inventory/prs.json').write_text(json.dumps(report, indent=2)+'\n')
-              print(p['number'],[(c['name'],c['conclusion'],c.get('failed_jobs',[])) for c in row['checks']])
+          sha = '14e18fda4f6d14a919fe66fdf7f86d408c3d2077'
+          with urllib.request.urlopen('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/' + sha, timeout=30) as response:
+              raw = base64.b64decode(json.load(response)['content'])
+          assert hashlib.sha1(f'blob {len(raw)}\0'.encode() + raw).hexdigest() == sha
+          Path('tests/test_bend_installer.py').write_bytes(raw)
+          def replace(path, old, new):
+              p = Path(path)
+              s = p.read_text()
+              assert s.count(old) == 1, (path, old)
+              p.write_text(s.replace(old, new))
+          root = 'native/bend_engine/'
+          replace(root + 'install_bend.sh', '''read -r WANT_VERSION WANT_SHA WANT_URL <<EOF
+          $(printf '%s' "$META" | python3 "$RESOLVE" "${RESOLVE_ARGS[@]}")
+          EOF''', '''# Capture the resolver status directly; a read/heredoc masks its failure.
+          RESOLVED="$(printf '%s' "$META" | python3 "$RESOLVE" "${RESOLVE_ARGS[@]}")"
+          read -r WANT_VERSION WANT_SHA WANT_URL <<< "$RESOLVED"''')
+          replace(root + 'install_bend.sh', '''echo "bend probe: installed $("$BIN/bend" --version 2>/dev/null || echo unknown) at $BIN/bend"''', '''# Do not report a successful installation of a non-working executable.
+          GOT_VERSION="$("$BIN/bend" version)"
+          if [ "$GOT_VERSION" != "bend $WANT_VERSION" ]; then
+            echo "error: installed Bend version mismatch: $GOT_VERSION" >&2
+            exit 2
+          fi
+          echo "bend probe: installed $GOT_VERSION at $BIN/bend"''')
+          for directory, filename, values in [('probe','chess_call.c','moves'), ('aoti_probe','aoti_call.c','words'), ('cuda_parity','cuda_call.c','values')]:
+              replace(root + directory + '/' + filename, f'io_node(e, CID_CON, (Term){values}[i - 1], xs, 0)', f'io_node(e, CID_CON, (Term){values}[i - 1], xs)')
+              replace(root + directory + '/build_probe.sh', '"$BEND" --version', '"$BEND" version')
+          for filename in ('bend-probe.yml', 'bend-aoti-probe.yml'):
+              p = Path('.github/workflows') / filename
+              s = p.read_text()
+              needle = '        run: native/bend_engine/install_bend.sh'
+              assert s.count(needle) == 1
+              s = s.replace(needle, '          GITHUB_TOKEN: ${{ github.token }}\n' + needle)
+              if filename == 'bend-probe.yml':
+                  s = s.replace('      - "tests/test_bend_chess_probe.py"\n', '      - "tests/test_bend_chess_probe.py"\n      - "tests/test_bend_latest_manifest.py"\n      - "tests/test_bend_installer.py"\n')
+                  s = s.replace('      # bun.sh', '      - name: Verify installer and metadata without network\n        run: pytest -q tests/test_bend_latest_manifest.py tests/test_bend_installer.py\n\n      # bun.sh')
+              p.write_text(s)
+          p = Path('tests/test_pause_window.py')
+          s = p.read_text()
+          start = s.index('def test_the_lease_watchdog_never_touches_a_foreign_marker(')
+          end = s.index('\ndef test_', start + 1)
+          part = s[start:end]
+          old = "        'for i in $(seq 1 20); do [ -e ' + shlex.quote(str(marker)) + ' ] || break; sleep 0.5; done; '"
+          new = '''        # Unlink precedes logging. Wait for BOTH observations before teardown;
+                  # killing on unlink alone races the watchdog's final printf/date command.
+                  'for i in $(seq 1 20); do '
+                  f'if [ ! -e {shlex.quote(str(marker))} ] && '
+                  f'grep -q "launcher pid" {shlex.quote(str(wlog))} 2>/dev/null; then break; fi; '
+                  'sleep 0.5; done; '\n'''.rstrip('\n')
+          assert part.count(old) == 1
+          p.write_text(s[:start] + part.replace(old, new) + s[end:])
           PY
+          git add native/bend_engine/install_bend.sh native/bend_engine/resolve_latest.py native/bend_engine/probe/chess_call.c native/bend_engine/probe/build_probe.sh native/bend_engine/aoti_probe/aoti_call.c native/bend_engine/aoti_probe/build_probe.sh native/bend_engine/cuda_parity/cuda_call.c native/bend_engine/cuda_parity/build_probe.sh tests/test_bend_latest_manifest.py tests/test_bend_installer.py tests/test_pause_window.py .github/workflows/bend-probe.yml .github/workflows/bend-aoti-probe.yml
+          git diff --cached --check
+          mkdir -p artifacts
+          git diff --cached --binary > artifacts/bend-ci-repair.patch
+      - name: Locked environment and static validation
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          ruff check native/bend_engine/resolve_latest.py tests/test_bend_latest_manifest.py tests/test_bend_installer.py tests/test_pause_window.py
+          basedpyright native/bend_engine/resolve_latest.py tests/test_bend_latest_manifest.py tests/test_bend_installer.py tests/test_pause_window.py
+          python scripts/validate.py lint --require-cpu-wheel
+      - name: Offline installer contracts and watchdog regression
+        run: |
+          pytest -q tests/test_bend_latest_manifest.py tests/test_bend_installer.py tests/test_pause_window.py -k 'bend or lease_watchdog' --junitxml=artifacts/bend-ci-contracts.xml
+      - name: Download and verify the actual latest upstream compiler
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BEND_NO_TELEMETRY: '1'
+        run: |
+          native/bend_engine/install_bend.sh
+          build/bend_toolchain/bin/bend version | tee artifacts/bend-ci-version.txt
+      - name: Actual required chess parity and AOTI and CUDA-harness builds
+        env:
+          BEND_NO_TELEMETRY: '1'
+          CAE_REQUIRE_BEND_PROBE: '1'
+          CAE_REQUIRE_BEND_AOTI_PROBE: '1'
+          CAE_REQUIRE_BEND_CUDA_PARITY: '1'
+        run: |
+          pytest -q tests/test_bend_chess_probe.py tests/test_bend_aoti_probe.py tests/test_bend_cuda_parity_harness.py --junitxml=artifacts/bend-ci-probes.xml
+      - name: Publish the exact tested repair without staging workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git diff --cached --check
+          git commit -m 'Fix latest Bend release installation, native effect ABI and watchdog test race'
+          target=refs/heads/fix/bend-ci-repair-validated
+          test -z "$(git ls-remote --heads origin "$target")"
+          git push origin HEAD:"$target"
+          git rev-parse HEAD > artifacts/bend-ci-repair-commit.txt
+          git ls-files -s native/bend_engine/install_bend.sh native/bend_engine/resolve_latest.py tests/test_bend_latest_manifest.py tests/test_bend_installer.py > artifacts/bend-ci-source.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bend-ci-inventory
-          path: /tmp/bend-ci-inventory/
-          retention-days: 7
+          name: bend-ci-repair-confirmation
+          path: artifacts/bend-ci-*
+          retention-days: 14
