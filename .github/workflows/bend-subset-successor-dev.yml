@@ -1,32 +1,180 @@
-name: Bend subset successor sources
+name: Bend subset ordinal qualification
 'on':
   push:
     branches: [feat/bend-subset-successor-dev-20260921]
     paths: ['.github/workflows/bend-subset-successor-dev.yml']
 permissions:
-  contents: read
+  contents: write
 defaults:
   run:
     shell: bash
 jobs:
-  sources:
+  qualify:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 10
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      TARGET_BRANCH: feat/bend-subset-ordinal-20260921
     steps:
       - uses: actions/checkout@v4
         with:
           ref: 1654a945e946440885675b5bc1f7d0ee80f80708
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
           persist-credentials: false
-      - name: Archive exact existing source without executing models or tests
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact locally tested source and check every candidate identity
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/successor-source"
-          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/successor-source/DeepFin-source.tar.gz"
-          git rev-parse HEAD > "$RUNNER_TEMP/successor-source/commit.txt"
-          cd "$RUNNER_TEMP/successor-source"
-          sha256sum DeepFin-source.tar.gz > SHA256SUMS
-      - uses: actions/upload-artifact@v4
+          export EVIDENCE="$RUNNER_TEMP/successor-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          gh api repos/jjoshua2/DeepFin/git/blobs/e535f0d8025a156830b583c82e027f1157080e73 --jq .content | base64 --decode > "$EVIDENCE/transport-part0.txt"
+          gh api repos/jjoshua2/DeepFin/git/blobs/ba6efe95298bb2ef25490d8c7e4853885b1f96a3 --jq .content | base64 --decode > "$EVIDENCE/transport-part1.txt"
+          python3 - <<'PATCH'
+          import base64, gzip, hashlib, os
+          from pathlib import Path
+          e = Path(os.environ['EVIDENCE'])
+          a = (e/'transport-part0.txt').read_bytes()
+          b = (e/'transport-part1.txt').read_bytes()
+          # Repair the known duplicated two characters in transport, not source.
+          assert a.count(b'MBqPvYnYnwx5') == 1
+          a = a.replace(b'MBqPvYnYnwx5', b'MBqPvYnwx5')
+          blob = lambda x: hashlib.sha1(f'blob {len(x)}\0'.encode()+x).hexdigest()
+          assert blob(a) == '7115b08c8aba3c19a58fa208ed0658b2a509d57e', (len(a),blob(a))
+          assert blob(b) == 'ba6efe95298bb2ef25490d8c7e4853885b1f96a3'
+          data = gzip.decompress(base64.b64decode(a+b,validate=True))
+          assert hashlib.sha256(data).hexdigest() == '6c53eb780dd2296aee7cd4438eda06002d58e4c6d077995e1e58fc38932f1455'
+          Path(os.environ['RUNNER_TEMP'],'successor.patch').write_bytes(data)
+          (e/'transport-part0.txt').unlink()
+          (e/'transport-part1.txt').unlink()
+          PATCH
+          test "$(git rev-parse HEAD)" = 1654a945e946440885675b5bc1f7d0ee80f80708
+          git apply --check "$RUNNER_TEMP/successor.patch"
+          git apply --index "$RUNNER_TEMP/successor.patch"
+          git diff --cached --check
+          python3 - <<'IDENTITY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          files = subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          allowed = {'docs/bend_migration_proofs.md','docs/experiments/README.md','docs/experiments/2026-09-21-bend-subset-successor.md'}
+          assert len(files) == 19
+          assert all(f in allowed or f.startswith('native/bend_engine/standalone/proofs/successor/') or f.startswith('docs/experiments/evidence/bend-subset-successor/') for f in files), files
+          root = Path('native/bend_engine/standalone')
+          d = Path('docs/experiments/evidence/bend-subset-successor')
+          hashes = {}
+          for name in ['local-successor-proofs.json','local-successor-native.json']:
+              r = json.loads((d/name).read_text())
+              assert r['compiler_revision'] == 'aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae'
+              for rel,digest in r['source_sha256s'].items():
+                  p = root/rel
+                  assert hashlib.sha256(p.read_bytes()).hexdigest() == digest, str(p)
+                  hashes[str(p)] = digest
+          e = Path(os.environ['EVIDENCE'])
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'changed-files.json').write_text(json.dumps(files,indent=2)+'\n')
+          IDENTITY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Prove seven new laws and retain all prior laws and negative controls
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/successor/verify.js "$PWD/.compiler" --report "$EVIDENCE/successor-proofs.json"
+          cmp "$EVIDENCE/successor-proofs.json" docs/experiments/evidence/bend-subset-successor/local-successor-proofs.json
+      - name: Check actual U64 subtraction and masked successor in four native modes
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/successor/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/successor-native.json"
+      - name: Recheck original compiler source laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/compiler-pin-tests.txt"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/inherited-u64-proofs.json"
+      - uses: actions/setup-python@v5
         with:
-          name: bend-successor-source
-          path: ${{ runner.temp }}/successor-source/
-          retention-days: 3
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          activate-environment: true
+      - name: Install locked external CPU development tools
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint once
+        run: |
+          set -euo pipefail
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/whole-repository-lint.txt"
+      - name: Publish exact tested source and durable reports on a fresh clean branch
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          git diff --exit-code
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET_BRANCH" > "$RUNNER_TEMP/target-ref.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          python - <<'RECORD'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          e = Path(os.environ['EVIDENCE'])
+          d = Path('docs/experiments/evidence/bend-subset-successor')
+          hashes = json.loads((e/'candidate-source-sha256.json').read_text())
+          for name,digest in hashes.items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, name
+          p = json.loads((e/'successor-proofs.json').read_text())
+          n = json.loads((e/'successor-native.json').read_text())
+          assert p['proof_gate'] == 'PASS' and p['new_law_count'] == 7
+          assert p['aggregate_law_count'] == 40 and p['prior_engine_law_count'] == 17 and p['inherited_u64_law_count'] == 16
+          assert p['prior_negative_controls'] == 26 and len(p['negative_controls']) == 16
+          assert all(x['rejected'] for x in p['negative_controls']) and p['consumer'] == 'PASS'
+          local = json.loads((d/'local-successor-native.json').read_text())
+          assert n['native_gate'] == 'PASS' and n['distinct_operand_pairs'] == 1605
+          assert n['modes'] == local['modes'] and n['source_sha256s'] == local['source_sha256s']
+          assert n['population_range'] == [0,64] and n['bun'] == local['bun']
+          assert json.loads((e/'inherited-u64-proofs.json').read_text())['proof_gate'] == 'PASS'
+          pin = (e/'compiler-pin-tests.txt').read_text()
+          assert '12 pass' in pin and '0 fail' in pin
+          assert (e/'whole-repository-lint.txt').read_text().strip().endswith('lint: OK')
+          for name in ['successor-proofs.json','successor-native.json','inherited-u64-proofs.json','candidate-source-sha256.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['compiler-pin-tests.txt','whole-repository-lint.txt','compiler-identity.txt']:
+              raw = (e/name).read_bytes()
+              (d/('hosted-'+name.removesuffix('.txt')+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run,sha = os.environ['GITHUB_RUN_ID'],os.environ['GITHUB_SHA']
+          text = f"\n\n## Hosted qualification\n\nRun **{run}**, temporary workflow commit `{sha}`, passed every qualification stage before publication on exact PR #806 parent `1654a945e946440885675b5bc1f7d0ee80f80708`. Candidate executable/proof/test sources matched the local source hashes before and after qualification. The unchanged compiler fingerprint was checked again.\n\n"
+          text += "The aggregate source gate proves all seven new universal laws, retaining 17 earlier engine/index laws and 16 original U64 laws: 40 accepted laws total. All 16 new negative controls and 26 prior controls pass. The new source report is byte-identical to the local report. The original fork source gate (16 laws/seven controls) and all 12 compiler-pin contracts also pass separately. No accepted obligation, compiler fingerprint or checker was weakened.\n\n"
+          text += f"All four native modes pass 1,605 distinct operand pairs each: 815 low-half borrows, 790 without borrow, 234 successor wraps and 1,371 advances. Mask populations 0..64 and four malformed/budget rejections are covered. Mode results and source identities match the local gate exactly; hosted compiler `{n['cc']}`, Bun `{n['bun']}`. The shared output digest is `55a842ac6c1f3fb3197dadc94eac304e11b262029e15b78f96bb352c345d1af2`. These are repeated environments, not exhaustive arbitrary-U64 testing.\n\n"
+          text += "The unchanged whole-repository lint gate passes Ruff, Basedpyright and Vulture in the locked CPU development environment. No failed check was suppressed. Original logs are retained losslessly as JSON strings with SHA-256 identities. The two duplicated characters in the first compressed transport fragment were corrected before decompression, then its exact expected blob hash and the complete original patch SHA-256 were required; this does not change any candidate source.\n\n"
+          text += "No production source, full engine binary, perft, model export/forward, GPU, trainer, benchmark or full inherited native suite was changed or rerun. The full ordinal law is now a source proof, not an inference from the bounded native samples. It uses the imported recurrence and actual subtraction; the conditional cyclic-successor specification is not a separate proof of Base Nat.mod/div. Chess-mask population/offset bounds and P2 affine table/lookup refinement remain open. Source proofs trust the pinned checker/Base; native lowering/runtime/ABI/toolchain/hardware remain separately tested/trusted. Self-review only.\n\n"
+          text += f"Reports and exact source identities are committed under this record's evidence directory and retained in the 30-day `bend-subset-ordinal-qualification` artifact. Patch SHA-256: `6c53eb780dd2296aee7cd4438eda06002d58e4c6d077995e1e58fc38932f1455`. Publication is create-only on `{os.environ['TARGET_BRANCH']}`. No force push, merge, deployment or live-process change. The temporary workflow and compressed transport are absent from the clean feature branch.\n"
+          r = Path('docs/experiments/2026-09-21-bend-subset-successor.md')
+          r.write_text(r.read_text()+text)
+          m = Path('docs/bend_migration_proofs.md')
+          m.write_text(m.read_text()+f"\nHosted successor/ordinal qualification run **{run}** passed the additive source gate, four native modes, original source/pin checks, and whole-repository lint on the exact candidate. Reports and source identities are committed in the dated record. Full P1 recurrence order/coverage/period is source-proved; actual affine table initialization, offsets and lookup geometry still require P2 refinement. No runtime-engine/model/GPU/performance requalification is implied.\n")
+          RECORD
+          git switch -c "$TARGET_BRANCH"
+          git add docs/bend_migration_proofs.md docs/experiments/2026-09-21-bend-subset-successor.md docs/experiments/evidence/bend-subset-successor
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove complete subset ordinal, coverage and period using actual U64 subtraction'
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          git log -1 --format='%H%n%s' | tee "$EVIDENCE/published-commit.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/successor > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-subset-ordinal-qualification
+          path: ${{ runner.temp }}/successor-evidence/
+          retention-days: 30
