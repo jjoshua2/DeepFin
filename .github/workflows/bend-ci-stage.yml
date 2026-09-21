@@ -21,17 +21,17 @@ jobs:
           run-id: 35644293608
           github-token: ${{ github.token }}
           path: /tmp/validated
-      - name: Prepare source-only commits, leaving final workflow publication to the authorized connector
+      - name: Stage exact tested source descendants without updating the PR branches
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python - <<'PY'
-          import hashlib, json, os, subprocess, urllib.request
+          import base64, hashlib, json, os, subprocess, urllib.request
           from pathlib import Path
-          repo=Path.cwd()
+          repo=Path.cwd();base='f1e4037b89314a1f787508d7bd0bb60a1dc6e96c'
           patch=Path('/tmp/validated/bend-ci-repair.patch')
           assert hashlib.sha256(patch.read_bytes()).hexdigest()=='26198f26bd62d50ad8e7bb81dde90f8b5a08768aa9af4e4c5df0f12d19968b26'
-          expected={777:'3244c3d25dc1d53153195cc433be0546c1d2c6ce',778:'4d5285eb016dec3f36f9eb0a1842c27d770eea97',779:'4ab0836c69f7d60ae41c84fa069527a8c731f047',780:'81d3c790a2d4aecde011f8d0f2d1b890a2b9261a',781:'d7517e5823d5b01239fae71472907e174ec591fb',784:'389cb8561599f54b98a6aa86be73218ade2ff426',788:'9e4a8a6db0693d2bcccfd1dfb73ffc63cd969619',792:'10dc757b3ff06ba9b37008c3d94d61105eebc74a',797:'3b6047ddfc08d9aed43da37aff8f2db218f84d98',798:'43bfad24787bd94f37b4884bf7b8617b02a3ce3d',799:'496284b233de9cc3727ddd4b79dc5720d6ed945e',800:'a3a2333e13fb9176bd31a3dbb3c8d5e18284d36a',801:'fe658a2680ec7941742c045feff0ccb806a898ad',802:'5032ba20d5c6e45630300d409a063de590f2ac21',803:'dfa0cda0498d45494e1c52e8271fbf20ebf37871',804:'f1e4037b89314a1f787508d7bd0bb60a1dc6e96c'}
+          expected={777:'3244c3d25dc1d53153195cc433be0546c1d2c6ce',778:'4d5285eb016dec3f36f9eb0a1842c27d770eea97',779:'4ab0836c69f7d60ae41c84fa069527a8c731f047',780:'81d3c790a2d4aecde011f8d0f2d1b890a2b9261a',781:'d7517e5823d5b01239fae71472907e174ec591fb',784:'389cb8561599f54b98a6aa86be73218ade2ff426',788:'9e4a8a6db0693d2bcccfd1dfb73ffc63cd969619',792:'10dc757b3ff06ba9b37008c3d94d61105eebc74a',797:'3b6047ddfc08d9aed43da37aff8f2db218f84d98',798:'43bfad24787bd94f37b4884bf7b8617b02a3ce3d',799:'496284b233de9cc3727ddd4b79dc5720d6ed945e',800:'a3a2333e13fb9176bd31a3dbb3c8d5e18284d36a',801:'fe658a2680ec7941742c045feff0ccb806a898ad',802:'5032ba20d5c6e45630300d409a063de590f2ac21',803:'dfa0cda0498d45494e1c52e8271fbf20ebf37871',804:base}
           def git(*args,cwd=repo):
               return subprocess.check_output(['git',*args],cwd=cwd,text=True).strip()
           def run(*args,cwd=repo):
@@ -42,53 +42,38 @@ jobs:
           rows=[]
           for number,sha in expected.items():
               p=get(f'pulls/{number}')
-              assert p['state']=='open' and p['head']['sha']==sha, (number,p['state'],p['head']['sha'])
+              assert p['state']=='open' and p['head']['sha']==sha,(number,p['state'],p['head']['sha'])
               assert p['head']['repo']['full_name']=='jjoshua2/DeepFin'
               rows.append({'number':number,'branch':p['head']['ref'],'old_sha':sha})
           run('git','fetch','--no-tags','--depth=1','origin',*expected.values())
           run('git','apply','--check',str(patch));run('git','apply',str(patch))
           candidates=git('diff','--name-only').splitlines()+git('ls-files','--others','--exclude-standard').splitlines()
           candidates=[x for x in candidates if x.startswith(('native/','tests/','.github/workflows/'))]
-          assert len(candidates)==15, candidates
+          assert len(candidates)==15,candidates
           desired={p:(repo/p).read_bytes() for p in candidates}
-          workflow_paths={'.github/workflows/bend-probe.yml','.github/workflows/bend-aoti-probe.yml'}
-          # Workflow-only refinements: cover installer changes and use the Bun
-          # version already executed in the native validation instead of latest.
-          old='''      - name: Install bun
-                  run: |
-                    if ! command -v bun >/dev/null 2>&1; then
-                      curl -fsSL https://bun.sh/install | bash
-                    fi
-                    echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
-          '''
-          old='\n'.join(line[10:] if line.startswith('          ') else line for line in old.split('\n'))
-          # Spell the anchor without indentation manipulation of its first line.
-          old='      - name: Install bun\n        run: |\n          if ! command -v bun >/dev/null 2>&1; then\n            curl -fsSL https://bun.sh/install | bash\n          fi\n          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"\n'
-          new='      - uses: oven-sh/setup-bun@v2\n        with:\n          bun-version: "1.4.2"\n'
-          for p in workflow_paths:
-              s=desired[p].decode();assert s.count(old)==1;s=s.replace(old,new)
-              if 'aoti' in p:
-                  anchor='      - "native/bend_engine/install_bend.sh"\n'
-                  assert s.count(anchor)==1
-                  s=s.replace(anchor,anchor+'      - "native/bend_engine/install_ci_bend.sh"\n      - "native/bend_engine/resolve_latest.py"\n')
-              desired[p]=s.encode()
-          expected_workflows={'.github/workflows/bend-probe.yml':'c5249b22542486166a1bb0a0c20f66071e9283b1','.github/workflows/bend-aoti-probe.yml':'ea7c9e50b3b4faadf5be9c6cc15ee80591367fb0'}
-          for p,sha in expected_workflows.items():
-              b=desired[p];assert hashlib.sha1(f'blob {len(b)}\0'.encode()+b).hexdigest()==sha
-          special={'.github/workflows/bend-probe.yml':'4fabaee7884a6b94424a459295f4fee36bf7863f','native/bend_engine/install_bend.sh':'c94a26ab606dc4b3d1c79bc311aab7aeae109342','native/bend_engine/resolve_latest.py':'39dbd08813677275a7e5ce2396358e9b362837c6','tests/test_bend_latest_manifest.py':'b1346cdccb136144922171024e67be5b1bd7f524'}
+          flows={'.github/workflows/bend-probe.yml':'c5249b22542486166a1bb0a0c20f66071e9283b1','.github/workflows/bend-aoti-probe.yml':'fd05e0aa8e7ef414f8f90dc023684197d78424d2'}
+          for p,sha in flows.items():
+              b=base64.b64decode(get('git/blobs/'+sha)['content'])
+              assert hashlib.sha1(f'blob {len(b)}\0'.encode()+b).hexdigest()==sha
+              desired[p]=b
+          special={'native/bend_engine/install_bend.sh':'c94a26ab606dc4b3d1c79bc311aab7aeae109342','native/bend_engine/resolve_latest.py':'39dbd08813677275a7e5ce2396358e9b362837c6','tests/test_bend_latest_manifest.py':'b1346cdccb136144922171024e67be5b1bd7f524'}
+          special_flows={'.github/workflows/bend-probe.yml':'4fabaee7884a6b94424a459295f4fee36bf7863f','.github/workflows/bend-aoti-probe.yml':'06e62b6fd405ec1d11783059cd7cac6978929afc'}
           git('config','user.name','github-actions[bot]');git('config','user.email','41898282+github-actions[bot]@users.noreply.github.com')
-          out=Path('/tmp/bend-ci-staged');out.mkdir()
+          out=Path('/tmp/bend-ci-staged');out.mkdir();complete=[]
           for row in rows:
               n=row['number'];sha=row['old_sha'];work=Path(f'/tmp/bend-repair-{n}')
               run('git','worktree','add','--detach',str(work),sha)
-              excludes=[]
+              for p in flows:
+                  expected_sha=special_flows[p] if n==777 else git('rev-parse',base+':'+p)
+                  assert git('rev-parse',sha+':'+p)==expected_sha,(n,p,'unexpected workflow change')
+              excludes=['--exclude='+p for p in flows]
               if n==777:
                   for p,old_sha in special.items(): assert git('rev-parse',sha+':'+p)==old_sha,(n,p)
-                  excludes=['--exclude='+p for p in special]
+                  excludes += ['--exclude='+p for p in special]
               run('git','apply','--index',*excludes,str(patch),cwd=work)
               if n==777:
                   for p in special: (work/p).write_bytes(desired[p])
-              for p in workflow_paths: (work/p).write_bytes(desired[p])
+              for p in flows: (work/p).write_bytes(desired[p])
               extra=set()
               if n==784:
                   p='.github/workflows/bend-search-sessions.yml';extra.add(p)
@@ -99,26 +84,22 @@ jobs:
               run('git','diff','--cached','--check',cwd=work)
               changed=set(git('diff','--cached','--name-only',cwd=work).splitlines())
               assert changed <= set(candidates)|extra and len(changed)>=14,(n,changed)
-              # Verify shared corrected C/install/test blobs are the tested bytes.
-              for p in candidates:
-                  assert (work/p).read_bytes()==desired[p],(n,p)
+              for p in candidates: assert (work/p).read_bytes()==desired[p],(n,p)
               entries=[]
-              for p in sorted(workflow_paths|extra):
+              for p in sorted(set(flows)|extra):
                   b=(work/p).read_bytes();h=hashlib.sha1(f'blob {len(b)}\0'.encode()+b).hexdigest()
                   entries.append({'path':p,'mode':'100644','type':'blob','sha':h})
                   (out/(h+'.txt')).write_bytes(b)
               row['workflow_entries']=entries
               row['expected_final_tree']=git('write-tree',cwd=work)
-              # A source-only staging commit does not modify workflows. The normal
-              # GitHub connector will publish those explicit workflow edits.
-              run('git','restore','--staged','--source='+sha,'--',*workflow_paths,*extra,cwd=work)
+              run('git','restore','--staged','--source='+sha,'--',*flows,*extra,cwd=work)
               tree=git('write-tree',cwd=work)
               commit=git('commit-tree',tree,'-p',sha,'-m','Repair Bend installer, effect ABI and watchdog test; staged source validation',cwd=work)
               target=f'refs/heads/fix/bend-ci-pr{n}-sources-20260921'
               assert not git('ls-remote','--heads','origin',target)
               run('git','push','origin',commit+':'+target)
               row['source_commit']=commit;row['source_tree']=tree;row['changed_paths']=sorted(changed)
-              (out/'manifest.json').write_text(json.dumps(rows,indent=2)+'\n')
+              complete.append(row);(out/'manifest.json').write_text(json.dumps(complete,indent=2)+'\n')
               print('STAGED',n,sha,tree,row['expected_final_tree'],flush=True)
               run('git','worktree','remove','--force',str(work))
           PY
