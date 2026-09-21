@@ -187,7 +187,13 @@ jobs:
             --checkpoint /tmp/bend-leaf-export/fixture.pt --package /tmp/bend-leaf-export/checkpoint.pt2 \
             --trace /tmp/bend-neural-runtime/trace.bin --report artifacts/bend-leaf-isolated.json \
             --command sudo env DEEPFIN_BEND_PACKAGE=/model.pt2 DEEPFIN_BEND_TRACE=/trace.bin \
-            chroot /tmp/bend-neural-runtime /deepfin-bend-neural --threads 1
+            chroot --userspec="$(id -u):$(id -g)" /tmp/bend-neural-runtime /deepfin-bend-neural --threads 1
+          python - <<'PY'
+          import os,stat
+          from pathlib import Path
+          s=Path('/tmp/bend-neural-runtime/trace.bin').stat()
+          assert s.st_uid==os.getuid() and stat.S_IMODE(s.st_mode)==0o600
+          PY
       - name: Publish only tested feature sources
         run: |
           git fetch --no-tags --depth=1 origin dfa0cda0498d45494e1c52e8271fbf20ebf37871
