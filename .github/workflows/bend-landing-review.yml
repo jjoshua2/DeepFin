@@ -1,0 +1,70 @@
+name: Bend landing review snapshot
+on:
+  push:
+    branches: [review/bend-landing-20260921]
+    paths: [.github/workflows/bend-landing-review.yml]
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Snapshot exact refs, reviews and check identities without changing PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/bend-landing-review
+          python - <<'PY'
+          import json, os, subprocess, urllib.request
+          from pathlib import Path
+          out = Path('/tmp/bend-landing-review')
+          def get(path):
+              req = urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/' + path,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.load(response)
+          def pages(path):
+              rows = []
+              for page in range(1, 11):
+                  result = get(path + ('&' if '?' in path else '?') + f'per_page=100&page={page}')
+                  rows.extend(result)
+                  if len(result) < 100:
+                      return rows
+              raise RuntimeError('pagination limit reached; do not report complete')
+          main = get('git/ref/heads/main')['object']['sha']
+          record = {'main': main, 'prs': []}
+          refs = {main}
+          for n in (777, 778, 779, 780, 781, 782, 784, 785, 788, 792, 797, 798, 799, 800, 801, 802, 803, 804, 805, 806):
+              p = get(f'pulls/{n}')
+              sha = p['head']['sha']
+              row = {k: p[k] for k in ('number', 'state', 'merged', 'mergeable', 'draft', 'title')}
+              row.update(head=sha, branch=p['head']['ref'], base=p['base']['ref'], base_sha=p['base']['sha'], merge_sha=p['merge_commit_sha'])
+              row['runs'] = get('actions/runs?event=pull_request&per_page=50&head_sha=' + sha)['workflow_runs']
+              if n in (777, 778, 779, 780, 781):
+                  row['issue_comments'] = pages(f'issues/{n}/comments')
+                  row['reviews'] = pages(f'pulls/{n}/reviews')
+                  row['inline_comments'] = pages(f'pulls/{n}/comments')
+                  refs.add(sha)
+                  if p['merge_commit_sha'] and p['mergeable']:
+                      refs.add(p['merge_commit_sha'])
+              record['prs'].append(row)
+          (out / 'inventory.json').write_text(json.dumps(record, indent=2) + '\n')
+          for i, sha in enumerate(sorted(refs)):
+              subprocess.run(['git', 'fetch', '--no-tags', '--depth=60', 'https://github.com/jjoshua2/DeepFin.git', sha + ':refs/heads/review-snapshot-' + str(i)], check=True)
+          subprocess.run(['git', 'bundle', 'create', str(out / 'source.bundle'), '--branches=review-snapshot-*'], check=True)
+          subprocess.run(['sha256sum', str(out / 'source.bundle')], check=True)
+          print('Snapshot main', main)
+          for p in record['prs']:
+              print(p['number'], p['head'], p['base'], p['mergeable'], [(r['name'], r['conclusion']) for r in p['runs'][:10]])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-landing-review
+          path: /tmp/bend-landing-review/
+          retention-days: 7
