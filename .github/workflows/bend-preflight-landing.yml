@@ -1,0 +1,90 @@
+name: Bend preflight landing review
+on:
+  push:
+    branches: [review/bend-preflight-landing-20260921]
+    paths: [.github/workflows/bend-preflight-landing.yml]
+permissions:
+  contents: write
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 0ff37d197eda2b389129083f7b2cdcca91872d7a
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          activate-environment: true
+      - name: Reconcile the exact reviewed checkpoint base and preserve source evidence
+        run: |
+          git fetch --no-tags origin b939d7d6acc3bfe3b4610248527790fb24d29bfe
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          mkdir -p artifacts/preflight-review
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          head='0ff37d197eda2b389129083f7b2cdcca91872d7a'
+          base='b939d7d6acc3bfe3b4610248527790fb24d29bfe'
+          def git(*args): return subprocess.check_output(['git', *args],text=True).strip()
+          result=subprocess.run(['git','merge','--no-commit','--no-ff',base],check=False)
+          assert result.returncode in (0,1)
+          conflicts=git('diff','--name-only','--diff-filter=U').splitlines()
+          if conflicts:
+              assert conflicts==['native/bend_engine/resolve_latest.py'],conflicts
+              p=conflicts[0]
+              assert git('rev-parse',':2:'+p)==git('rev-parse',':3:'+p)=='f5c8addd250dad2410079a11d780e3f460368663'
+              subprocess.run(['git','checkout','--theirs','--',p],check=True)
+              subprocess.run(['git','add','--',p],check=True)
+          assert not git('diff','--name-only','--diff-filter=U')
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          tree=git('write-tree')
+          out=Path('artifacts/preflight-review')
+          (out/'identity.json').write_text(json.dumps({'head':head,'base':base,'tree':tree,'conflicts':conflicts},indent=2)+'\n')
+          (out/'integration.patch').write_bytes(subprocess.check_output(['git','diff','--cached','--full-index','--binary',head]))
+          (out/'feature.patch').write_bytes(subprocess.check_output(['git','diff','--cached','--full-index','--binary',base]))
+          with (out/'source.tgz').open('wb') as stream:
+              subprocess.run(['git','archive','--format=tar.gz',tree],stdout=stream,check=True)
+          print('COMBINED_TREE',tree,flush=True)
+          PY
+      - name: Locked environment and focused static checks
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          ruff check native/bend_engine/neural_probe tests/test_bend_checkpoint.py tests/test_bend_qualification.py
+          basedpyright native/bend_engine/neural_probe tests/test_bend_checkpoint.py tests/test_bend_qualification.py
+      - name: Real qualification, checkpoint, batching and boundary contracts
+        run: |
+          python -m pytest -q tests/test_bend_qualification.py tests/test_bend_checkpoint.py tests/test_bend_batching.py tests/test_bend_neural_boundary.py tests/test_bend_search_sessions.py --junitxml=artifacts/preflight-review/contracts.xml
+      - name: Stage passing source without editing PR branches or workflow permissions
+        run: |
+          python - <<'PY'
+          import json,subprocess
+          from pathlib import Path
+          def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
+          out=Path('artifacts/preflight-review'); data=json.loads((out/'identity.json').read_text())
+          assert git('write-tree')==data['tree']
+          assert not git('diff','--name-only')
+          changes=git('diff','--cached','--name-only',data['head']).splitlines()
+          flows=[p for p in changes if p.startswith('.github/workflows/')]
+          entries=[{'path':p,'mode':'100644','type':'blob','sha':git('rev-parse',':'+p)} for p in flows]
+          if flows: subprocess.run(['git','restore','--staged','--source='+data['head'],'--',*flows],check=True)
+          tree=git('write-tree')
+          commit=git('commit-tree',tree,'-p',data['head'],'-m','Stage checked checkpoint-preflight base integration')
+          ref='refs/heads/review/bend-preflight-ready-sources-20260921'
+          assert not git('ls-remote','--heads','origin',ref)
+          subprocess.run(['git','push','origin',commit+':'+ref],check=True)
+          data.update(source_tree=tree,source_commit=commit,workflow_entries=entries)
+          (out/'publication.json').write_text(json.dumps(data,indent=2)+'\n')
+          print(json.dumps(data,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-preflight-landing-review
+          path: artifacts/preflight-review/
+          retention-days: 14
