@@ -112,8 +112,9 @@ Startup table construction exposed a native `U64.from_u32(variable)` bug: alias
 reuse could leave the operand as C u32 and generate `variable >> 32`. Fork PR #3
 fixes this by explicitly widening first, with a reproducer that fails strict C
 compilation before the patch and passes generic/portable/native/UBSan afterward.
-The September 20 fork update includes that fix and upstream Bend 2.0.20.
-This entry point now pins **`fd1df81707fd758f749a9570ccb5b12b1bb2fea3`**, from
+The checked September 20 fork update includes that fix, Bend 2.0.21, and the
+upstream cyclic-template termination fix.
+This entry point now pins **`aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae`**, from
 `jjoshua2/bend`'s `feat/u64-compact-reviewed` branch. The fork's `main` is
 upstream-only; it does **not** contain the native U64 extension. Installing a
 moving upstream release or copying just Base definitions is not equivalent.
@@ -138,12 +139,12 @@ The older bitboard/legal/session/neural probes still use their explicit
 `57bc84ed...` pin in `bitboard_probe/toolchain.json`; the release-based probes use
 their separate installer. They are preserved historical integration references,
 not the standalone engine's compiler. This update does not claim to have migrated
-or requalified those other entry points against Bend 2.0.20.
+or requalified those other entry points against the new standalone compiler.
 
-Fork PR #2 remains draft: its unchanged source-size gate is exceeded in `comp.ts`,
-and strict TypeScript checking reports an upstream kernel diagnostic. Targeted U64
-and standalone executable checks are distinct from those failing repository gates.
-No kernel change, budget relaxation, or upstream merge is implied.
+Fork PR #2 remains draft: its compiler source-size gate now passes, while strict
+TypeScript reports diagnostics reproduced on exact upstream. Targeted source
+proofs and standalone executable checks are separate from that strict gate.
+No kernel change, budget relaxation, or upstream feature merge is implied.
 
 ## Automatic draws are Bend-owned
 
@@ -270,3 +271,16 @@ F32 bit must match both oracles; positions beyond CBoard's uint8 clock range are
 checked against Python only and counted explicitly. Omit `--require-c` for a
 Python-only reference check, which the report labels accordingly. Native encoding
 traversals remain opt-in; ordinary pytest/perft depths and workflows are unchanged.
+
+## Checked slider-index laws
+
+`LAWS.bend` and `PROOF.bend` connect the actual sequential table builder to the
+actual PEXT lookup. They include generic inductive bridge/bit lemmas and an
+exhaustive source-checked certificate for all 128 masks and 107,648 generated
+occupancy subsets. Unwrapped addresses, U32 truncation and segment ordering are
+checked explicitly. This is not a proof of the complete engine or C compiler.
+
+The [proof guide](proofs/README.md) defines the exact scope, explicit
+preconditions, pinned dependencies, commands and failure controls. The separate
+`.github/workflows/bend-slider-laws.yml` source gate runs on relevant PR changes;
+existing native/perft/encoding qualification remains opt-in and unchanged.
