@@ -1,32 +1,166 @@
-name: Bend subset index source workspace
-on:
+name: Bend compact-index qualification
+'on':
   push:
-    branches: [feat/bend-subset-index-dev-20260921]
-    paths: ['.github/workflows/bend-subset-index-dev.yml']
+    branches:
+    - feat/bend-subset-index-dev-20260921
+    paths:
+    - .github/workflows/bend-subset-index-dev.yml
 permissions:
-  contents: read
+  contents: write
 defaults:
   run:
     shell: bash
 jobs:
-  sources:
+  qualify:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 10
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      TARGET_BRANCH: feat/bend-compact-index-bijection-20260921
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: d6503d8d6a0c2b8fa938477b755e8303c0af49f1
-          persist-credentials: false
-      - name: Preserve the exact existing proof and instruction bytes
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/subset-index"
-          git archive --format=tar HEAD CLAUDE.md AGENTS.md docs/development.md docs/branch_lifecycle.md docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-21-bend-subset-source-laws.md native/bend_engine/standalone > "$RUNNER_TEMP/subset-index/continuation-source.tar"
-          git rev-parse HEAD > "$RUNNER_TEMP/subset-index/source-commit.txt"
-          cd "$RUNNER_TEMP/subset-index"
-          sha256sum continuation-source.tar > SHA256SUMS
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bend-subset-index-source
-          path: ${{ runner.temp }}/subset-index/
-          retention-days: 3
+    - uses: actions/checkout@v4
+      with:
+        ref: d6503d8d6a0c2b8fa938477b755e8303c0af49f1
+    - uses: actions/checkout@v4
+      with:
+        repository: jjoshua2/bend
+        ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+        path: .compiler
+        persist-credentials: false
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.4.2
+    - name: Apply and identify exact locally tested proof-only candidate
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        export EVIDENCE="$RUNNER_TEMP/index-evidence"
+        mkdir -p "$EVIDENCE"
+        echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+        : > "$RUNNER_TEMP/index.b64"
+        for blob in d4b8a2ec723a95188b9712f204873ef0e8d9c03e f2170804337c7c3f38ee61ea0dee2a4ab3dcb6ec a1f5129dfa563771ca0f691b1d2f74c33838e69f; do
+          gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode >> "$RUNNER_TEMP/index.b64"
+        done
+        base64 --decode "$RUNNER_TEMP/index.b64" | gzip -d > "$RUNNER_TEMP/index.patch"
+        echo "f4fa71f0969e94298e7a10663c26d1c61544d86004ea891db08654a26750da3a  $RUNNER_TEMP/index.patch" | sha256sum --check
+        test "$(git rev-parse HEAD)" = d6503d8d6a0c2b8fa938477b755e8303c0af49f1
+        git apply --check "$RUNNER_TEMP/index.patch"
+        git apply --index "$RUNNER_TEMP/index.patch"
+        git diff --cached --check
+        python3 - <<'VERIFY'
+        import hashlib, json, os, subprocess
+        from pathlib import Path
+        files = subprocess.check_output(['git','diff','--cached','--name-only'], text=True).splitlines()
+        allowed = {'docs/bend_migration_proofs.md', 'docs/experiments/README.md', 'docs/experiments/2026-09-21-bend-compact-index-bijection.md'}
+        assert len(files) == 18
+        assert all(f in allowed or f.startswith('native/bend_engine/standalone/proofs/index/') or f.startswith('docs/experiments/evidence/bend-compact-index-bijection/') for f in files), files
+        root = Path('native/bend_engine/standalone')
+        d = Path('docs/experiments/evidence/bend-compact-index-bijection')
+        hashes = {}
+        for name in ['local-index-proofs.json','local-index-native.json']:
+            report = json.loads((d/name).read_text())
+            assert report['compiler_revision'] == 'aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae'
+            for rel, digest in report['source_sha256s'].items():
+                p = root/rel
+                assert hashlib.sha256(p.read_bytes()).hexdigest() == digest, str(p)
+                hashes[str(p)] = digest
+        Path(os.environ['EVIDENCE'], 'candidate-source-sha256.json').write_text(json.dumps(hashes, indent=2)+'\n')
+        Path(os.environ['EVIDENCE'], 'changed-files.json').write_text(json.dumps(files, indent=2)+'\n')
+        VERIFY
+        bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+    - name: Check nine new laws, all inherited obligations and negative controls
+      run: |
+        set -euo pipefail
+        bun native/bend_engine/standalone/proofs/index/verify.js "$PWD/.compiler" --report "$EVIDENCE/index-proofs.json"
+        cmp "$EVIDENCE/index-proofs.json" docs/experiments/evidence/bend-compact-index-bijection/local-index-proofs.json
+    - name: Qualify actual U64 compact operations in four native modes
+      run: |
+        set -euo pipefail
+        bun native/bend_engine/standalone/proofs/index/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/index-native.json"
+    - name: Retain original compiler source laws and pin contracts
+      run: |
+        set -euo pipefail
+        bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/compiler-pin-tests.txt"
+        (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/inherited-u64-proofs.json"
+    - uses: actions/setup-python@v5
+      with:
+        python-version-file: .python-version
+    - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      with:
+        activate-environment: true
+    - name: Install locked external CPU development tools
+      run: |
+        set -euo pipefail
+        uv sync --locked --extra dev --extra cpu
+        python -c 'import torch; assert torch.version.cuda is None'
+    - name: Run unchanged whole-repository lint once
+      run: |
+        set -euo pipefail
+        ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/whole-repository-lint.txt"
+    - name: Preserve evidence and publish only exact tested sources on a fresh branch
+      run: |
+        set -euo pipefail
+        bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+        git diff --exit-code
+        set +e
+        git ls-remote --exit-code --heads origin "refs/heads/$TARGET_BRANCH" > "$RUNNER_TEMP/target-ref.txt"
+        found=$?
+        set -e
+        test "$found" = 2
+        python - <<'RECORD'
+        import hashlib, json, os, shutil
+        from pathlib import Path
+        e = Path(os.environ['EVIDENCE'])
+        d = Path('docs/experiments/evidence/bend-compact-index-bijection')
+        hashes = json.loads((e/'candidate-source-sha256.json').read_text())
+        for path, digest in hashes.items():
+            assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest, path
+        p = json.loads((e/'index-proofs.json').read_text())
+        n = json.loads((e/'index-native.json').read_text())
+        assert p['proof_gate'] == 'PASS' and p['new_law_count'] == 9
+        assert p['parent_law_count'] == 8 and p['inherited_u64_law_count'] == 16
+        assert len(p['negative_controls']) == 15 and all(c['rejected'] for c in p['negative_controls'])
+        local = json.loads((d/'local-index-native.json').read_text())
+        assert n['native_gate'] == 'PASS' and n['distinct_operand_pairs'] == 1590
+        assert n['modes'] == local['modes'] and n['source_sha256s'] == local['source_sha256s']
+        assert n['population_range'] == [0,64] and n['bun'] == local['bun']
+        assert json.loads((e/'inherited-u64-proofs.json').read_text())['proof_gate'] == 'PASS'
+        assert '12 pass' in (e/'compiler-pin-tests.txt').read_text() and '0 fail' in (e/'compiler-pin-tests.txt').read_text()
+        assert (e/'whole-repository-lint.txt').read_text().strip().endswith('lint: OK')
+        for name in ['index-proofs.json','index-native.json','inherited-u64-proofs.json','candidate-source-sha256.json']:
+            shutil.copyfile(e/name, d/('hosted-'+name))
+        for name in ['compiler-pin-tests.txt','whole-repository-lint.txt','compiler-identity.txt']:
+            raw = (e/name).read_bytes()
+            (d/('hosted-'+name.removesuffix('.txt')+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+        run = os.environ['GITHUB_RUN_ID']
+        sha = os.environ['GITHUB_SHA']
+        text = f"\n\n## Hosted qualification\n\nRun **{run}**, temporary workflow commit `{sha}`, passed all qualification stages before publication. The clean implementation is based directly on #805's `d6503d8d6a0c2b8fa938477b755e8303c0af49f1`. Every candidate source digest matched the locally tested bytes before and after qualification, and the unchanged compiler fingerprint passed again.\n\n"
+        text += "All nine new universal laws and 15 new negative controls pass; the aggregate also retains eight prior engine laws, 16 original U64 laws and 11 prior controls. The new source report is byte-identical to its local report. The original fork source gate (16 laws/seven controls) and all 12 compiler-pin contracts pass separately.\n\n"
+        text += f"The four native modes pass the same 1,590 distinct operand pairs each, with 702 bounded and 888 out-of-range compact inputs and four malformed/budget rejections. All masks populations 0..64 are represented. Results and source hashes match the local gate; hosted compiler: `{n['cc']}`, Bun `{n['bun']}`. The four output digests match exactly. These are repeated environments, not disjoint data sets.\n\n"
+        text += "The unchanged whole-repository lint gate passes Ruff, Basedpyright and Vulture in the locked CPU development environment. No lint failure was ignored. Original lint and pin logs are stored losslessly as JSON strings with SHA-256 identities so trailing log whitespace does not alter the Git diff gate.\n\n"
+        text += "No production executable source changed. No full engine build, perft, model export/forward, GPU, training, performance measurement or full inherited native suite was rerun. The small new native probe and source-law gates are the newly executed evidence; #805's static-engine and broader native results remain historical. Source proofs are conditional on the pinned checker/Base, and the representation bijection is not the still-missing carry-rippler ordinal theorem.\n\n"
+        text += f"Reports and exact candidate identities are committed under this record's evidence directory and retained in the 30-day workflow artifact `bend-compact-index-qualification`. The source patch SHA-256 is `f4fa71f0969e94298e7a10663c26d1c61544d86004ea891db08654a26750da3a`. Publication is create-only on `{os.environ['TARGET_BRANCH']}`. No force push, merge or deployment. The temporary workflow and transport blobs are absent from the clean branch. Self-review only; no independent review is claimed.\n"
+        p = Path('docs/experiments/2026-09-21-bend-compact-index-bijection.md')
+        p.write_text(p.read_text()+text)
+        m = Path('docs/bend_migration_proofs.md')
+        m.write_text(m.read_text()+f"\nHosted compact-index qualification run **{run}** passed the additive source gate, all four native modes, original compiler source/pin checks and whole-repository lint on the exact candidate. Compact reports/source identities are committed in the dated record. This does not add runtime-engine, model, GPU or enumeration-order evidence.\n")
+        RECORD
+        git switch -c "$TARGET_BRANCH"
+        git add docs/bend_migration_proofs.md docs/experiments/2026-09-21-bend-compact-index-bijection.md docs/experiments/evidence/bend-compact-index-bijection
+        git diff --cached --check
+        git config user.name 'github-actions[bot]'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+        git commit -m 'native: prove compact PEXT/PDEP bounds and bijection without changing runtime code'
+        git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+        git log -1 --format='%H%n%s' | tee "$EVIDENCE/published-commit.txt"
+        git ls-tree -r HEAD native/bend_engine/standalone/proofs/index > "$EVIDENCE/published-source-blobs.txt"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: bend-compact-index-qualification
+        path: ${{ runner.temp }}/index-evidence/
+        retention-days: 30
