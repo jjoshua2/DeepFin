@@ -37,7 +37,7 @@ mkdir -p "$BUILD_DIR"
 GENERATED="$BUILD_DIR/aoti_probe.generated.c"
 CMAKE_BUILD="$BUILD_DIR/cmake"
 
-echo "bend AOTI probe: $("$BEND_BIN" --version 2>/dev/null || echo unknown)"
+echo "bend AOTI probe: $("$BEND_BIN" version 2>/dev/null || echo unknown)"
 echo "bend AOTI probe: generating C -> $GENERATED"
 "$BEND_BIN" "$PROBE_DIR/main.bend" -o "$GENERATED"
 
