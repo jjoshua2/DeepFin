@@ -1,111 +1,61 @@
-name: Prepare Bend PR CI repairs
+name: Verify repaired Bend PRs
 on:
   push:
     branches: [fix/bend-ci-audit-20260921]
     paths: [.github/workflows/bend-ci-stage.yml]
 permissions:
-  contents: write
+  contents: read
   actions: read
   pull-requests: read
 jobs:
-  stage:
+  audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: f1e4037b89314a1f787508d7bd0bb60a1dc6e96c
       - uses: actions/download-artifact@v4
         with:
-          name: bend-ci-repair-confirmation
-          run-id: 35644293608
+          name: bend-ci-pr-repairs
+          run-id: 35645364725
           github-token: ${{ github.token }}
-          path: /tmp/validated
-      - name: Stage exact tested source descendants without updating the PR branches
+          path: /tmp/staged
+      - name: Verify exact publication and list actual checks on each head
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python - <<'PY'
-          import base64, hashlib, json, os, subprocess, urllib.request
+          import datetime, json, os, urllib.request
           from pathlib import Path
-          repo=Path.cwd();base='f1e4037b89314a1f787508d7bd0bb60a1dc6e96c'
-          patch=Path('/tmp/validated/bend-ci-repair.patch')
-          assert hashlib.sha256(patch.read_bytes()).hexdigest()=='26198f26bd62d50ad8e7bb81dde90f8b5a08768aa9af4e4c5df0f12d19968b26'
-          expected={777:'3244c3d25dc1d53153195cc433be0546c1d2c6ce',778:'4d5285eb016dec3f36f9eb0a1842c27d770eea97',779:'4ab0836c69f7d60ae41c84fa069527a8c731f047',780:'81d3c790a2d4aecde011f8d0f2d1b890a2b9261a',781:'d7517e5823d5b01239fae71472907e174ec591fb',784:'389cb8561599f54b98a6aa86be73218ade2ff426',788:'9e4a8a6db0693d2bcccfd1dfb73ffc63cd969619',792:'10dc757b3ff06ba9b37008c3d94d61105eebc74a',797:'3b6047ddfc08d9aed43da37aff8f2db218f84d98',798:'43bfad24787bd94f37b4884bf7b8617b02a3ce3d',799:'496284b233de9cc3727ddd4b79dc5720d6ed945e',800:'a3a2333e13fb9176bd31a3dbb3c8d5e18284d36a',801:'fe658a2680ec7941742c045feff0ccb806a898ad',802:'5032ba20d5c6e45630300d409a063de590f2ac21',803:'dfa0cda0498d45494e1c52e8271fbf20ebf37871',804:base}
-          def git(*args,cwd=repo):
-              return subprocess.check_output(['git',*args],cwd=cwd,text=True).strip()
-          def run(*args,cwd=repo):
-              subprocess.run(args,cwd=cwd,check=True)
+          expected={777:'b238e47c1278953253e2687676c4d1e6a6e813d2',778:'6eaeab31233316fc012226ee25696e0806271d5b',779:'53e2f7f57ae7f8c6024a725f99b3f07ef152dc28',780:'e3dd04bc060c1cae057aaeedfcf1ece10924c071',781:'9ae8f810cbc22fa0b7d9af76e1af4c1afe0b51c9',784:'d4a42791379d8270a711cf16324865f543a3aafc',788:'4d4e823cebf2222c4edff687b6a0cab3f1dea832',792:'9cecd429658cd91ffd94de8ea14683c19b3332f4',797:'32f13f80c8968f83456a08fc49d06aee186081fa',798:'2127e8836c35cf7020227d19826c40d8478e6db3',799:'eb7610b994c28272d45b62f9c1f3652a5d67a275',800:'4334cc48926128f622b0ece79c13f6b8b2c382fb',801:'428ba8e0f6a5acde1c8da489bc3eaec89a053579',802:'c3858561a0c3f660b85be317a2f881aea2d5c6fd',803:'075b830f84a18bebe75c4494a41a4473867b2139',804:'1cb4db8b9eb0e882860aa51c0777ef0ee673beeb'}
           def get(path):
               req=urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/'+path,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-              with urllib.request.urlopen(req,timeout=30) as r: return json.load(r)
-          rows=[]
-          for number,sha in expected.items():
-              p=get(f'pulls/{number}')
-              assert p['state']=='open' and p['head']['sha']==sha,(number,p['state'],p['head']['sha'])
-              assert p['head']['repo']['full_name']=='jjoshua2/DeepFin'
-              rows.append({'number':number,'branch':p['head']['ref'],'old_sha':sha})
-          run('git','fetch','--no-tags','--depth=1','origin',*expected.values())
-          run('git','apply','--check',str(patch));run('git','apply',str(patch))
-          candidates=git('diff','--name-only').splitlines()+git('ls-files','--others','--exclude-standard').splitlines()
-          candidates=[x for x in candidates if x.startswith(('native/','tests/','.github/workflows/'))]
-          assert len(candidates)==15,candidates
-          desired={p:(repo/p).read_bytes() for p in candidates}
-          flows={'.github/workflows/bend-probe.yml':'c5249b22542486166a1bb0a0c20f66071e9283b1','.github/workflows/bend-aoti-probe.yml':'fd05e0aa8e7ef414f8f90dc023684197d78424d2'}
-          for p,sha in flows.items():
-              b=base64.b64decode(get('git/blobs/'+sha)['content'])
-              assert hashlib.sha1(f'blob {len(b)}\0'.encode()+b).hexdigest()==sha
-              desired[p]=b
-          special={'native/bend_engine/install_bend.sh':'c94a26ab606dc4b3d1c79bc311aab7aeae109342','native/bend_engine/resolve_latest.py':'39dbd08813677275a7e5ce2396358e9b362837c6','tests/test_bend_latest_manifest.py':'b1346cdccb136144922171024e67be5b1bd7f524'}
-          special_flows={'.github/workflows/bend-probe.yml':'4fabaee7884a6b94424a459295f4fee36bf7863f','.github/workflows/bend-aoti-probe.yml':'06e62b6fd405ec1d11783059cd7cac6978929afc'}
-          git('config','user.name','github-actions[bot]');git('config','user.email','41898282+github-actions[bot]@users.noreply.github.com')
-          out=Path('/tmp/bend-ci-staged');out.mkdir();complete=[]
-          for row in rows:
-              n=row['number'];sha=row['old_sha'];work=Path(f'/tmp/bend-repair-{n}')
-              run('git','worktree','add','--detach',str(work),sha)
-              for p in flows:
-                  expected_sha=special_flows[p] if n==777 else git('rev-parse',base+':'+p)
-                  assert git('rev-parse',sha+':'+p)==expected_sha,(n,p,'unexpected workflow change')
-              excludes=['--exclude='+p for p in flows]
-              if n==777:
-                  for p,old_sha in special.items(): assert git('rev-parse',sha+':'+p)==old_sha,(n,p)
-                  excludes += ['--exclude='+p for p in special]
-              run('git','apply','--index',*excludes,str(patch),cwd=work)
-              if n==777:
-                  for p in special: (work/p).write_bytes(desired[p])
-              for p in flows: (work/p).write_bytes(desired[p])
-              extra=set()
-              if n==784:
-                  p='.github/workflows/bend-search-sessions.yml';extra.add(p)
-                  s=(work/p).read_text();old="python -m pip install 'python-chess==1.999' 'pytest==9.1.1'"
-                  assert s.count(old)==1 and "'numpy==2.2.6'" not in s
-                  (work/p).write_text(s.replace(old,"python -m pip install 'python-chess==1.999' 'numpy==2.2.6' 'pytest==9.1.1'"))
-              run('git','add','--',*candidates,*extra,cwd=work)
-              run('git','diff','--cached','--check',cwd=work)
-              changed=set(git('diff','--cached','--name-only',cwd=work).splitlines())
-              assert changed <= set(candidates)|extra and len(changed)>=14,(n,changed)
-              for p in candidates: assert (work/p).read_bytes()==desired[p],(n,p)
-              entries=[]
-              for p in sorted(set(flows)|extra):
-                  b=(work/p).read_bytes();h=hashlib.sha1(f'blob {len(b)}\0'.encode()+b).hexdigest()
-                  entries.append({'path':p,'mode':'100644','type':'blob','sha':h})
-                  (out/(h+'.txt')).write_bytes(b)
-              row['workflow_entries']=entries
-              row['expected_final_tree']=git('write-tree',cwd=work)
-              run('git','restore','--staged','--source='+sha,'--',*flows,*extra,cwd=work)
-              tree=git('write-tree',cwd=work)
-              commit=git('commit-tree',tree,'-p',sha,'-m','Repair Bend installer, effect ABI and watchdog test; staged source validation',cwd=work)
-              target=f'refs/heads/fix/bend-ci-pr{n}-sources-20260921'
-              assert not git('ls-remote','--heads','origin',target)
-              run('git','push','origin',commit+':'+target)
-              row['source_commit']=commit;row['source_tree']=tree;row['changed_paths']=sorted(changed)
-              complete.append(row);(out/'manifest.json').write_text(json.dumps(complete,indent=2)+'\n')
-              print('STAGED',n,sha,tree,row['expected_final_tree'],flush=True)
-              run('git','worktree','remove','--force',str(work))
+              with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)
+          staged=json.loads(Path('/tmp/staged/manifest.json').read_text())
+          assert len(staged)==16
+          result={'as_of':datetime.datetime.now(datetime.timezone.utc).isoformat(),'prs':[]}
+          for row in staged:
+              n=row['number'];sha=expected[n];p=get(f'pulls/{n}')
+              assert p['head']['sha']==sha and p['head']['ref']==row['branch'] and not p['merged'],n
+              c=get('git/commits/'+sha)
+              assert [x['sha'] for x in c['parents']]==[row['old_sha']],n
+              assert c['tree']['sha']==row['expected_final_tree'],n
+              report={'number':n,'head':sha,'branch':row['branch'],'tree':c['tree']['sha'],'mergeable':p['mergeable'],'checks':[]}
+              runs=get('actions/runs?event=pull_request&per_page=30&head_sha='+sha)['workflow_runs']
+              seen=set()
+              for run in runs:
+                  if run['workflow_id'] in seen:continue
+                  seen.add(run['workflow_id'])
+                  check={k:run[k] for k in ('id','name','status','conclusion','html_url')}
+                  if run['conclusion']=='failure':
+                      jobs=get(f"actions/runs/{run['id']}/jobs?per_page=100")['jobs']
+                      check['failed_jobs']=[{'id':j['id'],'name':j['name'],'steps':[s['name'] for s in j['steps'] if s['conclusion']=='failure']} for j in jobs if j['conclusion']=='failure']
+                  report['checks'].append(check)
+              result['prs'].append(report)
+              print(n,[(x['name'],x['status'],x['conclusion'],x.get('failed_jobs')) for x in report['checks']],flush=True)
+              Path('/tmp/bend-ci-current.json').write_text(json.dumps(result,indent=2)+'\n')
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bend-ci-pr-repairs
-          path: /tmp/bend-ci-staged/
+          name: bend-ci-repaired-status
+          path: /tmp/bend-ci-current.json
           retention-days: 14
