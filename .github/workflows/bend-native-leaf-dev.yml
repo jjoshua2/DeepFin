@@ -112,9 +112,12 @@ jobs:
       - name: Actual model execution in a runtime without Python or an application source tree
         run: |
           python -m native.bend_engine.standalone.isolate_neural --root /tmp/bend-neural-runtime --executable /tmp/bend-native-leaf/neural/deepfin-bend-neural --package /tmp/bend-leaf-model/checkpoint.pt2 --report artifacts/bend-leaf-runtime.json
-          python -m native.bend_engine.standalone.verify_neural --checkpoint /tmp/bend-leaf-model/fixture.pt --package /tmp/bend-leaf-model/checkpoint.pt2 --oracle /tmp/cboard-reference --skip-startup-failures --trace-path /tmp/bend-neural-runtime/actual.trace --runtime-package /model.pt2 --runtime-trace /actual.trace --report artifacts/bend-leaf-isolated.json --command sudo --preserve-env=DEEPFIN_BEND_MODEL_PACKAGE,DEEPFIN_BEND_MODEL_TRACE chroot /tmp/bend-neural-runtime /deepfin-bend-neural --threads 1
+          # Drop privilege after chroot; the external verifier owns the private 0600 trace.
+          python -m native.bend_engine.standalone.verify_neural --checkpoint /tmp/bend-leaf-model/fixture.pt --package /tmp/bend-leaf-model/checkpoint.pt2 --oracle /tmp/cboard-reference --skip-startup-failures --trace-path /tmp/bend-neural-runtime/actual.trace --runtime-package /model.pt2 --runtime-trace /actual.trace --report artifacts/bend-leaf-isolated.json --command sudo --preserve-env=DEEPFIN_BEND_MODEL_PACKAGE,DEEPFIN_BEND_MODEL_TRACE chroot --userspec="$(id -u):$(id -g)" /tmp/bend-neural-runtime /deepfin-bend-neural --threads 1
           test -z "$(find /tmp/bend-neural-runtime -type f \( -name '*.py' -o -name '*.pyc' -o -name 'python*' -o -name 'libpython*' -o -name 'bun' \) -print -quit)"
           test -z "$(find /tmp/bend-neural-runtime/tmp -mindepth 1 -print -quit)"
+          test "$(stat -c '%a' /tmp/bend-neural-runtime/actual.trace)" = 600
+          test "$(stat -c '%u' /tmp/bend-neural-runtime/actual.trace)" = "$(id -u)"
       - name: Preserve all existing material-path component and UCI regressions
         run: |
           exe=/tmp/bend-native-leaf/deepfin-bend
