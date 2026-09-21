@@ -1,27 +1,135 @@
-name: Bend classical development snapshot
+name: Bend complete input confirmation
 on:
   push:
     branches: [feat/bend-owned-classical-dev]
     paths: ['.github/workflows/bend-classical-dev.yml']
 permissions:
-  contents: read
+  contents: write
 jobs:
-  snapshot:
+  confirm:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          persist-credentials: false
-      - run: |
-          mkdir -p /tmp/bend-classical-source
-          git archive --format=tar.gz HEAD > /tmp/bend-classical-source/deepfin.tgz
-          git clone --filter=blob:none --no-checkout https://github.com/jjoshua2/bend.git /tmp/bend-classical-compiler
-          git -C /tmp/bend-classical-compiler checkout --detach aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
-          git -C /tmp/bend-classical-compiler archive --format=tar.gz HEAD > /tmp/bend-classical-source/current-compiler.tgz
-          git -C /tmp/bend-classical-compiler log -8 --format='%H %s' > /tmp/bend-classical-source/compiler-history.txt
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply the exact locally tested full-input source
+        run: |
+          python - <<'PY'
+          import base64, gzip, hashlib, json, urllib.request
+          from pathlib import Path
+          parts = []
+          for sha in ['34264017d08af20797a554dc0f708f7d2e9560d2', 'e9f7fabbcd4d5d8c43367c513e8d1ce5667d5ab8', 'b9578302e382b7c94c1e3ec330af481fc21a8c98']:
+              with urllib.request.urlopen('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/' + sha, timeout=30) as response:
+                  data = json.load(response)
+              part = base64.b64decode(data['content'])
+              assert hashlib.sha1(f'blob {len(part)}\0'.encode() + part).hexdigest() == sha
+              parts.append(part)
+          patch = gzip.decompress(base64.b64decode(b''.join(parts), validate=True))
+          assert hashlib.sha256(patch).hexdigest() == 'bed77d6ab2503be34da43ac8592ec1041a5e912042f913a55d418d278d52bd04'
+          Path('/tmp/bend-classical.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/bend-classical.patch
+          git apply /tmp/bend-classical.patch
+          git diff --check
+      - name: Install external test dependencies and build the unchanged C oracle
+        run: |
+          python -m pip install 'python-chess==1.999' 'numpy==2.2.6' 'ruff==0.15.20' 'basedpyright==1.39.9'
+          python - <<'PY'
+          import ast, subprocess, sysconfig
+          from pathlib import Path
+          import numpy
+          module = ast.parse(Path('setup.py').read_text())
+          macros = next(ast.literal_eval(n.value) for n in module.body
+                        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name)
+                        and n.target.id == '_CBOARD_FAST_SLIDER_MACROS')
+          command = ['cc', '-shared', '-fPIC', '-O1', '-I' + sysconfig.get_paths()['include'],
+                     '-I' + numpy.get_include(), *[f'-D{k}={v}' for k, v in macros],
+                     'chess_anti_engine/encoding/_lc0_ext.c', '-pthread', '-lm', '-o',
+                     'chess_anti_engine/encoding/_lc0_ext' + sysconfig.get_config_var('EXT_SUFFIX')]
+          subprocess.run(command, check=True)
+          PY
+      - name: Static checks and unchanged pin contracts with updated exact identity
+        run: |
+          ruff check native/bend_engine/standalone/verify_classical.py
+          basedpyright native/bend_engine/standalone/verify_classical.py
+          bun test native/bend_engine/standalone/verify_compiler.test.js
+      - name: Build with the current manifest-pinned U64 fork
+        run: |
+          bash native/bend_engine/standalone/build.sh /tmp/bend-complete-input
+          mkdir -p artifacts
+          cp /tmp/bend-complete-input/build.txt artifacts/bend-complete-build.txt
+          grep 'compiler_revision=aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae' artifacts/bend-complete-build.txt
+      - name: Generic complete input and original history rules and UCI
+        run: |
+          python -m native.bend_engine.standalone.verify_classical --require-c --report artifacts/bend-complete-generic.json --command /tmp/bend-complete-input/deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify_encoding --require-c --report artifacts/bend-history-generic.json --command /tmp/bend-complete-input/deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify_rules --report artifacts/bend-rules-generic.json --command /tmp/bend-complete-input/deepfin-bend --threads 1
+          python native/bend_engine/standalone/verify.py --report artifacts/bend-original-generic.json --command /tmp/bend-complete-input/deepfin-bend --threads 1
+      - name: Portable native and UBSan full inputs and unchanged regressions
+        run: |
+          for mode in portable native ubsan; do
+            case "$mode" in
+              portable) flags=(-DBEND_U64_PORTABLE) ;;
+              native) flags=(-march=native) ;;
+              ubsan) flags=(-fsanitize=undefined -fno-sanitize-recover=all) ;;
+            esac
+            clang -std=c11 -O1 -ffp-contract=off -Werror=shift-count-overflow "${flags[@]}" /tmp/bend-complete-input/engine.c -pthread -lm -o "/tmp/bend-complete-input/$mode"
+            python -m native.bend_engine.standalone.verify_classical --require-c --report "artifacts/bend-complete-$mode.json" --command "/tmp/bend-complete-input/$mode" --threads 1
+            python -m native.bend_engine.standalone.verify_encoding --require-c --report "artifacts/bend-history-$mode.json" --command "/tmp/bend-complete-input/$mode" --threads 1
+            python -m native.bend_engine.standalone.verify_rules --report "artifacts/bend-rules-$mode.json" --command "/tmp/bend-complete-input/$mode" --threads 1
+            python native/bend_engine/standalone/verify.py --report "artifacts/bend-original-$mode.json" --command "/tmp/bend-complete-input/$mode" --threads 1
+          done
+      - name: Repeat all suites with only one static executable in the runtime
+        run: |
+          clang -std=c11 -O1 -ffp-contract=off -Werror=shift-count-overflow -static /tmp/bend-complete-input/engine.c -pthread -lm -o /tmp/bend-complete-input/static
+          if readelf -l /tmp/bend-complete-input/static | grep -q INTERP; then echo 'dynamic interpreter remains'; exit 1; fi
+          runtime="$(mktemp -d /tmp/bend-complete-runtime.XXXXXX)"
+          cp /tmp/bend-complete-input/static "$runtime/deepfin-bend"
+          test "$(find "$runtime" -mindepth 1 | wc -l)" = 1
+          python -m native.bend_engine.standalone.verify_classical --require-c --report artifacts/bend-complete-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify_encoding --require-c --report artifacts/bend-history-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          python -m native.bend_engine.standalone.verify_rules --report artifacts/bend-rules-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          python native/bend_engine/standalone/verify.py --report artifacts/bend-original-isolated.json --command sudo chroot "$runtime" /deepfin-bend --threads 1
+          {
+            file "$runtime/deepfin-bend"
+            find "$runtime" -mindepth 1 -printf '%P\n'
+            sha256sum "$runtime/deepfin-bend" /tmp/bend-complete-input/engine.c
+            printf 'Only this executable is inside the runtime; both reference encoders and clients stay outside.\n'
+          } > artifacts/bend-complete-isolation.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for mode in ('generic', 'portable', 'native', 'ubsan', 'isolated'):
+              r = json.loads(Path(f'artifacts/bend-complete-{mode}.json').read_text())
+              assert r['status'] == 'passed' and r['python_tensors'] == 714 and r['c_tensors'] == 706
+              assert r['python_only_clock_cases'] == 8 and r['all_63_features_activated']
+              assert r['ordered_tensor_sha256'] == '5e038b78e6cf9ae46422bad14d2d2144922a9cac25cd0c6260cbf80db6c881c6'
+              h = json.loads(Path(f'artifacts/bend-history-{mode}.json').read_text())
+              assert h['ordered_tensor_sha256'] == 'cb7a7e6688a73c5bfbf734769cd6c5f1d3a04609167bf019a4cbfa79d5eb6bbf'
+          PY
+      - name: Publish only the clean tested source
+        run: |
+          git fetch --no-tags --depth=1 origin fe658a2680ec7941742c045feff0ccb806a898ad
+          git read-tree fe658a2680ec7941742c045feff0ccb806a898ad
+          git add native/bend_engine/standalone/ClassicalEncoding.bend native/bend_engine/standalone/ModelInput.bend native/bend_engine/standalone/ModelInputDiagnostic.bend native/bend_engine/standalone/Protocol.bend native/bend_engine/standalone/main.bend native/bend_engine/standalone/verify_classical.py native/bend_engine/standalone/toolchain.json native/bend_engine/standalone/verify_compiler.test.js native/bend_engine/standalone/README.md docs/experiments/README.md docs/experiments/2026-09-20-bend-classical-encoding.md
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          commit="$(git commit-tree "$(git write-tree)" -p fe658a2680ec7941742c045feff0ccb806a898ad -m 'Construct complete 146/175-plane neural inputs in Bend on current U64 compiler')"
+          git push origin "$commit":refs/heads/feat/bend-owned-classical-encoding
+          printf '%s\n' "$commit" > artifacts/bend-complete-commit.txt
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: bend-classical-source
-          path: /tmp/bend-classical-source/
-          retention-days: 2
+          name: bend-complete-input-confirmation
+          path: |
+            artifacts/bend-complete-*
+            artifacts/bend-history-*
+            artifacts/bend-rules-*
+            artifacts/bend-original-*
+          retention-days: 30
