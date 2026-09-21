@@ -1,0 +1,111 @@
+name: Bend checkpoint landing review
+on:
+  push:
+    branches: [review/bend-checkpoint-landing-20260921]
+    paths: [.github/workflows/bend-checkpoint-landing.yml]
+permissions:
+  contents: write
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 9ae8f810cbc22fa0b7d9af76e1af4c1afe0b51c9
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          activate-environment: true
+      - name: Reconcile the exact reviewed base and apply the tested fixes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags origin 26c5b5074d7f3892bd389dd6a8be3ea3b64ed7f7
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python - <<'PY'
+          import base64, hashlib, json, os, subprocess, urllib.request
+          from pathlib import Path
+          def git(*args): return subprocess.check_output(['git', *args], text=True).strip()
+          result = subprocess.run(['git','merge','--no-commit','--no-ff','26c5b5074d7f3892bd389dd6a8be3ea3b64ed7f7'], check=False)
+          assert result.returncode == 1
+          assert git('diff','--name-only','--diff-filter=U') == 'native/bend_engine/resolve_latest.py'
+          assert git('rev-parse',':2:native/bend_engine/resolve_latest.py') == git('rev-parse',':3:native/bend_engine/resolve_latest.py') == 'f5c8addd250dad2410079a11d780e3f460368663'
+          subprocess.run(['git','checkout','--theirs','--','native/bend_engine/resolve_latest.py'],check=True)
+          subprocess.run(['git','add','native/bend_engine/resolve_latest.py'],check=True)
+          assert git('write-tree') == 'aee1976a8bde7ca3729bd4d2ba1c213504888751'
+          sha = '13fbeda4f69eddff80371915ab496b0a864e3962'
+          request = urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/'+sha,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN']})
+          with urllib.request.urlopen(request,timeout=30) as response:
+              raw = base64.b64decode(json.load(response)['content'])
+          assert hashlib.sha1(f'blob {len(raw)}\0'.encode()+raw).hexdigest() == sha
+          Path('/tmp/apply-landing-review.py').write_bytes(raw)
+          subprocess.run(['python','/tmp/apply-landing-review.py'],check=True)
+          patch = subprocess.check_output(['git','diff','--binary'])
+          assert hashlib.sha256(patch).hexdigest() == 'e5a0c910f8eba99fdaee866aa02b366170b9c8d2ddc666cff74d3e19e2fe7b92'
+          paths = ['native/bend_engine/neural_probe/backend.py','native/bend_engine/neural_probe/checkpoint.py','tests/test_bend_checkpoint.py','tests/test_derive_parallel.py']
+          subprocess.run(['git','add','--',*paths],check=True)
+          assert git('write-tree') == '5a4ceec54269ca365f561689823e52ee0d58e344'
+          Path('artifacts').mkdir(exist_ok=True)
+          Path('artifacts/landing-review.patch').write_bytes(patch)
+          PY
+          git diff --cached --check
+      - name: Locked dependencies and focused static validation
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          ruff check native/bend_engine/neural_probe/backend.py native/bend_engine/neural_probe/checkpoint.py tests/test_bend_checkpoint.py tests/test_derive_parallel.py
+          basedpyright native/bend_engine/neural_probe/backend.py native/bend_engine/neural_probe/checkpoint.py tests/test_bend_checkpoint.py tests/test_derive_parallel.py
+      - name: Actual checkpoint contracts and complete corpus-derivation test file
+        run: |
+          python -m pytest -q -m 'not slow' tests/test_bend_checkpoint.py tests/test_bend_neural_boundary.py tests/test_bend_batching.py tests/test_bend_search_sessions.py tests/test_derive_parallel.py --junitxml=artifacts/landing-contracts.xml
+      - name: Confirm the new checkpoint negatives fail against the former implementation
+        run: |
+          cp native/bend_engine/neural_probe/backend.py /tmp/backend.tested.py
+          cp native/bend_engine/neural_probe/checkpoint.py /tmp/checkpoint.tested.py
+          git show 9ae8f810cbc22fa0b7d9af76e1af4c1afe0b51c9:native/bend_engine/neural_probe/backend.py > native/bend_engine/neural_probe/backend.py
+          git show 9ae8f810cbc22fa0b7d9af76e1af4c1afe0b51c9:native/bend_engine/neural_probe/checkpoint.py > native/bend_engine/neural_probe/checkpoint.py
+          set +e
+          python -m pytest -q tests/test_bend_checkpoint.py -k 'conflicting_metadata or noncompact_checkpoint' --junitxml=artifacts/landing-before-fix.xml > artifacts/landing-before-fix.txt 2>&1
+          status=$?
+          set -e
+          cp /tmp/backend.tested.py native/bend_engine/neural_probe/backend.py
+          cp /tmp/checkpoint.tested.py native/bend_engine/neural_probe/checkpoint.py
+          test "$status" = 1
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root=ET.parse('artifacts/landing-before-fix.xml').getroot()
+          assert len(root.findall('.//testcase')) == 10
+          assert len(root.findall('.//failure')) == 10
+          assert not root.findall('.//error')
+          PY
+          git diff --exit-code
+      - name: Stage tested non-workflow sources without changing the actual PR head
+        run: |
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
+          full=git('write-tree')
+          assert full == '5a4ceec54269ca365f561689823e52ee0d58e344'
+          flows=['.github/workflows/bend-search-probe.yml','.github/workflows/bend-tree-probe.yml']
+          entries=[{'path':p,'mode':'100644','type':'blob','sha':git('rev-parse',':'+p)} for p in flows]
+          subprocess.run(['git','restore','--staged','--source=9ae8f810cbc22fa0b7d9af76e1af4c1afe0b51c9','--',*flows],check=True)
+          tree=git('write-tree')
+          commit=git('commit-tree',tree,'-p','9ae8f810cbc22fa0b7d9af76e1af4c1afe0b51c9','-m','Stage reviewed checkpoint identity and corpus-test repairs')
+          target='refs/heads/review/bend-checkpoint-ready-sources-20260921'
+          assert not git('ls-remote','--heads','origin',target)
+          subprocess.run(['git','push','origin',commit+':'+target],check=True)
+          report={'tested_tree':full,'source_tree':tree,'source_commit':commit,'workflow_entries':entries,'parent':'9ae8f810cbc22fa0b7d9af76e1af4c1afe0b51c9','integrated_base':'26c5b5074d7f3892bd389dd6a8be3ea3b64ed7f7'}
+          Path('artifacts/landing-publication.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-checkpoint-landing-review
+          path: artifacts/landing-*
+          retention-days: 14
