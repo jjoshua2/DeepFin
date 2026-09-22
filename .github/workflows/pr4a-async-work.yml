@@ -3,28 +3,137 @@ on:
   push:
     branches: [work/pr4a-native-async-20260922]
 permissions:
-  contents: read
+  contents: write
+  actions: read
 jobs:
-  transport:
+  qualify:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: .
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      TORCHINDUCTOR_COMPILE_THREADS: '1'
+      BEND_NO_TELEMETRY: '1'
     steps:
-      - name: Retrieve authored payload for exact-byte reconciliation
+      - uses: actions/checkout@v4
+        with:
+          ref: 3e308ec5c491cd9f427e923d63c2f80ac18598b7
+      - name: Recover exact authored source with checked transport correction
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p /tmp/pr4-transport
+          set -euo pipefail
+          mkdir -p /tmp/pr4a-evidence
           python - <<'PY'
-          import base64, hashlib, json, subprocess
+          import base64, gzip, hashlib, json, subprocess
           from pathlib import Path
-          for i, sha in enumerate(['974e5d177270be16e546ee99fe25d59df2deb7a7','eea3557599dbd694b32478b14f78e66991159195']):
+          parts=[]
+          for sha in ['974e5d177270be16e546ee99fe25d59df2deb7a7','eea3557599dbd694b32478b14f78e66991159195']:
               record=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
-              data=base64.b64decode(record['content'])
-              Path(f'/tmp/pr4-transport/part{i}.bin').write_bytes(data)
-              print(i,len(data),hashlib.sha256(data).hexdigest())
+              parts.append(base64.b64decode(record['content']))
+          assert hashlib.sha256(parts[0]).hexdigest() == '616bbe7febc6e137a1c6de5e6f4ed96872aeda574bf127a739a7a5fc3931bd74'
+          # The transfer-only preflight preserved the malformed payload. Restore
+          # its exact authored bytes before any decompression or source execution.
+          text=base64.b64encode(parts[0]).decode()
+          fixes=[(3194,3196,'Uc','0'),(4126,4128,'gs',''),(14669,14670,'g','o'),(14671,14672,'=','')]
+          for start,end,old,new in reversed(fixes):
+              assert text[start:end] == old
+              text=text[:start]+new+text[end:]
+          parts[0]=base64.b64decode(text,validate=True)
+          assert hashlib.sha256(parts[0]).hexdigest() == '6d76eed5ab7a3a848150c38c4f65beb0ff1ad1ecf3c7a7ea292fc6ee6e1cdc62'
+          assert hashlib.sha256(parts[1]).hexdigest() == 'df6909100d6679767c3a1557bfb08e208bcb83b53a96a3b73c241348b47b074a'
+          packed=b''.join(parts)
+          assert hashlib.sha256(packed).hexdigest() == '606330e522357872092642ebf46abe9a0b9d423d93f8c7d8e0bafaf358bd8b5e'
+          patch=gzip.decompress(packed)
+          assert hashlib.sha256(patch).hexdigest() == '86fe915786316a809ecd097de106d91a72b1698982d9b4c329dacafc6df92497'
+          subprocess.run(['git','apply','--check','-'],input=patch,check=True)
+          subprocess.run(['git','apply','-'],input=patch,check=True)
+          subprocess.run(['git','add','-N','.'],check=True)
+          subprocess.run(['git','diff','--check'],check=True)
+          paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
+          assert len(paths)==17 and all(not p.startswith('.github/') for p in paths)
+          manifest={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths}
+          Path('/tmp/pr4a-evidence/source-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          Path('/tmp/pr4a-evidence/pr4a.patch').write_bytes(patch)
           PY
-      - uses: actions/upload-artifact@v4
+          git diff --stat | tee /tmp/pr4a-evidence/diff-stat.txt
+      - uses: actions/setup-python@v5
         with:
-          name: pr4a-authored-transport
-          path: /tmp/pr4-transport
-          retention-days: 7
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Static gates and cheap parser and accounting regressions
+        run: |
+          set -euo pipefail
+          bash scripts/lint.sh 2>&1 | tee /tmp/pr4a-evidence/lint.txt
+          bash scripts/lint.sh native/bend_engine/async_probe/verify.py native/bend_engine/async_probe/verify_model.py 2>&1 | tee /tmp/pr4a-evidence/native-lint.txt
+          python -m pytest tests/test_bend_async_model_probe.py tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py -q --junitxml=/tmp/pr4a-evidence/tests.xml 2>&1 | tee /tmp/pr4a-evidence/tests.txt
+          bun test native/bend_engine/standalone/bind_model.test.js native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee /tmp/pr4a-evidence/binding-tests.txt
+          bash -n native/bend_engine/async_probe/qualify.sh native/bend_engine/async_probe/build_model_probe.sh
+      - name: Verify unchanged compiler and execute normal and sanitized lifecycle probes
+        run: |
+          set -euo pipefail
+          single=native/bend_engine/standalone
+          revision="$(bun "$single/verify_compiler.js" --revision)"
+          repository="$(bun "$single/verify_compiler.js" --repository)"
+          git init -q /tmp/pr4a-compiler
+          git -C /tmp/pr4a-compiler fetch -q --depth=1 "$repository" "$revision"
+          git -C /tmp/pr4a-compiler checkout -q --detach FETCH_HEAD
+          bash native/bend_engine/async_probe/qualify.sh /tmp/pr4a-compiler /tmp/pr4a-lifecycle 2>&1 | tee /tmp/pr4a-evidence/lifecycle.txt
+          mkdir /tmp/pr4a-evidence/lifecycle
+          cp /tmp/pr4a-lifecycle/{normal.json,sanitized.json,compiler.txt,build.txt,bend-check.txt} /tmp/pr4a-evidence/lifecycle/
+      - uses: actions/download-artifact@v4
+        with:
+          name: deepfin-pr1-validation
+          run-id: 35759888019
+          github-token: ${{ github.token }}
+          path: /tmp/pr4a-prior
+      - name: Recover exact saved untrained CPU fixture without export
+        run: |
+          set -euo pipefail
+          tar -xzf /tmp/pr4a-prior/native-build.tar.gz -C /tmp
+          echo '9654a1e334fb5f875d164b82068846bfeab3df2ef2a994737e44789c2623ee6e  /tmp/pr1-model/fixture.pt2' | sha256sum -c -
+          python -c 'import sys,torch; assert str(torch.__version__) == "2.14.0+cpu"; print(sys.version,torch.__version__)' | tee /tmp/pr4a-evidence/runtime.txt
+      - name: Build real singleton model with the native worker adapter
+        run: |
+          set -euo pipefail
+          prefix="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+          bash native/bend_engine/async_probe/build_model_probe.sh /tmp/pr4a-model /tmp/pr1-model/fixture.pt2 "$prefix" 2>&1 | tee /tmp/pr4a-evidence/model-build.txt
+          cp /tmp/pr4a-model/{binding.json,libraries.txt,executable.txt} /tmp/pr4a-evidence/
+      - name: Actual direct versus worker model and cancelled physical-work reconciliation
+        run: |
+          set -euo pipefail
+          python -m native.bend_engine.async_probe.verify_model --binary /tmp/pr4a-model/build/native-async-model-probe --package /tmp/pr1-model/fixture.pt2 --checkpoint /tmp/pr1-model/fixture.pt --report /tmp/pr4a-evidence/model.json 2>&1 | tee /tmp/pr4a-evidence/model.txt
+      - name: Publish clean feature source only after every qualification
+        id: publish
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -z "$(git ls-remote --heads origin refs/heads/feat/native-async-lifecycle-20260922)"
+          git switch -c feat/native-async-lifecycle-20260922
+          git add docs/experiments/2026-09-22-native-async-lifecycle.md docs/experiments/README.md native/bend_engine/async_probe native/bend_engine/standalone/Async.bend native/bend_engine/standalone/async_call.c native/bend_engine/standalone/async_model.cpp native/bend_engine/standalone/async_slot.h tests/test_bend_async_model_probe.py
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'native: add bounded async lifecycle with real CPU-model qualification'
+          git push origin HEAD:refs/heads/feat/native-async-lifecycle-20260922
+          git rev-parse HEAD | tee /tmp/pr4a-evidence/published-head.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deepfin-pr4a-async-qualification
+          path: /tmp/pr4a-evidence
+          retention-days: 30
+      - name: Require completed qualification and publication
+        if: always()
+        env:
+          PUBLISHED: ${{ steps.publish.outcome }}
+        run: test "$PUBLISHED" = success
