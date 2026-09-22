@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import gzip
 import hashlib
 import json
 import multiprocessing
@@ -32,6 +33,11 @@ import chess
 import numpy as np
 import zarr
 from numcodecs import Blosc
+
+try:
+    import msgspec
+except ImportError:
+    msgspec = None
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -67,6 +73,81 @@ PLY_FIELD = "ply"
 _SOURCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _SHARD_SUFFIXES = (".jsonl.zst", ".jsonl.gz")
 _COMPRESSOR = Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE)
+
+
+_BT4_ROW_DECODER = None
+if msgspec is not None:
+    class _BT4InputRow(msgspec.Struct):
+        """Project only consumed fields; Any and UNSET preserve validation inputs."""
+
+        schema: Any = msgspec.UNSET
+        run: Any = msgspec.UNSET
+        fen: Any = msgspec.UNSET
+        history_root_fen: Any = msgspec.UNSET
+        history_uci: Any = msgspec.UNSET
+        stm: Any = msgspec.UNSET
+        piece_count: Any = msgspec.UNSET
+        input_key: Any = msgspec.UNSET
+        game_id: Any = msgspec.UNSET
+        ply: Any = msgspec.UNSET
+        worker_id: Any = msgspec.UNSET
+
+
+    _BT4_ROW_DECODER = msgspec.json.Decoder(_BT4InputRow)
+# A skipped integer must not bypass Python's configurable JSON integer limit.
+# 640 is the smallest nonzero supported limit. False positives inside strings
+# only choose the reference decoder; they do not reject otherwise valid rows.
+_LONG_DIGITS = re.compile(r"[0-9]{640}")
+
+
+def _decode_bt4_row(line: str) -> dict[str, Any] | None:
+    """Project unused SF phases away; None asks the reader for stdlib decoding."""
+    if msgspec is None or _BT4_ROW_DECODER is None:
+        return None
+    # The C decoders have different recursion cutoffs, including for skipped
+    # fields. Count even brackets in strings: false positives only use stdlib.
+    # Reserve ample stack for its decoder and for this helper's caller.
+    frame = sys._getframe()
+    depth = 0
+    while frame is not None:
+        depth += 1
+        frame = frame.f_back
+    if (line.count("[") + line.count("{") >= sys.getrecursionlimit() - depth - 32
+            or _LONG_DIGITS.search(line)):
+        return None
+    try:
+        projected = _BT4_ROW_DECODER.decode(line)
+    except (msgspec.DecodeError, RecursionError):
+        # Preserve stdlib nonfinite numbers, unusual Unicode, non-object values,
+        # and its original exceptions for malformed JSON (including skipped SF).
+        return None
+    return {
+        key: value
+        for key, value in msgspec.structs.asdict(projected).items()
+        if value is not msgspec.UNSET
+    }
+
+
+def iter_bt4_input_rows(path: Path) -> Generator[dict[str, Any], None, None]:
+    """Stream the raw BT4 input projection; general target readers stay complete."""
+    if path.name.endswith(".jsonl.zst"):
+        module = corpus.zstandard_module()
+        if module is None:
+            raise derive.CorpusIntegrityError(
+                f"{path.name} is zstd-compressed but the zstandard module is not "
+                "importable in this environment",
+            )
+        with open(path, "rb") as binary:
+            reader = module.ZstdDecompressor().stream_reader(binary)
+            for line in derive._text_lines(reader):
+                row = _decode_bt4_row(line)
+                yield json.loads(line) if row is None else row
+        return
+    with gzip.open(path, "rt", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                row = _decode_bt4_row(line)
+                yield json.loads(line) if row is None else row
 
 
 @dataclass(frozen=True)
@@ -713,7 +794,7 @@ def label_shard(
             legal_moves_sum += len(indices)
         cursor = stop
 
-    for row in derive.iter_corpus_rows(pending.path):
+    for row in iter_bt4_input_rows(pending.path):
         batch_rows.append(row)
         if len(batch_rows) >= batch_size:
             evaluate_batch(batch_rows)
@@ -916,7 +997,7 @@ def verify_shard(
                 records['worker_id'][offset] = int(row['worker_id'])
         cursor = stop
 
-    for row in derive.iter_corpus_rows(pending.path):
+    for row in iter_bt4_input_rows(pending.path):
         batch_rows.append(row)
         if len(batch_rows) >= batch_size:
             verify_batch(batch_rows)

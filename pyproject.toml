@@ -105,6 +105,8 @@ tune = [
 ]
 
 onnx = [
+  # Raw BT4 input projection avoids allocating unused Stockfish search payloads.
+  "msgspec>=0.20.0",
   "onnx>=1.15",
   "onnxruntime>=1.17",
   "onnxscript>=0.1.0",

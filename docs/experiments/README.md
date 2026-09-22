@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Raw BT4 JSON projection](2026-09-21-bt4-raw-json-projection.md) | Exact 8,236-row CPU input parity; guarded projected reader measures 1.67x whole CPU preparation speedup, no GPU or runtime adoption |
 | [Bend neural play](2026-09-19-bend-neural-play.md) | Native evaluator across played roots, bounded multi-game queue and host draw policy; CPU lifecycle gate, not trained strength or throughput |
 | [Bend root advancement](2026-09-19-bend-root-advancement.md) | Same-process legal play/search, transactional epoch-bound root changes and retained host history; fresh trees, no subtree reuse or GPU claim |
 | [Bend checkpoint preflight and retention](2026-09-18-bend-checkpoint-preflight.md) | Fail-closed readiness, exact-checkpoint package reuse and retained failure evidence; no trained/CUDA execution claim |

@@ -1,0 +1,117 @@
+{
+  "status": "PASS_REVIEWED_FULL_SHARD_CPU_INPUT_PARITY",
+  "base": "7939609c903f2a59a57bc52f282fc39ad60182fa",
+  "runtime_adoption": false,
+  "rows": 8236,
+  "cpu_preparation_ratio": 1.6746318141204746,
+  "reader_ratio": 3.2195022039789847,
+  "tests": {
+    "locked_msgspec0211": 62,
+    "ambient_msgspec020": 38
+  },
+  "measurements": [
+    {
+      "reader": "reference",
+      "rows": 8236,
+      "wall_seconds": 8.537775941949803,
+      "reader_seconds": 4.714288472023327,
+      "encode_and_conversion_seconds": 2.9779927917406894,
+      "ordered_hashes": {
+        "planes": "e348afd2ce03e95df06022f0106b2c83ddfdf9d0883cbd46671dc6666535dc1a",
+        "input_keys": "1489e90f864d574139eb16ab043944e7793088e9573a9b551cf42d326c2a3e43",
+        "game_id": "e7e17029cc1c05afcb053b18bf0a24069549dd8c6619cba99a9e9bf0512aa1c3",
+        "ply": "9226dc892d8cf8a6d6a4018006bb7ed4a0c2728dee4fc8f700dcf404065be841",
+        "worker_id": "003316dc949670dfdb1e30b9f581bac6b5209ccc9518d292065da185f254404b",
+        "legal_moves": "7fe1a07a55db1db4f81ec36fbdaf70e6e17c78e5da3009731eb7ebac7423eac8",
+        "canonical_feed": "490da49d3f1373a1b6e9de05e21c20821c0e555b52c238dfbf6f511775456fa1"
+      }
+    },
+    {
+      "reader": "projected",
+      "rows": 8236,
+      "wall_seconds": 5.062254779972136,
+      "reader_seconds": 1.457699563994538,
+      "encode_and_conversion_seconds": 2.8008508206694387,
+      "ordered_hashes": {
+        "planes": "e348afd2ce03e95df06022f0106b2c83ddfdf9d0883cbd46671dc6666535dc1a",
+        "input_keys": "1489e90f864d574139eb16ab043944e7793088e9573a9b551cf42d326c2a3e43",
+        "game_id": "e7e17029cc1c05afcb053b18bf0a24069549dd8c6619cba99a9e9bf0512aa1c3",
+        "ply": "9226dc892d8cf8a6d6a4018006bb7ed4a0c2728dee4fc8f700dcf404065be841",
+        "worker_id": "003316dc949670dfdb1e30b9f581bac6b5209ccc9518d292065da185f254404b",
+        "legal_moves": "7fe1a07a55db1db4f81ec36fbdaf70e6e17c78e5da3009731eb7ebac7423eac8",
+        "canonical_feed": "490da49d3f1373a1b6e9de05e21c20821c0e555b52c238dfbf6f511775456fa1"
+      }
+    },
+    {
+      "reader": "projected",
+      "rows": 8236,
+      "wall_seconds": 5.256441123958211,
+      "reader_seconds": 1.4975051617948338,
+      "encode_and_conversion_seconds": 2.9492542747757398,
+      "ordered_hashes": {
+        "planes": "e348afd2ce03e95df06022f0106b2c83ddfdf9d0883cbd46671dc6666535dc1a",
+        "input_keys": "1489e90f864d574139eb16ab043944e7793088e9573a9b551cf42d326c2a3e43",
+        "game_id": "e7e17029cc1c05afcb053b18bf0a24069549dd8c6619cba99a9e9bf0512aa1c3",
+        "ply": "9226dc892d8cf8a6d6a4018006bb7ed4a0c2728dee4fc8f700dcf404065be841",
+        "worker_id": "003316dc949670dfdb1e30b9f581bac6b5209ccc9518d292065da185f254404b",
+        "legal_moves": "7fe1a07a55db1db4f81ec36fbdaf70e6e17c78e5da3009731eb7ebac7423eac8",
+        "canonical_feed": "490da49d3f1373a1b6e9de05e21c20821c0e555b52c238dfbf6f511775456fa1"
+      }
+    },
+    {
+      "reader": "reference",
+      "rows": 8236,
+      "wall_seconds": 8.742240499006584,
+      "reader_seconds": 4.799999655864667,
+      "encode_and_conversion_seconds": 3.0711533898720518,
+      "ordered_hashes": {
+        "planes": "e348afd2ce03e95df06022f0106b2c83ddfdf9d0883cbd46671dc6666535dc1a",
+        "input_keys": "1489e90f864d574139eb16ab043944e7793088e9573a9b551cf42d326c2a3e43",
+        "game_id": "e7e17029cc1c05afcb053b18bf0a24069549dd8c6619cba99a9e9bf0512aa1c3",
+        "ply": "9226dc892d8cf8a6d6a4018006bb7ed4a0c2728dee4fc8f700dcf404065be841",
+        "worker_id": "003316dc949670dfdb1e30b9f581bac6b5209ccc9518d292065da185f254404b",
+        "legal_moves": "7fe1a07a55db1db4f81ec36fbdaf70e6e17c78e5da3009731eb7ebac7423eac8",
+        "canonical_feed": "490da49d3f1373a1b6e9de05e21c20821c0e555b52c238dfbf6f511775456fa1"
+      }
+    }
+  ],
+  "source_sha256": "3c93d2d127bc6d11db9eb31425e0c795c96b417106d737632ef4b689569ae17d",
+  "code_sha256": "04cddfca96c120c949a5d4d32ae5771aab0a117e1b623b1d98aa605c643b8daa",
+  "scope": "Full-shard CPU reader+encoding+canonical feed+ordered hash/legal move checks. No inference or labeling. Alternating order, warm filesystem cache. No end-to-end GPU producer speed claim.",
+  "evidence": {
+    "benchmark_raw_projection_20260921.py": "b7d7afe481177d2e7d126407fdd76bfb2f6c411fd36bb98efbeb2afe73e3e7a7",
+    "bt4-raw-cpu-audit-20260921.json": "9520a16987844059e949c094a90b24eb99bc3b148ff8d4e0ec5a71c0c18fd86a",
+    "bt4-raw-projection-audit-20260921.json": "51ae77bda4823ac28dd9adb6156263a246a9593c8fdd56fe7c6af1aac04fa347",
+    "bt4_raw_corpus_sidecar.py": "04cddfca96c120c949a5d4d32ae5771aab0a117e1b623b1d98aa605c643b8daa",
+    "candidate.patch": "75c0d7b5dc9b7e842225f866e77e4b4b19e7989f6c165a257539f1a7806c0133",
+    "profile_bt4_raw_projection_20260921.py": "a0f3a79e10abd036035bcf91a9b843d5886029a62e357f70d88a9acc4bf3c1cd",
+    "pyproject.toml": "8211780c0797fe9ed399b5db77d357892ea48e1c377bf81a790f257ae6f9564c",
+    "raw-bt4-projected-json-independent-review-20260921.json": "69038150d57ade3ecae13db4c51939378d8b12036ce93940f36fc4903a4f750e",
+    "raw-projection-before-recursion-guard-20260921.json": "46bd7bf8bcf85154739f53c2dc88cb37bf57409bc0387229a3c75b9be00cba40",
+    "raw-projection-before-recursion-guard-20260921.log": "38069958be1f8a092598118687aefda5b0aaa3b2414232e74586b1bffd4484c0",
+    "raw-projection-full-shard-20260921.json": "9ec37af1cd54e04460bc933deb18141e5713982c088b0a0e6747ab7f282f57c2",
+    "raw-projection-full-shard-20260921.log": "212f4767abd3c4d68eca0251c79e1b56579a8ba11725710321b58fb7e97d4008",
+    "raw-projection-full-shard-msgspec020-20260921.json": "2eb69e4e327a47f300e72f82ac0db0aab53d31ab18c0c90e5dcd5d2a88274ff8",
+    "raw-projection-full-shard-msgspec020-20260921.log": "77766fccd8cc7b9d0ab938be87e661a135970cabecc05cfb2464e0785251c345",
+    "raw-projection-lint-baseline-comparison.json": "7fddf6f6feaa15d65f8bee87533ff8102ac964fe819a5db7509e9187a6e3da72",
+    "raw-projection-tests-0211.log": "e2b9bcea55cb1f80c1094b1895eaf1a501491652d21cad2757296a47a6af4689",
+    "raw-projection-tests.log": "f00889368ae8c5f10a398a8ab805cd819fb0bea88f1a3c4134fbf800ee467e8d",
+    "raw-projection-whole-lint-environment.log": "c1b25f378bcc9629c7079dfb83390c0045cf69b008512b446a1d560dad7149e8",
+    "raw-projection-whole-lint.log": "6fb294fccea6ca70b01103d9556d1deb7538d814084a92e87d236641e5c8ad37",
+    "test_bt4_raw_corpus_sidecar.py": "21f18c277bba74d9099b1ec0da04b1b7268b526275501d19df6dc10dadcd0ad0",
+    "uv.lock": "7daba33302cac85fcb1a2777d76e6c27c4df0a33693efb225b6fb798594e0e53"
+  },
+  "independent_review": {
+    "verdict": "APPROVE_CODE_BENCHMARK_AND_READOUT",
+    "path": "/home/josh/chess-artifacts/operations/bt4-raw-json-projection-20260921/raw-bt4-projected-json-independent-review-20260921.json"
+  },
+  "lint": {
+    "ruff": "PASS",
+    "vulture": "PASS",
+    "focused_type": "PASS",
+    "whole_type_errors": 14,
+    "same_unchanged_baseline_diagnostics": true,
+    "lock_check": "PASS"
+  },
+  "artifact_root": "/home/josh/chess-artifacts/operations/bt4-raw-json-projection-20260921"
+}
