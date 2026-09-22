@@ -80,3 +80,8 @@ The loss, optimizer, training tensor path and directory-only defaults are unchan
 This main-based launcher does not yet expose the frozen runtime's recovery CLI;
 future recovery integration must carry this option into its sampler reconstruction.
 No existing frozen run is converted by this option.
+
+Root-level `row_provenance.npz` from derivation may be retained as opaque provenance.
+It is covered by the archive content hash and never interpreted as a training
+array. Other auxiliary filenames and nested provenance files remain rejected, as
+do overlays, duplicate names, paths escaping the root and nonregular members.

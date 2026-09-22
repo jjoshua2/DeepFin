@@ -155,6 +155,8 @@ def test_objective_census_and_lazy_errors_close_store(corpus, monkeypatch):
         ".zattrs",
         "target_overlay.json",
         "base-binding.json",
+        "x/row_provenance.npz",
+        "other_provenance.npz",
     ],
 )
 def test_archive_members_refused(corpus, name):
@@ -290,3 +292,32 @@ def test_qualification_refuses_mismatched_rosters(corpus):
     next(target.glob("*.zip")).unlink()
     with pytest.raises(ValueError, match="rosters"):
         qualify(source, target, {})
+
+
+def test_root_provenance_is_preserved_hashed_and_not_a_tensor(corpus):
+    source, target = corpus
+    for shard in source.glob("*.zarr"):
+        np.savez(shard / "row_provenance.npz", source_row=np.arange(8))
+        pack(shard, target / (shard.name + ".zip"))
+    a, b = buffer(source), buffer(target, allow_packed_zarr=True)
+    try:
+        for _ in range(a.num_batches):
+            left, right = a.sample_batch_arrays(2), b.sample_batch_arrays(2)
+            assert left.keys() == right.keys()
+            for key in left:
+                np.testing.assert_array_equal(left[key], right[key])
+    finally:
+        a.close()
+        b.close()
+    shard = next(source.glob("*.zarr"))
+    archive = target / (shard.name + ".zip")
+    before = packed.content_sha256(archive)
+    np.savez(shard / "row_provenance.npz", source_row=np.arange(8) + 1)
+    pack(shard, archive)
+    assert packed.content_sha256(archive) != before
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        with zipfile.ZipFile(archive, "a") as handle:
+            handle.writestr("row_provenance.npz", b"duplicate")
+    with pytest.raises(ValueError, match="duplicate"):
+        packed.content_sha256(archive)
