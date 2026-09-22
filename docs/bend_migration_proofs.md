@@ -1,5 +1,9 @@
 # Bend migration and proof inventory
 
+## Current qualification update: September 22, 2026
+
+Hosted qualification **35706095107** on September 22, 2026 passes all 56 laws, 72 rejection controls, four native modes, original compiler source/pin checks and whole-repository lint. The original saved commit `53b6e78f3052a0ed273f7fc31be47b66b32707b9` and complete tree `fc6400fbefe04deded9d6e1c9ac3ff54ef883221` were recovered exactly, not rewritten. Historical local-only/lint-unqualified statements below retain their original execution context; the hosted result above supersedes those status gaps for this exact candidate. No prefix/affine-storage theorem follows from this update. The parallel six-law exact_index branch remains preserved and separate. See the dated exact-slider-indices readout and hosted evidence.
+
 Status snapshot: September 21, 2026. This inventory covers published PR #819
 (`40803892f3204a54a33a87e2e7b25fa48fed2e1a`) plus the locally qualified
 [exact U32 index increment](experiments/2026-09-21-bend-exact-slider-indices.md).

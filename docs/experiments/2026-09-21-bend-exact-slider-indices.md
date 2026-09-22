@@ -79,7 +79,7 @@ The completed candidate changes no existing implementation or accepted law. It a
 no axiom, unsafe dependency, foreign equality witness or proof hole. New rejection
 controls distinguish semantic checker failures from manifest/import-policy failures.
 
-## Execution readout
+## Historical local execution readout
 
 The final local candidate completed its bounded source and native qualification.
 The aggregate source gate reports **56 accepted laws**, including eight new laws
@@ -151,3 +151,22 @@ No additional responsibility moved from Python into Bend. Export, external refer
 production/data orchestration and training remain dependencies; C++/LibTorch/AOTI
 remains the explicitly transitional inference backend. No full-engine/model build,
 model forward, GPU, training, perft, benchmark, strength or speedup result is implied.
+
+
+## Hosted qualification and publication
+
+Hosted qualification **35706095107** on September 22, 2026 passes all 56 laws, 72 rejection controls, four native modes, original compiler source/pin checks and whole-repository lint. The original saved commit `53b6e78f3052a0ed273f7fc31be47b66b32707b9` and complete tree `fc6400fbefe04deded9d6e1c9ac3ff54ef883221` were recovered exactly, not rewritten.
+
+Temporary workflow commit `7a906f4a2e32b1d564dd747a8e6b2eeefb5658dd` checks all four transport fragment identities, original patch SHA-256 `decd7ad1380771334ca0014ad474e9e7e4f578537ee97a34304621cf6d24b2c6`, full source tree, original commit and every recorded candidate source hash. The reconstructed commit retains its original author/committer metadata. Only this subsequent documentation/evidence commit is new.
+
+The hosted source report is byte-identical to the saved local report. Native results and all source hashes match; only the separately reported C compiler identity may differ. Each mode checks 2,070 rows, all 128 chess keys, 28 population-32 rows, and 218 explicit wider-mask truncation counterexamples; five invalid requests are rejected. Repeated modes are not disjoint data sets or exhaustive arbitrary-U64 tests.
+
+Toolchain: Bun 1.4.2, Ubuntu clang version 18.1.3 (1ubuntu1), locked Python 3.13 CPU environment and uv 0.12.10. The unchanged whole-repository Ruff/Basedpyright/Vulture gate passes. This resolves the historical missing-tool lint gap; original failed local logs remain unchanged. The compiler fork's separately documented strict-TypeScript and diagnostic-depth limitations are not fixed or suppressed here.
+
+A parallel existing branch was found during refresh: feat/bend-exact-slider-index-20260921 at 5c05c5c281212e313a630f077ab466fbd650985d, with six laws in proofs/exact_index and its own hosted record 35684436097. It shares this parent but is not this eight-law proofs/address candidate. That branch and all its evidence are preserved untouched. Its test counts are not attributed to this candidate, and none of this candidate's eight accepted statements are dropped. Future consolidation must map contracts and preserve both sets before removing duplicate helpers.
+
+Publication creates `feat/bend-exact-slider-indices-20260921` only after qualification. No merge, force push, deployment or live-process operation. The temporary workflow and transport payloads are absent from the feature tree. Compact hosted evidence is committed; full gate logs remain in the 30-day artifact exact-slider-indices-qualification.
+
+Self-review only, not independent review. No production code, earlier laws, compiler inputs, existing tests or routine test budgets changed. No new full-engine/model build, perft, GPU, training or benchmark result. Python export/data/control/training and transitional C++/LibTorch/AOTI computation remain dependencies.
+
+Exact scalar lookup/ordinal/redeposit claims are now qualified on this source. Actual prefix offsets, initialized/disjoint affine writes/reads and equality to independent blocker rays remain the next acceptance; this publication is not that storage proof.
