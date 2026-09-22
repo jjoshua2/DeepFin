@@ -1,0 +1,80 @@
+name: Inspect Bend claim stack
+on:
+  push:
+    branches: [fix/bend-pr792-reconcile-audit-20260921]
+    paths: [.github/workflows/bend-pr792-reconcile-audit.yml]
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Preserve exact histories and record current checks and conflicts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/bend-claim-review
+          python - <<'PY'
+          import datetime, json, os, subprocess, urllib.request
+          from pathlib import Path
+          out = Path('/tmp/bend-claim-review')
+          def get(path):
+              req = urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/' + path,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.load(r)
+          prs = []
+          for page in range(1, 11):
+              rows = get(f'pulls?state=open&per_page=100&page={page}')
+              prs.extend(p for p in rows if 'bend' in p['title'].lower() or 'bend' in p['head']['ref'].lower())
+              if len(rows) < 100:
+                  break
+          else:
+              raise RuntimeError('incomplete PR enumeration')
+          refs = {'refs/audit/claims-start': 'e5561b2a16326e51d76b190085b5fcee911cdce8',
+                  'refs/audit/draws-start': 'bb8543eac97c0b0a423577c144195ae26113a6ea'}
+          report = {'as_of': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'prs': []}
+          for item in sorted(prs, key=lambda p: p['number']):
+              p = get(f"pulls/{item['number']}")
+              row = {'number': p['number'], 'head': p['head']['sha'], 'branch': p['head']['ref'],
+                  'base_sha': p['base']['sha'], 'base': p['base']['ref'], 'mergeable': p['mergeable'], 'checks': []}
+              seen = set()
+              for run in get('actions/runs?event=pull_request&per_page=100&head_sha=' + row['head'])['workflow_runs']:
+                  if run['workflow_id'] in seen:
+                      continue
+                  seen.add(run['workflow_id'])
+                  check = {k: run[k] for k in ('id', 'name', 'status', 'conclusion', 'run_attempt')}
+                  if run['conclusion'] == 'failure':
+                      jobs = get(f"actions/runs/{run['id']}/jobs?per_page=100")['jobs']
+                      check['failures'] = [{'id': j['id'], 'name': j['name'], 'steps': [s['name'] for s in j['steps'] if s['conclusion'] == 'failure']} for j in jobs if j['conclusion'] == 'failure']
+                  row['checks'].append(check)
+              refs[f"refs/audit/pr{p['number']}"] = row['head']
+              refs[f"refs/audit/base{p['number']}"] = row['base_sha']
+              report['prs'].append(row)
+              print(row['number'], row['head'], row['mergeable'], row['checks'], flush=True)
+              (out / 'status.json').write_text(json.dumps(report, indent=2) + '\n')
+          subprocess.run(['git', 'fetch', '--no-tags', 'https://github.com/jjoshua2/DeepFin.git', *sorted(set(refs.values()))], check=True)
+          for ref, sha in refs.items():
+              subprocess.run(['git', 'update-ref', ref, sha], check=True)
+          subprocess.run(['git', 'bundle', 'create', str(out / 'review.bundle'), *refs], check=True)
+          for row in report['prs']:
+              result = subprocess.run(['git', 'merge-tree', '--write-tree', '--messages', row['head'], row['base_sha']], capture_output=True, text=True, check=False)
+              assert result.returncode in (0, 1), result.stderr
+              row['local_merge_clean'] = result.returncode == 0
+              if result.returncode:
+                  (out / f"conflict-{row['number']}.txt").write_text(result.stdout + '\n' + result.stderr)
+          (out / 'status.json').write_text(json.dumps(report, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-claim-stack-review
+          path: /tmp/bend-claim-review/
+          retention-days: 7
