@@ -1,0 +1,31 @@
+{
+  "base": "290fc01a10517374518e505f9855c7d4a9a5d956",
+  "candidate_tree": "8fa75e5c727f288968804dbe50bb80bc5cd9b2b1",
+  "patch_sha256": "fa871489f0a3b579d66ef19282aa372a292134785ac0e39aad8f3f7b1179b869",
+  "changed_files": [
+    "docs/bend_migration_proofs.md",
+    "docs/experiments/2026-09-22-bend-table-storage.md",
+    "docs/experiments/README.md",
+    "docs/experiments/evidence/bend-table-storage/local-focused-proofs.json",
+    "docs/experiments/evidence/bend-table-storage/local-lint.json",
+    "docs/experiments/evidence/bend-table-storage/local-native.json",
+    "native/bend_engine/standalone/proofs/storage/Build.bend",
+    "native/bend_engine/standalone/proofs/storage/Fill.bend",
+    "native/bend_engine/standalone/proofs/storage/Initialize.bend",
+    "native/bend_engine/standalone/proofs/storage/LAWS.bend",
+    "native/bend_engine/standalone/proofs/storage/Model.bend",
+    "native/bend_engine/standalone/proofs/storage/Observe.bend",
+    "native/bend_engine/standalone/proofs/storage/PROOF.bend",
+    "native/bend_engine/standalone/proofs/storage/README.md",
+    "native/bend_engine/standalone/proofs/storage/Read.bend",
+    "native/bend_engine/standalone/proofs/storage/Refinement.bend",
+    "native/bend_engine/standalone/proofs/storage/Representation.bend",
+    "native/bend_engine/standalone/proofs/storage/Roundtrip.bend",
+    "native/bend_engine/standalone/proofs/storage/Write.bend",
+    "native/bend_engine/standalone/proofs/storage/consumer.bend",
+    "native/bend_engine/standalone/proofs/storage/probe.bend",
+    "native/bend_engine/standalone/proofs/storage/verify.js",
+    "native/bend_engine/standalone/proofs/storage/verify_native.js"
+  ],
+  "temporary_workflow_in_feature": false
+}
