@@ -251,3 +251,39 @@ hash cache or pinned runtime modification was made. This addresses startup cost
 regardless of whether the final value recipe contains SF.
 
 [Source analysis and limits](evidence/500m-continuation-20260921/startup-cost-review.json).
+
+
+## Evening continuation: implementations published and E preparation active
+
+At September 22 00:12 UTC (September 21 local), D reached 92,488/113,459
+updates, approximately 81.5%, and its D–C and D–B matches remained queued.
+The active frozen runtime was preserved.
+
+[PR #810](https://github.com/jjoshua2/DeepFin/pull/810) implements the identified
+operation-local overlay validation reuse. Independent review and 54 tests pass.
+A sequential eight-shard, 65,536-row constructor-stage comparison reduced
+semantic validations from 72 to 8 and time from 15.011 to 2.772 seconds (5.42x),
+with identical full plans/objective counts and ordered target hashes. This is
+not a full-corpus startup or training-throughput measurement. Whole-repository
+type-check failures exactly reproduce the frozen baseline's 23 diagnostics.
+
+[PR #811](https://github.com/jjoshua2/DeepFin/pull/811) implements the registered
+SF-free E recipe using original native BT4 values. Fifteen tests pass. Independent
+review verified all 35 manifests and current teacher metadata pins, plus three
+real source families totaling 24,576 rows: D policy and every non-value array
+remain exact, while independently computed E WDL matches byte-for-byte.
+
+The full 58,090,688-row CPU preparation launched at 00:10:55 UTC, PID 1755363,
+under independently reviewed plan SHA256
+`c0e137a3ec1a64bd6bc1fd2d0345901b18d4c2408923c302869cb710cdd40cdc`.
+It uses frozen builder commit `4ecf772963967cb9de53d6e9a2cd895172a41e15`,
+two CPU threads, nice19, no GPU, one 16-hour cap, 150 GiB disk reserve and
+40 GiB available-RAM floor. The same capped job qualifies all 35 output roots.
+Failure/STOP/resource tests pass and preserve incomplete artifacts.
+
+Plan, logs and terminal receipt location:
+`/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921`;
+outputs: `/home/josh/chess-artifacts/labels/factorial58_sffree_20260921`.
+E training is not launched or queued: it still requires completed full-corpus
+qualification, reviewed exact training admission and D's remaining matches.
+The teacher hypothesis and 500M production qualification remain unresolved.
