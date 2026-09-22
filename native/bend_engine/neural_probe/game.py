@@ -1,6 +1,7 @@
 """Host-owned played-game lifecycle around the native Bend diagnostic search.
 
-Draws are adjudicated at played roots, NOT inside the Bend tree. A stopped or
+The host adjudicates played roots and automatic draw leaves; Bend caches their
+zero terminal values. The opt-in search_choice policy retains claim actions. A stopped or
 truncated experiment is unfinished (*), never a draw. This controller deliberately
 uses the existing verified Actor and ACK protocol rather than another search.
 """
@@ -12,12 +13,13 @@ import chess
 import chess.pgn
 
 from native.bend_engine.session_probe import run_probe as sessions
+from native.bend_engine.session_probe.claims import claim_option
 from native.bend_engine.session_probe.root_protocol import Wire, advance_root, packed_move
 from .adapter import Encoding, HistoryEncoder, board_position, decode_key
 from .batch_probe import Actor
 from .batching import Batcher
 
-CLAIM_POLICIES = ('automatic', 'claim_available')
+CLAIM_POLICIES = ('automatic', 'claim_available', 'search_choice')
 
 
 @dataclass(frozen=True)
@@ -139,7 +141,8 @@ class GameActor(Actor):
         self.initial_history = len(spec.root.move_stack)
         self.rebound_encoders = 0
         root = spec.root.copy(stack=True)
-        super().__init__(peer, root, HistoryEncoder(root, encoding), oracle, session, budget)
+        super().__init__(peer, root, HistoryEncoder(root, encoding), oracle, session, budget,
+                         allow_claims=spec.claims == 'search_choice')
 
     def start(self) -> None:
         self.end = game_end(self.root, self.spec.claims, len(self.moves), self.spec.max_plies)
@@ -166,6 +169,13 @@ class GameActor(Actor):
             key = packed_move(self.root, move)
         else:
             key = self.results[-1].summary['best']
+            if key == sessions.CLAIM_KEY:
+                option = claim_option(self.root)
+                if self.spec.claims != 'search_choice' or option is None or option != self.claim_options.get(0):
+                    raise AssertionError('selected claim lacks current root evidence')
+                self.end = GameEnd('1/2-1/2', option.reason, True, option.intended_move)
+                self.done = True
+                return  # Claim BEFORE any witness move: no root advance or history push.
             if key == sessions.SENTINEL:
                 raise AssertionError('nonterminal game has no best move')
             move = decode_key(self.root, key)
@@ -199,4 +209,6 @@ class GameActor(Actor):
                 'final_fen': self.root.fen(en_passant='fen'),
                 'cancelled_epochs': self.cancelled_epochs, 'rebound_encoders': self.rebound_encoders,
                 'search_epochs': [r.summary for r in self.results],
+                'automatic_draw_leaves': self.draw_leaves,
+                'optional_claim_leaves': self.claim_leaves,
                 'pgn': pgn_text(self.root, self.end, self.spec.name)}
