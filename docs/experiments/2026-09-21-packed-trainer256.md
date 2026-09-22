@@ -164,3 +164,9 @@ The exact plan SHA is `cc9949d4e4c694111e2f1de1f081325fb469579a90d3e7ca5a9a0607f
 registered command SHA is `0ee0ba7c32d1ad5afc6f00d7166e63b7634e9f24c2c2da203938f5a756aac3d4`.
 The descriptor and proposed queue item are included in the evidence directory.
 Approval and registration do not constitute completed GPU measurements.
+
+The parent registered `packed_trainer256_pair_20260921` under the queue lock,
+preserving all prior 238 items and scheduler state. At registration the order was
+D_C running, then D_B, BT4 pipeline, and this storage pair queued. The append
+receipt is banked as `evidence/packed-trainer256-20260921/queue-registration.json`.
+GPU measurements remain pending.
