@@ -3,28 +3,139 @@ on:
   push:
     branches: [work/pr1-neural-accounting-20260922]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  tooling:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 35
+    env:
+      PYTHONPATH: .
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      TORCHINDUCTOR_COMPILE_THREADS: '1'
+      BEND_NO_TELEMETRY: '1'
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: jjoshua2/bend
-          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
-          path: compiler
+          ref: c78ca8aaab8982bd8ca234928c61c6225ad91580
+      - name: Assemble exact authored patch
+        id: patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/pr1-evidence
+          python - <<'PY'
+          import base64, hashlib, json, subprocess
+          from pathlib import Path
+          pieces = [
+            ('74ed4b9390a51a6b3199b0ca3ca790d9ff72884f','0b7cdbf3656792b2fb9b9666c5a8bde223800917fb6320af61e6ae7d8748d25f'),
+            ('5d440ca74df172f7d8d5a56ab95b3308dfa54293','9aa18e80ef45fba1366c05161671752a15c3c3cda45127e0c696ab23cc97834e'),
+            ('3e71115344fdc4bf1e02a47b72a971baea89d98a','19141d4c8874129006cbbe1d75b8dad1006cea4ffd0dd26ae3b4200e7470f7ea'),
+            ('0ea40c4fb3a7100e2acb6d30438e13ef5b849c89','8c549b36bfba21bfb35a20d554ea7e1c1d631d00b22651f64ce80eab66e618d7'),
+            ('67a69ef3eee14f8924c93bf998a9696f80c1fde7','3932adfd195b8f9df50621dddafa3e042dfaa9e8978170561e283dd499d3e09b'),
+          ]
+          data = b''
+          for i, (sha, expected) in enumerate(pieces):
+              blob = json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+              part = base64.b64decode(blob['content'])
+              if i == 0:
+                  part = part.replace(b'\n diff --git ', b'\ndiff --git ')
+              Path(f'/tmp/pr1-evidence/part-{i}.patch').write_bytes(part)
+              assert hashlib.sha256(part).hexdigest() == expected, (i, hashlib.sha256(part).hexdigest())
+              data += part
+          assert hashlib.sha256(data).hexdigest() == 'b0bf2ce8cb122cada2dce380f0688a3770fdee28a2ec6290edb07ca1093ee57a'
+          Path('/tmp/pr1-evidence/pr1.patch').write_bytes(data)
+          PY
+          git apply --check /tmp/pr1-evidence/pr1.patch
+          git apply /tmp/pr1-evidence/pr1.patch
+          git add -N .
+          git diff --check
+          git diff --stat | tee /tmp/pr1-evidence/diff-stat.txt
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.12.10
+          enable-cache: true
+      - name: Locked CPU environment
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - run: |
-          mkdir -p /tmp/pr1-tools/wheels
-          cp "$(command -v bun)" /tmp/pr1-tools/bun
-          cp -a compiler/bend2 /tmp/pr1-tools/bend2
-          python -m pip download --no-deps --dest /tmp/pr1-tools/wheels ruff basedpyright nodejs-wheel vulture chess
-          tar -C /tmp/pr1-tools -czf /tmp/pr1-tools.tar.gz .
+      - name: Whole-repository static gate
+        id: lint
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bash scripts/lint.sh 2>&1 | tee /tmp/pr1-evidence/lint.txt
+          bash scripts/lint.sh native/bend_engine/standalone/verify_work.py native/bend_engine/standalone/verify_neural.py 2>&1 | tee /tmp/pr1-evidence/native-lint.txt
+      - name: Accounting and broker regressions
+        id: tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m pytest tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py tests/test_inference_slot_protocol.py tests/test_inference_broker.py tests/test_aot_broker_integration.py -q --junitxml=/tmp/pr1-evidence/tests.xml 2>&1 | tee /tmp/pr1-evidence/tests.txt
+      - name: Native material and accounting execution
+        id: native
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bash native/bend_engine/standalone/build.sh /tmp/pr1-native /tmp/pr1-compiler 2>&1 | tee /tmp/pr1-evidence/native-build.txt
+          bun /tmp/pr1-compiler/bend2/main.ts native/bend_engine/standalone/work_probe.bend -o /tmp/pr1-work.c
+          clang -std=c11 -O1 -ffp-contract=off /tmp/pr1-work.c -pthread -lm -o /tmp/pr1-work
+          python native/bend_engine/standalone/verify_work.py --probe /tmp/pr1-work --command /tmp/pr1-native/deepfin-bend --threads 1 | tee /tmp/pr1-evidence/native-work.json
+          python native/bend_engine/standalone/verify.py --command /tmp/pr1-native/deepfin-bend --threads 1 | tee /tmp/pr1-evidence/material.txt
+          cp /tmp/pr1-native/build.txt /tmp/pr1-evidence/build.txt
+      - name: Actual CPU neural forward and search reconciliation
+        id: neural
+        if: steps.native.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir /tmp/pr1-model
+          python - <<'PY'
+          from pathlib import Path
+          import torch
+          from native.bend_engine.neural_probe.checkpoint_probe import fixture_checkpoint
+          from native.bend_engine.neural_probe.checkpoint import load_checkpoint, export_checkpoint
+          torch.set_num_threads(2)
+          checkpoint = Path('/tmp/pr1-model/fixture.pt')
+          fixture_checkpoint(checkpoint)
+          export_checkpoint(load_checkpoint(checkpoint), Path('/tmp/pr1-model/fixture.pt2'), batch=1, device='cpu')
+          PY
+          bun native/bend_engine/standalone/bind_model.js --header /tmp/pr1-model/fixture.pt2 /tmp/pr1-native/model_contract.h > /tmp/pr1-evidence/binding.json
+          cmake -S native/bend_engine/standalone -B /tmp/pr1-native/neural -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')" -DBEND_GENERATED_C=/tmp/pr1-native/engine.c -DBEND_CONTRACT_DIR=/tmp/pr1-native
+          cmake --build /tmp/pr1-native/neural --parallel 1
+          clang -std=c11 -O3 -DLEGAL_ORACLE -I . native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/cboard-reference
+          python native/bend_engine/standalone/verify_neural.py --checkpoint /tmp/pr1-model/fixture.pt --package /tmp/pr1-model/fixture.pt2 --oracle /tmp/cboard-reference --report /tmp/pr1-evidence/neural.json --command /tmp/pr1-native/neural/deepfin-bend-neural --threads 1 | tee /tmp/pr1-evidence/neural.txt
+      - name: Publish clean feature branch only after checks
+        if: steps.lint.outcome == 'success' && steps.tests.outcome == 'success' && steps.native.outcome == 'success' && steps.neural.outcome == 'success'
+        run: |
+          git diff --check
+          git switch -c feat/neural-work-accounting-20260922
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chess_anti_engine/inference.py chess_anti_engine/neural_work.py docs/neural_work.md native/bend_engine/standalone/NativeEvaluation.bend native/bend_engine/standalone/NeuralWork.bend native/bend_engine/standalone/Protocol.bend native/bend_engine/standalone/README.md native/bend_engine/standalone/main.bend native/bend_engine/standalone/verify_neural.py native/bend_engine/standalone/verify_work.py native/bend_engine/standalone/work_probe.bend scripts/bench_neural_search.py tests/test_broker_served_count.py tests/test_neural_search_benchmark.py tests/test_neural_work.py
+          git commit -m 'bench: unify neural-work accounting and fixed-budget search comparisons'
+          git push origin HEAD:refs/heads/feat/neural-work-accounting-20260922
+          git rev-parse HEAD | tee /tmp/pr1-evidence/published-head.txt
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: deepfin-pr1-tools
-          path: /tmp/pr1-tools.tar.gz
-          retention-days: 1
+          name: deepfin-pr1-validation
+          path: /tmp/pr1-evidence
+          retention-days: 30
+      - name: Require every qualification
+        if: always()
+        env:
+          PATCH: ${{ steps.patch.outcome }}
+          LINT: ${{ steps.lint.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+          NATIVE: ${{ steps.native.outcome }}
+          NEURAL: ${{ steps.neural.outcome }}
+        run: |
+          test "$PATCH/$LINT/$TESTS/$NATIVE/$NEURAL" = 'success/success/success/success/success'
