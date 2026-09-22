@@ -156,3 +156,11 @@ The exact helper bytes used by both CPU attempts were copied with SHA256 receipt
 before subsequent typing/import-loader guards changed the development files.
 GPU cleanup defers INT/TERM/ALRM until the owned child group is killed and reaped;
 real-signal regressions cover a TERM-ignoring child.
+
+The final GPU admission plan is independently approved for queue registration after
+the BT4 pipeline benchmark (19 independent harness tests passed). Immutable runner,
+probe, helper, config and review copies are banked under the registration operation.
+The exact plan SHA is `cc9949d4e4c694111e2f1de1f081325fb469579a90d3e7ca5a9a0607f25f0a15`;
+registered command SHA is `0ee0ba7c32d1ad5afc6f00d7166e63b7634e9f24c2c2da203938f5a756aac3d4`.
+The descriptor and proposed queue item are included in the evidence directory.
+Approval and registration do not constitute completed GPU measurements.
