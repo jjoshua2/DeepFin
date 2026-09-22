@@ -1,0 +1,33 @@
+name: Stop obsolete relative-address qualification
+'on':
+  push:
+    branches: [feat/bend-relative-address-dev-20260922]
+    paths: [.github/workflows/bend-relative-stop-obsolete.yml]
+permissions:
+  actions: write
+  contents: read
+jobs:
+  stop-own-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Cancel only the identified obsolete development run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api repos/jjoshua2/DeepFin/actions/runs/35776424965 > "$RUNNER_TEMP/run.json"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          r=json.loads(Path(os.environ['RUNNER_TEMP'],'run.json').read_text())
+          assert r['id']==35776424965
+          assert r['head_branch']=='feat/bend-relative-address-dev-20260922'
+          assert r['head_sha']=='7c0dd124c6cb66d7ef93772bedcd2431ee349e61'
+          assert r['path']=='.github/workflows/bend-relative-address-qualification.yml'
+          PY
+          status=$(python3 -c 'import json,os; print(json.load(open(os.environ["RUNNER_TEMP"]+"/run.json"))["status"])')
+          if test "$status" != completed; then
+            gh api -X POST repos/jjoshua2/DeepFin/actions/runs/35776424965/cancel
+          fi
