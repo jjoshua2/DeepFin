@@ -1,0 +1,36 @@
+{
+  "question": "Does chunk-aligned read-ahead reduce BT4 source I/O without changing inference inputs/boundaries?",
+  "sequence": [
+    "baseline",
+    "candidate",
+    "candidate",
+    "baseline"
+  ],
+  "rows_per_run": 8192,
+  "batch": 128,
+  "success": "All source/feed/boundary hashes identical per location and median source-read time improves >=15% on at least one location; report total CPU preprocessing separately.",
+  "kill": "Any mismatch or resource breach stops screen. No new inference; no end-to-end GPU throughput claim.",
+  "caps": {
+    "wall_seconds": 600,
+    "cpu_affinity": [
+      14,
+      15
+    ],
+    "threads": 2,
+    "minimum_disk_gib": 150,
+    "minimum_ram_gib": 40
+  },
+  "cache": "Fixed ABBA order; caches uncontrolled. External ZIP already banked; no cache drop/cold-scale claim.",
+  "builder": {
+    "path": "/home/josh/projects/chess-worktrees/labeling-io-20260921/scripts/bt4_derived_wdl_sidecar.py",
+    "sha256": "fb0c6c5754532abcd164d6ea0f3a6116b13e43f125d940d33feed46fad5af027"
+  },
+  "benchmark": {
+    "path": "/tmp/bench_bt4_source_reads.py",
+    "sha256": "ca3cbe176c201398f0088778a408511cd61c89c79ec191a0fbf93b70a3a9d515"
+  },
+  "sources": [
+    "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05_value50/shard_000000.zarr",
+    "/mnt/e/chess_packed_exact32_20260920/shard_000000.zarr.zip"
+  ]
+}

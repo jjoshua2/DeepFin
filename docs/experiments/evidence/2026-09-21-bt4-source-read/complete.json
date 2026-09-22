@@ -1,0 +1,100 @@
+{
+  "status": "PASS_CPU_READ_SCREEN",
+  "summary_ratios": {
+    "nvme": {
+      "source_read_seconds": 3.9052702747019703,
+      "total_cpu_seconds_wall": 1.3100774227427594
+    },
+    "external_zip": {
+      "source_read_seconds": 4.087498870105363,
+      "total_cpu_seconds_wall": 1.3082262610744595
+    }
+  },
+  "records": [
+    {
+      "location": "nvme",
+      "mode": "baseline",
+      "rows": 8192,
+      "steps": 64,
+      "source_read_seconds": 0.3791152650373988,
+      "prepare_and_digest_seconds": 0.9321396688465029,
+      "total_cpu_seconds_wall": 1.3113768739858642,
+      "sequence_sha256": "ea1120c9150f5cccb6e50f1a3ef66bc96489cacc98c221c5759c9b6f91d38de4"
+    },
+    {
+      "location": "nvme",
+      "mode": "candidate",
+      "rows": 8192,
+      "steps": 64,
+      "source_read_seconds": 0.10295026877429336,
+      "prepare_and_digest_seconds": 0.9351005359203555,
+      "total_cpu_seconds_wall": 1.038161643955391,
+      "sequence_sha256": "ea1120c9150f5cccb6e50f1a3ef66bc96489cacc98c221c5759c9b6f91d38de4"
+    },
+    {
+      "location": "nvme",
+      "mode": "candidate",
+      "rows": 8192,
+      "steps": 64,
+      "source_read_seconds": 0.09388625907013193,
+      "prepare_and_digest_seconds": 0.9441002727835439,
+      "total_cpu_seconds_wall": 1.0380879499716684,
+      "sequence_sha256": "ea1120c9150f5cccb6e50f1a3ef66bc96489cacc98c221c5759c9b6f91d38de4"
+    },
+    {
+      "location": "nvme",
+      "mode": "baseline",
+      "rows": 8192,
+      "steps": 64,
+      "source_read_seconds": 0.389584576128982,
+      "prepare_and_digest_seconds": 1.018974918173626,
+      "total_cpu_seconds_wall": 1.4086708429967985,
+      "sequence_sha256": "ea1120c9150f5cccb6e50f1a3ef66bc96489cacc98c221c5759c9b6f91d38de4"
+    },
+    {
+      "location": "external_zip",
+      "mode": "baseline",
+      "rows": 8192,
+      "steps": 64,
+      "source_read_seconds": 0.5617583523271605,
+      "prepare_and_digest_seconds": 0.9518992717494257,
+      "total_cpu_seconds_wall": 1.5137945919996127,
+      "sequence_sha256": "ea1120c9150f5cccb6e50f1a3ef66bc96489cacc98c221c5759c9b6f91d38de4"
+    },
+    {
+      "location": "external_zip",
+      "mode": "candidate",
+      "rows": 8192,
+      "steps": 64,
+      "source_read_seconds": 0.1300428697722964,
+      "prepare_and_digest_seconds": 0.9685711510828696,
+      "total_cpu_seconds_wall": 1.0987363880267367,
+      "sequence_sha256": "ea1120c9150f5cccb6e50f1a3ef66bc96489cacc98c221c5759c9b6f91d38de4"
+    },
+    {
+      "location": "external_zip",
+      "mode": "candidate",
+      "rows": 8192,
+      "steps": 64,
+      "source_read_seconds": 0.13751388806849718,
+      "prepare_and_digest_seconds": 1.0911781110917218,
+      "total_cpu_seconds_wall": 1.2288300479995087,
+      "sequence_sha256": "ea1120c9150f5cccb6e50f1a3ef66bc96489cacc98c221c5759c9b6f91d38de4"
+    },
+    {
+      "location": "external_zip",
+      "mode": "baseline",
+      "rows": 8192,
+      "steps": 64,
+      "source_read_seconds": 0.5318795930361375,
+      "prepare_and_digest_seconds": 0.9991753432550468,
+      "total_cpu_seconds_wall": 1.5311889440054074,
+      "sequence_sha256": "ea1120c9150f5cccb6e50f1a3ef66bc96489cacc98c221c5759c9b6f91d38de4"
+    }
+  ],
+  "plan": {
+    "path": "/home/josh/chess-artifacts/operations/bt4-source-read-20260921/plan.json",
+    "sha256": "fe106a3df3d4d9f4502a59278d52142941f34cfde41c7a270b2c0cf30e66cf9a"
+  },
+  "elapsed_seconds": 10.214223821007181
+}

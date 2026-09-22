@@ -1,0 +1,37 @@
+{
+  "status": "APPROVE_BT4_SOURCE_READ_OPTIMIZATION",
+  "reviewer": "/root/factorial_receipt_review",
+  "checked_utc": "2026-09-22T00:34:12.804522+00:00",
+  "source_sha256": "fb0c6c5754532abcd164d6ea0f3a6116b13e43f125d940d33feed46fad5af027",
+  "tests_sha256": "4c1d0806279ca8ef5f42f43a38a4404647e38819191f2d88050c553b4ec39dbc",
+  "independent_tests": {
+    "passed": 28,
+    "command": "taskset -c16,17 nice -n19 env OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 PYTHONPATH=<worktree> /usr/bin/python3 -m pytest -q -p no:cacheprovider tests/test_bt4_derived_wdl_sidecar.py",
+    "torch_threads": 2
+  },
+  "checks": [
+    "LCM block boundaries preserve original batch start/end, row order and tail",
+    "Fallback preserves original reads when alignment exceeds cap",
+    "STOP/resource guard still called before each inference batch",
+    "Final whole-source storage identity and source summary guards unchanged",
+    "Fake-session producer verifies exact inputs, requested outputs, metadata and output arrays with original read-loop control",
+    "No persistent cache or accumulated batch retention on production path"
+  ],
+  "benchmark": {
+    "complete_sha256": "e1d3f64856f1dc813277df5ade865879c06854e9a45ec72c361c52cbd3c7a397",
+    "plan_sha256": "fe106a3df3d4d9f4502a59278d52142941f34cfde41c7a270b2c0cf30e66cf9a",
+    "all8recorded_runs_match_raw_jsonl": true,
+    "builder_and_benchmark_pins_match": true,
+    "all_sequence_sha256_equal": true,
+    "ABBA_per_location": true,
+    "rows_each": 8192,
+    "inference_boundaries_each": 64,
+    "summary_ratios_independently_recomputed": true
+  },
+  "findings": [],
+  "limitations": [
+    "2048 is per-read/read-ahead cap, not44MiB peak process memory. Previous yielded views and new buffer can coexist at rollover; decoder/feed temporaries also exist. Production residency stays bounded.",
+    "Benchmark measures source reads and CPU feed/digest preparation on one warm/cache-uncontrolled NVMe/ZIP shard; no actual model inference or end-to-end GPU throughput measurement.",
+    "Producer identity records new source code hash; fake-session metadata equality compares read strategies under the same new producer code identity."
+  ]
+}
