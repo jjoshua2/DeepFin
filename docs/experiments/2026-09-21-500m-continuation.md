@@ -343,3 +343,20 @@ separate reviewed 20-minute cap, two threads, nice 19, disk/RAM reserves and
 owned-child cleanup. Preparation is still pending; it is not a GPU result or a
 cold multi-terabyte storage qualification. E's separate full-corpus SF-free
 preparation continues; E training remains unadmitted.
+
+The first larger-storage qualification stopped after 626.29 seconds because the
+strict packed validator rejected preserved root-level `row_provenance.npz` files
+present in 224 of the additional source shards. Packing itself passed byte checks
+in 229.83 seconds. This is a representation-compatibility failure, not evidence of
+storage slowdown or target mismatch. A narrow fix accepts that one root-level
+auxiliary member while retaining archive hashing and all other member checks;
+33 packed-epoch and CPU-trainer tests pass independently. Existing archives and
+failed receipts are preserved. The initial qualification stage took about 396 seconds, completing the directory
+stream before the packed-loader eligibility failure. A fresh 20-minute
+qualification-only budget was authorized before requalification; no samples, targets or GPU decision thresholds were changed.
+
+The fix is published as [PR #817](https://github.com/jjoshua2/DeepFin/pull/817).
+Corrected qualification launched with reviewed plan SHA256
+`e321ca4f189ae00ede1f0e367301d85530f21d9499eb2dc4ffcd15f39a295b79`;
+all 256 archive bytes and staged bindings were independently verified before
+launch. GPU admission remains contingent on both complete streams passing.
