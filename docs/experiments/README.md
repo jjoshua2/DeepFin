@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [256-shard actual-trainer storage preregistration](2026-09-21-packed-trainer256.md) | 35-cohort paired NVMe/ZIP instrumentation; retained-provenance eligibility fix and amended CPU qualification running, GPU unlaunched |
 | [Bend search draws](2026-09-19-bend-search-draws.md) | History-aware automatic leaf draws, terminal-zero cache and native backup; optional claims remain separate |
 | [Bend neural play](2026-09-19-bend-neural-play.md) | Native evaluator across played roots, bounded multi-game queue and host draw policy; CPU lifecycle gate, not trained strength or throughput |
 | [Bend root advancement](2026-09-19-bend-root-advancement.md) | Same-process legal play/search, transactional epoch-bound root changes and retained host history; fresh trees, no subtree reuse or GPU claim |

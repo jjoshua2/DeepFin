@@ -1,0 +1,52 @@
+{
+  "status": "APPROVED",
+  "plan_sha256": "e321ca4f189ae00ede1f0e367301d85530f21d9499eb2dc4ffcd15f39a295b79",
+  "scope": "Authorized amended single20minuteCPU qualification-only correction; noGPU launch or stochastic/throughput reroll.",
+  "runtime_commit": "2fc51585955044e85f09e27e704d86787c47e382",
+  "runtime_entries_independently_verified": 2862,
+  "independent_packed_tests_passed": 33,
+  "independent_worker_tests_passed": 2,
+  "checks": [
+    "Narrowroot row_provenance.npz allowance retainsunsafe/duplicate/compression/pathvalidation; nested/otherNPZ refused; auxbytes remain archivehashcovered andnottensor.",
+    "Allruntime entries and helper/interpreter/originalfailure/packingreceipt/selection pins verified.",
+    "All256current stagedrosters/resolvedtargets andarchivebytes independently matchoriginalbank.",
+    "Worker authenticates exactstaging, allsource-memberbytes andZIPbytes beforestreams andaftereachstream; atomic no-overwrite perstream receipts preserve progress.",
+    "Paired full1963948row tensor/order digest equality required forfinalqualification.",
+    "1192second timer includespreflight plus8secondcleanupreserve; ownedchildgroup cleanup,2cores12/13,threads2,nice19,GPUhidden,40GiBRAM/150GiBdiskfloors and10GiBtotalnewbytes cap retained.",
+    "Parentauthorized fresh20minute amendment beforelaunch because396second firststream implies prior565secondremainingbudget inadequate; original626.29secondfailedreceipt preserved andtotalCPUtime separatelyrecorded."
+  ],
+  "pins": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-cpu-control-20260921/complete.json",
+      "sha256": "b9b4f11e17265b2fc5898af680e7a87d2aaf2bbbf4b7097c8cc1abf4e4d37864"
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/packed-trainer256-20260921/receipt.json",
+      "sha256": "e42f319ccd2c10176979bb6dd6b5217b1c29510814df1ec42f263adb71b832f6"
+    },
+    {
+      "path": "/tmp/packed-trainer256-preparation-plan-20260921.json",
+      "sha256": "be5d0fb0ec0cf0f1c407bdbb057721ba9e8198b479ffe6e9525ec8d6b9afb778"
+    },
+    {
+      "path": "/usr/bin/python3.10",
+      "sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49"
+    },
+    {
+      "path": "/home/josh/projects/chess-worktrees/packed-trainer-20260921/scripts/run_packed_trainer_preparation.py",
+      "sha256": "f3662d9a6293187bf9c7a0ed3da68a9322a76041611a2fda1b5cdc43986cf0b0"
+    },
+    {
+      "path": "/home/josh/projects/chess-worktrees/packed-trainer-20260921/scripts/requalify_packed_trainer.py",
+      "sha256": "18be27e85f4a860ed5f4b1230b65ab934749e13fbddfae7d35f9f07a7aac0e6b"
+    },
+    {
+      "path": "/home/josh/projects/chess-worktrees/packed-trainer-20260921/scripts/qualify_packed_trainer_remaining_worker.py",
+      "sha256": "f8bc6343fe25099b37a04430fd65141cec34001132cdfac39e60b5a18d4f2ad3"
+    }
+  ],
+  "limitations": [
+    "Actualstreamqualification remains unexecuted atreview; successrequired beforeseparateGPU admission.",
+    "Perstream receipts alone are notpairedqualification PASS."
+  ]
+}
