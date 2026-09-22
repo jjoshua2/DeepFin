@@ -1,0 +1,12 @@
+{
+  "id": "factorial58_sffree_20260922_E",
+  "kind": "registered_command",
+  "status": "queued",
+  "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/scheduler_run",
+  "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/registered_command.json",
+  "command_sha256": "ac2cde06eeb4b3daa6db9c0d32ddcbf9a2fd7b13744aa38bae2e8216d6ded20c",
+  "max_seconds": 79800,
+  "estimated_seconds": 47000,
+  "description": "Full fresh exact58M epoch, no clock-truncated epoch",
+  "requires_previous_id": null
+}

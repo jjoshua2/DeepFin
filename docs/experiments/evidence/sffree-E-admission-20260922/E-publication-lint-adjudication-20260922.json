@@ -1,0 +1,27 @@
+{
+  "status": "UNCHANGED_BASELINE_TYPE_FINDINGS",
+  "candidate_count": 14,
+  "baseline_count": 14,
+  "equal": true,
+  "diagnostics": [
+    "tests/test_adaptive_sf_value.py:168:43 - error: Argument of type \"Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group\" cannot be assigned to parameter \"x\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_adaptive_sf_value.py:168:55 - error: Argument of type \"Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group\" cannot be assigned to parameter \"y\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_adaptive_sf_value.py:189:35 - error: Argument of type \"Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group\" cannot be assigned to parameter \"x\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_adaptive_sf_value.py:189:55 - error: Argument of type \"Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group\" cannot be assigned to parameter \"y\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_bt4_policy_mix.py:1189:71 - error: Argument of type \"floating[_16Bit]\" cannot be assigned to parameter \"atol\" of type \"float\" in function \"allclose\"",
+    "tests/test_ceres_derived_sidecar.py:344:54 - error: Argument of type \"Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group\" cannot be assigned to parameter \"y\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_ceres_derived_sidecar.py:415:39 - error: Argument of type \"Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group\" cannot be assigned to parameter \"x\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_ceres_derived_sidecar.py:415:55 - error: Argument of type \"Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group\" cannot be assigned to parameter \"y\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_ceres_onnx_byte_input.py:131:35 - error: Argument of type \"ndarray[Unknown, Unknown] | SparseTensor | list[Unknown] | dict[Unknown, Unknown]\" cannot be assigned to parameter \"x\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_ceres_onnx_byte_input.py:132:43 - error: Argument of type \"ndarray[Unknown, Unknown] | SparseTensor | list[Unknown] | dict[Unknown, Unknown]\" cannot be assigned to parameter \"y\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_derive_observation_provenance.py:114:43 - error: Argument of type \"Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group\" cannot be assigned to parameter \"x\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_derive_observation_provenance.py:114:59 - error: Argument of type \"Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group\" cannot be assigned to parameter \"y\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_sf_allmove_downside.py:81:39 - error: Argument of type \"Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group\" cannot be assigned to parameter \"x\" of type \"ArrayLike\" in function \"assert_array_equal\"",
+    "tests/test_sf_allmove_downside.py:81:59 - error: Argument of type \"Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group\" cannot be assigned to parameter \"y\" of type \"ArrayLike\" in function \"assert_array_equal\""
+  ],
+  "ruff": "PASS",
+  "vulture": "PASS",
+  "candidate_log": "/tmp/E-publication-whole-lint-native-20260922.log",
+  "baseline_log": "/home/josh/chess-artifacts/operations/bt4-source-read-20260921/baseline-typecheck.log",
+  "baseline_other_log": "/home/josh/chess-artifacts/operations/bt4-source-read-20260921/baseline-typecheck-other.log"
+}
