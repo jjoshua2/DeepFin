@@ -99,7 +99,7 @@ Evidence: [independent review](evidence/500m-continuation-20260921/factorial-rev
 [repair receipt](evidence/500m-continuation-20260921/reconciliation.json), and
 [compact results](evidence/500m-continuation-20260921/factorial-results.json).
 Full repair artifacts are under
-`/home/josh/chess-artifacts/operations/factorial58-reconcile-20260921/`.
+`~/chess-artifacts/operations/factorial58-reconcile-20260921/`.
 
 ## Scale optimization readout
 
@@ -146,7 +146,7 @@ identify all completed artifacts, including prepared markers that are stale.
 
 The isolated build completed in 48.11s. Its first loader attempt failed because the
 system libstdc++ lacked GLIBCXX_3.4.32; that attempt is preserved. The successful
-qualification explicitly supplied `/home/josh/.local/gcc-15.3/lib64`, recorded in
+qualification explicitly supplied `~/.local/gcc-15.3/lib64`, recorded in
 the manifest. The deployed engine remains unchanged.
 
 All 648 normal searches (72 cases x 3 settings x 3 engine variants) and 48 option
@@ -181,7 +181,7 @@ is retained; faster SF labels are not evidence that the labels improve training.
 [exact runtime manifest](evidence/500m-continuation-20260921/retention-manifest.json)
 identify the binaries, patch, inputs and harness. All raw observations, the failed
 loader attempt, build logs and exact harness/validator are under
-`/home/josh/chess-artifacts/operations/sf-retain-qualification-20260921/`.
+`~/chess-artifacts/operations/sf-retain-qualification-20260921/`.
 
 
 ## Does SF value supervision earn its cost?
@@ -282,8 +282,8 @@ two CPU threads, nice19, no GPU, one 16-hour cap, 150 GiB disk reserve and
 Failure/STOP/resource tests pass and preserve incomplete artifacts.
 
 Plan, logs and terminal receipt location:
-`/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921`;
-outputs: `/home/josh/chess-artifacts/labels/factorial58_sffree_20260921`.
+`~/chess-artifacts/operations/factorial58-sffree-preparation-20260921`;
+outputs: `~/chess-artifacts/labels/factorial58_sffree_20260921`.
 E training is not launched or queued: it still requires completed full-corpus
 qualification, reviewed exact training admission and D's remaining matches.
 The teacher hypothesis and 500M production qualification remain unresolved.
@@ -308,3 +308,38 @@ These gains address different CPU stages and must not be multiplied into an
 end-to-end speedup. Full GPU-labeling throughput and large cold-working-set
 training remain unqualified. New-position generation is a separate bottleneck.
 No active frozen runtime was changed to adopt these patches.
+
+## Queued complete labeling check and larger storage qualification
+
+[BT4 prefetch #815](https://github.com/jjoshua2/DeepFin/pull/815) adds one bounded
+CPU preparation future ahead of main-thread ONNX inference. It remains off by
+default. Seventy-three tests, independent interrupt/cleanup review and exact
+8,236-row CPU feed/identity parity pass; these do not establish GPU speedup.
+
+[Complete pipeline screen #816](https://github.com/jjoshua2/DeepFin/pull/816)
+compares original serial decoding, projected serial decoding and projected
+prefetch in fixed ABCCBA order at batch 128 on the same 8,236 rows. Its deciding
+metric includes labeling plus deep output verification, with exact actual input,
+raw neural output and stored-array parity. A 5% reduction versus optimized serial
+is required for the prefetch screen. Hash observation cost is included. Nine CPU
+tests and three actual-producer/verifier call-contract smokes pass, along with
+independent code and final launch review. The 20-minute job is queued after D,
+D-C and D-B; append-only readback preserved every prior item and active state.
+
+At 01:22 UTC September 22, D was at 105,688/113,459 updates (93.2%). In its latest
+100 completed windows, training-thread batch preparation/wait accounted for
+1,172.155 of 2,783.746 seconds (42.1%). This phase includes sampler/CPU preparation,
+memory pinning and transfer submission. It is not isolated disk I/O or measured
+GPU idle time. Concurrent CPU work and cache state prevent causal attribution.
+The per-window observations and source snapshot identity are banked in the
+[phase snapshot](evidence/500m-continuation-20260921/D-phase-snapshot.json).
+This supports prioritizing the data-to-training path, while leaving the storage
+comparison to determine the external drive's effect.
+
+The larger storage preparation selects 256 unique shards across 35 cohorts,
+1,963,948 rows, for an actual GPU trainer comparison of external ZIP against
+NVMe directories. CPU packing and full-stream qualification launched under a
+separate reviewed 20-minute cap, two threads, nice 19, disk/RAM reserves and
+owned-child cleanup. Preparation is still pending; it is not a GPU result or a
+cold multi-terabyte storage qualification. E's separate full-corpus SF-free
+preparation continues; E training remains unadmitted.
