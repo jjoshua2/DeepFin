@@ -1,0 +1,19 @@
+{
+  "native/bend_engine/standalone/proofs/storage/Build.bend": "4859dd6c15f0ec33c63607cba33fa4891e32d671fb2d17c6b0f04476376905ae",
+  "native/bend_engine/standalone/proofs/storage/Fill.bend": "5e5598fd8aec1e65680a91953b029a9256deafd85e96c7b0ae9a6a4d79d0294a",
+  "native/bend_engine/standalone/proofs/storage/Initialize.bend": "df9a8e127908e60f687170dbf1c532c4f6dcff20f14a4282b624cf954eeb35ce",
+  "native/bend_engine/standalone/proofs/storage/LAWS.bend": "0c54bd8cd58ee1679ea93d2fe17d35c2ed74c36aa7ee7260bc4dc1914b12a671",
+  "native/bend_engine/standalone/proofs/storage/Model.bend": "147b9fa371bb6066e1adcbe70bb85aab9ca931eb6465af49626c633ea23bca5a",
+  "native/bend_engine/standalone/proofs/storage/Observe.bend": "51d1b811b9ed4933db9672d0348490e2e017110460dd473d33a0fe6bde6b292b",
+  "native/bend_engine/standalone/proofs/storage/PROOF.bend": "fc84559c8500eca28dca432acc886e47b4164d4e0ea352af1c6299f977138dc3",
+  "native/bend_engine/standalone/proofs/storage/README.md": "c499d8bcff11df3aacd63b251c1d6dd3811c277af65648798af63bb720ed6752",
+  "native/bend_engine/standalone/proofs/storage/Read.bend": "4df305d3b934e27d4c12e3049f337b1ae5312bb1ff428b98b048c4d9b2fbfaa1",
+  "native/bend_engine/standalone/proofs/storage/Refinement.bend": "73da23ca26992ca657505a4daeacdbbfe3f9004943bd14948af15c47a7ba8647",
+  "native/bend_engine/standalone/proofs/storage/Representation.bend": "1703fb62ab133fbfd4fa8155fa59dc19d1fa87ce2d838c92453eed516fbc9e2d",
+  "native/bend_engine/standalone/proofs/storage/Roundtrip.bend": "05d00fbc9089cb176c434c8042e2220344ce643c8dcd1c2155c623d195d43a54",
+  "native/bend_engine/standalone/proofs/storage/Write.bend": "a12f1778b8d176939174df2050e8ae00c03f20af55eeae3fc7c5744abe47ca41",
+  "native/bend_engine/standalone/proofs/storage/consumer.bend": "0d6ed1918cbb65d7749c99c6f90631b5d3bade26b22e278d69e8912d699e5c57",
+  "native/bend_engine/standalone/proofs/storage/probe.bend": "cdedd4e7858f3ffba635b3f5a8878af3081f2d461680df371674a9089d41061d",
+  "native/bend_engine/standalone/proofs/storage/verify.js": "b52beb28367f2475897669fe9401b85076e6a1a9191c262ad06424d7ae9d33c0",
+  "native/bend_engine/standalone/proofs/storage/verify_native.js": "ee3141b09cd8a9278661c5a7273b8f55f05a47b281e2b7b995e3d1f9535cad65"
+}
