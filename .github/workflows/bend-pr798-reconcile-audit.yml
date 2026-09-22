@@ -1,0 +1,50 @@
+name: Bend PR798 reconciliation audit
+on:
+  push:
+    branches: [fix/bend-pr798-ci-reconcile-20260921]
+    paths: [.github/workflows/bend-pr798-reconcile-audit.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fd4e751b0dccd01194c568b9a1ef6626b1b00c13
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Preserve exact parents, feature delta and conflict contents
+        run: |
+          git fetch --no-tags https://github.com/jjoshua2/DeepFin.git ac8107a712838e0d3f548bcfdc0d917b587e8a86
+          mkdir -p /tmp/bend-pr798-review
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          out = Path('/tmp/bend-pr798-review')
+          head = 'fd4e751b0dccd01194c568b9a1ef6626b1b00c13'
+          base = 'ac8107a712838e0d3f548bcfdc0d917b587e8a86'
+          original_base = '3b6047ddfc08d9aed43da37aff8f2db218f84d98'
+          original_head = '43bfad24787bd94f37b4884bf7b8617b02a3ce3d'
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          result = subprocess.run(['git', 'merge-tree', '--write-tree', '--messages', head, base], capture_output=True, text=True, check=False)
+          assert result.returncode in (0, 1), result.stderr
+          (out / 'merge.txt').write_text(result.stdout + '\nSTDERR\n' + result.stderr)
+          (out / 'merge.patch').write_bytes(subprocess.check_output(['git', 'diff', head, result.stdout.splitlines()[0]]))
+          feature_paths = git('diff', '--name-only', original_base, original_head).splitlines()
+          report = {'head': head, 'base': base, 'head_tree': git('rev-parse', head+'^{tree}'), 'base_tree': git('rev-parse', base+'^{tree}'), 'merge_clean': result.returncode == 0, 'original_feature_paths': feature_paths}
+          (out / 'summary.json').write_text(json.dumps(report, indent=2) + '\n')
+          for name, sha in [('head',head), ('base',base), ('original-head',original_head), ('original-base',original_base)]:
+              subprocess.run(['git','update-ref','refs/audit/'+name,sha],check=True)
+          subprocess.run(['git','bundle','create',str(out/'review.bundle'),'refs/audit/head','refs/audit/base','refs/audit/original-head','refs/audit/original-base'],check=True)
+          print(json.dumps(report, indent=2))
+          print(result.stdout)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-pr798-reconcile-review
+          path: /tmp/bend-pr798-review/
+          retention-days: 7
