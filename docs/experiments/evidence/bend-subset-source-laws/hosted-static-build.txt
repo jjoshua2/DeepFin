@@ -1,0 +1,43 @@
+verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4
+All terms check, but 17 defs rely on unsafe or foreign code:
+- Wire.poll
+- model_reply
+- evaluate_reply
+- adjudicated
+- history_checked
+- rebuilt
+- evaluated
+- prepared
+- progress
+- elapsed
+- tick_mode
+- packet
+- serve
+- launch
+- native_launch
+- opened
+- main
+Run: /home/runner/work/_temp/subset-material/deepfin-bend --threads 1
+	Command being timed: "bash native/bend_engine/standalone/build.sh /home/runner/work/_temp/subset-material /home/runner/work/DeepFin/DeepFin/.compiler static"
+	User time (seconds): 94.78
+	System time (seconds): 6.02
+	Percent of CPU this job got: 154%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:05.30
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 13411580
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 11
+	Minor (reclaiming a frame) page faults: 3811017
+	Voluntary context switches: 38238
+	Involuntary context switches: 13787
+	Swaps: 0
+	File system inputs: 11528
+	File system outputs: 25808
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
