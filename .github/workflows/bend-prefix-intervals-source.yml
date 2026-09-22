@@ -1,0 +1,31 @@
+name: Bend prefix interval source
+'on':
+  push:
+    branches: [feat/bend-prefix-intervals-dev-20260922]
+    paths: [.github/workflows/bend-prefix-intervals-source.yml]
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b85b4b3620a815150736e4a6ac2858d372160917
+          persist-credentials: false
+      - name: Archive exact source and identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prefix-source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/prefix-source/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/prefix-source/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/prefix-source/tree.txt"
+          cd "$RUNNER_TEMP/prefix-source"
+          sha256sum source.tar.gz commit.raw > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-prefix-intervals-source
+          path: ${{ runner.temp }}/prefix-source/
+          retention-days: 3
