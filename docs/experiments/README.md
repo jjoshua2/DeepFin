@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Native async lifecycle](2026-09-22-native-async-lifecycle.md) | Bounded worker ownership, exact cancellation/retirement and separate real CPU-model qualification; no asynchronous UCI or GPU claim |
 | [Native policy-map and buffer reuse](2026-09-22-native-buffer-reuse.md) | Linear Bend-owned reusable storage, packed transport and opt-in diagnostics; bounded CPU qualification |
 | [Bend-owned native neural leaves](2026-09-21-bend-native-leaf.md) | Actual search inputs and legal priors in Bend, native model execution without Python runtime; CPU fixture only |
 | [Bend policy/input composition](2026-09-21-bend-policy-composition.md) | Recovered Bend policy vocabulary paired with complete input from one Game; no inference or Python runtime |
