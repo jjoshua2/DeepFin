@@ -1,0 +1,26 @@
+{
+  "base": "b85b4b3620a815150736e4a6ac2858d372160917",
+  "source": "34d40b0a8e897fb48536a40fee1c2ea443431b70",
+  "candidate_tree": "ee69ab6c6053899f3b990771c1f072b66a85d096",
+  "changed_files": [
+    "docs/experiments/2026-09-22-bend-prefix-intervals.md",
+    "native/bend_engine/standalone/proofs/prefix/Builder.bend",
+    "native/bend_engine/standalone/proofs/prefix/Certified.bend",
+    "native/bend_engine/standalone/proofs/prefix/Facts.bend",
+    "native/bend_engine/standalone/proofs/prefix/LAWS.bend",
+    "native/bend_engine/standalone/proofs/prefix/Monotone.bend",
+    "native/bend_engine/standalone/proofs/prefix/Nats.bend",
+    "native/bend_engine/standalone/proofs/prefix/Order.bend",
+    "native/bend_engine/standalone/proofs/prefix/PROOF.bend",
+    "native/bend_engine/standalone/proofs/prefix/README.md",
+    "native/bend_engine/standalone/proofs/prefix/Size.bend",
+    "native/bend_engine/standalone/proofs/prefix/Spec.bend",
+    "native/bend_engine/standalone/proofs/prefix/consumer.bend",
+    "native/bend_engine/standalone/proofs/prefix/focused.js",
+    "native/bend_engine/standalone/proofs/prefix/probe.bend",
+    "native/bend_engine/standalone/proofs/prefix/verify.js",
+    "native/bend_engine/standalone/proofs/prefix/verify_native.js"
+  ],
+  "transfer": "direct tree entries; exact original Facts blob restored before candidate creation",
+  "production_changed": false
+}

@@ -105,3 +105,26 @@ The corrected original source, not the malformed copy, is the candidate. An
 unreferenced alternative transport blob was discarded without application or
 execution. These are transfer artifacts, not source-law or compiler changes.
 The full candidate tree must match the local tree before hosted execution.
+
+
+## Hosted qualification and publication
+
+Hosted run **35747413010**, temporary workflow commit `647db192fd1004c897824e72a06699171a8a68de`, passes **74 accepted laws and 126 rejection controls**, all four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `34d40b0a8e897fb48536a40fee1c2ea443431b70`.
+
+The complete tree ee69ab6c6053899f3b990771c1f072b66a85d096 matches the inspected local source. Every native/proof source digest is checked before and after qualification. The aggregate retains the unchanged 68-law/107-control separation gate, then checks the six-law/19-control prefix gate. No earlier law or rejection control is removed. Local full aggregate execution is not claimed.
+
+The public caller provides only n+k<=128 or the stated finite key-order bounds. All actual-size certificates are constructed using the explicitly imported existing layout proof. The actual table-loop equality quantifies over the complete affine array, not only scalar counters or an ideal buffer. It equates schedules of the original operations; it does not independently prove the slider function or every initialized final lookup.
+
+Ten controls require ordinary affected-refinement failures, including wrong prefixes, widened arithmetic, geometric sizes, actual header addresses, next-prefix updates and fill counts. Nine additional controls protect proof/import manifests, existing certificate producers, no holes/foreign/symlinked proofs and exact successful checker output. Crashes, missing-file errors and timeouts are not counted as semantic rejection.
+
+Each native mode compares all 131,072 returned cells in five executions: zero, one, 64 and 128 actual slider-block loops with nonzero seeds, plus actual Tables.build with zero initialization and extras. That is 655,360 cell comparisons per mode; all 128 chess keys, reserved metadata and unused slack are covered. Seven invalid requests are rejected per mode. The full native report matches the local canonical result except the separately recorded C compiler identity. Modes repeat the same fixtures, not disjoint datasets or arbitrary-U64 exhaustiveness.
+
+Tools: Bun 1.4.2, Ubuntu clang version 18.1.3 (1ubuntu1), locked Python 3.13 CPU environment with uv 0.12.10. Original compiler source laws/seven controls and all 12 pin contracts pass. The unchanged Ruff/Basedpyright/Vulture gate passes, resolving the historical local missing-tool lint gap. Compiler-fork strict-TypeScript and diagnostic-depth limitations remain separately unresolved and unsuppressed.
+
+The six public contracts remain unchanged after qualification. A separate proposed closed Tables.build source equality was never accepted and is not counted: its direct normalization exceeded a bounded construction check. Actual build execution is native-tested, while the general n+k<=128 table-loop theorem is source-proved. No earlier accepted theorem was weakened to handle this distinction.
+
+After qualification only compact evidence, the experiment index and the migration matrix are added. Full logs are retained in artifact bend-prefix-intervals-qualification for 30 days; compact reports are committed. Self-review only, not independent review. No production runtime code, previous law, compiler input, existing test, permanent workflow or routine perft budget changed.
+
+The feature branch `feat/bend-prefix-intervals-20260922` receives only a fast-forward evidence/documentation commit. No merge, force push, deployment or live-process change. Temporary recovery/qualification workflows and unused transfer objects are excluded from the feature tree.
+
+Next acceptance: derive normalized separation/clear certificates for every interior address from the now bounded ordered prefix intervals, combine them with frame/ordinal lemmas to prove final computed contents, and connect actual lookup to independent blocker-ray geometry. Endpoint normalization and native full-buffer parity do not replace those source contracts. Python export/data/control/training and transitional C++/LibTorch/AOTI remain dependencies; no model/GPU, engine strength or speedup claim is added.

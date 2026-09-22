@@ -1,6 +1,12 @@
 # Bend migration and proof inventory
 
-## Latest storage-separation qualification: September 22, 2026
+## Current prefix qualification: September 22, 2026
+
+Hosted run **35747413010**, temporary workflow commit `647db192fd1004c897824e72a06699171a8a68de`, passes **74 accepted laws and 126 rejection controls**, all four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `34d40b0a8e897fb48536a40fee1c2ea443431b70`.
+
+`prefix/prefix_widening`, `prefix_in_allocation` and `logical_end` cover every cumulative endpoint through 128. `step_no_overflow` and `blocks_ordered` use the actual block size, with its certificate derived from the existing layout proof. `tables_follow_prefix` equates the actual complete affine-array result with the independently bounded schedule for every n+k<=128. Endpoints range from 512 to 108160 within capacity 131072. This does not yet derive every interior path certificate or final blocker-ray lookup theorem. See [the dated record](experiments/2026-09-22-bend-prefix-intervals.md). Older qualification sections retain historical scope. No Python responsibility or model/GPU/performance result is added.
+
+## Historical storage-separation qualification: September 22, 2026
 
 Hosted qualification **35728145361**, temporary workflow commit `82b49583a60ddcd9cd29408abcdd59e208eef409`, passes **68 accepted laws and 107 rejection controls**, all four native modes, original compiler source/pin checks and the unchanged whole-repository lint gate on source `4a0e442cc701b38a5ccd93938f28e421be5b4f9a`.
 
@@ -10,7 +16,7 @@ These four source laws import actual Array and Tables operations through the exi
 
 The remaining P2 gap is proving that actual numeric prefix intervals produce separated normalized paths with no overflow, then establishing final initialized contents and independent blocker-ray lookup equality. Historical statements below that other-slot preservation is wholly unproved are superseded only by these explicit conditional frame laws, not by a complete prefix or lookup theorem. See [the dated readout](experiments/2026-09-22-bend-storage-separation.md) and committed evidence. No Python responsibility, full engine/model/GPU or benchmark result is added.
 
-## Latest hosted storage qualification
+## Historical hosted storage qualification
 
 Hosted run **35711968651**, temporary workflow commit `ae80e948fdd5ef12011a8d9f5d9ed98462df0968`, passes all **64 accepted laws**, **90 rejection controls** (18 new plus 72 retained), four native modes, original compiler source/pin checks and unchanged whole-repository lint on exact parent `290fc01a10517374518e505f9855c7d4a9a5d956`. The dated table-storage record and committed reports retain exact identities, original local limitations and remaining trust boundaries. Prefix/nonaliasing/full-lookup geometry remain open; these are eight new actual-buffer laws, not completion of P2.
 
@@ -130,8 +136,8 @@ No proof holes, unsafe dependencies, foreign witnesses or new axioms are accepte
 
 | Target | Current evidence / partial progress | Still required; do not relabel as proved |
 | --- | --- | --- |
-| P1: subset enumeration / slider indices | General ordinal/coverage/period, chess-mask/size bounds, and now exact actual U32/full-PEXT and ordinal/coverage correspondence are source-proved. The address increment is locally qualified with all 56 laws. | Actual prefix-offset arithmetic and its no-overflow/region bounds remain; connect exact indices and the recurrence to affine writes/reads. Scalar correspondence is not total Array-region safety. |
-| P2: table/lookup refinement | Native `Tables.build` matches all 108,160 C-reference logical entries; independent geometric rays check slider values. | Independent square/rank/file/ray specification, step boundaries, blockers, mask correctness, initialized regions, disjoint offsets/no overflow, affine writes and actual `Chess.bend` lookup refinement. |
+| P1: subset enumeration / slider indices | General ordinal/coverage/period, exact scalar lookup, chess-mask bounds and actual prefix widening/order are source-proved. The table-loop result equals the explicit prefix schedule for n+k<=128. | Derive interior normalized-path certificates and use actual array framing for final contents. Scalar and prefix arithmetic are not complete lookup/geometry refinement. |
+| P2: table/lookup refinement | Actual array write/read and conditional frame laws; six prefix laws add bounded widened arithmetic, ordered block endpoints and full-array Tables.tables schedule equality. Four-mode complete-buffer parity also passes. | All interior normalized separation/clear certificates, final computed initialization, independent mask/blocker-ray geometry and actual Chess.bend lookup refinement. Native parity is not this universal theorem. |
 | P3: board / moves / perft | Existing legality/special-move/perft reference tests; no new perft budget or depth. | Named orthodox-chess specification and FIDE edition, board invariants, special moves and legal-move soundness/completeness/no duplicates; legal-tree recurrence separate from draw pruning and machine-counter overflow. |
 | P4: history / rules / parser / UCI | Native reconstructed paths and draw/parser/protocol checks, including transactional rejection. | Quantified history reconstruction, EP/repetition/windows/clocks/mate precedence, sufficient material-case soundness, claim witnesses, parsing bounds/replay and pure controller safety. Responsiveness also needs scheduling/progress assumptions. |
 | P5: input / policy | Native complete input and paired policy tests for supported corrected root layouts. | Logical bounds/initialization, perspective/temporal repetition, feature formulas, valid-domain forward/reverse mappings, sentinel exclusion and one-Game binding with affine observations. No unrestricted Full4672/compact1858 bijection. |
