@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Relative table-address bounds](2026-09-22-bend-relative-address-bounds.md) | Six source laws connect actual U32 prefix-plus-index sums to bounded ordered regions and real cross-block array preservation; metadata and final fill contents remain separate |
 | [Complete-tree route separation](2026-09-22-bend-complete-tree-routes.md) | Four real-array laws derive separated leaf paths and other-index preservation from complete shape and bounded unequal addresses; actual initialization/builders supply shape |
 | [Bounded address normalization](2026-09-22-bend-address-normalization.md) | Five source laws eliminate the actual allocation mask for all bounded addresses and connect real affine APIs; tree-route injectivity and final contents remain separate |
 | [Actual prefix intervals](2026-09-22-bend-prefix-intervals.md) | Six source laws connect ordered, widened prefix arithmetic to the actual complete-array table loop; interior path certificates and final ray geometry remain separate |

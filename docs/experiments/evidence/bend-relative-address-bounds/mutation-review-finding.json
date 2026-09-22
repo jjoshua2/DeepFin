@@ -1,0 +1,38 @@
+{
+  "initial_report": "historical-initial-controls.json is a reported harness PASS, not successful semantic qualification of its two misdirected controls",
+  "finding": "Untyped zero failed inference in U64.add; U32 off-by-one failed the preexisting Base U32.add_comm proof before the new refinement",
+  "correction": "Use well-typed zero and a well-typed U64 low-half increment; reject cannot-infer and other malformed-program diagnostics and require safe_from_wide/widening rejection locations",
+  "obsolete_hosted_run": 35776424965,
+  "action": "Own obsolete run cancelled during source checking before native/lint/publication; no full aggregate result or published feature branch from that run",
+  "source_laws_changed": false,
+  "records": [
+    {
+      "mutation": "actual-u32-add-off-by-one",
+      "status": {
+        "command": [
+          "/mnt/data/relative-tools/bun",
+          "/mnt/data/relative-review/actual-u32-add-off-by-one/main.ts",
+          "/mnt/data/relative-review/snapshot/native/bend_engine/standalone/proofs/relative/Add.bend"
+        ],
+        "exit_code": 1,
+        "elapsed_seconds": 0.16491896100001213
+      },
+      "original_sha256": "99019784df41a7c249285f98e0948ea42cef3b4c7e708b7e936b13237ac7f9dc",
+      "raw_text": "Error:\n- expected : {U32{Word.adc(32n, x, y, False{}, True{})} == U32{Word.adc(32n, y, x, False{}, True{})} : U32}\n- observed : {U32{Word.adc(32n, x, y, False{}, False{})} == U32{Word.adc(32n, y, x, False{}, False{})} : U32}\nContext:\n- x : Word.Con<31n>\n- y : Word.Con<31n>\nLocation: U32.add_comm\n1358 |     case U32{x} U32{y}:\n1359>|       Equal.cong(Word(32n), U32, w => U32{w}, Word.add(32n, x, y),\n1360 |         Word.add(32n, y, x), Word.add_comm(32n, x, y))\n"
+    },
+    {
+      "mutation": "actual-wide-add-discards-carry",
+      "status": {
+        "command": [
+          "/mnt/data/relative-tools/bun",
+          "/mnt/data/relative-review/actual-wide-add-discards-carry/main.ts",
+          "/mnt/data/relative-review/snapshot/native/bend_engine/standalone/proofs/relative/Add.bend"
+        ],
+        "exit_code": 1,
+        "elapsed_seconds": 0.16721812900004807
+      },
+      "original_sha256": "75061a09e8e5084779424d27d9bb6e8372e27be553d358aa676ba2229a355896",
+      "raw_text": "Error:\n- expected : an annotated term (cannot infer)\n- observed : 0\nContext:\n- alo : U32\n- ahi : U32\n- blo : U32\n- bhi : U32\n- lo  : U32\nLocation: U64.add\n1649 |       +lo = U32.add(alo, blo)\n1650>|       carry = 0\n1651 |       U64{lo, U32.add(U32.add(ahi, bhi), carry)}\n"
+    }
+  ]
+}
