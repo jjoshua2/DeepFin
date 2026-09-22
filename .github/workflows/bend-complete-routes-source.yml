@@ -1,0 +1,30 @@
+name: Complete route source recovery
+'on':
+  push:
+    branches: [feat/bend-complete-routes-dev-20260922]
+    paths: [.github/workflows/bend-complete-routes-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e680c126908d1e816f31c38b7e3255e196e6f174
+          persist-credentials: false
+      - name: Archive exact baseline without executing application code
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/source/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/source/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/source/tree.txt"
+          (cd "$RUNNER_TEMP/source" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: complete-routes-source
+          path: ${{ runner.temp }}/source/
+          retention-days: 3
