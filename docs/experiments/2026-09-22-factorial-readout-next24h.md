@@ -123,3 +123,33 @@ entries, preserving every unrelated queue item and the active state.
 Host readback found the restarted supervisor and its owned storage GPU process
 active, with about 851 GiB free locally and 6.7 TiB on the external drive. These
 are point-in-time observations, not a guarantee against future runtime failures.
+
+
+## User-requested allocation amendment — September 22, before E121-D121 result
+
+The user no longer wants the second seed to run automatically if the first
+SF-free result is sufficient for a practical cost/quality decision. D122, E122
+and E122-D122 are now held pending that decision. E121 training and E121-D121
+remain unchanged. This explicitly supersedes the fixed-replication allocation
+above; no result has been read to choose the amendment. The
+[hold receipt](evidence/factorial-next24h-20260922/second-seed-user-hold.json)
+verifies preservation of active work and all unrelated queue items.
+
+Cost clarification: the approximately 80-day d8 estimate described generation
+of the remaining positions through SF-guided games, whereas the approximately
+8-day BT4 estimate described labeling already available positions. They are
+separate stages. E changes value targets on the same already-generated corpus;
+it does not qualify cheaper position generation or establish its playing strength.
+
+The user's preferred research direction is an inexpensive bulk pipeline with
+selective SF contribution, rather than pure BT4/Ceres distillation. Candidate
+SF uses include tactical corrections, neural-teacher disagreements and endgame
+positions; tablebase-covered positions can supply exact endgame supervision
+subject to correct rule/position semantics. Outside that coverage, deeper SF
+remains a fallible teacher. Selection must be compared with an equal-cost random
+allocation, since teacher disagreement alone does not establish correctness.
+A shallow d7 bulk screen is a candidate, not an adopted setting: prior profiling
+found engine-reset overhead can dominate shallow search, so lower depth does
+not establish proportional cost savings. No new labeling/training job is launched
+by this amendment. A genuinely non-distillation source of improvement would
+also require search/outcome supervision, whose generation cost must be measured.
