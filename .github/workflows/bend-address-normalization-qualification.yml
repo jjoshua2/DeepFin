@@ -1,0 +1,175 @@
+name: Bend address normalization qualification
+'on':
+  push:
+    branches: [feat/bend-address-normalization-dev-20260922]
+    paths: [.github/workflows/bend-address-normalization-qualification.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: fa1afc75ee652d5b13f5788abfc36d9545010df9
+      SOURCE: a26e59f7168519c7de9720b9edb7967ef0650d97
+      TARGET: feat/bend-address-normalization-20260922
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a26e59f7168519c7de9720b9edb7967ef0650d97
+          fetch-depth: 2
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Verify exact candidate and unchanged production sources
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/normalization-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^1)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = 166ca47788da93ad29a9c5da7b3668fb35f89c94
+          test "$(git rev-parse HEAD^1^{tree})" = 5d9df02609c7296fd6b4a26118b1d202b1ff8911
+          git diff "$BASE" HEAD --check
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          files=subprocess.check_output(['git','diff',os.environ['BASE'],'HEAD','--name-only'],text=True).splitlines()
+          allowed={'docs/experiments/2026-09-22-bend-address-normalization.md','docs/experiments/evidence/bend-address-normalization/local-raw-native-lowering-failure.json'}
+          assert len(files)==14
+          assert all(f.startswith('native/bend_engine/standalone/proofs/normalization/') or f in allowed for f in files),files
+          tracked=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in tracked if Path(f).is_file()}
+          e=Path(os.environ['EVIDENCE'])
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'source-identity.json').write_text(json.dumps({'base':os.environ['BASE'],'source':os.environ['SOURCE'],'candidate_tree':'166ca47788da93ad29a9c5da7b3668fb35f89c94','changed_files':files,'production_changed':False,'transfer':'Direct Git tree entries; full candidate tree matches local index including preserved final parent note'},indent=2)+'\n')
+          failure=json.loads(Path('docs/experiments/evidence/bend-address-normalization/local-raw-native-lowering-failure.json').read_text())
+          assert hashlib.sha256(failure['raw_source'].encode()).hexdigest()==failure['source_sha256']
+          assert hashlib.sha256(failure['raw_log'].encode()).hexdigest()==failure['log_sha256']
+          assert failure['observed_status']==1
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Retain all 74 prior laws and check five normalization laws
+        timeout-minutes: 48
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/normalization/verify.js "$PWD/.compiler" --report "$EVIDENCE/proofs.json" 2>&1 | tee "$EVIDENCE/source-gate.log"
+      - name: Qualify supported public Array APIs in four native modes
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/normalization/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native-gate.log"
+      - name: Recheck original compiler source laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development environment
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint once
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify local agreement and retain exact qualification evidence
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-prefix-intervals-20260922 | cut -f1)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          p=json.loads((e/'proofs.json').read_text());n=json.loads((e/'native.json').read_text())
+          assert p['proof_gate']=='PASS' and p['aggregate_law_count']==79 and p['new_law_count']==5
+          assert p['inherited_law_count']==74 and p['inherited_negative_controls']==126
+          assert len(p['negative_controls'])==14 and all(x['rejected'] for x in p['negative_controls']) and p['consumer']=='PASS'
+          focused={'focused_gate':'PASS',**{k:p[k] for k in ['compiler_revision','source_files','source_sha256','new_law_count','new_laws']},'inherited_gate_run':False,**{k:p[k] for k in ['negative_controls','consumer','source_sha256s','scope']}}
+          def canonical(v):
+              return hashlib.sha256(json.dumps(v,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          assert canonical(focused)=='9c1c4ab343ffe4bb53261cafff9e5d874a02b32d1c6e8518a3d4dcbcb2c7553c'
+          assert canonical({k:v for k,v in n.items() if k!='cc'})=='ce99d3e55f2594141718354ed3aac9671e8e5d5e98271ad4041a08601c02940c'
+          assert n['native_gate']=='PASS' and n['fixture_rows']==74 and n['in_range_rows']==64 and n['out_of_range_wrapper_rows']==10
+          assert n['allocation_cells']==131072 and len(n['modes'])==4
+          assert all(x['invalid_rejections']==6 and x['output_sha256']=='8d1c4b88ed54862d8f22e6fe0d1872c2e7766fb81b2b60bcf4ae91d1fbeb00e7' for x in n['modes'])
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for f,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          for f,h in p['source_sha256s'].items():
+              assert hashlib.sha256((Path('native/bend_engine')/f).read_bytes()).hexdigest()==h,f
+          comparison={'comparison':'PASS','focused_report_canonical_sha256':canonical(focused),'native_except_cc_canonical_sha256':canonical({k:v for k,v in n.items() if k!='cc'}),'scope':'Focused local report matches. Native report matches except C compiler identity. Full 79-law aggregate and repository lint are first executed hosted for this candidate.'}
+          (e/'local-hosted-comparison.json').write_text(json.dumps(comparison,indent=2)+'\n')
+          d=Path('docs/experiments/evidence/bend-address-normalization')
+          for name in ['proofs.json','native.json','compiler-proofs.json','candidate-source-sha256.json','source-identity.json','local-hosted-comparison.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];sha=os.environ['GITHUB_SHA']
+          summary=f"Hosted run **{run}**, temporary workflow commit `{sha}`, passes **79 accepted laws and 140 rejection controls**, supported public-API tests in four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `{os.environ['SOURCE']}`."
+          record=Path('docs/experiments/2026-09-22-bend-address-normalization.md')
+          sections=['## Hosted qualification and publication',summary,
+            'The aggregate invokes the unchanged 74-law/126-control prefix gate, then the five-law/14-control normalization gate. The focused contract/control/source report matches the saved local canonical identity; the complete native report matches except the recorded C compiler version. Every candidate native/proof source hash is checked before and after qualification. No previous law or gate was omitted or modified.',
+            'The native probe executes only supported public Array.get/set/size APIs, using a complete 131072-cell allocation for each fixture. Each mode passes 74 rows (64 in-range and ten out-of-range wrapper cases), and rejects six malformed requests. Observations are query values, capacity and mask values, not complete returned-cell comparisons. Repeated modes are not disjoint datasets or exhaustive arbitrary-input native tests.',
+            f"Tools: Bun {n['bun']}, {n['cc']}, locked Python 3.13 CPU development environment and uv 0.12.10. Original compiler source laws and seven controls including cyclic-template rejection pass, and all 12 compiler-pin tests pass. Whole-repository Ruff/Basedpyright/Vulture passes unchanged; it was not rerun locally without its locked environment.",
+            'The exploratory direct-internal-routine C generation failure remains unresolved: open Array element type. Its original source and command-output bytes are committed with SHA-256 identities. The passing public-wrapper native probe is explicitly narrower and does not qualify direct calls to Array.get.go/swap.go. Source equalities involving those routines do check. No compiler edit, continue-on-error or relabeling of the failed probe was used.',
+            'The complete source tree 166ca47788da93ad29a9c5da7b3668fb35f89c94 matches the locally prepared index with the final parent reconciliation note preserved. Local baseline proof/native bytes came from the previous parent evidence commit; its final note is the only later change. Publication adds evidence, index and matrix documentation only after qualification. Full logs remain in the 30-day artifact bend-address-normalization-qualification; compact reports are committed.',
+            'Mask injectivity is a numeric result. Distinct bounded integers reaching distinct leaves of a balanced tree, prefix-plus-interior bounds, clear-path certificates, final computed table contents and independent blocker-ray lookup remain separate unfinished targets. Observed capacity alone does not require a balanced tree. No source theorem assumes its desired read value as a premise.',
+            f"Branch `{os.environ['TARGET']}` is advanced by a documentation/evidence commit only. No merge, force push, deployment or live-process change; the temporary workflow is excluded from this feature branch. Self-review only, not independent review. No production code, previous proof, compiler input, existing test or routine perft budget changes. No full-engine/model/GPU/training/benchmark result. Python export, data/control orchestration, external references and training, and transitional C++/LibTorch/AOTI inference remain dependencies. Historical compiler TypeScript/diagnostic-depth limits are not fixed or suppressed."
+          ]
+          record.write_text(record.read_text()+'\n\n'+'\n\n'.join(sections)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n'
+          assert text.count(anchor)==1
+          row='| [Bounded address normalization](2026-09-22-bend-address-normalization.md) | Five source laws eliminate the actual allocation mask for all bounded addresses and connect real affine APIs; tree-route injectivity and final contents remain separate |\n'
+          index.write_text(text.replace(anchor,anchor+row,1))
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          lines=['## Latest address-normalization qualification: September 22, 2026',summary,
+            '`normalization/bounded_mask_identity` proves i & 131071 == i for every U32 i<131072. `bounded_mask_injective` establishes numeric injectivity on that domain. `bounded_read_direct` and `bounded_write_direct` connect actual public affine wrappers to their unmasked internal source routines when the observed array capacity is 131072. `bounded_separation_direct` eliminates normalization from the existing path predicate under the same capacity and both address bounds. The capacity is observed from the actual array, not an assumed read result, and the consumer certifies the actual depth-17 allocation with arbitrary seeds.',
+            'These five laws do not yet derive distinct leaf paths from unequal numeric addresses or bound every prefix-plus-lookup addition. Balanced-tree route injectivity, clear-path certificates, final initialized/computed table contents and independent blocker-ray lookup remain the next P2 obligations. Direct native calls to internal Array.get.go/swap.go failed C lowering; only public wrappers are native-tested here. The failure is preserved rather than hidden by the passing source laws.',
+            'See [the dated normalization readout](experiments/2026-09-22-bend-address-normalization.md) and committed source/native/failure evidence. Source proofs trust the pinned checker/Base; native lowering and allocation/lifetime remain separate. No additional Python responsibility, production code, full-engine/model/GPU or performance result is added. Historical records below retain their original scope.'
+          ]
+          matrix.write_text(title+'\n\n'+'\n\n'.join(lines)+'\n'+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-22-bend-address-normalization.md docs/experiments/evidence/bend-address-normalization
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify bounded address normalization and retain native lowering limit'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/normalization > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-address-normalization-qualification
+          path: ${{ runner.temp }}/normalization-evidence/
+          retention-days: 30
