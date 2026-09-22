@@ -1,11 +1,13 @@
-# Bend-owned standalone diagnostic engine
+# Bend-owned standalone engine
 
-This is the first no-Python-runtime slice of the Bend-everywhere experiment.
-It is a separate entry point, not a replacement for production DeepFin or the
-Python neural/UCI scaffolding. The application is authored in Bend and compiled
-to a directly launched executable. The evaluator is explicitly **material-only**,
-not a neural model. No interpreter, subprocess, checkpoint or attack-table file
-is needed at runtime.
+This is a no-Python-runtime entry point for the Bend-everywhere experiment, not
+a replacement for production DeepFin. The default build uses a **material-only**
+evaluator and needs no interpreter, subprocess, checkpoint or attack-table file.
+The separate [native neural build](#bend-owned-search-leaves-with-a-native-model-backend)
+keeps the controller, input and probabilities in Bend while executing a bound
+model through native LibTorch/AOTI. That product additionally needs the package
+and native libraries, but still no Python runtime. Model math and training are
+not yet Bend-authored; the old Python tools remain external migration references.
 
 ## Ownership, not just a wrapper
 
@@ -390,3 +392,97 @@ python -m native.bend_engine.standalone.verify_request --require-c \
 The policy prototype was recovered from `bf2d50ada2d0b3d718a987c4d24de7a010ce1ad2`;
 its old compiler pin and older Protocol/Main were NOT copied over the complete
 input work. This combined version must be validated on its own exact source.
+
+
+## Bend-owned search leaves with a native model backend
+
+The optional neural build now routes **actual selected leaves** through
+`SearchHistory`, `EvaluationInput`, native tensor execution, and `LogitReply` back
+to the existing `Search.resume`. It is not only an `encode_request` diagnostic.
+Bend owns board/history validation, automatic draws, complete 146/175-plane input,
+exact legal policy entries, legal-only stable softmax, WDL probabilities and the
+reply identity. An automatic draw bypasses encoding and inference. A predicted
+draw remains a neural value rather than a rule-terminal assertion.
+
+`model_call.c` only marshals bounded float lists. `model_bridge.cpp` loads one
+pre-exported package and invokes native LibTorch/AOTI, with strict tensor shape,
+device and dtype checks. It has no chess, legal masking, probability conversion,
+search algorithm, scheduler or Python calls. This is an explicitly **transitional
+native model backend**, not Bend-authored transformer mathematics or training.
+Python remains in the separate exporter and external references; it is absent
+from the running engine. Build tools and exporter are not deployment dependencies.
+
+The default `build.sh` still creates the material-only executable without
+LibTorch. Neural execution is a separate build product, bound to one exact trusted
+package at build time. The package sidecar must use the existing v3 checkpoint
+format, CPU float32, **batch 1**, compact policy width 1858 and corrected
+root-oriented encoding. Four layout/feature combinations can be bound; runtime
+qualification in this milestone uses the existing **untrained** 175-plane
+root-legacy-meta/v2_threats fixture. Do not mistake a binding test for execution
+of another layout, trained model, GPU or batch shape.
+
+The model package and sidecar come from the separate checkpoint exporter. Existing
+batch-four packages are rejected, not padded or silently re-exported. The supplied
+LibTorch CMake prefix must match the package's recorded version. Building the
+engine needs Bun, Git, Clang/Clang++, CMake, OpenSSL development files and compatible
+LibTorch development files; the build script itself does not invoke Python.
+
+```sh
+# Both output directories and generated headers must be new.
+bash native/bend_engine/standalone/build_neural.sh \
+  build/bend_neural /path/to/checkpoint.pt2 /path/to/libtorch/share/cmake
+
+DEEPFIN_BEND_MODEL_PACKAGE=/path/to/checkpoint.pt2 \
+  ./build/bend_neural/neural/deepfin-bend-neural --threads 1
+```
+
+The UCI subset is unchanged, for example `position startpos moves e2e4 e7e5` then
+`go nodes 4 depth 2`. The native model stays loaded across normal searches and
+position changes; trees remain fresh. The sibling `build/bend_neural/deepfin-bend`
+is the material-only product, not a fallback selected when neural execution fails.
+
+The build checks package hash and manifest consistency and records the checkpoint
+identity declared by the trusted sidecar; it does not load the original checkpoint.
+`model_contract.h` records this immutable model contract. Startup copies the package
+once into a new private scratch directory while hashing those exact bytes, then
+loads only that verified copy. A missing/changed package, incompatible library
+version, malformed output, bad legal alignment or nonfinite logit is fatal; no
+silent material replacement or fabricated bestmove is returned. Every output
+logit is checked, including currently illegal slots. Finite illegal logits do not
+enter the legal softmax. Hashes establish identity/integrity, not authentication:
+use only trusted executable packages and the original trusted sidecar. This is
+not a machine-code portability or numerical-PASS certificate.
+
+`info string native_path` and `native_reply` expose the actual selected ancestor
+path and probabilities returned to the search. Optional
+`DEEPFIN_BEND_MODEL_TRACE=/new/path.trace` writes the actual input and raw output
+float32 bits in an append-only binary stream (new file only, no symlink/overwrite).
+Tracing is disabled by default; the new path/reply diagnostics are emitted per
+forward. Traces can contain model inputs and outputs, so keep them private when
+using private models. The diagnostic stream is not a remote inference protocol.
+
+The deployment now needs **the executable, exact model package, native ELF
+libraries and writable scratch**, not just one static file. The external
+`isolate_neural` helper tests an otherwise newly created filesystem with only
+those files and a read-only `/proc/cpuinfo` snapshot for native CPU dispatch.
+It discovers package dependencies using the executable's resolved native library
+directories, without copying Python, Bun, a shell or the application source tree.
+The host kernel/stdio remain infrastructure, and this dependency test is not a
+security sandbox. The original material build can still be statically deployed
+as a single executable.
+
+The verifier compares actual traced input to the unchanged C/Python encoders,
+raw logits to eager inference, legal priors/WDL to the existing normalization
+reference, and subsequent selected paths/result counts/best moves to diagnostic
+PUCT. It does not inspect every final tree field or prove all possible positions.
+All verifiers/exporters are external, not launched by the engine.
+
+Limits remain deliberate: synchronous CPU batch-one forwards are **not
+preemptible**. `isready`, `stop`, `quit` and time limits can wait for a forward,
+encoding, or blocked diagnostic output. No hard-stop latency guarantee is made.
+Policy maps are currently rebuilt per leaf, and tensor lists are copied across
+the boundary; no speed claim or optimized memory/batching claim is implied.
+The backend has a 65,536-forward process limit. No CUDA, batched scheduler,
+subtree reuse, production Gumbel parity, trained-model strength or training
+migration is established. Existing material-mode regressions and perft depths
+remain unchanged; new native tests and model export are opt-in only.
