@@ -7,20 +7,27 @@
 #include <vector>
 
 namespace deepfin_native {
-inline void copy_batch_outputs(const std::vector<at::Tensor>& outputs, uint32_t batch,
-                               uint32_t rows, void* destination) {
-  if (!destination || !rows || rows > batch
-      || !(batch == 1 || batch == 2 || batch == 4 || batch == 8 || batch == 16))
-    throw std::runtime_error("native batch row/output bound violated");
+// Device equality includes the index, not just CPU-versus-CUDA. Both heads
+// must be valid before staging or publication; output dtype stays F32 even
+// for a BF16-input model exported through OutputTuple.
+inline void validate_batch_outputs(const std::vector<at::Tensor>& outputs, uint32_t batch,
+                                   const at::Device& device) {
   if (outputs.size() != 2) throw std::runtime_error("expected (policy, wdl) output tuple");
   // Validate BOTH tensors before changing any caller bytes. Flattened element
   // counts alone cannot distinguish swapped axes, wrong batch or wrong heads.
   for (size_t i = 0; i < 2; ++i) {
     const auto& x = outputs[i];
-    if (!x.defined() || !x.device().is_cpu() || x.scalar_type() != at::kFloat || x.dim() != 2
+    if (!x.defined() || x.device() != device || x.scalar_type() != at::kFloat || x.dim() != 2
         || x.size(0) != batch || x.size(1) != (i == 0 ? 1858 : 3))
       throw std::runtime_error("native batch output shape/dtype/device mismatch");
   }
+}
+inline void copy_batch_outputs(const std::vector<at::Tensor>& outputs, uint32_t batch,
+                               uint32_t rows, void* destination) {
+  if (!destination || !rows || rows > batch
+      || !(batch == 1 || batch == 2 || batch == 4 || batch == 8 || batch == 16))
+    throw std::runtime_error("native batch row/output bound violated");
+  validate_batch_outputs(outputs, batch, at::Device(at::kCPU));
   const auto policy = outputs[0].contiguous(), wdl = outputs[1].contiguous();
   for (uint32_t row = 0; row < rows; ++row) {
     auto* out = static_cast<char*>(destination) + size_t(row) * 1861 * sizeof(float);
