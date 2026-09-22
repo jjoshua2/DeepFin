@@ -1,0 +1,20 @@
+name: PR1 accounting workspace
+on:
+  push:
+    branches: [work/pr1-neural-accounting-20260922]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c78ca8aaab8982bd8ca234928c61c6225ad91580
+      - run: git archive HEAD -o /tmp/deepfin-pr1-base.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepfin-pr1-base
+          path: /tmp/deepfin-pr1-base.tar
+          retention-days: 1
