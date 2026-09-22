@@ -1,0 +1,25 @@
+name: PR4b async search workspace
+on:
+  push:
+    branches: [work/pr4b-async-search-20260922]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a63409180bc337591a97d8877c5dbc86483381c6
+      - name: Archive tracked source only
+        run: |
+          mkdir -p /tmp/pr4b-source
+          git archive HEAD | gzip > /tmp/pr4b-source/source.tar.gz
+          git rev-parse HEAD > /tmp/pr4b-source/revision.txt
+          sha256sum /tmp/pr4b-source/source.tar.gz > /tmp/pr4b-source/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepfin-pr4b-source
+          path: /tmp/pr4b-source
+          retention-days: 7
