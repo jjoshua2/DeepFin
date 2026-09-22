@@ -1,0 +1,19 @@
+{
+  "comparison": "PASS",
+  "full_source_run": 35764846623,
+  "full_source_step": "success; first overall run failed at native-target warnings",
+  "native_and_compiler_run": 35766677592,
+  "native_and_compiler_steps": "success; second overall run failed at Python editable build due to job-wide CC=clang-18 and missing omp.h",
+  "lint_publication_run": 35767511451,
+  "candidate_source_entries": 239,
+  "full_aggregate_rerun": false,
+  "native_rerun": false,
+  "focused_canonical_sha256": "e53969bc796b4362b59244d3b8b2c8bf47a034612386f9a1af39be6523cc18e9",
+  "native_except_cc_canonical_sha256": "634092c8dd12db28af364c17cd13e1c2727dda55cab29ef8143f19e9e5da0133",
+  "warnings_suppressed": false,
+  "code_changed": false,
+  "earlier_lint_publication_attempt": {
+    "run": 35767241042,
+    "status": "failed before lint; gh refused ANSI-bearing historical logs; raw download now goes directly to a file, never rendered to a terminal"
+  }
+}

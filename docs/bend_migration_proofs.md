@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest complete-tree route qualification: September 22, 2026
+
+Qualification is complete on exact source `868335129a501b677ca916d2bbdc779a1b2e22e9`: source run **35764846623** passed all **83 laws and 156 rejection controls**; run **35766677592** passed all four native modes with explicit Clang 18 and original compiler source/pin checks; final run **35767511451** verifies those retained exact-source results and passes unchanged whole-repository lint. The first two overall workflow verdicts remain red and their failures are preserved.
+
+`complete/allocation_complete` and `table_pipeline_complete` derive complete constructor shape from actual Array.new, Tables.tables and Tables.extras. `bounded_complete_routes` proves normalized leaf separation for real complete depth-17 arrays and distinct U32 addresses below 131072. `bounded_other_index_write` proves the full returned read pair contains the complete updated array and the original other-slot value. No path-separation or read-value equality is assumed.
+
+These source laws supersede the historical open complete-tree route implication, not the remaining prefix/interior arithmetic, fill-clear, initialized contents or independent blocker-ray lookup obligations. Capacity alone remains insufficient. See [the complete-tree readout](experiments/2026-09-22-bend-complete-tree-routes.md) and the exact-source evidence for separate passed checks and preserved workflow failures. No native lowering/lifetime theorem, new Python migration or performance claim follows.
+
 ## Latest address-normalization qualification: September 22, 2026
 
 Hosted run **35759797335**, temporary workflow commit `6348d9f69e2f8871b895949d5567ec9211347ac2`, passes **79 accepted laws and 140 rejection controls**, supported public-API tests in four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `a26e59f7168519c7de9720b9edb7967ef0650d97`.
