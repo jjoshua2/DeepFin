@@ -1,0 +1,43 @@
+name: Recover unpublished Bend layout payload
+'on':
+  push:
+    branches: [feat/bend-layout-qualification-dev-20260921]
+    paths: [.github/workflows/bend-layout-payload-recovery.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Read the existing blob without applying or executing its contents
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/layout-recovery"
+          gh api repos/jjoshua2/DeepFin/git/blobs/bb3b838627e633dbb2117d6bc900a26533d8188d --jq .content | base64 --decode > "$RUNNER_TEMP/layout-recovery/payload.b64"
+          test "$(git hash-object "$RUNNER_TEMP/layout-recovery/payload.b64")" = bb3b838627e633dbb2117d6bc900a26533d8188d
+          python3 - <<'PY'
+          import base64, gzip, hashlib, io, json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])/'layout-recovery'
+          raw = (root/'payload.b64').read_bytes()
+          with gzip.GzipFile(fileobj=io.BytesIO(base64.b64decode(raw, validate=True))) as stream:
+              patch = stream.read(4*1024*1024+1)
+          assert len(patch) <= 4*1024*1024, 'payload exceeds inspection budget'
+          patch.decode('utf-8')
+          (root/'recovered.patch').write_bytes(patch)
+          info = {'blob': 'bb3b838627e633dbb2117d6bc900a26533d8188d', 'patch_sha256': hashlib.sha256(patch).hexdigest(), 'patch_bytes': len(patch), 'file_headers': [s for s in patch.decode().splitlines() if s.startswith('diff --git ')], 'applied': False, 'executed': False}
+          (root/'identity.json').write_text(json.dumps(info, indent=2)+'\n')
+          print(json.dumps(info, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recovered-bend-layout-payload
+          path: ${{ runner.temp }}/layout-recovery/
+          retention-days: 7
