@@ -15,6 +15,7 @@ is needed at runtime.
 | FEN, castling/EP metadata, exact legal move replay | Position.bend and existing Chess.bend |
 | Played board/move history and both clocks | Position.bend; retained in Bend state |
 | Repetition identity, automatic draw rules, search-leaf history | Rules.bend and SearchHistory.bend |
+| Complete 146/175-plane input construction | HistoryEncoding.bend, ClassicalEncoding.bend and ModelInput.bend |
 | Slider masks/subsets/PEXT table entries, leapers | Tables.bend, generated once at startup |
 | Legal moves, king safety, promotions, perft | Existing pure Chess.bend |
 | PUCT tree and uniform-policy/material replies | Existing Search.bend and main.bend |
@@ -112,15 +113,15 @@ Startup table construction exposed a native `U64.from_u32(variable)` bug: alias
 reuse could leave the operand as C u32 and generate `variable >> 32`. Fork PR #3
 fixes this by explicitly widening first, with a reproducer that fails strict C
 compilation before the patch and passes generic/portable/native/UBSan afterward.
-The September 20 fork update includes that fix and upstream Bend 2.0.20.
-This entry point now pins **`fd1df81707fd758f749a9570ccb5b12b1bb2fea3`**, from
+The later September 20 fork update includes that fix and upstream Bend 2.0.21.
+This entry point now pins **`aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae`**, from
 `jjoshua2/bend`'s `feat/u64-compact-reviewed` branch. The fork's `main` is
 upstream-only; it does **not** contain the native U64 extension. Installing a
 moving upstream release or copying just Base definitions is not equivalent.
 
 `toolchain.json` is the single revision/fingerprint contract for this entry point.
 The default source cache is `build/bend_standalone_toolchain/REVISION/source`, so
-the old `d9b9bce9...` cache is neither reused nor reset. Explicit source directories
+older `d9b9bce9...` and `fd1df817...` caches are neither reused nor reset. Explicit source directories
 must match all 84 pinned compiler/effect files; stale or modified contents are
 rejected before compilation/output creation. `build.txt` records the revision and
 source fingerprint actually checked. Existing output directories remain protected.
@@ -138,12 +139,12 @@ The older bitboard/legal/session/neural probes still use their explicit
 `57bc84ed...` pin in `bitboard_probe/toolchain.json`; the release-based probes use
 their separate installer. They are preserved historical integration references,
 not the standalone engine's compiler. This update does not claim to have migrated
-or requalified those other entry points against Bend 2.0.20.
+or requalified those other entry points against Bend 2.0.21.
 
-Fork PR #2 remains draft: its unchanged source-size gate is exceeded in `comp.ts`,
-and strict TypeScript checking reports an upstream kernel diagnostic. Targeted U64
-and standalone executable checks are distinct from those failing repository gates.
-No kernel change, budget relaxation, or upstream merge is implied.
+The pinned fork commit records passing repository source budgets and its U64 laws/
+oracles, while inherited strict-TypeScript findings remain separate. This engine
+qualification does not relabel the fork as universally gate-clean or prove compiler
+correctness. No checker/kernel edit or budget relaxation is made by this PR.
 
 ## Automatic draws are Bend-owned
 
@@ -227,9 +228,9 @@ visible flags. This implements **history_rep_fix=true only**. Missing pre-FEN
 frames stay zero, rather than repeating the first available board. Unknown layouts
 and compatibility requests are rejected, not defaulted or approximated.
 
-This is **not a complete 146/175-plane input**: the additional 34 v1 or 63
-v2_threats classical-feature planes are not implemented here. They are NOT appended
-as zeros. Policy-head index mapping, model execution and batching remain separate.
+This history-only API is **not a complete 146/175-plane input**. Use the complete
+`ModelInput.encode` API below to append the implemented 34 v1 or 63 v2_threats
+features. Policy-head index mapping, model execution and batching remain separate.
 The existing material evaluator and default search path do not invoke this encoder.
 There is no neural-play or throughput claim from comparing input values.
 
@@ -270,3 +271,66 @@ F32 bit must match both oracles; positions beyond CBoard's uint8 clock range are
 checked against Python only and counted explicitly. Omit `--require-c` for a
 Python-only reference check, which the report labels accordingly. Native encoding
 traversals remain opt-in; ordinary pytest/perft depths and workflows are unchanged.
+
+
+## Complete Bend-owned 146/175-plane inputs
+
+`ModelInput.encode(layout, version, game, table)` joins the unchanged 112 history
+planes with actual `ClassicalEncoding.bend` features. Supported versions are exactly
+`v1` (146 channels) and `v2_threats` (175), with either supported root-oriented layout
+and corrected repetition semantics. Unsupported v3 variants or repfix=false are
+rejected, not approximated. No absent feature is supplied as placeholder zeros.
+
+The feature code owns king zones, enemy attacks into those zones, full pin rays,
+discovered attacks, passed/isolated/backward/connected pawns, piece mobility,
+outposts and space. v2 adds piece-specific attack maps, saturated attacker counts,
+hanging/cheaper-attacker masks, safe-check squares, control, tension and pawn storms.
+These intentionally match DeepFin's existing training inputs: pseudo-attacks from
+pinned pieces are still counted, and pawn mobility is not a legal-move count.
+
+All square indexing uses the current side-to-move perspective. Attacker counts
+saturate at seven before the existing clamp/normalization formulas; an eight-versus-
+four attacker fixture checks this boundary. Pawn storms follow the C encoder's
+float32 division/subtraction rather than Python's double intermediate. Thus every
+output bit is expected to match C, with an a priori absolute allowance of 1.2e-7
+only on Python's two storm planes (absolute indices 173 and 174). All other Python
+planes, including history, mobility and control, require exact float32 bits.
+
+The result carries an explicit channel count and contiguous `Array<F32>` values:
+9344 or 11200 logical values. Its physical capacity is 16384; that is not a tensor
+shape. No padded extra channels are part of the interface. The model, policy
+mapping and batching have not been connected: ordinary search still uses material.
+
+At idle, the read-only diagnostic is:
+
+```text
+position startpos moves e2e4 e7e5
+encode_input lc0_root_legacy_meta v2_threats
+encode_input lc0_root v1 moves g1f3 b8c6
+```
+
+The response is a `model_input` header with layout/version/channels and repfix=1,
+one `input_plane` row of 64 decimal IEEE-F32 bit patterns per channel, and
+`model_input_end`. It is diagnostic text, not an inference wire protocol.
+Hypothetical moves (at most 32) are checked before encoding and never replace the
+accepted root/history. Invalid commands emit no partial tensor; busy commands are
+rejected. Output is synchronous, not a stop/readiness responsiveness guarantee.
+
+```sh
+# New output directory; no Python needed to build or run the engine:
+bash native/bend_engine/standalone/build.sh build/bend_complete_input
+./build/bend_complete_input/deepfin-bend --threads 1
+
+# Optional external Python and C oracles, never linked/launched by the engine:
+python -m native.bend_engine.standalone.verify_classical --require-c \
+  --report artifacts/bend-complete-input.json \
+  --command ./build/bend_complete_input/deepfin-bend --threads 1
+```
+
+The verifier requires the original CBoard extension in its external environment
+for `--require-c`; its uint8 clock limits are reported as Python-only cases rather
+than using wrapped C values. It compares complete tensors, preserves every root,
+activates all 63 feature planes and checks invalid/busy/reset behavior. Existing
+history/rule/perft verifiers stay unchanged. No model export, native traversal or
+benchmark is added to ordinary pytest or recurring CI. See the complete-input
+experiment record for the exact tested revisions, counts and limitations.
