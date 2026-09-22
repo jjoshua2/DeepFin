@@ -1,13 +1,14 @@
-name: Bend CI inspected tree publication
+name: Bend CI final publication audit
 on:
   push:
     branches: [fix/bend-ci-stack-audit-20260922-1938]
     paths: [.github/workflows/bend-ci-stack-audit-20260922.yml]
 permissions:
-  contents: write
+  contents: read
+  actions: read
   pull-requests: read
 jobs:
-  stage:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -15,122 +16,82 @@ jobs:
         with:
           ref: 4e8d463e1df6871a2b73b066c95506258d028800
           fetch-depth: 0
-      - name: Reproduce only inspected document resolutions and verify complete trees
+          persist-credentials: false
+      - name: Verify exact published source and take one current-head status snapshot
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p /tmp/bend-ci-staged-trees
+          mkdir -p /tmp/bend-ci-final
           python3 - <<'PY'
-          import json, os, subprocess, urllib.request
+          import datetime, json, os, subprocess, urllib.parse, urllib.request
           from pathlib import Path
-          root = Path.cwd()
-          out = Path('/tmp/bend-ci-staged-trees')
+          out = Path('/tmp/bend-ci-final')
           main = '4e8d463e1df6871a2b73b066c95506258d028800'
-          specs = [
-              (828, 'ba18279fffdb13beb894e1d4f49cd60601f38583', 'c78ca8aaab8982bd8ca234928c61c6225ad91580', '31a70d89bdeb9628264e4d9c90e6809b5362cbee', ['native/bend_engine/standalone/README.md'], 15),
-              (830, '4bf90fed14b3ad0a192a4e93cc978b8f102a7b3c', 'ba18279fffdb13beb894e1d4f49cd60601f38583', '1917464b3c963ea341d0cbc73663c4f98b973366', ['docs/experiments/README.md', 'native/bend_engine/standalone/README.md'], 17),
-              (831, '9b0f57492f7c86fdb935da7523748fc088e056b8', '4bf90fed14b3ad0a192a4e93cc978b8f102a7b3c', 'cf50d6c2c5f2faf848fb71f26ce880247911ee9a', [], 16),
-          ]
-          docs = {'docs/experiments/README.md', 'native/bend_engine/standalone/README.md'}
-          def git(*args, cwd=root):
-              return subprocess.check_output(['git', *args], cwd=cwd, text=True, timeout=90).strip()
-          def run(*args, cwd=root):
-              subprocess.run(['git', *args], cwd=cwd, check=True, timeout=90)
+          expected = {
+              828: ('d0152b92ca87227c5fc00def78fae9838938ec59', 'ba18279fffdb13beb894e1d4f49cd60601f38583', main, '31a70d89bdeb9628264e4d9c90e6809b5362cbee', 15),
+              830: ('a12aeeb08e2422978ab2aedf56fea8c825dad19a', '4bf90fed14b3ad0a192a4e93cc978b8f102a7b3c', 'd0152b92ca87227c5fc00def78fae9838938ec59', '1917464b3c963ea341d0cbc73663c4f98b973366', 17),
+              831: ('33718f1ba82b228ad92866856807fc1f0d238253', '9b0f57492f7c86fdb935da7523748fc088e056b8', 'a12aeeb08e2422978ab2aedf56fea8c825dad19a', 'cf50d6c2c5f2faf848fb71f26ce880247911ee9a', 16),
+          }
           def get(path):
               req = urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/' + path,
                   headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
               with urllib.request.urlopen(req, timeout=30) as r:
                   return json.load(r)
-          def entries(ref):
-              result = {}
-              for line in git('ls-tree', '-r', ref).splitlines():
-                  meta, path = line.split('\t', 1)
-                  result[path] = meta
-              return result
-          assert get('git/ref/heads/main')['object']['sha'] == main, 'main advanced; inspect again'
-          metadata = {}
-          for number, old, *_ in specs:
-              p = get(f'pulls/{number}')
-              assert p['state'] == 'open' and p['head']['sha'] == old, (number, 'head changed')
-              metadata[number] = p['head']['ref']
-          run('fetch', '--no-tags', 'origin', main, *[s[1] for s in specs])
-          run('config', 'user.name', 'github-actions[bot]')
-          run('config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com')
-          parent = main
-          reports = []
-          for number, old, original_parent, expected_tree, expected_conflicts, count in specs:
-              work = Path(f'/tmp/bend-ci-inspected-{number}')
-              run('worktree', 'add', '--detach', str(work), old)
-              merged = subprocess.run(['git', 'merge', '--no-commit', '--no-ff', parent], cwd=work,
-                                      capture_output=True, text=True, timeout=90, check=False)
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True, timeout=90).strip()
+          git('fetch', '--no-tags', 'https://github.com/jjoshua2/DeepFin.git', *[v[0] for v in expected.values()])
+          published = []
+          for n, (sha, old, parent, tree, count) in expected.items():
+              assert git('show', '-s', '--format=%P', sha).split() == [old, parent]
+              assert git('rev-parse', sha + '^{tree}') == tree
+              files = git('diff', '--name-only', parent, sha).splitlines()
+              assert len(files) == count
+              assert not any(p.startswith('.github/workflows/') for p in git('diff', '--name-only', old, sha).splitlines())
+              subprocess.run(['git', 'diff', '--check', old, sha], check=True)
+              for path in ('native/bend_engine/standalone/proofs', 'native/bend_engine/standalone/toolchain.json', 'tests/test_derive_parallel.py'):
+                  assert git('rev-parse', sha + ':' + path) == git('rev-parse', main + ':' + path)
+              published.append({'pr': n, 'head': sha, 'parents': [old, parent], 'tree': tree, 'feature_files': files,
+                                'main_proofs_pin_and_codec_test_unchanged': True, 'workflow_changes': False})
+          (out / 'publication.json').write_text(json.dumps(published, indent=2) + '\n')
+          rows = []
+          for page in range(1, 11):
+              batch = get(f'pulls?state=open&per_page=100&page={page}')
+              rows.extend(p for p in batch if 'bend' in p['title'].lower() or 'bend' in p['head']['ref'].lower() or p['number'] in expected)
+              if len(batch) < 100: break
+          else: raise RuntimeError('incomplete PR enumeration')
+          result = {'as_of_start': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'main': get('git/ref/heads/main')['object']['sha'], 'prs': []}
+          for item in sorted(rows, key=lambda p: p['number']):
+              p = get(f"pulls/{item['number']}")
+              if p['state'] != 'open': continue
+              sha = p['head']['sha']
+              base = get('git/ref/heads/' + urllib.parse.quote(p['base']['ref'], safe='/'))['object']['sha']
+              row = {'number': p['number'], 'head': sha, 'branch': p['head']['ref'], 'base': base, 'base_branch': p['base']['ref'],
+                     'github_mergeable': p['mergeable'], 'changed_files': p['changed_files'], 'checks': []}
+              git('fetch', '--no-tags', 'https://github.com/jjoshua2/DeepFin.git', sha, base)
+              merged = subprocess.run(['git', 'merge-tree', '--write-tree', '--messages', sha, base], capture_output=True, text=True, timeout=60, check=False)
               assert merged.returncode in (0, 1), merged.stderr
-              conflicts = git('diff', '--name-only', '--diff-filter=U', cwd=work).splitlines()
-              assert conflicts == expected_conflicts, (number, conflicts)
-              (out / f'pr{number}-merge.txt').write_text(merged.stdout + '\n' + merged.stderr)
-              for name in conflicts:
-                  p = work / name
-                  lines = p.read_text().splitlines(keepends=True)
-                  new = []
-                  blocks = []
-                  i = 0
-                  while i < len(lines):
-                      if not lines[i].startswith('<<<<<<< '):
-                          new.append(lines[i]); i += 1; continue
-                      i += 1
-                      left = []; right = []
-                      while i < len(lines) and lines[i] != '=======\n':
-                          left.append(lines[i]); i += 1
-                      assert i < len(lines); i += 1
-                      while i < len(lines) and not lines[i].startswith('>>>>>>> '):
-                          right.append(lines[i]); i += 1
-                      assert i < len(lines); i += 1
-                      new += left
-                      if name != 'docs/experiments/README.md' and left and right and left[-1].strip() and right[0].strip():
-                          new.append('\n')
-                      new += right
-                      blocks.append((''.join(left), ''.join(right)))
-                  text = ''.join(new)
-                  assert all(a in text and b in text for a, b in blocks)
-                  p.write_text(text)
-                  run('add', name, cwd=work)
-              assert not git('diff', '--name-only', '--diff-filter=U', cwd=work)
-              run('diff', '--cached', '--check', cwd=work)
-              tree = git('write-tree', cwd=work)
-              assert tree == expected_tree, (number, tree, 'not the locally inspected tree')
-              features = git('diff', '--name-only', original_parent, old).splitlines()
-              assert len(features) == count
-              a, b, c = entries(old), entries(parent), entries(tree)
-              assert {p for p in set(b) | set(c) if b.get(p) != c.get(p)} == set(features)
-              for p in features:
-                  if p not in docs:
-                      assert a.get(p) == c.get(p), (number, p, 'feature changed')
-              if 'docs/experiments/README.md' in features:
-                  text = git('show', tree + ':docs/experiments/README.md')
-                  for ref in (old, parent):
-                      assert all(line in text for line in git('show', ref + ':docs/experiments/README.md').splitlines() if line.startswith('|'))
-              for p in ('native/bend_engine/standalone/proofs', 'native/bend_engine/standalone/toolchain.json', 'tests/test_derive_parallel.py'):
-                  assert git('rev-parse', tree + ':' + p) == git('rev-parse', main + ':' + p), (number, p)
-              assert not any(p.startswith('.github/workflows/') for p in git('diff', '--name-only', old, tree).splitlines())
-              latest = get(f'pulls/{number}')
-              assert latest['state'] == 'open' and latest['head']['sha'] == old
-              commit = git('commit-tree', tree, '-p', old, '-p', parent, '-m', f'Stage exact inspected CI reconciliation tree for PR {number}')
-              target = f'refs/heads/fix/bend-ci-pr{number}-tree-20260922-1938'
-              assert not git('ls-remote', '--heads', 'origin', target)
-              run('push', 'origin', commit + ':' + target)
-              report = {'pr': number, 'old_head': old, 'branch': metadata[number], 'staged_parent': parent,
-                        'staged_commit': commit, 'tree': tree, 'feature_files': features, 'conflicts': conflicts,
-                        'non_document_feature_blobs_preserved': True, 'all_other_files_match_parent': True,
-                        'main_proofs_pin_and_codec_test_preserved': True}
-              reports.append(report)
-              (out / 'manifest.json').write_text(json.dumps(reports, indent=2) + '\n')
-              (out / f'pr{number}-resolution.patch').write_bytes(subprocess.check_output(['git', 'diff', old, tree]))
-              print(json.dumps(report), flush=True)
-              parent = commit
-              run('worktree', 'remove', '--force', str(work))
+              row['merge_clean'] = merged.returncode == 0
+              if merged.returncode:
+                  (out / f"conflict-{p['number']}.txt").write_text(merged.stdout + merged.stderr)
+              seen = set()
+              for run in get('actions/runs?event=pull_request&per_page=100&head_sha=' + sha)['workflow_runs']:
+                  if run['workflow_id'] in seen: continue
+                  seen.add(run['workflow_id'])
+                  check = {k: run[k] for k in ('id', 'name', 'status', 'conclusion', 'html_url', 'run_attempt')}
+                  check['jobs'] = []
+                  for job in get(f"actions/runs/{run['id']}/jobs?per_page=100")['jobs']:
+                      check['jobs'].append({'id': job['id'], 'name': job['name'], 'status': job['status'], 'conclusion': job['conclusion'],
+                          'active_or_failed_steps': [s['name'] for s in job['steps'] if s['status'] == 'in_progress' or s['conclusion'] == 'failure']})
+                  row['checks'].append(check)
+              result['prs'].append(row)
+              print(row['number'], sha, row['merge_clean'], [(c['name'], c['status'], c['conclusion']) for c in row['checks']], flush=True)
+              (out / 'status.json').write_text(json.dumps(result, indent=2) + '\n')
+          result['as_of_end'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+          (out / 'status.json').write_text(json.dumps(result, indent=2) + '\n')
           PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bend-ci-inspected-tree-publication
-          path: /tmp/bend-ci-staged-trees/
+          name: bend-ci-final-publication-20260922
+          path: /tmp/bend-ci-final/
           retention-days: 14
