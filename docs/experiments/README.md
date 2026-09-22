@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [September 20 standalone compiler adoption](2026-09-20-bend-compiler-adoption.md) | Pin the Bend-owned engine to upstream-synced U64 2.0.20; immutable source/cache contract and runtime requalification |
 | [Bend-owned standalone](2026-09-20-bend-standalone.md) | Bend UCI/FEN/history/table/evaluator ownership; static interpreter-free runtime, diagnostic only |
 | [Bend UCI interface](2026-09-20-bend-uci-interface.md) | Opt-in bounded UCI frontend, actual native search/client checks and stop isolation; no full-UCI, GPU or strength claim |
 | [Bend optional claims](2026-09-20-bend-claim-options.md) | Explicit zero-valued claim choice preserving legal continuations; native and host contracts, opt-in only |
