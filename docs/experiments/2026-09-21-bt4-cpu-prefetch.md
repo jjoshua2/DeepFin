@@ -54,7 +54,7 @@ to overlap, and this is not throughput evidence.
 Whole-repository lint ran: Ruff/Vulture passed, and all 14 type diagnostics match
 the unchanged main baseline. Focused type checks passed. Bulk artifacts and exact
 source/test hashes are under
-`/home/josh/chess-artifacts/operations/bt4-cpu-prefetch-20260921`.
+`~/chess-artifacts/operations/bt4-cpu-prefetch-20260921`.
 
 Independent reviewer `factorial_receipt_review` approved the code after its
 original real-SIGINT shutdown reproducer passed: reader closed, worker joined,
