@@ -1,0 +1,58 @@
+{
+  "status": "PASS_THREE_SOURCE_FAMILIES",
+  "records": [
+    {
+      "cohort": 0,
+      "rows": 8192,
+      "seconds": 4.448963117029052,
+      "target_bytes": 1582000,
+      "policy_and_nonvalue_exact_D": true,
+      "changed_value_rows": 8192,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-smoke-v2-20260921/cohort00/manifest.json",
+        "sha256": "9cfdf70dd3deb3dc960d03413b3fbec02349fbd6dd9a9713130d3d2fd02c8ff6"
+      },
+      "complete": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-smoke-v2-20260921/cohort00/targets/complete.json",
+        "sha256": "a171b6ababe3d0be8da30741db8937f11499abb61de82a8d74d8f251e62f74f7"
+      }
+    },
+    {
+      "cohort": 1,
+      "rows": 8192,
+      "seconds": 6.145450358977541,
+      "target_bytes": 1571672,
+      "policy_and_nonvalue_exact_D": true,
+      "changed_value_rows": 8192,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-smoke-v2-20260921/cohort01/manifest.json",
+        "sha256": "13fa5634eac5c15208d070d0f09845c22326a94581d3c9fa9dc0518c126801ef"
+      },
+      "complete": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-smoke-v2-20260921/cohort01/targets/complete.json",
+        "sha256": "e09f0e8cb7d23a816ee6a51f2aa46f82e9abd34739e6d077d0c460bae857cd39"
+      }
+    },
+    {
+      "cohort": 21,
+      "rows": 8192,
+      "seconds": 4.368599522043951,
+      "target_bytes": 1618788,
+      "policy_and_nonvalue_exact_D": true,
+      "changed_value_rows": 8192,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-smoke-v2-20260921/cohort21/manifest.json",
+        "sha256": "44b8b36dfcfc2b3f98f1d3f4d5480b717be5f2161d7494bfda7f694f6a039157"
+      },
+      "complete": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-smoke-v2-20260921/cohort21/targets/complete.json",
+        "sha256": "d9051e6f9c4a57cce6fe70e1ddce3691b1d60ba388f3bd84737143c26df4d8e7"
+      }
+    }
+  ],
+  "elapsed_seconds": 35.50492043001577,
+  "builder": {
+    "path": "/home/josh/projects/chess-worktrees/sffree-targets-20260921/scripts/bootstrap_sffree_targets.py",
+    "sha256": "081d69f0217991493638b36d8a442ea62e6946ca26f44388ae1ea08a9e19959c"
+  }
+}

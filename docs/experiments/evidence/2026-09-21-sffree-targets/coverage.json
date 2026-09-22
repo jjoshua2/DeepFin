@@ -1,0 +1,37 @@
+{
+  "status": "PASS_METADATA_COVERAGE_ONLY",
+  "rows": 58090688,
+  "shards": 7108,
+  "cohorts": 35,
+  "elapsed_seconds": 18.11187195777893,
+  "issues": [],
+  "scope": "Metadata pins, recorded source identity and native value declarations only. No dense arrays, chunk payloads, input histories or raw observations rehashed. Not completed byte/row qualification or launch authorization.",
+  "recipe": "E search_wdl = .5 normalized native BT4 + .5 Ceres dual value; Ceres=.6softmax(primary/.55)+.4softmax(secondary/1.5). No SF and no reconstruction from rounded V50. Parent protocol determines inherited policy.",
+  "next": "Implement direct native-bank read with full per-array digest and row/feed identity verification, finite probability checks, unchanged inherited features/policy, fresh immutable output plus exact-epoch qualification. No new inference needed if metadata coverage passes.",
+  "corpus_match": {
+    "expected_rows": 58090688,
+    "expected_shards": 7108,
+    "expected_cohorts": 35,
+    "matches": true
+  },
+  "limitations": [
+    "Historical JSON/metadata identity consistency, not fresh authentication of dense payload bytes or confirmation every chunk exists.",
+    "Ceres cohort0-20 manifests and all V50 summaries compared with existing pinned plan SHA256; cohort21-34 manifest hashes newly recorded from completed collection paths, binding metadata checked on each actual bank.",
+    "BT4 historical reuse/adapter manifest pins checked where named; every actual native .zattrs hashed, but nested invocation receipt chains not fully revalidated in this bounded metadata census.",
+    "No source provenance recreated from rounded V50. Original20M inherits stored-history limitations; later adapter rows retain verified-raw-history lineage."
+  ],
+  "files": {
+    "sources.json": {
+      "sha256": "215e24f525bfe7c687fbed25512de19b80723cca3915aec8d13f33a65de930f4",
+      "bytes": 7908656
+    },
+    "metadata-pins.json": {
+      "sha256": "7ef713a4d41cb170df8ffafae61a76254abe09117d3ee9098af781f7cf25e026",
+      "bytes": 7711584
+    },
+    "cohorts.json": {
+      "sha256": "e6c38a419a181c4993166f22cd36f6ae2c9f7fedda866994fbe330e19d1f4187",
+      "bytes": 66300
+    }
+  }
+}
