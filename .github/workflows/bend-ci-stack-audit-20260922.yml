@@ -36,7 +36,7 @@ jobs:
           prs = []
           for page in range(1, 11):
               batch = get(f'pulls?state=open&per_page=100&page={page}')
-              prs.extend(p for p in batch if 'bend' in p['title'].lower() or 'bend' in p['head']['ref'].lower())
+              prs.extend(p for p in batch if 'bend' in p['title'].lower() or 'bend' in p['head']['ref'].lower() or p['number'] in (828, 830, 831))
               if len(batch) < 100:
                   break
           else:
