@@ -1,7 +1,7 @@
 """Observe an actual pinned lc0_control_train run; scheduling belongs to its caller.
 
 Use the same wrapper for both arms. Full tensor parity must be qualified separately.
-This records compact, globally remapped game_id/ply order and initial model state.
+This records compact, globally remapped game_id/ply_index order and initial model state.
 """
 from __future__ import annotations
 
@@ -54,10 +54,12 @@ def observe(driver, receipt, argv):
         if record["first_batch_seconds"] is None:
             record["first_batch_seconds"] = tick - started
         # game_id has already been remapped to globally source-qualified keys.
-        if "game_id" not in batch or "ply" not in batch:
+        if any(key not in batch for key in ("game_id", "ply_index", "has_game_id", "has_ply_index")):
             raise ValueError("actual trainer batches lack qualified game/ply identity")
+        if not batch["has_game_id"].all() or not batch["has_ply_index"].all():
+            raise ValueError("actual trainer batches contain missing game/ply identity")
         record["batches"].append({"rows": len(batch["game_id"]),
-            "order_sha256": arrays_digest({k: batch[k] for k in ("game_id", "ply")}),
+            "order_sha256": arrays_digest({k: batch[k] for k in ("game_id", "ply_index")}),
             "sampler_seconds": wait})
         record["observer_seconds"] += time.monotonic() - tick
         return batch

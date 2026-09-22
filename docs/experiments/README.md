@@ -70,6 +70,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Value head architecture](value_head_arch.md) | Historical April 2026 experiments |
 | [Historical ledger](../experiment_ledger.md) | Frozen July–September 2026 record, including yardsticks, gotchas and recovery snapshots |
 | [256-shard actual-trainer storage preregistration](2026-09-21-packed-trainer256.md) | 35-cohort NVMe/ZIP full tensor parity passed; guarded actual-trainer pair prepared, GPU unlaunched |
+| [Storage observer retry and BT4 results](2026-09-22-packed-observer-retry.md) | First-batch observer schema failure preserved; corrected real-sampler regression and fresh retry; BT4 exact pipeline screen passed |
 
 These descriptions identify the records, not the state of a running experiment.
 Check subsequent readouts and the actual process/artifacts before resuming work.

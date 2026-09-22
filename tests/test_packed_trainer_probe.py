@@ -14,7 +14,9 @@ def test_order_digest_sees_permutation_and_dtype():
 @pytest.mark.parametrize('fail', [False, True])
 def test_observer_preserves_batch_and_restores_hooks(tmp_path, fail):
     import torch
-    batch = {'game_id': np.array([0, 1]), 'ply': np.array([2, 3])}
+    batch = {'game_id': np.array([0, 1]), 'ply_index': np.array([2, 3]),
+             'has_game_id': np.ones(2, dtype=bool),
+             'has_ply_index': np.ones(2, dtype=bool)}
     class Buffer:
         def sample_batch_arrays(self, *_args, **_kwargs):
             return batch
@@ -41,3 +43,33 @@ def test_observer_preserves_batch_and_restores_hooks(tmp_path, fail):
     assert data['batches'][0]['rows'] == 2
     assert len(data['initial_model_sha256']) == 64
     assert data['status'] == ('INCOMPLETE' if fail else 'TRAINER_RETURNED_SUCCESS')
+
+
+def test_observer_accepts_real_epoch_sampler_schema(tmp_path):
+    import torch
+    from tests.test_game_aware_epoch_replay import _write, _open
+    from chess_anti_engine.replay.game_epoch import GameAwareEpochBuffer
+    root = _write(tmp_path / "source", [[(1, 10), (2, 20)], [(1, 11), (2, 21)]])
+    original = GameAwareEpochBuffer.sample_batch_arrays
+    driver = SimpleNamespace(build_model=lambda: torch.nn.Linear(2, 1),
+                             GameAwareEpochBuffer=GameAwareEpochBuffer)
+    seen = []
+    def main(_argv):
+        driver.build_model()
+        buffer = _open(root, batch_size=2)
+        try:
+            for _ in range(buffer.plan.batches):
+                batch = buffer.sample_batch_arrays(2)
+                assert "ply" not in batch
+                seen.append(arrays_digest({k: batch[k] for k in ("game_id", "ply_index")}))
+            assert buffer.receipt()["complete"]
+        finally:
+            buffer.close()
+    driver.main = main
+    receipt = tmp_path / "real.json"
+    observe(driver, receipt, [])
+    data = json.loads(receipt.read_text())
+    assert data["status"] == "TRAINER_RETURNED_SUCCESS"
+    assert [b["order_sha256"] for b in data["batches"]] == seen
+    assert sum(b["rows"] for b in data["batches"]) == 4
+    assert GameAwareEpochBuffer.sample_batch_arrays is original
