@@ -16,7 +16,10 @@ The fresh retry keeps the original qualified 256 shards, 35 sources and 1,963,94
 rows, runtime, model/config, seed121, external-then-NVMe order, 45-minute arm and
 90-minute pair limits, and preregistered 0.90 throughput threshold. Only observer
 schema and output paths change. Prior failed output bytes remain in the combined
-disk budget. Independent review is required before queued admission.
+disk budget. Independent review approved queued admission after 20 passing observer/pair tests,
+including the real-sampler regression, and verification of all 2,862 runtime
+members and 10 source pins. The retry is prepared; queue insertion belongs to
+the parent scheduler. Plan, review and descriptor are banked in the evidence directory.
 
 The completed BT4 pipeline screen passed exact input and output parity. Median
 producer-plus-verification time was 19.3321s original, 13.4608s optimized serial,

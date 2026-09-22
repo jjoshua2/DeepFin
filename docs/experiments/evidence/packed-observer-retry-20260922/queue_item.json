@@ -1,0 +1,10 @@
+{
+  "id": "packed_trainer256_pair_retry_20260922",
+  "kind": "registered_command",
+  "status": "queued",
+  "out": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922/scheduler_run",
+  "max_seconds": 5400,
+  "estimated_active_seconds": 3600,
+  "command_file": "/home/josh/chess-artifacts/operations/packed-trainer256-gpu-retry-registration-20260922/registered_command.json",
+  "command_sha256": "6e6a5df3eac214e31f0b40698c18778a07032095452ecfd61e380ae861119a6e"
+}
