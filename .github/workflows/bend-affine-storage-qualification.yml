@@ -1,0 +1,174 @@
+name: Bend actual affine storage qualification
+'on':
+  push:
+    branches: [feat/bend-prefix-storage-dev-20260922]
+    paths: [.github/workflows/bend-affine-storage-qualification.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 290fc01a10517374518e505f9855c7d4a9a5d956
+      TARGET: feat/bend-affine-storage-laws-20260922
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 290fc01a10517374518e505f9855c7d4a9a5d956
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover and identify the exact source-only candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/storage-evidence"
+          mkdir -p "$EVIDENCE" "$RUNNER_TEMP/storage-transport"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/storage-transport/patch.b64"
+          for blob in 06dfdee4bc1d70eadb33b7d23ffdd14db0df0703 9f041a9bb24478f06dc3d53240f4b5bb0e18ff2a dffc3094ef598ab55b4c99a9dcbb15e4006216d9; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/storage-transport/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/storage-transport/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/storage-transport/$blob" >> "$RUNNER_TEMP/storage-transport/patch.b64"
+          done
+          test "$(git hash-object "$RUNNER_TEMP/storage-transport/patch.b64")" = c5bd1c77e54f4a4bb25556a32559d1e0b166f86e
+          python3 - <<'PY'
+          import base64, hashlib, lzma, os
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP'])/'storage-transport'
+          p=lzma.decompress(base64.b64decode((t/'patch.b64').read_bytes(),validate=True),memlimit=256*1024*1024)
+          assert len(p)==80118
+          assert hashlib.sha256(p).hexdigest()=='fa871489f0a3b579d66ef19282aa372a292134785ac0e39aad8f3f7b1179b869'
+          (t/'candidate.patch').write_bytes(p)
+          PY
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = a1c46bb0620922e18da3f924e310c49f15888044
+          git apply --check "$RUNNER_TEMP/storage-transport/candidate.patch"
+          git apply --index "$RUNNER_TEMP/storage-transport/candidate.patch"
+          git diff --cached --check
+          test "$(git write-tree)" = 8fa75e5c727f288968804dbe50bb80bc5cd9b2b1
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          files=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          allowed={'docs/bend_migration_proofs.md','docs/experiments/README.md','docs/experiments/2026-09-22-bend-table-storage.md'}
+          assert len(files)==23
+          assert all(f in allowed or f.startswith('native/bend_engine/standalone/proofs/storage/') or f.startswith('docs/experiments/evidence/bend-table-storage/') for f in files),files
+          e=Path(os.environ['EVIDENCE'])
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in files if f.startswith('native/')}
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'source-recovery.json').write_text(json.dumps({'base':os.environ['BASE'],'candidate_tree':'8fa75e5c727f288968804dbe50bb80bc5cd9b2b1','patch_sha256':'fa871489f0a3b579d66ef19282aa372a292134785ac0e39aad8f3f7b1179b869','changed_files':files,'temporary_workflow_in_feature':False},indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Check all 64 laws and 90 rejection controls without changing the parent gate
+        timeout-minutes: 26
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/storage/verify.js "$PWD/.compiler" --report "$EVIDENCE/storage-proofs.json" 2>&1 | tee "$EVIDENCE/source-gate.log"
+      - name: Compare real array operations and table builders in four native modes
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/storage/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/storage-native.json" 2>&1 | tee "$EVIDENCE/native-gate.log"
+      - name: Recheck original compiler laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install the locked CPU development environment
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint once on the final candidate
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Record results and publish a new clean feature branch only
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/feat/bend-exact-slider-indices-20260921 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target-ref.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);d=Path('docs/experiments/evidence/bend-table-storage')
+          p=json.loads((e/'storage-proofs.json').read_text());n=json.loads((e/'storage-native.json').read_text())
+          local=json.loads((d/'local-native.json').read_text())
+          assert p['proof_gate']=='PASS' and p['new_law_count']==8 and p['aggregate_law_count']==64
+          assert p['inherited_negative_controls']==72 and len(p['negative_controls'])==18
+          assert all(c['rejected'] for c in p['negative_controls'])
+          focused=json.loads((d/'local-focused-proofs.json').read_text())
+          assert p['negative_controls']==focused['negative_controls']
+          for path,digest in focused['implementation_source_sha256s'].items():
+              assert hashlib.sha256((Path('native/bend_engine')/path).read_bytes()).hexdigest()==digest,path
+          assert n['native_gate']=='PASS' and n['fixture_rows']==1096 and n['full_array_cells']==109354
+          assert {k:v for k,v in n.items() if k!='cc'}=={k:v for k,v in local.items() if k!='cc'}
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for name,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==h,name
+          for name in ['storage-proofs.json','storage-native.json','compiler-proofs.json','candidate-source-sha256.json','source-recovery.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];sha=os.environ['GITHUB_SHA']
+          summary=f"Hosted run **{run}**, temporary workflow commit `{sha}`, passes all **64 accepted laws**, **90 rejection controls** (18 new plus 72 retained), four native modes, original compiler source/pin checks and unchanged whole-repository lint on exact parent `{os.environ['BASE']}`."
+          readout=Path('docs/experiments/2026-09-22-bend-table-storage.md')
+          sections=['## Hosted qualification and publication',summary,
+            'The new eight-law importing consumer and all 18 new controls match the focused development results. The aggregate separately runs the unchanged 56-law parent once; no inherited law is omitted or weakened. Ten controls require ordinary affected-refinement failures and eight enforce manifests/imports/exact checker output. A raw zero with unsafe warnings remains rejected.',
+            'Each native mode passes 1,096 rows and 109,354 complete-array cell comparisons: 705 set/read, 384 actual fill, four actual table-builder and three extras cases. All 128 chess fill keys are represented, with 249 explicit distinct-index aliases and seven invalid requests rejected. Native source hashes and all outcomes match the saved local report; modes repeat fixtures, not disjoint datasets.',
+            f"Hosted tools: Bun {n['bun']}, {n['cc']}, locked Python 3.13 CPU environment with uv 0.12.10. The unchanged Ruff/Basedpyright/Vulture gate now passes, resolving the local missing-tool lint gap. Original failed local evidence remains retained; no errors were suppressed.",
+            'The complete candidate tree and every source identity match the inspected patch, SHA-256 fa871489f0a3b579d66ef19282aa372a292134785ac0e39aad8f3f7b1179b869. The exact compiler fingerprint is checked before and after. Publication only adds hosted evidence and documentation to the tested source. Compact reports are committed; full logs remain in the 30-day artifact bend-affine-storage-qualification.',
+            f"Fresh branch `{os.environ['TARGET']}` is created only after all qualification steps. No force push, merge, deployment or live-process change; temporary workflow and transport payloads are absent from the feature diff. Self-review only, not independent review.",
+            'Source proofs include arbitrary affine U64 arrays and all source Nat loop counts; native fixtures cover complete bounded arrays only. Same-address correctness and topology preservation do not prove safe prefixes, nonaliasing, allocation/lifetime, complete computed table contents or independent blocker-ray geometry. Those are the next P2 obligations. No production code or Python application responsibility moved in this increment. No engine/model/GPU/perft/strength/performance requalification is implied.']
+          readout.write_text(readout.read_text()+'\n\n'+'\n\n'.join(sections)+'\n')
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          m.write_text(title+'\n\n## Latest hosted storage qualification\n\n'+summary+' The dated table-storage record and committed reports retain exact identities, original local limitations and remaining trust boundaries. Prefix/nonaliasing/full-lookup geometry remain open; these are eight new actual-buffer laws, not completion of P2.\n'+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/2026-09-22-bend-table-storage.md docs/experiments/evidence/bend-table-storage
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove actual affine storage identity, write/read and table-builder topology'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -1 --format='%H%n%s' | tee "$EVIDENCE/published-commit.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/storage > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-affine-storage-qualification
+          path: ${{ runner.temp }}/storage-evidence/
+          retention-days: 30
