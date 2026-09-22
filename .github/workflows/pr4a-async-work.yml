@@ -1,0 +1,30 @@
+name: PR4a async qualification workspace
+on:
+  push:
+    branches: [work/pr4a-native-async-20260922]
+permissions:
+  contents: read
+jobs:
+  transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Retrieve authored payload for exact-byte reconciliation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/pr4-transport
+          python - <<'PY'
+          import base64, hashlib, json, subprocess
+          from pathlib import Path
+          for i, sha in enumerate(['974e5d177270be16e546ee99fe25d59df2deb7a7','eea3557599dbd694b32478b14f78e66991159195']):
+              record=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+              data=base64.b64decode(record['content'])
+              Path(f'/tmp/pr4-transport/part{i}.bin').write_bytes(data)
+              print(i,len(data),hashlib.sha256(data).hexdigest())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr4a-authored-transport
+          path: /tmp/pr4-transport
+          retention-days: 7
