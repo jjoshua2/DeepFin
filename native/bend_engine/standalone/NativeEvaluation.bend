@@ -8,6 +8,7 @@ import ./HistoryEncoding.bend as H
 import ./ModelInput.bend as Input
 import ./EvaluationInput.bend as Evaluation
 import ./LogitReply.bend as Logits
+import ./NeuralWork.bend as Work
 
 # Zero is the explicitly material-only build. A native build must load and
 # validate its bound model before returning profile 1..4; errors are fatal.
@@ -78,14 +79,30 @@ def notice(root: Pos.Game, game: Pos.Game, entries: List<&2, Policy.Entry>,
     case 0: notice_render(root, game, table, epoch, request, node, win, draw, loss, count, priors(entries, 0, (policy, "")))
     case _: IO.die(Array<U64> & Search.Reply, 2, "native model output or legal policy contract failed; no material fallback")
 
-def prepared(root: Pos.Game, game: Pos.Game, ticket: Search.Ticket, p: Evaluation.Preparation) -> IO(Array<U64> & Search.Reply):
+type Result is Type:
+  Result{table: Array<U64>, reply: Search.Reply, encoding_ms: Nat, backend_ms: Nat, post_ms: Nat}
+
+def material(r: Array<U64> & Search.Reply) -> Result:
+  (table, reply) = r
+  Result{table, reply, 0n, 0n, 0n}
+
+def timed_result(started: Nat, +encoded: Nat, +forwarded: Nat, finished: Nat,
+  r: Array<U64> & Search.Reply) -> Result:
+  (table, reply) = r
+  Result{table, reply, Nat.sub(encoded, started), Nat.sub(forwarded, encoded), Nat.sub(finished, forwarded)}
+
+def prepared(+profile: Bool, +started: Nat, root: Pos.Game, game: Pos.Game, ticket: Search.Ticket, p: Evaluation.Preparation) -> IO(Result):
   match p:
-    case Evaluation.Invalid{table, maps}: IO.die(Array<U64> & Search.Reply, 2, "native input preparation failed")
+    case Evaluation.Invalid{table, maps}: IO.die(Result, 2, "native input preparation failed")
     case Evaluation.Ready{Evaluation.Prepared{maps, Input.Input{table, values, +channels}, +entries}}:
       +count = U32.mul(channels, 64)
-      do IO<Array<U64> & Search.Reply>:
+      do IO<Result>:
+        encoded : Nat <- Work.clock(profile)
         output : List<F32> <- Native.run(flatten(U32.to_nat(count), count, (values, Nil{})))
-        notice(root, game, entries, table, Logits.convert(ticket, entries, output))
+        forwarded : Nat <- Work.clock(profile)
+        r : Array<U64> & Search.Reply <- notice(root, game, entries, table, Logits.convert(ticket, entries, output))
+        finished : Nat <- Work.clock(profile)
+        return timed_result(started, encoded, forwarded, finished, r)
 
 def layout(profile: U32) -> H.Layout:
   match profile:
@@ -100,6 +117,8 @@ def version(profile: U32) -> Input.Version:
     case 2: Input.V1{}
     case _: Input.V2Threats{}
 
-def evaluate(+profile: U32, root: Pos.Game, +game: Pos.Game, ticket: Search.Ticket,
-  table: Array<U64>) -> IO(Array<U64> & Search.Reply):
-  prepared(root, game, ticket, Evaluation.prepare(layout(profile), version(profile), game, table, Policy.build()))
+def evaluate(+timing: Bool, +profile: U32, root: Pos.Game, +game: Pos.Game, ticket: Search.Ticket,
+  table: Array<U64>) -> IO(Result):
+  do IO<Result>:
+    now : Nat <- Work.clock(timing)
+    prepared(timing, now, root, game, ticket, Evaluation.prepare(layout(profile), version(profile), game, table, Policy.build()))

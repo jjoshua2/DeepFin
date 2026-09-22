@@ -486,3 +486,11 @@ The backend has a 65,536-forward process limit. No CUDA, batched scheduler,
 subtree reuse, production Gumbel parity, trained-model strength or training
 migration is established. Existing material-mode regressions and perft depths
 remain unchanged; new native tests and model export are opt-in only.
+
+## Neural-work instrumentation
+
+Every completed search reports `deepfin.neural-work.v1` counters. `go evals N`
+selects a real-neural-row budget; `go movetime MS` selects a wall-time budget;
+append `profile` for optional CPU phase clocks. See
+[measurement definitions and paired benchmark](../../../docs/neural_work.md)
+for limits, missing backend measurements and the `verify_work.py` opt-in checks.
