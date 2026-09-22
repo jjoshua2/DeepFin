@@ -113,3 +113,22 @@ C++/LibTorch/AOTI remain dependencies. Self-review only, not independent review.
 Pinned checker/Base, native lowering, physical storage/lifetime, ABI, toolchain,
 libraries, OS/hardware remain trust boundaries. Prior TypeScript, diagnostic-depth
 and raw-internal-call lowering limitations are unchanged and unsuppressed.
+
+
+## Hosted qualification and clean publication
+
+Hosted run **35777583835**, workflow commit `95bde5c08c5dacf52c50a514b3ec93a9bc0e00f6`, passed the complete **89-law / 176-control** aggregate, four native modes, original compiler source/pin checks and unchanged whole-repository lint on source commit `ce9d5e5442cf44cde50a4c8da66e3ea9ffdd5bdc`.
+
+The unchanged 83-law / 156-control parent ran once in this completed qualification, then all six new public laws and 20 reviewed controls. The full importing consumer checked with exact successful output; its certificate producers remain imported. Local controls, ordinary diagnostic locations and every proof-input identity match the hosted report. The earlier standalone 300-second timeout remains a development failure. No accepted statement or compiler was changed to get green.
+
+Initial development run 35776424965 was deliberately cancelled before publication after self-review found that two mutations failed at the wrong layer. The untyped zero literal and U32.add_comm failure are retained as invalid new-refinement evidence. The final controls use well-typed U64 mutations and require the intended Add.safe_from_wide / Add.widening diagnostic, with stricter rejection of malformed/inference/linearity errors. All six accepted theorem sources are unchanged. No complete aggregate result is attributed to the cancelled run.
+
+All four native modes passed 288 cases and six malformed requests each. Every native result/source identity agrees with the local report except C compiler identity: hosted Ubuntu clang version 18.1.3 (1ubuntu1), Bun 1.4.2. CC=clang-18 was scoped only to the native step; Python 3.13 CPU development setup used its normal compiler and locked uv 0.12.10 environment. Ruff, Basedpyright and Vulture passed unchanged. No warning or failure was suppressed.
+
+Recovery applied the original exact patch (SHA-256 5dcaeb4a4a87626fc461f2816985c46f2dd89b8e8a6934d729bacb92932279da) and the separately identified review correction (SHA-256 549148d8ac90b8ecc2e5c032a981175978267fbbe798b716006076fc53e5fb88). The complete reviewed tree is 4ee76c5d996b16d6ca84b0053b2a65f80d90611e. All transport identities were verified before application; no damaged transport was repaired. All 253 native-source manifest entries matched before and after qualification.
+
+Fresh branch `feat/bend-relative-address-bounds-20260922` receives the source commit and this evidence/documentation commit only after all gates. Temporary workflows and payloads are excluded. Compact reports and lossless lint/pin logs are committed; full logs remain in the 30-day artifact bend-relative-address-qualification. No merge, force push, deployment or live-process change.
+
+The new source statements use the certified prefix expression; they do not prove every stored offset header or final table value. The native probe reads actual headers and selected computed values but is not exhaustive over all occupancies and is not a source proof. Full fill-clear schedules, final initialized/computed contents and independent blocker-ray refinement remain the next P2 acceptance.
+
+Self-review only, not independent review. No production runtime or new Python responsibility moved. Existing export, references, data/control, training and transitional C++/LibTorch/AOTI dependencies remain. No model/GPU, perft increase, training, strength or benchmark result. Pinned checker/Base and native lowering/storage/lifetime/ABI/toolchain/OS/hardware remain trust boundaries; earlier compiler diagnostics are unchanged.
