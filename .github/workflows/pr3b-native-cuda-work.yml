@@ -11,6 +11,7 @@ defaults:
 env:
   APPLY_AUTHORED_PATCH: |
     mkdir -p /tmp/pr3b-evidence
+    git config --global --add safe.directory "$PWD"
     python - <<'PY_PATCH'
     import base64, gzip, hashlib, json, subprocess
     from pathlib import Path
@@ -96,7 +97,7 @@ jobs:
           name: deepfin-pr2-reuse-final
           run-id: 35767013700
           github-token: ${{ github.token }}
-          path: /tmp/pr3b-prrior2
+          path: /tmp/pr3b-prior2
       - name: Recover exact fixture and unchanged generated singleton source
         run: |
           tar -xzf /tmp/pr3b-prior1/native-build.tar.gz -C /tmp
