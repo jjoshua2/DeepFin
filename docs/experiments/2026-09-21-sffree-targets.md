@@ -63,13 +63,43 @@ Fifteen focused tests pass, including real target-overlay construction, wrong
 feed bytes despite matching IDs, changed teacher content/provenance and both
 missing supervision masks. Focused Ruff, basedpyright and vulture pass. The
 whole-repository gate reports 23 type errors in seven unchanged baseline test
-files and no introduced diagnostics; baseline reproduction is being banked with
-the companion loader optimization. Independent implementation review approved
-the builder after adding the explicit policy-mask guard.
+files and no introduced diagnostics; baseline reproduction is banked in the
+[companion loader optimization PR #810](https://github.com/jjoshua2/DeepFin/pull/810). Independent implementation review approved
+the builder after adding the explicit policy-mask guard. The
+[independent real-data review](evidence/2026-09-21-sffree-targets/independent-review.json)
+revalidated schema-2 receipts, independently reproduced E values byte-for-byte,
+and checked all 35 manifests and 14,216 current teacher metadata pins/bindings.
 
-## Current boundary
+## Full CPU preparation launched
 
-Full CPU preparation and E training have not launched at this record's creation.
+After [independent launch review](evidence/2026-09-21-sffree-targets/launch-review.json),
+the full CPU preparation started on September 22 at 00:10:55 UTC (September 21
+local time). Supervisor PID 1755363 owns the first cohort child PID 1755443.
+[Launch](evidence/2026-09-21-sffree-targets/launch.json) and
+[compact plan](evidence/2026-09-21-sffree-targets/plan-summary.json) are banked;
+the full plan SHA256 is
+`c0e137a3ec1a64bd6bc1fd2d0345901b18d4c2408923c302869cb710cdd40cdc`.
+
+Runtime commit `4ecf772963967cb9de53d6e9a2cd895172a41e15` is frozen separately at
+`/tmp/deepfin-sffree-frozen-4ecf7729`. All 2,887 runtime file identities, membership,
+physical symlink targets and the smoke-tested builder are rechecked. The job runs
+35 sequential builders and full schema-2 qualification under one 16-hour cap,
+with affinity 8,9, nice19, two threads and CUDA hidden. D has wider CPU affinity,
+so these cores are not exclusively reserved. Guards check STOP markers, 150 GiB
+free disk and 40 GiB available RAM; failure preserves incomplete output and only
+terminates owned child groups. [Guard tests](evidence/2026-09-21-sffree-targets/guard-tests.json)
+cover failed children, STOP and low RAM, including cleanup and no next launch.
+
+The three cached smoke samples suggest 8.6–12.1 hours of building and 11.1–11.5 GB
+of output, excluding full seal verification, qualification and contention. The
+16-hour limit is a kill cap, not a completion ETA. Outputs go to
+`/home/josh/chess-artifacts/labels/factorial58_sffree_20260921`; terminal receipts go
+to the preparation operation's `execution_v1` directory. A successful full receipt
+must establish all 58,090,688 rows and 7,108 shards before training admission.
+
+E training has not launched or been queued. D and its two queued matches remain
+in place. Full-corpus completion, exact training-plan review and comparison pins
+remain outstanding.
 Bulk artifacts live under `/home/josh/chess-artifacts/operations/`; the manifests
 point to original teacher/base banks. Publishing this builder does not alter the
 active frozen factorial runtime or queue. The implementation PR is stacked on

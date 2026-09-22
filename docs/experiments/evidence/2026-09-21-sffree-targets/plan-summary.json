@@ -1,0 +1,61 @@
+{
+  "status": "READY_REVIEWED_FROZEN",
+  "runtime": "/tmp/deepfin-sffree-frozen-4ecf7729",
+  "runtime_head": "4ecf772963967cb9de53d6e9a2cd895172a41e15",
+  "python": "/usr/bin/python3",
+  "orchestrator": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/full_cpu_run.py",
+    "sha256": "8e94ae8c5b255b8d1ca27a98c840678f407f785674666910e7dd2fb5cba6a0c8"
+  },
+  "manifests": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/manifests.json",
+    "sha256": "ca4e61bbae176ac0b6d1f32698aad9de299bc4f48de3035f2a430dac60ccf34c"
+  },
+  "operation": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/execution_v1",
+  "output": "/home/josh/chess-artifacts/labels/factorial58_sffree_20260921",
+  "wall_seconds": 57600,
+  "cpus": [
+    8,
+    9
+  ],
+  "threads": 2,
+  "minimum_free_gib": 150,
+  "minimum_available_gib": 40,
+  "stop_paths": [
+    "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/autonomous_loop_20260914/STOP"
+  ],
+  "smoke": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-smoke-v2-20260921/complete.json",
+    "sha256": "d4a054ea178ddb32580d703668774a34b30b22360922426ce90c27ec4eb94e92"
+  },
+  "planning_estimate": {
+    "rows": 58090688,
+    "target_bytes_range": [
+      11144959447.0625,
+      11479065996.84375
+    ],
+    "builder_seconds_range": [
+      30978.38767480521,
+      43578.300710797404
+    ],
+    "limits": "Three one-shard warm/cache-affected samples. Scale estimate excludes full base-corpus seal checks, aggregate qualification, contention and filesystem metadata growth.16h is a kill cap, not ETA.",
+    "host_snapshot": {
+      "artifact_free_bytes": 927862689792,
+      "external_free_bytes": 7273666404352,
+      "available_ram_bytes": 72492732416,
+      "active_training_pid": 1516996,
+      "active_training_elapsed": "10:55:56",
+      "active_training_cpu_percent": 119
+    }
+  },
+  "runtime_directory_links": {
+    "/tmp/deepfin-sffree-frozen-4ecf7729/.claude/skills": "../.agents/skills"
+  },
+  "runtime_file_count": 2887,
+  "full_plan": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/full_cpu_plan.json",
+    "sha256": "c0e137a3ec1a64bd6bc1fd2d0345901b18d4c2408923c302869cb710cdd40cdc"
+  }
+}

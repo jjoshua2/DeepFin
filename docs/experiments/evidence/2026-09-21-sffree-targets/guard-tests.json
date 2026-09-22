@@ -1,0 +1,26 @@
+[
+  {
+    "mode": "child_failure",
+    "result": "PASS",
+    "error": "RuntimeError('cohort00 failed with exit 7')",
+    "child_returncodes": [
+      7
+    ]
+  },
+  {
+    "mode": "stop",
+    "result": "PASS",
+    "error": "RuntimeError('STOP requested')",
+    "child_returncodes": [
+      -15
+    ]
+  },
+  {
+    "mode": "ram_floor",
+    "result": "PASS",
+    "error": "RuntimeError('available RAM floor')",
+    "child_returncodes": [
+      -15
+    ]
+  }
+]
