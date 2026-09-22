@@ -1,0 +1,201 @@
+name: Qualify saved exact slider indices
+'on':
+  push:
+    branches: [feat/bend-exact-indices-qualification-20260922]
+    paths: [.github/workflows/bend-exact-indices-qualification.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 40803892f3204a54a33a87e2e7b25fa48fed2e1a
+      SOURCE: 53b6e78f3052a0ed273f7fc31be47b66b32707b9
+      TARGET: feat/bend-exact-slider-indices-20260921
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 40803892f3204a54a33a87e2e7b25fa48fed2e1a
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover the exact saved patch, complete tree and original commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/exact-evidence" "$RUNNER_TEMP/exact-transport"
+          echo "EVIDENCE=$RUNNER_TEMP/exact-evidence" >> "$GITHUB_ENV"
+          export EVIDENCE="$RUNNER_TEMP/exact-evidence"
+          for blob in 9ba27eeb45cebebcc54250b917f3bed862493b34 3973e80379c6c9da78685e60dce10f83997bb7db b24c992b26e023a90bae5901139568f38b0baace 17de5c5c4a3bc04d535ede57d3d3dc3bf51e2dc8; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/exact-transport/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/exact-transport/$blob")" = "$blob"
+          done
+          python3 - <<'PY'
+          import base64, email.policy, email.parser, email.utils, hashlib, json, lzma, os, subprocess
+          from pathlib import Path
+          t = Path(os.environ['RUNNER_TEMP'])/'exact-transport'
+          ids = ['9ba27eeb45cebebcc54250b917f3bed862493b34','3973e80379c6c9da78685e60dce10f83997bb7db','b24c992b26e023a90bae5901139568f38b0baace','17de5c5c4a3bc04d535ede57d3d3dc3bf51e2dc8']
+          encoded = b''.join((t/i).read_bytes() for i in ids)
+          assert len(encoded) == 33208
+          patch = lzma.decompress(base64.b64decode(encoded, validate=True), memlimit=256*1024*1024)
+          assert len(patch) == 112619
+          digest = hashlib.sha256(patch).hexdigest()
+          assert digest == 'decd7ad1380771334ca0014ad474e9e7e4f578537ee97a34304621cf6d24b2c6'
+          (t/'candidate.patch').write_bytes(patch)
+          def git(*args):
+              return subprocess.check_output(['git',*args],text=True).strip()
+          assert git('rev-parse','HEAD') == os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}') == '50269344ff41534586f485a1b5aa70875e465a46'
+          subprocess.run(['git','apply','--check',str(t/'candidate.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(t/'candidate.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          tree = git('write-tree')
+          assert tree == 'fc6400fbefe04deded9d6e1c9ac3ff54ef883221'
+          files = git('diff','--cached','--name-only').splitlines()
+          allowed = {'docs/bend_migration_proofs.md','docs/experiments/README.md','docs/experiments/2026-09-21-bend-exact-slider-indices.md'}
+          assert len(files) == 33
+          assert all(f in allowed or f.startswith('native/bend_engine/standalone/proofs/address/') or f.startswith('docs/experiments/evidence/bend-exact-slider-indices/') for f in files)
+          m = email.parser.BytesParser(policy=email.policy.default).parsebytes(patch.split(b'\n',1)[1])
+          message = (str(m['Subject']).removeprefix('[PATCH] ')+'\n\n'+m.get_content().split('\n---\n',1)[0]).rstrip()+'\n'
+          ts = int(email.utils.parsedate_to_datetime(str(m['Date'])).timestamp())
+          raw = f"tree {tree}\nparent {os.environ['BASE']}\nauthor {m['From']} {ts} +0000\ncommitter {m['From']} {ts} +0000\n\n{message}".encode()
+          expected = hashlib.sha1(b'commit '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+          assert expected == os.environ['SOURCE']
+          stored = subprocess.check_output(['git','hash-object','-t','commit','-w','--stdin'],input=raw).decode().strip()
+          assert stored == expected
+          subprocess.run(['git','switch','--detach',stored],check=True)
+          e = Path(os.environ['EVIDENCE'])
+          (e/'recovery.json').write_text(json.dumps({'base':os.environ['BASE'],'source_commit':stored,'source_tree':tree,'patch_sha256':digest,'patch_bytes':len(patch),'changed_files':files,'original_commit_preserved':True},indent=2)+'\n')
+          d = Path('docs/experiments/evidence/bend-exact-slider-indices')
+          hashes = {}
+          for report in ['local-proofs.json','local-native.json']:
+              r = json.loads((d/report).read_text())
+              assert r['compiler_revision'] == 'aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae'
+              for rel,h in r['source_sha256s'].items():
+                  p = Path('native/bend_engine')/rel
+                  assert hashlib.sha256(p.read_bytes()).hexdigest() == h,str(p)
+                  hashes[str(p)] = h
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          PY
+          git diff --exit-code
+          git diff --cached --exit-code
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Recheck all 56 laws and 72 rejection controls
+        timeout-minutes: 13
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/address/verify.js "$PWD/.compiler" --report "$EVIDENCE/proofs.json" 2>&1 | tee "$EVIDENCE/source-gate.log"
+          cmp "$EVIDENCE/proofs.json" docs/experiments/evidence/bend-exact-slider-indices/local-proofs.json
+      - name: Check the actual scalar implementation in four native modes
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/address/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native-gate.log"
+      - name: Recheck the original compiler source suite and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install the locked CPU development environment
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run the unchanged whole-repository lint gate
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Record the results and publish only a fresh branch
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          git diff --cached --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-slider-mask-bounds-20260921 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target-ref.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          e = Path(os.environ['EVIDENCE'])
+          d = Path('docs/experiments/evidence/bend-exact-slider-indices')
+          p = json.loads((e/'proofs.json').read_text())
+          n = json.loads((e/'native.json').read_text())
+          old = json.loads((d/'local-native.json').read_text())
+          assert p['proof_gate'] == 'PASS' and p['aggregate_law_count'] == 56 and p['new_law_count'] == 8
+          assert p['inherited_negative_controls'] == 55 and len(p['negative_controls']) == 17
+          assert all(c['rejected'] for c in p['negative_controls'])
+          assert n['native_gate'] == 'PASS' and n['distinct_operand_rows'] == 2070 and n['chess_keys'] == 128
+          assert {k:v for k,v in n.items() if k != 'cc'} == {k:v for k,v in old.items() if k != 'cc'}
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate'] == 'PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for f,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest() == h,f
+          for name in ['proofs.json','native.json','compiler-proofs.json','candidate-source-sha256.json','recovery.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw = (e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run = os.environ['GITHUB_RUN_ID']
+          sha = os.environ['GITHUB_SHA']
+          summary = f"Hosted qualification **{run}** on September 22, 2026 passes all 56 laws, 72 rejection controls, four native modes, original compiler source/pin checks and whole-repository lint. The original saved commit `{os.environ['SOURCE']}` and complete tree `fc6400fbefe04deded9d6e1c9ac3ff54ef883221` were recovered exactly, not rewritten."
+          record = Path('docs/experiments/2026-09-21-bend-exact-slider-indices.md')
+          text = record.read_text().replace('## Execution readout','## Historical local execution readout',1)
+          sections = [
+              '## Hosted qualification and publication',
+              summary,
+              f"Temporary workflow commit `{sha}` checks all four transport fragment identities, original patch SHA-256 `decd7ad1380771334ca0014ad474e9e7e4f578537ee97a34304621cf6d24b2c6`, full source tree, original commit and every recorded candidate source hash. The reconstructed commit retains its original author/committer metadata. Only this subsequent documentation/evidence commit is new.",
+              'The hosted source report is byte-identical to the saved local report. Native results and all source hashes match; only the separately reported C compiler identity may differ. Each mode checks 2,070 rows, all 128 chess keys, 28 population-32 rows, and 218 explicit wider-mask truncation counterexamples; five invalid requests are rejected. Repeated modes are not disjoint data sets or exhaustive arbitrary-U64 tests.',
+              f"Toolchain: Bun {n['bun']}, {n['cc']}, locked Python 3.13 CPU environment and uv 0.12.10. The unchanged whole-repository Ruff/Basedpyright/Vulture gate passes. This resolves the historical missing-tool lint gap; original failed local logs remain unchanged. The compiler fork's separately documented strict-TypeScript and diagnostic-depth limitations are not fixed or suppressed here.",
+              'A parallel existing branch was found during refresh: feat/bend-exact-slider-index-20260921 at 5c05c5c281212e313a630f077ab466fbd650985d, with six laws in proofs/exact_index and its own hosted record 35684436097. It shares this parent but is not this eight-law proofs/address candidate. That branch and all its evidence are preserved untouched. Its test counts are not attributed to this candidate, and none of this candidate\'s eight accepted statements are dropped. Future consolidation must map contracts and preserve both sets before removing duplicate helpers.',
+              f"Publication creates `{os.environ['TARGET']}` only after qualification. No merge, force push, deployment or live-process operation. The temporary workflow and transport payloads are absent from the feature tree. Compact hosted evidence is committed; full gate logs remain in the 30-day artifact exact-slider-indices-qualification.",
+              'Self-review only, not independent review. No production code, earlier laws, compiler inputs, existing tests or routine test budgets changed. No new full-engine/model build, perft, GPU, training or benchmark result. Python export/data/control/training and transitional C++/LibTorch/AOTI computation remain dependencies.',
+              'Exact scalar lookup/ordinal/redeposit claims are now qualified on this source. Actual prefix offsets, initialized/disjoint affine writes/reads and equality to independent blocker rays remain the next acceptance; this publication is not that storage proof.'
+          ]
+          record.write_text(text+'\n\n'+'\n\n'.join(sections)+'\n')
+          m = Path('docs/bend_migration_proofs.md')
+          title,rest = m.read_text().split('\n',1)
+          m.write_text(title+'\n\n## Current qualification update: September 22, 2026\n\n'+summary+' Historical local-only/lint-unqualified statements below retain their original execution context; the hosted result above supersedes those status gaps for this exact candidate. No prefix/affine-storage theorem follows from this update. The parallel six-law exact_index branch remains preserved and separate. See the dated exact-slider-indices readout and hosted evidence.\n'+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/2026-09-21-bend-exact-slider-indices.md docs/experiments/evidence/bend-exact-slider-indices
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify and publish the saved eight-law exact-index continuation'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/address > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exact-slider-indices-qualification
+          path: ${{ runner.temp }}/exact-evidence/
+          retention-days: 30
