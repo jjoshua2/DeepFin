@@ -120,3 +120,5 @@ For durable knowledge, use [model heads](../model_heads.md),
 [the loop audit](../rl_loop_audit.md) and [operations](../operations.md), following their
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
+
+- [2026-09-22: 500M shared CPU/GPU capacity requirements](2026-09-22-scale-compute-budget.md)
