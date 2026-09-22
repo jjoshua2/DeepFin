@@ -287,3 +287,24 @@ outputs: `/home/josh/chess-artifacts/labels/factorial58_sffree_20260921`.
 E training is not launched or queued: it still requires completed full-corpus
 qualification, reviewed exact training admission and D's remaining matches.
 The teacher hypothesis and 500M production qualification remain unresolved.
+
+## Labeling and storage CPU optimizations
+
+The next bounded optimization pass preserved active D and SF-free preparation.
+Three independently reviewed changes are published:
+
+- [Ceres encoding #812](https://github.com/jjoshua2/DeepFin/pull/812) reduces binary-history reduction cost. Across three saved panels, encoder CPU time fell 22.7–30.3%, with all 3,072 feed outputs byte-identical. The author and independent reviewer each passed 118 focused tests. This is encoder-component evidence; inference throughput was not measured.
+- [BT4 source reading #813](https://github.com/jjoshua2/DeepFin/pull/813) avoids decoding 512-row source chunks four times for 128-row inference batches. An 8,192-row ABBA test measured 3.91x/4.09x faster source reading on NVMe/external ZIP and 1.31x faster total measured CPU preparation. All source/feed/batch hashes matched. Twenty-eight tests and independent review passed. External ZIP exercised the reader helper; full-producer packed-source admission was not added.
+
+[Raw BT4 preparation #814](https://github.com/jjoshua2/DeepFin/pull/814) projects only the eleven fields consumed by labeling and
+verification, avoiding allocation of unused Stockfish search payloads. After
+integer/nesting/optional-dependency compatibility fixes, the complete 8,236-row
+CPU screen measured 8.64s to 5.16s median read-plus-encoding time (1.675x), with
+all consumed fields and seven ordered identity/input/legal/feed hashes exact.
+The initial ten-field parser-only 33x prototype is not the final result. Sixty-two focused tests passed on the locked dependency version; independent
+review verified the implementation, paired results and compatibility cases.
+
+These gains address different CPU stages and must not be multiplied into an
+end-to-end speedup. Full GPU-labeling throughput and large cold-working-set
+training remain unqualified. New-position generation is a separate bottleneck.
+No active frozen runtime was changed to adopt these patches.
