@@ -83,3 +83,22 @@ diagnostic-depth issues are not fixed or suppressed. Python export, external
 references, data/control orchestration and training remain; C++/LibTorch/AOTI is
 transitional inference. No new Python responsibility moved into Bend and no
 full-engine/model/GPU, perft, strength or performance qualification is claimed.
+
+
+## Hosted qualification and publication
+
+Hosted run **35759797335**, temporary workflow commit `6348d9f69e2f8871b895949d5567ec9211347ac2`, passes **79 accepted laws and 140 rejection controls**, supported public-API tests in four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `a26e59f7168519c7de9720b9edb7967ef0650d97`.
+
+The aggregate invokes the unchanged 74-law/126-control prefix gate, then the five-law/14-control normalization gate. The focused contract/control/source report matches the saved local canonical identity; the complete native report matches except the recorded C compiler version. Every candidate native/proof source hash is checked before and after qualification. No previous law or gate was omitted or modified.
+
+The native probe executes only supported public Array.get/set/size APIs, using a complete 131072-cell allocation for each fixture. Each mode passes 74 rows (64 in-range and ten out-of-range wrapper cases), and rejects six malformed requests. Observations are query values, capacity and mask values, not complete returned-cell comparisons. Repeated modes are not disjoint datasets or exhaustive arbitrary-input native tests.
+
+Tools: Bun 1.4.2, Ubuntu clang version 18.1.3 (1ubuntu1), locked Python 3.13 CPU development environment and uv 0.12.10. Original compiler source laws and seven controls including cyclic-template rejection pass, and all 12 compiler-pin tests pass. Whole-repository Ruff/Basedpyright/Vulture passes unchanged; it was not rerun locally without its locked environment.
+
+The exploratory direct-internal-routine C generation failure remains unresolved: open Array element type. Its original source and command-output bytes are committed with SHA-256 identities. The passing public-wrapper native probe is explicitly narrower and does not qualify direct calls to Array.get.go/swap.go. Source equalities involving those routines do check. No compiler edit, continue-on-error or relabeling of the failed probe was used.
+
+The complete source tree 166ca47788da93ad29a9c5da7b3668fb35f89c94 matches the locally prepared index with the final parent reconciliation note preserved. Local baseline proof/native bytes came from the previous parent evidence commit; its final note is the only later change. Publication adds evidence, index and matrix documentation only after qualification. Full logs remain in the 30-day artifact bend-address-normalization-qualification; compact reports are committed.
+
+Mask injectivity is a numeric result. Distinct bounded integers reaching distinct leaves of a balanced tree, prefix-plus-interior bounds, clear-path certificates, final computed table contents and independent blocker-ray lookup remain separate unfinished targets. Observed capacity alone does not require a balanced tree. No source theorem assumes its desired read value as a premise.
+
+Branch `feat/bend-address-normalization-20260922` is advanced by a documentation/evidence commit only. No merge, force push, deployment or live-process change; the temporary workflow is excluded from this feature branch. Self-review only, not independent review. No production code, previous proof, compiler input, existing test or routine perft budget changes. No full-engine/model/GPU/training/benchmark result. Python export, data/control orchestration, external references and training, and transitional C++/LibTorch/AOTI inference remain dependencies. Historical compiler TypeScript/diagnostic-depth limits are not fixed or suppressed.
