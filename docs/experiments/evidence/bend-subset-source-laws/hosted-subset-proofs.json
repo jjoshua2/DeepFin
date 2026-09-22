@@ -1,0 +1,94 @@
+{
+  "proof_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "new_source_laws": [
+    "step_in_mask",
+    "sequence_in_mask",
+    "sequence_extract_deposit",
+    "empty_mask_sequence",
+    "cross_low_half",
+    "cross_bit63",
+    "mask_cycle_end",
+    "full_word_wrap"
+  ],
+  "universal_laws": 4,
+  "closed_boundary_equalities": 4,
+  "inherited_source_laws": [
+    "pext_pdep_roundtrip",
+    "popcount_bound",
+    "popcount_zero",
+    "popcount_full",
+    "popcount_bit63",
+    "word_roundtrip",
+    "word_fullwidth",
+    "parts_roundtrip",
+    "from_parts_low",
+    "from_parts_high",
+    "widening_low",
+    "widening_high_zero",
+    "pext_zero_mask",
+    "pdep_zero_mask",
+    "xor_twice",
+    "not_twice"
+  ],
+  "negative_controls": [
+    {
+      "name": "missing-proof",
+      "rejected": true
+    },
+    {
+      "name": "missing-laws-import",
+      "rejected": true
+    },
+    {
+      "name": "false-boundary-law",
+      "rejected": true
+    },
+    {
+      "name": "proof-hole",
+      "rejected": true
+    },
+    {
+      "name": "unmasked-implementation",
+      "rejected": true
+    },
+    {
+      "name": "reversed-subtraction",
+      "rejected": true
+    },
+    {
+      "name": "stuck-at-zero",
+      "rejected": true
+    },
+    {
+      "name": "truncated-subtraction",
+      "rejected": true
+    },
+    {
+      "name": "unsafe-dependency",
+      "rejected": true,
+      "raw_cli_status": 0
+    },
+    {
+      "name": "inherited-provenance-change",
+      "rejected": true
+    },
+    {
+      "name": "missing-inherited-proof",
+      "rejected": true
+    }
+  ],
+  "source_blobs": {
+    "Subsets.bend": "7ed52ce5b91058ec63681ad1317942afde0bacb5",
+    "Tables.bend": "1bf430a4e998e05181fa6612c17527825c3123c3",
+    "proofs/LAWS.bend": "40fb1376f08628c230d72ca0cc9880a6ddb67211",
+    "proofs/PROOF.bend": "2140fde7be11e53ef6aeb9f21f70642d4f2c34cf",
+    "proofs/Mask.bend": "31b7d972d42606603ff8a795c353fc255a22ca2b",
+    "proofs/u64/LAWS.bend": "158f45a68c7f24bc79c8cb7e557424a317d315de",
+    "proofs/u64/PROOF.bend": "e08dad20df90b9e542aee34b7e775e4402339b9c",
+    "proofs/u64/Words.bend": "503f1e5f49c4ef01ca45a1a3a010d5b52551a3df"
+  },
+  "scope": "Source mask membership and extract/deposit recovery; NOT complete ordering or affine-table refinement"
+}

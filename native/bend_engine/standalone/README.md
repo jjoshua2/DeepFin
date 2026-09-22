@@ -486,3 +486,15 @@ The backend has a 65,536-forward process limit. No CUDA, batched scheduler,
 subtree reuse, production Gumbel parity, trained-model strength or training
 migration is established. Existing material-mode regressions and perft depths
 remain unchanged; new native tests and model export are opt-in only.
+
+
+## Source-proof coverage
+
+The production `Tables.fill` step calls `Subsets.next`; its arithmetic is unchanged.
+The opt-in [proof suite](proofs/README.md) discharges eight initial mask-membership,
+recurrence/recovery and closed-boundary laws, reusing the pinned fork's 16 U64 laws.
+It does **not** prove complete enumeration order, slider geometry, affine table
+lookup, chess legality, neural numerics or the native compiler. See the durable
+[migration/proof matrix](../../../docs/bend_migration_proofs.md) and
+[subset evidence record](../../../docs/experiments/2026-09-21-bend-subset-source-laws.md).
+Neither proof/native gate is added to ordinary pytest or existing perft budgets.
