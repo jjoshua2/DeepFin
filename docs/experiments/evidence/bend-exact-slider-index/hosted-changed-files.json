@@ -1,0 +1,15 @@
+[
+  "docs/experiments/2026-09-21-bend-exact-slider-index.md",
+  "docs/experiments/evidence/bend-exact-slider-index/local-native.json",
+  "docs/experiments/evidence/bend-exact-slider-index/local-source-stage.json",
+  "native/bend_engine/standalone/proofs/exact_index/Boundary.bend",
+  "native/bend_engine/standalone/proofs/exact_index/Correspondence.bend",
+  "native/bend_engine/standalone/proofs/exact_index/LAWS.bend",
+  "native/bend_engine/standalone/proofs/exact_index/PROOF.bend",
+  "native/bend_engine/standalone/proofs/exact_index/Projection.bend",
+  "native/bend_engine/standalone/proofs/exact_index/README.md",
+  "native/bend_engine/standalone/proofs/exact_index/consumer.bend",
+  "native/bend_engine/standalone/proofs/exact_index/probe.bend",
+  "native/bend_engine/standalone/proofs/exact_index/verify.js",
+  "native/bend_engine/standalone/proofs/exact_index/verify_native.js"
+]

@@ -94,3 +94,22 @@ verify its final file identities rather than relabel the earlier report.
 Whole-repository lint is reserved for the complete locked hosted checkout; it
 was not run on the reconstructed local snapshot. No hosted result or clean
 branch publication is claimed until the follow-up record below exists.
+
+
+## Hosted qualification
+
+Run **35684436097**, temporary workflow commit `b1282686462fd83f62691f256dadf34e65ca15af`, passed every qualification stage before publication on exact candidate `f6fd6e349eea48af36a8fa4e14c2d40a0049f329`, whose parent is #819 `40803892f3204a54a33a87e2e7b25fa48fed2e1a`. All candidate and inherited source identities were checked before and after qualification.
+
+All six new universal laws, 48 inherited laws, 15 new rejection controls and 55 inherited controls pass. The importing consumer checks the complete existing layout proof and supplies its population certificate to the new helpers. No accepted obligation or trust condition is weakened.
+
+The final source report differs from the retained local source-stage report only in the corrected, nonimported native-probe source hash. Proof statements, proof sources and all control outcomes agree exactly; the original local report was not rewritten. Native modes and source identities agree with the corrected local native report.
+
+Generic, forced-portable, native-target and UBSan modes each pass all 107,648 relevant occupancy states, 215,296 indexed occupancies, 128 cycle endpoints and six rejected requests. Shared output SHA-256: `37cd7ab0da1fc36e2292fb00dc49fcd563ee0024c4656d55e47b8f182a6995da`. Hosted toolchain: Bun 1.4.2, Ubuntu clang version 18.1.3 (1ubuntu1). These are repeated fixtures, not disjoint datasets or exhaustive arbitrary-U64 native testing.
+
+The original fork source suite passes 16 laws and seven controls including cyclic-template rejection; all 12 compiler-pin contracts pass. The unchanged whole-repository lint gate passes Ruff, Basedpyright and Vulture in the locked Python 3.13 CPU development environment. No failures or assertions are suppressed.
+
+Proof/native reports, source identities, the local/hosted comparison and lossless lint/pin logs are committed alongside the original local reports. Full gate logs are also retained in the 30-day artifact `bend-exact-slider-index-qualification`. No generated binary, model, private trace or transport payload is committed.
+
+Clean publication is create-only on `feat/bend-exact-slider-index-20260921`. The implementation commit contains no development workflow; its follow-up adds only evidence and documentation/index updates. No force push, merge, deployment or live-process change. Self-review only, not independent review.
+
+This closes exact scalar-index/ordinal/relevant-occupancy correspondence, not prefix-offset arithmetic or initialized/disjoint affine storage. No full-engine, perft, model, GPU, training, strength or benchmark result is added. The next acceptance connects actual Tables.tables/fill offsets and writes/reads to these proved scalar facts and independent blocker-ray attacks. Python export/control/data/training and transitional LibTorch/AOTI computation remain unchanged.

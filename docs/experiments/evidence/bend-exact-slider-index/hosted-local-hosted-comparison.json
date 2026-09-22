@@ -1,0 +1,7 @@
+{
+  "proof_and_control_outcomes": "identical",
+  "only_source_report_difference": "standalone/proofs/exact_index/probe.bend",
+  "reason": "new native probe parser syntax corrected after local proof check; not imported by proofs",
+  "original_local_report_modified": false,
+  "native_modes_and_source_hashes": "identical"
+}
