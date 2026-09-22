@@ -22,7 +22,7 @@ The precommitted gate passed on all three 1,024-row panels; all 3,072 teacher fe
 | Qualified G10 history | 0.2044 | 0.1425 | 30.3% |
 | Raw-adapted source | 0.1277 | 0.0909 | 28.8% |
 
-[All paired measurements and byte digests](evidence/ceres-history-cpu-20260921.json) retain the five alternating pairs per source. The complete bounded benchmark took 5.49 s. Raw benchmark/profile scripts and receipt are banked in `/home/josh/chess-artifacts/operations/ceres-history-cpu-20260921/`. Measurements used Python 3.10's deployed NumPy 1.26.2 on cores 12–13 at nice 19; no new environment or GPU work was performed. Host load varied during the panel; medians describe this small warm CPU screen, not a cross-machine guarantee.
+[All paired measurements and byte digests](evidence/ceres-history-cpu-20260921.json) retain the five alternating pairs per source. The complete bounded benchmark took 5.49 s. Raw benchmark/profile scripts and receipt are banked in `~/chess-artifacts/operations/ceres-history-cpu-20260921/`. Measurements used Python 3.10's deployed NumPy 1.26.2 on cores 12–13 at nice 19; no new environment or GPU work was performed. Host load varied during the panel; medians describe this small warm CPU screen, not a cross-machine guarantee.
 
 The change narrows history only after the original binary-value check. Valid history contains exactly 0/1, so reductions and argmax preserve values; fractional, negative and overflowing values still fail before narrowing. At batch 32 the additional byte-history allocation is 208 KiB. The caller's float16 stored inputs, output uint8 feed, row order, batch padding, teacher backend and teacher calls remain unchanged. The existing producer hash identifies the new encoder revision rather than reusing old provenance.
 
