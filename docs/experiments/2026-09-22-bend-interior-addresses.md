@@ -92,3 +92,22 @@ inference. No whole-engine, model/GPU, strength or performance result is added.
 The next decisive acceptance is relative-index membership and complete regular-tree
 path separation, then frame certificates for final initialized contents and actual
 lookup against independent blocker rays. Numeric mask injectivity is only a step.
+
+
+## Hosted qualification and publication
+
+Hosted run **35761225905**, temporary workflow commit `f4a29f5a9e359db4cda3ba08dd9c48590047c936`, passes **79 accepted laws and 147 rejection controls**, the four-mode public-read native gate, original compiler source/pin checks and unchanged whole-repository lint on source `196229c1ebd2fa93774dfd1250e8580f620354a7`.
+
+The five new laws and 21 controls are checked before the unchanged 74-law/126-control parent, so a new failure stops promptly without omitting inherited qualification. Controls-only mode cannot satisfy the aggregate. All required prefix/layout proof producers are in the checked import graph. Positive source witnesses include genuine interior addresses, a satisfiable allocation-size premise, and both out-of-range masking and nonuniform-route counterexamples.
+
+Every native mode checks all 131072 allocation addresses and 393216 returned values using actual Tables.build and actual public Array.get. Public reads, explicitly normalized arguments and outside aliases match the independent geometric reference; seven invalid requests are rejected per mode. Reports match the local native result except the separately recorded C compiler identity. Modes repeat a fixed table fixture, not disjoint datasets or exhaustive arbitrary arrays.
+
+The source Array.get.go equality is qualified at source level only. The earlier direct internal-helper native probe failed with an open Array element type. The successful native probe intentionally exercises only the public API; it is not evidence that the internal helper now compiles. No compiler file was changed or failure suppressed.
+
+Hosted tools: Bun 1.4.2, Ubuntu clang version 18.1.3 (1ubuntu1), locked Python 3.13 CPU development environment and uv 0.12.10. All 12 compiler-pin checks and the original 16-law/seven-control source suite pass. Whole-repository Ruff/Basedpyright/Vulture passes unchanged, resolving the local missing-tools lint gap for this candidate.
+
+The candidate tree and every recorded source hash are checked before and after qualification. Subsequent publication adds only documentation and compact reports. Full logs have 30-day retention in bend-interior-address-qualification; compact reports are committed. The original local timeout and direct-helper compiler failure remain documented as failed or incomplete attempts, not proof passes.
+
+These are absolute half-open interval membership laws, not proof that every relative-index addition or incrementing writer produces such a member. Distinct normalized U32 values do not by themselves separate paths in arbitrary nonuniform arrays. Regular-depth shape/path certificates and their connection to relative PEXT indices, clear-write conditions, final computed contents and independent blocker-ray lookup remain open.
+
+Branch `feat/bend-interior-addresses-20260922` receives a fast-forward documentation/evidence commit only after all checks. No merge, force push, deployment, live-process change, production source change or additional Python-to-Bend migration. Temporary workflow and development transport are absent from the feature branch. Self-review only; no independent code review, full-engine/model/GPU, perft, training, strength or speedup qualification is claimed.

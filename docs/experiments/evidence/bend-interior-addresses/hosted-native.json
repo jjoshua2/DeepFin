@@ -1,0 +1,54 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "allocation_addresses_per_mode": 131072,
+  "read_value_comparisons_per_mode": 393216,
+  "slider_interior_addresses": 107648,
+  "reserved_addresses": 512,
+  "slack_addresses": 22912,
+  "outside_masked_alias_addresses": 131072,
+  "all_chess_keys": 128,
+  "logical_end": 108160,
+  "modes": [
+    {
+      "mode": "generic",
+      "allocation_addresses": 131072,
+      "value_comparisons": 393216,
+      "invalid_rejections": 7,
+      "output_sha256": "56d8669faa0f206e26f8185c335b83148f2543397f1bca55b2cfacbce73df641"
+    },
+    {
+      "mode": "portable",
+      "allocation_addresses": 131072,
+      "value_comparisons": 393216,
+      "invalid_rejections": 7,
+      "output_sha256": "56d8669faa0f206e26f8185c335b83148f2543397f1bca55b2cfacbce73df641"
+    },
+    {
+      "mode": "native",
+      "allocation_addresses": 131072,
+      "value_comparisons": 393216,
+      "invalid_rejections": 7,
+      "output_sha256": "56d8669faa0f206e26f8185c335b83148f2543397f1bca55b2cfacbce73df641"
+    },
+    {
+      "mode": "ubsan",
+      "allocation_addresses": 131072,
+      "value_comparisons": 393216,
+      "invalid_rejections": 7,
+      "output_sha256": "56d8669faa0f206e26f8185c335b83148f2543397f1bca55b2cfacbce73df641"
+    }
+  ],
+  "source_sha256s": {
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/interior/probe.bend": "ef4e0ba8e68854783d70a8db033891804f97c7c7a042b8a076f556710231f854",
+    "standalone/proofs/interior/verify_native.js": "3aef467b304086d7db587c396e87884492e41cfbb400d04223ebed61fc6f87c1"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "bun": "1.4.2",
+  "scope": "Actual Tables.build followed by public, explicit-normalization and out-of-range masked-alias reads at every allocation address. Proof predicates are not executed. Direct Array.get.go compilation is unsupported and was not native-qualified. Tests do not prove relative-index arithmetic, arbitrary-array path separation, final computed contents or geometry."
+}

@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest interior-address qualification: September 22, 2026
+
+Hosted run **35761225905**, temporary workflow commit `f4a29f5a9e359db4cda3ba08dd9c48590047c936`, passes **79 accepted laws and 147 rejection controls**, the four-mode public-read native gate, original compiler source/pin checks and unchanged whole-repository lint on source `196229c1ebd2fa93774dfd1250e8580f620354a7`.
+
+`interior/allocation_mask_exact` and `allocation_mask_injective` are structural U32/Word source laws for x<131072. `prefix_interior_certificate` constructs bounds and normalization for any absolute member of a valid actual prefix block. `ordered_normalized_addresses_distinct` proves distinct normalized numbers across ordered blocks. `interior_read_uses_unmasked_address` equates the complete actual public/internal source read pair under an explicit actual-size certificate. Prior prefix/layout certificates are constructed by imported proofs, not assumed by the caller.
+
+This supersedes the narrower claim that only block endpoints are known to normalize safely. It does not certify relative-index addition, regular tree shape, route injectivity, complete clear-write conditions or final geometric lookup. Nonuniform-array route aliasing is explicitly retained. Native qualification covers the public API only: direct internal Array.get.go compilation failed and remains unqualified. See the dated interior-address readout and committed evidence for exact scope and failures. No production or Python application responsibility changed.
+
 ## Current prefix qualification: September 22, 2026
 
 Hosted run **35747413010**, temporary workflow commit `647db192fd1004c897824e72a06699171a8a68de`, passes **74 accepted laws and 126 rejection controls**, all four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `34d40b0a8e897fb48536a40fee1c2ea443431b70`.

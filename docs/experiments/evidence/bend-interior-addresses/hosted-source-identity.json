@@ -1,0 +1,24 @@
+{
+  "base": "fa1afc75ee652d5b13f5788abfc36d9545010df9",
+  "source": "196229c1ebd2fa93774dfd1250e8580f620354a7",
+  "candidate_tree": "85680f9031dcc1bb1aa159e722fd114408b39c35",
+  "changed_files": [
+    "docs/experiments/2026-09-22-bend-interior-addresses.md",
+    "native/bend_engine/standalone/proofs/interior/Certified.bend",
+    "native/bend_engine/standalone/proofs/interior/Interval.bend",
+    "native/bend_engine/standalone/proofs/interior/LAWS.bend",
+    "native/bend_engine/standalone/proofs/interior/Mask.bend",
+    "native/bend_engine/standalone/proofs/interior/Order.bend",
+    "native/bend_engine/standalone/proofs/interior/PROOF.bend",
+    "native/bend_engine/standalone/proofs/interior/README.md",
+    "native/bend_engine/standalone/proofs/interior/Read.bend",
+    "native/bend_engine/standalone/proofs/interior/Spec.bend",
+    "native/bend_engine/standalone/proofs/interior/consumer.bend",
+    "native/bend_engine/standalone/proofs/interior/focused.js",
+    "native/bend_engine/standalone/proofs/interior/probe.bend",
+    "native/bend_engine/standalone/proofs/interior/verify.js",
+    "native/bend_engine/standalone/proofs/interior/verify_native.js"
+  ],
+  "transfer": "direct Git tree entries; expected tree computed from the recovered code-identical evidence ancestor, preserved final documentation blob and new file bytes",
+  "production_changed": false
+}

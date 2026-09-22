@@ -1,0 +1,238 @@
+{
+  "proof_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "aggregate_law_count": 79,
+  "new_law_count": 5,
+  "new_laws": [
+    "allocation_mask_exact",
+    "allocation_mask_injective",
+    "prefix_interior_certificate",
+    "ordered_normalized_addresses_distinct",
+    "interior_read_uses_unmasked_address"
+  ],
+  "inherited_law_count": 74,
+  "inherited_negative_controls": 126,
+  "negative_controls": [
+    {
+      "name": "normalization-is-zero",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Interval.bend"
+    },
+    {
+      "name": "mask-loses-bit-16",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Interval.bend"
+    },
+    {
+      "name": "normalization-increments-input",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Interval.bend"
+    },
+    {
+      "name": "inclusive-allocation-bound",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Mask.bend"
+    },
+    {
+      "name": "allocation-bound-one-too-wide",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Mask.bend"
+    },
+    {
+      "name": "inclusive-block-end",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Interval.bend"
+    },
+    {
+      "name": "missing-block-lower-bound",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Interval.bend"
+    },
+    {
+      "name": "actual-get-forces-zero",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Read.bend"
+    },
+    {
+      "name": "actual-get-masks-wrong-width",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Read.bend"
+    },
+    {
+      "name": "wrong-direct-read-address",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Read.bend"
+    },
+    {
+      "name": "missing-actual-size-certificate",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Read.bend"
+    },
+    {
+      "name": "falsely-excludes-first-block-addresses",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Interval.bend"
+    },
+    {
+      "name": "omitted-law",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "omitted-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-laws-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-consumer-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-prefix-certificate-producer",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "proof-hole",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "foreign-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "symlinked-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe-mask",
+      "rejected": true,
+      "kind": "policy and exact output",
+      "raw_cli_status": 0
+    }
+  ],
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/proofs/LAWS.bend": "cea2bd21b74162d11647a70fb5ca103a7dc93063a366c5f76a361c1a0f9f4608",
+    "standalone/proofs/Mask.bend": "515bf96ec739bdfcbefb26bfd5b9d8f4049f5f85862093760e9ee2bff1b3e4ee",
+    "standalone/proofs/PROOF.bend": "dde73c6b6cc8371a0ff8628483b5fb72e74194414cd31f2e49125b0f3a14a249",
+    "standalone/proofs/index/Bits.bend": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb",
+    "standalone/proofs/index/Count.bend": "0c81284f470204a97aa6f06ae6afed62b06173f906f08281cbfa6740df19b602",
+    "standalone/proofs/index/LAWS.bend": "6dc623f1b89b0ede66dfb9441ae83a82289e8af474aaef57e663321880e49905",
+    "standalone/proofs/index/Nats.bend": "71da4b9b978f47cebf57b79352ee614f1aa6257c13c7dfc624b839c95ed38c5c",
+    "standalone/proofs/index/PROOF.bend": "694ae18e89a0c44d718d6fa6d4393957199c00839d760bbf596aa805557497b6",
+    "standalone/proofs/index/Words.bend": "6d08fbbc9e16d3194e2d1a7e224f17676eb81adea1ead37523e0c24cc0cccd81",
+    "standalone/proofs/interior/Certified.bend": "f5512cd55f919fd1002c49ac771332fd53ee7e8f5ccddf4c17a74df178410f3c",
+    "standalone/proofs/interior/Interval.bend": "f080d2812d8f650eed2ac92f8c276f8c3006f678de38966a4a3cacaea1bd4f84",
+    "standalone/proofs/interior/LAWS.bend": "1e28586b00726a08f140a3f77f6b8fb0823f12efe2794a3a6667d1fcbcba17b2",
+    "standalone/proofs/interior/Mask.bend": "0fa715b70e2d5ebd8125c4f523ab8c6c1848b42fae9236f184a4354d9d6e3510",
+    "standalone/proofs/interior/Order.bend": "e6f99c58bb8aa52e1fedb241ef85dd7335a48d4d571a300ed6dbe3b6f367877b",
+    "standalone/proofs/interior/PROOF.bend": "02a9d651af79bb0b97dd945d7aecdcafb3fbbed5f47ad9c68ff0df3c0585d8cc",
+    "standalone/proofs/interior/Read.bend": "eae57cf22812ed7e7891bd4664296fafc696d905511a58ae767c9f5891ac8940",
+    "standalone/proofs/interior/Spec.bend": "499cb7c28285c67477c0c926ad8df77e49896b5fccabc00180e8f4f9b44450e1",
+    "standalone/proofs/interior/consumer.bend": "7500e41c3ce6dcafc599e371c573bdf1bd4ebf08f008120e2708467ab0d6f283",
+    "standalone/proofs/interior/focused.js": "bc5fd1f541fcb0174dd746552374207f763b6b99709dc439ac08c1a868863db8",
+    "standalone/proofs/interior/probe.bend": "ef4e0ba8e68854783d70a8db033891804f97c7c7a042b8a076f556710231f854",
+    "standalone/proofs/interior/verify.js": "d4ae4f86519582334586eb1d2dbf6d2b2c7185d72bc8715c3915e82f0505b47a",
+    "standalone/proofs/interior/verify_native.js": "3aef467b304086d7db587c396e87884492e41cfbb400d04223ebed61fc6f87c1",
+    "standalone/proofs/layout/Cases.bend": "5840233d09bdfbfdf4c26bb4b778994684c70fe9cb1484b5796b53757f5d374d",
+    "standalone/proofs/layout/Consequences.bend": "bb8824edee790cccf79967d0ccb9427e5e552ebfa6ff4d02fbc3dcdc60fa4f2d",
+    "standalone/proofs/layout/Domain.bend": "5acad280e9df6975f63fa0fe51c18c08cb4f5ae9296c89a7e10673d5fa2e87b6",
+    "standalone/proofs/layout/Facts.bend": "cf95627947229b2d92ccb81dbee9af2839b5405b4f1d21ae41bf0d240ecc0911",
+    "standalone/proofs/layout/Geometry.bend": "efecbce0291cc623af31a0057aa7f1262d8d74dee0cb70759a99ac8558a3ce01",
+    "standalone/proofs/layout/LAWS.bend": "7b1f038fad89016cff8c8c799b98efb9f8abe9ff38643534c8334412532f59f2",
+    "standalone/proofs/layout/Low.bend": "edcaee366557d916ab2c331f671989891d45249d9dae72a93bd763a5d1a24c5c",
+    "standalone/proofs/layout/PROOF.bend": "67898fefe872c0349f2a16b0640e263d8c55ef5b2aa25e0640cc8e71431bf12c",
+    "standalone/proofs/layout/Spec.bend": "a08495ab3c27218154f6fd79091cd98b48e44d04d8f8b032e4f68f76531dcc89",
+    "standalone/proofs/prefix/Builder.bend": "d313c3656e6a8cf4cc7f0328e69f3dd00edb22eda93a7b3082f601c9b007b682",
+    "standalone/proofs/prefix/Certified.bend": "e7d6f4f5dfc834ed851bf6fcc37cd5abcc16f1596f1870bb2b10051ce11c425d",
+    "standalone/proofs/prefix/Facts.bend": "9b1b33fc8c3f1faf0425cae9fb00b63ed0405b9346a0544bacd7c7c3eec03988",
+    "standalone/proofs/prefix/LAWS.bend": "cf966803385243769be066fb0a980342d3752548f50571aa04949c350998452e",
+    "standalone/proofs/prefix/Monotone.bend": "91f6ce06ec54623963c841179aa73750534c043f74e0de0e1828309bf9180c75",
+    "standalone/proofs/prefix/Nats.bend": "dba0b1922e8b2d7ecd32cedea0e2a56cbbe8d7aea514f329bd414a97ce70469f",
+    "standalone/proofs/prefix/Order.bend": "5fb5770518543636c19eb599a202793e6bbbfd25dfe7b122b86c85d2d194c46a",
+    "standalone/proofs/prefix/PROOF.bend": "b45cea97cbf6c78a2015bdb47dc8d17dbece357e4585297a482451d13d674aa3",
+    "standalone/proofs/prefix/Size.bend": "3b244a22cbf7ec2cbda11dac4a18e7e922516311f10bb24e054dfb69923a355b",
+    "standalone/proofs/prefix/Spec.bend": "93b30727d908bc73ee001e4c48af3d858166fe9b2fac606afd496577d9e9d827",
+    "standalone/proofs/storage/Observe.bend": "51d1b811b9ed4933db9672d0348490e2e017110460dd473d33a0fe6bde6b292b",
+    "standalone/proofs/storage/Read.bend": "4df305d3b934e27d4c12e3049f337b1ae5312bb1ff428b98b048c4d9b2fbfaa1",
+    "standalone/proofs/storage/Representation.bend": "1703fb62ab133fbfd4fa8155fa59dc19d1fa87ce2d838c92453eed516fbc9e2d",
+    "standalone/proofs/successor/Value.bend": "8e97a14a3659bda32dc061ae458338827d66b60dbb5749c71e2f3300140ceccf",
+    "standalone/proofs/u64/LAWS.bend": "e4b1f1b3bf993574e5daca56b3d729e7980232786ba4cf4438e61e95951adbaf",
+    "standalone/proofs/u64/PROOF.bend": "d4cd7e9934cd8f42bcea72da8f5d3035508ea47b5ec9ba34139808b5dffd3c71",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "inherited_source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/proofs/LAWS.bend": "cea2bd21b74162d11647a70fb5ca103a7dc93063a366c5f76a361c1a0f9f4608",
+    "standalone/proofs/Mask.bend": "515bf96ec739bdfcbefb26bfd5b9d8f4049f5f85862093760e9ee2bff1b3e4ee",
+    "standalone/proofs/PROOF.bend": "dde73c6b6cc8371a0ff8628483b5fb72e74194414cd31f2e49125b0f3a14a249",
+    "standalone/proofs/index/Bits.bend": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb",
+    "standalone/proofs/index/Count.bend": "0c81284f470204a97aa6f06ae6afed62b06173f906f08281cbfa6740df19b602",
+    "standalone/proofs/index/LAWS.bend": "6dc623f1b89b0ede66dfb9441ae83a82289e8af474aaef57e663321880e49905",
+    "standalone/proofs/index/Nats.bend": "71da4b9b978f47cebf57b79352ee614f1aa6257c13c7dfc624b839c95ed38c5c",
+    "standalone/proofs/index/PROOF.bend": "694ae18e89a0c44d718d6fa6d4393957199c00839d760bbf596aa805557497b6",
+    "standalone/proofs/index/Words.bend": "6d08fbbc9e16d3194e2d1a7e224f17676eb81adea1ead37523e0c24cc0cccd81",
+    "standalone/proofs/layout/Cases.bend": "5840233d09bdfbfdf4c26bb4b778994684c70fe9cb1484b5796b53757f5d374d",
+    "standalone/proofs/layout/Consequences.bend": "bb8824edee790cccf79967d0ccb9427e5e552ebfa6ff4d02fbc3dcdc60fa4f2d",
+    "standalone/proofs/layout/Domain.bend": "5acad280e9df6975f63fa0fe51c18c08cb4f5ae9296c89a7e10673d5fa2e87b6",
+    "standalone/proofs/layout/Facts.bend": "cf95627947229b2d92ccb81dbee9af2839b5405b4f1d21ae41bf0d240ecc0911",
+    "standalone/proofs/layout/Geometry.bend": "efecbce0291cc623af31a0057aa7f1262d8d74dee0cb70759a99ac8558a3ce01",
+    "standalone/proofs/layout/LAWS.bend": "7b1f038fad89016cff8c8c799b98efb9f8abe9ff38643534c8334412532f59f2",
+    "standalone/proofs/layout/Low.bend": "edcaee366557d916ab2c331f671989891d45249d9dae72a93bd763a5d1a24c5c",
+    "standalone/proofs/layout/PROOF.bend": "67898fefe872c0349f2a16b0640e263d8c55ef5b2aa25e0640cc8e71431bf12c",
+    "standalone/proofs/layout/Spec.bend": "a08495ab3c27218154f6fd79091cd98b48e44d04d8f8b032e4f68f76531dcc89",
+    "standalone/proofs/prefix/Builder.bend": "d313c3656e6a8cf4cc7f0328e69f3dd00edb22eda93a7b3082f601c9b007b682",
+    "standalone/proofs/prefix/Certified.bend": "e7d6f4f5dfc834ed851bf6fcc37cd5abcc16f1596f1870bb2b10051ce11c425d",
+    "standalone/proofs/prefix/Facts.bend": "9b1b33fc8c3f1faf0425cae9fb00b63ed0405b9346a0544bacd7c7c3eec03988",
+    "standalone/proofs/prefix/LAWS.bend": "cf966803385243769be066fb0a980342d3752548f50571aa04949c350998452e",
+    "standalone/proofs/prefix/Monotone.bend": "91f6ce06ec54623963c841179aa73750534c043f74e0de0e1828309bf9180c75",
+    "standalone/proofs/prefix/Nats.bend": "dba0b1922e8b2d7ecd32cedea0e2a56cbbe8d7aea514f329bd414a97ce70469f",
+    "standalone/proofs/prefix/Order.bend": "5fb5770518543636c19eb599a202793e6bbbfd25dfe7b122b86c85d2d194c46a",
+    "standalone/proofs/prefix/PROOF.bend": "b45cea97cbf6c78a2015bdb47dc8d17dbece357e4585297a482451d13d674aa3",
+    "standalone/proofs/prefix/Size.bend": "3b244a22cbf7ec2cbda11dac4a18e7e922516311f10bb24e054dfb69923a355b",
+    "standalone/proofs/prefix/Spec.bend": "93b30727d908bc73ee001e4c48af3d858166fe9b2fac606afd496577d9e9d827",
+    "standalone/proofs/prefix/consumer.bend": "e59afe7862908f98258c817969812aa49894b02d6f51a10ef578342dc62032fd",
+    "standalone/proofs/prefix/focused.js": "2698adae7e14d8ca4e890b8641fc69164e6349ade3b6e3ccd11033d7cfeae87a",
+    "standalone/proofs/prefix/probe.bend": "c68d0fb4ca852d7c61305e73bff48831ff5c30c0e8ea690b90f85bb454eabe78",
+    "standalone/proofs/prefix/verify.js": "3dfcbea29f4ef8201c5e34d173709b7c97dae2863032d2a7f83ae54150a316cb",
+    "standalone/proofs/prefix/verify_native.js": "d3868ec1602e55a4bf90d66d3b167b4c0e56ab519aefdbfa7fecf382695c1a70",
+    "standalone/proofs/successor/Value.bend": "8e97a14a3659bda32dc061ae458338827d66b60dbb5749c71e2f3300140ceccf",
+    "standalone/proofs/u64/LAWS.bend": "e4b1f1b3bf993574e5daca56b3d729e7980232786ba4cf4438e61e95951adbaf",
+    "standalone/proofs/u64/PROOF.bend": "d4cd7e9934cd8f42bcea72da8f5d3035508ea47b5ec9ba34139808b5dffd3c71",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "consumer": "PASS",
+  "scope": "Absolute interior-address bounds and allocation-mask injectivity; actual complete read-pair normalization under explicit source size. Not relative-offset arithmetic, arbitrary-array path separation or final geometry."
+}
