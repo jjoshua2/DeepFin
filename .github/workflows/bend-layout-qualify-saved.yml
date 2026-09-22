@@ -1,0 +1,197 @@
+name: Bend slider-mask source qualification
+'on':
+  push:
+    branches: [feat/bend-layout-qualification-dev-20260921]
+    paths: [.github/workflows/bend-layout-qualify-saved.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      TARGET_BRANCH: feat/bend-slider-mask-bounds-20260921
+      BASE_REV: ef3ded0b652a09918abb1d79467b1ac56a8e1ce5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ef3ded0b652a09918abb1d79467b1ac56a8e1ce5
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Reconstruct only the exact saved patch and verify source scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/layout-qualification"
+          export TRANSPORT="$RUNNER_TEMP/layout-transport"
+          mkdir -p "$EVIDENCE" "$TRANSPORT"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          for blob in bef01ec034319b71998f80f33e4e9543d4a1c555 8b79efa3006a5065f8f5c62bfba7fba513fbefc4 e6beeb6deb4792e151370f339c981d03b962719e f82026727f5f6f4f8df5d2369cc47c038a1a1d32; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$TRANSPORT/$blob"
+            test "$(git hash-object "$TRANSPORT/$blob")" = "$blob"
+          done
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, os
+          from pathlib import Path
+          t = Path(os.environ['TRANSPORT'])
+          ids = ['bef01ec034319b71998f80f33e4e9543d4a1c555','8b79efa3006a5065f8f5c62bfba7fba513fbefc4','e6beeb6deb4792e151370f339c981d03b962719e','f82026727f5f6f4f8df5d2369cc47c038a1a1d32']
+          parts = [(t/i).read_bytes() for i in ids]
+          def blob(b):
+              return hashlib.sha1(b'blob '+str(len(b)).encode()+b'\0'+b).hexdigest()
+          assert len(parts[1]) == 9001 and parts[1][2728:2729] == b'Y'
+          parts[1] = parts[1][:2728]+parts[1][2729:]
+          assert blob(parts[1]) == 'f3e69cfe27ecabb7551906d7687c0f00a2f9341b'
+          encoded = b''.join(parts)
+          assert blob(encoded) == 'ab9635b14c387264556053aeb22a6c2ab0a24d94'
+          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
+          assert len(patch) == 103636
+          assert hashlib.sha256(patch).hexdigest() == '569a67a46c60aea0c5bc11f82886d4fc80eef629c83c4b33c2678c3c79f5ce52'
+          (t/'candidate.patch').write_bytes(patch)
+          record = {'patch_sha256': hashlib.sha256(patch).hexdigest(), 'patch_bytes': len(patch), 'original_patch_target':'33c363ba6715956fd9323a6032b1a6c4a2b916fe', 'qualification_base':os.environ['BASE_REV'], 'transport_repair':'Remove exactly one duplicated Y at byte 2728 of fragment 1; require original fragment and complete patch identities', 'proof_source_modified':False}
+          Path(os.environ['EVIDENCE'],'recovery-identity.json').write_text(json.dumps(record,indent=2)+'\n')
+          PY
+          test "$(git rev-parse HEAD)" = "$BASE_REV"
+          test "$(git rev-parse HEAD^{tree})" = 3ac5db02eb34525aba27e862153473cc93dfaab1
+          git apply --check "$TRANSPORT/candidate.patch"
+          git apply --index "$TRANSPORT/candidate.patch"
+          git diff --cached --check
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          files = subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          allowed = {'docs/bend_migration_proofs.md','docs/experiments/README.md','docs/experiments/2026-09-21-bend-slider-mask-bounds.md'}
+          assert len(files) == 30
+          assert all(f in allowed or f.startswith('native/bend_engine/standalone/proofs/layout/') or f.startswith('docs/experiments/evidence/bend-slider-mask-bounds/') for f in files)
+          d = Path('docs/experiments/evidence/bend-slider-mask-bounds')
+          hashes = {}
+          for name in ['local-proofs.json','local-native.json']:
+              r = json.loads((d/name).read_text())
+              assert r['compiler_revision'] == 'aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae'
+              for rel,digest in r['source_sha256s'].items():
+                  p = Path('native/bend_engine')/rel
+                  assert hashlib.sha256(p.read_bytes()).hexdigest() == digest, str(p)
+                  hashes[str(p)] = digest
+          for f in files:
+              if f.startswith('native/'):
+                  hashes[f] = hashlib.sha256(Path(f).read_bytes()).hexdigest()
+          e = Path(os.environ['EVIDENCE'])
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'changed-files.json').write_text(json.dumps(files,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Check all 48 laws and all 55 rejection controls
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/layout/verify.js "$PWD/.compiler" --report "$EVIDENCE/layout-proofs.json"
+          cmp "$EVIDENCE/layout-proofs.json" docs/experiments/evidence/bend-slider-mask-bounds/local-proofs.json
+      - name: Qualify native scalar contracts in four modes
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/layout/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/layout-native.json"
+      - name: Retain original source laws and compiler-pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/compiler-pin-tests.txt"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/inherited-u64-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install the locked external CPU development environment
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint once
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/whole-repository-lint.txt"
+      - name: Record exact qualification and publish a new clean source branch only
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          git diff --exit-code
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET_BRANCH" > "$RUNNER_TEMP/target-ref.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          python3 - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          e = Path(os.environ['EVIDENCE'])
+          d = Path('docs/experiments/evidence/bend-slider-mask-bounds')
+          p = json.loads((e/'layout-proofs.json').read_text())
+          n = json.loads((e/'layout-native.json').read_text())
+          old = json.loads((d/'local-native.json').read_text())
+          assert p['proof_gate'] == 'PASS' and p['new_law_count'] == 8 and p['aggregate_law_count'] == 48
+          assert p['inherited_negative_controls'] == 42 and len(p['negative_controls']) == 13
+          assert all(x['rejected'] for x in p['negative_controls'])
+          assert n['native_gate'] == 'PASS' and n['distinct_operand_pairs'] == 2302 and n['keys'] == 128
+          assert n['modes'] == old['modes'] and n['source_sha256s'] == old['source_sha256s']
+          assert n['populations'] == old['populations'] and n['bun'] == '1.4.2'
+          assert json.loads((e/'inherited-u64-proofs.json').read_text())['proof_gate'] == 'PASS'
+          assert '12 pass' in (e/'compiler-pin-tests.txt').read_text() and '0 fail' in (e/'compiler-pin-tests.txt').read_text()
+          assert (e/'whole-repository-lint.txt').read_text().strip().endswith('lint: OK')
+          hashes = json.loads((e/'candidate-source-sha256.json').read_text())
+          for name,digest in hashes.items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, name
+          for name in ['layout-proofs.json','layout-native.json','inherited-u64-proofs.json','candidate-source-sha256.json','recovery-identity.json','changed-files.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['compiler-pin-tests.txt','compiler-identity.txt','whole-repository-lint.txt']:
+              raw = (e/name).read_bytes()
+              (d/('hosted-'+name.removesuffix('.txt')+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          record = Path('docs/experiments/2026-09-21-bend-slider-mask-bounds.md')
+          text = record.read_text()
+          text = text.replace('## Scope and source basis','## Historical local scope and source basis',1)
+          paragraphs = [
+              '## Hosted qualification and clean publication',
+              f"Run **{os.environ['GITHUB_RUN_ID']}**, development workflow commit `{os.environ['GITHUB_SHA']}`, qualified the exact saved patch against refreshed #807 `{os.environ['BASE_REV']}`. The earlier no-publication and missing-lint-tool statements above are retained as historical local outcomes, not the current publication status.",
+              'The original patch was 103,636 bytes, SHA-256 `569a67a46c60aea0c5bc11f82886d4fc80eef629c83c4b33c2678c3c79f5ce52`. Its original 33c363ba baseline differs from the refreshed ef3ded0b baseline only by the canonical executable mode on resolve_latest.py, which is preserved. No patch source or accepted law changed.',
+              'All 48 accepted source laws and 55 rejection controls (13 new plus 42 inherited) pass. The hosted source report is byte-identical to the saved local report. The original compiler source suite and its seven controls, including cyclic-template rejection, pass separately; all 12 compiler-pin contracts pass.',
+              f"The four native modes pass the same 2,302 distinct key/occupancy pairs and five invalid requests per mode. All 128 keys are covered; mode results and source identities match saved local evidence. Toolchain: Bun {n['bun']}, {n['cc']}. Repeated environments are not disjoint datasets or exhaustive native U64 testing.",
+              'The unchanged whole-repository ./scripts/lint.sh passes Ruff, Basedpyright and Vulture in the locked Python 3.13 CPU development environment. This resolves the earlier missing-tools gap for this exact candidate without ignoring failures or weakening checks. Original source hashes and lossless tool logs are committed under the evidence directory.',
+              'Publication recovery failures are retained: run 35681173158 rejected the earlier truncated/bloated unpublished payload before source application. Transfer-readback run 35681825701 detected one duplicated base64 character in the replacement fragment. The one-character transport repair is followed by exact fragment, full transport, decompressed patch and candidate source hash checks. No damaged payload was applied or used as proof evidence.',
+              'No production source, compiler/checker, old proof, existing test, workflow or perft budget changes are in the feature diff. No full-engine rebuild, model export/forward, GPU, training or benchmark was rerun. Source-checker diagnostic overflow observed by the historical extreme mutation remains documented; the checker itself was not edited. Fork strict TypeScript remains a separate inherited unresolved check.',
+              f"Publication creates `{os.environ['TARGET_BRANCH']}` only after the above checks, with parent `{os.environ['BASE_REV']}`. No force push, PR merge, deployment or live-process change. Temporary development workflows and transport blobs are excluded. Qualification reports are retained in artifact `bend-slider-mask-bounds-qualification` for 30 days and in the clean commit. Self-review only; no independent review is claimed.",
+              'The next acceptance remains exact U32 compact-index correspondence, prefix arithmetic and affine writes/reads, then independent blocker-ray lookup refinement. Current size/range proofs do not establish those. Python export, production/data orchestration and training remain dependencies; C++/LibTorch/AOTI remains transitional inference.'
+          ]
+          record.write_text(text+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          m = Path('docs/bend_migration_proofs.md')
+          m.write_text(m.read_text()+f"\n\n## Slider-mask hosted publication\n\nRun **{os.environ['GITHUB_RUN_ID']}** qualifies the unchanged saved eight-law layout increment on #807 `{os.environ['BASE_REV']}`: 48 total laws, 55 controls, four native modes, inherited source/pin checks and whole-repository lint pass. This resolves the local-only publication/lint gap. The dated slider-mask readout and committed hosted reports retain exact identities, failures and limits. No additional migration, offset/affine-table theorem, model/GPU result or benchmark is implied.\n")
+          PY
+          git switch -c "$TARGET_BRANCH"
+          git add docs/bend_migration_proofs.md docs/experiments/2026-09-21-bend-slider-mask-bounds.md docs/experiments/evidence/bend-slider-mask-bounds
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove chess-mask population, U32 sizes and slider-index bounds'
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          git log -1 --format='%H%n%s' | tee "$EVIDENCE/published-commit.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/layout > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-slider-mask-bounds-qualification
+          path: ${{ runner.temp }}/layout-qualification/
+          retention-days: 30
