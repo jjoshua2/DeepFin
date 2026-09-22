@@ -1,0 +1,169 @@
+name: Bend complete tree route qualification
+'on':
+  push:
+    branches: [feat/bend-complete-routes-dev-20260922]
+    paths: [.github/workflows/bend-complete-routes-qualification.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: e680c126908d1e816f31c38b7e3255e196e6f174
+      SOURCE: 868335129a501b677ca916d2bbdc779a1b2e22e9
+      TARGET: feat/bend-complete-routes-20260922
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 868335129a501b677ca916d2bbdc779a1b2e22e9
+          fetch-depth: 2
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Verify complete candidate identity and unchanged prior sources
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/complete-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^1)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = 2e6428e87a347679b2f39b5eacc0a0ea58e421fc
+          test "$(git rev-parse HEAD^1^{tree})" = b9a31c6971f4eda33a5c486b3c2b6dacade3ea54
+          git diff "$BASE" HEAD --check
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          files=subprocess.check_output(['git','diff',os.environ['BASE'],'HEAD','--name-only'],text=True).splitlines()
+          assert len(files)==12
+          assert all(f.startswith('native/bend_engine/standalone/proofs/complete/') or f=='docs/experiments/2026-09-22-bend-complete-tree-routes.md' for f in files),files
+          tracked=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in tracked if Path(f).is_file()}
+          e=Path(os.environ['EVIDENCE'])
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'source-identity.json').write_text(json.dumps({'base':os.environ['BASE'],'source':os.environ['SOURCE'],'tree':'2e6428e87a347679b2f39b5eacc0a0ea58e421fc','changed_files':files,'transfer':'Direct Git tree entries; complete tree equals the locally checked candidate'},indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Preserve all 79 prior laws and check four complete-tree laws
+        timeout-minutes: 45
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/complete/verify.js "$PWD/.compiler" --report "$EVIDENCE/proofs.json" 2>&1 | tee "$EVIDENCE/source-gate.log"
+      - name: Check public array behavior in four native modes
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/complete/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native-gate.log"
+      - name: Retain original compiler source laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development environment
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint once
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Compare local evidence and append qualification records without changing code
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-address-normalization-20260922 | cut -f1)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          p=json.loads((e/'proofs.json').read_text());n=json.loads((e/'native.json').read_text())
+          assert p['proof_gate']=='PASS' and p['aggregate_law_count']==83 and p['new_law_count']==4
+          assert p['inherited_law_count']==79 and p['inherited_negative_controls']==140
+          assert len(p['negative_controls'])==16 and all(x['rejected'] for x in p['negative_controls'])
+          assert p['consumer']=='PASS'
+          focused={'focused_gate':'PASS',**{k:p[k] for k in ['compiler_revision','source_files','source_sha256','new_law_count','new_laws']},'inherited_gate_run':False,**{k:p[k] for k in ['negative_controls','consumer','source_sha256s','scope']}}
+          def canonical(x):
+              return hashlib.sha256(json.dumps(x,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          focused_hash=canonical(focused)
+          assert focused_hash=='e53969bc796b4362b59244d3b8b2c8bf47a034612386f9a1af39be6523cc18e9'
+          native_hash=canonical({k:v for k,v in n.items() if k!='cc'})
+          assert native_hash=='634092c8dd12db28af364c17cd13e1c2727dda55cab29ef8143f19e9e5da0133'
+          assert n['native_gate']=='PASS' and n['fixture_rows']==152 and n['protected_in_range_rows']==125
+          assert n['same_index_rows']==17 and n['out_of_range_wrapper_rows']==10 and n['divergence_bits']==17
+          assert len(n['modes'])==4 and all(m['invalid_rejections']==6 and m['output_sha256']=='63b2966db40ac2d9ea8fa45aac97e7fb305f692ff656bb8c43d09151ad01ad1b' for m in n['modes'])
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for f,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          comparison={'comparison':'PASS','focused_canonical_sha256':focused_hash,'native_except_cc_canonical_sha256':native_hash,'local_focused_raw_sha256':'3f73913907285e0e466f2677a7a88eacef8049a0451a9d9d6874c67470657a08','local_native_raw_sha256':'a2dc436232179ee0b5c3c94fd3080900058f7b73e96a40fd36b401905723322b','scope':'Local focused gate only; full inherited aggregate and lint first executed hosted for this candidate.'}
+          (e/'local-hosted-comparison.json').write_text(json.dumps(comparison,indent=2)+'\n')
+          d=Path('docs/experiments/evidence/bend-complete-tree-routes');d.mkdir(parents=True,exist_ok=False)
+          for name in ['proofs.json','native.json','compiler-proofs.json','candidate-source-sha256.json','source-identity.json','local-hosted-comparison.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];sha=os.environ['GITHUB_SHA']
+          summary=f"Hosted qualification **{run}**, temporary workflow commit `{sha}`, passes **83 accepted laws and 156 rejection controls**, four native modes, original compiler source/pin checks and unchanged whole-repository lint on exact source `{os.environ['SOURCE']}`."
+          record=Path('docs/experiments/2026-09-22-bend-complete-tree-routes.md')
+          sections=['## Hosted qualification',summary,
+              'The complete candidate tree 2e6428e87a347679b2f39b5eacc0a0ea58e421fc matches the locally checked source. All 79 prior laws and 140 controls are retained by the unchanged normalization aggregate; four laws and 16 controls are additive. The local focused report and complete native report excluding C compiler identity match their canonical digests. No failed gate is ignored or weakened.',
+              'Each native mode passes 152 rows: 125 distinct bounded queries, 17 same-index cases and ten deliberate out-of-range wrapper cases. All 17 route-divergence bits are represented and six malformed requests reject per mode. The candidate uses supported public APIs on actual complete 131072-cell allocations. It does not execute proof predicates or internal raw routines, observe every cell, or requalify the complete table builder. Repeated environments are not disjoint datasets.',
+              f"Hosted tools: Bun {n['bun']}, {n['cc']}, locked Python 3.13 CPU environment and uv 0.12.10 for external lint. Original compiler source laws/seven controls and all 12 pin tests pass. Ruff, Basedpyright and Vulture pass unchanged. This candidate has no local whole-repository lint pass claimed; the hosted result is the newly executed lint evidence.",
+              'Compact reports, exact source identities, local/hosted comparisons and lossless lint/pin logs are committed. Full hosted logs have 30-day retention in bend-complete-routes-qualification. Historical construction limits and the mutation-spelling error remain recorded; final source and all mutation controls passed without compiler changes. The prior internal raw-API C-lowering and compiler TypeScript/diagnostic-depth limitations remain unresolved.',
+              'Only documentation and evidence are added after source qualification. The experiment index and migration matrix now mark complete-tree route separation proved. Source equality is not native pointer identity, allocation success or lifetime verification. Arbitrary source depths/counts in the shape theorem do not imply feasible native execution.',
+              f"The `{os.environ['TARGET']}` branch receives a fast-forward evidence/documentation commit only; no force push, merge, deployment or live-process change. Temporary workflows are excluded. Self-review only, not independent review. No production runtime, previous accepted law, compiler input or routine test budget changed.",
+              'Remaining acceptance is actual prefix-plus-interior arithmetic, derivation of every fill-clear certificate, final computed contents and independent blocker-ray lookup refinement. These four laws provide the missing complete-shape route result but not those remaining arithmetic/content statements. No Python application logic moved: export, data/control orchestration and training remain, with C++/LibTorch/AOTI transitional inference. No engine/model/GPU/perft/strength/performance result is added.'
+          ]
+          record.write_text(record.read_text()+'\n\n'+'\n\n'.join(sections)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Complete-tree route separation](2026-09-22-bend-complete-tree-routes.md) | Four real-array laws derive separated leaf paths and other-index preservation from complete shape and bounded unequal addresses; actual initialization/builders supply shape |\n',1))
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          sections=['## Latest complete-tree route qualification: September 22, 2026',summary,
+              '`complete/allocation_complete` and `table_pipeline_complete` derive complete constructor shape from actual Array.new, Tables.tables and Tables.extras for arbitrary source Nat counts. `bounded_complete_routes` proves the existing normalized separation predicate for any actual complete depth-17 array and distinct U32 indices below 131072. `bounded_other_index_write` derives the actual complete returned read pair with the original other-slot value from those shape/bound/inequality premises; no assumed path or read equality remains.',
+              'The internal proof uses unsigned half-interval subtraction, fixed-subtrahend injectivity and depth induction through 17, with the existing affine representation and normalization laws. The importing consumer constructs the actual pipeline shape certificate. The previous statement that balanced-tree route injectivity is open is superseded by these conditional source laws; capacity alone remains insufficient and ragged/endpoint counterexamples remain.',
+              'Actual prefix-plus-relative-index bounds, every fill-clear certificate, final computed contents and independent blocker-ray lookup are still separate P2 obligations. No full table native requalification or new Python migration follows. See [the dated complete-tree readout](experiments/2026-09-22-bend-complete-tree-routes.md) and committed exact-source evidence. All native/runtime/checker trust boundaries and earlier documented limitations remain.'
+          ]
+          matrix.write_text(title+'\n\n'+'\n\n'.join(sections)+'\n'+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-22-bend-complete-tree-routes.md docs/experiments/evidence/bend-complete-tree-routes
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify complete-tree routes and numeric other-slot preservation'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/complete > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-complete-routes-qualification
+          path: ${{ runner.temp }}/complete-evidence/
+          retention-days: 30
