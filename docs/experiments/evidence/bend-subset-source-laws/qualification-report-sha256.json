@@ -1,0 +1,17 @@
+{
+  "candidate-source-sha256.txt": "3b62c267b3fa9cf3555eba04ab4097a97e2b68a92e93c778f9782f7e6b9a13f5",
+  "change-stat.txt": "6e74d0529ba16293cf49532b4fcab7ad257e56356bc44653113c08e93ff1f90d",
+  "changed-files.txt": "ee6e5c6c7f6dfb4c9ff17fd581eba4cd7e0e9d620dfc771c45dfc81d58f77874",
+  "compiler-identity.txt": "5d6d5f2cbe9e1dc09eff86539ca70ea17ac829cba622a107cb4373e33d88de5f",
+  "compiler-pin-tests.txt": "85e7090854cf2c3a83814d34d4b9eff5b9b9e47687b1516d70583e2d2bfa2bbc",
+  "inherited-u64-native.json": "d5ae193f8ecb6e13e009fb8ec4dfa0bedc533dce62f1fdc482b88c323e1bd9d5",
+  "inherited-u64-proofs.json": "b1366bab9cbd545e1ed78212bc36b9e2fa1a5b1646f5bfe9be5779ecc4a3e72d",
+  "material-build-identity.txt": "de65ca471b60b69455bbc64cac4cc16cb119067db111cd71acbbdc060a662d9d",
+  "material-empty.json": "069d232b8c339587219ccbf9dd0e72500d58d76feb44999089df317b40fed387",
+  "material-file.txt": "a7de9239ec19aba228da5c5e0eaa425d21afe70089330d56f5f24fd087966eba",
+  "material-normal.json": "51f646f968926c9fca5274a34b742007971ea0ea72f4b596d54a59e379d6a67a",
+  "static-build.txt": "5d69b54b35a5dae55c3e0400276feb83d37a63361d8ec693f0723a76bf9b8247",
+  "subset-native.json": "2804dea520812f7b1f99f0f7fe160b27f8d8229087886e4ec46b08358c93246c",
+  "subset-proofs.json": "ac92929b36f9af96a6fb1cf99cfb655da42da9f42597a7ace7405acccdec0d44",
+  "whole-repository-lint.txt": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc"
+}
