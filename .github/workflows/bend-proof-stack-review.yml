@@ -1,0 +1,61 @@
+name: Bend proof-stack review snapshot
+on:
+  push:
+    branches: [review/bend-proof-stack-819-20260922]
+    paths: [.github/workflows/bend-proof-stack-review.yml]
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Collect source objects and all three review surfaces without modifying PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/bend-proof-review
+          python3 - <<'PY'
+          import datetime, json, os, subprocess, urllib.request
+          from pathlib import Path
+          out=Path('/tmp/bend-proof-review')
+          def get(path):
+              req=urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/'+path,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req,timeout=30) as r:return json.load(r)
+          def pages(path):
+              rows=[]
+              for page in range(1,21):
+                  batch=get(path+f'?per_page=100&page={page}')
+                  rows.extend(batch)
+                  if len(batch)<100:return rows
+              raise RuntimeError('pagination bound exceeded: '+path)
+          refs={'refs/audit/main':get('git/ref/heads/main')['object']['sha']}
+          report={'as_of':datetime.datetime.now(datetime.timezone.utc).isoformat(),'main':refs['refs/audit/main'],'prs':[]}
+          for n in (819,820,821,822,826,827,829):
+              p=get(f'pulls/{n}')
+              assert p['head']['repo']['full_name']=='jjoshua2/DeepFin'
+              row={'number':n,'state':p['state'],'head':p['head']['sha'],'branch':p['head']['ref'],'base':p['base']['ref'],'base_sha':p['base']['sha'],'merged':p['merged'],'mergeable':p['mergeable']}
+              row['workflows']=get('actions/runs?event=pull_request&per_page=100&head_sha='+row['head'])['workflow_runs']
+              report['prs'].append(row)
+              for name,path in [('discussion',f'issues/{n}/comments'),('reviews',f'pulls/{n}/reviews'),('inline',f'pulls/{n}/comments')]:
+                  (out/f'{n}-{name}.json').write_text(json.dumps(pages(path),indent=2)+'\n')
+              refs[f'refs/audit/pr{n}']=row['head']
+              refs[f'refs/audit/base{n}']=row['base_sha']
+          subprocess.run(['git','fetch','--no-tags','https://github.com/jjoshua2/DeepFin.git',*sorted(set(refs.values()))],check=True)
+          for ref,sha in refs.items():subprocess.run(['git','update-ref',ref,sha],check=True)
+          subprocess.run(['git','bundle','create',str(out/'review.bundle'),*refs],check=True)
+          (out/'status.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('Source snapshot:',report['as_of'],[(r['number'],r['head'],r['state']) for r in report['prs']])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-proof-stack-review
+          path: /tmp/bend-proof-review/
+          retention-days: 7
