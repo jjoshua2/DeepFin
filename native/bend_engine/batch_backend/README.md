@@ -1,4 +1,4 @@
-# Native fixed-batch backend (PR3a)
+# Native fixed-batch backend
 
 This is a synchronous, Bend-owned **tensor transport boundary**, not a second
 search controller. `Batch.bend` retains linear ownership of its input/output arrays
@@ -81,8 +81,9 @@ are not published by the qualification workflow.
 
 ## Scope boundary
 
-CPU/F32 only. CUDA/BF16 is deliberately still rejected rather than inferred from
-metadata or quietly converted to CPU. This is the batch-handling slice of PR3;
-GPU streams, pinned staging, CUDA/BF16 numerical qualification, trained-network
-5090 measurements, batch-bucket scheduling and asynchronous search remain open.
+The default path documented above remains CPU/F32 only. An explicitly enabled
+[CUDA/BF16 backend](CUDA.md) adds pinned staging and a single synchronous CUDA
+stream, but has not yet passed actual-device numerical qualification. Its separate
+build/verification gates never turn CPU testing into GPU evidence. Trained-network
+5090 qualification, batch-bucket scheduling and asynchronous search remain open.
 The 4,096-node search arena and fixed-wall comparability limit are unchanged.

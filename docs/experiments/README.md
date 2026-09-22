@@ -120,3 +120,5 @@ links to supporting experiments. The `experiment-readout` Skill covers the reusa
 analysis workflow.
 
 - [Native fixed-batch boundary (PR3a)](2026-09-22-native-batch-boundary.md) — bounded full/partial batch qualification; CUDA remains separate.
+
+- [Native CUDA/BF16 backend implementation and qualification limits](2026-09-22-native-cuda-backend.md)
