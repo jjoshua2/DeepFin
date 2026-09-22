@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from typing import Any
 
 
 def arrays_digest(arrays):
@@ -29,7 +30,7 @@ def arrays_digest(arrays):
 def observe(driver, receipt, argv):
     """Driver is loaded from the frozen runtime; no training semantics are changed."""
     started = time.monotonic()
-    record = {"status": "INCOMPLETE", "argv": argv, "batches": [],
+    record: dict[str, Any] = {"status": "INCOMPLETE", "argv": argv, "batches": [],
               "first_batch_seconds": None, "observer_seconds": 0.0}
     original_build = driver.build_model
     buffer_class = driver.GameAwareEpochBuffer
@@ -101,6 +102,8 @@ def main():
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(runtime))
     spec = importlib.util.spec_from_file_location("packed_probe_driver", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load pinned trainer module")
     driver = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = driver
     spec.loader.exec_module(driver)

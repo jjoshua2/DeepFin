@@ -1,6 +1,6 @@
 # 256-shard paired actual-trainer storage benchmark
 
-Status: corrected CPU qualification running; GPU pair unlaunched. Packing finished
+Status: corrected CPU qualification passed; GPU pair remains unlaunched. Packing finished
 in229.83 s, but the original CPU attempt stopped after626.29 s because PR #795
 rejected the retained root `row_provenance.npz` on224 shards. That failed run and all
 archive bytes are preserved. [PR #817](https://github.com/jjoshua2/DeepFin/pull/817),
@@ -13,8 +13,20 @@ in the failed attempt took roughly396 s. The selection, archives, seed, and orde
 remain unchanged. This corrects representation eligibility; it does not reroll a
 throughput result. The corrected runtime is
 `2fc51585955044e85f09e27e704d86787c47e382`. Its supervisor/plan passed independent
-review before launch and banks each completed stream atomically. No complete
-paired qualification or GPU throughput result is claimed yet.
+review before launch and banks each completed stream atomically. The corrected full paired qualification passed in748.045 s. Both paths emitted
+1,963,948 rows in3,836 batches across256 shards/35 sources, with identical full ordered
+tensor SHA256 `c39d8f17230b3ab22cbe4203cca15d3e314085a94df795cd12b58fbbf0300707`.
+Total CPU preparation, including the preserved626.289 s failure, was1,374.334 s.
+No GPU throughput result is claimed yet.
+
+| CPU qualification component | NVMe directory | External ZIP |
+| --- | ---: | ---: |
+| Planning seconds | 22.997 | 25.711 |
+| Full consumer wall including tensor hashing, seconds | 318.643 | 340.250 |
+
+These are cache-affected qualification observations with competing host work, not
+the GPU benchmark's deciding metric. The exact sequence and receipts are banked
+in [qualification evidence](evidence/packed-trainer256-20260921/qualification.json).
 This continues the 2026-09-20 storage-loader record. The previous 32-shard,
 262,144-row exact sampler passed full ordered tensor parity, but measured no
 training. PR #795 supplies ordinary packed-Zarr loading; it is an explicit
@@ -136,3 +148,11 @@ secondary, not a denominator selected after seeing the result.
 Host dependency distribution versions are recorded by the CPU qualifier and
 checked again before and after each GPU arm. This is a pinned repository/native
 runtime with version-checked host packages, not a newly installed locked environment.
+
+Validation on the final source candidate: the prescribed whole `scripts/lint.sh`
+gate has no introduced findings. Ruff and vulture pass; basedpyright reports the
+same14 existing findings in six unchanged baseline tests, recorded in the evidence.
+The exact helper bytes used by both CPU attempts were copied with SHA256 receipts
+before subsequent typing/import-loader guards changed the development files.
+GPU cleanup defers INT/TERM/ALRM until the owned child group is killed and reaped;
+real-signal regressions cover a TERM-ignoring child.

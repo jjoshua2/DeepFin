@@ -11,11 +11,13 @@ import shutil
 import signal
 import subprocess
 import time
+from typing import Any
 
 if __package__:
     from .run_packed_trainer_preparation import digest, inventory, stop_owned
 else:
-    from run_packed_trainer_preparation import digest, inventory, stop_owned
+    # Direct script execution has no package; its sibling is on sys.path.
+    from run_packed_trainer_preparation import digest, inventory, stop_owned  # pyright: ignore[reportImplicitRelativeImport]
 
 GIB = 1024**3
 
@@ -36,7 +38,13 @@ def run_stage(command, *, cwd, env, log, guard, lease_fd):
             guard()
     finally:
         if child is not None:
-            stop_owned(child)
+            # Deliver pending stop signals only after TERM/KILL and reap finish.
+            previous_mask = signal.pthread_sigmask(
+                signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGALRM})
+            try:
+                stop_owned(child)
+            finally:
+                signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
 
 
 def dependency_gate(plan):
@@ -53,6 +61,29 @@ def dependency_gate(plan):
     terminal = json.loads((Path(item['out']) / 'parent_outer_terminal.json').read_text())
     if terminal['returncode'] != 0:
         raise ValueError('BT4 outer supervisor failed')
+
+
+def qualified_inputs(plan):
+    preparation = json.loads(Path(plan['preparation_receipt']).read_text())
+    qualified = json.loads(Path(plan['qualification']).read_text())
+    terminal = json.loads(Path(plan['cpu_complete']).read_text())
+    if terminal['status'] != 'PASS_CPU_QUALIFICATION_NOT_GPU_READY' or terminal['qualification_sha256'] != digest(plan['qualification']):
+        raise ValueError('CPU qualification supervisor did not authenticate success')
+    if preparation['status'] != 'PASS_BYTES_REQUIRES_FULL_STREAM_QUALIFICATION' or qualified['status'] != 'PASS_MATCHED_PACKED_ZARR_SAMPLER':
+        raise ValueError('source preparation or full tensor parity not qualified')
+    return preparation, qualified
+
+
+def qualified_batch_count(qualified, rows):
+    if len(qualified['runs']) != 2 or any(run['rows'] != rows for run in qualified['runs']):
+        raise ValueError('qualified rows or arm count mismatch')
+    plans = [run['plan'] for run in qualified['runs']]
+    if any(plan['rows_planned'] != rows or plan['shards'] != 256 or plan['sources'] != 35 for plan in plans):
+        raise ValueError('qualified plan coverage mismatch')
+    batches = plans[0]['batches_planned']
+    if batches <= 0 or plans[1]['batches_planned'] != batches:
+        raise ValueError('qualified batch counts differ')
+    return batches
 
 
 def validate_arm(summary, observation, *, rows, batches):
@@ -87,7 +118,7 @@ def validate_arm(summary, observation, *, rows, batches):
         'observer_seconds': observation['observer_seconds']}
 
 
-def compare(arms, *, rows, batches):
+def compare(arms, *, rows, batches) -> dict[str, Any]:
     results = {name: validate_arm(value['summary'], value['observation'], rows=rows, batches=batches)
                for name, value in arms.items()}
     external, local = [arms[name]['observation'] for name in ('external_zip', 'nvme_directory')]
@@ -167,18 +198,11 @@ def main():
     dependency_gate(plan)
     if out.exists() or out.is_symlink():
         raise FileExistsError(out)
-    preparation = json.loads(Path(plan['preparation_receipt']).read_text())
-    qualified = json.loads(Path(plan['qualification']).read_text())
-    if preparation['status'] != 'PASS_BYTES_REQUIRES_FULL_STREAM_QUALIFICATION' or qualified['status'] != 'PASS_MATCHED_PACKED_ZARR_SAMPLER':
-        raise ValueError('source preparation or full tensor parity not qualified')
+    preparation, qualified = qualified_inputs(plan)
     expected_rows = plan['rows']
-    if len(qualified['runs']) != 2 or any(run['rows'] != expected_rows for run in qualified['runs']):
-        raise ValueError('qualified rows mismatch')
-    batches = qualified['runs'][0]['plan']['batches']
-    if qualified['runs'][1]['plan']['batches'] != batches:
-        raise ValueError('qualified batch counts differ')
+    batches = qualified_batch_count(qualified, expected_rows)
     out.mkdir(parents=True)
-    status = {'status': 'INCOMPLETE', 'plan_sha256': a.plan_sha256, 'stages': []}
+    status: dict[str, Any] = {'status': 'INCOMPLETE', 'plan_sha256': a.plan_sha256, 'stages': []}
     arm_start = None
     def guard():
         now = time.monotonic()

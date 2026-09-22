@@ -1,9 +1,10 @@
 import copy
+from typing import Any
 import pytest
 from scripts.run_packed_trainer_pair import compare
 
 
-def arm(seconds=10):
+def arm(seconds=10) -> dict[str, Any]:
     windows = [{'steps_requested': n, 'train_steps_done': n, 'train_samples_seen': rows,
                 'train_time_s': seconds, 'loss': 1.0, 'batch_prefetch_wait_s': 1.0}
                for n, rows in [(88, 45056), (88, 45056), (1, 1)]]
@@ -101,3 +102,77 @@ def test_predecessor_requires_logged_outer_success(tmp_path, status, returncode,
     else:
         with pytest.raises(ValueError, match=r'predecessor|supervisor'):
             dependency_gate(plan)
+
+
+@pytest.mark.parametrize('stop_signal_name', ['SIGALRM', 'SIGTERM', 'SIGINT'])
+def test_real_stop_signal_after_term_cannot_escape_cleanup(tmp_path, monkeypatch, stop_signal_name):
+    import os
+    import signal
+    import subprocess
+    import sys
+    from scripts import run_packed_trainer_pair as pair
+    ready = tmp_path / 'ready'
+    code = ('import signal,pathlib,sys,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); '
+            'pathlib.Path(sys.argv[1]).write_text("ready"); time.sleep(30)')
+    # A real TERM-ignoring descendant makes the post-TERM interruption meaningful.
+    child = subprocess.Popen([sys.executable, '-c', code, str(ready)], start_new_session=True)
+    import time
+    deadline = time.monotonic() + 5
+    while not ready.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ready.exists()
+    original_killpg = os.killpg
+    chosen = getattr(signal, stop_signal_name)
+    prior = signal.getsignal(chosen)
+    def interrupted(_signum, _frame):
+        raise RuntimeError('real deferred cleanup signal')
+    def killpg(group, sig):
+        original_killpg(group, sig)
+        if group == child.pid and sig == signal.SIGTERM:
+            os.kill(os.getpid(), chosen)
+    signal.signal(chosen, interrupted)
+    monkeypatch.setattr(pair.subprocess, 'Popen', lambda *_args, **_kwargs: child)
+    monkeypatch.setattr(pair.os, 'killpg', killpg)
+    calls = 0
+    def guard():
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise RuntimeError('enter cleanup')
+    try:
+        with (tmp_path / 'lease').open('a') as lease, pytest.raises(RuntimeError, match='real deferred cleanup signal'):
+            pair.run_stage(['owned fake child'], cwd=tmp_path, env=dict(os.environ),
+                           log=tmp_path / 'child.log', guard=guard, lease_fd=lease.fileno())
+        assert child.poll() is not None
+    finally:
+        signal.signal(chosen, prior)
+        if child.poll() is None:
+            original_killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=3)
+
+
+def test_cpu_inner_pass_requires_successful_supervisor(tmp_path):
+    import json
+    from scripts.run_packed_trainer_pair import digest, qualified_inputs
+    paths = {key: tmp_path / (key + '.json') for key in ('preparation_receipt', 'qualification', 'cpu_complete')}
+    paths['preparation_receipt'].write_text(json.dumps({'status': 'PASS_BYTES_REQUIRES_FULL_STREAM_QUALIFICATION'}))
+    paths['qualification'].write_text(json.dumps({'status': 'PASS_MATCHED_PACKED_ZARR_SAMPLER'}))
+    terminal = {'status': 'INCOMPLETE', 'qualification_sha256': digest(paths['qualification'])}
+    paths['cpu_complete'].write_text(json.dumps(terminal))
+    with pytest.raises(ValueError, match='supervisor'):
+        qualified_inputs(paths)
+    terminal['status'] = 'PASS_CPU_QUALIFICATION_NOT_GPU_READY'
+    paths['cpu_complete'].write_text(json.dumps(terminal))
+    assert qualified_inputs(paths)[1]['status'] == 'PASS_MATCHED_PACKED_ZARR_SAMPLER'
+
+
+def test_real_qualification_plan_field_names():
+    from scripts.run_packed_trainer_pair import qualified_batch_count
+    # These are the actual schema keys in the banked 256-shard qualifier receipt.
+    run: dict[str, Any] = {'rows': 1963948, 'plan': {'rows_planned': 1963948,
+        'batches_planned': 3836, 'shards': 256, 'sources': 35}}
+    qualified = {'runs': [copy.deepcopy(run), copy.deepcopy(run)]}
+    assert qualified_batch_count(qualified, 1963948) == 3836
+    qualified['runs'][1]['plan']['sources'] = 34
+    with pytest.raises(ValueError, match='coverage'):
+        qualified_batch_count(qualified, 1963948)

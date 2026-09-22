@@ -11,7 +11,8 @@ import time
 if __package__:
     from .run_packed_trainer_preparation import digest, inventory, run_stage
 else:
-    from run_packed_trainer_preparation import digest, inventory, run_stage
+    # Direct script execution has no package; its sibling is on sys.path.
+    from run_packed_trainer_preparation import digest, inventory, run_stage  # pyright: ignore[reportImplicitRelativeImport]
 
 GIB = 1024**3
 

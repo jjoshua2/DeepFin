@@ -15,6 +15,8 @@ def main():
     sys.path.insert(0, str(a.runtime))
     path = a.runtime / 'scripts/qualify_packed_zarr_epoch.py'
     spec = importlib.util.spec_from_file_location('packed_qualifier', path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load pinned qualification module")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     from numcodecs.blosc import set_nthreads

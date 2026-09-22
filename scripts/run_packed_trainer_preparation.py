@@ -9,6 +9,7 @@ import shutil
 import signal
 import subprocess
 import time
+from typing import Any
 
 GIB = 1024**3
 
@@ -114,7 +115,7 @@ def main():
     control.mkdir(parents=True)
     os.sched_setaffinity(0, {12, 13})
     os.nice(19)
-    status = {'status': 'INCOMPLETE', 'plan_sha256': a.plan_sha256, 'stages': []}
+    status: dict[str, Any] = {'status': 'INCOMPLETE', 'plan_sha256': a.plan_sha256, 'stages': []}
 
     def guard():
         if time.monotonic() - start >= 1192:
