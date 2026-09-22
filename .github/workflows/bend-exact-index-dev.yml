@@ -1,0 +1,206 @@
+name: Bend exact slider-index qualification
+'on':
+  push:
+    branches: [feat/bend-exact-index-dev-20260921]
+    paths: [.github/workflows/bend-exact-index-dev.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      SOURCE_BASE: 40803892f3204a54a33a87e2e7b25fa48fed2e1a
+      CANDIDATE: f6fd6e349eea48af36a8fa4e14c2d40a0049f329
+      TARGET_BRANCH: feat/bend-exact-slider-index-20260921
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: f6fd6e349eea48af36a8fa4e14c2d40a0049f329
+          fetch-depth: 2
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Check exact candidate, scope and local proof/native source identities
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/exact-index-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+          test "$(git rev-parse HEAD^)" = "$SOURCE_BASE"
+          test "$(git rev-parse HEAD^{tree})" = be41d9d93f33a9db1d8a48319dbd32ba256284ce
+          git diff "$SOURCE_BASE" HEAD --check
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          e = Path(os.environ['EVIDENCE'])
+          files = subprocess.check_output(['git','diff',os.environ['SOURCE_BASE'],'HEAD','--name-only'],text=True).splitlines()
+          assert len(files) == 13, files
+          assert all(f.startswith('native/bend_engine/standalone/proofs/exact_index/') or f.startswith('docs/experiments/evidence/bend-exact-slider-index/') or f == 'docs/experiments/2026-09-21-bend-exact-slider-index.md' for f in files)
+          d = Path('docs/experiments/evidence/bend-exact-slider-index')
+          source_bytes = (d/'local-source-stage.json').read_bytes()
+          assert hashlib.sha256(source_bytes).hexdigest() == '168c52047083dccd2b131c762a9578b0a1b1bd0bc9eb36f887264f7b2880a079'
+          s = json.loads(source_bytes)
+          n = json.loads((d/'local-native.json').read_text())
+          assert s['proof_gate'] == 'PASS' and n['native_gate'] == 'PASS'
+          probe = 'standalone/proofs/exact_index/probe.bend'
+          assert s['source_sha256s'][probe] == '67a1a81f33da2bde22be2f109dc6f55691e37beeff8db7021c2b806ec3e859d3'
+          assert n['source_sha256s'][probe] == 'f7fa1f833b34fd6fa8edf0c5183845add26421608297f2087c52bd7275c35cb0'
+          hashes = {}
+          for r in [s,n]:
+              assert r['compiler_revision'] == 'aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae'
+              for rel,digest in r['source_sha256s'].items():
+                  if r is s and rel == probe:
+                      continue
+                  p = Path('native/bend_engine')/rel
+                  assert p.is_file() and not p.is_symlink(), str(p)
+                  assert hashlib.sha256(p.read_bytes()).hexdigest() == digest, str(p)
+                  hashes[str(p)] = digest
+          for f in files:
+              hashes[f] = hashlib.sha256(Path(f).read_bytes()).hexdigest()
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'changed-files.json').write_text(json.dumps(files,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Prove all 54 laws and retain all 70 rejection controls
+        timeout-minutes: 18
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/exact_index/verify.js "$PWD/.compiler" --report "$EVIDENCE/exact-index-proofs.json" 2>&1 | tee "$EVIDENCE/proof-gate.txt"
+      - name: Compare actual recurrence and indices for all chess-mask subsets
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/exact_index/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/exact-index-native.json" 2>&1 | tee "$EVIDENCE/native-gate.txt"
+      - name: Retain original compiler source laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/compiler-pin-tests.txt"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/inherited-u64-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools for repository lint
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run the unchanged whole-repository lint gate once
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/whole-repository-lint.txt"
+      - name: Record qualification and publish a fresh clean branch without merging
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          git diff --exit-code
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET_BRANCH" > "$RUNNER_TEMP/target-ref.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          python3 - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          e = Path(os.environ['EVIDENCE'])
+          d = Path('docs/experiments/evidence/bend-exact-slider-index')
+          s = json.loads((e/'exact-index-proofs.json').read_text())
+          n = json.loads((e/'exact-index-native.json').read_text())
+          old_s = json.loads((d/'local-source-stage.json').read_text())
+          old_n = json.loads((d/'local-native.json').read_text())
+          assert s['proof_gate'] == 'PASS' and s['aggregate_law_count'] == 54 and s['new_law_count'] == 6
+          assert s['inherited_negative_controls'] == 55 and len(s['negative_controls']) == 15
+          assert all(x['rejected'] for x in s['negative_controls'])
+          probe = 'standalone/proofs/exact_index/probe.bend'
+          assert [k for k in s['source_sha256s'] if s['source_sha256s'][k] != old_s['source_sha256s'][k]] == [probe]
+          old_s['source_sha256s'][probe] = old_n['source_sha256s'][probe]
+          assert s == old_s, 'hosted source report has an unexplained difference'
+          assert n['native_gate'] == 'PASS' and n['enumerated_states'] == 107648 and n['indexed_occupancies'] == 215296
+          assert n['keys'] == 128 and n['cycle_endpoints'] == 128 and n['modes'] == old_n['modes']
+          assert n['source_sha256s'] == old_n['source_sha256s'] and n['bun'] == '1.4.2'
+          assert json.loads((e/'inherited-u64-proofs.json').read_text())['proof_gate'] == 'PASS'
+          assert '12 pass' in (e/'compiler-pin-tests.txt').read_text() and '0 fail' in (e/'compiler-pin-tests.txt').read_text()
+          assert (e/'whole-repository-lint.txt').read_text().strip().endswith('lint: OK')
+          for f,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest() == h, f
+          comparison = {'proof_and_control_outcomes':'identical','only_source_report_difference':probe,'reason':'new native probe parser syntax corrected after local proof check; not imported by proofs','original_local_report_modified':False,'native_modes_and_source_hashes':'identical'}
+          (e/'local-hosted-comparison.json').write_text(json.dumps(comparison,indent=2)+'\n')
+          for name in ['exact-index-proofs.json','exact-index-native.json','inherited-u64-proofs.json','candidate-source-sha256.json','changed-files.json','local-hosted-comparison.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['compiler-pin-tests.txt','compiler-identity.txt','whole-repository-lint.txt']:
+              raw = (e/name).read_bytes()
+              (d/('hosted-'+name.removesuffix('.txt')+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run, candidate = os.environ['GITHUB_RUN_ID'], os.environ['CANDIDATE']
+          p = Path('docs/experiments/2026-09-21-bend-exact-slider-index.md')
+          paragraphs = [
+              '## Hosted qualification',
+              f"Run **{run}**, temporary workflow commit `{os.environ['GITHUB_SHA']}`, passed every qualification stage before publication on exact candidate `{candidate}`, whose parent is #819 `{os.environ['SOURCE_BASE']}`. All candidate and inherited source identities were checked before and after qualification.",
+              'All six new universal laws, 48 inherited laws, 15 new rejection controls and 55 inherited controls pass. The importing consumer checks the complete existing layout proof and supplies its population certificate to the new helpers. No accepted obligation or trust condition is weakened.',
+              'The final source report differs from the retained local source-stage report only in the corrected, nonimported native-probe source hash. Proof statements, proof sources and all control outcomes agree exactly; the original local report was not rewritten. Native modes and source identities agree with the corrected local native report.',
+              f"Generic, forced-portable, native-target and UBSan modes each pass all 107,648 relevant occupancy states, 215,296 indexed occupancies, 128 cycle endpoints and six rejected requests. Shared output SHA-256: `37cd7ab0da1fc36e2292fb00dc49fcd563ee0024c4656d55e47b8f182a6995da`. Hosted toolchain: Bun {n['bun']}, {n['cc']}. These are repeated fixtures, not disjoint datasets or exhaustive arbitrary-U64 native testing.",
+              'The original fork source suite passes 16 laws and seven controls including cyclic-template rejection; all 12 compiler-pin contracts pass. The unchanged whole-repository lint gate passes Ruff, Basedpyright and Vulture in the locked Python 3.13 CPU development environment. No failures or assertions are suppressed.',
+              'Proof/native reports, source identities, the local/hosted comparison and lossless lint/pin logs are committed alongside the original local reports. Full gate logs are also retained in the 30-day artifact `bend-exact-slider-index-qualification`. No generated binary, model, private trace or transport payload is committed.',
+              f"Clean publication is create-only on `{os.environ['TARGET_BRANCH']}`. The implementation commit contains no development workflow; its follow-up adds only evidence and documentation/index updates. No force push, merge, deployment or live-process change. Self-review only, not independent review.",
+              'This closes exact scalar-index/ordinal/relevant-occupancy correspondence, not prefix-offset arithmetic or initialized/disjoint affine storage. No full-engine, perft, model, GPU, training, strength or benchmark result is added. The next acceptance connects actual Tables.tables/fill offsets and writes/reads to these proved scalar facts and independent blocker-ray attacks. Python export/control/data/training and transitional LibTorch/AOTI computation remain unchanged.'
+          ]
+          p.write_text(p.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          m = Path('docs/bend_migration_proofs.md')
+          text = m.read_text()
+          start, stop = text.index('Status snapshot:'), text.index('The older `feat/bend-native-leaf-evaluation')
+          text = text[:start]+f"Status snapshot: September 21, 2026. This inventory covers PR #819 at\n`{os.environ['SOURCE_BASE']}` plus the [exact U32 slider-index increment](experiments/2026-09-21-bend-exact-slider-index.md),\nqualified in run {run}. Earlier dated records remain historical.\n"+text[stop:]
+          rows = text.splitlines()
+          matches = [i for i,row in enumerate(rows) if row.startswith('| P1: subset enumeration / slider indices |')]
+          assert len(matches) == 1
+          rows[matches[0]] = '| P1: subset enumeration / slider indices | General ordinal/coverage/period, tight actual chess-mask populations, safe block sizes, and now exact U32/full-PEXT identity, U32 ordinal, masked-occupancy recovery and both collision directions are source-proved. | Actual prefix-offset arithmetic and its connection to initialized/disjoint affine writes and reads remain. Exact scalar correspondence is not a table-buffer theorem. |'
+          marker = '| 16 existing U64 obligations |'
+          matches = [i for i,row in enumerate(rows) if row.startswith(marker)]
+          assert len(matches) == 1
+          rows[matches[0]:matches[0]] = [
+              '| `exact_index/low_projection_exact`, `exact_index/lookup_index_exact` | Actual low U32 observation and Sliders.pext_index equal the full compact Nat value. | Generic symbolic width <=32 with strict bound; valid chess keys and arbitrary occupancies for actual masks. Prior population certificates are proved, not assumed. | **Laws proved**; final hosted aggregate and independent boundary mutations pass. |',
+              '| `exact_index/lookup_sequence_ordinal`, `exact_index/lookup_state_recovery` | Actual U32 lookup index identifies the exact state of the imported production-step recurrence. | Nat indices below actual block size; valid key and arbitrary occupancy. Recovery yields masked occupancy, not complete board. | **Laws proved**; native probe exhausts all relevant chess-mask states; actual Array writes remain separate. |',
+              '| `exact_index/lookup_collision_sound`, `exact_index/lookup_collision_complete` | Actual indices agree exactly when relevant occupancies agree for chess masks. | Soundness uses valid chess keys. Equal masked occupancies imply equal indices for any U64 mask, even wider than 32 bits. | **Laws proved**; >32-bit-mask counterexample prevents unrestricted inverse claim. |'
+          ]
+          text = '\n'.join(rows)+'\n'
+          text += f"\n## Exact U32 slider-index qualification\n\nRun **{run}** passes 54 accepted laws (six new plus 48 inherited) and 70 controls (15 new plus 55 inherited), four native modes, original source/pin checks and whole-repository lint. Exact candidate `{candidate}` changes no production source. The dated record and committed reports distinguish the corrected probe hash from unchanged proof inputs. Prefix-offset/affine-storage and independent blocker-ray refinement remain the next P2 work; no new application migration or model/performance result follows.\n"
+          m.write_text(text)
+          index = Path('docs/experiments/README.md')
+          text = index.read_text()
+          marker = '| --- | --- |\n'
+          assert marker in text and '2026-09-21-bend-exact-slider-index.md' not in text
+          text = text.replace(marker,marker+'| [Exact U32 slider-index correspondence](2026-09-21-bend-exact-slider-index.md) | Actual lookup/full-PEXT identity, ordinal, masked occupancy recovery and collision equivalence; prefix/affine storage remains separate |\n',1)
+          index.write_text(text)
+          PY
+          git switch -c "$TARGET_BRANCH"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-21-bend-exact-slider-index.md docs/experiments/evidence/bend-exact-slider-index
+          git diff --cached --check
+          git diff --exit-code -- native
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: record exact slider-index qualification and remaining storage obligations'
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          git log -1 --format='%H%n%s' | tee "$EVIDENCE/published-commit.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/exact_index > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-exact-slider-index-qualification
+          path: ${{ runner.temp }}/exact-index-evidence/
+          retention-days: 30
