@@ -1,0 +1,39 @@
+name: Prefix source reconciliation
+'on':
+  push:
+    branches: [feat/bend-prefix-reconciliation-dev-20260922]
+    paths: [.github/workflows/bend-prefix-review-source.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e8ce93c36a848e87b687aabc0c0483f709c3267a
+          fetch-depth: 3
+          persist-credentials: false
+      - name: Archive exact reviewed delta and commit identities without executing it
+        run: |
+          set -euo pipefail
+          base=b85b4b3620a815150736e4a6ac2858d372160917
+          test "$(git rev-parse HEAD)" = e8ce93c36a848e87b687aabc0c0483f709c3267a
+          git cat-file -e "$base^{commit}"
+          mkdir -p "$RUNNER_TEMP/prefix-source"
+          git diff --binary "$base" HEAD > "$RUNNER_TEMP/prefix-source/qualified.patch"
+          git cat-file commit HEAD > "$RUNNER_TEMP/prefix-source/head.commit"
+          git cat-file commit HEAD^ > "$RUNNER_TEMP/prefix-source/source.commit"
+          git rev-parse HEAD^{tree} HEAD^1^{tree} "$base^{tree}" > "$RUNNER_TEMP/prefix-source/trees.txt"
+          git diff --name-only "$base" HEAD > "$RUNNER_TEMP/prefix-source/changed-files.txt"
+          cd "$RUNNER_TEMP/prefix-source"
+          sha256sum qualified.patch head.commit source.commit > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qualified-prefix-source-reconciliation
+          path: ${{ runner.temp }}/prefix-source/
+          retention-days: 7
