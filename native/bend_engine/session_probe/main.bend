@@ -147,12 +147,20 @@ def run(n: Nat, r: Live & Bool) -> IO(Live):
             run(p, next)
 
 type Printed is Type:
-  Printed{pool: Array<Search.Node>, best: U32, visits: U32}
+  Printed{pool: Array<Search.Node>, best: U32, visits: U32,
+    claim: Bool, positive: U32, positive_visits: U32}
 
-def node_print(+i: U32, +best: U32, +visits: U32, r: Array<Search.Node> & Search.Node) -> IO(Printed):
+def node_print(+i: U32, +best: U32, +visits: U32, claim: Bool,
+  +positive: U32, +positive_visits: U32, r: Array<Search.Node> & Search.Node) -> IO(Printed):
   (pool, +a) = r
   +key = Search.key(Search.node_move(a))
   +n = Search.node_n(a)
+  +root_child = Bool.and(Bool.not(U32.is_zero(i)), U32.is_zero(Search.node_parent(a)))
+  claim = Bool.or(claim, Bool.and(root_child, Search.is_claim(a)))
+  +good = Bool.and(root_child, Bool.and(Bool.not(Search.is_claim(a)),
+    Bool.and(U32.is_gt(n, 0), F32.is_gt(F32.neg(Search.mean(a)), 0.0))))
+  +better_positive = Bool.and(good, Bool.or(U32.is_gt(n, positive_visits),
+    Bool.and(U32.is_eq(n, positive_visits), U32.is_lt(key, positive))))
   +better = Bool.and(Bool.not(U32.is_zero(i)), Bool.and(U32.is_zero(Search.node_parent(a)),
     Bool.or(U32.is_gt(n, visits), Bool.and(U32.is_eq(n, visits), U32.is_lt(key, best)))))
   do IO<Printed>:
@@ -162,17 +170,20 @@ def node_print(+i: U32, +best: U32, +visits: U32, r: Array<Search.Node> & Search
       ++ " " ++ float_word(Search.node_prior(a)) ++ " " ++ float_word(Search.node_value(a))
       ++ " " ++ U32.show(Search.node_first(a)) ++ " " ++ U32.show(Search.node_count(a))
       ++ " " ++ board_text(Search.node_board(a)))
-    return Printed{pool, Bool.pick(U32, better, key, best), Bool.pick(U32, better, n, visits)}
+    return Printed{pool, Bool.pick(U32, better, key, best), Bool.pick(U32, better, n, visits),
+      claim, Bool.pick(U32, better_positive, key, positive),
+      Bool.pick(U32, better_positive, n, positive_visits)}
 
 def print_step(+i: U32, state: Printed) -> IO(Printed):
-  Printed{pool, best, visits} = state
-  node_print(i, best, visits, Array.get(Search.Node, pool, i))
+  Printed{pool, best, visits, claim, positive, positive_visits} = state
+  node_print(i, best, visits, claim, positive, positive_visits, Array.get(Search.Node, pool, i))
 
 def print_nodes(n: Nat, +i: U32, state: Printed) -> IO(Unit):
   match n:
     case 0n:
-      Printed{pool, best, visits} = state
-      IO.print("best " ++ U32.show(best))
+      Printed{pool, best, visits, claim, +positive, positive_visits} = state
+      option = Bool.pick(U32, U32.is_eq(positive, 4294967295), Search.claim_key(), positive)
+      IO.print("best " ++ U32.show(Bool.pick(U32, claim, option, best)))
     case 1n+p:
       do IO<Unit>:
         next : Printed <- print_step(i, state)
@@ -187,7 +198,7 @@ def finish(board: Chess.Board, r: Live) -> IO(Connection):
   do IO<Connection>:
     IO.print("result " ++ U32.show(epoch) ++ " " ++ U32.show(n) ++ " " ++ U32.show(used)
       ++ " " ++ U32.show(stop) ++ " " ++ U32.show(pending) ++ " " ++ U32.show(request))
-    print_nodes(U32.to_nat(used), 0, Printed{pool, 4294967295, 0})
+    print_nodes(U32.to_nat(used), 0, Printed{pool, 4294967295, 0, False{}, 4294967295, 0})
     return Connection{board, table, epoch}
 
 def begin_valid(valid: Bool, +board: Chess.Board, table: Array<U64>, config: Config) -> IO(Connection):

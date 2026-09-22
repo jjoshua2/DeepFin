@@ -9,6 +9,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Bend UCI interface](2026-09-20-bend-uci-interface.md) | Opt-in bounded UCI frontend, actual native search/client checks and stop isolation; no full-UCI, GPU or strength claim |
+| [Bend optional claims](2026-09-20-bend-claim-options.md) | Explicit zero-valued claim choice preserving legal continuations; native and host contracts, opt-in only |
 | [Bend search draws](2026-09-19-bend-search-draws.md) | History-aware automatic leaf draws, terminal-zero cache and native backup; optional claims remain separate |
 | [Bend neural play](2026-09-19-bend-neural-play.md) | Native evaluator across played roots, bounded multi-game queue and host draw policy; CPU lifecycle gate, not trained strength or throughput |
 | [Bend root advancement](2026-09-19-bend-root-advancement.md) | Same-process legal play/search, transactional epoch-bound root changes and retained host history; fresh trees, no subtree reuse or GPU claim |

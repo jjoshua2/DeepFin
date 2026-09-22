@@ -19,6 +19,7 @@ import torch
 from native.bend_engine.legal_probe import run_probe as rules
 from native.bend_engine.session_probe import run_probe as sessions
 from native.bend_engine.session_probe.search_draws import automatic_draw, draw_reply, reconstruct_leaf
+from native.bend_engine.session_probe.claims import Claim, claim_option
 from .adapter import HistoryEncoder, board_position, decode_key
 from .backend import BATCHES, NativeEvaluator, build_worker
 from .batching import Batch, Batcher, Completion, Key
@@ -36,9 +37,13 @@ class Observation:
 
 class Actor:
     def __init__(self, peer: sessions.Peer, root: chess.Board, encoder: HistoryEncoder,
-                 oracle: sessions.Oracle, session: int, budget: int):
+                 oracle: sessions.Oracle, session: int, budget: int, *, allow_claims: bool = False):
         self.peer, self.root, self.encoder, self.oracle = peer, root, encoder, oracle
         self.session, self.budget = session, budget
+        self.allow_claims = allow_claims
+        self.pending_claim: Claim | None = None
+        self.claim_options: dict[int, Claim] = {}
+        self.claim_leaves: list[dict[str, object]] = []
         self.epoch = 0
         self.waiting: Key | None = None
         self.actions: list[int] = []
@@ -48,6 +53,8 @@ class Actor:
         self.start()
 
     def start(self) -> None:
+        self.pending_claim = None
+        self.claim_options = {}
         self.epoch += 1
         self.ref = sessions.Reference(board_position(self.root), self.oracle,
                                       cap=4096, depth=4, budget=self.budget)
@@ -61,7 +68,10 @@ class Actor:
             best = sessions.numbers(self.peer.line(), 'best', 1)[0]
             self.ref.check_snapshot(rows, result, best, self.epoch)
             self.peer.expect('ready')
-            if best != sessions.SENTINEL:
+            if best == sessions.CLAIM_KEY:
+                if not self.allow_claims or 0 not in self.claim_options:
+                    raise AssertionError('native claim has no validated root evidence')
+            elif best != sessions.SENTINEL:
                 decode_key(self.root, best)
             self.results.append(Observation(
                 {'session': self.session, 'epoch': self.epoch, 'completed': self.ref.completed,
@@ -93,12 +103,13 @@ class Actor:
             self.draw_leaves.append({'epoch': self.epoch, 'request': header[1],
                                      'node': wanted, 'path': path, 'reason': reason})
             return
+        option = claim_option(board) if self.allow_claims else None
         x, full, board = self.encoder.encode(path, supplied, actions)
         check_encoding(x, board, self.encoder.encoding)
         key = Key(self.session, self.epoch, header[1], wanted)
         now = time.monotonic()
         broker.submit(key, x, full, now=now, deadline=now + 30)
-        self.waiting, self.actions = key, actions
+        self.waiting, self.actions, self.pending_claim = key, actions, option
 
     def after_search(self, broker: Batcher) -> None:
         """Default qualification behavior; game controllers may advance at ready."""
@@ -114,8 +125,13 @@ class Actor:
             raise AssertionError('wrong-session/epoch or duplicate completion reached an actor')
         if reply.status == 'ok':
             wdl, policy = list(reply.wdl), list(reply.policy)
-            self.ref.accept(reply.key.node, self.actions, wdl, policy)
-            status = 0
+            option = self.pending_claim
+            self.ref.accept(reply.key.node, self.actions, wdl, policy, claim=option is not None)
+            status = 4 if option is not None else 0
+            if option is not None and not self.ref.stop:
+                self.claim_options[reply.key.node] = option
+                self.claim_leaves.append({'epoch': self.epoch, 'node': reply.key.node,
+                                          'reason': option.reason, 'intended_move': option.intended_move})
         else:
             status = 2 if reply.status == 'cancelled' else 1
             self.ref.stop = 2 if status == 2 else 3
@@ -124,6 +140,7 @@ class Actor:
                   *(sessions.bits(v) for v in wdl), len(policy), *(sessions.bits(v) for v in policy)]
         self.peer.write('reply ' + ' '.join(f'{v:x}' for v in fields) + '\n')
         self.waiting = None
+        self.pending_claim = None
 
 
 def roots() -> list[chess.Board]:
