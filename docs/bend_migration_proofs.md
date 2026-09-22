@@ -1,5 +1,15 @@
 # Bend migration and proof inventory
 
+## Latest storage-separation qualification: September 22, 2026
+
+Hosted qualification **35728145361**, temporary workflow commit `82b49583a60ddcd9cd29408abcdd59e208eef409`, passes **68 accepted laws and 107 rejection controls**, all four native modes, original compiler source/pin checks and the unchanged whole-repository lint gate on source `4a0e442cc701b38a5ccd93938f28e421be5b4f9a`.
+
+Current P2 progress now includes actual other-location preservation, not only same-location reads and topology. `separation/write_preserves_other_location` preserves the complete updated read pair under `Spec.separate`; `write_preserves_separation` retains every path decision. `fill_preserves_unwritten_location` preserves the query value under `Spec.clear` for every actual Nat fill count and U32-incrementing address schedule; `fill_preserves_separation` retains path decisions through the real loop. The conditions depend only on shape and addresses, not expected read values, and have positive-count and wraparound consumer certificates.
+
+These four source laws import actual Array and Tables operations through the existing certified affine representation. They remain conditional on the pinned checker/Base. Complete native arrays are tested; arbitrary nonuniform source trees are not claimed native-qualified. Numerical inequality alone is insufficient because addresses may alias.
+
+The remaining P2 gap is proving that actual numeric prefix intervals produce separated normalized paths with no overflow, then establishing final initialized contents and independent blocker-ray lookup equality. Historical statements below that other-slot preservation is wholly unproved are superseded only by these explicit conditional frame laws, not by a complete prefix or lookup theorem. See [the dated readout](experiments/2026-09-22-bend-storage-separation.md) and committed evidence. No Python responsibility, full engine/model/GPU or benchmark result is added.
+
 ## Latest hosted storage qualification
 
 Hosted run **35711968651**, temporary workflow commit `ae80e948fdd5ef12011a8d9f5d9ed98462df0968`, passes all **64 accepted laws**, **90 rejection controls** (18 new plus 72 retained), four native modes, original compiler source/pin checks and unchanged whole-repository lint on exact parent `290fc01a10517374518e505f9855c7d4a9a5d956`. The dated table-storage record and committed reports retain exact identities, original local limitations and remaining trust boundaries. Prefix/nonaliasing/full-lookup geometry remain open; these are eight new actual-buffer laws, not completion of P2.

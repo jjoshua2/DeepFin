@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Normalized storage separation](2026-09-22-bend-storage-separation.md) | Four actual-array/fill frame laws under normalized path separation; preserves other slots and separation, with prefix certificates and final ray geometry still open |
 | [Actual affine table storage](2026-09-22-bend-table-storage.md) | Eight real-buffer laws: read identity, same-location write/read, initialization, builder topology and one actual fill write; prefix/nonaliasing/geometry remain separate |
 | [Exact U32 slider indices](2026-09-21-bend-exact-slider-indices.md) | Eight source laws connect actual low32 lookup to full PEXT and recurrence order/recovery; prefix and affine storage remain separate |
 | [Bend slider-mask populations and sizes](2026-09-21-bend-slider-mask-bounds.md) | Eight scalar laws: all 128 actual masks, safe U32 block sizes, arbitrary-occupancy lookup-index bounds; offsets/affine table refinement remain separate |
