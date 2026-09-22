@@ -1,0 +1,37 @@
+name: Restore exact prefix Facts source
+'on':
+  push:
+    branches: [feat/bend-prefix-intervals-dev-20260922]
+    paths: [.github/workflows/bend-prefix-transfer-fix.yml]
+permissions:
+  contents: write
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Restore the exact source blob without executing it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api repos/jjoshua2/DeepFin/git/blobs/3cfe59699f5ebe08a3a31dac60039e5ff14da95e --jq .content | base64 --decode > "$RUNNER_TEMP/facts.bad"
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])
+          raw=(root/'facts.bad').read_bytes()
+          def blob(b):
+              return hashlib.sha1(b'blob '+str(len(b)).encode()+b'\0'+b).hexdigest()
+          assert blob(raw)=='3cfe59699f5ebe08a3a31dac60039e5ff14da95e'
+          before=b'case 99n: ({==}, ({==}, ({==}, ({==}, {==})))'
+          after=b'case 99n: ({==}, ({==}, ({==}, {==})))'
+          assert raw.count(before)==1
+          fixed=raw.replace(before,after)
+          assert blob(fixed)=='4caa1366a6e7a87e8be0b7dfcd2085443fe1b828'
+          (root/'blob.json').write_text(json.dumps({'encoding':'utf-8','content':fixed.decode()}))
+          PY
+          got=$(gh api --method POST repos/jjoshua2/DeepFin/git/blobs --input "$RUNNER_TEMP/blob.json" --jq .sha)
+          test "$got" = 4caa1366a6e7a87e8be0b7dfcd2085443fe1b828
+          echo "Restored exact original Facts source blob: $got; no branch, proof or compiler changed."
