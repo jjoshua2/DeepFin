@@ -1,0 +1,193 @@
+name: Bend relative address qualification
+'on':
+  push:
+    branches: [feat/bend-relative-address-dev-20260922]
+    paths: [.github/workflows/bend-relative-address-qualification.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: fc1fdd7cbe4d7e84543a14df9b7336c39ab098f2
+      TARGET: feat/bend-relative-address-bounds-20260922
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fc1fdd7cbe4d7e84543a14df9b7336c39ab098f2
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover the exact limited patch and create a local immutable source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/relative-evidence"
+          export TRANSPORT="$RUNNER_TEMP/relative-transport"
+          mkdir -p "$EVIDENCE" "$TRANSPORT"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$TRANSPORT/patch.b64"
+          for blob in ef79d36be7412bbb32239e007ce7ceb1de30a39b 1017cf6e0263d82ca4baac6ec3dd6392d2aa936a 4771db742d4f7b11c2fc0cc4b8a75f2e982b7f16 9d597d2f9e6d6a80c6a733a8986a14c9d9600dad; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$TRANSPORT/$blob"
+            test "$(git hash-object "$TRANSPORT/$blob")" = "$blob"
+            cat "$TRANSPORT/$blob" >> "$TRANSPORT/patch.b64"
+          done
+          test "$(git hash-object "$TRANSPORT/patch.b64")" = 3642deb8173e7dcca961f7d40cc664414f0cd415
+          python3 - <<'PY'
+          import base64,hashlib,lzma,os
+          from pathlib import Path
+          t=Path(os.environ['TRANSPORT'])
+          encoded=(t/'patch.b64').read_bytes()
+          assert len(encoded)==28540
+          patch=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(patch)==115709
+          assert hashlib.sha256(patch).hexdigest()=='5dcaeb4a4a87626fc461f2816985c46f2dd89b8e8a6934d729bacb92932279da'
+          (t/'candidate.patch').write_bytes(patch)
+          PY
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = 1a182723143434f457daf296b8582a7a7a415f21
+          git apply --check "$TRANSPORT/candidate.patch"
+          git apply --index "$TRANSPORT/candidate.patch"
+          git diff --cached --check
+          test "$(git write-tree)" = 6cea10a621415fb8bb8c674184cb533ca0f57d18
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          files=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          assert len(files)==20
+          assert all(f.startswith('native/bend_engine/standalone/proofs/relative/') or f.startswith('docs/experiments/evidence/bend-relative-address-bounds/') or f=='docs/experiments/2026-09-22-bend-relative-address-bounds.md' for f in files),files
+          tracked=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in tracked if Path(f).is_file()}
+          assert len(hashes)==253
+          e=Path(os.environ['EVIDENCE'])
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'source-recovery.json').write_text(json.dumps({'base':os.environ['BASE'],'source_tree':'6cea10a621415fb8bb8c674184cb533ca0f57d18','patch_sha256':'5dcaeb4a4a87626fc461f2816985c46f2dd89b8e8a6934d729bacb92932279da','patch_bytes':115709,'changed_files':files,'transport_repaired':False},indent=2)+'\n')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove relative table address bounds and cross-block write preservation'
+          SOURCE=$(git rev-parse HEAD)
+          echo "SOURCE=$SOURCE" >> "$GITHUB_ENV"
+          git cat-file commit HEAD > "$EVIDENCE/source-commit.raw"
+          git log -1 --format='%H%n%s' > "$EVIDENCE/source-commit.txt"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Preserve all 83 parent laws and check the six new public contracts
+        timeout-minutes: 36
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/relative/verify.js "$PWD/.compiler" --report "$EVIDENCE/proofs.json" 2>&1 | tee "$EVIDENCE/source-gate.log"
+      - name: Check actual table metadata and public array behavior in four modes
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          command -v clang-18
+          bun native/bend_engine/standalone/proofs/relative/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native-gate.log"
+      - name: Retain original compiler source laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install the locked CPU development environment with its normal compiler
+        run: |
+          set -euo pipefail
+          env -u CC -u CXX uv sync --locked --extra dev --extra cpu 2>&1 | tee "$EVIDENCE/development-install.log"
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint once
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          env -u CC -u CXX ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify local agreement and publish only a fresh clean feature branch
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-complete-routes-20260922 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target-ref.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);d=Path('docs/experiments/evidence/bend-relative-address-bounds')
+          p=json.loads((e/'proofs.json').read_text());n=json.loads((e/'native.json').read_text())
+          local=json.loads((d/'local-controls.json').read_text());oldn=json.loads((d/'local-native.json').read_text())
+          assert p['proof_gate']=='PASS' and p['aggregate_law_count']==89 and p['new_law_count']==6 and p['inherited_law_count']==83
+          assert p['inherited_negative_controls']==156 and len(p['negative_controls'])==20 and all(c['rejected'] for c in p['negative_controls'])
+          assert p['consumer']=='PASS'
+          for k in ['compiler_revision','source_files','source_sha256','new_laws','new_law_count','negative_controls','source_sha256s','scope']:
+              assert p[k]==local[k],k
+          assert n['native_gate']=='PASS' and n['fixture_rows']==288 and n['chess_keys']==128
+          assert {k:v for k,v in n.items() if k!='cc'}=={k:v for k,v in oldn.items() if k!='cc'}
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          manifest=json.loads((e/'candidate-source-sha256.json').read_text())
+          for f,h in manifest.items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          for name in ['proofs.json','native.json','compiler-proofs.json','candidate-source-sha256.json','source-recovery.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt','source-commit.raw']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          comparison={'comparison':'PASS','source_commit':os.environ['SOURCE'],'source_tree':'6cea10a621415fb8bb8c674184cb533ca0f57d18','native_source_files':len(manifest),'source_report_matches':'Local controls and source identities match; local consumer and controls ran separately, hosted aggregate is a fresh combined execution','native_report_matches':'Every field except separately recorded C compiler identity','proof_inputs_unchanged_after_qualification':True}
+          (d/'hosted-comparison.json').write_text(json.dumps(comparison,indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];workflow=os.environ['GITHUB_SHA'];source=os.environ['SOURCE']
+          summary=f"Hosted run **{run}**, workflow commit `{workflow}`, passed the complete **89-law / 176-control** aggregate, four native modes, original compiler source/pin checks and unchanged whole-repository lint on source commit `{source}`."
+          record=Path('docs/experiments/2026-09-22-bend-relative-address-bounds.md')
+          sections=['## Hosted qualification and clean publication',summary,
+            'The unchanged 83-law / 156-control parent ran once, then all six new public laws and 20 controls. The full importing consumer checked with exact successful output; its certificate producers remain imported. Local controls and every proof-input identity match the hosted report. The earlier standalone 300-second timeout remains a development failure, not a passing result. No accepted statement or compiler was changed to get green.',
+            f"All four native modes passed 288 cases and six malformed requests each. Every native result/source identity agrees with the local report except C compiler identity: hosted {n['cc']}, Bun {n['bun']}. CC=clang-18 was scoped only to the native step; Python 3.13 CPU development setup used its normal compiler and locked uv 0.12.10 environment. Ruff, Basedpyright and Vulture passed unchanged. No warning or failure was suppressed.",
+            'Source-only patch SHA-256 5dcaeb4a4a87626fc461f2816985c46f2dd89b8e8a6934d729bacb92932279da, 115709 bytes, complete candidate tree 6cea10a621415fb8bb8c674184cb533ca0f57d18. All four transport fragments and the full transport were checked before decompression/application. Every one of the 253 native-source manifest entries matched before and after qualification. No payload repair occurred.',
+            f"The feature branch `{os.environ['TARGET']}` receives the source commit plus this evidence/documentation commit only after all gates. Temporary workflows and payloads remain excluded. Compact reports and lossless lint/pin logs are committed; full logs are retained in the 30-day artifact bend-relative-address-qualification. No merge, force push, deployment or live-process change.",
+            'The new source statements use the certified prefix expression; they do not prove every stored offset header or final table value. The native probe reads actual headers and selected computed values but is not exhaustive over all occupancies and is not a source proof. Full fill-clear schedules, final initialized/computed contents and independent blocker-ray refinement remain the next P2 acceptance.',
+            'Self-review only, not independent review. No production runtime or new Python responsibility moved. Existing export, references, data/control, training and transitional C++/LibTorch/AOTI dependencies remain. No model/GPU, perft increase, training, strength or benchmark result. Pinned checker/Base and native lowering/storage/lifetime/ABI/toolchain/OS/hardware remain trust boundaries; earlier compiler diagnostics are unchanged.'
+          ]
+          record.write_text(record.read_text()+'\n\n'+'\n\n'.join(sections)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Relative table-address bounds](2026-09-22-bend-relative-address-bounds.md) | Six source laws connect actual U32 prefix-plus-index sums to bounded ordered regions and real cross-block array preservation; metadata and final fill contents remain separate |\n',1))
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          blocks=['## Latest relative-address qualification: September 22, 2026',summary,
+            '`relative/relative_address_bounds` and `relative_addition_exact` prove every valid relative U32 address stays in its actual-sized block, below allocation capacity, with exact U32-to-U64 addition. `lookup_address_bounds` derives that bound for the actual arbitrary-occupancy PEXT index. `ordered_block_addresses` and `ordered_block_address_paths` derive numeric order and complete-tree separation across ordered keys; `lookup_other_block_write` proves the whole updated read pair preserves the other block query without caller-supplied relative bounds or path certificates.',
+            'Actual stored metadata equality to the certified prefix, every fill-clear certificate, final computed contents and independent blocker-ray lookup remain open. These results supersede the historical open scalar prefix-plus-relative-index and cross-block separation steps, not the full P2 theorem. Complete shape is still necessary. See the dated relative-address readout and committed source/native evidence. No new application responsibility moves from Python; prior compiler/native trust limitations remain.'
+          ]
+          matrix.write_text(title+'\n\n'+'\n\n'.join(blocks)+'\n'+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-22-bend-relative-address-bounds.md docs/experiments/evidence/bend-relative-address-bounds
+          git diff --cached --check
+          git commit -m 'docs: retain hosted relative-address qualification and remaining table-refinement obligations'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/relative > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-relative-address-qualification
+          path: ${{ runner.temp }}/relative-evidence/
+          retention-days: 30
