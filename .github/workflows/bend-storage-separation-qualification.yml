@@ -1,0 +1,176 @@
+name: Bend storage separation qualification
+'on':
+  push:
+    branches: [feat/bend-storage-separation-dev-20260922]
+    paths: [.github/workflows/bend-storage-separation-qualification.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 2c807135a17a8abcf478f9b142ac9a860b6111ed
+      SOURCE: 4a0e442cc701b38a5ccd93938f28e421be5b4f9a
+      TARGET: feat/bend-storage-separation-20260922
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 4a0e442cc701b38a5ccd93938f28e421be5b4f9a
+          fetch-depth: 2
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Verify exact complete candidate tree and limited source scope
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/separation-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^1)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = 893dfc70e26e2bcba0a1536b1315fe12c306f79a
+          test "$(git rev-parse HEAD^1^{tree})" = 0491217a0e20ee5ed1c14b1208e7ffc2b6cf75e2
+          git diff "$BASE" HEAD --check
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          files=subprocess.check_output(['git','diff',os.environ['BASE'],'HEAD','--name-only'],text=True).splitlines()
+          assert len(files)==12
+          assert all(f.startswith('native/bend_engine/standalone/proofs/separation/') or f=='docs/experiments/2026-09-22-bend-storage-separation.md' for f in files),files
+          tracked=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in tracked if Path(f).is_file()}
+          e=Path(os.environ['EVIDENCE'])
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'source-identity.json').write_text(json.dumps({'base':os.environ['BASE'],'source':os.environ['SOURCE'],'candidate_tree':'893dfc70e26e2bcba0a1536b1315fe12c306f79a','changed_files':files,'transfer':'direct Git tree entries, matched against complete locally checked tree','local_patch_sha256':'4d2177b8c4e0d2f43035740646f3f117334c293a4730f0e0fd0bb5cca09708c4'},indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Retain all 64 prior laws and check four new frame laws
+        timeout-minutes: 34
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/separation/verify.js "$PWD/.compiler" --report "$EVIDENCE/proofs.json" 2>&1 | tee "$EVIDENCE/source-gate.log"
+      - name: Compare real array and fill outcomes in four native modes
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/separation/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native-gate.log"
+      - name: Recheck original compiler laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development environment
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint once
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify local agreement and append durable qualification evidence
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-affine-storage-laws-20260922 | cut -f1)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          p=json.loads((e/'proofs.json').read_text());n=json.loads((e/'native.json').read_text())
+          assert p['proof_gate']=='PASS' and p['aggregate_law_count']==68 and p['new_law_count']==4
+          assert p['inherited_law_count']==64 and p['inherited_negative_controls']==90
+          assert len(p['negative_controls'])==17 and all(x['rejected'] for x in p['negative_controls'])
+          assert p['consumer']=='PASS'
+          focused={'focused_gate':'PASS',**{k:p[k] for k in ['compiler_revision','source_files','source_sha256','new_laws','new_law_count']},'inherited_gate_run':False,**{k:p[k] for k in ['negative_controls','consumer','source_sha256s','scope']}}
+          def canonical(x):
+              return hashlib.sha256(json.dumps(x,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          focused_hash=canonical(focused)
+          assert focused_hash=='4cbbcfa6983e8a04bc3ad081b6cebde287c45f46ab341f7cfe18963078c7399c'
+          native_hash=canonical({k:v for k,v in n.items() if k!='cc'})
+          assert native_hash=='1f212a0a29d461356b99a74653f05186ea529dc97114bc03b98b3d58d40986d4'
+          assert n['native_gate']=='PASS' and n['fixture_rows']==1279 and n['full_array_cells']==57226
+          assert n['protected_query_rows']==547 and n['overlap_counterexample_rows']==732
+          assert n['distinct_indices_aliasing_rows']==186 and n['chess_fill_keys']==128
+          assert n['cases_by_operation']=={'array_set':638,'fill':641}
+          assert len(n['modes'])==4 and all(m['invalid_rejections']==7 and m['output_sha256']=='3e61ca04a8aecda814c5f0c9ca03bab82c35609c74af85987935b923f53f8ee8' for m in n['modes'])
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for f,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          comparison={'focused_report_canonical_sha256':focused_hash,'native_report_except_cc_canonical_sha256':native_hash,'focused_local_raw_sha256':'3b93d19d201275b8ef5585216b3271806a82fbcf5a21193cf9d4714bb295d64e','native_local_raw_sha256':'6c623a1f48bc836d281e82cac38d5b39a5bcb52c34aaeb2d09735d449722d0c6','comparison':'PASS','scope':'Same focused contract/control/source report; same complete native report except C compiler identity. The full 68-law aggregate was first run hosted, not locally.'}
+          (e/'local-hosted-comparison.json').write_text(json.dumps(comparison,indent=2)+'\n')
+          d=Path('docs/experiments/evidence/bend-storage-separation');d.mkdir(parents=True,exist_ok=False)
+          for name in ['proofs.json','native.json','compiler-proofs.json','candidate-source-sha256.json','source-identity.json','local-hosted-comparison.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          raw="\n::: running lint tools in parallel\n\n::: ruff check\nenv: 'ruff': No such file or directory\n\n::: basedpyright\n./scripts/lint.sh: line 135: basedpyright: command not found\n\n::: vulture (dead code, min confidence 80)\n./scripts/lint.sh: line 116: vulture: command not found\n"
+          assert hashlib.sha256(raw.encode()).hexdigest()=='13dfc8c98d92235d145b6d7aa429cc1b617b81e3cf8dccf29f307cb4535dea00'
+          (d/'local-lint-failure.json').write_text(json.dumps({'command':'./scripts/lint.sh','exit_code':1,'original_sha256':hashlib.sha256(raw.encode()).hexdigest(),'raw_text':raw,'status':'Historical local environment failure; fresh unchanged hosted lint resolves this candidate gap'},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];sha=os.environ['GITHUB_SHA']
+          summary=f"Hosted qualification **{run}**, temporary workflow commit `{sha}`, passes **68 accepted laws and 107 rejection controls**, all four native modes, original compiler source/pin checks and the unchanged whole-repository lint gate on source `{os.environ['SOURCE']}`."
+          record=Path('docs/experiments/2026-09-22-bend-storage-separation.md')
+          sections=['## Hosted qualification',summary,
+            'The complete source tree is 893dfc70e26e2bcba0a1536b1315fe12c306f79a, identical to the locally checked candidate. The full aggregate retains the unmodified 64-law/90-control parent and adds four frame laws and 17 controls. The focused contract/control/source report matches its local canonical SHA-256; the full native report matches locally except the separately recorded C compiler identity. Exact local/hosted comparison identities are committed.',
+            'Each native mode passes 1,279 fixture rows and 57,226 full-array cell comparisons: 638 set/read and 641 actual fill cases, all 128 keys, 547 protected queries, 732 overlap counterexamples and 186 distinct-index alias rows. Seven invalid requests are rejected per mode. These repeat local fixtures and modes, not disjoint datasets or exhaustive native U64 testing. Neither proof predicates nor proof representations execute in the native probe.',
+            f"Tools: Bun {n['bun']}, {n['cc']}, locked Python 3.13 CPU environment with uv 0.12.10 for external tools. Original compiler source laws and all seven controls, including cyclic-template rejection, pass. The 12 compiler-pin contracts pass. Whole-repository Ruff/Basedpyright/Vulture passes unchanged, resolving the retained local missing-tools failure for this exact candidate.",
+            'Only qualification evidence, the experiment index and the migration inventory are appended after checking. Executable source hashes are unchanged. Full logs are in the 30-day artifact bend-storage-separation-qualification; compact reports and the original local lint failure are committed. Source publication uses direct Git tree entries with exact complete-tree verification, not encoded patch fragments.',
+            'Self-review only, not independent review. No production runtime, prior accepted law, compiler input, existing test, permanent workflow or perft budget changes. No full-engine/model/GPU/training/benchmark qualification. Source equality does not establish native pointer identity, allocation or physical lifetime.',
+            'The four laws assume explicit normalized-path separation or a computed clear-write-path condition, which the consumer shows satisfiable. Deriving these certificates for every actual chess prefix remains unfinished. Prefix no-overflow, initialized final table contents and independent blocker-ray lookup refinement are separate acceptance targets. No new Python application responsibility moved into Bend; export/data/control/training and transitional C++/LibTorch/AOTI remain dependencies.',
+            f"Branch `{os.environ['TARGET']}` is updated only by a fast-forward evidence/documentation commit after qualification. No merge, force push, deployment or live-process change. The temporary development workflow is excluded from this feature branch. Historical compiler TypeScript and diagnostic-depth limitations are not fixed or suppressed."
+          ]
+          record.write_text(record.read_text()+'\n\n'+'\n\n'.join(sections)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n'
+          assert text.count(anchor)==1
+          row='| [Normalized storage separation](2026-09-22-bend-storage-separation.md) | Four actual-array/fill frame laws under normalized path separation; preserves other slots and separation, with prefix certificates and final ray geometry still open |\n'
+          index.write_text(text.replace(anchor,anchor+row,1))
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          lines=['## Latest storage-separation qualification: September 22, 2026',summary,
+            'Current P2 progress now includes actual other-location preservation, not only same-location reads and topology. `separation/write_preserves_other_location` preserves the complete updated read pair under `Spec.separate`; `write_preserves_separation` retains every path decision. `fill_preserves_unwritten_location` preserves the query value under `Spec.clear` for every actual Nat fill count and U32-incrementing address schedule; `fill_preserves_separation` retains path decisions through the real loop. The conditions depend only on shape and addresses, not expected read values, and have positive-count and wraparound consumer certificates.',
+            'These four source laws import actual Array and Tables operations through the existing certified affine representation. They remain conditional on the pinned checker/Base. Complete native arrays are tested; arbitrary nonuniform source trees are not claimed native-qualified. Numerical inequality alone is insufficient because addresses may alias.',
+            'The remaining P2 gap is proving that actual numeric prefix intervals produce separated normalized paths with no overflow, then establishing final initialized contents and independent blocker-ray lookup equality. Historical statements below that other-slot preservation is wholly unproved are superseded only by these explicit conditional frame laws, not by a complete prefix or lookup theorem. See [the dated readout](experiments/2026-09-22-bend-storage-separation.md) and committed evidence. No Python responsibility, full engine/model/GPU or benchmark result is added.'
+          ]
+          matrix.write_text(title+'\n\n'+'\n\n'.join(lines)+'\n'+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-22-bend-storage-separation.md docs/experiments/evidence/bend-storage-separation
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify normalized array separation and actual fill frame contracts'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/separation > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-storage-separation-qualification
+          path: ${{ runner.temp }}/separation-evidence/
+          retention-days: 30
