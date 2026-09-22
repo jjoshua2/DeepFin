@@ -65,12 +65,7 @@ class Actor:
                 {'session': self.session, 'epoch': self.epoch, 'completed': self.ref.completed,
                  'nodes': len(rows), 'stop': self.ref.stop, 'best': best},
                 [tuple(r[:6] + r[9:]) for r in rows]))
-            if self.ref.stop:
-                # Exercise a fresh epoch before late cancelled rows are scattered.
-                self.start()
-                broker.register(self.session, self.epoch)
-            else:
-                self.done = True
+            self.after_search(broker)
             return
         header = sessions.numbers(line, 'eval', 4)
         if header[:3] != [self.epoch, self.ref.seq, wanted] or not 1 <= header[3] <= 256:
@@ -92,6 +87,15 @@ class Actor:
         now = time.monotonic()
         broker.submit(key, x, full, now=now, deadline=now + 30)
         self.waiting, self.actions = key, actions
+
+    def after_search(self, broker: Batcher) -> None:
+        """Default qualification behavior; game controllers may advance at ready."""
+        if self.ref.stop:
+            # Exercise a fresh epoch before late cancelled rows are scattered.
+            self.start()
+            broker.register(self.session, self.epoch)
+        else:
+            self.done = True
 
     def deliver(self, reply: Completion) -> None:
         if reply.key != self.waiting:
