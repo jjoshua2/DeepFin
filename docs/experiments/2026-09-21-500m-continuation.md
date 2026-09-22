@@ -3,10 +3,12 @@
 ## Decision
 
 Continue the frozen 58,090,688-row factorial through D and its two registered
-matches before selecting the policy/value package. Retain BT4 batch128. Prioritize
-lossless packed Zarr for scale storage, and qualify the prepared Stockfish tablebase
-retention option as the next CPU optimization. No live training inputs, targets,
-engine binary, or search settings were changed by this continuation.
+matches before selecting the policy/value package. Retain BT4 batch128 and keep
+prefetch off by default until its queued complete GPU pipeline screen passes.
+The larger 1,963,948-row packed-storage stream now passes exact tensor parity;
+actual GPU training throughput remains to be measured. SF-free E preparation
+continues separately. No live training inputs, targets, engine binary, or search
+settings were changed by this continuation.
 
 This is a partial readout, not a final factorial winner or a 500M throughput claim.
 The main checkout predates several open research PRs; current evidence was recovered
@@ -360,3 +362,14 @@ Corrected qualification launched with reviewed plan SHA256
 `e321ca4f189ae00ede1f0e367301d85530f21d9499eb2dc4ffcd15f39a295b79`;
 all 256 archive bytes and staged bindings were independently verified before
 launch. GPU admission remains contingent on both complete streams passing.
+
+Corrected qualification completed in 748.045 seconds, within its new cap; total
+CPU preparation including the preserved failed attempt was 1,374.334 seconds.
+Both representations consumed all 1,963,948 rows with exact ordered tensor hash
+`c39d8f17230b3ab22cbe4203cca15d3e314085a94df795cd12b58fbbf0300707`.
+The [full-stream receipt](evidence/500m-continuation-20260921/storage-full-stream-qualification.json)
+and [completion receipt](evidence/500m-continuation-20260921/storage-requalification-complete.json)
+bank the result. Cached CPU consumer time including digest observation was
+318.643 seconds for NVMe and 340.250 seconds for external ZIP. These are
+qualification timings, not GPU throughput or cold 500M storage evidence.
+The actual GPU comparison is published in [PR #818](https://github.com/jjoshua2/DeepFin/pull/818).
