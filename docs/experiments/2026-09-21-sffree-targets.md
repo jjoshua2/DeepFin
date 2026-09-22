@@ -55,7 +55,7 @@ Target generation takes 4.45, 6.15 and 4.37 seconds per shard; output sizes are
 throughput estimates. Each smoke uses an isolated copied base and new seal.
 The initial attempt built and compared cohort00 successfully, then used the
 schema-1 qualification API in the harness and failed. That attempt remains at
-`/home/josh/chess-artifacts/operations/factorial58-sffree-smoke-20260921`;
+`~/chess-artifacts/operations/factorial58-sffree-smoke-20260921`;
 the corrected schema-2 harness uses the separate `...smoke-v2-20260921` namespace.
 No teacher inference or outcome selection was rerun.
 
@@ -93,14 +93,14 @@ cover failed children, STOP and low RAM, including cleanup and no next launch.
 The three cached smoke samples suggest 8.6–12.1 hours of building and 11.1–11.5 GB
 of output, excluding full seal verification, qualification and contention. The
 16-hour limit is a kill cap, not a completion ETA. Outputs go to
-`/home/josh/chess-artifacts/labels/factorial58_sffree_20260921`; terminal receipts go
+`~/chess-artifacts/labels/factorial58_sffree_20260921`; terminal receipts go
 to the preparation operation's `execution_v1` directory. A successful full receipt
 must establish all 58,090,688 rows and 7,108 shards before training admission.
 
 E training has not launched or been queued. D and its two queued matches remain
 in place. Full-corpus completion, exact training-plan review and comparison pins
 remain outstanding.
-Bulk artifacts live under `/home/josh/chess-artifacts/operations/`; the manifests
+Bulk artifacts live under `~/chess-artifacts/operations/`; the manifests
 point to original teacher/base banks. Publishing this builder does not alter the
 active frozen factorial runtime or queue. The implementation PR is stacked on
 `research/factorial58-teacher-mix`, whose schema-2 overlay support is required.
@@ -110,7 +110,7 @@ active frozen factorial runtime or queue. The implementation PR is stacked on
 
 A [draft readiness record](evidence/2026-09-21-sffree-targets/training-draft.json)
 and E-only runner/admission plan are banked at
-`/home/josh/chess-artifacts/operations/factorial58-sffree-training-draft-20260921`.
+`~/chess-artifacts/operations/factorial58-sffree-training-draft-20260921`.
 The draft preserves D's exact training runtime, configuration, environment and
 initialization; the loader optimization is not part of this target contrast.
 Execution refuses before GPU acquisition or output creation. Nine future pins
