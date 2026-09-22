@@ -1,8 +1,8 @@
 # Bend migration and proof inventory
 
 Status snapshot: September 21, 2026. This inventory is specific to the standalone
-stack through PR #805 (`d6503d8d6a0c2b8fa938477b755e8303c0af49f1`) plus the
-[compact-index increment](experiments/2026-09-21-bend-compact-index-bijection.md).
+stack through PR #806 (`1654a945e946440885675b5bc1f7d0ee80f80708`) plus the
+[successor/ordinal increment](experiments/2026-09-21-bend-subset-successor.md).
 The older `feat/bend-native-leaf-evaluation@975cc8f6...` continuation is preserved,
 not silently substituted for the validated PR #804 implementation. Prior probes
 and unpublished branches are references, not evidence of standalone integration.
@@ -38,9 +38,9 @@ Paths in this table are under `native/bend_engine/` unless stated otherwise.
 | Python production pipeline (`chess_anti_engine/selfplay/`, `worker*.py`, `replay/`, `train/`, `model/`) | Production control, data tooling, model definition/export and training remain separate migration dependencies, not claims of Bend implementation. | Inventory enabled source/config/checkpoint contracts before porting RNG, records/shards, retries/recovery, losses/targets, optimizers, augmentation, schedules, SWA, resume, precision and synchronization. `policy_sf` predicts the opponent reply, not the current move. |
 | Practical viability | New tests are correctness checks, not benchmarks. PR #804's 9.22-GiB peak is a build measurement. | Compare equivalent model/precision/batching/history/search/hardware; separate startup, compilation, encoding, inference, search, scheduling and runtime memory. |
 
-No new Python responsibility moves into Bend in the subset increment: its arithmetic
-was already Bend-owned. The concrete change is attaching checked properties to the
-actual production helper, with independent native checks for its table integration.
+No new Python responsibility moves into Bend in the proof increments: this arithmetic
+was already Bend-owned. The new successor/ordinal suite changes no production source;
+it proves the actual helper and imported recurrence, with separate native checks.
 
 ## Accepted laws / assumptions / revision links
 
@@ -60,6 +60,10 @@ under `proofs/u64/`, with source provenance and import enforcement.
 | `index/capacity_matches_popcount`, `index/extraction_bound`, `index/sequence_index_bound` | Actual popcount, PEXT and imported production-step recurrence; unbounded Nat capacity. | Every U64 mask/input, and every Nat recurrence index; pinned checker/Base. | **Laws proved**; compact range, including population 64; not ordinal equality. |
 | `index/compact_projection`, `index/compact_roundtrip` | Actual PDEP then PEXT; low-k-bit projection or exact bounded inverse. | Projection unconditional; inverse requires strict `value(x) < 2^popcount(mask)`. | **Laws proved**; inclusive/unrestricted variants rejected; four native modes test valid and invalid-domain values. |
 | `index/deposit_in_mask`, `index/deposit_injective`, `index/masked_extract_injective`, `index/compact_coverage` | Bijection between bounded compact U64 words and mask-contained bitboards. | Injectivity/coverage use the stated bounds/membership; no enumerator-order assumption. | **Laws proved**; constructive witness is actual PDEP, not a proof of sequence coverage. |
+| `successor/subtraction_refinement` | Actual split-U32 `U64.sub` equals full-width `Word.sub`. | All U64 operands, including low-half borrow and equal-low-half cases. | **Law proved**; three corrupt-Base controls specifically fail the new bridge; native borrow/non-borrow checks. |
+| `successor/step_successor` | PEXT value after actual `Subsets.next` is piecewise compact successor with wrap. | State is mask-contained; compact value bound/capacity equality are already proved. | **Law proved**; unmasked-state counterexample retained; actual step native checks. |
+| `successor/sequence_ordinal`, `successor/sequence_nonduplicating`, `successor/sequence_coverage` | Imported `at(i,mask)` reaches each masked state exactly once in its first mathematical capacity states, in PEXT-index order. | Nat indices strictly below mathematical capacity; coverage requires mask membership. | **Laws proved**; stuck actual recurrence and false inclusive bounds rejected; no enumeration-count assumption. |
+| `successor/cycle_endpoint`, `successor/sequence_periodic` | Imported recurrence returns to zero at capacity and repeats after capacity for every Nat index. | All U64 masks, including empty/full; no machine-power overflow. | **Laws proved**; derived from successor/ordinal and numeric-observation injectivity. |
 | 16 existing U64 obligations | Public U64 operations, full-width representation and Word lemmas from pinned fork. | Original assumptions unchanged; source checker/Base remain trusted. | **Inherited laws reused**, not 16 new engine laws; original files fingerprinted and all imports checked. |
 
 Both source gates require successful process plus exactly `All terms check.`. The
@@ -73,7 +77,7 @@ No proof holes, unsafe dependencies, foreign witnesses or new axioms are accepte
 
 | Target | Current evidence / partial progress | Still required; do not relabel as proved |
 | --- | --- | --- |
-| P1: subset enumeration / slider indices | Eight initial laws plus nine compact-index laws: exact extraction bounds, bounded inverse and representation bijection. Prior native exhaustive chess-mask enumeration remains separate. | For `k = popcount(mask)` and every `i < 2^k`, prove `toNat(pext(at(i,mask),mask)) = i`; derive sequence completeness/nonduplication. Bridge actual U64 subtraction/carry/borrow to compact successor. Prove chess-mask population bounds for actual U32 size/offset operations. Mathematical capacity, including k=64, is now proved separately. |
+| P1: subset enumeration / slider indices | **General ordinal, complete/nonduplicating coverage and period proved** for actual Subsets/at, including k=64. Seven new laws connect split-U32 borrow, compact successor and Nat recurrence; earlier 17 engine/index laws retained. | Tighter chess-mask population bounds justifying actual U32 size/offset arithmetic remain. Source recurrence is not yet a proof of affine table construction or lookup. |
 | P2: table/lookup refinement | Native `Tables.build` matches all 108,160 C-reference logical entries; independent geometric rays check slider values. | Independent square/rank/file/ray specification, step boundaries, blockers, mask correctness, initialized regions, disjoint offsets/no overflow, affine writes and actual `Chess.bend` lookup refinement. |
 | P3: board / moves / perft | Existing legality/special-move/perft reference tests; no new perft budget or depth. | Named orthodox-chess specification and FIDE edition, board invariants, special moves and legal-move soundness/completeness/no duplicates; legal-tree recurrence separate from draw pruning and machine-counter overflow. |
 | P4: history / rules / parser / UCI | Native reconstructed paths and draw/parser/protocol checks, including transactional rejection. | Quantified history reconstruction, EP/repetition/windows/clocks/mate precedence, sufficient material-case soundness, claim witnesses, parsing bounds/replay and pure controller safety. Responsiveness also needs scheduling/progress assumptions. |
@@ -81,10 +85,16 @@ No proof holes, unsafe dependencies, foreign witnesses or new axioms are accepte
 | P6: search / replies / scheduling | Diagnostic PUCT and synchronous neural leaf tests; finite/shape/move-alignment rejection. | Arena/parent/ticket/reset safety, no partial mutation, exactly-once completion, sign/terminal conventions; batching/cancellation ownership and progress assumptions. F32 is not exact real arithmetic; no exact IEEE-softmax-sum theorem. |
 | P7: model / training / native trust | Transitional native CPU model fixture only. | Bend tensor/model/gradient/update/RNG/serialization/resume/data-provenance contracts as components migrate; justified numerical model and source-to-native refinement/translation validation. |
 
-The next decisive source acceptance test is P1's **universal compact-index/order
-theorem**, not another successful bounded occupancy test. For inference, the next
-separate model acceptance is a representative trained-checkpoint run and then the
-specified target-CUDA qualification; neither is established by the CPU fixture.
+The next decisive source acceptance is now the **P1 chess-mask bounds / P2 table
+refinement connection**: prove relevant mask populations fit actual U32 size/offset
+arithmetic, and connect the completed ordinal theorem to affine writes, initialized
+regions and actual lookup with independent ray geometry. Do not relabel native table
+comparisons as that proof. Representative trained-checkpoint and target-CUDA
+qualification remain separate inference acceptance targets.
+
+The successor aggregate adds seven laws to the previous 33, checking **40 accepted
+laws** in total and retaining 26 prior negative controls plus 16 new controls. The
+compiler fork's independent source gate retains its cyclic-template regression.
 
 ## Trust and retained dependencies
 
@@ -136,3 +146,12 @@ The dated readout distinguishes source proofs, bounded native tests, historical
 engine/model results and remaining trust/application dependencies.
 
 Hosted compact-index qualification run **35643399130** passed the additive source gate, all four native modes, original compiler source/pin checks and whole-repository lint on the exact candidate. Compact reports/source identities are committed in the dated record. This does not add runtime-engine, model, GPU or enumeration-order evidence.
+
+## Successor / ordinal qualification
+
+The dated successor readout records the newly executed proof/native gates and exact
+source identities. General enumeration order, coverage, nonduplication and period
+are no longer listed as open; no table-buffer, whole-engine, model or performance
+result is implied by that update. Earlier dated evidence below/above remains historical.
+
+Hosted successor/ordinal qualification run **35655691011** passed the additive source gate, four native modes, original source/pin checks, and whole-repository lint on the exact candidate. Reports and source identities are committed in the dated record. Full P1 recurrence order/coverage/period is source-proved; actual affine table initialization, offsets and lookup geometry still require P2 refinement. No runtime-engine/model/GPU/performance requalification is implied.
