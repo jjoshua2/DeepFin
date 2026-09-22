@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -160,3 +162,94 @@ def test_report_cannot_overwrite_checkpoint(tmp_path: Path, alias: str) -> None:
         validate_report_destination(report, source)
     assert checkpoint.read_bytes() == b'preserve checkpoint'
     validate_report_destination(tmp_path / 'different.json', source)
+
+
+@pytest.mark.parametrize('change', ['missing_arch', 'missing_resolved', 'history', 'features',
+                                   'repfix_type', 'policy', 'topology', 'unknown', 'schema'])
+def test_checkpoint_package_rejects_conflicting_metadata_before_execution(
+    tmp_path: Path, change: str,
+) -> None:
+    from native.bend_engine.neural_probe.backend import package_manifest
+    path = tmp_path / 'unused.pt2'
+    path.write_bytes(b'not executable; metadata validation must not load it')
+    arch = payload()['arch']
+    cfg = cp.model_config_from_arch(arch)
+    resolved = asdict(cfg)
+    data = {**spec(), 'arch': arch, 'resolved_model_config': resolved,
+            'torch_version': str(torch.__version__),
+            'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+            'channels': 175, 'batch': 1, 'policy_width': 1858, 'row_independent': True,
+            **asdict(cp.Encoding(cfg.input_history_encoding, cfg.input_extra_features, cfg.history_rep_fix))}
+    sidecar = path.with_suffix('.json')
+    sidecar.write_text(json.dumps(data))
+    assert package_manifest(path)[1].channels == 175
+    if change == 'missing_arch':
+        del data['arch']
+    elif change == 'missing_resolved':
+        del data['resolved_model_config']
+    elif change == 'history':
+        data['input_history_encoding'] = 'lc0_root_legacy_meta'
+    elif change == 'features':
+        data['input_extra_features'] = 'v1'
+        data['channels'] = 146
+    elif change == 'repfix_type':
+        arch['history_rep_fix'] = 0
+    elif change == 'policy':
+        resolved['policy_encoding'] = 'not_compact'
+    elif change == 'topology':
+        resolved['num_layers'] += 1
+    elif change == 'unknown':
+        arch['unknown_architecture_field'] = True
+    else:
+        arch['_schema_version'] = True
+    sidecar.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match=r'architecture|configuration|encoding|schema|unknown'):
+        package_manifest(path)
+
+
+def test_noncompact_checkpoint_is_rejected_before_model_allocation(monkeypatch, tmp_path: Path) -> None:
+    data = payload()
+    data['arch']['policy_encoding'] = 'lc0_4672'
+    path = tmp_path / 'trainer.pt'
+    torch.save(data, path)
+    def unexpected(_cfg):
+        raise AssertionError('must not allocate unsupported model')
+    monkeypatch.setattr(cp, 'build_model', unexpected)
+    with pytest.raises(ValueError, match='policy encoding'):
+        cp.load_checkpoint(path)
+
+
+def test_in_place_checkpoint_change_is_rejected(monkeypatch, tmp_path: Path) -> None:
+    # Retain the useful mutation control from the alternative #780 implementation.
+    path = tmp_path / 'trainer.pt'
+    torch.save(payload(), path)
+    real_load = torch.load
+    def changing(*args, **kwargs):
+        result = real_load(*args, **kwargs)
+        with path.open('ab') as stream:
+            stream.write(b'changed during load')
+        return result
+    monkeypatch.setattr(torch, 'load', changing)
+    with pytest.raises(ValueError, match='changed while loading'):
+        cp.load_checkpoint(path)
+
+
+def test_atomic_checkpoint_replacement_cannot_mix_identity_and_weights(monkeypatch, tmp_path: Path) -> None:
+    path = tmp_path / 'trainer.pt'
+    torch.save(payload(), path)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    replacement = tmp_path / 'replacement.pt'
+    updated = payload()
+    updated['model']['weight'] *= 2
+    torch.save(updated, replacement)
+    real_load = torch.load
+    def replacing(*args, **kwargs):
+        result = real_load(*args, **kwargs)
+        replacement.replace(path)
+        return result
+    monkeypatch.setattr(torch, 'load', replacing)
+    monkeypatch.setattr(cp, 'build_model', lambda cfg: torch.nn.Linear(2, 2))
+    loaded = cp.load_checkpoint(path)
+    assert loaded.identity['checkpoint_sha256'] == digest
+    assert torch.equal(loaded.model.state_dict()['weight'], torch.ones(2, 2))
+    assert hashlib.sha256(path.read_bytes()).hexdigest() != digest
