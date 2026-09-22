@@ -1,0 +1,175 @@
+name: Complete routes lint and evidence publication
+'on':
+  push:
+    branches: [feat/bend-complete-routes-dev-20260922]
+    paths: [.github/workflows/bend-complete-routes-lint-publication.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  finish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: e680c126908d1e816f31c38b7e3255e196e6f174
+      SOURCE: 868335129a501b677ca916d2bbdc779a1b2e22e9
+      TARGET: feat/bend-complete-routes-20260922
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 868335129a501b677ca916d2bbdc779a1b2e22e9
+          fetch-depth: 2
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Verify retained successful source and native checks against the exact candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/complete-final"
+          export SAVED="$RUNNER_TEMP/complete-saved"
+          mkdir -p "$EVIDENCE" "$SAVED"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          echo "SAVED=$SAVED" >> "$GITHUB_ENV"
+          curl --fail --silent --show-error --location -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' https://api.github.com/repos/jjoshua2/DeepFin/actions/artifacts/10712168622/zip -o "$RUNNER_TEMP/saved.zip"
+          echo "c91f200ed814f33886da5ed3eab7da579198f8e42de1ac8ab16657b81a69332b  $RUNNER_TEMP/saved.zip" | sha256sum --check
+          python3 -c 'import zipfile,os; z=zipfile.ZipFile(os.environ["RUNNER_TEMP"]+"/saved.zip"); assert all("/" not in n and ".." not in n for n in z.namelist()); z.extractall(os.environ["SAVED"])'
+          gh api repos/jjoshua2/DeepFin/actions/jobs/106877854539 > "$EVIDENCE/native-recovery-job.json"
+          gh api repos/jjoshua2/DeepFin/actions/jobs/106877854539/logs > "$EVIDENCE/native-recovery-job.log"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^1)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = 2e6428e87a347679b2f39b5eacc0a0ea58e421fc
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);s=Path(os.environ['SAVED'])
+          job=json.loads((e/'native-recovery-job.json').read_text())
+          assert job['id']==106877854539 and job['run_id']==35766677592
+          assert job['head_sha']=='c67f68d309ca061cdf38d74bb28d789f1265a7ec'
+          assert job['status']=='completed' and job['conclusion']=='failure'
+          steps={x['number']:x for x in job['steps']}
+          assert all(steps[i]['conclusion']=='success' for i in range(1,11))
+          assert steps[11]['conclusion']=='failure' and steps[12]['conclusion']=='skipped' and steps[13]['conclusion']=='skipped'
+          assert steps[14]['conclusion']=='success'
+          log=(e/'native-recovery-job.log').read_text()
+          assert "'omp.h' file" in log and 'not found' in log and 'clang-18' in log
+          original=json.loads((s/'first-job.json').read_text())
+          assert original['id']==106871635955 and original['run_id']==35764846623
+          assert original['conclusion']=='failure' and {x['number']:x for x in original['steps']}[6]['conclusion']=='success'
+          p=json.loads((s/'proofs.json').read_text());f=json.loads((s/'focused-recheck.json').read_text());n=json.loads((s/'native.json').read_text())
+          assert p['proof_gate']=='PASS' and p['aggregate_law_count']==83 and p['inherited_law_count']==79
+          assert p['inherited_negative_controls']==140 and len(p['negative_controls'])==16
+          assert all(c['rejected'] for c in p['negative_controls'])
+          def canonical(x):
+              return hashlib.sha256(json.dumps(x,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          assert canonical(f)=='e53969bc796b4362b59244d3b8b2c8bf47a034612386f9a1af39be6523cc18e9'
+          for k,v in f.items():
+              if k not in ['focused_gate','inherited_gate_run']:
+                  assert p[k]==v,k
+          assert canonical({k:v for k,v in n.items() if k!='cc'})=='634092c8dd12db28af364c17cd13e1c2727dda55cab29ef8143f19e9e5da0133'
+          assert n['native_gate']=='PASS' and n['fixture_rows']==152 and 'clang version 18.' in n['cc']
+          assert len(n['modes'])==4 and all(m['invalid_rejections']==6 for m in n['modes'])
+          assert json.loads((s/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (s/'pin.log').read_text() and '0 fail' in (s/'pin.log').read_text()
+          manifest=json.loads((s/'candidate-source-sha256.json').read_text());assert len(manifest)==239
+          for file,h in manifest.items():
+              assert hashlib.sha256(Path(file).read_bytes()).hexdigest()==h,file
+          identity=json.loads((s/'source-identity.json').read_text())
+          assert identity['base']==os.environ['BASE'] and identity['source']==os.environ['SOURCE']
+          for file in s.iterdir():
+              shutil.copyfile(file,e/file.name)
+          comparison={'comparison':'PASS','full_source_run':35764846623,'full_source_step':'success; first overall run failed at native-target warnings','native_and_compiler_run':35766677592,'native_and_compiler_steps':'success; second overall run failed at Python editable build due to job-wide CC=clang-18 and missing omp.h','lint_publication_run':int(os.environ['GITHUB_RUN_ID']),'candidate_source_entries':len(manifest),'full_aggregate_rerun':False,'native_rerun':False,'focused_canonical_sha256':canonical(f),'native_except_cc_canonical_sha256':canonical({k:v for k,v in n.items() if k!='cc'}),'warnings_suppressed':False,'code_changed':False}
+          (e/'qualification-provenance.json').write_text(json.dumps(comparison,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/final-compiler-identity.txt"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install the locked development environment without the native-probe CC override
+        run: |
+          set -euo pipefail
+          env -u CC -u CXX uv sync --locked --extra dev --extra cpu 2>&1 | tee "$EVIDENCE/development-install.log"
+          .venv/bin/python -c 'import sysconfig,torch; assert torch.version.cuda is None; print("Python extension compiler:",sysconfig.get_config_var("CC"))' | tee "$EVIDENCE/python-build-compiler.txt"
+      - name: Run unchanged whole-repository lint once
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          env -u CC -u CXX ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Preserve exact qualification and publish documentation and evidence only
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-address-normalization-20260922 | cut -f1)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for file,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(file).read_bytes()).hexdigest()==h,file
+          d=Path('docs/experiments/evidence/bend-complete-tree-routes');d.mkdir(parents=True,exist_ok=False)
+          for name in ['proofs.json','focused-recheck.json','native.json','compiler-proofs.json','candidate-source-sha256.json','source-identity.json','qualification-provenance.json','first-native-failure.json','first-job.json','native-recovery-job.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt','final-compiler-identity.txt','recovery-toolchain.txt','python-build-compiler.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          raw=(e/'native-recovery-job.log').read_bytes()
+          (d/'native-recovery-environment-failure.json').write_text(json.dumps({'run':35766677592,'job':106877854539,'original_log_sha256':hashlib.sha256(raw).hexdigest(),'original_log_location':'native-recovery-job.log in bend-complete-routes-final-qualification artifact','failure':'CC=clang-18 set job-wide affected Python extension build; omp.h was missing; native tests and original compiler checks had already passed','resolution':'Only external Python development installation uses its normal compiler, with CC/CXX unset. Native result retains explicit Clang 18. No production or proof source changes; no warnings filtered.'},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];sha=os.environ['GITHUB_SHA']
+          summary=f"Qualification is complete on exact source `{os.environ['SOURCE']}`: source run **35764846623** passed all **83 laws and 156 rejection controls**; run **35766677592** passed all four native modes with explicit Clang 18 and original compiler source/pin checks; final run **{run}** verifies those retained exact-source results and passes unchanged whole-repository lint. The first two overall workflow verdicts remain red and their failures are preserved."
+          record=Path('docs/experiments/2026-09-22-bend-complete-tree-routes.md')
+          sections=['## Completed qualification with separate failure provenance',summary,
+              'First run 35764846623 passed the full inherited/source aggregate, then default clang with -march=native emitted six invalid-feature-combination warnings involving AVX10.1. The strict empty-stderr check rejected them. Generic and portable modes had passed; native-target execution and later steps did not receive successful verdicts. The original failure is preserved, not classified as an engine-value mismatch or relabeled green.',
+              'Second run 35766677592 retained and verified the full source report, rechecked the focused four-law/16-control gate, and passed every native mode with explicit installed clang-18, without altering flags, output expectations or warning policy. Original 16 compiler laws/seven controls and all 12 pin contracts passed. However, setting CC=clang-18 job-wide also changed the external Python editable-build compiler; that installation failed because omp.h was absent. Lint and publication were skipped. This environment-scoping mistake is retained separately; no compiler or source theorem was changed.',
+              f"Final run {run}, workflow {sha}, downloads artifact 10712168622 with ZIP SHA-256 c91f200ed814f33886da5ed3eab7da579198f8e42de1ac8ab16657b81a69332b, validates both recorded job/step outcomes, the source/native results and all 239 source hashes. It does not redundantly rerun completed proofs or native checks. The Python development install uses its normal compiler with CC/CXX unset; locked Python 3.13 CPU dependencies and uv 0.12.10 are retained. Unchanged Ruff, Basedpyright and Vulture now pass. No error or warning is suppressed.",
+              'The first full-source report is from artifact 10711688170, verified ZIP SHA-256 4ef8329318f900a341c2f3ce4663e1788918c1d7286c4aeda487174a3c95195a. The focused local and hosted reports agree exactly; the full native report agrees except C compiler identity. Candidate tree remains 2e6428e87a347679b2f39b5eacc0a0ea58e421fc. Subsequent changes are evidence/documents only.',
+              'Native results: 152 rows per mode, 125 distinct bounded pairs, 17 same-index and ten deliberate out-of-range cases, all 17 divergence bits and six malformed rejections. The candidate uses supported public APIs with complete 131072-cell allocations. Query values/capacity/normalization are observed, not all cells, direct raw routines or the full table builder. Repeated fixtures across environments are not disjoint or exhaustive coverage.',
+              f"Compact reports, lossless lint/pin logs, source identities and three-run provenance are committed. Full final/install/earlier environment logs are retained in the 30-day artifact bend-complete-routes-final-qualification. Publication fast-forwards {os.environ['TARGET']} only. Temporary workflows are excluded; no merge, force push, deployment or live-process change.",
+              'Complete shape now derives distinct normalized paths for distinct bounded addresses, and the actual initialization/table/extras pipeline supplies shape. Prefix-plus-relative-index arithmetic, every fill-clear certificate, final computed contents and independent blocker-ray lookup remain separate P2 obligations. Shape preservation for arbitrary source depths/counts does not prove native feasibility, allocation/lifetime or physical pointer identity.',
+              'Self-review only, not independent review. No production code, old accepted law, compiler input or ordinary test budget changes. The earlier six-law local candidate, raw-internal C-lowering limitation and compiler TypeScript/diagnostic issues remain separate and unchanged. No Python application logic moved; export, external references, data/control and training remain, with C++/LibTorch/AOTI transitional inference. No engine/model/GPU/perft/training/strength/performance result is added.'
+          ]
+          record.write_text(record.read_text()+'\n\n'+'\n\n'.join(sections)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Complete-tree route separation](2026-09-22-bend-complete-tree-routes.md) | Four real-array laws derive separated leaf paths and other-index preservation from complete shape and bounded unequal addresses; actual initialization/builders supply shape |\n',1))
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          sections=['## Latest complete-tree route qualification: September 22, 2026',summary,
+              '`complete/allocation_complete` and `table_pipeline_complete` derive complete constructor shape from actual Array.new, Tables.tables and Tables.extras. `bounded_complete_routes` proves normalized leaf separation for real complete depth-17 arrays and distinct U32 addresses below 131072. `bounded_other_index_write` proves the full returned read pair contains the complete updated array and the original other-slot value. No path-separation or read-value equality is assumed.',
+              'These source laws supersede the historical open complete-tree route implication, not the remaining prefix/interior arithmetic, fill-clear, initialized contents or independent blocker-ray lookup obligations. Capacity alone remains insufficient. See [the complete-tree readout](experiments/2026-09-22-bend-complete-tree-routes.md) and the exact-source evidence for separate passed checks and preserved workflow failures. No native lowering/lifetime theorem, new Python migration or performance claim follows.'
+          ]
+          matrix.write_text(title+'\n\n'+'\n\n'.join(sections)+'\n'+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-22-bend-complete-tree-routes.md docs/experiments/evidence/bend-complete-tree-routes
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify complete routes and preserve exact multi-run failure provenance'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-complete-routes-final-qualification
+          path: ${{ runner.temp }}/complete-final/
+          retention-days: 30
