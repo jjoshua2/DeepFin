@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import chess
+
 from chess_anti_engine.neural_work import SCHEMA
 from native.bend_engine.standalone.verify import Client
 
@@ -61,6 +63,15 @@ def parse_report(lines: list[str], *, kind: str, budget: int, wall_tolerance_ms:
         "dispatched_real_rows", "executed_real_rows", "accepted_neural_rows"))
     if not accepted <= executed <= dispatched:
         raise ValueError("acceptance/execution/dispatch counters contradict each other")
+    # Logical resolution cannot prove that all dispatched GPU work completed.
+    # Failed forwards consume reservations too, but are not confirmed execution.
+    finished = executed + counts["failed_forward_rows"]
+    if finished > dispatched:
+        raise ValueError("completed/failed forward rows contradict dispatched rows")
+    unconfirmed = dispatched - finished
+    dispositions = sum(counts[key] for key in ("cancelled_rows", "stale_rows", "rejected_rows", "failed_rows"))
+    if counts["executed_wasted_rows"] > dispositions:
+        raise ValueError("executed wasted rows contradict logical dispositions")
     if counts["unresolved_rows"] == 0 and accepted + counts["executed_wasted_rows"] != executed:
         raise ValueError("resolved useful/wasted rows contradict executed rows")
     real_calls, real_rows = _histogram(report, "real_batch_histogram")
@@ -81,11 +92,24 @@ def parse_report(lines: list[str], *, kind: str, budget: int, wall_tolerance_ms:
             value, numerator / wall, rel_tol=2e-5, abs_tol=1e-5,
         ):
             raise ValueError(f"{key} denominator/numerator mismatch")
-    nodes = [int(line.split()[2]) for line in lines if line.startswith("info nodes ")]
-    bestmoves = [line.split()[1] for line in lines if line.startswith("bestmove ")]
-    if nodes != [counts["completed_simulations"]] or len(bestmoves) != 1:
+    node_lines = [line.split() for line in lines if line.startswith("info nodes ")]
+    if len(node_lines) != 1 or len(node_lines[0]) < 3 or not node_lines[0][2].isdecimal():
+        raise ValueError("missing/duplicate or malformed final nodes")
+    nodes = [int(node_lines[0][2])]
+    move_lines = [line.split() for line in lines if line.startswith("bestmove ")]
+    if (len(move_lines) != 1 or len(move_lines[0]) not in (2, 4)
+            or (len(move_lines[0]) == 4 and move_lines[0][2] != "ponder")):
+        raise ValueError("missing/duplicate or malformed bestmove")
+    bestmove = move_lines[0][1]
+    try:
+        chess.Move.from_uci(bestmove)
+        if len(move_lines[0]) == 4:
+            chess.Move.from_uci(move_lines[0][3])
+    except ValueError as exc:
+        raise ValueError("malformed bestmove or ponder move") from exc
+    if nodes != [counts["completed_simulations"]]:
         raise ValueError("missing/duplicate final nodes or bestmove")
-    errors = sum(counts[key] for key in ("failed_forward_rows", "cancelled_rows", "stale_rows", "failed_rows", "unresolved_rows"))
+    errors = counts["failed_forward_rows"] + dispositions + counts["unresolved_rows"] + unconfirmed
     if kind == "evals":
         reached = dispatched == executed == budget
         overrun = max(0, dispatched - budget)
@@ -94,15 +118,41 @@ def parse_report(lines: list[str], *, kind: str, budget: int, wall_tolerance_ms:
         overrun = max(0.0, wall - budget / 1000)
     comparable = (reached and counts["stop_code"] == 0 and errors == 0
                   and (overrun == 0 if kind == "evals" else overrun <= wall_tolerance_ms / 1000 + 1e-9))
-    return {"counters": report, "bestmove": bestmoves[0], "budget_kind": kind, "budget": budget,
+    return {"counters": report, "bestmove": bestmove, "budget_kind": kind, "budget": budget,
+            "unconfirmed_forward_rows": unconfirmed,
             "budget_reached": reached, "budget_overrun": overrun, "comparable": comparable,
             "overrun_unit": "real_rows" if kind == "evals" else "seconds"}
 
 
+def position_board(position: str) -> chess.Board:
+    """Validate the exact standard-chess UCI position, including every history move."""
+    if "\n" in position or "\r" in position:
+        raise ValueError("positions must be single full UCI position commands")
+    words = position.split()
+    if len(words) < 2 or words[0] != "position":
+        raise ValueError("positions must be single full UCI position commands")
+    if words[1] == "startpos":
+        board, end = chess.Board(), 2
+    elif words[1] == "fen" and len(words) >= 8:
+        board, end = chess.Board(" ".join(words[2:8])), 8
+    else:
+        raise ValueError("positions must be single full UCI position commands")
+    if not board.is_valid():
+        raise ValueError("invalid standard-chess root position")
+    if words[end:]:
+        if words[end] != "moves":
+            raise ValueError("invalid UCI position history")
+        for text in words[end + 1:]:
+            move = chess.Move.from_uci(text)
+            if not move or move not in board.legal_moves:
+                raise ValueError(f"illegal position history move: {text}")
+            board.push(move)
+    return board
+
+
 def search(client: Client, position: str, *, kind: str, budget: int, profile: bool,
            timeout: float, wall_tolerance_ms: int) -> dict[str, Any]:
-    if not position.startswith(("position startpos", "position fen ")) or "\n" in position or "\r" in position:
-        raise ValueError("positions must be single full UCI position commands")
+    board = position_board(position)
     ready = client.sync(position)
     if ready != ["readyok"]:
         raise ValueError(f"engine rejected position: {ready}")
@@ -111,6 +161,12 @@ def search(client: Client, position: str, *, kind: str, budget: int, profile: bo
     lines = client.until("bestmove ", timeout=timeout)
     decision_seconds = time.perf_counter() - started
     result = parse_report(lines, kind=kind, budget=budget, wall_tolerance_ms=wall_tolerance_ms)
+    move = chess.Move.from_uci(result["bestmove"])
+    # Rule draws may retain legal moves; do not confuse a predicted draw with a
+    # terminal no-move position. Match the native verifier's fallback contract.
+    legal = move in board.legal_moves if any(board.legal_moves) else not move
+    if not legal:
+        raise ValueError(f"illegal bestmove for the supplied position: {result['bestmove']}")
     if result["counters"]["wall_seconds"] > decision_seconds + .002:
         raise ValueError("engine wall interval exceeds observed command-to-bestmove time")
     result["decision_wall_seconds"] = decision_seconds
@@ -147,6 +203,9 @@ def run(config: Path, positions_file: Path, output: Path, *, evals: int, millise
                  if line.strip() and not line.lstrip().startswith("#")]
     if not positions or repeats < 1 or not 1 <= evals <= 65536 or not 1 <= milliseconds <= 60000:
         raise ValueError("empty corpus or invalid bounded run settings")
+    # Reject a malformed corpus before launching any engine or creating output.
+    for position in positions:
+        position_board(position)
     corpus_sha256 = hashlib.sha256(positions_file.read_bytes()).hexdigest()
     all_comparable = True
     # Exclusive creation avoids overwriting banked observations.

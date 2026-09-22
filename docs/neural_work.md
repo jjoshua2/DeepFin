@@ -143,6 +143,17 @@ wall-overrun tolerance (default 10 ms), for both the internal search interval an
 the external command-to-bestmove interval. Slow go preparation or result output
 cannot be hidden by the internal clock. Unresolved requests are not a completed
 comparison; resolved accepted/wasted rows must reconcile with execution.
+The driver also derives `unconfirmed_forward_rows` as dispatched minus confirmed
+executed minus failed-forward rows. This must be zero for comparability even when
+the report claims every logical request is resolved. Executed and failed-forward
+rows cannot overlap, and executed wasted rows must have a nonaccepted logical
+disposition. Cancelled, stale, rejected and failed requests retain their compute
+cost and observed EPS but cannot certify a successful comparison in this driver.
+
+The complete standard-chess position corpus (including all history moves) is
+validated before launching an engine or creating the output file. Returned moves
+must be legal for that exact position; `0000` is accepted only with no legal moves.
+Malformed result lines are report errors, not successful timing observations.
 Early termination or unfair timing leaves
 `comparable=false` and the CLI exits nonzero. Wasted rows still cost budget.
 

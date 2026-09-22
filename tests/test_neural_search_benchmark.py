@@ -183,3 +183,151 @@ def test_unresolved_requests_cannot_be_a_completed_budget_comparison() -> None:
     report["unresolved_rows"] = 1
     lines[0] = PREFIX + json.dumps(report)
     assert not parse_report(lines, kind="evals", budget=3)["comparable"]
+
+
+def test_logical_resolution_cannot_hide_an_unfinished_physical_batch() -> None:
+    lines = _lines()
+    report = json.loads(lines[0][len(PREFIX):])
+    # One completed three-row forward and one unconfirmed singleton. The old
+    # parser trusted unresolved_rows=0 instead of reconciling physical work.
+    report.update(forward_calls=2, dispatched_real_rows=4,
+                  real_batch_histogram={"1": 1, "3": 1}, physical_batch_histogram={"1": 1, "8": 1})
+    lines[0] = PREFIX + json.dumps(report)
+    result = parse_report(lines, kind="movetime", budget=1000)
+    assert not result["comparable"]
+    assert result["unconfirmed_forward_rows"] == 1
+
+
+def test_a_forward_cannot_be_both_executed_and_failed() -> None:
+    lines = _lines()
+    report = json.loads(lines[0][len(PREFIX):])
+    report["failed_forward_rows"] = 1
+    lines[0] = PREFIX + json.dumps(report)
+    with pytest.raises(ValueError, match="forward rows contradict"):
+        parse_report(lines, kind="movetime", budget=1000)
+
+
+@pytest.mark.parametrize("kind", ["evals", "movetime"])
+@pytest.mark.parametrize("outcome", ["rejected", "failed", "cancelled", "stale"])
+def test_discarded_work_costs_compute_but_cannot_certify_a_successful_comparison(kind: str, outcome: str) -> None:
+    ledger = NeuralWorkLedger()
+    ledger.submit(0, 2)
+    ledger.submit(1)
+    ledger.dispatch(0, (0, 1), physical_rows=8)
+    ledger.complete(0)
+    ledger.resolve(0, "accepted")
+    ledger.resolve(1, outcome)
+    ledger.simulations_completed(2)
+    report = ledger.snapshot(1.0)
+    report["stop_code"] = 0
+    lines = [PREFIX + json.dumps(report), "info nodes 2 string test", "bestmove e2e4"]
+    result = parse_report(lines, kind=kind, budget=3 if kind == "evals" else 1000)
+    assert result["budget_reached"]
+    assert not result["comparable"]
+    assert result["unconfirmed_forward_rows"] == 0
+    assert result["counters"]["executed_real_rows"] == 3
+    assert result["counters"]["accepted_neural_rows"] == 2
+    assert result["counters"]["useful_eps"] == 2
+
+
+def test_wasted_rows_require_a_nonaccepted_disposition() -> None:
+    lines = _lines()
+    report = json.loads(lines[0][len(PREFIX):])
+    report.update(accepted_neural_rows=2, useful_eps=2, executed_wasted_rows=1)
+    lines[0] = PREFIX + json.dumps(report)
+    with pytest.raises(ValueError, match="logical dispositions"):
+        parse_report(lines, kind="evals", budget=3)
+
+
+@pytest.mark.parametrize("line", ["bestmove ", "bestmove garbage", "bestmove e2e4 unexpected",
+                                  "bestmove e2e4 notponder e7e5", "bestmove e2e4 ponder garbage"])
+def test_malformed_bestmove_is_a_report_error(line: str) -> None:
+    lines = _lines()
+    lines[-1] = line
+    with pytest.raises(ValueError, match="bestmove"):
+        parse_report(lines, kind="evals", budget=3)
+
+
+@pytest.mark.parametrize(("position", "move"), [
+    ("position startpos", "a1a8"),  # syntactically valid but blocked rook
+    ("position startpos", "e7e5"),  # wrong side to move
+    ("position startpos", "0000"),  # cannot substitute no move for a legal root
+    ("position startpos moves e2e4", "e2e4"),  # validate the actual history, not startpos
+    ("position fen 7k/6Q1/6K1/8/8/8/8/8 b - - 0 1", "h8g8"),  # checkmate
+])
+def test_search_rejects_illegal_bestmove_before_banking_success(
+    monkeypatch: pytest.MonkeyPatch, position: str, move: str,
+) -> None:
+    ticks = iter((0.0, 1.0))
+    monkeypatch.setattr("scripts.bench_neural_search.time.perf_counter", lambda: next(ticks))
+    lines = _lines()
+    lines[-1] = "bestmove " + move
+    client: Any = _Client()
+    monkeypatch.setattr(client, "until", lambda _prefix, **_kwargs: lines)
+    with pytest.raises(ValueError, match="illegal bestmove"):
+        search(client, position, kind="evals", budget=3, profile=False, timeout=2, wall_tolerance_ms=10)
+
+
+def test_terminal_null_bestmove_still_has_zero_neural_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    ticks = iter((0.0, 1.0))
+    monkeypatch.setattr("scripts.bench_neural_search.time.perf_counter", lambda: next(ticks))
+    ledger = NeuralWorkLedger()
+    ledger.simulations_completed()
+    report = ledger.snapshot(1.0)
+    report["stop_code"] = 0
+    lines = [PREFIX + json.dumps(report), "info nodes 1 string test", "bestmove 0000"]
+    client: Any = _Client()
+    monkeypatch.setattr(client, "until", lambda _prefix, **_kwargs: lines)
+    result = search(client, "position fen 7k/6Q1/6K1/8/8/8/8/8 b - - 0 1",
+                    kind="evals", budget=1, profile=False, timeout=2, wall_tolerance_ms=10)
+    assert result["bestmove"] == "0000"
+    assert result["counters"]["executed_real_rows"] == 0
+    assert not result["budget_reached"]
+    assert not result["comparable"]
+
+
+@pytest.mark.parametrize("position", [
+    "position startposgarbage", "position startpos extra",
+    "position startpos moves e2e5", "position startpos moves 0000",
+    "position fen 8/8/8/8/8/8/8/8 w - - 0 1", "position fen not-a-fen",
+])
+def test_invalid_corpus_fails_before_engine_launch_or_output_creation(tmp_path: Path, position: str) -> None:
+    config = tmp_path / "engines.json"
+    config.write_text(json.dumps([{"label": "one", "command": ["must-not-be-launched"],
+                                   "model_id": "same", "encoding_id": "same", "source_revision": "test"}]))
+    positions = tmp_path / "positions.txt"
+    positions.write_text("position startpos\n" + position + "\n")
+    output = tmp_path / "observations.jsonl"
+    with pytest.raises(ValueError, match=r"position|history|UCI"):
+        run(config, positions, output, evals=3, milliseconds=10, repeats=1, profile=False,
+            timeout=2, wall_tolerance_ms=10)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("line", ["info nodes ", "info nodes garbage", "info nodes -1"])
+def test_malformed_final_nodes_is_a_report_error(line: str) -> None:
+    lines = _lines()
+    lines[1] = line
+    with pytest.raises(ValueError, match="final nodes"):
+        parse_report(lines, kind="evals", budget=3)
+
+
+@pytest.mark.parametrize(("position", "move"), [
+    ("position startpos moves", "e2e4"),  # empty optional history remains compatible
+    ("position startpos moves e2e4", "c7c5"),
+    ("position fen r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1g1"),
+    ("position startpos moves e2e4 a7a6 e4e5 d7d5", "e5d6"),
+    ("position fen 7k/P7/8/8/8/8/8/7K w - - 0 1", "a7a8q"),
+])
+def test_legal_history_castling_en_passant_and_promotion_remain_comparable(
+    monkeypatch: pytest.MonkeyPatch, position: str, move: str,
+) -> None:
+    ticks = iter((0.0, 1.0))
+    monkeypatch.setattr("scripts.bench_neural_search.time.perf_counter", lambda: next(ticks))
+    lines = _lines()
+    lines[-1] = "bestmove " + move
+    client: Any = _Client()
+    monkeypatch.setattr(client, "until", lambda _prefix, **_kwargs: lines)
+    result = search(client, position, kind="evals", budget=3, profile=False, timeout=2, wall_tolerance_ms=10)
+    assert result["bestmove"] == move
+    assert result["comparable"]
