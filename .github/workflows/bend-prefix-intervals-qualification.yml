@@ -1,0 +1,172 @@
+name: Bend prefix intervals qualification
+'on':
+  push:
+    branches: [feat/bend-prefix-intervals-dev-20260922]
+    paths: [.github/workflows/bend-prefix-intervals-qualification.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: b85b4b3620a815150736e4a6ac2858d372160917
+      SOURCE: 34d40b0a8e897fb48536a40fee1c2ea443431b70
+      TARGET: feat/bend-prefix-intervals-20260922
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 34d40b0a8e897fb48536a40fee1c2ea443431b70
+          fetch-depth: 2
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Verify the complete candidate and unchanged production sources
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/prefix-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^1)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = ee69ab6c6053899f3b990771c1f072b66a85d096
+          test "$(git rev-parse HEAD^1^{tree})" = 919b77ab4c7188a7c7d69f7880d72e7540be52ca
+          git diff "$BASE" HEAD --check
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          files=subprocess.check_output(['git','diff',os.environ['BASE'],'HEAD','--name-only'],text=True).splitlines()
+          assert len(files)==17
+          assert all(f.startswith('native/bend_engine/standalone/proofs/prefix/') or f=='docs/experiments/2026-09-22-bend-prefix-intervals.md' for f in files),files
+          tracked=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in tracked if Path(f).is_file()}
+          e=Path(os.environ['EVIDENCE'])
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'source-identity.json').write_text(json.dumps({'base':os.environ['BASE'],'source':os.environ['SOURCE'],'candidate_tree':'ee69ab6c6053899f3b990771c1f072b66a85d096','changed_files':files,'transfer':'direct tree entries; exact original Facts blob restored before candidate creation','production_changed':False},indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Retain 68 prior laws and check six public prefix contracts
+        timeout-minutes: 43
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/prefix/verify.js "$PWD/.compiler" --report "$EVIDENCE/proofs.json" 2>&1 | tee "$EVIDENCE/source-gate.log"
+      - name: Compare complete actual table buffers in four native modes
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/prefix/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native-gate.log"
+      - name: Recheck original compiler laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development environment
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Retain exact reports and fast-forward only the feature evidence
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-storage-separation-20260922 | cut -f1)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          p=json.loads((e/'proofs.json').read_text());n=json.loads((e/'native.json').read_text())
+          assert p['proof_gate']=='PASS' and p['aggregate_law_count']==74 and p['new_law_count']==6
+          assert p['inherited_law_count']==68 and p['inherited_negative_controls']==107
+          assert len(p['negative_controls'])==19 and all(c['rejected'] for c in p['negative_controls'])
+          assert p['consumer']=='PASS'
+          assert n['native_gate']=='PASS' and n['executions_per_mode']==5 and n['full_array_cells_per_mode']==655360
+          assert n['all_chess_keys']==128 and n['logical_end']==108160 and n['allocation_capacity']==131072
+          canon=json.dumps({k:v for k,v in n.items() if k!='cc'},sort_keys=True,separators=(',',':')).encode()
+          assert hashlib.sha256(canon).hexdigest()=='f7f8e86b958566423fee6cb5ae6b60bd7ced65f5b4aca6ce05470c931050ab1e'
+          assert len(n['modes'])==4 and all(m['invalid_rejections']==7 for m in n['modes'])
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for f,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          for f,h in p['source_sha256s'].items():
+              assert hashlib.sha256((Path('native/bend_engine')/f).read_bytes()).hexdigest()==h,f
+          d=Path('docs/experiments/evidence/bend-prefix-intervals');d.mkdir(parents=True,exist_ok=False)
+          for name in ['proofs.json','native.json','compiler-proofs.json','candidate-source-sha256.json','source-identity.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];sha=os.environ['GITHUB_SHA']
+          summary=f"Hosted run **{run}**, temporary workflow commit `{sha}`, passes **74 accepted laws and 126 rejection controls**, all four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `{os.environ['SOURCE']}`."
+          record=Path('docs/experiments/2026-09-22-bend-prefix-intervals.md')
+          sections=['## Hosted qualification and publication',summary,
+            'The complete tree ee69ab6c6053899f3b990771c1f072b66a85d096 matches the inspected local source. Every native/proof source digest is checked before and after qualification. The aggregate retains the unchanged 68-law/107-control separation gate, then checks the six-law/19-control prefix gate. No earlier law or rejection control is removed. Local full aggregate execution is not claimed.',
+            'The public caller provides only n+k<=128 or the stated finite key-order bounds. All actual-size certificates are constructed using the explicitly imported existing layout proof. The actual table-loop equality quantifies over the complete affine array, not only scalar counters or an ideal buffer. It equates schedules of the original operations; it does not independently prove the slider function or every initialized final lookup.',
+            'Ten controls require ordinary affected-refinement failures, including wrong prefixes, widened arithmetic, geometric sizes, actual header addresses, next-prefix updates and fill counts. Nine additional controls protect proof/import manifests, existing certificate producers, no holes/foreign/symlinked proofs and exact successful checker output. Crashes, missing-file errors and timeouts are not counted as semantic rejection.',
+            'Each native mode compares all 131,072 returned cells in five executions: zero, one, 64 and 128 actual slider-block loops with nonzero seeds, plus actual Tables.build with zero initialization and extras. That is 655,360 cell comparisons per mode; all 128 chess keys, reserved metadata and unused slack are covered. Seven invalid requests are rejected per mode. The full native report matches the local canonical result except the separately recorded C compiler identity. Modes repeat the same fixtures, not disjoint datasets or arbitrary-U64 exhaustiveness.',
+            f"Tools: Bun {n['bun']}, {n['cc']}, locked Python 3.13 CPU environment with uv 0.12.10. Original compiler source laws/seven controls and all 12 pin contracts pass. The unchanged Ruff/Basedpyright/Vulture gate passes, resolving the historical local missing-tool lint gap. Compiler-fork strict-TypeScript and diagnostic-depth limitations remain separately unresolved and unsuppressed.",
+            'The six public contracts remain unchanged after qualification. A separate proposed closed Tables.build source equality was never accepted and is not counted: its direct normalization exceeded a bounded construction check. Actual build execution is native-tested, while the general n+k<=128 table-loop theorem is source-proved. No earlier accepted theorem was weakened to handle this distinction.',
+            'After qualification only compact evidence, the experiment index and the migration matrix are added. Full logs are retained in artifact bend-prefix-intervals-qualification for 30 days; compact reports are committed. Self-review only, not independent review. No production runtime code, previous law, compiler input, existing test, permanent workflow or routine perft budget changed.',
+            f"The feature branch `{os.environ['TARGET']}` receives only a fast-forward evidence/documentation commit. No merge, force push, deployment or live-process change. Temporary recovery/qualification workflows and unused transfer objects are excluded from the feature tree.",
+            'Next acceptance: derive normalized separation/clear certificates for every interior address from the now bounded ordered prefix intervals, combine them with frame/ordinal lemmas to prove final computed contents, and connect actual lookup to independent blocker-ray geometry. Endpoint normalization and native full-buffer parity do not replace those source contracts. Python export/data/control/training and transitional C++/LibTorch/AOTI remain dependencies; no model/GPU, engine strength or speedup claim is added.'
+          ]
+          record.write_text(record.read_text()+'\n\n'+'\n\n'.join(sections)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n'
+          assert text.count(anchor)==1
+          row='| [Actual prefix intervals](2026-09-22-bend-prefix-intervals.md) | Six source laws connect ordered, widened prefix arithmetic to the actual complete-array table loop; interior path certificates and final ray geometry remain separate |\n'
+          index.write_text(text.replace(anchor,anchor+row,1))
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          rest=rest.replace('## Latest storage-separation qualification:', '## Historical storage-separation qualification:',1).replace('## Latest hosted storage qualification','## Historical hosted storage qualification',1)
+          lines=rest.splitlines()
+          for i,line in enumerate(lines):
+              if line.startswith('| P1: subset enumeration / slider indices |'):
+                  lines[i]='| P1: subset enumeration / slider indices | General ordinal/coverage/period, exact scalar lookup, chess-mask bounds and actual prefix widening/order are source-proved. The table-loop result equals the explicit prefix schedule for n+k<=128. | Derive interior normalized-path certificates and use actual array framing for final contents. Scalar and prefix arithmetic are not complete lookup/geometry refinement. |'
+              if line.startswith('| P2: table/lookup refinement |'):
+                  lines[i]='| P2: table/lookup refinement | Actual array write/read and conditional frame laws; six prefix laws add bounded widened arithmetic, ordered block endpoints and full-array Tables.tables schedule equality. Four-mode complete-buffer parity also passes. | All interior normalized separation/clear certificates, final computed initialization, independent mask/blocker-ray geometry and actual Chess.bend lookup refinement. Native parity is not this universal theorem. |'
+          rest='\n'.join(lines)+'\n'
+          note='## Current prefix qualification: September 22, 2026\n\n'+summary+'\n\n`prefix/prefix_widening`, `prefix_in_allocation` and `logical_end` cover every cumulative endpoint through 128. `step_no_overflow` and `blocks_ordered` use the actual block size, with its certificate derived from the existing layout proof. `tables_follow_prefix` equates the actual complete affine-array result with the independently bounded schedule for every n+k<=128. Endpoints range from 512 to 108160 within capacity 131072. This does not yet derive every interior path certificate or final blocker-ray lookup theorem. See [the dated record](experiments/2026-09-22-bend-prefix-intervals.md). Older qualification sections retain historical scope. No Python responsibility or model/GPU/performance result is added.\n'
+          matrix.write_text(title+'\n\n'+note+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-22-bend-prefix-intervals.md docs/experiments/evidence/bend-prefix-intervals
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify actual prefix intervals and table-loop refinement'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/prefix > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-prefix-intervals-qualification
+          path: ${{ runner.temp }}/prefix-evidence/
+          retention-days: 30
