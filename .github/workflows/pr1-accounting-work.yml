@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: c78ca8aaab8982bd8ca234928c61c6225ad91580
-      - name: Assemble exact authored patch
+      - name: Assemble exact final authored patch
         id: patch
         env:
           GH_TOKEN: ${{ github.token }}
@@ -35,21 +35,31 @@ jobs:
             ('0ea40c4fb3a7100e2acb6d30438e13ef5b849c89','8c549b36bfba21bfb35a20d554ea7e1c1d631d00b22651f64ce80eab66e618d7'),
             ('67a69ef3eee14f8924c93bf998a9696f80c1fde7','3932adfd195b8f9df50621dddafa3e042dfaa9e8978170561e283dd499d3e09b'),
           ]
+          def get(sha):
+              blob = json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+              return base64.b64decode(blob['content']).replace(b'\n diff --git ', b'\ndiff --git ')
           data = b''
           for i, (sha, expected) in enumerate(pieces):
-              blob = json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
-              part = base64.b64decode(blob['content'])
-              if i == 0:
-                  part = part.replace(b'\n diff --git ', b'\ndiff --git ')
-              Path(f'/tmp/pr1-evidence/part-{i}.patch').write_bytes(part)
-              assert hashlib.sha256(part).hexdigest() == expected, (i, hashlib.sha256(part).hexdigest())
+              part = get(sha)
+              assert hashlib.sha256(part).hexdigest() == expected, i
               data += part
           assert hashlib.sha256(data).hexdigest() == 'b0bf2ce8cb122cada2dce380f0688a3770fdee28a2ec6290edb07ca1093ee57a'
-          Path('/tmp/pr1-evidence/pr1.patch').write_bytes(data)
+          subprocess.run(['git','apply','--check','-'], input=data, check=True)
+          subprocess.run(['git','apply','-'], input=data, check=True)
+          review = get('e22252cf91a504339ffb81e947fea5ddab5e9e76')
+          assert hashlib.sha256(review).hexdigest() == '6796e5187675af0786937298acb2689ecd1b1841441997ce3b1f92ec95611d7c'
+          subprocess.run(['git','apply','--check','-'], input=review, check=True)
+          subprocess.run(['git','apply','-'], input=review, check=True)
+          path = Path('chess_anti_engine/neural_work.py')
+          text = path.read_text()
+          assert text.count('from typing import Any, Literal, cast') == 1
+          assert text.count('entry.outcome = cast(Outcome, outcome)') == 1
+          path.write_text(text.replace('from typing import Any, Literal, cast','from typing import Any, Literal').replace('entry.outcome = cast(Outcome, outcome)','entry.outcome = outcome'))
+          subprocess.run(['git','add','-N','.'], check=True)
+          final = subprocess.check_output(['git','diff','--binary'])
+          assert hashlib.sha256(final).hexdigest() == '35472bde6a95b787ee1e8ecb187a437092740accc79747c3d4faa738e0f6c246'
+          Path('/tmp/pr1-evidence/pr1.patch').write_bytes(final)
           PY
-          git apply --check /tmp/pr1-evidence/pr1.patch
-          git apply /tmp/pr1-evidence/pr1.patch
-          git add -N .
           git diff --check
           git diff --stat | tee /tmp/pr1-evidence/diff-stat.txt
       - uses: actions/setup-python@v5
@@ -85,11 +95,11 @@ jobs:
         run: |
           set -o pipefail
           bash native/bend_engine/standalone/build.sh /tmp/pr1-native /tmp/pr1-compiler 2>&1 | tee /tmp/pr1-evidence/native-build.txt
+          cp /tmp/pr1-native/build.txt /tmp/pr1-evidence/build.txt
           bun /tmp/pr1-compiler/bend2/main.ts native/bend_engine/standalone/work_probe.bend -o /tmp/pr1-work.c
           clang -std=c11 -O1 -ffp-contract=off /tmp/pr1-work.c -pthread -lm -o /tmp/pr1-work
           python native/bend_engine/standalone/verify_work.py --probe /tmp/pr1-work --command /tmp/pr1-native/deepfin-bend --threads 1 | tee /tmp/pr1-evidence/native-work.json
-          python native/bend_engine/standalone/verify.py --command /tmp/pr1-native/deepfin-bend --threads 1 | tee /tmp/pr1-evidence/material.txt
-          cp /tmp/pr1-native/build.txt /tmp/pr1-evidence/build.txt
+          python native/bend_engine/standalone/verify.py --report /tmp/pr1-evidence/material.json --command /tmp/pr1-native/deepfin-bend --threads 1 | tee /tmp/pr1-evidence/material.txt
       - name: Actual CPU neural forward and search reconciliation
         id: neural
         if: steps.native.outcome == 'success'
@@ -123,6 +133,12 @@ jobs:
           git commit -m 'bench: unify neural-work accounting and fixed-budget search comparisons'
           git push origin HEAD:refs/heads/feat/neural-work-accounting-20260922
           git rev-parse HEAD | tee /tmp/pr1-evidence/published-head.txt
+      - name: Preserve native build for reproducible checks
+        if: always()
+        run: |
+          if test -f /tmp/pr1-native/engine.c; then
+            tar -C /tmp -czf /tmp/pr1-evidence/native-build.tar.gz pr1-native
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
