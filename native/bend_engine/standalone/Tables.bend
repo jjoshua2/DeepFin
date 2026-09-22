@@ -1,6 +1,7 @@
 # Attack tables constructed entirely in Bend. Same layout as Chess.bend.
 # Coordinates use wrapping U32 deltas; off-board coordinates are rejected.
 import Base
+import ./Subsets.bend as Subsets
 
 def delta(dir: U32) -> U32 & U32:
   match dir:
@@ -44,7 +45,7 @@ def fill(n: Nat, +at: U32, +sq: U32, +bishop: Bool, +mask: U64, +subset: U64, a:
     case 0n: a
     case 1n+p:
       a = Array.set(U64, a, at, slider(sq, bishop, subset, False{}))
-      fill(p, U32.inc(at), sq, bishop, mask, U64.and(U64.sub(subset, mask), mask), a)
+      fill(p, U32.inc(at), sq, bishop, mask, Subsets.next(subset, mask), a)
 
 def tables(n: Nat, +key: U32, +at: U32, a: Array<U64>) -> Array<U64>:
   match n:
