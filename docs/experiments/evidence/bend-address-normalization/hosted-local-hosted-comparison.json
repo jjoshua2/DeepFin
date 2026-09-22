@@ -1,0 +1,6 @@
+{
+  "comparison": "PASS",
+  "focused_report_canonical_sha256": "9c1c4ab343ffe4bb53261cafff9e5d874a02b32d1c6e8518a3d4dcbcb2c7553c",
+  "native_except_cc_canonical_sha256": "ce99d3e55f2594141718354ed3aac9671e8e5d5e98271ad4041a08601c02940c",
+  "scope": "Focused local report matches. Native report matches except C compiler identity. Full 79-law aggregate and repository lint are first executed hosted for this candidate."
+}

@@ -1,5 +1,15 @@
 # Bend migration and proof inventory
 
+## Latest address-normalization qualification: September 22, 2026
+
+Hosted run **35759797335**, temporary workflow commit `6348d9f69e2f8871b895949d5567ec9211347ac2`, passes **79 accepted laws and 140 rejection controls**, supported public-API tests in four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `a26e59f7168519c7de9720b9edb7967ef0650d97`.
+
+`normalization/bounded_mask_identity` proves i & 131071 == i for every U32 i<131072. `bounded_mask_injective` establishes numeric injectivity on that domain. `bounded_read_direct` and `bounded_write_direct` connect actual public affine wrappers to their unmasked internal source routines when the observed array capacity is 131072. `bounded_separation_direct` eliminates normalization from the existing path predicate under the same capacity and both address bounds. The capacity is observed from the actual array, not an assumed read result, and the consumer certifies the actual depth-17 allocation with arbitrary seeds.
+
+These five laws do not yet derive distinct leaf paths from unequal numeric addresses or bound every prefix-plus-lookup addition. Balanced-tree route injectivity, clear-path certificates, final initialized/computed table contents and independent blocker-ray lookup remain the next P2 obligations. Direct native calls to internal Array.get.go/swap.go failed C lowering; only public wrappers are native-tested here. The failure is preserved rather than hidden by the passing source laws.
+
+See [the dated normalization readout](experiments/2026-09-22-bend-address-normalization.md) and committed source/native/failure evidence. Source proofs trust the pinned checker/Base; native lowering and allocation/lifetime remain separate. No additional Python responsibility, production code, full-engine/model/GPU or performance result is added. Historical records below retain their original scope.
+
 ## Current prefix qualification: September 22, 2026
 
 Hosted run **35747413010**, temporary workflow commit `647db192fd1004c897824e72a06699171a8a68de`, passes **74 accepted laws and 126 rejection controls**, all four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `34d40b0a8e897fb48536a40fee1c2ea443431b70`.

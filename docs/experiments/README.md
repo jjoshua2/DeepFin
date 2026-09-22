@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Bounded address normalization](2026-09-22-bend-address-normalization.md) | Five source laws eliminate the actual allocation mask for all bounded addresses and connect real affine APIs; tree-route injectivity and final contents remain separate |
 | [Actual prefix intervals](2026-09-22-bend-prefix-intervals.md) | Six source laws connect ordered, widened prefix arithmetic to the actual complete-array table loop; interior path certificates and final ray geometry remain separate |
 | [Normalized storage separation](2026-09-22-bend-storage-separation.md) | Four actual-array/fill frame laws under normalized path separation; preserves other slots and separation, with prefix certificates and final ray geometry still open |
 | [Actual affine table storage](2026-09-22-bend-table-storage.md) | Eight real-buffer laws: read identity, same-location write/read, initialization, builder topology and one actual fill write; prefix/nonaliasing/geometry remain separate |
