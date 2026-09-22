@@ -1,0 +1,31 @@
+name: Bend prefix storage workspace
+'on':
+  push:
+    branches: [feat/bend-prefix-storage-dev-20260922]
+    paths: [.github/workflows/bend-prefix-storage-dev.yml]
+permissions:
+  contents: read
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 290fc01a10517374518e505f9855c7d4a9a5d956
+          persist-credentials: false
+      - name: Archive exact baseline and original commit object
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/prefix-source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/prefix-source/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/prefix-source/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/prefix-source/tree.txt"
+          cd "$RUNNER_TEMP/prefix-source"
+          sha256sum source.tar.gz commit.raw > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-prefix-source
+          path: ${{ runner.temp }}/prefix-source/
+          retention-days: 3
