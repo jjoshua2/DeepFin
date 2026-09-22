@@ -1,0 +1,31 @@
+name: Bend fill interval source workspace
+'on':
+  push:
+    branches: [feat/bend-fill-interval-dev-20260922]
+    paths: [.github/workflows/bend-fill-interval-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d8de6e46fd04c4b34385d754224df37722a6a118
+          persist-credentials: false
+      - name: Archive exact source and commit identity without running candidate code
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fill-source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/fill-source/DeepFin.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/fill-source/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/fill-source/tree.txt"
+          cd "$RUNNER_TEMP/fill-source"
+          sha256sum DeepFin.tar.gz commit.raw > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-fill-interval-source
+          path: ${{ runner.temp }}/fill-source/
+          retention-days: 3
