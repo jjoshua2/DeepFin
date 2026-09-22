@@ -1,0 +1,155 @@
+name: PR2 native reuse qualification
+on:
+  push:
+    branches: [work/pr2-native-reuse-20260922]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: .
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      TORCHINDUCTOR_COMPILE_THREADS: '1'
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ba18279fffdb13beb894e1d4f49cd60601f38583
+      - name: Reconstruct exact locally checked source
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/pr2-evidence
+          python - <<'PY'
+          import base64, hashlib, json, subprocess
+          from pathlib import Path
+          pieces = [
+              ('8397d9ea62db1b5c4f62df63352a908cc89f7435','c358943ca227b5d0de77ba64fb84281eafef58caedcbd5a00381ceaf845d21fe'),
+              ('c2f2fceb3418934528a26d817b2785452f41b70c','1374c83ab2d5142e799bd6f440f08efa317be6cbd5954b31da4ad23b08477044'),
+              ('77c1cead2d43b5fbb21ae4f7328333b617021cac','547f74c6a9961784ef1ddf96813bef4d46f31d8c974e6b0c41c7744dec3cea3b'),
+              ('8f0029e9005d01c71b381b44944b5cd5d3455ea6','348866c3977057b9d6460199d634bf2ef82f1fae46e8d39d78df76ad8c655a3b'),
+              ('d1f70f08c62f9e971542f1ab43768142926e33a7','0287ebf15af85e8bc3370168c1756377ee68282afd55f2d5cd6359503f468387'),
+              ('d0721522d295194a35e28d2da59cbd517f6c93dc','31beef212082cbe717564f717fc672b240c7b9fe7336de02799dd6d49110dccd'),
+          ]
+          ns = {}
+          for i, (sha, digest) in enumerate(pieces):
+              blob = json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+              code = base64.b64decode(blob['content'])
+              assert hashlib.sha256(code).hexdigest() == digest, i
+              exec(compile(code, f'authored-part-{i}', 'exec'), ns)
+          Path('/tmp/pr2-evidence/source-manifest.json').write_text(json.dumps(ns['expected'], indent=2)+'\n')
+          subprocess.run(['git','add','-N','.'], check=True)
+          patch = subprocess.check_output(['git','diff','--binary'])
+          assert hashlib.sha256(patch).hexdigest() == 'ab256f0e21f931667cc92c150b17cf2d6564d8030d9c4d1a8f3fff934aba0b36'
+          Path('/tmp/pr2-evidence/pr2.patch').write_bytes(patch)
+          PY
+          git diff --check
+          git diff --stat | tee /tmp/pr2-evidence/diff-stat.txt
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.12.10
+      - name: Locked CPU dependencies
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/download-artifact@v4
+        with:
+          name: deepfin-pr1-validation
+          run-id: 35759888019
+          github-token: ${{ github.token }}
+          path: /tmp/pr2-prior
+      - name: Reuse exact saved fixture without re-export
+        run: |
+          tar -xzf /tmp/pr2-prior/native-build.tar.gz -C /tmp
+          echo '9654a1e334fb5f875d164b82068846bfeab3df2ef2a994737e44789c2623ee6e  /tmp/pr1-model/fixture.pt2' | sha256sum -c -
+          python -c 'import sys,torch; print(sys.version, torch.__version__); assert torch.__version__ == "2.14.0+cpu"' | tee /tmp/pr2-evidence/runtime.txt
+      - name: Whole repository and native verifier lint
+        id: lint
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bash scripts/lint.sh 2>&1 | tee /tmp/pr2-evidence/lint.txt
+          bash scripts/lint.sh native/bend_engine/standalone/verify_buffers.py native/bend_engine/standalone/verify_reuse.py native/bend_engine/standalone/verify_neural.py 2>&1 | tee /tmp/pr2-evidence/native-lint.txt
+      - name: Accounting and benchmark regressions
+        id: tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m pytest tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py -q --junitxml=/tmp/pr2-evidence/tests.xml 2>&1 | tee /tmp/pr2-evidence/tests.txt
+      - name: Build real native neural and material products
+        id: build
+        run: |
+          set -o pipefail
+          prefix="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+          bash native/bend_engine/standalone/build_neural.sh /tmp/pr2-native /tmp/pr1-model/fixture.pt2 "$prefix" /tmp/pr2-compiler 2>&1 | tee /tmp/pr2-evidence/build.txt
+          cp /tmp/pr2-native/build.txt /tmp/pr2-evidence/compiler-build.txt
+          cp /tmp/pr2-native/neural-build.txt /tmp/pr2-evidence/neural-build.txt
+      - name: Packed transport and unchanged numerical contracts
+        id: probes
+        run: |
+          set -o pipefail
+          here=native/bend_engine/standalone
+          for name in buffer_probe buffer_logit_probe logit_probe work_probe; do
+            bun /tmp/pr2-compiler/bend2/main.ts "$here/$name.bend" -o "/tmp/pr2-$name.c"
+          done
+          for mode in normal ubsan; do
+            flags=()
+            if test "$mode" = ubsan; then flags=(-fsanitize=undefined -fno-sanitize-recover=all); fi
+            clang -std=c11 -O1 -ffp-contract=off "${flags[@]}" -DDEEPFIN_BEND_NATIVE_MODEL /tmp/pr2-buffer_probe.c "$here/buffer_probe.c" -pthread -lm -o "/tmp/pr2-transport-$mode"
+            clang -std=c11 -O1 -ffp-contract=off "${flags[@]}" /tmp/pr2-buffer_logit_probe.c -pthread -lm -o "/tmp/pr2-array-$mode"
+            clang -std=c11 -O1 -ffp-contract=off "${flags[@]}" /tmp/pr2-logit_probe.c -pthread -lm -o "/tmp/pr2-list-$mode"
+            python "$here/verify_buffers.py" --transport "/tmp/pr2-transport-$mode" --array-logits "/tmp/pr2-array-$mode" --list-logits "/tmp/pr2-list-$mode" --report "/tmp/pr2-evidence/buffers-$mode.json"
+          done
+          clang -std=c11 -O1 -ffp-contract=off /tmp/pr2-work_probe.c -pthread -lm -o /tmp/pr2-work
+          python "$here/verify_work.py" --probe /tmp/pr2-work --command /tmp/pr2-native/deepfin-bend --threads 1 | tee /tmp/pr2-evidence/work.json
+      - name: Original material UCI and perft regression
+        id: material
+        run: |
+          set -o pipefail
+          python -m native.bend_engine.standalone.verify --report /tmp/pr2-evidence/material.json --command /tmp/pr2-native/deepfin-bend --threads 1 | tee /tmp/pr2-evidence/material.txt
+      - name: Actual neural inputs priors and reuse across searches
+        id: neural
+        run: |
+          set -o pipefail
+          clang -std=c11 -O3 -DLEGAL_ORACLE -I "$PWD" native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/pr2-oracle
+          python -m native.bend_engine.standalone.verify_neural --checkpoint /tmp/pr1-model/fixture.pt --package /tmp/pr1-model/fixture.pt2 --oracle /tmp/pr2-oracle --report /tmp/pr2-evidence/neural.json --command /tmp/pr2-native/neural/deepfin-bend-neural --threads 1 | tee /tmp/pr2-evidence/neural.txt
+          python -m native.bend_engine.standalone.verify_reuse --package /tmp/pr1-model/fixture.pt2 --reference /tmp/pr2-evidence/neural.json --report /tmp/pr2-evidence/reuse.json --command /tmp/pr2-native/neural/deepfin-bend-neural --threads 1 | tee /tmp/pr2-evidence/reuse.txt
+      - name: Publish clean feature branch after all gates
+        id: publish
+        if: steps.source.outcome == 'success' && steps.lint.outcome == 'success' && steps.tests.outcome == 'success' && steps.build.outcome == 'success' && steps.probes.outcome == 'success' && steps.material.outcome == 'success' && steps.neural.outcome == 'success'
+        run: |
+          git diff --check
+          git switch -c feat/native-buffer-reuse-20260922
+          git add docs/experiments/2026-09-22-native-buffer-reuse.md docs/experiments/README.md native/bend_engine/standalone
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'native: reuse policy maps and bounded inference buffers'
+          git push origin HEAD:refs/heads/feat/native-buffer-reuse-20260922
+          git rev-parse HEAD | tee /tmp/pr2-evidence/published-head.txt
+      - name: Preserve generated build for bounded failure diagnosis
+        if: always()
+        run: |
+          if test -f /tmp/pr2-native/engine.c; then
+            tar -C /tmp -czf /tmp/pr2-evidence/native-build.tar.gz pr2-native
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deepfin-pr2-reuse-validation
+          path: /tmp/pr2-evidence
+          retention-days: 30
+      - name: Require successful publication and all qualifications
+        if: always()
+        env:
+          PUBLISHED: ${{ steps.publish.outcome }}
+        run: test "$PUBLISHED" = success
