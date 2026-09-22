@@ -4,10 +4,11 @@ on:
     branches: [work/pr1-neural-accounting-20260922]
 permissions:
   contents: write
+  actions: read
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 30
     env:
       PYTHONPATH: .
       CAE_TEST_THREADS: '2'
@@ -19,45 +20,28 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: c78ca8aaab8982bd8ca234928c61c6225ad91580
-      - name: Assemble exact final authored patch
-        id: patch
+      - name: Apply exact patch and held-result correction
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p /tmp/pr1-evidence
+          mkdir -p /tmp/pr1-evidence /tmp/pr1-previous
+          gh api repos/jjoshua2/DeepFin/actions/artifacts/10709686312/zip > /tmp/pr1-previous.zip
+          unzip -q /tmp/pr1-previous.zip -d /tmp/pr1-previous
           python - <<'PY'
           import base64, hashlib, json, subprocess
           from pathlib import Path
-          pieces = [
-            ('74ed4b9390a51a6b3199b0ca3ca790d9ff72884f','0b7cdbf3656792b2fb9b9666c5a8bde223800917fb6320af61e6ae7d8748d25f'),
-            ('5d440ca74df172f7d8d5a56ab95b3308dfa54293','9aa18e80ef45fba1366c05161671752a15c3c3cda45127e0c696ab23cc97834e'),
-            ('3e71115344fdc4bf1e02a47b72a971baea89d98a','19141d4c8874129006cbbe1d75b8dad1006cea4ffd0dd26ae3b4200e7470f7ea'),
-            ('0ea40c4fb3a7100e2acb6d30438e13ef5b849c89','8c549b36bfba21bfb35a20d554ea7e1c1d631d00b22651f64ce80eab66e618d7'),
-            ('67a69ef3eee14f8924c93bf998a9696f80c1fde7','3932adfd195b8f9df50621dddafa3e042dfaa9e8978170561e283dd499d3e09b'),
-          ]
-          def get(sha):
-              blob = json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
-              return base64.b64decode(blob['content']).replace(b'\n diff --git ', b'\ndiff --git ')
-          data = b''
-          for i, (sha, expected) in enumerate(pieces):
-              part = get(sha)
-              assert hashlib.sha256(part).hexdigest() == expected, i
-              data += part
-          assert hashlib.sha256(data).hexdigest() == 'b0bf2ce8cb122cada2dce380f0688a3770fdee28a2ec6290edb07ca1093ee57a'
+          data = Path('/tmp/pr1-previous/pr1.patch').read_bytes()
+          assert hashlib.sha256(data).hexdigest() == '35472bde6a95b787ee1e8ecb187a437092740accc79747c3d4faa738e0f6c246'
           subprocess.run(['git','apply','--check','-'], input=data, check=True)
           subprocess.run(['git','apply','-'], input=data, check=True)
-          review = get('e22252cf91a504339ffb81e947fea5ddab5e9e76')
-          assert hashlib.sha256(review).hexdigest() == '6796e5187675af0786937298acb2689ecd1b1841441997ce3b1f92ec95611d7c'
-          subprocess.run(['git','apply','--check','-'], input=review, check=True)
-          subprocess.run(['git','apply','-'], input=review, check=True)
-          path = Path('chess_anti_engine/neural_work.py')
-          text = path.read_text()
-          assert text.count('from typing import Any, Literal, cast') == 1
-          assert text.count('entry.outcome = cast(Outcome, outcome)') == 1
-          path.write_text(text.replace('from typing import Any, Literal, cast','from typing import Any, Literal').replace('entry.outcome = cast(Outcome, outcome)','entry.outcome = outcome'))
+          blob = json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/git/blobs/3b667d15aeeb5d66c95c6d27765c9202d2b3f214']))
+          correction = base64.b64decode(blob['content'])
+          assert hashlib.sha256(correction).hexdigest() == 'a94b0a2cc96f74cf7594242074ee4239f3852722174673738f75d077988d2d00'
+          subprocess.run(['git','apply','--check','-'], input=correction, check=True)
+          subprocess.run(['git','apply','-'], input=correction, check=True)
           subprocess.run(['git','add','-N','.'], check=True)
           final = subprocess.check_output(['git','diff','--binary'])
-          assert hashlib.sha256(final).hexdigest() == '35472bde6a95b787ee1e8ecb187a437092740accc79747c3d4faa738e0f6c246'
+          assert hashlib.sha256(final).hexdigest() == 'fab03fb1861a17b4371dbcb8d7f7fbdb8730d018d895540d3935f2e2eafa9306'
           Path('/tmp/pr1-evidence/pr1.patch').write_bytes(final)
           PY
           git diff --check
@@ -69,29 +53,19 @@ jobs:
         with:
           version: 0.12.10
           enable-cache: true
-      - name: Locked CPU environment
-        run: |
+      - run: |
           uv sync --locked --extra dev --extra cpu
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Whole-repository static gate
-        id: lint
-        continue-on-error: true
+      - name: Static and regression gates
         run: |
           set -o pipefail
           bash scripts/lint.sh 2>&1 | tee /tmp/pr1-evidence/lint.txt
           bash scripts/lint.sh native/bend_engine/standalone/verify_work.py native/bend_engine/standalone/verify_neural.py 2>&1 | tee /tmp/pr1-evidence/native-lint.txt
-      - name: Accounting and broker regressions
-        id: tests
-        continue-on-error: true
-        run: |
-          set -o pipefail
           python -m pytest tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py tests/test_inference_slot_protocol.py tests/test_inference_broker.py tests/test_aot_broker_integration.py -q --junitxml=/tmp/pr1-evidence/tests.xml 2>&1 | tee /tmp/pr1-evidence/tests.txt
-      - name: Native material and accounting execution
-        id: native
-        continue-on-error: true
+      - name: Build and run native material regressions
         run: |
           set -o pipefail
           bash native/bend_engine/standalone/build.sh /tmp/pr1-native /tmp/pr1-compiler 2>&1 | tee /tmp/pr1-evidence/native-build.txt
@@ -99,11 +73,8 @@ jobs:
           bun /tmp/pr1-compiler/bend2/main.ts native/bend_engine/standalone/work_probe.bend -o /tmp/pr1-work.c
           clang -std=c11 -O1 -ffp-contract=off /tmp/pr1-work.c -pthread -lm -o /tmp/pr1-work
           python native/bend_engine/standalone/verify_work.py --probe /tmp/pr1-work --command /tmp/pr1-native/deepfin-bend --threads 1 | tee /tmp/pr1-evidence/native-work.json
-          python native/bend_engine/standalone/verify.py --report /tmp/pr1-evidence/material.json --command /tmp/pr1-native/deepfin-bend --threads 1 | tee /tmp/pr1-evidence/material.txt
-      - name: Actual CPU neural forward and search reconciliation
-        id: neural
-        if: steps.native.outcome == 'success'
-        continue-on-error: true
+          python -m native.bend_engine.standalone.verify --report /tmp/pr1-evidence/material.json --command /tmp/pr1-native/deepfin-bend --threads 1 | tee /tmp/pr1-evidence/material.txt
+      - name: Native neural execution and exact-budget controls
         run: |
           set -o pipefail
           mkdir /tmp/pr1-model
@@ -121,9 +92,32 @@ jobs:
           cmake -S native/bend_engine/standalone -B /tmp/pr1-native/neural -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')" -DBEND_GENERATED_C=/tmp/pr1-native/engine.c -DBEND_CONTRACT_DIR=/tmp/pr1-native
           cmake --build /tmp/pr1-native/neural --parallel 1
           clang -std=c11 -O3 -DLEGAL_ORACLE -I . native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/cboard-reference
-          python native/bend_engine/standalone/verify_neural.py --checkpoint /tmp/pr1-model/fixture.pt --package /tmp/pr1-model/fixture.pt2 --oracle /tmp/cboard-reference --report /tmp/pr1-evidence/neural.json --command /tmp/pr1-native/neural/deepfin-bend-neural --threads 1 | tee /tmp/pr1-evidence/neural.txt
-      - name: Publish clean feature branch only after checks
-        if: steps.lint.outcome == 'success' && steps.tests.outcome == 'success' && steps.native.outcome == 'success' && steps.neural.outcome == 'success'
+          python -m native.bend_engine.standalone.verify_neural --checkpoint /tmp/pr1-model/fixture.pt --package /tmp/pr1-model/fixture.pt2 --oracle /tmp/cboard-reference --report /tmp/pr1-evidence/neural.json --command /tmp/pr1-native/neural/deepfin-bend-neural --threads 1 | tee /tmp/pr1-evidence/neural.txt
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from native.bend_engine.standalone.verify import Client
+          from scripts.bench_neural_search import search
+          os.environ['DEEPFIN_BEND_MODEL_PACKAGE'] = '/tmp/pr1-model/fixture.pt2'
+          client = Client(['/tmp/pr1-native/neural/deepfin-bend-neural','--threads','1'])
+          results = []
+          try:
+              for profile in (False, True):
+                  for budget in (1, 3):
+                      row = search(client, 'position startpos', kind='evals', budget=budget, profile=profile, timeout=30, wall_tolerance_ms=10)
+                      assert row['comparable'], row
+                      assert row['counters']['accepted_neural_rows'] == budget
+                      assert (row['counters']['phase_seconds']['encoding'] is not None) == profile
+                      results.append(row)
+              # Time controls are measured, not presumed preemptible or fair.
+              row = search(client, 'position startpos', kind='movetime', budget=10, profile=False, timeout=30, wall_tolerance_ms=10)
+              assert row['budget_reached'], row
+              results.append(row)
+          finally:
+              client.close()
+          Path('/tmp/pr1-evidence/native-budgets.json').write_text(json.dumps(results, indent=2)+'\n')
+          PY
+      - name: Publish clean feature branch after all gates
         run: |
           git diff --check
           git switch -c feat/neural-work-accounting-20260922
@@ -133,25 +127,14 @@ jobs:
           git commit -m 'bench: unify neural-work accounting and fixed-budget search comparisons'
           git push origin HEAD:refs/heads/feat/neural-work-accounting-20260922
           git rev-parse HEAD | tee /tmp/pr1-evidence/published-head.txt
-      - name: Preserve native build for reproducible checks
+      - name: Preserve build and qualification inputs
         if: always()
         run: |
-          if test -f /tmp/pr1-native/engine.c; then
-            tar -C /tmp -czf /tmp/pr1-evidence/native-build.tar.gz pr1-native
-          fi
+          mkdir -p /tmp/pr1-native /tmp/pr1-model
+          tar -C /tmp -czf /tmp/pr1-evidence/native-build.tar.gz pr1-native pr1-model
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: deepfin-pr1-validation
           path: /tmp/pr1-evidence
           retention-days: 30
-      - name: Require every qualification
-        if: always()
-        env:
-          PATCH: ${{ steps.patch.outcome }}
-          LINT: ${{ steps.lint.outcome }}
-          TESTS: ${{ steps.tests.outcome }}
-          NATIVE: ${{ steps.native.outcome }}
-          NEURAL: ${{ steps.neural.outcome }}
-        run: |
-          test "$PATCH/$LINT/$TESTS/$NATIVE/$NEURAL" = 'success/success/success/success/success'
