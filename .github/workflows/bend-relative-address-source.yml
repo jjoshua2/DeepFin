@@ -1,0 +1,31 @@
+name: Relative address source recovery
+'on':
+  push:
+    branches: [feat/bend-relative-address-dev-20260922]
+    paths: [.github/workflows/bend-relative-address-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fc1fdd7cbe4d7e84543a14df9b7336c39ab098f2
+          persist-credentials: false
+      - name: Retain complete source and immutable commit identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/source/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/source/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/source/tree.txt"
+          cd "$RUNNER_TEMP/source"
+          sha256sum source.tar.gz commit.raw > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relative-address-source
+          path: ${{ runner.temp }}/source/
+          retention-days: 3
