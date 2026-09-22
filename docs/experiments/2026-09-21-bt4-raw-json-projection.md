@@ -62,7 +62,7 @@ Tests cover both codecs, field types/null/absence, duplicate keys, nonfinite and
 large numbers, malformed skipped values, nesting fallback, and actual label/verify
 reader calls with identity and canonical-feed receipts. No model/feed code changed.
 
-Artifact root: `/home/josh/chess-artifacts/operations/bt4-raw-json-projection-20260921`. `complete.json` records hashes of the exact benchmark,
+Artifact root: `~/chess-artifacts/operations/bt4-raw-json-projection-20260921`. `complete.json` records hashes of the exact benchmark,
 implementation, patch, and result files; `raw-projection-full-shard-20260921.json`
 contains all final measurements and ordered hashes. Source corpus hash is pinned
 above. The original general reader is unchanged from the recorded main base.
