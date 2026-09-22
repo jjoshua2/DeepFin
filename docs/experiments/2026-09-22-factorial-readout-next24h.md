@@ -84,9 +84,42 @@ favors D; mixed directions leave the decision unresolved. No extra games based
 on closeness to zero, no automatic deployment, and no changing targets mid-run.
 
 Plan three complete training jobs at approximately 13 hours each plus two arenas
-and the bounded storage retry: roughly 40 hours of useful backlog, exceeding the
+and the bounded storage retry: roughly 41 hours of useful backlog, exceeding the
 requested next 24 hours. Runtime caps are recovery bounds, not expected durations.
 Respect the existing September 26 queue deadline and each job's resource/STOP
 checks. A failed admission must remain failed with evidence; never mark a partial
-epoch complete to keep the GPU busy. Queue registration and launch verification
-will be appended after independent review.
+epoch complete to keep the GPU busy. Final admission and queue registration are recorded below.
+
+
+## Registered queue and launch readback
+
+The storage retry is running after the supervisor was restarted; its correction
+and reviewed immutable plan are published in [PR #823](https://github.com/jjoshua2/DeepFin/pull/823).
+The five training/arena entries are queued in this fixed order:
+
+| Item | Expected active time | Outer cap |
+| --- | ---: | ---: |
+| E121 fresh exact epoch | 13.06 h | 22.17 h |
+| E121 versus D121 | 0.50 h | 61 min |
+| D122 fresh exact epoch | 13.06 h | 22.17 h |
+| E122 fresh exact epoch | 13.06 h | 22.17 h |
+| E122 versus D122 | 0.50 h | 61 min |
+
+These add 40.17 estimated hours after the storage test; they do not promise a
+result within 24 hours. Even the complete declared caps plus cleanup and the
+storage retry fit the existing September 26 deadline. Prerequisites fail closed
+on incomplete training or invalid matches; a failed storage screen does not gate
+E training. The GPU lease serializes all of this work.
+
+The [final independent admission review](evidence/factorial-next24h-20260922/queue-admission-review.json)
+verifies all five descriptor/plan bindings, full-corpus E admission, paired
+initialization, exact-epoch/finite-loss gates, 14 second-seed admission checks and
+owned-child cleanup. A brief prelaunch hold reconciled a final gate amendment with
+its exact re-review; neither E job launched during that hold. The
+[registration receipt](evidence/factorial-next24h-20260922/queue-registration.json)
+records release of those two held entries and addition of the three replica
+entries, preserving every unrelated queue item and the active state.
+
+Host readback found the restarted supervisor and its owned storage GPU process
+active, with about 851 GiB free locally and 6.7 TiB on the external drive. These
+are point-in-time observations, not a guarantee against future runtime failures.
