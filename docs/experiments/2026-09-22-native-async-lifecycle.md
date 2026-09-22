@@ -20,7 +20,7 @@ model bridge, production settings and PR1 accounting remain unchanged. The test
 callback is not LibTorch or a neural model. `DEEPFIN_BEND_ASYNC=1` is implemented
 only in this isolated interface/probe; it does not enable an async engine.
 
-## Local validation and limits
+## Initial patch local validation and limits
 
 The qualification script and reports accompany the patch. Checks use the existing
 verified compiler revision
@@ -121,5 +121,95 @@ the tool's execution window; the remaining instrumented compile and tests were
 completed separately. Local lint launcher cannot import its Node wrapper; locked
 hosted type/lint checks are required rather than treating that failure as success.
 
-Hosted model readout: pending this explicit qualification, not inferred from the
-prior callback tests.
+## Hosted continuation readout — September 22, 2026
+
+**[Run 35798303801](https://github.com/jjoshua2/DeepFin/actions/runs/35798303801)
+passed every qualification stage before publishing the clean feature branch.**
+Job `106982621420`. Executable-source feature commit:
+`b7c2216828df78fa56e0ec83a9df96fe5f3e63b2`. A following documentation-only
+commit records this readout; it does not change any qualified executable source.
+
+The exact base is #832 at `3e308ec5c491cd9f427e923d63c2f80ac18598b7`.
+The 17-path source manifest in the downloaded artifact matches the local authored
+files. There are sixteen new implementation/test/documentation files plus one
+experiment-index entry. No existing engine, search, accounting, exporter, model
+bridge, CUDA, compiler or production configuration is changed. A separate
+`async_probe/CMakeLists.txt` builds only the opt-in CPU-model verification target.
+
+### Actual results
+
+| Gate | Observed result |
+| --- | --- |
+| Whole-repository Ruff, Basedpyright, Vulture plus explicit verifier lint | Pass; zero type errors or warnings |
+| New parser tests plus existing accounting/benchmark/broker tests | 127 passed; zero failures, errors or skips; includes 38 new cases |
+| Existing Bun singleton-binding/compiler contracts | 33 passed |
+| Native worker, each normal/instrumented mode | 440 assertions; 128 reuse round trips; all pass |
+| Generated Bend/C foreign interface, each mode | Cancellation/drain/reuse/input-snapshot and duplicate-poll checks pass |
+| Disabled/malformed-option and missing-native controls | Five option rejections and missing-link rejection pass per mode |
+| Actual CPU-model adapter | Four native processes, six forwards each; 24 forwards total |
+| Worker publication in each of two worker processes | Five completed results, one cancelled result withheld |
+| CPU eager singleton comparison | Maximum logit error 5.960464477539062e-7; inherited 2e-6 absolute / 2e-5 relative tolerances retained |
+
+The worker suite's increase from the initial patch's 433 to 440 assertions includes
+shutdown with pending cancelled and non-cancelled callbacks. Both must finish before
+shutdown returns. Backend failures deliberately write private partial output first;
+no bytes may escape to the caller, and a cancelled failure still poisons the slot.
+
+Actual model execution used the same **untrained 5,043,005-parameter 175-plane
+CPU-F32 batch-one checkpoint/package**, without export. The direct and worker
+processes execute the actual existing LibTorch/AOTI bridge, not the deterministic
+test callback. All six physical forwards are retained in each trace, including the
+worker's cancelled request. Published worker outputs omit only that request.
+Direct/worker trace bytes are identical; quiet/traced output bytes are identical;
+input-snapshot and repeated-input checks pass. Each process has stable bridge
+buffer addresses and exactly one bridge input-tensor allocation. These allocation
+observations do not cover LibTorch/AOTI internal allocations.
+
+The real-model driver is a C++ qualification executable using the actual worker
+adapter. The generated Bend foreign interface is qualified separately with test
+callbacks. Their composition inside the full Bend UCI/search application is **not**
+qualified by these two component results. Inputs here are synthetic tensors, not
+Bend-encoded search leaves; published results are not accepted search evaluations.
+
+Environment: locked Python 3.13.15, Torch 2.14.0+cpu, uv 0.12.10, Bun 1.4.2,
+Clang/Clang++ 18.1.3 on hosted Linux x86-64, two Torch threads and one compiler
+job. The existing compiler revision and 84-file fingerprint above are unchanged.
+Normal and instrumented modes are both executed. The instrumented C++ worker and
+adapter use ASan+UBSan, while generated Bend C uses UBSan only; neither LibTorch
+nor compiled model internals are sanitizer-qualified. ThreadSanitizer, full-engine
+rebuild, full ordinary pytest suite, perft and chroot isolation were not run here.
+The ordinary PR checks run separately after publication.
+
+### Integrity, transport and review
+
+The initial payload transfer had a base64 mismatch. A transfer-only preflight
+(run 35798069945) preserved and downloaded those bytes. The correction was checked
+against the locally authored compressed and uncompressed hashes **before** source
+application or execution. Qualification then applied the exact authored patch; no
+source, compiler, numerical threshold or oracle was changed to bypass a failure.
+The preflight is transport evidence, not an additional successful test run.
+
+Self-review, not independent review or formal proof. The prior local type-checker
+launcher failure remains a local tooling limitation; the locked hosted
+whole-repository and explicit verifier checks passed without suppressions.
+
+### Retained evidence and remaining integration
+
+Artifact **10725151032**, `deepfin-pr4a-async-qualification`, retains the exact
+source patch/manifest, JUnit and lint output, compiler/build identities, lifecycle
+and real-model reports, dependency list and executable digest for 30 days. It
+contains no model package, binary or raw neural trace.
+
+- Artifact ZIP SHA256: `001967f7f7a162271cd32a65dd930579980a0d81cfc4daa514c545f687628b6a`.
+- Qualified source patch SHA256: `86fe915786316a809ecd097de106d91a72b1698982d9b4c329dacafc6df92497`.
+- Model-probe executable SHA256: `b57d25c7179e97557d0ae3b238bf0cfb17cd54c001299c3d76f7ce7634985535`.
+- Checkpoint SHA256: `bb9934134c0d9a39c515c10fa870122c3dfd28259bece392be026e32a9ca60d7`.
+- Model-package SHA256: `9654a1e334fb5f875d164b82068846bfeab3df2ef2a994737e44789c2623ee6e`.
+
+**No asynchronous UCI stop/readiness, search-tree resumption or PR1 pending-work
+integration is delivered here.** The excluded integration above remains the next
+stage: Bend-owned awaiting/draining states, exactly one bestmove, monotonic search
+epochs, physical retirement of cancelled work and real selected-leaf model parity.
+The existing CUDA implementation is also still awaiting real GPU qualification.
+No trained model, live GPU, speed or Elo result is claimed. Nothing was merged,
+deployed or changed in live training.
