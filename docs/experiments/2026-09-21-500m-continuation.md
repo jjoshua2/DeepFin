@@ -2,8 +2,8 @@
 
 ## Decision
 
-Continue the frozen 58,090,688-row factorial through D and its two registered
-matches before selecting the policy/value package. Retain BT4 batch128 and keep
+All four frozen 58,090,688-row factorial training arms are complete. Finish the
+registered D-C and D-B matches before selecting the policy/value package. Retain BT4 batch128 and keep
 prefetch off by default until its queued complete GPU pipeline screen passes.
 The larger 1,963,948-row packed-storage stream now passes exact tensor parity;
 actual GPU training throughput remains to be measured. SF-free E preparation
@@ -25,14 +25,14 @@ The preceding records are in [factorial PR #786](https://github.com/jjoshua2/Dee
 | A | BT4 T=0.5 | 50% SF / 50% BT4 | Complete, 58,090,688 rows / 113,459 updates |
 | B | Equal BT4 T=0.5 / Ceres T=0.5 | Same as A | Complete, same rows/updates |
 | C | Same as A | Equal thirds SF / BT4 / Ceres | Complete, same rows/updates |
-| D | Same as B | Same as C | Active; initialization verified, epoch completion pending |
+| D | Same as B | Same as C | Complete, same rows/updates |
 
 Ceres values retain the registered 60% primary T=0.55 / 40% secondary T=1.5
 calibration. The equal-third implementation is 2/3 normalized stored V50 plus
 1/3 Ceres, inheriting the stored V50 float16 rounding. Sharpen each policy teacher
 before mixing; do not sharpen BT4 twice or sharpen the mixture again.
 
-All four actual initial tensor fingerprints agree. A/B/C completed one exact epoch
+All four actual initial tensor fingerprints agree. A/B/C/D completed one exact epoch
 with zero same-game repeats inside batches, and each realized schedule hash equals
 its own plan hash. Independent review mapped all 7,108 staged shards to identical
 ordered base inputs and source partitions. The physical schedule hashes differ
@@ -342,8 +342,8 @@ The larger storage preparation selects 256 unique shards across 35 cohorts,
 1,963,948 rows, for an actual GPU trainer comparison of external ZIP against
 NVMe directories. CPU packing and full-stream qualification launched under a
 separate reviewed 20-minute cap, two threads, nice 19, disk/RAM reserves and
-owned-child cleanup. Preparation is still pending; it is not a GPU result or a
-cold multi-terabyte storage qualification. E's separate full-corpus SF-free
+owned-child cleanup. The initial preparation state was pending; the completed qualification below is
+not a GPU result or a cold multi-terabyte storage qualification. E's separate full-corpus SF-free
 preparation continues; E training remains unadmitted.
 
 The first larger-storage qualification stopped after 626.29 seconds because the
@@ -373,3 +373,28 @@ bank the result. Cached CPU consumer time including digest observation was
 318.643 seconds for NVMe and 340.250 seconds for external ZIP. These are
 qualification timings, not GPU throughput or cold 500M storage evidence.
 The actual GPU comparison is published in [PR #818](https://github.com/jjoshua2/DeepFin/pull/818).
+
+
+## Final continuation status — September 22, 02:13 UTC
+
+D completed all 58,090,688 rows and 113,459 updates with scheduler exit zero.
+The [independent completion audit](evidence/500m-continuation-20260921/D-completion-review.json)
+verified initialization, all 1,089 registered runtime/operator pins, matching
+planned/realized schedule hashes and zero same-game repeats inside batches.
+Its final checkpoint SHA256 is
+`2aef77229a1aad76ab02a4d640ddfe1d394ee30f329c04bcaa8547a37522c7f2`.
+D-C is running against that checkpoint; D-B follows. No result from either match
+is claimed, so the combined target package remains undecided.
+
+The larger actual GPU training comparison is now independently reviewed and
+queued after the BT4 pipeline screen. It runs external ZIP then NVMe directories
+on the same qualified 1,963,948 rows, with a 90-minute pair cap and 45-minute
+per-arm cap. The deciding storage screen requires external-drive training
+throughput to reach at least 90% of NVMe after the preregistered warmup exclusion;
+startup and complete wall time are also recorded. One ordered, cache-affected
+pair does not establish cold multi-terabyte performance or isolate disk causality.
+The [queue append receipt](evidence/500m-continuation-20260921/storage-queue-registration.json)
+confirms all prior queue items and active state were preserved. The order is
+D-C, D-B, BT4 labeling, then the storage pair. Both optimization results remain
+pending; no frozen training runtime was changed. SF-free E CPU preparation
+continues separately, with training admission still pending full qualification.
