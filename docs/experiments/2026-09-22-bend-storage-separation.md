@@ -100,3 +100,22 @@ No production code or application responsibility moved from Python to Bend.
 Python export, external references, data/control orchestration and training remain;
 C++/LibTorch/AOTI is still transitional inference. No complete-engine theorem,
 new model/GPU qualification, performance or strength result is implied.
+
+
+## Hosted qualification
+
+Hosted qualification **35728145361**, temporary workflow commit `82b49583a60ddcd9cd29408abcdd59e208eef409`, passes **68 accepted laws and 107 rejection controls**, all four native modes, original compiler source/pin checks and the unchanged whole-repository lint gate on source `4a0e442cc701b38a5ccd93938f28e421be5b4f9a`.
+
+The complete source tree is 893dfc70e26e2bcba0a1536b1315fe12c306f79a, identical to the locally checked candidate. The full aggregate retains the unmodified 64-law/90-control parent and adds four frame laws and 17 controls. The focused contract/control/source report matches its local canonical SHA-256; the full native report matches locally except the separately recorded C compiler identity. Exact local/hosted comparison identities are committed.
+
+Each native mode passes 1,279 fixture rows and 57,226 full-array cell comparisons: 638 set/read and 641 actual fill cases, all 128 keys, 547 protected queries, 732 overlap counterexamples and 186 distinct-index alias rows. Seven invalid requests are rejected per mode. These repeat local fixtures and modes, not disjoint datasets or exhaustive native U64 testing. Neither proof predicates nor proof representations execute in the native probe.
+
+Tools: Bun 1.4.2, Ubuntu clang version 18.1.3 (1ubuntu1), locked Python 3.13 CPU environment with uv 0.12.10 for external tools. Original compiler source laws and all seven controls, including cyclic-template rejection, pass. The 12 compiler-pin contracts pass. Whole-repository Ruff/Basedpyright/Vulture passes unchanged, resolving the retained local missing-tools failure for this exact candidate.
+
+Only qualification evidence, the experiment index and the migration inventory are appended after checking. Executable source hashes are unchanged. Full logs are in the 30-day artifact bend-storage-separation-qualification; compact reports and the original local lint failure are committed. Source publication uses direct Git tree entries with exact complete-tree verification, not encoded patch fragments.
+
+Self-review only, not independent review. No production runtime, prior accepted law, compiler input, existing test, permanent workflow or perft budget changes. No full-engine/model/GPU/training/benchmark qualification. Source equality does not establish native pointer identity, allocation or physical lifetime.
+
+The four laws assume explicit normalized-path separation or a computed clear-write-path condition, which the consumer shows satisfiable. Deriving these certificates for every actual chess prefix remains unfinished. Prefix no-overflow, initialized final table contents and independent blocker-ray lookup refinement are separate acceptance targets. No new Python application responsibility moved into Bend; export/data/control/training and transitional C++/LibTorch/AOTI remain dependencies.
+
+Branch `feat/bend-storage-separation-20260922` is updated only by a fast-forward evidence/documentation commit after qualification. No merge, force push, deployment or live-process change. The temporary development workflow is excluded from this feature branch. Historical compiler TypeScript and diagnostic-depth limitations are not fixed or suppressed.
