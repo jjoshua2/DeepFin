@@ -6,6 +6,8 @@ import ./Tables.bend as Tables
 import ./Text.bend as Text
 import ./Position.bend as Pos
 import ./Protocol.bend as Protocol
+import ./Rules.bend as Rules
+import ./SearchHistory.bend as History
 
 type Packet is Data:
   Packet{kind: U32, text: String}
@@ -72,19 +74,61 @@ def reply_for(ticket: Search.Ticket) -> Search.Reply:
   prior = F32.div(1.0, F32.from_nat(U32.to_nat(U32.max(1, count))))
   Search.Reply{epoch, request, id, 0, win, 0.0, F32.sub(1.0, win), count, Array.new(F32, 8n, prior)}
 
-def evaluated(needed: Bool, tree: Search.Tree, +ticket: Search.Ticket) -> Search.Tree:
-  match needed:
-    case False{}: tree
-    case True{}: Search.resume(tree, ticket, reply_for(ticket))
-
-def needed(ticket: Search.Ticket) -> Bool:
+# A canonical draw reply is constructed here in Bend, not supplied by a host.
+def rule_reply(ticket: Search.Ticket) -> Search.Reply:
   Search.Ticket{epoch, request, id, b, moves, reply} = ticket
-  reply
+  Search.Reply{epoch, request, id, 3, 0.0, 1.0, 0.0, 0, Array.new(F32, 8n, 0.0)}
+
+def rule_result(reason: U32, tree: Search.Tree, +ticket: Search.Ticket) -> Search.Tree:
+  match reason:
+    case 0: Search.resume(tree, ticket, reply_for(ticket))
+    case _: Search.resume(tree, ticket, rule_reply(ticket))
+
+def ready_state(root: Pos.Game, table: Array<U64>, tree: Search.Tree, budget: U32,
+  inf: Bool, started: Nat, duration: U32, fallback: U32) -> State:
+  State{root, table, Running{tree, budget, inf, started, duration, fallback}, False{}}
+
+def rule_notice(code: U32, node: U32, count: U32, half: U32) -> IO(Unit):
+  match code:
+    case 0: IO.pure(Unit, Unit{})
+    case _:
+      IO.print("info string rule_draw " ++ U32.show(node) ++ " " ++ Rules.name(code)
+        ++ " " ++ U32.show(count) ++ " " ++ U32.show(half))
+
+def adjudicated(root: Pos.Game, tree: Search.Tree, +ticket: Search.Ticket, budget: U32,
+  inf: Bool, started: Nat, duration: U32, fallback: U32, r: Array<U64> & Rules.Facts) -> IO(State):
+  Search.Ticket{epoch, request, id, b, moves, reply} = ticket
+  (table, Rules.Facts{+code, count, half}) = r
+  do IO<State>:
+    rule_notice(code, id, count, half)
+    return ready_state(root, table, rule_result(code, tree, ticket), budget, inf, started, duration, fallback)
+
+def history_checked(ok: Bool, root: Pos.Game, game: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  +ticket: Search.Ticket, budget: U32, inf: Bool, started: Nat, duration: U32, fallback: U32) -> IO(State):
+  match ok:
+    case False{}: IO.die(State, 2, "invalid native search history")
+    case True{}:
+      Search.Ticket{epoch, request, id, b, moves, reply} = ticket
+      adjudicated(root, tree, ticket, budget, inf, started, duration, fallback, Rules.automatic(game, moves, table))
+
+def rebuilt(root: Pos.Game, table: Array<U64>, ticket: Search.Ticket, budget: U32,
+  inf: Bool, started: Nat, duration: U32, fallback: U32, h: History.Rebuilt) -> IO(State):
+  History.Rebuilt{tree, game, valid} = h
+  history_checked(valid, root, game, table, tree, ticket, budget, inf, started, duration, fallback)
+
+def evaluated(needed: Bool, +root: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  +ticket: Search.Ticket, budget: U32, inf: Bool, started: Nat, duration: U32, fallback: U32) -> IO(State):
+  match needed:
+    case False{}: IO.pure(State, ready_state(root, table, tree, budget, inf, started, duration, fallback))
+    case True{}:
+      Search.Ticket{epoch, request, id, b, moves, reply} = ticket
+      rebuilt(root, table, ticket, budget, inf, started, duration, fallback, History.rebuild(root, id, b, tree))
 
 def prepared(root: Pos.Game, budget: U32, infinite: Bool, started: Nat, duration: U32, fallback: U32,
-  p: Search.Prepared) -> State:
+  p: Search.Prepared) -> IO(State):
   Search.Prepared{table, tree, +ticket} = p
-  State{root, table, Running{evaluated(needed(ticket), tree, ticket), budget, infinite, started, duration, fallback}, False{}}
+  Search.Ticket{epoch, request, id, b, moves, needs} = ticket
+  evaluated(needs, root, table, tree, ticket, budget, infinite, started, duration, fallback)
 
 type Pick is Type:
   Pick{pool: Array<Search.Node>, key: U32, visits: U32}
@@ -128,9 +172,17 @@ def output_or_hold(hold: Bool, root: Pos.Game, table: Array<U64>, key: U32, +n: 
     case True{}: IO.pure(State, State{root, table, Held{key, n, stop}, False{}})
     case False{}: output(root, table, key, n, stop)
 
-def picked(hold: Bool, root: Pos.Game, table: Array<U64>, fallback: U32, n: U32, stop: U32, p: Pick) -> IO(State):
+def fallback_notice(used: Bool) -> IO(Unit):
+  match used:
+    case False{}: IO.pure(Unit, Unit{})
+    case True{}: IO.print("info string legal protocol fallback; no searched continuation; GUI owns adjudication")
+
+def picked(hold: Bool, root: Pos.Game, table: Array<U64>, +fallback: U32, n: U32, stop: U32, p: Pick) -> IO(State):
   Pick{pool, +key, visits} = p
-  output_or_hold(hold, root, table, Bool.pick(U32, U32.is_eq(key, 4294967295), fallback, key), n, stop)
+  +missing = U32.is_eq(key, 4294967295)
+  do IO<State>:
+    fallback_notice(Bool.and(missing, Bool.not(U32.is_eq(fallback, 4294967295))))
+    output_or_hold(hold, root, table, Bool.pick(U32, missing, fallback, key), n, stop)
 
 def finish(hold: Bool, root: Pos.Game, table: Array<U64>, fallback: U32, tree: Search.Tree) -> IO(State):
   Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
@@ -146,7 +198,7 @@ def progress(done: Bool, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
   budget: U32, inf: Bool, started: Nat, duration: U32, fallback: U32) -> IO(State):
   match done:
     case True{}: finish(inf, root, table, fallback, tree)
-    case False{}: IO.pure(State, prepared(root, budget, inf, started, duration, fallback, Search.prepare(table, tree)))
+    case False{}: prepared(root, budget, inf, started, duration, fallback, Search.prepare(table, tree))
 
 def elapsed(now: Nat, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
   +budget: U32, inf: Bool, +started: Nat, +duration: U32, fallback: U32) -> IO(State):
@@ -221,12 +273,25 @@ def perft_args(args: List<&2, String>, root: Pos.Game, table: Array<U64>) -> IO(
     case Con{n, Nil{}}: perft_number(Text.number(n), root, table)
     case _: message(State{root, table, Idle{}, False{}}, "perft requires one depth")
 
+# Read-only diagnostics for an external oracle; all facts are computed in Bend.
+def rules_done(root: Pos.Game, r: Array<U64> & Rules.Facts) -> IO(State):
+  (table, Rules.Facts{code, count, half}) = r
+  do IO<State>:
+    IO.print("info string rules " ++ Rules.name(code) ++ " " ++ U32.show(count) ++ " " ++ U32.show(half))
+    return State{root, table, Idle{}, False{}}
+
+def rules_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO(State):
+  match args:
+    case Nil{}: rules_done(root, Rules.inspect(root, table))
+    case _: message(State{root, table, Idle{}, False{}}, "rules takes no arguments")
+
 def idle_command(code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>) -> IO(State):
   match code:
     case 3: replace(root, Protocol.position(Protocol.parse_position(args), table))
     case 4: go_limits(root, table, Protocol.go(args, Protocol.GoState{Protocol.Limits{64, 4, 0, False{}, 0, True{}}, 0}))
     case 7: IO.pure(State, State{Pos.start(), table, Idle{}, False{}})
     case 9: perft_args(args, root, table)
+    case 10: rules_args(args, root, table)
     case _: message(State{root, table, Idle{}, False{}}, "unsupported command")
 
 def available(code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
