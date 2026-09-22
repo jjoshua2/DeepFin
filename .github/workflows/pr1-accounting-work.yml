@@ -5,16 +5,26 @@ on:
 permissions:
   contents: read
 jobs:
-  snapshot:
+  tooling:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: c78ca8aaab8982bd8ca234928c61c6225ad91580
-      - run: git archive HEAD -o /tmp/deepfin-pr1-base.tar
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: compiler
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: |
+          mkdir -p /tmp/pr1-tools/wheels
+          cp "$(command -v bun)" /tmp/pr1-tools/bun
+          cp -a compiler/bend2 /tmp/pr1-tools/bend2
+          python -m pip download --no-deps --dest /tmp/pr1-tools/wheels ruff basedpyright nodejs-wheel vulture chess
+          tar -C /tmp/pr1-tools -czf /tmp/pr1-tools.tar.gz .
       - uses: actions/upload-artifact@v4
         with:
-          name: deepfin-pr1-base
-          path: /tmp/deepfin-pr1-base.tar
+          name: deepfin-pr1-tools
+          path: /tmp/pr1-tools.tar.gz
           retention-days: 1
