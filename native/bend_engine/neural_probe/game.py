@@ -1,6 +1,7 @@
 """Host-owned played-game lifecycle around the native Bend diagnostic search.
 
-Draws are adjudicated at played roots, NOT inside the Bend tree. A stopped or
+The host adjudicates played roots and automatic draw leaves; Bend caches their
+zero terminal values. Optional claims inside search are not yet modeled. A stopped or
 truncated experiment is unfinished (*), never a draw. This controller deliberately
 uses the existing verified Actor and ACK protocol rather than another search.
 """
@@ -199,4 +200,5 @@ class GameActor(Actor):
                 'final_fen': self.root.fen(en_passant='fen'),
                 'cancelled_epochs': self.cancelled_epochs, 'rebound_encoders': self.rebound_encoders,
                 'search_epochs': [r.summary for r in self.results],
+                'automatic_draw_leaves': self.draw_leaves,
                 'pgn': pgn_text(self.root, self.end, self.spec.name)}

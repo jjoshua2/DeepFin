@@ -8,6 +8,8 @@ type Node is Data:
     n: U32, w: F32, prior: F32, value: F32, status: U32, depth: U32}
 
 # Node status: 0=unevaluated, 1=expanded, 2=terminal, 3=depth-cutoff.
+# Reply status 3 is an exact draw adjudication by the history-owning host,
+# NOT a neural WDL prediction. Bend validates identity/payload and caches zero.
 # Tree stop: 0=running/budget done, 1=capacity, 2=cancelled,
 # 3=backend failure, 4=invalid reply. No partial expansion on errors.
 type Tree is Type:
@@ -330,11 +332,32 @@ def reply_values(id: U32, ms: List<&2, Chess.Ply>, tree: Tree, reply: Reply) -> 
   reply_summed(id, ms, count, F32.div(F32.sub(win, loss), F32.max(total, 0.00001)), tree,
     policy_sum(U32.to_nat(count), 0, (policy, (0.0, wdl_ok))))
 
+# The host owns pre-root history and clocks. A rule draw has no children or
+# neural policy. Validate everything before setting terminal state or backing up.
+def draw_seen(+id: U32, used: U32, cap: U32, n: U32, pending: U32, epoch: U32,
+  request: U32, stop: U32, limit: U32, r: Array<Node> & Node) -> Tree:
+  (pool, a) = r
+  pool = Array.set(Node, pool, id, mark(a, 0, 0, 2, 0.0))
+  complete(id, 0.0, Tree{pool, used, cap, n, pending, epoch, U32.inc(request), stop, limit})
+
+def draw_checked(valid: Bool, +id: U32, tree: Tree) -> Tree:
+  match valid:
+    case False{}: halt(tree, 4)
+    case True{}:
+      Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
+      draw_seen(id, used, cap, n, pending, epoch, request, stop, limit, Array.get(Node, pool, id))
+
+def reply_draw(id: U32, tree: Tree, reply: Reply) -> Tree:
+  Reply{epoch, request, node, status, win, draw, loss, count, policy} = reply
+  draw_checked(Bool.and(U32.is_zero(count), Bool.and(F32.is_eq(win, 0.0),
+    Bool.and(F32.is_eq(draw, 1.0), F32.is_eq(loss, 0.0)))), id, tree)
+
 def reply_status(status: U32, id: U32, ms: List<&2, Chess.Ply>, tree: Tree, reply: Reply) -> Tree:
   match status:
     case 0: reply_values(id, ms, tree, reply)
     case 1: halt(tree, 3)
     case 2: halt(tree, 2)
+    case 3: reply_draw(id, tree, reply)
     case _: halt(tree, 4)
 
 def reply_checked(valid: Bool, id: U32, ms: List<&2, Chess.Ply>, tree: Tree, reply: Reply) -> Tree:
