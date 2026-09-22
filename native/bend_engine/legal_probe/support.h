@@ -5,6 +5,9 @@
  * White=1, KQkq=1/2/4/8, ep=64 is absent. All input tokens are hexadecimal.
  * Tables: masks[128], offsets[128], knight[64], king[64], pawns[128], attacks. */
 enum { LEGAL_TABLE_WORDS = 131072, LEGAL_TABLE_START = 512 };
+/* blk_new depth is log2(LEGAL_TABLE_WORDS); keep them coupled. */
+_Static_assert((LEGAL_TABLE_WORDS & (LEGAL_TABLE_WORDS - 1)) == 0,
+    "LEGAL_TABLE_WORDS must be a power of two (Bend Array blk_new depth)");
 typedef struct {
     uint64_t bb[8];
     uint32_t turn, rights, ep, depth, mode, seed;
