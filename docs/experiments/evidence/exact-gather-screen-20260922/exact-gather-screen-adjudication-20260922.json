@@ -1,0 +1,58 @@
+{
+  "status": "LOCAL_GATHER_GAIN_NOT_PRIORITIZED_FOR_IMPLEMENTATION",
+  "decision": "Keep external prototype only. Local copy reduction is real on fixed slices, but ~1.5-1.9ms absolute does not establish meaningful end-to-end benefit; prioritize existing bounded host overlap qualification and phase-resolved sampling/validation/pinning evidence.",
+  "runs": [
+    {
+      "shards": 4,
+      "baseline_median_batch_s": 0.0033990652195643634,
+      "prototype_median_batch_s": 0.0019387949304655195,
+      "local_ratio": 1.7531844993777768,
+      "saved_s": 0.0014602702890988439,
+      "wall_s": 2.2073746230453253,
+      "peak_rss_kib": 153256,
+      "receipt": {
+        "path": "/tmp/gather-cpu-screen-20260922.json",
+        "sha256": "77e6d281bebf4fefc82b87f8a7334ebf9d420e75856d5b80d72c16f4b4275107"
+      },
+      "script": {
+        "path": "/tmp/gather_cpu_screen_20260922.py",
+        "sha256": "c1aa082994e0fd19b11dfc9553a9b9f2ec0b9be043eed826b8fc070296ba39c8"
+      }
+    },
+    {
+      "shards": 8,
+      "baseline_median_batch_s": 0.0032838238601107152,
+      "prototype_median_batch_s": 0.0014047204400412737,
+      "local_ratio": 2.3377063268291516,
+      "saved_s": 0.0018791034200694415,
+      "wall_s": 1.9312622820725664,
+      "peak_rss_kib": 181460,
+      "receipt": {
+        "path": "/tmp/gather-cpu-screen8-20260922.json",
+        "sha256": "b49779face019a6218f47948bd333cc142b4deacfcffb9eb4ee16a8b20537c2d"
+      },
+      "script": {
+        "path": "/tmp/gather_cpu_screen8_20260922.py",
+        "sha256": "da486d456eed436f1eaff26f6d09cd785f737166dc9a57b5c341060b2e9d1ab0"
+      }
+    }
+  ],
+  "source_base": "4e8d463e1df6871a2b73b066c95506258d028800",
+  "resource_limits": {
+    "cores": [
+      16,
+      17
+    ],
+    "nice": 19,
+    "threads": 2,
+    "max_screen_wall_seconds": 600,
+    "max_extra_memory_bytes": 2147483648
+  },
+  "limitations": [
+    "Only first256rows of4 then8 real D overlay/base shard pairs were loaded directly from read-only Zarr. Full shard receipt/content requalification was not performed.",
+    "Exact keys/dtypes/values matched sliced baseline; prototype has no general mixed-schema, defaults, metadata conflict or invalid-index contract.",
+    "Repeated fixed512-row gather excludes actual epoch choice, decoder/refill, target preparation, CPU pinning, H2D and optimizer.",
+    "mode=clip is safe only for preregistered nonnegative in-bounds prototype indices; it is not a production-ready general gather implementation.",
+    "No GPU calls, active changes, full epoch construction or repository code patch."
+  ]
+}

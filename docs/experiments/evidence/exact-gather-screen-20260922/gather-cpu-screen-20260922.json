@@ -1,0 +1,60 @@
+{
+  "status": "FIXED_REAL_VALUES_PROTOTYPE_PARITY_PASS",
+  "rows_loaded_per_shard": 256,
+  "shards": [
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000000.zarr",
+      "manifest_sha256": "ca79c6382b941fee41c05e119315666c24112bb9dc03ba6248c60980755f6467"
+    },
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000001.zarr",
+      "manifest_sha256": "5c810f93306f1993b77c130a47ef75cb658a2d22e47b08e62d600a97e08fb3e2"
+    },
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000002.zarr",
+      "manifest_sha256": "0f7c6ff2a905db2deba37a86a096e56f913649fdf1ac10ace8afd15817dd7799"
+    },
+    {
+      "overlay": "/home/josh/chess-artifacts/labels/factorial58_20260919/outputs/cohort00/D/shard_000003.zarr",
+      "manifest_sha256": "e6b878e538445f24518f014d28fce5a5ba8d118337aa375d6f251eec185c283d"
+    }
+  ],
+  "batch_rows": 512,
+  "source_arrays_bytes": 28678144,
+  "runs": [
+    {
+      "variant": "old",
+      "iterations": 100,
+      "seconds": 0.4470496539724991
+    },
+    {
+      "variant": "new",
+      "iterations": 100,
+      "seconds": 0.2009659999748692
+    },
+    {
+      "variant": "new",
+      "iterations": 100,
+      "seconds": 0.19387949304655194
+    },
+    {
+      "variant": "old",
+      "iterations": 100,
+      "seconds": 0.30656655703205615
+    },
+    {
+      "variant": "old",
+      "iterations": 100,
+      "seconds": 0.33990652195643634
+    },
+    {
+      "variant": "new",
+      "iterations": 100,
+      "seconds": 0.1406028320780024
+    }
+  ],
+  "profile": "         146701 function calls in 0.269 seconds\n\n   Ordered by: cumulative time\n   List reduced from 26 to 15 due to restriction <15>\n\n   ncalls  tottime  percall  cumtime  percall filename:lineno(function)\n      100    0.002    0.000    0.269    0.003 /tmp/gather_cpu_screen_20260922.py:14(old)\n      100    0.137    0.001    0.153    0.002 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/disk_buffer.py:339(_concat_sparse_batches)\n      100    0.000    0.000    0.114    0.001 /tmp/gather_cpu_screen_20260922.py:14(<listcomp>)\n      400    0.001    0.000    0.113    0.000 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/game_epoch.py:345(_slice_epoch_arrays)\n      400    0.005    0.000    0.112    0.000 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/game_epoch.py:356(<dictcomp>)\n     6800    0.002    0.000    0.105    0.000 /home/josh/.local/lib/python3.10/site-packages/numpy/core/fromnumeric.py:95(take)\n     6800    0.002    0.000    0.103    0.000 /home/josh/.local/lib/python3.10/site-packages/numpy/core/fromnumeric.py:53(_wrapfunc)\n     6800    0.100    0.000    0.100    0.000 {method 'take' of 'numpy.ndarray' objects}\n     7200    0.006    0.000    0.009    0.000 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/disk_buffer.py:324(_batch_dims)\n     9300    0.003    0.000    0.006    0.000 {built-in method builtins.any}\n    41400    0.003    0.000    0.003    0.000 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/disk_buffer.py:355(<genexpr>)\n    28000    0.003    0.000    0.003    0.000 {built-in method numpy.asarray}\n      100    0.000    0.000    0.001    0.000 /home/josh/projects/chess-worktrees/exact-gather-20260922/chess_anti_engine/replay/disk_buffer.py:344(<setcomp>)\n     6800    0.001    0.000    0.001    0.000 {built-in method builtins.getattr}\n     6800    0.001    0.000    0.001    0.000 /home/josh/.local/lib/python3.10/site-packages/numpy/core/fromnumeric.py:91(_take_dispatcher)\n\n\n",
+  "wall_seconds": 2.2073746230453253,
+  "peak_rss_kib": 153256,
+  "limitations": "Partial4shard tensors, repeated fixed gather only; not actual epoch schedule/trainer timing; homogeneous prototype with no mixed/default/error handling."
+}
