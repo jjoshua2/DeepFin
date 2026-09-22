@@ -1,0 +1,35 @@
+name: Check Bend layout transfer
+'on':
+  push:
+    branches: [feat/bend-layout-qualification-dev-20260921]
+    paths: [.github/workflows/bend-layout-transfer-check.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Recover four immutable fragments without applying their contents
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/layout-fragments"
+          cd "$RUNNER_TEMP/layout-fragments"
+          for blob in bef01ec034319b71998f80f33e4e9543d4a1c555 8b79efa3006a5065f8f5c62bfba7fba513fbefc4 e6beeb6deb4792e151370f339c981d03b962719e f82026727f5f6f4f8df5d2369cc47c038a1a1d32; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$blob.txt"
+            test "$(git hash-object "$blob.txt")" = "$blob"
+          done
+          cat bef01ec034319b71998f80f33e4e9543d4a1c555.txt 8b79efa3006a5065f8f5c62bfba7fba513fbefc4.txt e6beeb6deb4792e151370f339c981d03b962719e.txt f82026727f5f6f4f8df5d2369cc47c038a1a1d32.txt > assembled.b64
+          git hash-object assembled.b64 > observed-hash.txt
+          test "$(cat observed-hash.txt)" = ab9635b14c387264556053aeb22a6c2ab0a24d94
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-layout-transfer-readback
+          path: ${{ runner.temp }}/layout-fragments/
+          retention-days: 7
