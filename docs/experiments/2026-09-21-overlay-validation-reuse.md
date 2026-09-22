@@ -51,8 +51,8 @@ The focused static gate passes. Whole-repository Ruff passes; basedpyright
 reports 23 diagnostics in seven unchanged test files. Baseline verification is
 recorded in the receipt; these unrelated diagnostics are not suppressed here.
 
-[Compact receipt](artifacts/2026-09-21-overlay-validation-reuse/receipt.json).
+[Compact receipt](evidence/overlay-validation-reuse-20260921/receipt.json).
 Full raw inputs, timings, rejected attempts, source patch, logs and reviewer
 receipt are banked under
-`/home/josh/chess-artifacts/operations/overlay-validation-reuse-20260921/`.
+`~/chess-artifacts/operations/overlay-validation-reuse-20260921/`.
 Publication does not adopt this code into the running factorial experiment.
