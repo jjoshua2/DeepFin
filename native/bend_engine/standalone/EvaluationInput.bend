@@ -37,3 +37,28 @@ def prepare(layout: H.Layout, version: Input.Version, game: Pos.Game,
   table: Array<U64>, maps: Policy.Maps) -> Preparation:
   Policy.Maps{f2c, c2f, pairs, +count} = maps
   checked(U32.is_eq(count, 1858), layout, version, game, table, Policy.Maps{f2c, c2f, pairs, count})
+
+def mapped_into(layout: H.Layout, version: Input.Version, game: Pos.Game,
+  table: Array<U64>, values: Array<F32>, r: Policy.Maps & Maybe<&2, List<&2, Policy.Entry>>) -> Preparation:
+  (maps, entries) = r
+  match entries:
+    case None{}: Invalid{table, maps}
+    case Some{entries}: Ready{Prepared{maps, Input.encode_into(layout, version, game, table, values), entries}}
+
+def generated_into(layout: H.Layout, version: Input.Version, +game: Pos.Game,
+  maps: Policy.Maps, values: Array<F32>, r: Array<U64> & List<&2, Chess.Ply>) -> Preparation:
+  (table, moves) = r
+  mapped_into(layout, version, game, table, values, Policy.entries(Chess.get_turn(Pos.board(game)), moves, maps))
+
+def checked_into(ok: Bool, layout: H.Layout, version: Input.Version, +game: Pos.Game,
+  table: Array<U64>, maps: Policy.Maps, values: Array<F32>) -> Preparation:
+  match ok:
+    case False{}: Invalid{table, maps}
+    case True{}: generated_into(layout, version, game, maps, values, Chess.legal_moves(table, Pos.board(game)))
+
+def prepare_into(layout: H.Layout, version: Input.Version, game: Pos.Game,
+  table: Array<U64>, maps: Policy.Maps, r: Array<F32> & U32) -> Preparation:
+  Policy.Maps{f2c, c2f, pairs, +count} = maps
+  (values, capacity) = r
+  checked_into(Bool.and(U32.is_eq(count, 1858), U32.is_eq(capacity, 16384)), layout,
+    version, game, table, Policy.Maps{f2c, c2f, pairs, count}, values)

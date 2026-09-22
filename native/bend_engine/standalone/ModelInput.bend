@@ -66,3 +66,20 @@ def history(version: Version, b: Chess.Board, e: H.Encoded) -> Input:
 
 def encode(layout: H.Layout, version: Version, +game: Pos.Game, table: Array<U64>) -> Input:
   history(version, Pos.board(game), H.encode(layout, game, table))
+
+# Native reusable storage is cleared, including unused capacity, before every
+# position. No feature is allowed to inherit an unwritten value from a prior leaf.
+def cleared(fuel: Nat, +i: U32, out: Array<F32>) -> Array<F32>:
+  match fuel:
+    case 0n: out
+    case 1n+p: cleared(p, U32.inc(i), Array.set(F32, out, i, 0.0))
+
+def history_into(version: Version, b: Chess.Board, out: Array<F32>, e: H.Encoded) -> Input:
+  H.Encoded{table, src} = e
+  features(version, b, table, copy(7168n, 0, (src, out)))
+
+# Caller owns the fixed 2^14-element workspace; Native.run independently checks
+# its physical capacity. Diagnostics/reference encoding retain encode above.
+def encode_into(layout: H.Layout, version: Version, +game: Pos.Game,
+  table: Array<U64>, out: Array<F32>) -> Input:
+  history_into(version, Pos.board(game), cleared(16384n, 0, out), H.encode(layout, game, table))

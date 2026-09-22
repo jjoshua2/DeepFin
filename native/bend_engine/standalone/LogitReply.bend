@@ -146,3 +146,64 @@ def convert(ticket: Search.Ticket, +entries: List<&2, Policy.Entry>, output: Lis
   +count = U32.from_nat(List.length(&2, Policy.Entry, entries))
   validated(Bool.and(needs, Bool.and(U32.is_gt(count, 0), Bool.and(U32.is_le(count, 256), aligned(entries, moves)))),
     epoch, request, node, count, entries, decode(1861n, 0, output, Array.new(F32, 11n, 0.0), True{}))
+
+# Reusable native output. Retain storage through validation, gathering and WDL
+# extraction; the tree owns only the newly built legal policy, never these logits.
+type Converted is Type:
+  Converted{values: Array<F32>, reply: Search.Reply}
+
+def finite_seen(valid: Bool, r: Array<F32> & F32) -> Array<F32> & Bool:
+  (values, x) = r
+  (values, Bool.and(valid, finite(x)))
+
+def finite_buffer(fuel: Nat, +i: U32, r: Array<F32> & Bool) -> Array<F32> & Bool:
+  match fuel:
+    case 0n: r
+    case 1n+p:
+      (values, valid) = r
+      finite_buffer(p, U32.inc(i), finite_seen(valid, Array.get(F32, values, i)))
+
+def wdl_buffer(fuel: Nat, +i: U32, r: Array<F32> & Array<F32>) -> Array<F32> & Array<F32>:
+  match fuel:
+    case 0n: r
+    case 1n+p:
+      (src, out) = r
+      wdl_buffer(p, U32.inc(i), wdl_copy(i, out, Array.get(F32, src, U32.add(1858, i))))
+
+def probabilities_collected(epoch: U32, request: U32, node: U32, +count: U32,
+  policy: Array<F32>, r: Array<F32> & Array<F32>) -> Converted:
+  (logits, wdl) = r
+  Converted{logits, with_win(epoch, request, node, count, softmax(U32.to_nat(count), policy),
+    Array.get(F32, softmax(3n, wdl), 0))}
+
+def probabilities_buffer(epoch: U32, request: U32, node: U32, count: U32, g: Gather) -> Converted:
+  Gather{logits, policy} = g
+  probabilities_collected(epoch, request, node, count, policy, wdl_buffer(3n, 0, (logits, Array.new(F32, 2n, 0.0))))
+
+def validated_buffer(epoch: U32, request: U32, node: U32, count: U32,
+  entries: List<&2, Policy.Entry>, r: Array<F32> & Bool) -> Converted:
+  (values, ok) = r
+  match ok:
+    case False{}: Converted{values, failed(epoch, request, node)}
+    case True{}: probabilities_buffer(epoch, request, node, count,
+      gather(entries, 0, Gather{values, Array.new(F32, 8n, 0.0)}))
+
+def failed_buffer(ticket: Search.Ticket, values: Array<F32>) -> Converted:
+  Search.Ticket{epoch, request, node, board, moves, needs} = ticket
+  Converted{values, failed(epoch, request, node)}
+
+def checked_buffer(ticket: Search.Ticket, +entries: List<&2, Policy.Entry>, values: Array<F32>) -> Converted:
+  Search.Ticket{epoch, request, node, board, moves, needs} = ticket
+  +count = U32.from_nat(List.length(&2, Policy.Entry, entries))
+  valid = Bool.and(needs, Bool.and(U32.is_gt(count, 0), Bool.and(U32.is_le(count, 256), aligned(entries, moves))))
+  validated_buffer(epoch, request, node, count, entries, finite_buffer(1861n, 0, (values, valid)))
+
+def shaped_buffer(ok: Bool, ticket: Search.Ticket, entries: List<&2, Policy.Entry>, values: Array<F32>) -> Converted:
+  match ok:
+    case False{}: failed_buffer(ticket, values)
+    case True{}: checked_buffer(ticket, entries, values)
+
+def convert_buffer(ticket: Search.Ticket, entries: List<&2, Policy.Entry>, count: U32,
+  r: Array<F32> & U32) -> Converted:
+  (values, capacity) = r
+  shaped_buffer(Bool.and(U32.is_eq(count, 1861), U32.is_eq(capacity, 2048)), ticket, entries, values)

@@ -28,9 +28,22 @@ static_assert(sizeof(float) == 4 && std::endian::native == std::endian::little);
 struct Runtime {
   std::unique_ptr<torch::inductor::AOTIModelPackageLoader> loader;
   std::filesystem::path workspace;
+  // One synchronous caller owns this input for the lifetime of the bound model.
+  // AOTI output tensors remain loader-owned; results are copied into Bend's
+  // distinct reusable output buffer before either side can reuse its storage.
+  at::Tensor input;
+  std::vector<at::Tensor> inputs;
   int trace = -1;
   uint32_t calls = 0;
+  bool audit = false;
+  const void* first_input = nullptr;
+  const void* first_output = nullptr;
+  uint32_t input_changes = 0, output_changes = 0, input_tensor_allocations = 0;
   ~Runtime() {
+    if (audit && loader) {
+      std::cerr << "native-buffer-audit calls=" << calls << " input_changes=" << input_changes
+                << " output_changes=" << output_changes << " input_tensor_allocations=" << input_tensor_allocations << '\n';
+    }
     loader.reset();
     if (trace >= 0) ::close(trace);
     if (!workspace.empty()) { std::error_code ec; std::filesystem::remove_all(workspace, ec); }
@@ -81,7 +94,7 @@ std::string copy_verified(const char* source) {
   if (hex.str() != DEEPFIN_MODEL_SHA256) throw std::runtime_error("bound model package hash mismatch");
   return dest.string();
 }
-void copy_output(const at::Tensor& x, int64_t width, float* destination) {
+void copy_output(const at::Tensor& x, int64_t width, void* destination) {
   if (!x.device().is_cpu() || x.scalar_type() != at::kFloat || x.dim() != 2
       || x.size(0) != 1 || x.size(1) != width)
     throw std::runtime_error("native model output shape/dtype/device mismatch");
@@ -100,6 +113,14 @@ extern "C" uint32_t deepfin_model_open() {
     at::set_num_threads(2);
     at::set_num_interop_threads(1);
     state.loader = std::make_unique<torch::inductor::AOTIModelPackageLoader>(path);
+    state.input = at::empty({1, DEEPFIN_MODEL_CHANNELS, 8, 8},
+                           at::TensorOptions().dtype(at::kFloat).device(at::kCPU));
+    ++state.input_tensor_allocations;
+    state.inputs = {state.input};
+    const char* audit = std::getenv("DEEPFIN_BEND_BUFFER_AUDIT");
+    if (audit && *audit && std::strcmp(audit, "0") && std::strcmp(audit, "1"))
+      throw std::runtime_error("DEEPFIN_BEND_BUFFER_AUDIT must be 0 or 1");
+    state.audit = audit && std::strcmp(audit, "1") == 0;
     const char* trace = std::getenv("DEEPFIN_BEND_MODEL_TRACE");
     if (trace && *trace) {
       state.trace = ::open(trace, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
@@ -114,13 +135,17 @@ extern "C" int deepfin_model_run(const float* input, uint32_t count, float* outp
   try {
     if (!state.loader || !input || !output || count != DEEPFIN_MODEL_CHANNELS * 64 || capacity != 1861
         || state.calls >= 65536) throw std::runtime_error("native model input/call bound violated");
+    if (state.audit) {
+      if (!state.calls) { state.first_input = input; state.first_output = output; }
+      state.input_changes += state.first_input != input;
+      state.output_changes += state.first_output != output;
+    }
     c10::InferenceMode inference;
-    auto x = at::from_blob(const_cast<float*>(input), {1, DEEPFIN_MODEL_CHANNELS, 8, 8},
-                          at::TensorOptions().dtype(at::kFloat).device(at::kCPU)).clone();
-    auto outputs = state.loader->run({x});
+    std::memcpy(state.input.mutable_data_ptr(), input, static_cast<size_t>(count) * sizeof(float));
+    auto outputs = state.loader->run(state.inputs);
     if (outputs.size() != 2) throw std::runtime_error("expected (policy, wdl) output tuple");
     copy_output(outputs[0], 1858, output);
-    copy_output(outputs[1], 3, output + 1858);
+    copy_output(outputs[1], 3, reinterpret_cast<char*>(output) + 1858 * sizeof(float));
     ++state.calls;
     if (state.trace >= 0) {
       const uint32_t header[] = {0x44464c31, state.calls, count, 1861};

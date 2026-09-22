@@ -494,3 +494,23 @@ selects a real-neural-row budget; `go movetime MS` selects a wall-time budget;
 append `profile` for optional CPU phase clocks. See
 [measurement definitions and paired benchmark](../../../docs/neural_work.md)
 for limits, missing backend measurements and the `verify_work.py` opt-in checks.
+
+### Reusable native model storage
+
+The neural application carries one linear cache across searches and position
+changes: immutable policy maps and 16,384/2,048-element F32 input/output workspaces.
+Legal entries and the entire logical input are rebuilt for every selected leaf;
+input capacity is cleared before reuse. Native transport uses the checked compiler's
+packed scalar-array layout, not linked float lists. The synchronous LibTorch bridge
+allocates its input tensor once and copies into it; AOTI internals may still allocate.
+This is **not zero-copy**, concurrent inference, or a CUDA optimization.
+
+Detailed `native_path`/`native_reply` notices are off by default. Enable them with
+`DEEPFIN_BEND_NATIVE_DIAGNOSTICS=1` for the external neural verifier. Raw model traces
+remain separately opt-in with `DEEPFIN_BEND_MODEL_TRACE`. Optional
+`DEEPFIN_BEND_BUFFER_AUDIT=1` reports input/output address changes and bridge
+input-tensor allocations on stderr at shutdown. Only `0` and `1` are accepted for
+these Boolean settings; there is no silent typo fallback.
+
+See [reuse qualification](../../../docs/experiments/2026-09-22-native-buffer-reuse.md)
+for the bounded tests, evidence, and remaining allocation/copy costs.
