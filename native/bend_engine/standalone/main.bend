@@ -10,6 +10,8 @@ import ./Rules.bend as Rules
 import ./SearchHistory.bend as History
 import ./EncodingDiagnostic.bend as EncodingDiagnostic
 import ./ModelInputDiagnostic.bend as ModelInputDiagnostic
+import ./PolicyDiagnostic.bend as PolicyDiagnostic
+import ./EvaluationDiagnostic.bend as EvaluationDiagnostic
 
 type Packet is Data:
   Packet{kind: U32, text: String}
@@ -297,6 +299,16 @@ def input_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO
     table : Array<U64> <- ModelInputDiagnostic.run(args, root, table)
     return State{root, table, Idle{}, False{}}
 
+def policy_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO(State):
+  do IO<State>:
+    table : Array<U64> <- PolicyDiagnostic.run(args, root, table)
+    return State{root, table, Idle{}, False{}}
+
+def evaluation_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO(State):
+  do IO<State>:
+    table : Array<U64> <- EvaluationDiagnostic.run(args, root, table)
+    return State{root, table, Idle{}, False{}}
+
 def idle_command(code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>) -> IO(State):
   match code:
     case 3: replace(root, Protocol.position(Protocol.parse_position(args), table))
@@ -306,6 +318,8 @@ def idle_command(code: U32, args: List<&2, String>, root: Pos.Game, table: Array
     case 10: rules_args(args, root, table)
     case 11: encoding_args(args, root, table)
     case 12: input_args(args, root, table)
+    case 13: policy_args(args, root, table)
+    case 14: evaluation_args(args, root, table)
     case _: message(State{root, table, Idle{}, False{}}, "unsupported command")
 
 def available(code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
