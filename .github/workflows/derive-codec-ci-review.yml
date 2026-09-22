@@ -1,0 +1,118 @@
+name: Codec observation repair qualification
+on:
+  push:
+    branches: [fix/derive-codec-ci-review-20260922]
+    paths: [.github/workflows/derive-codec-ci-review.yml]
+permissions:
+  contents: write
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CAE_TEST_THREADS: '2'
+      CUDA_VISIBLE_DEVICES: ''
+      MAX_JOBS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c78ca8aaab8982bd8ca234928c61c6225ad91580
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          activate-environment: true
+      - name: Verify exact reviewed test-only patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/codec-review
+          python - <<'PY'
+          import base64, gzip, hashlib, json, os, subprocess, urllib.request
+          from pathlib import Path
+          target=Path('tests/test_derive_parallel.py')
+          assert subprocess.check_output(['git','hash-object',str(target)],text=True).strip()=='573ec7e9b544375df0e1234e37651271490b3e2a'
+          sha='de9b41bc33df08bd6339886e456a5b7f2378af94'
+          request=urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/git/blobs/'+sha,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+          with urllib.request.urlopen(request,timeout=30) as response:
+              raw=base64.b64decode(json.load(response)['content'])
+          assert hashlib.sha1(f'blob {len(raw)}\0'.encode()+raw).hexdigest()==sha
+          patch=gzip.decompress(base64.b64decode(raw,validate=True))
+          assert hashlib.sha256(patch).hexdigest()=='e7dc8fdacc20a8524d98cf186999bafc7fa7636576c7691d125a09063d6c59fa'
+          p=Path('artifacts/codec-review/repair.patch');p.write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(p)],check=True)
+          subprocess.run(['git','apply',str(p)],check=True)
+          assert subprocess.check_output(['git','hash-object',str(target)],text=True).strip()=='9a22c27413255ea5072d25a0014e93f4afbe33b0'
+          assert subprocess.check_output(['git','diff','--name-only'],text=True).splitlines()==[str(target)]
+          PY
+          git diff --check
+      - name: Install locked CPU environment
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          python -c "import torch; assert torch.version.cuda is None; print(torch.__version__)"
+      - name: Repository static validation
+        run: python scripts/validate.py lint --require-cpu-wheel
+      - name: Actual parallel derivation and controlled codec regressions
+        run: |
+          python -m pytest -q tests/test_derive_parallel.py tests/test_derive_corpus_targets.py --tb=short --durations=15 --junitxml=artifacts/codec-review/derive.xml
+      - name: Reproduce the false-positive inference without modifying candidate sources
+        run: |
+          python - <<'PY'
+          import ast, itertools, json, subprocess
+          from pathlib import Path
+          from types import SimpleNamespace
+          target=Path('tests/test_derive_parallel.py')
+          old=subprocess.check_output(['git','show','HEAD:'+str(target)],text=True)
+          new=target.read_text()
+          def load(text,name,env):
+              node=next(n for n in ast.parse(text).body if isinstance(n,ast.FunctionDef) and n.name==name)
+              node.decorator_list=[]
+              exec(compile(ast.Module(body=[node],type_ignores=[]),name,'exec'),env)
+              return env[name]
+          blosc=SimpleNamespace(use_threads=None)
+          env={'numcodecs':SimpleNamespace(blosc=blosc)}
+          before=load(old,'assert_sequential_file_observation',{})
+          after=load(new,'assert_sequential_file_observation',env)
+          a={'shard_0.zarr/x/0.0.0.0':'one','shard_0.zarr/.zattrs':'same'}
+          b={**a,'shard_0.zarr/x/0.0.0.0':'two'}
+          try: before(a,b,parent_repeats=True)
+          except AssertionError: pass
+          else: raise AssertionError('old false-positive premise was not reproduced')
+          cases=0
+          for mode,repeats,same in itertools.product([None,True,False],[False,True],[False,True]):
+              blosc.use_threads=mode
+              try:
+                  after(a,a if same else b,parent_repeats=repeats)
+                  rejected=False
+              except AssertionError: rejected=True
+              assert rejected==(mode is False and repeats and not same)
+              cases+=1
+          gate=load(new,'byte_identity_is_required',env)
+          for mode,repeats,agrees in itertools.product([None,True,False],[False,True],[False,True]):
+              blosc.use_threads=mode
+              env['probe_roles']=lambda: (repeats,agrees)
+              assert gate()==(mode is False and repeats and agrees)
+              cases+=1
+          Path('artifacts/codec-review/negative-control.json').write_text(json.dumps({'old_positive_sample_counterexample':'reproduced','new_pure_gate_cases':cases,'status':'passed','scope':'actual pure assertion functions; runtime derivation tests are separate'},indent=2)+'\n')
+          PY
+      - name: Publish only the validated test-source descendant
+        run: |
+          test "$(git hash-object tests/test_derive_parallel.py)" = 9a22c27413255ea5072d25a0014e93f4afbe33b0
+          git add tests/test_derive_parallel.py
+          git diff --cached --check
+          test "$(git diff --cached --name-only)" = tests/test_derive_parallel.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Require controlled codec mode before asserting derived shard byte identity'
+          target=refs/heads/fix/bend-pr804-codec-tested-20260922
+          test -z "$(git ls-remote --heads origin "$target")"
+          git push origin HEAD:"$target"
+          git rev-parse HEAD > artifacts/codec-review/commit.txt
+          git rev-parse HEAD^{tree} > artifacts/codec-review/tree.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: derive-codec-repair-qualification
+          path: artifacts/codec-review/
+          retention-days: 14
