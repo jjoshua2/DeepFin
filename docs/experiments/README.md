@@ -120,3 +120,5 @@ For durable knowledge, use [model heads](../model_heads.md),
 [the loop audit](../rl_loop_audit.md) and [operations](../operations.md), following their
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
+
+- [SF generation depth and concurrency](2026-09-20-sf-generation-throughput.md) — bounded d8/G10 throughput screen for500M.

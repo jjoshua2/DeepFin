@@ -1,0 +1,398 @@
+{
+  "status": "COMPLETE_SCREEN",
+  "runtime_head": "93537e6b0",
+  "plan_sha256": "3013451e730a7641ffad7bcdb4508c7527d668e7fd3c04c79181063193d0f98b",
+  "complete_receipt_sha256": "e6dfff02a4db148bc39274f2cec582b2088449ce6e8d8c8f4f6938ff07b8e7d0",
+  "artifacts": {
+    "operations": "/home/josh/chess-artifacts/operations/sf_generation_throughput_confirmation_20260920",
+    "corpus": "/home/josh/chess-artifacts/corpora/generation_throughput_20260920/run_v4_confirmation"
+  },
+  "elapsed_seconds": 1240.0162125329953,
+  "cpu_seconds_observed": 4486.67,
+  "controller_cpu_seconds": 42.916857,
+  "cells": [
+    {
+      "id": "g10_c4",
+      "policy": "g10",
+      "concurrency": 4,
+      "elapsed_seconds": 600.5376211099792,
+      "cpu_seconds_observed": 2207.14,
+      "stop_reason": "cell_budget",
+      "returncode": -15,
+      "closure_snapshots": [
+        {
+          "elapsed": 0.008870668010786176,
+          "listed_closed_rows_unvalidated": 0,
+          "closed_games": 0,
+          "closed_shards": 0,
+          "unlisted_file_bytes": 0,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 30.226362849003635,
+          "listed_closed_rows_unvalidated": 0,
+          "closed_games": 0,
+          "closed_shards": 0,
+          "unlisted_file_bytes": 0,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 60.44257875997573,
+          "listed_closed_rows_unvalidated": 0,
+          "closed_games": 0,
+          "closed_shards": 0,
+          "unlisted_file_bytes": 0,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 90.64355642499868,
+          "listed_closed_rows_unvalidated": 0,
+          "closed_games": 0,
+          "closed_shards": 0,
+          "unlisted_file_bytes": 0,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 120.84353489597561,
+          "listed_closed_rows_unvalidated": 261,
+          "closed_games": 1,
+          "closed_shards": 1,
+          "unlisted_file_bytes": 1378088,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 151.0317029110156,
+          "listed_closed_rows_unvalidated": 1129,
+          "closed_games": 5,
+          "closed_shards": 3,
+          "unlisted_file_bytes": 930992,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 181.2435638210154,
+          "listed_closed_rows_unvalidated": 1512,
+          "closed_games": 7,
+          "closed_shards": 4,
+          "unlisted_file_bytes": 1056873,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 211.44295115198474,
+          "listed_closed_rows_unvalidated": 2314,
+          "closed_games": 10,
+          "closed_shards": 6,
+          "unlisted_file_bytes": 1076434,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 241.66108523798175,
+          "listed_closed_rows_unvalidated": 3273,
+          "closed_games": 14,
+          "closed_shards": 8,
+          "unlisted_file_bytes": 802650,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 271.87951841799077,
+          "listed_closed_rows_unvalidated": 3572,
+          "closed_games": 16,
+          "closed_shards": 9,
+          "unlisted_file_bytes": 370434,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 302.09147838299396,
+          "listed_closed_rows_unvalidated": 4217,
+          "closed_games": 20,
+          "closed_shards": 11,
+          "unlisted_file_bytes": 1082830,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 332.3275251929881,
+          "listed_closed_rows_unvalidated": 5026,
+          "closed_games": 24,
+          "closed_shards": 13,
+          "unlisted_file_bytes": 1033803,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 362.5367114149849,
+          "listed_closed_rows_unvalidated": 5703,
+          "closed_games": 29,
+          "closed_shards": 15,
+          "unlisted_file_bytes": 493410,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 392.763747658988,
+          "listed_closed_rows_unvalidated": 5977,
+          "closed_games": 30,
+          "closed_shards": 16,
+          "unlisted_file_bytes": 879037,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 422.9758465469931,
+          "listed_closed_rows_unvalidated": 7030,
+          "closed_games": 35,
+          "closed_shards": 19,
+          "unlisted_file_bytes": 333795,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 453.2032009839895,
+          "listed_closed_rows_unvalidated": 7745,
+          "closed_games": 39,
+          "closed_shards": 21,
+          "unlisted_file_bytes": 862384,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 483.427970550023,
+          "listed_closed_rows_unvalidated": 8503,
+          "closed_games": 43,
+          "closed_shards": 23,
+          "unlisted_file_bytes": 768879,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 513.6479464499862,
+          "listed_closed_rows_unvalidated": 8854,
+          "closed_games": 45,
+          "closed_shards": 24,
+          "unlisted_file_bytes": 682911,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 543.8836694809725,
+          "listed_closed_rows_unvalidated": 9545,
+          "closed_games": 49,
+          "closed_shards": 26,
+          "unlisted_file_bytes": 857719,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 574.1036832570098,
+          "listed_closed_rows_unvalidated": 10431,
+          "closed_games": 53,
+          "closed_shards": 28,
+          "unlisted_file_bytes": 384055,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 600.5376211099792,
+          "listed_closed_rows_unvalidated": 10431,
+          "closed_games": 53,
+          "closed_shards": 28,
+          "unlisted_file_bytes": 1906612,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        }
+      ],
+      "banked_rows": 10431,
+      "eligible_rows": 10431,
+      "no_result_rows": 0,
+      "invalid_rows": 0,
+      "closed_shards": 28,
+      "failures": {},
+      "manifest_sha256": "18d8256672f57fbddac344159b539fb25f2c1fef3675327bce82ddfba6f7e911",
+      "scope": "Closed-game rows passing result, stored-input, phase0 policy and latest-phase value support checks; no cross-corpus dedup or teacher labeling.",
+      "eligible_rows_per_wall_second": 17.36943637389492,
+      "banked_rows_per_wall_second": 17.36943637389492
+    },
+    {
+      "id": "d8_c4",
+      "policy": "d8",
+      "concurrency": 4,
+      "elapsed_seconds": 601.1821084929979,
+      "cpu_seconds_observed": 2279.53,
+      "stop_reason": "cell_budget",
+      "returncode": -15,
+      "closure_snapshots": [
+        {
+          "elapsed": 0.03517317201476544,
+          "listed_closed_rows_unvalidated": 0,
+          "closed_games": 0,
+          "closed_shards": 0,
+          "unlisted_file_bytes": 0,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 30.278885233041365,
+          "listed_closed_rows_unvalidated": 0,
+          "closed_games": 0,
+          "closed_shards": 0,
+          "unlisted_file_bytes": 0,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 60.51856954203686,
+          "listed_closed_rows_unvalidated": 0,
+          "closed_games": 0,
+          "closed_shards": 0,
+          "unlisted_file_bytes": 0,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 90.75767205201555,
+          "listed_closed_rows_unvalidated": 1622,
+          "closed_games": 8,
+          "closed_shards": 4,
+          "unlisted_file_bytes": 585416,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 120.9860207940219,
+          "listed_closed_rows_unvalidated": 3362,
+          "closed_games": 17,
+          "closed_shards": 9,
+          "unlisted_file_bytes": 946860,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 151.22548841201933,
+          "listed_closed_rows_unvalidated": 6240,
+          "closed_games": 32,
+          "closed_shards": 17,
+          "unlisted_file_bytes": 0,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 181.4652148160385,
+          "listed_closed_rows_unvalidated": 8224,
+          "closed_games": 43,
+          "closed_shards": 23,
+          "unlisted_file_bytes": 355405,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 211.7131681489991,
+          "listed_closed_rows_unvalidated": 10620,
+          "closed_games": 55,
+          "closed_shards": 29,
+          "unlisted_file_bytes": 345905,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 241.95863697503228,
+          "listed_closed_rows_unvalidated": 12793,
+          "closed_games": 67,
+          "closed_shards": 35,
+          "unlisted_file_bytes": 656141,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 272.20245604903903,
+          "listed_closed_rows_unvalidated": 14543,
+          "closed_games": 77,
+          "closed_shards": 40,
+          "unlisted_file_bytes": 729810,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 302.45328215003246,
+          "listed_closed_rows_unvalidated": 16462,
+          "closed_games": 85,
+          "closed_shards": 45,
+          "unlisted_file_bytes": 992489,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 332.69804088003,
+          "listed_closed_rows_unvalidated": 19068,
+          "closed_games": 100,
+          "closed_shards": 52,
+          "unlisted_file_bytes": 443404,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 362.95550202805316,
+          "listed_closed_rows_unvalidated": 21583,
+          "closed_games": 113,
+          "closed_shards": 59,
+          "unlisted_file_bytes": 418587,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 393.2130462420173,
+          "listed_closed_rows_unvalidated": 23384,
+          "closed_games": 123,
+          "closed_shards": 64,
+          "unlisted_file_bytes": 487162,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 423.4650859350222,
+          "listed_closed_rows_unvalidated": 26069,
+          "closed_games": 136,
+          "closed_shards": 71,
+          "unlisted_file_bytes": 430848,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 453.717153241043,
+          "listed_closed_rows_unvalidated": 27407,
+          "closed_games": 142,
+          "closed_shards": 75,
+          "unlisted_file_bytes": 1031637,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 483.98119021899765,
+          "listed_closed_rows_unvalidated": 29930,
+          "closed_games": 155,
+          "closed_shards": 82,
+          "unlisted_file_bytes": 367539,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 514.2291403400013,
+          "listed_closed_rows_unvalidated": 32534,
+          "closed_games": 168,
+          "closed_shards": 89,
+          "unlisted_file_bytes": 801343,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 544.4943668820197,
+          "listed_closed_rows_unvalidated": 34885,
+          "closed_games": 180,
+          "closed_shards": 95,
+          "unlisted_file_bytes": 309810,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 574.7576297090272,
+          "listed_closed_rows_unvalidated": 36841,
+          "closed_games": 190,
+          "closed_shards": 101,
+          "unlisted_file_bytes": 276609,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        },
+        {
+          "elapsed": 601.1821084929979,
+          "listed_closed_rows_unvalidated": 38615,
+          "closed_games": 200,
+          "closed_shards": 106,
+          "unlisted_file_bytes": 162082,
+          "unclosed_in_memory_rows": "unknown_not_counted"
+        }
+      ],
+      "banked_rows": 38615,
+      "eligible_rows": 38615,
+      "no_result_rows": 0,
+      "invalid_rows": 0,
+      "closed_shards": 106,
+      "failures": {},
+      "manifest_sha256": "5b02e05a9e22219777d39320b13cab973c74adf3b92c772df86f43ceb6ca475a",
+      "scope": "Closed-game rows passing result, stored-input, phase0 policy and latest-phase value support checks; no cross-corpus dedup or teacher labeling.",
+      "eligible_rows_per_wall_second": 64.23178510218382,
+      "banked_rows_per_wall_second": 64.23178510218382
+    }
+  ],
+  "limitations": [
+    "Short cold-start closed-shard rates are conservative and may have high opening/game-length variance.",
+    "Proc CPU accounting may miss very short children; observed cap5000s. Pilot reserves300s within30core-minutes; confirmation reserves400s within90core-minutes.",
+    "No strength conclusion, no production corpus mutation, and no500M rate guarantee."
+  ]
+}
