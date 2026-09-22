@@ -104,3 +104,22 @@ Bulk artifacts live under `/home/josh/chess-artifacts/operations/`; the manifest
 point to original teacher/base banks. Publishing this builder does not alter the
 active frozen factorial runtime or queue. The implementation PR is stacked on
 `research/factorial58-teacher-mix`, whose schema-2 overlay support is required.
+
+
+## Next training admission draft
+
+A [draft readiness record](evidence/2026-09-21-sffree-targets/training-draft.json)
+and E-only runner/admission plan are banked at
+`/home/josh/chess-artifacts/operations/factorial58-sffree-training-draft-20260921`.
+The draft preserves D's exact training runtime, configuration, environment and
+initialization; the loader optimization is not part of this target contrast.
+Execution refuses before GPU acquisition or output creation. Nine future pins
+remain unset, covering E qualification/completion and D plus its two matches.
+This draft requires independent review and final receipt freezing after those
+jobs complete. It is neither admitted nor queued.
+
+Hosted CI at publication reports six inherited Optional/None type diagnostics
+in unchanged `tests/test_bootstrap_recovery.py`; local whole-repository checking
+reports these plus the other documented baseline diagnostics. Hosted native
+slider checks pass; the ordinary test job was still running at this snapshot.
+No hosted all-checks-pass claim is made.
