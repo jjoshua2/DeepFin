@@ -1,0 +1,187 @@
+name: Bend whole fill interval qualification
+'on':
+  push:
+    branches: [feat/bend-fill-interval-dev-20260922]
+    paths: [.github/workflows/bend-fill-interval-qualification.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: d8de6e46fd04c4b34385d754224df37722a6a118
+      TARGET: feat/bend-fill-intervals-20260922
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d8de6e46fd04c4b34385d754224df37722a6a118
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact inspected patch and identify every candidate source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/fill-evidence"
+          mkdir -p "$EVIDENCE" "$RUNNER_TEMP/fill-transport"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/fill-transport/patch.b64"
+          for blob in 5c8b6d3e305898307a21c312be6084b32cb9a5e8 0b95b56ccd579bed2d2f4de899eb85ebad0590cd; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/fill-transport/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/fill-transport/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/fill-transport/$blob" >> "$RUNNER_TEMP/fill-transport/patch.b64"
+          done
+          test "$(git hash-object "$RUNNER_TEMP/fill-transport/patch.b64")" = 3c782e75a009bb9ece18143cfa47e03561369276
+          python3 - <<'PY'
+          import base64,hashlib,lzma,os
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP'])/'fill-transport'
+          patch=lzma.decompress(base64.b64decode((t/'patch.b64').read_bytes(),validate=True),memlimit=256*1024*1024)
+          assert len(patch)==91865
+          assert hashlib.sha256(patch).hexdigest()=='d1dc1397b645af0647010e003791c94bec360ef6f31dd7a897a7ed103faf0c4f'
+          (t/'candidate.patch').write_bytes(patch)
+          PY
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = 99f19d5ef816a238e89da12ec19529088943012d
+          git apply --check "$RUNNER_TEMP/fill-transport/candidate.patch"
+          git apply --index "$RUNNER_TEMP/fill-transport/candidate.patch"
+          git diff --cached --check
+          test "$(git write-tree)" = 1b7a58263f7f5c17c8acb88b9426bfe05b73279f
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          files=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          assert len(files)==25
+          assert all(f.startswith('native/bend_engine/standalone/proofs/fill_interval/') or f.startswith('docs/experiments/evidence/bend-fill-intervals/') or f=='docs/experiments/2026-09-22-bend-fill-intervals.md' for f in files),files
+          tracked=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          assert len(tracked)==269
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in tracked}
+          e=Path(os.environ['EVIDENCE'])
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'source-identity.json').write_text(json.dumps({'base':os.environ['BASE'],'candidate_tree':'1b7a58263f7f5c17c8acb88b9426bfe05b73279f','patch_sha256':'d1dc1397b645af0647010e003791c94bec360ef6f31dd7a897a7ed103faf0c4f','changed_files':files,'source_entries':len(hashes)},indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Retain the full parent and check all six fill interval laws
+        timeout-minutes: 38
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/fill_interval/verify.js "$PWD/.compiler" --report "$EVIDENCE/proofs.json" 2>&1 | tee "$EVIDENCE/source-gate.log"
+      - name: Compare actual full and partial fills in four native modes
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/fill_interval/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native-gate.log"
+      - name: Recheck original compiler source laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked external CPU development environment
+        run: |
+          set -euo pipefail
+          env -u CC -u CXX uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint once on final code
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          env -u CC -u CXX ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Preserve results and publish a new clean feature branch only
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/feat/bend-relative-address-bounds-20260922 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target-ref.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);d=Path('docs/experiments/evidence/bend-fill-intervals')
+          p=json.loads((e/'proofs.json').read_text());n=json.loads((e/'native.json').read_text())
+          c=json.loads((d/'local-controls-final.json').read_text());old=json.loads((d/'local-native.json').read_text())
+          assert p['proof_gate']=='PASS' and p['aggregate_law_count']==95 and p['new_law_count']==6
+          assert p['inherited_law_count']==89 and p['inherited_negative_controls']==176
+          assert len(p['negative_controls'])==19 and all(x['rejected'] for x in p['negative_controls'])
+          assert p['consumer']=='PASS'
+          assert p['negative_controls']==c['negative_controls'] and p['source_sha256s']==c['source_sha256s']
+          assert p['new_laws']==c['new_laws']
+          assert n['native_gate']=='PASS' and n['fixture_rows']==469 and n['chess_keys']==128
+          assert {k:v for k,v in n.items() if k!='cc'}=={k:v for k,v in old.items() if k!='cc'}
+          assert len(n['modes'])==4 and all(m['invalid_rejections']==7 for m in n['modes'])
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for file,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(file).read_bytes()).hexdigest()==h,file
+          for name in ['proofs.json','native.json','compiler-proofs.json','candidate-source-sha256.json','source-identity.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];sha=os.environ['GITHUB_SHA']
+          summary=f"Hosted run **{run}**, development workflow `{sha}`, passes all **95 accepted laws and 195 rejection controls**, four native modes, original compiler source/pin checks and unchanged whole-repository lint on the exact inspected candidate."
+          record=Path('docs/experiments/2026-09-22-bend-fill-intervals.md')
+          sections=['## Hosted qualification and clean publication',summary,
+              'The aggregate runs the unchanged 89-law/176-control parent, then the new six-law/19-control gate on final source bytes. The new control diagnostics and complete source identities match the final local controls report. This is a newly executed complete aggregate, not the two separate local development commands relabeled. The final EOF formatting is checked here.',
+              'All four native modes match the saved complete local report except the separately recorded C compiler identity: 469 rows, all 128 keys, 384 full-block, 20 zero-count and 25 overlong rows, 331 protected and 138 overwritten queries, seven malformed rejections per mode. The candidate reads actual table headers and executes the real fill; proof predicates and host expected tables are not candidate inputs. Only selected query/first/last cells and capacity are observed, not the complete returned array.',
+              f"Hosted tools: Bun {n['bun']}, {n['cc']} scoped to the native step; locked Python 3.13 CPU dependencies, uv 0.12.10 and the normal Python extension compiler. Original compiler laws/seven controls and 12 pin tests pass. The unchanged Ruff/Basedpyright/Vulture gate resolves the local missing-tools lint failure; the original nonzero log remains retained.",
+              'Every one of the 269 native-source manifest entries matches before and after qualification. Patch and complete candidate tree identities are preserved. Publication adds hosted evidence and documentation only. No production code, prior proof/gate, compiler input, existing test, routine workflow or perft budget changed.',
+              'The local wrong-layer increment mutation was not counted as a pass; its replacement targets inc_value. Eight new arithmetic/interval refinements and two deliberately inherited actual-fill refinement failures make up the ten semantic controls; nine policy/output guards complete the new 19. The separate actual extra-write native mutation fails at the exclusive-endpoint query and is not added to gate counts.',
+              f"Fresh branch `{os.environ['TARGET']}` is created only after all checks. No force push, merge, deployment or live process change. Temporary development workflows and transport payloads are absent from the feature diff. Compact reports are committed; full logs are retained in the 30-day artifact bend-fill-interval-qualification. Self-review only, not independent review.",
+              'The new laws prove derived clear-write certificates and outside-value preservation for bounded fills and every full slider block. Stored header correctness, preservation of computed inside-block entries, composition through all metadata/extras writes and independent blocker-ray lookup equality remain P2 obligations. Source prefix expressions are not yet a theorem about every loaded stored header.',
+              'Source checker/Base, native lowering, allocation/ownership/lifetime, ABI, toolchain, libraries and hardware remain trust boundaries. Prior compiler TypeScript/diagnostic and raw-internal-call limitations remain unresolved. No Python application responsibility moved: export, external references, data/control and training remain, with C++/LibTorch/AOTI transitional inference. No engine/model/GPU/perft increase/training/strength/benchmark result is added.'
+          ]
+          record.write_text(record.read_text()+'\n\n'+'\n\n'.join(sections)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Whole fill intervals](2026-09-22-bend-fill-intervals.md) | Six laws derive actual fill-clear certificates from numeric budgets and prove every complete slider block preserves outside queried values; stored headers and final contents/geometry remain separate |\n',1))
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          sections=['## Latest whole-fill interval qualification: September 22, 2026',summary,
+              '`fill_interval/bounded_clear_before` and `bounded_clear_after` derive the existing clear predicate from complete depth-17 shape and mathematical count/start budgets. The corresponding bounded-fill laws preserve actual queried values. `block_fill_preserves_before` and `block_fill_preserves_after` use actual block masks/counts/prefixes with existing prefix proof producers; no caller supplies a per-write clear or size equality. The actual U32 increment is related to Nat successor, and widened endpoint facts give an exact Nat loop budget.',
+              'This supersedes the historical unproved interval-to-fill-clear step for these bounded/full-block domains. The before theorem requires an exclusive endpoint below 131072 (all actual slider blocks satisfy this); the after theorem permits a query at the exclusive endpoint. Theorems preserve query values, not a complete final contents specification. Complete shape remains required.',
+              'Remaining P2 acceptance: establish every stored header and inside-block computed value, combine the block frame results across actual builder metadata/extras writes, and prove lookup equals independent blocker-ray attacks. Native selected-cell observations do not replace those quantified source contracts. See [the dated readout](experiments/2026-09-22-bend-fill-intervals.md) and committed identities/results. No application migration, model/GPU or performance result is added.'
+          ]
+          matrix.write_text(title+'\n\n'+'\n\n'.join(sections)+'\n'+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-22-bend-fill-intervals.md docs/experiments/evidence/bend-fill-intervals
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove numeric fill-clear certificates and full-block outside-value preservation'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -1 --format='%H%n%s' | tee "$EVIDENCE/published-commit.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/fill_interval > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-fill-interval-qualification
+          path: ${{ runner.temp }}/fill-evidence/
+          retention-days: 30
