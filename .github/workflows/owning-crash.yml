@@ -1,0 +1,54 @@
+name: Owning ring crash diagnosis
+on:
+  push:
+    branches: [work/bend-owning-crash-20260923]
+    paths: ['.github/workflows/owning-crash.yml']
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      BEND_NO_TELEMETRY: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      ASAN_OPTIONS: 'allow_user_segv_handler=0:detect_leaks=0'
+      UBSAN_OPTIONS: 'print_stacktrace=1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Compile exact failing source and retain both executions
+        run: |
+          bash native/bend_engine/install_ci_bend.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os, subprocess
+          from native.bend_engine.collections_probe.run_probe import build, check_compiler, command
+          compiler = Path('build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae')
+          check_compiler(compiler)
+          out = Path('artifacts/owning-crash')
+          out.mkdir(parents=True, exist_ok=True)
+          binary = out/'owning'
+          build(Path('native/bend_engine/collections_probe/owning.bend').resolve(), binary, compiler, 'bun', 'clang-18', [])
+          command(['clang-18', '-std=c11', '-O1', '-g', '-ffp-contract=off', '-fsanitize=address,undefined', '-fno-sanitize-recover=all', str(binary.with_suffix('.c')), '-pthread', '-lm', '-o', str(out/'owning-asan')])
+          results = []
+          for exe in ('owning', 'owning-asan'):
+              for config in ('0 1 0', '1 1 0', '2 1 0'):
+                  run = subprocess.run([str(out/exe), '--threads', '1'], env=dict(os.environ, DEEPFIN_COLLECTION_BENCH=config), text=True, capture_output=True, timeout=30, check=False)
+                  name = exe+'-'+config.replace(' ', '-')
+                  (out/(name+'.stdout')).write_text(run.stdout)
+                  (out/(name+'.stderr')).write_text(run.stderr)
+                  results.append({'executable': exe, 'config': config, 'exit': run.returncode, 'stdout': run.stdout, 'stderr': run.stderr})
+          (out/'results.json').write_text(json.dumps(results, indent=2)+'\n')
+          print(json.dumps(results, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owning-crash-diagnosis
+          path: artifacts/owning-crash
+          retention-days: 7
