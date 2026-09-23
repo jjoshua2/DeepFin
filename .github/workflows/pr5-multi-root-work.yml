@@ -35,10 +35,12 @@ jobs:
               data=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
               raw=base64.b64decode(data['content'])
               Path(f'/tmp/pr5-evidence/transferred-{i}.bin').write_bytes(raw)
-              text=base64.b64encode(raw).decode()
               if i==0:
-                  text=text.replace('KNnjsiGh','KNjsiGh')
-                  raw=base64.b64decode(text+'===')
+                  text=base64.b64encode(raw).decode()
+                  assert len(text)==12000 and text[10084]=='n'
+                  text=text[:10084]+text[10085:]+'+'
+                  raw=base64.b64decode(text,validate=True)
+                  assert hashlib.sha256(raw).hexdigest()=='8d84227be600f2a6e5c97ba3a2e10c9f0caa882af3369b605dc2dad5f429ebf5'
               parts.append(raw)
           compressed=b''.join(parts)
           assert hashlib.sha256(compressed).hexdigest()=='89446de19ff241339ed962df954750456534f62205e39847c5591d76ad9b4069', hashlib.sha256(compressed).hexdigest()
