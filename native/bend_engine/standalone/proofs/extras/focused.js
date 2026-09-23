@@ -41,7 +41,7 @@ function reject(name,entry,edit,location,kind='new refinement'){
 function guard(name,edit,check,reason){const d=copy(name);edit(d);assert.throws(()=>check(d),reason);controls.push({name,rejected:true,kind:'manifest/import policy'});}
 try{
   manifest(suite);const graph=policy(path.join(suite,'consumer.bend'),engine);
-  for(const f of ['focused.js','verify.js','verify_native.js','probe.bend'])graph.add(path.join(suite,f));
+  for(const f of ['focused.js','verify.js','verify_native.js','probe.bend','unique_probe.bend'])graph.add(path.join(suite,f));
   const hashes=()=>Object.fromEntries([...graph].sort().map(f=>[path.relative(engine,f),sha(fs.readFileSync(f))]));
   const before=hashes();clean(invoke(path.join(suite,'consumer.bend')));
   reject('include-first-extras-slot','Primitive.bend',d=>replace(path.join(d.s,'Spec.bend'),'U32.is_lt(q,256)','U32.is_le(q,256)'),/Location: routes/);
