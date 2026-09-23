@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -71,10 +72,16 @@ class FakeTablebase:
 
 
 def spec(tmp_path: Path, *, fen: str = SEVEN, max_plies: int = 8) -> worker.WorkerSpec:
+    wdl_dir = tmp_path / "wdl"
+    dtz_dir = tmp_path / "dtz"
+    wdl_dir.mkdir(exist_ok=True)
+    dtz_dir.mkdir(exist_ok=True)
+    (wdl_dir / "KQBNRvK.rtbw").write_bytes(b"fake WDL fixture")
+    (dtz_dir / "KQBNRvK.rtbz").write_bytes(b"fake DTZ fixture")
     return worker.WorkerSpec(
         out=tmp_path / "run", games=2, seed=14, max_plies=max_plies,
         parallel_games=2, temperature=0, initial_fen=fen,
-        syzygy_path="fake:pair", model_sha256=MODEL_SHA,
+        syzygy_path=f"{wdl_dir}{os.pathsep}{dtz_dir}", model_sha256=MODEL_SHA,
         outcome_mode=worker.OUTCOME_MODE, model_path="fake.onnx",
         providers=("CPUExecutionProvider",),
     )
@@ -97,7 +104,7 @@ def test_capture_worker_banks_complete_raw_teacher_and_terminal_target(
 ) -> None:
     evaluator = FakeEvaluator()
     summary = worker.run_worker(
-        spec(tmp_path), evaluator, FakeTablebase(), {"identity_basis": "test"},  # type: ignore[arg-type]
+        spec(tmp_path), evaluator, FakeTablebase(),  # type: ignore[arg-type]
     )
     assert summary["status"] == "complete"
     assert summary["completed"] == 2
@@ -129,7 +136,7 @@ def test_unresolved_game_discard_has_no_rows(tmp_path: Path) -> None:
     short = spec(tmp_path, fen=starting, max_plies=1)
     # Choose a legal opening move for this fixture.
     summary = worker.run_worker(
-        short, FakeEvaluator("e2e4"), FakeTablebase(), {"identity_basis": "test"},  # type: ignore[arg-type]
+        short, FakeEvaluator("e2e4"), FakeTablebase(),  # type: ignore[arg-type]
     )
     assert summary["rows_emitted"] == 0
     assert summary["rows_attempted"] == 2
@@ -147,8 +154,7 @@ def test_missing_required_probe_aborts_without_game_or_completion(
 ) -> None:
     with pytest.raises(tablebase.MatchTablebaseError, match="missing eligible"):
         worker.run_worker(
-            spec(tmp_path), FakeEvaluator(), FakeTablebase(missing=True),
-            {"identity_basis": "test"},  # type: ignore[arg-type]
+            spec(tmp_path), FakeEvaluator(), FakeTablebase(missing=True),  # type: ignore[arg-type]
         )
     assert (tmp_path / "run" / "launch.json").exists()
     assert not (tmp_path / "run" / "summary.json").exists()
@@ -165,18 +171,37 @@ def test_writer_failure_leaves_no_published_or_partial_game(
     monkeypatch.setattr(worker.np, "savez_compressed", fail_after_partial_write)
     with pytest.raises(OSError, match="simulated full disk"):
         worker.run_worker(
-            spec(tmp_path), FakeEvaluator(), FakeTablebase(),
-            {"identity_basis": "test"},  # type: ignore[arg-type]
+            spec(tmp_path), FakeEvaluator(), FakeTablebase(),  # type: ignore[arg-type]
         )
     assert not list((tmp_path / "run" / "games").iterdir())
+    assert not (tmp_path / "run" / "summary.json").exists()
+
+
+def test_table_file_change_refuses_completion(tmp_path: Path) -> None:
+    current = spec(tmp_path)
+
+    class ChangingEvaluator(FakeEvaluator):
+        def evaluate_roots(
+            self, boards: list[chess.Board], x_batch: np.ndarray,
+        ) -> list[BT4RootOutput]:
+            rows = super().evaluate_roots(boards, x_batch)
+            (tmp_path / "wdl" / "KQBNRvK.rtbw").write_bytes(b"changed fixture")
+            return rows
+
+    with pytest.raises(RuntimeError, match="inventory changed"):
+        worker.run_worker(current, ChangingEvaluator(), FakeTablebase())  # type: ignore[arg-type]
+    assert len(list((tmp_path / "run" / "games").glob("*.npz"))) == 2
     assert not (tmp_path / "run" / "summary.json").exists()
 
 
 def test_bounded_buffer_and_explicit_mode_before_output(tmp_path: Path) -> None:
     bad = replace(spec(tmp_path), outcome_mode="theoretical_wdl")
     with pytest.raises(ValueError, match="explicit rule50"):
-        worker.run_worker(bad, FakeEvaluator(), FakeTablebase(), {})  # type: ignore[arg-type]
+        worker.run_worker(bad, FakeEvaluator(), FakeTablebase())  # type: ignore[arg-type]
     assert not bad.out.exists()
     oversized = replace(spec(tmp_path), max_plies=3000)
     with pytest.raises(ValueError, match="4096"):
         oversized.validate()
+    too_many = replace(spec(tmp_path), games=worker.MAX_GAMES + 1)
+    with pytest.raises(ValueError, match="games <= 32"):
+        too_many.validate()

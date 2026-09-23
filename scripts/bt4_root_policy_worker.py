@@ -40,6 +40,8 @@ from scripts.gen_sf_rooted_corpus import INPUT_EXTRA_FEATURES, INPUT_HISTORY_ENC
 SCHEMA = "bt4_root_policy_games_v1"
 OUTCOME_MODE = "rule50_match_v1"
 MAX_BUFFERED_ROWS = 4096
+MAX_GAMES = 32
+MAX_TOTAL_REQUESTED_PLIES = 4096
 _SOURCE_FILES = (
     "scripts/bt4_root_policy_worker.py",
     "scripts/bt4_root_policy_stepper.py",
@@ -51,6 +53,10 @@ _SOURCE_FILES = (
     "chess_anti_engine/moves/leela_index.py",
     "chess_anti_engine/encoding/cboard_encode.py",
     "chess_anti_engine/encoding/lc0.py",
+    "scripts/gen_sf_rooted_corpus.py",
+    "chess_anti_engine/eval/rvg_surgery.py",
+    "chess_anti_engine/mcts/sampling.py",
+    "chess_anti_engine/selfplay/game.py",
 )
 
 
@@ -80,6 +86,11 @@ class WorkerSpec:
             raise ValueError("BT4 worker requires explicit rule50_match_v1 outcome mode")
         if self.games < 1 or self.seed < 0 or self.max_plies < 1:
             raise ValueError("games/max_plies must be positive and seed nonnegative")
+        if self.games > MAX_GAMES or self.games * self.max_plies > MAX_TOTAL_REQUESTED_PLIES:
+            raise ValueError(
+                f"experimental run requires games <= {MAX_GAMES} and "
+                f"games * max_plies <= {MAX_TOTAL_REQUESTED_PLIES}"
+            )
         if self.parallel_games < 1 or self.parallel_games * self.max_plies > MAX_BUFFERED_ROWS:
             raise ValueError(f"parallel_games * max_plies must be <= {MAX_BUFFERED_ROWS}")
         if not math.isfinite(self.temperature) or self.temperature < 0:
@@ -236,7 +247,6 @@ def write_finalized_game(
 def run_worker(
     spec: WorkerSpec, evaluator: RootEvaluator,
     match_tablebase: chess.syzygy.Tablebase,
-    table_inventory: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Run a finite seeded corpus. A missing strict probe aborts without summary."""
     spec.validate()
@@ -246,6 +256,7 @@ def run_worker(
     tablebase.SyzygyProbe(
         spec.syzygy_path, max_pieces=6, rule50_aware=True, tablebase=match_tablebase,
     )
+    table_inventory = table_file_inventory(spec.syzygy_path)
     root = Path(__file__).resolve().parents[1]
     manifest: dict[str, Any] = {
         "schema": SCHEMA, "status": "launched", "actor": "bt4_root_policy_no_search",
@@ -305,6 +316,8 @@ def run_worker(
                 batch, outputs,
                 temperatures={root.slot_id: spec.temperature for root in batch.roots},
             )
+    if table_file_inventory(spec.syzygy_path) != table_inventory:
+        raise RuntimeError("Syzygy file inventory changed during BT4 generation")
     summary: dict[str, Any] = {
         "schema": SCHEMA, "status": "complete", "games": spec.games,
         "completed": spec.games - sum(discarded.values()),
@@ -333,8 +346,8 @@ def main() -> None:
     parser.add_argument("--initial-fen", default=chess.STARTING_FEN)
     parser.add_argument("--threads", type=int, default=2)
     args = parser.parse_args()
-    if args.threads < 1:
-        parser.error("--threads must be positive")
+    if args.threads not in (1, 2):
+        parser.error("experimental CPU worker requires --threads 1 or 2")
     model_path = args.onnx.resolve(strict=True)
     model_sha256 = file_sha256(model_path)
     spec = WorkerSpec(
@@ -350,7 +363,6 @@ def main() -> None:
     rep_fix.apply(True, boards_discarded=True)
     tb = tablebase.open_strict_match_tablebase(args.syzygy_path, max_pieces=6)
     try:
-        inventory = table_file_inventory(args.syzygy_path)
         sess, input_name, input_dtype, providers = open_session(
             str(model_path), gpu_mem_gb=0, threads=args.threads,
         )
@@ -362,7 +374,7 @@ def main() -> None:
             history_rep_fix=True,
         )
         realized = replace(spec, providers=tuple(providers))
-        print(json.dumps(run_worker(realized, evaluator, tb, inventory), sort_keys=True))
+        print(json.dumps(run_worker(realized, evaluator, tb), sort_keys=True))
     finally:
         tb.close()
 

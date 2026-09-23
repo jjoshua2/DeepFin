@@ -33,14 +33,20 @@ python3 -m scripts.bt4_root_policy_worker \
   --temperature 1.0 --threads 2
 ```
 
-The worker refuses an existing output directory and bounds
-`parallel_games * max_plies` to 4,096 buffered plies. No resume or shard
+The worker refuses an existing output directory and bounds both
+`parallel_games * max_plies` and `games * max_plies` to 4,096 plies,
+with at most 32 games per invocation. This caps the number of model/root
+calls and possible banked rows; it does not impose a wall-time deadline on an
+individual ONNX call. The CLI accepts one or two ONNX CPU threads. No resume or shard
 rotation exists in this experimental schema. `launch.json` records the exact
 model SHA-256, realized CPU provider, code-file and native encoder hashes,
 input/history mode,
 actor, seed, temperature, and Syzygy path, handle capacity counts and
 file-stat inventory (resolved filename, size, nanosecond mtime). The table
-inventory deliberately is **not** a content-hash attestation. Each finalized
+inventory deliberately is **not** a content-hash attestation. The inventory
+is built from the strict handle's requested path before writing and checked
+again before completion; any path/stat change leaves the run incomplete.
+Each finalized
 game publishes as one atomically renamed `games/game_NNNNNNNN.npz`; no row
 file is visible until the complete game validates and serializes. Its JSON
 `metadata` array records game/result/termination and ordered FEN, source key,
