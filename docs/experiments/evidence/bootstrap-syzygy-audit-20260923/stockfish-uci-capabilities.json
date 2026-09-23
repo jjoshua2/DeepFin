@@ -1,0 +1,12 @@
+{
+  "binary": "/home/josh/projects/chess/e2e_server/publish/stockfish",
+  "uci_lines": [
+    "id name Stockfish dev-20260420-ed651aab",
+    "id author the Stockfish developers (see AUTHORS file)",
+    "option name SyzygyPath type string default <empty>",
+    "option name SyzygyProbeDepth type spin default 1 min 1 max 100",
+    "option name Syzygy50MoveRule type check default true",
+    "option name SyzygyProbeLimit type spin default 7 min 0 max 7"
+  ],
+  "scope": "Capability/default advertisement only; no search or realized probe proof"
+}

@@ -1,0 +1,9 @@
+{
+  "start_fen": "7k/8/8/8/8/p1b5/PP6/KQ6 w - - 70 1",
+  "move": "b2c3",
+  "end_fen": "7k/8/8/8/8/p1P5/P7/KQ6 b - - 0 1",
+  "pieces": 6,
+  "wdl": -2,
+  "dtz": -2,
+  "status": -1
+}

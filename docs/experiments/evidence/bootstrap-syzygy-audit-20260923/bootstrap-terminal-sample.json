@@ -1,0 +1,539 @@
+{
+  "scope": "First raw shard prefix per source run; selected-cohort membership not requalified; not a prevalence estimate",
+  "limits": {
+    "seconds": 60,
+    "decompressed_bytes_per_run": 33554432,
+    "unique_games_per_run": 12
+  },
+  "runs": [
+    {
+      "run": "run03_s3",
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run03_s3/w00-00000.jsonl.zst",
+      "games": [
+        {
+          "game_id": 0,
+          "result_pgn": "1-0",
+          "adjudication": null
+        },
+        {
+          "game_id": 14,
+          "result_pgn": null,
+          "adjudication": null
+        },
+        {
+          "game_id": 28,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "8/1Pk5/p4P2/P2K4/8/8/8/8 w - - 0 132",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 1,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 42,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "8/5P2/8/8/8/5p2/2K2k1p/Q7 b - - 0 111",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -2,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 56,
+          "result_pgn": "1/2-1/2",
+          "adjudication": {
+            "fen": "8/8/7b/p2B1k2/P7/8/6K1/8 w - - 0 104",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1/2-1/2",
+            "wdl": 1
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 0,
+          "raw_syzygy_dtz": 0,
+          "rule50_result": "1/2-1/2",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 70,
+          "result_pgn": "0-1",
+          "adjudication": {
+            "fen": "8/5k2/1r6/7p/p6P/2K5/8/8 w - - 0 118",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "0-1",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -2,
+          "rule50_result": "0-1",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 84,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "8/P1k5/6N1/7p/K6P/8/8/8 w - - 0 141",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 1,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 98,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "8/3b3p/5k1P/2K5/8/6R1/8/8 b - - 0 106",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -72,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 112,
+          "result_pgn": "1-0",
+          "adjudication": null
+        },
+        {
+          "game_id": 126,
+          "result_pgn": "0-1",
+          "adjudication": null
+        },
+        {
+          "game_id": 140,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "8/4R3/7P/8/B4k2/P7/2K5/8 b - - 0 132",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -2,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 154,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "8/8/8/r6p/K7/P5R1/8/1k6 w - - 0 126",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 1,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        }
+      ],
+      "rows_read": 1951,
+      "bytes_read": 17382346
+    },
+    {
+      "run": "run06_g10",
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run06_g10/w00-00000.jsonl.zst",
+      "games": [
+        {
+          "game_id": 0,
+          "result_pgn": "1-0",
+          "adjudication": null
+        },
+        {
+          "game_id": 12,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "8/8/1p6/1P2Q3/p1K5/8/7k/8 b - - 0 151",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -4,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 24,
+          "result_pgn": "0-1",
+          "adjudication": null
+        },
+        {
+          "game_id": 36,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "bR6/4k3/8/8/1K6/6N1/8/1B6 w - - 0 109",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 1,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 48,
+          "result_pgn": "0-1",
+          "adjudication": {
+            "fen": "8/7p/k6r/4p2P/8/8/8/7K w - - 0 96",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "0-1",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -2,
+          "rule50_result": "0-1",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 60,
+          "result_pgn": "0-1",
+          "adjudication": {
+            "fen": "2k2K2/8/1r6/3pr3/8/8/8/2n5 w - - 0 115",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "0-1",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -2,
+          "rule50_result": "0-1",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 72,
+          "result_pgn": "0-1",
+          "adjudication": {
+            "fen": "8/8/4p3/7p/1k3K2/1p5P/8/8 b - - 0 114",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "0-1",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 1,
+          "rule50_result": "0-1",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 84,
+          "result_pgn": "0-1",
+          "adjudication": {
+            "fen": "8/8/4k3/P1r5/3K1p2/2p5/8/8 w - - 0 105",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "0-1",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -2,
+          "rule50_result": "0-1",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 96,
+          "result_pgn": "0-1",
+          "adjudication": {
+            "fen": "8/8/3p2p1/8/2K2p1k/8/8/q7 b - - 0 92",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "0-1",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 1,
+          "rule50_result": "0-1",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 108,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "4B3/2P5/8/8/8/3k4/R5pK/8 b - - 0 92",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -2,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 120,
+          "result_pgn": "0-1",
+          "adjudication": {
+            "fen": "8/5p2/p4P2/n2K4/8/8/8/7k b - - 0 117",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "0-1",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 3,
+          "rule50_result": "0-1",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 132,
+          "result_pgn": "1-0",
+          "adjudication": null
+        }
+      ],
+      "rows_read": 1981,
+      "bytes_read": 26892580
+    },
+    {
+      "run": "run07_g10_companion4",
+      "path": "/home/josh/projects/chess/data/nnue_bootstrap/run07_g10_companion4/w00-00000.jsonl.zst",
+      "games": [
+        {
+          "game_id": 0,
+          "result_pgn": "1-0",
+          "adjudication": null
+        },
+        {
+          "game_id": 4,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "1r4R1/8/P7/8/8/7B/8/K2k4 w - - 0 117",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 1,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 8,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "3B4/8/4k3/1K5P/8/5p2/5P2/8 w - - 0 116",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 1,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 12,
+          "result_pgn": "0-1",
+          "adjudication": {
+            "fen": "8/2p5/2Pr1p2/8/8/1K3k2/8/8 b - - 0 119",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "0-1",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 1,
+          "rule50_result": "0-1",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 16,
+          "result_pgn": "0-1",
+          "adjudication": {
+            "fen": "1n4K1/8/8/p3k3/P7/1n6/8/8 b - - 0 136",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "0-1",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 3,
+          "rule50_result": "0-1",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 20,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "2k5/8/7N/P7/8/4K2p/8/7Q b - - 0 134",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -2,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 24,
+          "result_pgn": "1/2-1/2",
+          "adjudication": {
+            "fen": "8/2r5/1k6/1p6/5Q2/4p3/6K1/8 b - - 0 105",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1/2-1/2",
+            "wdl": 1
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 0,
+          "raw_syzygy_dtz": 0,
+          "rule50_result": "1/2-1/2",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 28,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "8/1k6/5K2/8/6pP/P7/3B4/8 w - - 0 123",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 2
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": 2,
+          "raw_syzygy_dtz": 1,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 32,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "7k/1Q6/8/8/1p3p2/1P6/8/7K b - - 0 88",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -2,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 36,
+          "result_pgn": "0-1",
+          "adjudication": null
+        },
+        {
+          "game_id": 40,
+          "result_pgn": "0-1",
+          "adjudication": {
+            "fen": "8/8/4k3/P5K1/1P6/5P2/3r4/8 w - - 0 110",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "0-1",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -3,
+          "rule50_result": "0-1",
+          "confirmed_result_mismatch": false
+        },
+        {
+          "game_id": 44,
+          "result_pgn": "1-0",
+          "adjudication": {
+            "fen": "8/8/4kB2/PP5Q/7K/8/8/8 b - - 0 111",
+            "kind": "syzygy",
+            "piece_count": 6,
+            "pov": "terminal_position_side_to_move",
+            "result": "1-0",
+            "wdl": 0
+          },
+          "terminal_halfmove_clock": 0,
+          "raw_syzygy_wdl": -2,
+          "raw_syzygy_dtz": -2,
+          "rule50_result": "1-0",
+          "confirmed_result_mismatch": false
+        }
+      ],
+      "rows_read": 2221,
+      "bytes_read": 28737113
+    }
+  ],
+  "elapsed_s": 1.3011058780830353
+}

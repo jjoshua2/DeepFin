@@ -120,3 +120,5 @@ For durable knowledge, use [model heads](../model_heads.md),
 [the loop audit](../rl_loop_audit.md) and [operations](../operations.md), following their
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
+
+- [2026-09-23: Bootstrap and evaluation Syzygy correctness audit](2026-09-23-bootstrap-syzygy-correctness-audit.md) — in progress; confirmed arena support gaps, preserved evidence, pending evaluation held.

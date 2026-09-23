@@ -1,0 +1,388 @@
+{
+  "scope": "Small-file receipt, result, and opening-pair audit. No checkpoint tensor or full corpus rehash.",
+  "arenas": {
+    "B_A": {
+      "small_pin_checks": [
+        {
+          "role": "candidate",
+          "artifact": "summary",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_B/summary.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "initial_state",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_B/initial_state.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "receipt",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/complete.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "terminal",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/scheduler_run/parent_outer_terminal.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "plan",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/plan.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "summary",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/summary.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "initial_state",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/initial_state.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "receipt",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/complete.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "terminal",
+          "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/terminal.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "plan",
+          "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/plan.json",
+          "matches": true
+        }
+      ],
+      "receipt_hash_matches": true,
+      "plan_hash_matches": true,
+      "bank_hash_matches": true,
+      "games": 256,
+      "pairs": 128,
+      "paired_openings_and_colors_valid": true,
+      "score_recomputed": 0.509765625,
+      "elo_recomputed": 6.786714342897122,
+      "termination": {
+        "rules": 249,
+        "max_plies": 7
+      },
+      "syzygy": "",
+      "syzygy_max_pieces": 0,
+      "moves_available": 0
+    },
+    "C_A": {
+      "small_pin_checks": [
+        {
+          "role": "candidate",
+          "artifact": "summary",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_C/summary.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "initial_state",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_C/initial_state.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "receipt",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/complete.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "terminal",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/scheduler_run/parent_outer_terminal.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "plan",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/plan.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "summary",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/summary.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "initial_state",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/initial_state.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "receipt",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/complete.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "terminal",
+          "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/terminal.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "plan",
+          "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/plan.json",
+          "matches": true
+        }
+      ],
+      "receipt_hash_matches": true,
+      "plan_hash_matches": true,
+      "bank_hash_matches": true,
+      "games": 256,
+      "pairs": 128,
+      "paired_openings_and_colors_valid": true,
+      "score_recomputed": 0.53125,
+      "elo_recomputed": 21.74306492903707,
+      "termination": {
+        "rules": 252,
+        "max_plies": 4
+      },
+      "syzygy": "",
+      "syzygy_max_pieces": 0,
+      "moves_available": 0
+    },
+    "D_C": {
+      "small_pin_checks": [
+        {
+          "role": "candidate",
+          "artifact": "summary",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/summary.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "initial_state",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/initial_state.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "receipt",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/complete.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "terminal",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/scheduler_run/parent_outer_terminal.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "plan",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/plan.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "summary",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_C/summary.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "initial_state",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_C/initial_state.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "receipt",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/complete.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "terminal",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/scheduler_run/parent_outer_terminal.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "plan",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/plan.json",
+          "matches": true
+        }
+      ],
+      "receipt_hash_matches": true,
+      "plan_hash_matches": true,
+      "bank_hash_matches": true,
+      "games": 256,
+      "pairs": 128,
+      "paired_openings_and_colors_valid": true,
+      "score_recomputed": 0.4765625,
+      "elo_recomputed": -16.297987076023766,
+      "termination": {
+        "rules": 256
+      },
+      "syzygy": "",
+      "syzygy_max_pieces": 0,
+      "moves_available": 0
+    },
+    "D_B": {
+      "small_pin_checks": [
+        {
+          "role": "candidate",
+          "artifact": "summary",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/summary.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "initial_state",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/initial_state.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "receipt",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/complete.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "terminal",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/scheduler_run/parent_outer_terminal.json",
+          "matches": true
+        },
+        {
+          "role": "candidate",
+          "artifact": "plan",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/plan.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "summary",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_B/summary.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "initial_state",
+          "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_B/initial_state.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "receipt",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/complete.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "terminal",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/scheduler_run/parent_outer_terminal.json",
+          "matches": true
+        },
+        {
+          "role": "reference",
+          "artifact": "plan",
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/plan.json",
+          "matches": true
+        }
+      ],
+      "receipt_hash_matches": true,
+      "plan_hash_matches": true,
+      "bank_hash_matches": true,
+      "games": 256,
+      "pairs": 128,
+      "paired_openings_and_colors_valid": true,
+      "score_recomputed": 0.525390625,
+      "elo_recomputed": 17.658402561638308,
+      "termination": {
+        "rules": 250,
+        "max_plies": 6
+      },
+      "syzygy": "",
+      "syzygy_max_pieces": 0,
+      "moves_available": 0
+    }
+  },
+  "training": {
+    "A": {
+      "seed": 121,
+      "tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+      "rows": 58090688,
+      "updates": 113459,
+      "compute_loss_calls": 113459,
+      "epoch_complete": true,
+      "plan_realized_match": true,
+      "same_game_repeats_max": 0,
+      "validity_problems": [
+        "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+        "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+        "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+      ]
+    },
+    "B": {
+      "seed": 121,
+      "tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+      "rows": 58090688,
+      "updates": 113459,
+      "compute_loss_calls": 113459,
+      "epoch_complete": true,
+      "plan_realized_match": true,
+      "same_game_repeats_max": 0,
+      "validity_problems": [
+        "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+        "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+        "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+      ]
+    },
+    "C": {
+      "seed": 121,
+      "tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+      "rows": 58090688,
+      "updates": 113459,
+      "compute_loss_calls": 113459,
+      "epoch_complete": true,
+      "plan_realized_match": true,
+      "same_game_repeats_max": 0,
+      "validity_problems": [
+        "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+        "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+        "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+      ]
+    },
+    "D": {
+      "seed": 121,
+      "tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+      "rows": 58090688,
+      "updates": 113459,
+      "compute_loss_calls": 113459,
+      "epoch_complete": true,
+      "plan_realized_match": true,
+      "same_game_repeats_max": 0,
+      "validity_problems": [
+        "no --purity-receipt: the trained corpus is not tied to any held-out purity check",
+        "no live config was given (CHESS_LIVE_PRODUCTION_CONFIG unset or --live-config omitted): the architecture and/or trainer premise was judged against a COMMITTED PIN, which cannot detect that the live file has moved since the pin was recorded",
+        "sampling mode game_epoch intentionally differs from the historical DiskReplayBuffer control (without replacement, natural corpus WDL mix, and at most one row per game per batch). It is a sampler intervention, not a valid continuation of replacement-sampled control results"
+      ]
+    }
+  },
+  "all_four_same_opening_identities": true,
+  "confirmed_limitations": [
+    "All four actual arena headers disable Syzygy.",
+    "No move histories in these game banks; cannot reconstruct tablebase-entry outcomes.",
+    "All four training summaries lack held-out purity receipt; game_epoch control mismatch and committed-config guard limitations are explicitly flagged."
+  ]
+}
