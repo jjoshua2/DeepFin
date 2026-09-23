@@ -1,0 +1,23 @@
+{
+  "status": "APPROVE_WITH_REPRODUCED_BASELINE_TEST_LIMITATION",
+  "review": "Independent parent inspected option forwarding, advertised check validation, failed-constructor cleanup, respawn, default wire behavior and resume drift rejection. No correctness findings. Six-man adjudication unchanged.",
+  "source_sha256": {
+    "chess_anti_engine/stockfish/uci.py": "8bce6a6242afdc5fa3121534d792f1dce6498ccc10e5c6ec4df6bdc153acecb8",
+    "scripts/gen_sf_rooted_corpus.py": "76fd61b6f3ff128e8e4f9ab1913b6c1fe655c9eebbaddd0813084ef7ede73b39",
+    "tests/test_stockfish_retain_option.py": "eca76157ed704a8c69c21805b0cd09ebc87c85443650cb57a007095b81259812"
+  },
+  "independent_suite": {
+    "passed": 81,
+    "failed": 1,
+    "files": [
+      "tests/test_stockfish_retain_option.py",
+      "tests/test_stockfish_threads_option.py",
+      "tests/test_stockfish_child_reapability.py",
+      "tests/test_stockfish_uci_timeout.py",
+      "tests/test_stockfish_uci_desync.py"
+    ],
+    "failure": "test_the_guard_is_a_no_op_when_prctl_is_unavailable: inherited PDEATHSIG=15, expected0",
+    "baseline_reproduction": "Same single test fails identically on unchanged main source at4e8d463e1 in scale-compute-budget worktree.",
+    "bounds": "GPU hidden; OMP/MKL/OpenBLAS2; affinity16,17 nice19; no live process changes"
+  }
+}
