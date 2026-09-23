@@ -5,21 +5,58 @@ on:
 permissions:
   contents: read
 jobs:
-  snapshot:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 12
+    env:
+      BEND_NO_TELEMETRY: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           ref: 57bb9636e3e6fcfb6832bb2cd494279bacae4d38
-      - name: Archive tracked source only
+      - name: Apply exact authored runtime source
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p /tmp/pr5c-source
-          git archive HEAD | gzip > /tmp/pr5c-source/source.tar.gz
-          git rev-parse HEAD > /tmp/pr5c-source/revision.txt
-          sha256sum /tmp/pr5c-source/source.tar.gz > /tmp/pr5c-source/sha256.txt
-      - uses: actions/upload-artifact@v4
+          set -euo pipefail
+          mkdir -p /tmp/pr5c-build
+          python - <<'PY'
+          import base64,gzip,hashlib,json,subprocess
+          from pathlib import Path
+          rec=json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/git/blobs/c54655b55ec6b673994a5bd399bb59213c7919a7']))
+          packed=base64.b64decode(rec['content'])
+          Path('/tmp/pr5c-build/transferred.bin').write_bytes(packed)
+          assert hashlib.sha256(packed).hexdigest()=='80151cb56c2089436f78bd28d52b5a806037a59c93a23ce733e5049d412f91b4'
+          patch=gzip.decompress(packed)
+          assert hashlib.sha256(patch).hexdigest()=='451832e41f1fd841296519ebefdf5992193173282948a07196225b40494a54d0'
+          subprocess.run(['git','apply','--check','-'],input=patch,check=True)
+          subprocess.run(['git','apply','-'],input=patch,check=True)
+          subprocess.run(['git','add','-N','.'],check=True)
+          paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
+          assert len(paths)==5 and all(p.endswith('.bend') for p in paths)
+          Path('/tmp/pr5c-build/runtime.patch').write_bytes(patch)
+          Path('/tmp/pr5c-build/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths},indent=2))
+          PY
+          git diff --check
+      - uses: oven-sh/setup-bun@v2
         with:
-          name: deepfin-pr5c-source
-          path: /tmp/pr5c-source
-          retention-days: 7
+          bun-version: 1.4.2
+      - name: Verify pinned compiler and generate fresh coordinator C
+        run: |
+          set -o pipefail
+          single=native/bend_engine/standalone
+          revision="$(bun "$single/verify_compiler.js" --revision)"
+          repository="$(bun "$single/verify_compiler.js" --repository)"
+          git init -q /tmp/pr5c-compiler
+          git -C /tmp/pr5c-compiler fetch -q --depth=1 "$repository" "$revision"
+          git -C /tmp/pr5c-compiler checkout -q --detach FETCH_HEAD
+          bun "$single/verify_compiler.js" /tmp/pr5c-compiler | tee /tmp/pr5c-build/compiler.txt
+          bun /tmp/pr5c-compiler/bend2/main.ts native/bend_engine/multi_root/main.bend -o /tmp/pr5c-runner.c 2>&1 | tee /tmp/pr5c-build/build.txt
+          sha256sum /tmp/pr5c-runner.c > /tmp/pr5c-build/generated.txt
+          gzip -c /tmp/pr5c-runner.c > /tmp/pr5c-build/runner.c.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deepfin-pr5c-generated
+          path: /tmp/pr5c-build
+          retention-days: 30
