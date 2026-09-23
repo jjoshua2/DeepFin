@@ -212,10 +212,12 @@ def test_parent_passes_arm_only_env_through_launch(
         def poll(self) -> int:
             return 0
 
-    def fake_popen(*_args: object, **kwargs: object) -> FinishedChild:
+    def fake_popen(
+        *_args: object, env: dict[str, str], cwd: Path, **_kwargs: object,
+    ) -> FinishedChild:
         index = len(launches)
-        launches.append(dict(kwargs["env"]))  # type: ignore[arg-type]
-        output_dir = Path(kwargs["cwd"])  # type: ignore[arg-type]
+        launches.append(dict(env))
+        output_dir = cwd
         arm = thp.ORDER[index]
         thp.atomic_json(
             output_dir / f"arm_{index}.json",
