@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Host-overlap runner preparation](2026-09-22-host-overlap-runner.md) | Frozen-runtime CPU qualification and bounded OFF/ON GPU pair tooling; no full-stream or GPU launch yet |
 | [Bend UCI interface](2026-09-20-bend-uci-interface.md) | Opt-in bounded UCI frontend, actual native search/client checks and stop isolation; no full-UCI, GPU or strength claim |
 | [Bend optional claims](2026-09-20-bend-claim-options.md) | Explicit zero-valued claim choice preserving legal continuations; native and host contracts, opt-in only |
 | [Bend search draws](2026-09-19-bend-search-draws.md) | History-aware automatic leaf draws, terminal-zero cache and native backup; optional claims remain separate |
