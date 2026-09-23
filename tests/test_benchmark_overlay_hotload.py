@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import time
+from typing import Any
 
 import pytest
 
@@ -86,7 +87,7 @@ def test_admission_is_explicit_fresh_and_bound_to_plan(tmp_path: Path) -> None:
     plan_path.write_text("{}")
     plan = {"status": "PREPARED_HELD_FOR_UNCONTENDED_CPU_SLOT"}
     admission_path = tmp_path / "admission.json"
-    admission = {
+    admission: dict[str, Any] = {
         "status": "ADMITTED", "plan_sha256": hotload.sha256(plan_path),
         "admitted_by": "operator", "quiet_workload_evidence": "quiet slot checked",
         "admitted_unix_seconds": time.time(),
@@ -110,10 +111,10 @@ def test_resource_and_stop_gates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     real_read_text = Path.read_text
     available_kib = [41943040]
 
-    def meminfo(path: Path, *args: object, **kwargs: object) -> str:
+    def meminfo(path: Path, *_args: object, **_kwargs: object) -> str:
         if str(path) == "/proc/meminfo":
             return f"MemAvailable: {available_kib[0]} kB\n"
-        return real_read_text(path, *args, **kwargs)
+        return real_read_text(path)
 
     monkeypatch.setattr(Path, "read_text", meminfo)
     monkeypatch.setattr(hotload.shutil, "disk_usage", lambda path: type("Disk", (), {"free": 150 * hotload.GIB})())

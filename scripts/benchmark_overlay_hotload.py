@@ -204,13 +204,13 @@ def cleanup_owned_child(process: subprocess.Popen[bytes], starttime: int | None)
 
 
 def _jsonable(value: Any) -> Any:
-    if dataclasses.is_dataclass(value):
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return _jsonable(dataclasses.asdict(value))
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_jsonable(item) for item in value]
-    if hasattr(value, "tolist"):
+    if not isinstance(value, type) and hasattr(value, "tolist"):
         return value.tolist()
     if isinstance(value, Path):
         return str(value)
@@ -263,19 +263,19 @@ def child(
     entries = plan["fixture"]["shards"]
     paths = [Path(entry["path"]) for entry in entries]
     manifest = load_json(paths[0] / storage.MANIFEST)
-    context = storage.BaseSeals([manifest["base_seal"]])
+    context = getattr(storage, "BaseSeals")([manifest["base_seal"]])
     receipt = Path(plan["fixture"]["receipt"])
     if hasattr(context, "bind_roots"):
         context.bind_roots([paths[0].parent, context.root])
         context.bind_receipt(receipt, storage._receipt_stamp(receipt))
     calls: list[str] = []
-    original = storage._open_target_manifest
+    original = getattr(storage, "_open_target_manifest")
 
     def counted(path: Path, manifest: Any, *, seal: Any = None) -> Any:
         calls.append(str(path))
         return original(path, manifest, seal=seal)
 
-    storage._open_target_manifest = counted
+    setattr(storage, "_open_target_manifest", counted)
     stages: dict[str, float] = {}
     result: dict[str, Any] = {"arm": arm, "index": index, "status": "FAILED"}
     started = time.monotonic()

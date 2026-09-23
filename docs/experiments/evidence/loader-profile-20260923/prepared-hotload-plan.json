@@ -1,7 +1,7 @@
 {
   "status": "PREPARED_HELD_FOR_UNCONTENDED_CPU_SLOT",
   "hypothesis": "PR810 reduces repeated schema-2 semantic validation during actual GameAwareEpochBuffer._load_one while preserving decoded arrays and plan.",
-  "runner_sha256": "cd937edac499a926fe8263223a66b7b6b9955d43b0891ab0cd2f6f0ea4767fd8",
+  "runner_sha256": "35dae760ec5f048319640f08bb4f8bf79b5cce5549ff3be76cfa5488b65aca62",
   "sources": {
     "control": {
       "path": "/tmp/deepfin-factorial58-runtime",

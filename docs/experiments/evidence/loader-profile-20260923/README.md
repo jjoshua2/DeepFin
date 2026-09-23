@@ -2,10 +2,16 @@
 
 The pinned [plan](prepared-hotload-plan.json) and
 [`scripts/benchmark_overlay_hotload.py`](../../../../scripts/benchmark_overlay_hotload.py)
-are held for a quiet CPU slot. No shard comparison has run. The `check` command
+are held for any future quiet CPU slot. No comparison has run with this revised
+runner and plan. The `check` command
 verifies the runner, Python and package versions, both clean source commits and
 file hashes, qualification receipt hash, eight-shard roster and row count. It
 does not open shard contents.
+
+The original ABBA measurement, its exact executed runner and plan bytes, and
+the readout are preserved in [PR #838](https://github.com/jjoshua2/DeepFin/pull/838).
+This plan pins the later tooling revision for any future run; it is not the
+executed plan from that measurement.
 
 ```bash
 /usr/bin/python3 scripts/benchmark_overlay_hotload.py check \
