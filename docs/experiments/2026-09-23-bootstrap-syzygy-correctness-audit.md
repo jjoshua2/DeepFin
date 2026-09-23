@@ -264,3 +264,39 @@ natural repetition draw involving pre-opening history; it admits only the
 explicit limited draw case, never an unproved decisive result. No completed
 GPU result is claimed at registration. Any later second-seed release must also
 amend its dependency from the old held E_D item; it is not released here.
+
+## September 23 reboot recovery and completed E–D readout
+
+Post-reboot inspection found both experiments completed before the reboot:
+E at 03:42:03 UTC, and the corrected match at 04:05:28 UTC. Their outer
+scheduler terminal receipts both have return code zero; the supervisor logged
+`QUEUE_IDLE` at 04:05:48 UTC. No interrupted epoch remains to resume.
+E completed all 58,090,688 rows and 113,459 updates at seed 121. Preserve its
+checkpoint rather than rerunning a completed epoch.
+
+Independent receipt verification checked all 105 E-linked and 16 arena-linked
+file hashes, including donor checkpoints and the match bank/PGN/results, with
+no mismatch. The full 256-game/128-pair bank rederives a score of 133/256
+(51.953125%), paired standard error 0.02049188, and **E–D +13.58 Elo,
+95% interval [-14.35, +41.68]**. The strict arena recorded 164,767 search probes
+and 120,037 hits, and completed all pairs without truncation. This qualifies
+this particular arena execution beyond the earlier CPU fixtures.
+
+The original SF-free preregistration states that a nonnegative point estimate
+supports provisional E for its collection-cost benefit, while neither sign
+establishes universal teacher usefulness. This result meets that screen's
+provisional-E rule. It does not establish a strength gain, show SF never helps,
+or decide whether cheap/targeted SF corrections are valuable. The first-seed
+contrast uses the same registered policy recipe; bounded decoded checks found
+policy parity, while the value mixture changed;
+it is conditional on these checkpoints and the corrected Syzygy protocol.
+The expensive second seed remains held, consistent with the user's instruction;
+no sample extension is made to chase significance.
+
+Recovery verified the external data mount and available storage. The four
+replacement Sol 6 xhigh lanes cover receipt verification, a CPU-only NumPy THP
+pilot and its independent review, and the experimental BT4 generation/writer
+integration. New pilot launches require their own frozen admission; restoring
+workers does not imply a new training run or deployment of unmerged fixes.
+
+The [independent recovery receipt](evidence/bootstrap-syzygy-audit-20260923/reboot-factorial-readout.json) banks the exact preregistration quote, input hashes and recomputed statistics.
