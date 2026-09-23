@@ -42,3 +42,13 @@ if(BEND_BATCH_TESTS)
   set_property(TARGET batch-bf16-staging PROPERTY CXX_STANDARD 20)
   target_link_libraries(batch-bf16-staging PRIVATE "${TORCH_LIBRARIES}")
 endif()
+
+# Opt-in async cohort worker. Existing standalone and batch targets default off.
+option(BEND_ASYNC_BATCH "Link CPU asynchronous cohort batch execution" OFF)
+if(BEND_ASYNC_BATCH)
+  if(BEND_CUDA_MODEL)
+    message(FATAL_ERROR "Async cohorts are CPU-qualified only; CUDA is unsupported")
+  endif()
+  target_sources(${BEND_TARGET_NAME} PRIVATE ../batch_backend/async_batch.cpp)
+  target_compile_definitions(${BEND_TARGET_NAME} PRIVATE DEEPFIN_ASYNC_BATCH)
+endif()
