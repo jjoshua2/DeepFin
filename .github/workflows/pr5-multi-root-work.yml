@@ -3,23 +3,165 @@ on:
   push:
     branches: [work/pr5-multi-root-20260922]
 permissions:
-  contents: read
+  contents: write
+  actions: read
 jobs:
-  snapshot:
+  qualify:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: .
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      TORCHINDUCTOR_COMPILE_THREADS: '1'
+      BEND_NO_TELEMETRY: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           ref: 31f376752d0baea75a6fbd65bf59f8bd1d92202c
-      - name: Preserve tracked source and identity
+      - name: Reconstruct exact authored source with integrity gate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p /tmp/pr5-source
-          git archive HEAD | gzip > /tmp/pr5-source/source.tar.gz
-          git rev-parse HEAD > /tmp/pr5-source/revision.txt
-          sha256sum /tmp/pr5-source/source.tar.gz > /tmp/pr5-source/sha256.txt
-      - uses: actions/upload-artifact@v4
+          set -euo pipefail
+          mkdir -p /tmp/pr5-evidence
+          python - <<'PY'
+          import base64,gzip,hashlib,json,subprocess
+          from pathlib import Path
+          shas=['d63654b121fe05f29edc39e47c6fee70e69e9460','f00641492cc3064322224aa8829f51e0509f1e34','c8b84a0f43eee33ee2b9586fb3abda615156271e']
+          parts=[]
+          for i,sha in enumerate(shas):
+              data=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+              raw=base64.b64decode(data['content'])
+              Path(f'/tmp/pr5-evidence/transferred-{i}.bin').write_bytes(raw)
+              text=base64.b64encode(raw).decode()
+              if i==0:
+                  text=text.replace('KNnjsiGh','KNjsiGh')
+                  raw=base64.b64decode(text+'===')
+              parts.append(raw)
+          compressed=b''.join(parts)
+          assert hashlib.sha256(compressed).hexdigest()=='89446de19ff241339ed962df954750456534f62205e39847c5591d76ad9b4069', hashlib.sha256(compressed).hexdigest()
+          patch=gzip.decompress(compressed)
+          assert hashlib.sha256(patch).hexdigest()=='0cb52d8c33f06b66bd9adf63f84929b0ca93ec3de09ecc729e34e1960183ca35'
+          subprocess.run(['git','apply','--check','-'],input=patch,check=True)
+          subprocess.run(['git','apply','-'],input=patch,check=True)
+          subprocess.run(['git','add','-N','.'],check=True)
+          subprocess.run(['git','diff','--check'],check=True)
+          paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
+          assert len(paths)==10 and not any(p.startswith('.github/') for p in paths)
+          Path('/tmp/pr5-evidence/qualified.patch').write_bytes(patch)
+          Path('/tmp/pr5-evidence/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths},indent=2))
+          PY
+      - uses: actions/setup-python@v5
         with:
-          name: deepfin-pr5-source
-          path: /tmp/pr5-source
-          retention-days: 7
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.12.10
+      - name: Locked CPU dependencies
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Static and cheap regression gates
+        run: |
+          set -o pipefail
+          bash scripts/lint.sh 2>&1 | tee /tmp/pr5-evidence/lint.txt
+          bash scripts/lint.sh native/bend_engine/multi_root/verify.py 2>&1 | tee /tmp/pr5-evidence/native-lint.txt
+          python -m pytest tests/test_bend_multi_root.py tests/test_bend_async_search.py tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py -q --junitxml=/tmp/pr5-evidence/tests.xml | tee /tmp/pr5-evidence/tests.txt
+          bash -n native/bend_engine/multi_root/{build,qualify}.sh
+      - name: Verify pinned compiler and generate the actual Bend cohort runner
+        run: |
+          set -o pipefail
+          single=native/bend_engine/standalone
+          revision="$(bun "$single/verify_compiler.js" --revision)"
+          repository="$(bun "$single/verify_compiler.js" --repository)"
+          git init -q /tmp/pr5-compiler
+          git -C /tmp/pr5-compiler fetch -q --depth=1 "$repository" "$revision"
+          git -C /tmp/pr5-compiler checkout -q --detach FETCH_HEAD
+          bun "$single/verify_compiler.js" /tmp/pr5-compiler | tee /tmp/pr5-evidence/compiler.txt
+          bun /tmp/pr5-compiler/bend2/main.ts native/bend_engine/multi_root/main.bend -o /tmp/pr5-runner.c 2>&1 | tee /tmp/pr5-evidence/bend-build.txt
+          sha256sum /tmp/pr5-runner.c > /tmp/pr5-evidence/generated.txt
+      - name: Full deterministic search and serial parity matrix
+        run: |
+          set -o pipefail
+          clang -std=c11 -O3 -DLEGAL_ORACLE -I "$PWD" native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/pr5-oracle
+          bash native/bend_engine/multi_root/qualify.sh /tmp/pr5-runner.c /tmp/pr5-oracle /tmp/pr5-matrix 2>&1 | tee /tmp/pr5-evidence/matrix.txt
+          mkdir /tmp/pr5-evidence/matrix
+          find /tmp/pr5-matrix -name '*.json' | while read -r f; do cp "$f" "/tmp/pr5-evidence/matrix/$(basename "$(dirname "$f")")-$(basename "$f")"; done
+      - uses: actions/download-artifact@v4
+        with:
+          name: deepfin-pr1-validation
+          run-id: 35759888019
+          github-token: ${{ github.token }}
+          path: /tmp/pr5-prior
+      - name: Recover exact fixture and export batch four once
+        run: |
+          set -o pipefail
+          tar -xzf /tmp/pr5-prior/native-build.tar.gz -C /tmp
+          echo '9654a1e334fb5f875d164b82068846bfeab3df2ef2a994737e44789c2623ee6e  /tmp/pr1-model/fixture.pt2' | sha256sum -c -
+          python - <<'PY'
+          from pathlib import Path
+          import torch
+          from native.bend_engine.neural_probe.checkpoint import load_checkpoint,export_checkpoint
+          assert str(torch.__version__)=='2.14.0+cpu'
+          torch.set_num_threads(2)
+          Path('/tmp/pr5-model').mkdir()
+          loaded=load_checkpoint(Path('/tmp/pr1-model/fixture.pt'))
+          export_checkpoint(loaded,Path('/tmp/pr5-model/b4.pt2'),batch=4,device='cpu',device_index=0)
+          PY
+      - name: Actual CPU selected-leaf model at batch one and four
+        run: |
+          set -o pipefail
+          single=native/bend_engine/standalone
+          prefix="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+          for batch in 1 4; do
+            package=/tmp/pr1-model/fixture.pt2
+            if test "$batch" = 4; then package=/tmp/pr5-model/b4.pt2; fi
+            output=/tmp/pr5-real-$batch; mkdir "$output"
+            bun "$single/bind_model.js" --batch-header "$package" "$output/model_contract.h" > /tmp/pr5-evidence/binding-$batch.json
+            cmake -S "$single" -B "$output/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH="$prefix" -DBEND_GENERATED_C=/tmp/pr5-runner.c -DBEND_CONTRACT_DIR="$output" -DBEND_TARGET_NAME=deepfin-bend-multi-root
+            cmake --build "$output/build" --parallel 1
+            python -m native.bend_engine.multi_root.verify --binary "$output/build/deepfin-bend-multi-root" --oracle /tmp/pr5-oracle --batch "$batch" --channels 175 --package "$package" --checkpoint /tmp/pr1-model/fixture.pt --report /tmp/pr5-evidence/real-$batch.json
+            ldd "$output/build/deepfin-bend-multi-root" > /tmp/pr5-evidence/libraries-$batch.txt
+            if grep -qi libpython /tmp/pr5-evidence/libraries-$batch.txt; then exit 2; fi
+            sha256sum "$output/build/deepfin-bend-multi-root" >> /tmp/pr5-evidence/executables.txt
+          done
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.loads(Path('/tmp/pr5-evidence/real-1.json').read_text())
+          b=json.loads(Path('/tmp/pr5-evidence/real-4.json').read_text())
+          assert a['root_results']==b['root_results']
+          Path('/tmp/pr5-evidence/real-parity.json').write_text(json.dumps({'status':'passed','paired_root_results_equal':True,'speed_or_strength_qualified':False}))
+          PY
+      - name: Publish only qualified feature source
+        id: publish
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -z "$(git ls-remote --heads origin refs/heads/feat/native-multi-root-20260922)"
+          git switch -c feat/native-multi-root-20260922
+          git add native/bend_engine/multi_root tests/test_bend_multi_root.py docs/experiments/2026-09-22-native-multi-root.md
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'native: batch independent Bend search roots through a bounded cohort runner'
+          git push origin HEAD:refs/heads/feat/native-multi-root-20260922
+          git rev-parse HEAD | tee /tmp/pr5-evidence/published-head.txt
+      - name: Preserve bounded failure diagnostics
+        if: always()
+        run: |
+          if test -f /tmp/pr5-runner.c; then gzip -c /tmp/pr5-runner.c > /tmp/pr5-evidence/runner.c.gz; fi
+          if test -d /tmp/pr5-matrix; then mkdir -p /tmp/pr5-evidence/matrix; find /tmp/pr5-matrix -name '*.json' | while read -r f; do cp "$f" "/tmp/pr5-evidence/matrix/$(basename "$(dirname "$f")")-$(basename "$f")"; done; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deepfin-pr5-cohort-qualification
+          path: /tmp/pr5-evidence
+          retention-days: 30
+      - name: Require completed qualification and publication
+        if: always()
+        env:
+          PUBLISHED: ${{ steps.publish.outcome }}
+        run: test "$PUBLISHED" = success
