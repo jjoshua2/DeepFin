@@ -1,14 +1,14 @@
-# Native asynchronous request-lifecycle foundation (PR4a)
+# Native asynchronous lifecycle and search integration
 
-This is an **isolated CPU-singleton execution boundary**, not an asynchronous
-chess engine. It prepares the request/buffer-lifetime part of the neural-search
-scaling plan's PR4. It is not wired into `standalone/main.bend`, the engine CMake target, UCI `stop`,
-`movetime`, `Search.resume`, or PR1 accounting. Existing engine behavior is unchanged.
+PR4a provides the isolated CPU-singleton execution boundary and component tests.
+PR4b composes it with the actual Bend standalone engine, including UCI stop,
+movetime, Search.resume and PR1 accounting. **Synchronous execution remains the
+default.** See [full engine integration](#full-engine-integration-pr4b) below.
+The component probes remain separate qualification scopes, not fallback engines.
 
-The patch is based on PR #832 at
-`3e308ec5c491cd9f427e923d63c2f80ac18598b7`. The lifecycle tests need no checkpoint, LibTorch, CUDA device or network access.
-A separate opt-in target below executes an actual CPU model through the same
-worker adapter. Neither target changes the engine or supplies a fallback evaluator.
+The lifecycle foundation was based on #832; the composed application is based on
+#836 at `a63409180bc337591a97d8877c5dbc86483381c6`. Lifecycle tests need no model.
+The separate model and application checks use the exact trusted CPU checkpoint.
 
 ## Ownership and completion contract
 
@@ -40,7 +40,7 @@ result. A matching terminal result is consumed at most once.
 
 Cancellation is logical. It does **not** preempt a callback, refund a reservation,
 free a slot, or publish its output. Even a cancelled queued admission executes;
-its committed work must remain observable when accounting is integrated. Drain
+its committed work remains observable in the application accounting. Drain
 can release a cancelled slot only after the callback has returned. Failure takes
 precedence over cancellation and cannot be hidden by it.
 
@@ -57,7 +57,7 @@ are unsupported. Sequential repeated shutdown is harmless; future submissions
 fail. This patch makes no shutdown-latency or crash-recovery guarantee.
 
 The C++ admission API returns zero when occupied. The Bend glue treats an attempted
-second admission as a fatal owner-contract violation: its future state machine
+second admission as a fatal owner-contract violation: the owning state machine
 must poll/drain the current identity before submitting another request. Pending
 polls do not wait for the model, but short mutex contention is possible; this is
 not a hard-real-time or wait-free interface.
@@ -75,8 +75,8 @@ BUN=bun CC=clang CXX=clang++ PYTHON=python \
   /path/to/checked-bend-source /tmp/deepfin-async-check
 ```
 
-`DEEPFIN_BEND_ASYNC=1` enables **this probe**, not the standalone engine. Do not use
-it as a production-adoption switch. The verifier also tests disabled/malformed
+`DEEPFIN_BEND_ASYNC=1` enables this probe and, with PR4b, the CPU-singleton
+standalone engine. It is an explicit experimental option, not production adoption. The verifier also tests disabled/malformed
 values and a binary without the native implementation. No real model is loaded.
 
 The script runs normal and instrumented checks. C++ worker/adapter code receives
@@ -136,24 +136,61 @@ No tolerance is selected from the observed result. Test failures are errors, not
 skipped qualification. Raw traces stay in a temporary directory and are not part
 of published evidence. This is not a speed or actual-chess-input test.
 
-## Remaining PR4 integration
+## Full engine integration (PR4b)
 
-Keep this foundation separate from the engine switch until all of the following
-are implemented and qualified together:
+Build the normal bound CPU-F32 batch-one neural product, then opt in at launch:
 
-1. Bend-owned awaiting/draining states carrying both the original leaf ticket and
-   the execution token. Only matching, non-cancelled, numerically valid results may
-   enter `Search.resume`; backup and reservation release must occur exactly once.
-2. UCI `stop`, deadlines, position replacement, readiness and quit handling while
-   inference is pending. A stopped search must emit one result promptly, retain
-   physical work until drain, and prevent late completion from updating a new tree.
-3. PR1 accounting for submitted, pending, completed, accepted, cancelled and failed
-   work. A response at stop may have unfinished physical work; do not report it as
-   a fully reconciled equal-budget comparison. Retain separate drain reconciliation.
-4. Real CPU checkpoint parity and deterministic slow-inference UCI regressions,
-   then separately qualified GPU/model execution. Existing arena limits, CUDA
-   qualification and production Gumbel parity are not changed by this patch.
+```sh
+bash native/bend_engine/standalone/build_neural.sh /tmp/new-engine \
+  /path/to/checkpoint.pt2 /path/to/libtorch/share/cmake /path/to/verified/bend
+DEEPFIN_BEND_MODEL_PACKAGE=/path/to/checkpoint.pt2 DEEPFIN_BEND_ASYNC=1 \
+  /tmp/new-engine/neural/deepfin-bend-neural --threads 1
+```
 
-An initial full-engine wiring draft did not complete bounded local compiler
-qualification and is **excluded** from this deliverable. The included files are
-self-reviewed only, not independently reviewed or formally proved.
+Without the flag, the synchronous reference path remains active. There is no CUDA
+UCI support or multi-root scheduler in this integration. Bend owns encoding,
+legal-policy normalization, rules, selection, identities and every Search.resume.
+The worker receives a private tensor snapshot, never the tree or played history.
+
+Each valid go receives a process-monotonic search_epoch, with no reset at position
+or ucinewgame and no wraparound. While awaiting inference, readiness, stop and
+movetime remain active. Stop publishes one decision/bestmove using completed work
+or an explicitly marked legal fallback, and logically cancels the pending request.
+It retains only identity/accounting metadata for physical retirement, not the old
+tree. Replacement roots/searches are allowed after stop, but dispatch waits for
+old physical completion. A replacement's own wall clock includes that wait.
+Repeated stop cannot duplicate the result. Quit joins the pending callback before
+returning; it does not promise to kill a wedged model or emit a bestmove on quit.
+
+`neural_work` is the decision-time snapshot. Dispatched calls are irrevocable
+worker callback reservations, not confirmed execution. Neural budgets are charged
+at admission and never refunded on cancellation. A cancelled pending row has
+cancelled=1 and unconfirmed=1 at decision, not executed=1 or accepted=1.
+`neural_retired` is a distinct physical-cleanup record tagged with the OLD epoch.
+Its wall time includes drain; do not treat it as time-to-bestmove, sum it with the
+snapshot, or attribute it to the next search. Successful cleanup increments
+executed/wasted only; failed cleanup records failed-forward work and exits.
+The benchmark rejects cancelled/unconfirmed comparisons and ignores the distinct
+retirement prefix as a primary decision. Async backend time remains null: polling
+elapsed time is not a measurement of GPU or inference service time.
+
+Opt-in whole-application checks link the same generated engine C and actual worker
+to `search_gate.cpp` instead of LibTorch. Dedicated pipes block/release physical
+completion; neither pipes nor test callback are in the shipped product. Tests
+require readiness/stop before release, safe queued replacement, timer checks across
+buffered commands, shutdown drain, bad-output failures and a synchronous negative
+control. Work/epoch probes verify reconciliation and exhaustion separately.
+
+```sh
+bash native/bend_engine/async_probe/qualify_search.sh \
+  /path/to/verified/bend /path/to/build/engine.c /tmp/new-async-search-check
+```
+
+Real selected-leaf neural parity is checked with the existing standalone neural
+verifier in both DEEPFIN_BEND_ASYNC=0 and 1 modes, using the same package/oracles.
+[The experiment record](../../../docs/experiments/2026-09-22-native-async-search.md)
+contains the completed hosted qualification and limitations. These are CPU fixture
+functional checks, not throughput or playing-strength evidence. Encoding, selection,
+diagnostics, stdout backpressure and shutdown joins remain synchronous. The
+4,096-node arena and production Gumbel gap are unchanged; trained-model and CUDA
+qualification remain separate. Self-reviewed, not independently reviewed/proven.

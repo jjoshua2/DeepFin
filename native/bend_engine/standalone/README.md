@@ -9,6 +9,10 @@ model through native LibTorch/AOTI. That product additionally needs the package
 and native libraries, but still no Python runtime. Model math and training are
 not yet Bend-authored; the old Python tools remain external migration references.
 
+**Optional CPU async mode:** the native neural product accepts
+`DEEPFIN_BEND_ASYNC=1` for pending-forward stop/readiness and separate physical
+retirement. Synchronous remains default. See [lifecycle and full engine checks](../async_probe/README.md#full-engine-integration-pr4b).
+
 ## Ownership, not just a wrapper
 
 | Responsibility | Implementation |
@@ -477,11 +481,12 @@ reference, and subsequent selected paths/result counts/best moves to diagnostic
 PUCT. It does not inspect every final tree field or prove all possible positions.
 All verifiers/exporters are external, not launched by the engine.
 
-Limits remain deliberate: synchronous CPU batch-one forwards are **not
-preemptible**. `isready`, `stop`, `quit` and time limits can wait for a forward,
-encoding, or blocked diagnostic output. No hard-stop latency guarantee is made.
-Policy maps are currently rebuilt per leaf, and tensor lists are copied across
-the boundary; no speed claim or optimized memory/batching claim is implied.
+Limits remain deliberate: CPU batch-one forwards themselves are not preemptible.
+In default synchronous mode, readiness/stop/deadlines may wait for a forward. In
+opt-in async mode they are processed while the copied forward runs, but encoding,
+selection and blocked diagnostic output can still delay them. Quit joins physical
+work. No hard-stop latency guarantee is made. Policy maps and packed buffers are
+now reused as described below; legal entries/history inputs remain leaf-specific.
 The backend has a 65,536-forward process limit. No CUDA, batched scheduler,
 subtree reuse, production Gumbel parity, trained-model strength or training
 migration is established. Existing material-mode regressions and perft depths
