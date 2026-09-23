@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/mnt/data/header-toolchain/bun",
+    "native/bend_engine/standalone/proofs/extras/focused.js",
+    "/mnt/data/header-toolchain/bend",
+    "--report",
+    "/mnt/data/header-evidence/focused.json"
+  ],
+  "timeout": 180,
+  "exit_code": 0,
+  "elapsed_seconds": 34.98818448099996
+}

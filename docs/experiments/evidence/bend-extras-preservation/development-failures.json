@@ -1,0 +1,162 @@
+[
+  {
+    "receipt": "consumer-final.status.json",
+    "command": [
+      "/mnt/data/header-toolchain/bun",
+      "/mnt/data/header-toolchain/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/extras/consumer.bend"
+    ],
+    "exit_code": null,
+    "outcome": "outer container tool timed out; no completed checker verdict captured",
+    "scope": "mixed concrete-count draft before fully symbolic consumer; not final source",
+    "log_bytes": 0,
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "excerpt": "\n...\n"
+  },
+  {
+    "receipt": "extras-core-ordered.status.json",
+    "command": [
+      "/mnt/data/header-toolchain/bun",
+      "/mnt/data/header-toolchain/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/extras/Actual.bend"
+    ],
+    "timeout": 180,
+    "exit_code": 1,
+    "elapsed_seconds": 5.756988924999973,
+    "log_bytes": 13632466,
+    "log_sha256": "a94f426220755a74b1bd6b3d348f2ef5ce4ee62b140e5a906103a823b3ec26d5",
+    "excerpt": "Error:\n- expected : a decreasing self-call (arguments are read left to right: each passed unchanged until one shrinks)\n- observed : value\nContext:\n- a      : Array<U64>\n- p      : Nat\n- k      : Nat\n- q      : U32\n- shape  : {../storage/Observe.shape\n...\nNode{../storage/Observe.Leaf{}, ../storage/Observe.Leaf{}}, ../storage/Observe.Node{../storage/Observe.Leaf{}, ../storage/Observe.Leaf{}}}}}}}}}}}}}}}}}} : ../storage/Observe.Shape}\nLocation: value\n45 |           Sep.value(Array.get(U64,Build.black(c,sq),q)),Sep.value(Array.get(U64,O.pack(c),q)),\n46>|           value(Build.black(c,sq),p,1n+k,q,\n47 |             Equal.trans(O.Shape,O.shape(Build.black(c,sq)),O.shape(O.pack(c)),C.full(17n),Build.extra_shape(c,sq),sh),Facts.tail(p,k,budget),qb,e),\n"
+  },
+  {
+    "receipt": "extras-core.status.json",
+    "command": [
+      "/mnt/data/header-toolchain/bun",
+      "/mnt/data/header-toolchain/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/extras/Actual.bend"
+    ],
+    "timeout": 180,
+    "exit_code": 1,
+    "elapsed_seconds": 5.443002766000006,
+    "log_bytes": 6816568,
+    "log_sha256": "3ee50762d4f765b29ed72a66377180d4cb2461bc53f93c721e88275aee1c961d",
+    "excerpt": "Error:\n- expected : a defined name\n- observed : value\nContext:\n- c      : ../storage/Observe.Cells\n- p      : Nat\n- k      : Nat\n- q      : U32\n- shape  : {../storage/Observe.shape(../storage/Observe.pack(c)) == ../storage/Observe.Node{../storage/Obs\n...\n == True{} : Bool}\n- e      : {Bool.or(Cmp.is_lt(U32.cmp(q, 256)), Cmp.is_le(U32.cmp(512, q))) == True{} : Bool}\n- valid  : {Cmp.is_lt(Nat.cmp(k, 64n)) == True{} : Bool}\n- sq     : U32\nLocation: model\n31 |         Sep.value(Array.get(U64,Build.black(c,sq),q)),Sep.value(Array.get(U64,O.pack(c),q)),\n32>|         value(Build.black(c,sq),p,1n+k,q,\n33 |           Equal.trans(O.Shape,O.shape(Build.black(c,sq)),O.shape(O.pack(c)),C.full(17n),Build.extra_shape(c,sq),shape),Facts.tail(p,k,budget),qb,e),\n"
+  },
+  {
+    "receipt": "extras-public-symbolic.status.json",
+    "command": [
+      "/mnt/data/header-toolchain/bun",
+      "/mnt/data/header-toolchain/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/extras/consumer.bend"
+    ],
+    "timeout": 180,
+    "exit_code": null,
+    "timed_out": true,
+    "elapsed_seconds": 180.0270083150001,
+    "log_bytes": 0,
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "excerpt": "\n...\n"
+  },
+  {
+    "receipt": "extras-public.status.json",
+    "command": [
+      "/mnt/data/header-toolchain/bun",
+      "/mnt/data/header-toolchain/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/extras/consumer.bend"
+    ],
+    "timeout": 180,
+    "exit_code": null,
+    "timed_out": true,
+    "elapsed_seconds": 180.022838052,
+    "log_bytes": 0,
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "excerpt": "\n...\n"
+  },
+  {
+    "receipt": "focused-attempt1.status.json",
+    "command": [
+      "/mnt/data/header-toolchain/bun",
+      "native/bend_engine/standalone/proofs/extras/focused.js",
+      "/mnt/data/header-toolchain/bend",
+      "--report",
+      "/mnt/data/header-evidence/focused.json"
+    ],
+    "timeout": 240,
+    "exit_code": 1,
+    "elapsed_seconds": 13.188443048999943,
+    "log_bytes": 6817491,
+    "log_sha256": "a6110ce379b83c2740a4abf0c37d2b5413307b1004aeb39404d01218bc54648b",
+    "excerpt": "PASS rejection: include-first-extras-slot\nPASS rejection: include-last-extras-slot\n33 |   fs.cpSync(path.join(root,'proofs'),path.join(r,'proofs'),{recursive:true});return {e,r,s:path.join(r,'proofs/extras')};}\n34 | function reject(name,entry,edit,lo\n...\n : {Bool.or(Cmp.is_lt(U32.cmp(q, 256)), Cmp.is_le(U32.cmp(512, q))) == True{} : Bool}\\nLocation: LAWS.bounded_extras_read\\n6 | def Laws.bounded_extras_read(a,n,k,q,shape,budget,qb,outside):\\n7>|   Actual.pair(a,n,k,q,shape,budget,qb,outside)\\n8 |\",\n   expected: /Location: Laws.bounded_extras_read/,\n   operator: \"match\",\n       diff: \"simple\",\n       code: \"ERR_ASSERTION\"\n\n      at reject (/mnt/data/header-work/native/bend_engine/standalone/proofs/extras/focused.js:38:10)\n\nBun v1.4.2 (Linux x64)\n"
+  },
+  {
+    "receipt": "focused-final.status.json",
+    "command": [
+      "/mnt/data/header-toolchain/bun",
+      "native/bend_engine/standalone/proofs/extras/focused.js",
+      "/mnt/data/header-toolchain/bend",
+      "--report",
+      "/mnt/data/header-evidence/focused.json"
+    ],
+    "timeout": 240,
+    "exit_code": 1,
+    "elapsed_seconds": 29.787149160000126,
+    "log_bytes": 1840,
+    "log_sha256": "7144599784d3dd21a42aab3bebe1468171653808abc7986e78a6ae21760f68e0",
+    "excerpt": "PASS rejection: include-first-extras-slot\nPASS rejection: include-last-extras-slot\nPASS rejection: remove-query-bound\nPASS rejection: allow-overlong-square-range\nPASS rejection: return-original-array\n33 |   fs.cpSync(path.join(root,'proofs'),path.joi\n...\n> Tables.extras(1n+p,sq,x),\n82>|         +c => Equal.trans(O.Shape,O.shape(Tables.extras(p,U32.inc(sq),black(c,sq))),O.shape(black(c,sq)),O.shape(O.pack(c)),\n83 |           extras(p,U32.inc(sq),black(c,sq)),extra_shape(c,sq)),R.reify(a))\n generatedMessage: false,\n     actual: false,\n   expected: true,\n   operator: \"==\",\n       diff: \"simple\",\n       code: \"ERR_ASSERTION\"\n\n      at reject (/mnt/data/header-work/native/bend_engine/standalone/proofs/extras/focused.js:38:10)\n\nBun v1.4.2 (Linux x64)\n"
+  },
+  {
+    "receipt": "lint-final.status.json",
+    "command": [
+      "bash",
+      "scripts/lint.sh"
+    ],
+    "timeout": 60,
+    "exit_code": 1,
+    "elapsed_seconds": 0.03214460499998495,
+    "log_bytes": 270,
+    "log_sha256": "075f269264e3508474d7b1d8537ac148a8c7b09c2625c0f158c7f9cbabe359dc",
+    "excerpt": "\n::: running lint tools in parallel\n\n::: ruff check\nenv: \u2018ruff\u2019: No such file or directory\n\n::: basedpyright\nscripts/lint.sh: line 135: basedpyright: command not found\n\n::: vulture (dead code, min confidence 80)\nscripts/lint.sh: line 116: vulture\n...\n\n::: running lint tools in parallel\n\n::: ruff check\nenv: \u2018ruff\u2019: No such file or directory\n\n::: basedpyright\nscripts/lint.sh: line 135: basedpyright: command not found\n\n::: vulture (dead code, min confidence 80)\nscripts/lint.sh: line 116: vulture: command not found\n"
+  },
+  {
+    "receipt": "primitive.status.json",
+    "command": [
+      "/mnt/data/header-toolchain/bun",
+      "/mnt/data/header-toolchain/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/extras/Primitive.bend"
+    ],
+    "timeout": 180,
+    "exit_code": -15,
+    "elapsed_seconds": 69.00836101499999,
+    "log_bytes": 0,
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "excerpt": "\n...\n"
+  },
+  {
+    "receipt": "producer-isolation.status.json",
+    "command": [
+      "/mnt/data/header-toolchain/bun",
+      "/mnt/data/header-toolchain/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/extras/Certified.bend"
+    ],
+    "timeout": 60,
+    "exit_code": null,
+    "timed_out": true,
+    "elapsed_seconds": 60.05404781800007,
+    "log_bytes": 0,
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "excerpt": "\n...\n"
+  },
+  {
+    "receipt": "public-depth-symbolic.status.json",
+    "command": [
+      "/mnt/data/header-toolchain/bun",
+      "/mnt/data/header-toolchain/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/extras/consumer.bend"
+    ],
+    "timeout": 120,
+    "exit_code": -15,
+    "elapsed_seconds": 67.78292527999997,
+    "log_bytes": 0,
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "excerpt": "\n...\n"
+  }
+]

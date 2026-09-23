@@ -1,0 +1,10 @@
+{
+  "command": [
+    "/mnt/data/header-toolchain/bun",
+    "/mnt/data/header-native-mutation/proofs/extras/verify_native.js",
+    "/mnt/data/header-toolchain/bend"
+  ],
+  "timeout": 90,
+  "exit_code": 1,
+  "elapsed_seconds": 4.097360612999864
+}

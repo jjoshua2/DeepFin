@@ -1,0 +1,7 @@
+{
+  "comparison": "PASS",
+  "source_controls": "All 14 exactly equal saved local records, including diagnostic hashes and classifications",
+  "native": "Entire native report equal except C compiler identity",
+  "complete_aggregate": "Newly executed unchanged parent wrapper plus new focused gate, not synthesized from historical reports",
+  "all_native_source_manifest_entries": 297
+}

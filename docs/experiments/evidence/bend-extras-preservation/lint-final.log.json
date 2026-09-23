@@ -1,0 +1,4 @@
+{
+  "original_sha256": "075f269264e3508474d7b1d8537ac148a8c7b09c2625c0f158c7f9cbabe359dc",
+  "raw_text": "\n::: running lint tools in parallel\n\n::: ruff check\nenv: \u2018ruff\u2019: No such file or directory\n\n::: basedpyright\nscripts/lint.sh: line 135: basedpyright: command not found\n\n::: vulture (dead code, min confidence 80)\nscripts/lint.sh: line 116: vulture: command not found\n"
+}
