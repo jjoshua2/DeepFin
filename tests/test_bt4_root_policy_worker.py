@@ -73,7 +73,7 @@ class FakeTablebase:
 
 def fake_tablebase(*, missing: bool = False) -> chess.syzygy.Tablebase:
     """Only this test seam presents the fake as an opened Syzygy handle."""
-    return cast(chess.syzygy.Tablebase, FakeTablebase(missing=missing))
+    return cast(chess.syzygy.Tablebase, cast(object, FakeTablebase(missing=missing)))
 
 
 def spec(tmp_path: Path, *, fen: str = SEVEN, max_plies: int = 8) -> worker.WorkerSpec:
