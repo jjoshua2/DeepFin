@@ -137,6 +137,8 @@ def test_root_retains_native_output_and_legal_mapping(fen: str) -> None:
     assert root.input_dtype == "float32"
     assert root.input_history_encoding == HISTORY
     assert root.history_rep_fix is HISTORY_REP_FIX
+    assert root.verified_session_sha256 is None
+    assert len(root.onnx_feed_sha256) == 64
     assert root.input_key == input_tensor_key(x)
     assert root.source_key == position_fingerprints(x[None], input_history_encoding=HISTORY)[0]
     assert not root.policy_t1.flags.writeable
