@@ -1,0 +1,100 @@
+name: Bend CI dependency audit
+on:
+  push:
+    branches: [fix/bend-ci-audit-20260923-1546]
+    paths: [.github/workflows/bend-ci-audit-20260923.yml]
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 4e8d463e1df6871a2b73b066c95506258d028800
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read current heads, checks and dependency trees
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/bend-ci-review
+          python3 - <<'PY'
+          import datetime, json, os, subprocess, urllib.parse, urllib.request
+          from pathlib import Path
+          out = Path('/tmp/bend-ci-review')
+          def get(path):
+              request = urllib.request.Request('https://api.github.com/repos/jjoshua2/DeepFin/' + path,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True, timeout=90).strip()
+          def pages(path, key=None):
+              rows = []
+              for page in range(1, 11):
+                  payload = get(path + ('&' if '?' in path else '?') + f'per_page=100&page={page}')
+                  batch = payload[key] if key else payload
+                  rows.extend(batch)
+                  if len(batch) < 100:
+                      return rows
+              raise RuntimeError('Pagination bound exceeded: ' + path)
+          scope = {828, 830, 831, 832, 836, 840, 847}
+          pulls = [p for p in pages('pulls?state=open') if 'bend' in p['title'].lower()
+                   or 'bend' in p['head']['ref'].lower() or p['number'] in scope]
+          main = get('git/ref/heads/main')['object']['sha']
+          report = {'started_at': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'main': main, 'prs': []}
+          refs = {'refs/audit/main': main}
+          for item in sorted(pulls, key=lambda p: p['number']):
+              p = get(f"pulls/{item['number']}")
+              if p['state'] != 'open':
+                  continue
+              assert p['head']['repo']['full_name'] == 'jjoshua2/DeepFin'
+              head = get('git/ref/heads/' + urllib.parse.quote(p['head']['ref'], safe='/'))['object']['sha']
+              base = get('git/ref/heads/' + urllib.parse.quote(p['base']['ref'], safe='/'))['object']['sha']
+              row = {'number': p['number'], 'title': p['title'], 'branch': p['head']['ref'], 'head': head,
+                     'base_branch': p['base']['ref'], 'base': base, 'github_mergeable': p['mergeable'],
+                     'changed_files': p['changed_files'], 'checks': []}
+              seen = set()
+              runs = pages('actions/runs?event=pull_request&head_sha=' + head, 'workflow_runs')
+              for r in runs:
+                  if r['workflow_id'] in seen:
+                      continue
+                  seen.add(r['workflow_id'])
+                  check = {k: r[k] for k in ('id', 'name', 'status', 'conclusion', 'html_url', 'run_attempt', 'created_at', 'updated_at')}
+                  check['jobs'] = []
+                  for job in pages(f"actions/runs/{r['id']}/jobs", 'jobs'):
+                      check['jobs'].append({'id': job['id'], 'name': job['name'], 'status': job['status'],
+                          'conclusion': job['conclusion'], 'started_at': job['started_at'], 'completed_at': job['completed_at'],
+                          'active_or_failed_steps': [s['name'] for s in job['steps'] if s['status'] == 'in_progress' or s['conclusion'] == 'failure']})
+                  row['checks'].append(check)
+              refs[f"refs/audit/pr{p['number']}"] = head
+              refs[f"refs/audit/base{p['number']}"] = base
+              report['prs'].append(row)
+              (out/'status.json').write_text(json.dumps(report, indent=2)+'\n')
+          git('fetch', '--no-tags', 'https://github.com/jjoshua2/DeepFin.git', *sorted(set(refs.values())))
+          for ref, sha in refs.items():
+              git('update-ref', ref, sha)
+          git('bundle', 'create', str(out/'review.bundle'), *refs)
+          for row in report['prs']:
+              merged = subprocess.run(['git','merge-tree','--write-tree','--messages',row['head'],row['base']],
+                                      text=True,capture_output=True,timeout=60,check=False)
+              assert merged.returncode in (0,1), merged.stderr
+              row['merge_clean'] = merged.returncode == 0
+              row['head_tree'] = git('rev-parse',row['head']+'^{tree}')
+              row['base_tree'] = git('rev-parse',row['base']+'^{tree}')
+              (out/f"merge-{row['number']}.txt").write_text(merged.stdout+'\nSTDERR\n'+merged.stderr)
+              print(row['number'],row['head'],'merge_clean='+str(row['merge_clean']),
+                    [(c['name'],c['status'],c['conclusion']) for c in row['checks']],flush=True)
+          report['finished_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+          (out/'status.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-ci-review-20260923
+          path: /tmp/bend-ci-review/
+          retention-days: 7
