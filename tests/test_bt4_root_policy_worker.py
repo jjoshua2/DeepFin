@@ -117,7 +117,7 @@ def test_capture_worker_banks_complete_raw_teacher_and_terminal_target(
         assert meta["result"] == "1-0"
         assert meta["rows"][0]["move_uci"] == "b1c2"
         assert meta["rows"][0]["wdl_target"] == 0
-        assert meta["rows"][0]["teacher"]["kind"] == "raw_root_inference"
+        assert meta["rows"][0]["teacher"]["kind"] == "root_inference_no_search"
         assert meta["rows"][0]["teacher"]["wdl_dtype"] == "float64"
         assert arrays["wdl_raw"].dtype == np.dtype("float64")
         assert arrays["wdl_raw"][0].tolist() == [0.05, 0.1, 0.85]

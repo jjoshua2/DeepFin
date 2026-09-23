@@ -11,8 +11,10 @@ from the historical SF source rows and BT4 sidecars.
 `--outcome-mode rule50_match_v1` and opens the six-man WDL+DTZ pair strictly.
 It runs a named BT4 ONNX policy and WDL head on CPU. The played actor samples
 the raw root policy at the supplied temperature; it does **not** run C search
-or consult Syzygy to choose moves at seven or more pieces. Its teacher policy
-and WDL arrays remain native raw observations. When a game finishes, the
+or consult Syzygy to choose moves at seven or more pieces. Its stored policy
+is the legal-mapped compact T1 distribution from the native policy head; its
+stored WDL preserves the named native tensor and dtype. Neither is corrected
+by the game outcome. When a game finishes, the
 stepper's rule-aware result supplies a distinct per-row `wdl_target` from the
 root side to move. A six-man decision happens before another inference. A
 missing eligible strict table probe aborts the invocation, while a positive

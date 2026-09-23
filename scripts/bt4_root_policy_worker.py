@@ -183,7 +183,7 @@ def _game_payload(
             "move_uci": played.move.uci(), "temperature": played.temperature,
             "wdl_target": labeled.wdl_target,
             "teacher": {
-                "kind": "raw_root_inference", "policy_encoding": "lc0_1858_compact",
+                "kind": "root_inference_no_search", "policy_encoding": "lc0_1858_compact",
                 "policy_output": teacher.policy_output,
                 "wdl_output": teacher.wdl_output, "wdl_kind": teacher.wdl_kind,
                 "wdl_pov": "side_to_move", "wdl_order": ["win", "draw", "loss"],
@@ -262,7 +262,7 @@ def run_worker(
         "schema": SCHEMA, "status": "launched", "actor": "bt4_root_policy_no_search",
         "outcome_mode": spec.outcome_mode, "minimum_emitted_root_pieces": 7,
         "terminal_wdl_target": "game_result_from_root_side_to_move",
-        "teacher_observation": "raw_named_onnx_heads_unmodified_by_outcome",
+        "teacher_observation": "root_inference_compact_t1_policy_and_native_wdl_unmodified_by_outcome",
         "seed": spec.seed, "games": spec.games, "max_plies": spec.max_plies,
         "parallel_games": spec.parallel_games, "max_buffered_rows": MAX_BUFFERED_ROWS,
         "temperature": spec.temperature, "initial_fen": spec.initial_fen,
