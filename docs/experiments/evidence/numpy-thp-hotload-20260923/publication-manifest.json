@@ -1,0 +1,45 @@
+{
+  "files_sha256": {
+    "prepared-thp-plan.json": "8d3b0c7bac25db0cd3c09bbfd9640e0c4ce95899dadf9bef33c88ddd9210f558",
+    "run01/arm_0.json": "b4e186445b9549b32b6bf867073e86ed3dd6417b01a4b6f2b9a9b73805ecd447",
+    "run01/arm_1.json": "b9d8d7292e26dcec49268d53d8ce86e3a36e23a9e725de675618d0f501133a9e",
+    "run01/arm_2.json": "dccdde748a2212eda2470e20eaf06cb4d001c0b2c8c2fa9594c5b834b79ce9d1",
+    "run01/arm_3.json": "507a2ac0fedec1ae9fa418d521f8a1836884e85163c267151610e09e62fac1e9",
+    "run01/summary.json": "4ff8f8cc3295e48e7d653eaafafccee2d7eba5fbd1eb6f0b0dcec93c332f6b88",
+    "scripts/benchmark_numpy_thp_hotload.py": "f0de6e270b2c7ba554c23074907ee4a90c7c274885026b0cc8987d16b10d5c08",
+    "tests/test_benchmark_numpy_thp_hotload.py": "7460b94cb61dca99c1e29579662cba2a07fdf4eeae0bf6f5e32b2966afa40c18"
+  },
+  "source_worktree_original_unmodified": "/home/josh/projects/chess-worktrees/numpy-thp-hotload-abba-20260923",
+  "status": "COMPLETED_NEGATIVE_LOCAL_SCREEN",
+  "summary": {
+    "adjacent_pair_improvements": [
+      false,
+      false
+    ],
+    "admission_sha256": "ff0dc29060fbb303c6b36620dd30d1d881771a0af4de008f63b98bc7c326d6a2",
+    "arm_hot_load_seconds": [
+      3.738455459999841,
+      4.715370137999912,
+      4.589864002000127,
+      3.248547046999988
+    ],
+    "arm_whole_wall_seconds": [
+      9.797364494000021,
+      11.924422617999994,
+      11.519935369999985,
+      8.755328405
+    ],
+    "completed_arms": 4,
+    "decision": "DOES_NOT_MEET_LOCAL_BENEFIT_GATE",
+    "fraction_reduction": -0.33179201391121893,
+    "fraction_whole_wall_regression": 0.26366334610452236,
+    "median_candidate_seconds": 4.652617070000019,
+    "median_candidate_whole_wall_seconds": 11.72217899399999,
+    "median_control_seconds": 3.4935012534999146,
+    "median_control_whole_wall_seconds": 9.27634644950001,
+    "plan_sha256": "8d3b0c7bac25db0cd3c09bbfd9640e0c4ce95899dadf9bef33c88ddd9210f558",
+    "runner_sha256": "f0de6e270b2c7ba554c23074907ee4a90c7c274885026b0cc8987d16b10d5c08",
+    "scope": "NumPy advice on eight B shards only; no trainer throughput or system-wide THP conclusion.",
+    "status": "PASS_EXACT_PARITY"
+  }
+}
