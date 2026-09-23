@@ -161,3 +161,24 @@ moves into Bend: Python export, external references, data/control orchestration 
 training remain dependencies; C++/LibTorch/AOTI remains transitional inference.
 No full-engine/model build, perft increase, GPU run, training, benchmark, strength or
 speedup claim is added. All new verification is opt-in.
+
+
+## Hosted full-checkout qualification and publication
+
+Hosted run **35920944024**, workflow commit `3ae0ffe92b941c2c6145f71d788bfa48d8f36695`, passes the full **100-law / 226-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on exact source `c60a5e83958acef579f50593e970d40b1a0019e9`.
+
+These are the same two previously delivered public laws. The unchanged 128,899-byte patch with SHA-256 90a8a37d5fe69e93fc0662f332bf2a0eb206432c0bcc709d1dc73e9e0960ca65 was applied to the complete PR 861 checkout, parent 6f2c71fa9bd1d1537c1f5ae0ff6e70e31e495c53, tree 99da6fbe20da28e99b4dff4dc5fe3908fdb67616. All 283 inherited native-source entries and the saved candidate proof/native closure hashes match. No intended source, statement, mutation or timeout was changed.
+
+The combined wrapper actually ran the unchanged 98-law/212-control parent, then both new laws and all 14 controls. Every local control record, diagnostic hash, proof-source identity and importing-consumer result agrees. The full native report matches the saved local result except the C compiler identity. Each mode checks five complete buffers, 655360 cells and seven malformed requests. Modes repeat fixtures; the candidate executes actual extras, not the prior table builder or proof representation.
+
+Hosted tools: Bun 1.4.2, Ubuntu clang version 18.1.3 (1ubuntu1) scoped only to native checks, locked Python 3.13 CPU dependencies and uv 0.12.10 with normal Python build compiler. Original compiler laws/seven controls and 12 pin contracts pass. Unchanged Ruff/Basedpyright/Vulture passes. This resolves the prior full-aggregate, hosted, lint and incomplete-current-checkout gaps for this exact patch. Historical nonzero/time-limited local receipts remain unchanged.
+
+The first hosted attempt, run 35920545827 (job 107383077943), passed patch integrity/application but stopped before any proof, native or lint check: the workflow treated native-report paths as engine-relative instead of standalone-relative and requested nonexistent native/bend_engine/Tables.bend. The recovery selects each report's documented root explicitly. All original hash expectations, source bytes, proof statements and gate settings are unchanged. The failed attempt and original saved patch remain in artifact 10776473874; it is not counted as a qualification pass.
+
+The input source commit was made before checks and published only after all gates passed. Subsequent commit changes only docs and compact evidence. Full logs and saved patch are retained for 30 days in bend-extras-preservation-qualification. The compiler pin and all candidate source hashes were rechecked before publication. No permanent workflow or transport payload is included in the feature branch.
+
+Publication creates `feat/bend-extras-preservation-20260923` only after checking the parent is unchanged and the target does not exist. No force push, merge, deployment or live-process change. Self-review only, not independent review.
+
+Preservation of an arbitrary incoming value does not prove initial stored-header correctness or inside-extras geometric correctness. Stored mask/prefix values, survival through later table-header and other-block writes, and independent blocker-ray lookup equality remain open. Source equality still trusts the pinned checker/Base; native lowering, allocation, ownership/lifetime, ABI, toolchain, libraries, OS and hardware remain separate trust boundaries. Existing compiler TypeScript and diagnostic-depth/raw-helper limitations are untouched.
+
+No production runtime code or Python application responsibility changed. Python export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No model/GPU, whole-engine build, increased perft, training or benchmark result is added.

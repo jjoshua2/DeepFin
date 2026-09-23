@@ -1,5 +1,9 @@
 # Bend migration and proof inventory
 
+## Current extras-preservation hosted qualification: September 23, 2026
+
+Hosted run **35920944024**, workflow commit `3ae0ffe92b941c2c6145f71d788bfa48d8f36695`, passes the full **100-law / 226-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on exact source `c60a5e83958acef579f50593e970d40b1a0019e9`. These are the unchanged saved two laws, not additional contracts beyond that candidate. Historical local-only/full-aggregate-unrun/lint-unqualified statements below retain their original context; these gaps are now closed for the exact hosted candidate. Stored headers and full independent ray lookup remain separate P2 obligations. See the dated extras readout and committed hosted evidence.
+
 ## Local extras-stage preservation — September 23, 2026
 
 Two new source laws and their importing consumer pass; all 14 focused rejection
