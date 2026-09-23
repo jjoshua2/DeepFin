@@ -12,7 +12,7 @@ import chess
 import pytest
 
 from scripts import audit_raw_baseline as tool
-from tests.test_derive_corpus_targets import history_row, full_width_phase, narrowed_phase
+from tests.test_derive_corpus_targets import CONFIG_REQUESTED, history_row, full_width_phase, narrowed_phase
 
 
 def row() -> dict[str, Any]:
@@ -114,6 +114,22 @@ def test_streaming_counts_collateral_and_source_qualified_reasons(tmp_path: Path
     assert rejected['source_row'] == 1
     assert rejected['source_shard'] == 'w00-00000.jsonl.gz'
     assert len(rejected['source_namespace']) == 64
+
+
+def test_strict_outcome_row_uses_pinned_launch_mode(tmp_path: Path) -> None:
+    strict = row()
+    requested = {**CONFIG_REQUESTED, 'outcome_mode': 'rule50_match_v1'}
+    strict['run']['config_sha256'] = tool.derive.corpus.stamp_sha256(requested)
+    strict['run']['outcome_mode'] = 'rule50_match_v1'
+    m = manifest(tmp_path, [strict])
+    source = m['sources'][0]
+    launch_path = Path(source['manifest']['path'])
+    launch = json.loads(launch_path.read_text())
+    launch['config_requested'] = requested
+    source['manifest'] = put(launch_path, launch)
+    result = tool.audit(m, tmp_path / 'strict_audit', lambda: None)
+    assert result['counts']['eligible_rows'] == 1
+    assert result['shards'][0]['outcome_mode'] == 'rule50_match_v1'
 
 
 @pytest.mark.parametrize('fault', ['hash', 'rows', 'duplicate', 'cap', 'deadline'])

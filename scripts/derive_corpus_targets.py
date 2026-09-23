@@ -4424,6 +4424,7 @@ def derive(
         raise CorpusIntegrityError(f"{corpus_dir} holds no .jsonl.zst/.jsonl.gz shards")
 
     corpus_sha = str(summary.get("config_sha256", ""))
+    expected_outcome_mode = corpus_outcome_mode(summary)
     deriver = TargetDeriver(options)
     rng = np.random.default_rng(options.seed)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -4479,7 +4480,9 @@ def derive(
             if options.limit and deriver.stats.rows_read >= options.limit:
                 break
             deriver.stats.rows_read += 1
-            tt_carried.add(_check_row_identity(row, corpus_sha))
+            tt_carried.add(_check_row_identity(
+                row, corpus_sha, expected_outcome_mode,
+            ))
             if _baseline_rows().consume(exclusions, path, raw_index, row):
                 deriver.stats.rows_dropped_baseline_audit += 1
                 continue
@@ -4906,7 +4909,23 @@ class GameGrouper:
         return GameBatch(rows=rows, banked_tail_ply=banked_tail_ply)
 
 
-def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
+def corpus_outcome_mode(facts: Mapping[str, Any]) -> str:
+    """Read the versioned result convention; old records mean theoretical_v1."""
+    requested = facts.get("config_requested")
+    requested_mode = (
+        requested.get("outcome_mode", corpus.OUTCOME_MODE_THEORETICAL)
+        if isinstance(requested, dict) else corpus.OUTCOME_MODE_THEORETICAL
+    )
+    mode = corpus.outcome_mode_of(requested_mode)
+    if "outcome_mode" in facts and facts["outcome_mode"] != mode:
+        raise CorpusIntegrityError("corpus outcome_mode disagrees with config_requested")
+    return mode
+
+
+def _check_row_identity(
+    row: dict[str, Any], corpus_sha: str,
+    expected_outcome_mode: str = corpus.OUTCOME_MODE_THEORETICAL,
+) -> bool:
     """Every row belongs to the run ``summary.json`` describes.  Returns its TT flag.
 
     ⚑ The join key is the row's OWN ``config_sha256``, not the directory it was
@@ -4936,6 +4955,14 @@ def _check_row_identity(row: dict[str, Any], corpus_sha: str) -> bool:
         )
     if schema == ROW_SCHEMA_HISTORY:
         require_row_regime(row)
+    row_mode = corpus.outcome_mode_of(
+        run.get("outcome_mode", corpus.OUTCOME_MODE_THEORETICAL),
+    )
+    if row_mode != expected_outcome_mode:
+        raise CorpusIntegrityError(
+            f"{_row_label(row)}: outcome_mode {row_mode!r} does not match "
+            f"corpus record {expected_outcome_mode!r}",
+        )
     row_sha = str(run["config_sha256"])
     if corpus_sha and row_sha != corpus_sha:
         raise CorpusIntegrityError(
@@ -4957,6 +4984,7 @@ class CommitIdentity:
     corpus_shards_adopted: int
     corpus_rows_claimed: int
     corpus_record_row_schema: int
+    corpus_outcome_mode: str
 
     @classmethod
     def of(cls, record: CorpusRecord) -> CommitIdentity:
@@ -4966,6 +4994,7 @@ class CommitIdentity:
             corpus_shards_adopted=len(record.shards),
             corpus_rows_claimed=int(record.rows_claimed),
             corpus_record_row_schema=int(record.facts["row_schema"]),
+            corpus_outcome_mode=corpus_outcome_mode(record.facts),
         )
 
 
@@ -5021,6 +5050,7 @@ def _shard_identity(
         ),
         "derive_corpus_row_schema_counts": dict(sorted(counts.items())),
         "derive_corpus_record_row_schema": identity.corpus_record_row_schema,
+        "derive_outcome_mode": identity.corpus_outcome_mode,
         "zero_history": filled_max <= 1,
         "history_slots_nonzero_max": int(filled_max),
         "derive_history_rep_fix": HISTORY_REP_FIX,
@@ -5292,6 +5322,13 @@ def _stamp_realized_row_schema(
                 "at finalization; every shard is committed with its identity",
             )
         record_schema = int(corpus_record.facts["row_schema"])
+        record_outcome_mode = corpus_outcome_mode(corpus_record.facts)
+        if committed.get("derive_outcome_mode") != record_outcome_mode:
+            raise CorpusIntegrityError(
+                f"{entry['path']}: committed outcome mode "
+                f"{committed.get('derive_outcome_mode')!r} disagrees with "
+                f"corpus record {record_outcome_mode!r}",
+            )
         if int(committed.get("derive_corpus_record_row_schema", -1)) != record_schema:
             raise CorpusIntegrityError(
                 f"{entry['path']}: committed with corpus record row schema "
@@ -5431,6 +5468,7 @@ def build_summary(
             # a schema-1 corpus (Fable review, finding 1).
             "row_schema": int(facts["row_schema"]),
             "row_schema_realized": realized_row_schema(stats),
+            "outcome_mode": corpus_outcome_mode(facts),
             "staircase_parsed": facts.get("staircase_parsed"),
             "staircase_gate": facts.get(
                 "staircase_gate",
@@ -6378,6 +6416,7 @@ class _WorkerTask:
     span: ShardRange
     options: DeriveOptions
     corpus_sha: str
+    outcome_mode: str
     spill_dir: Path
     shards_in_play: int
 
@@ -6669,7 +6708,9 @@ def _run_worker(task: _WorkerTask) -> _WorkerResult:
                     skipping = False
             max_gidx = gidx
             deriver.stats.rows_read += 1
-            tt_carried.add(_check_row_identity(row, task.corpus_sha))
+            tt_carried.add(_check_row_identity(
+                row, task.corpus_sha, task.outcome_mode,
+            ))
             if _baseline_rows().consume(exclusions, task.shards[shard_index], seen - 1, row):
                 deriver.stats.rows_dropped_baseline_audit += 1
                 continue
@@ -7179,6 +7220,7 @@ def derive_parallel(
             f"{corpus_dir} holds no .jsonl.zst/.jsonl.gz shards",
         )
     corpus_sha = str(summary.get("config_sha256", ""))
+    expected_outcome_mode = corpus_outcome_mode(summary)
 
     counts = shard_row_counts(record)
     ranges, shards_in_play, rows_to_read = plan_ranges(
@@ -7201,6 +7243,7 @@ def derive_parallel(
             span=span,
             options=options,
             corpus_sha=corpus_sha,
+            outcome_mode=expected_outcome_mode,
             spill_dir=spill_dir,
             shards_in_play=shards_in_play,
         )

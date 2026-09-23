@@ -191,6 +191,42 @@ def _provenance_fixture(tmp_path: Path) -> tuple[Path, Path, list[dict[str, Any]
     return source, derived, rows
 
 
+def test_strict_outcome_rank_provenance_uses_raw_record_mode(tmp_path: Path) -> None:
+    from tests.test_derive_corpus_targets import (
+        CONFIG_REQUESTED, history_row, run_derive, write_corpus,
+    )
+    rows = [history_row(game_id=i) for i in range(6)]
+    requested = {**CONFIG_REQUESTED, 'outcome_mode': 'rule50_match_v1'}
+    config_sha = tool.derive.corpus.stamp_sha256(requested)
+    for row in rows:
+        row['run']['config_sha256'] = config_sha
+        row['run']['outcome_mode'] = 'rule50_match_v1'
+        original = tool.d9_lines(row)
+        original.sort(key=lambda line: -float(line[2]))
+        for position, line in enumerate(original, 1):
+            line[0] = position
+    source = write_corpus(
+        tmp_path, rows, config_sha=config_sha, config_requested=requested,
+    )
+    derived = tmp_path / 'strict_derived'
+    run_derive(source, derived, 'uniform-d9', '--limit', '6', '--temp', '0.0005',
+               '--rows-per-shard', '2', '--seed', '9', '--row-provenance',
+               '--policy-observation', 'phase0')
+    out = tmp_path / 'strict_ranks'
+    args = ['--raw', str(source), '--shards', str(derived), '--out', str(out),
+            '--limit', '6', '--top-k', '3', '--rows-per-shard', '2', '--seed', '9',
+            '--expected-rows', '6', '--expected-shards', '3',
+            '--expected-source-summary-sha256', tool.file_sha256(derived / tool.DERIVE_SUMMARY)]
+    assert tool.main(args) == 0
+    assert (out / tool.SUMMARY_NAME).is_file()
+    first_shard = sorted(derived.glob('shard_*.zarr'))[0]
+    group: Any = zarr.open_group(str(first_shard), mode='a')
+    del group.attrs['derive_outcome_mode']
+    args[args.index('--out') + 1] = str(tmp_path / 'unstamped_ranks')
+    with pytest.raises(ValueError, match='outcome mode'):
+        tool.main(args)
+
+
 def _rank_args(source: Path, derived: Path, out: Path) -> list[str]:
     return ['--raw', str(source), '--shards', str(derived), '--out', str(out),
             '--limit', '6', '--top-k', '3', '--rows-per-shard', '2', '--seed', '9',

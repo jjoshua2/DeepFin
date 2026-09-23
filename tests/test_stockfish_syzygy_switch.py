@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from chess_anti_engine.selfplay.config import GameConfig
 from chess_anti_engine.selfplay.stockfish_turn import _sf_syzygy_path_for_slot
 from chess_anti_engine.stockfish.uci import StockfishUCI
@@ -86,3 +88,76 @@ for line in sys.stdin:
         "setoption name SyzygyPath value /ssd/tb:/mnt/e/dtz",
         "setoption name SyzygyPath value /ssd/tb",
     ]
+
+
+@pytest.mark.parametrize("advertise", ["all", "no_path", "no_rules", "duplicate_path"])
+def test_explicit_rule50_options_require_uci_capability_and_ready_barrier(
+    tmp_path: Path, advertise: str,
+) -> None:
+    log_path = tmp_path / "commands.log"
+    engine_py = tmp_path / "engine.py"
+    announced = []
+    if advertise != "no_path":
+        announced.append("option name SyzygyPath type string default <empty>")
+    if advertise == "duplicate_path":
+        announced.append("option name SyzygyPath type string default <empty>")
+    if advertise != "no_rules":
+        announced.extend([
+            "option name Syzygy50MoveRule type check default true",
+            "option name SyzygyProbeLimit type spin default 7 min 0 max 7",
+        ])
+    options = "".join(f"        print({line!r}, flush=True)\n" for line in announced)
+    engine_py.write_text(
+        "import sys\nfrom pathlib import Path\n"
+        f"log = Path({str(log_path)!r})\n"
+        "for line in sys.stdin:\n"
+        "    cmd = line.strip()\n"
+        "    with log.open('a', encoding='utf-8') as stream:\n"
+        "        stream.write(cmd + '\\n')\n"
+        "    if cmd == 'uci':\n"
+        f"{options}"
+        "        print('uciok', flush=True)\n"
+        "    elif cmd == 'isready':\n"
+        "        print('readyok', flush=True)\n",
+        encoding="utf-8",
+    )
+    engine_sh = tmp_path / "engine.sh"
+    engine_sh.write_text(f"#!/usr/bin/env bash\nexec {sys.executable} {engine_py}\n", encoding="utf-8")
+    engine_sh.chmod(engine_sh.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    kwargs = {
+        "syzygy_path": "/ssd/tb:/mnt/e/dtz",
+        "syzygy_50_move_rule": True,
+        "syzygy_probe_limit": 6,
+        "read_timeout_s": 1.0,
+    }
+    if advertise != "all":
+        problem = (
+            "duplicate UCI SyzygyPath" if advertise == "duplicate_path"
+            else "SyzygyPath" if advertise == "no_path"
+            else "Syzygy50MoveRule"
+        )
+        with pytest.raises(RuntimeError, match=problem):
+            StockfishUCI(str(engine_sh), **kwargs)
+        assert not any(
+            line.startswith("setoption name Syzygy50MoveRule")
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+        )
+        if advertise == "duplicate_path":
+            historical = StockfishUCI(
+                str(engine_sh), syzygy_path="/ssd/tb:/mnt/e/dtz",
+                read_timeout_s=1.0,
+            )
+            historical.close()
+        return
+    sf = StockfishUCI(str(engine_sh), **kwargs)
+    try:
+        assert sf.syzygy_ready_after_requests is True
+        assert set(sf.syzygy_option_capabilities) == {
+            "SyzygyPath", "Syzygy50MoveRule", "SyzygyProbeLimit",
+        }
+    finally:
+        sf.close()
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert "setoption name Syzygy50MoveRule value true" in lines
+    assert "setoption name SyzygyProbeLimit value 6" in lines
+    assert lines.index("setoption name SyzygyProbeLimit value 6") < lines.index("isready")
