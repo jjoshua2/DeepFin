@@ -24,54 +24,56 @@ MAX_STEPS = 20_000_000
 MIN_MS = 50
 
 
-def expected_ring_trace() -> str:
+def capacity_trace(capacity: int) -> list[str]:
+    if capacity > 4096:
+        return [f'invalid {capacity}']
     lines: list[str] = []
-    for capacity in CAPACITIES:
-        if capacity > 4096:
-            lines.append(f'invalid {capacity}')
-            continue
-        q: deque[int] = deque()
-        lines.append(f'capacity {capacity}')
+    q: deque[int] = deque()
+    lines.append(f'capacity {capacity}')
 
-        def push(x: int) -> None:
-            x &= MASK
-            if len(q) == capacity:
-                lines.append(f'reject {x ^ 2779096485} {x}')
-            else:
-                q.append(x)
-                lines.append('accept')
-            lines.append(f'size {len(q)}')
+    def push(x: int) -> None:
+        x &= MASK
+        if len(q) == capacity:
+            lines.append(f'reject {x ^ 2779096485} {x}')
+        else:
+            q.append(x)
+            lines.append('accept')
+        lines.append(f'size {len(q)}')
 
-        def pop() -> None:
-            if q:
-                x = q.popleft()
-                lines.append(f'value {x ^ 2779096485} {x}')
-            else:
-                lines.append('empty')
-            lines.append(f'size {len(q)}')
+    def pop() -> None:
+        if q:
+            x = q.popleft()
+            lines.append(f'value {x ^ 2779096485} {x}')
+        else:
+            lines.append('empty')
+        lines.append(f'size {len(q)}')
 
-        for _ in range(2):
-            pop()
-        for x in range(4294967280, 4294967280 + capacity + 2):
+    for _ in range(2):
+        pop()
+    for x in range(4294967280, 4294967280 + capacity + 2):
+        push(x)
+    for _ in range(capacity // 2 + 1):
+        pop()
+    for x in range(100, 100 + capacity + 2):
+        push(x)
+    x = 305419896 + capacity
+    for _ in range(512):
+        if (x >> 16) & 7 < 4:
             push(x)
-        for _ in range(capacity // 2 + 1):
+        else:
             pop()
-        for x in range(100, 100 + capacity + 2):
-            push(x)
-        x = 305419896 + capacity
-        for _ in range(512):
-            if (x >> 16) & 7 < 4:
-                push(x)
-            else:
-                pop()
-            x = (x * 1664525 + 1013904223) & MASK
-        for _ in range(capacity + 2):
-            pop()
-        push(42)
-        push(43)
-        for _ in range(3):
-            pop()
-    return '\n'.join(lines) + '\n'
+        x = (x * 1664525 + 1013904223) & MASK
+    for _ in range(capacity + 2):
+        pop()
+    push(42)
+    push(43)
+    for _ in range(3):
+        pop()
+    return lines
+
+
+def expected_ring_trace() -> str:
+    return '\n'.join(line for capacity in CAPACITIES for line in capacity_trace(capacity)) + '\n'
 
 
 def verify_ring_trace(text: str) -> None:
@@ -111,6 +113,8 @@ def parse_sample(text: str, arm: int, size: int, steps: int) -> int:
         raise ValueError('owning sample identity or checksum mismatch')
     if lines[1:-1] != expected_roots(size, steps) or lines[-1] != 'length 0':
         raise ValueError('owning sample root order, visits, identity, history or length mismatch')
+    if ms > 120_000:
+        raise ValueError('owning sample exceeds execution timeout')
     return ms
 
 
@@ -122,7 +126,11 @@ def timing_summary(rows: list[dict[str, int | str]]) -> dict[str, object]:
         if not selected:
             continue
         times = {arm: [int(row['milliseconds']) for row in selected if row['arm'] == arm] for arm in ARMS}
-        reliable = all(len(v) == 6 and min(v) >= MIN_MS for v in times.values())
+        keys = {(row['arm'], row['index']) for row in selected}
+        counts = {int(row['steps']) for row in selected}
+        coherent = len(selected) == 18 and keys == {(arm, i) for arm in ARMS for i in range(6)}
+        coherent = coherent and len(counts) == 1 and min(counts) > 0
+        reliable = coherent and all(len(v) == 6 and min(v) >= MIN_MS for v in times.values())
         medians = {arm: statistics.median(v) for arm, v in times.items() if v}
         result[str(size)] = {'reliable': reliable, 'median_ms': medians,
                              'list_over_fifo': medians['list'] / medians['fifo'] if reliable else None,
@@ -153,6 +161,8 @@ def main() -> None:
         report['bun'] = command([args.bun, '--version'])
         report['sources'] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in
                              (HERE / name for name in ('Ring.bend', 'Queue.bend', 'ring_trace.bend', 'owning.bend', 'owning_benchmark.py'))}
+        report['search_sha256'] = hashlib.sha256((HERE.parent / 'session_probe/Search.bend').read_bytes()).hexdigest()
+        report['chess_sha256'] = hashlib.sha256((HERE.parent / 'legal_probe/Chess.bend').read_bytes()).hexdigest()
         with tempfile.TemporaryDirectory(prefix='owning-collections-') as tmp:
             directory = Path(tmp)
             hashes: dict[str, str] = {}

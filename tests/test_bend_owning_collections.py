@@ -93,3 +93,23 @@ def test_unreliable_timings_have_no_ratio(fault: str) -> None:
     summary = timing_summary(rows)
     assert summary['1'] == {'reliable': False, 'median_ms': {'list': 200, 'fifo': 100, 'ring': 50},
                             'list_over_fifo': None, 'fifo_over_ring': None}
+
+
+@pytest.mark.parametrize('fault', ['duplicate', 'different_work', 'zero_work'])
+def test_incoherent_timings_have_no_ratio(fault: str) -> None:
+    rows = timing_rows()
+    if fault == 'duplicate':
+        rows[0]['index'] = 1
+    elif fault == 'different_work':
+        rows[0]['steps'] = 131072
+    else:
+        for row in rows:
+            row['steps'] = 0
+    summary = timing_summary(rows)
+    assert summary['1'] == {'reliable': False, 'median_ms': {'list': 200, 'fifo': 100, 'ring': 50},
+                            'list_over_fifo': None, 'fifo_over_ring': None}
+
+
+def test_impossible_timer_rejected() -> None:
+    with pytest.raises(ValueError, match='execution timeout'):
+        parse_sample(sample_text(ms=120001), 0, 3, 7)
