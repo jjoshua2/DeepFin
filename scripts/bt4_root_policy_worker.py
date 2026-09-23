@@ -229,7 +229,9 @@ def write_finalized_game(
     try:
         with writing.open("xb") as handle:
             np.savez_compressed(
-                handle, **arrays,
+                handle,
+                x=arrays["x"], policy_t1=arrays["policy_t1"],
+                wdl_raw=arrays["wdl_raw"],
                 metadata=np.frombuffer(json.dumps(meta, sort_keys=True).encode(), dtype=np.uint8),
             )
             handle.flush()

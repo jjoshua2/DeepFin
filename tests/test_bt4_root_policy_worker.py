@@ -6,7 +6,7 @@ import json
 import os
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import chess
 import chess.syzygy
@@ -71,6 +71,11 @@ class FakeTablebase:
         return -1
 
 
+def fake_tablebase(*, missing: bool = False) -> chess.syzygy.Tablebase:
+    """Only this test seam presents the fake as an opened Syzygy handle."""
+    return cast(chess.syzygy.Tablebase, FakeTablebase(missing=missing))
+
+
 def spec(tmp_path: Path, *, fen: str = SEVEN, max_plies: int = 8) -> worker.WorkerSpec:
     wdl_dir = tmp_path / "wdl"
     dtz_dir = tmp_path / "dtz"
@@ -94,6 +99,7 @@ def history_mode(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def read_game(path: Path) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     with np.load(path, allow_pickle=False) as archive:
+        assert set(archive.files) == {"metadata", "x", "policy_t1", "wdl_raw"}
         metadata = json.loads(archive["metadata"].tobytes().decode())
         arrays = {key: archive[key].copy() for key in ("x", "policy_t1", "wdl_raw")}
     return metadata, arrays
@@ -104,7 +110,7 @@ def test_capture_worker_banks_complete_raw_teacher_and_terminal_target(
 ) -> None:
     evaluator = FakeEvaluator()
     summary = worker.run_worker(
-        spec(tmp_path), evaluator, FakeTablebase(),  # type: ignore[arg-type]
+        spec(tmp_path), evaluator, fake_tablebase(),
     )
     assert summary["status"] == "complete"
     assert summary["completed"] == 2
@@ -136,7 +142,7 @@ def test_unresolved_game_discard_has_no_rows(tmp_path: Path) -> None:
     short = spec(tmp_path, fen=starting, max_plies=1)
     # Choose a legal opening move for this fixture.
     summary = worker.run_worker(
-        short, FakeEvaluator("e2e4"), FakeTablebase(),  # type: ignore[arg-type]
+        short, FakeEvaluator("e2e4"), fake_tablebase(),
     )
     assert summary["rows_emitted"] == 0
     assert summary["rows_attempted"] == 2
@@ -154,7 +160,7 @@ def test_missing_required_probe_aborts_without_game_or_completion(
 ) -> None:
     with pytest.raises(tablebase.MatchTablebaseError, match="missing eligible"):
         worker.run_worker(
-            spec(tmp_path), FakeEvaluator(), FakeTablebase(missing=True),  # type: ignore[arg-type]
+            spec(tmp_path), FakeEvaluator(), fake_tablebase(missing=True),
         )
     assert (tmp_path / "run" / "launch.json").exists()
     assert not (tmp_path / "run" / "summary.json").exists()
@@ -171,7 +177,7 @@ def test_writer_failure_leaves_no_published_or_partial_game(
     monkeypatch.setattr(worker.np, "savez_compressed", fail_after_partial_write)
     with pytest.raises(OSError, match="simulated full disk"):
         worker.run_worker(
-            spec(tmp_path), FakeEvaluator(), FakeTablebase(),  # type: ignore[arg-type]
+            spec(tmp_path), FakeEvaluator(), fake_tablebase(),
         )
     assert not list((tmp_path / "run" / "games").iterdir())
     assert not (tmp_path / "run" / "summary.json").exists()
@@ -189,7 +195,7 @@ def test_table_file_change_refuses_completion(tmp_path: Path) -> None:
             return rows
 
     with pytest.raises(RuntimeError, match="inventory changed"):
-        worker.run_worker(current, ChangingEvaluator(), FakeTablebase())  # type: ignore[arg-type]
+        worker.run_worker(current, ChangingEvaluator(), fake_tablebase())
     assert len(list((tmp_path / "run" / "games").glob("*.npz"))) == 2
     assert not (tmp_path / "run" / "summary.json").exists()
 
@@ -197,7 +203,7 @@ def test_table_file_change_refuses_completion(tmp_path: Path) -> None:
 def test_bounded_buffer_and_explicit_mode_before_output(tmp_path: Path) -> None:
     bad = replace(spec(tmp_path), outcome_mode="theoretical_wdl")
     with pytest.raises(ValueError, match="explicit rule50"):
-        worker.run_worker(bad, FakeEvaluator(), FakeTablebase())  # type: ignore[arg-type]
+        worker.run_worker(bad, FakeEvaluator(), fake_tablebase())
     assert not bad.out.exists()
     oversized = replace(spec(tmp_path), max_plies=3000)
     with pytest.raises(ValueError, match="4096"):
