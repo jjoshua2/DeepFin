@@ -1,6 +1,31 @@
 # Computed entries inside actual table fills
 
-## Recorded result for this delivery
+## Current hosted qualification — September 23, 2026
+
+**Run 35896688343, job 107302258875, completed successfully through publication.**
+The complete **98-law / 212-control aggregate**, all four native modes, original
+compiler source/pin checks and unchanged whole-repository lint passed on source
+`94e380d218d1713828fd192427282588bf7df910`. Its complete source tree is
+`731bf2a90704324e1dd34727d3f1aaad07162a67`; the saved patch is unchanged.
+Hosted evidence was published at `342e36360ead49eb0775eff0f5f98e33a532911f`.
+
+Downloaded artifact **10768704502**, `bend-fill-contents-qualification`, has ZIP
+SHA-256 `8314fe4d6106b6c8e4678e47b48b402ca6a638105b8f9f3982c9f00e5b37c476`.
+All **283 native-source manifest entries**, the full candidate tree, source commit
+object, saved patch, new control diagnostics and native results were verified
+against the separately reconstructed full checkout. Native reports differ only
+in the separately recorded local versus hosted C compiler identity.
+
+The earlier local-only, missing-lint-tool and unexecuted-aggregate statements below
+are **historical execution records**, superseded by the completed hosted section.
+No source or accepted law changed to close those gaps. The dependency is now
+reviewable as PR #860. [Supplementary self-review](evidence/bend-fill-contents/review-supplement.md)
+retains arbitrary-start returned-pair composition, bounded nonzero-start native
+checks, no-op/wrong-value mutations and full-tree reconstruction. These checks are
+not added to the aggregate counts. **Self-review only, not independent review.**
+No merge, deployment, full-builder/geometry theorem or application migration is implied.
+
+## Historical local delivery
 
 **The pinned CLI checked all three new public laws and their importing consumer successfully, printing exactly `All terms check.`.** The 17 rejection controls passed in a separate controls-only invocation. These are two recorded source commands, not a claimed execution of the combined wrapper.
 
