@@ -9,7 +9,10 @@ from the historical SF source rows and BT4 sidecars.
 
 `scripts/bt4_root_policy_worker.py` accepts an explicit
 `--outcome-mode rule50_match_v1` and opens the six-man WDL+DTZ pair strictly.
-It runs a named BT4 ONNX policy and WDL head on CPU. The played actor samples
+It runs a named BT4 ONNX policy and WDL head on CPU by default. An explicit,
+bounded CUDA path is prepared in the separate
+[GPU qualification plan](2026-09-23-bt4-root-worker-gpu-qualification.md);
+no GPU game has run. The played actor samples
 the raw root policy at the supplied temperature; it does **not** run C search
 or consult Syzygy to choose moves at seven or more pieces. Its stored policy
 is the legal-mapped compact T1 distribution from the native policy head; its

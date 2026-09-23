@@ -6,6 +6,7 @@ import json
 import os
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import chess
@@ -211,3 +212,177 @@ def test_bounded_buffer_and_explicit_mode_before_output(tmp_path: Path) -> None:
     too_many = replace(spec(tmp_path), games=worker.MAX_GAMES + 1)
     with pytest.raises(ValueError, match="games <= 32"):
         too_many.validate()
+
+
+def test_cuda_requires_realized_device_zero_and_bounded_arena(tmp_path: Path) -> None:
+    base = spec(tmp_path)
+    cuda = replace(
+        base, requested_provider="cuda", gpu_mem_gb=1.0,
+        providers=("CUDAExecutionProvider", "CPUExecutionProvider"),
+        provider_options={"device_id": "0", "gpu_mem_limit": str(1024 ** 3)},
+    )
+    cuda.validate()
+    assert str(worker.GPU_LOCK) == "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock"
+    with pytest.raises(ValueError, match="realized CUDA"):
+        replace(cuda, providers=("CPUExecutionProvider",)).validate()
+    with pytest.raises(ValueError, match="memory cap"):
+        replace(cuda, provider_options={"device_id": "0", "gpu_mem_limit": "0"}).validate()
+    with pytest.raises(ValueError, match="8 GiB"):
+        replace(cuda, gpu_mem_gb=9.0).validate()
+    with pytest.raises(ValueError, match="zero GPU memory"):
+        replace(base, gpu_mem_gb=1.0).validate()
+
+
+def test_child_gpu_lease_fails_immediately_when_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(worker, "GPU_LOCK", tmp_path / "gpu0_experiment.lock")
+    fd = worker.acquire_gpu_lock()
+    try:
+        with pytest.raises(RuntimeError, match="canonical GPU lock is busy"):
+            worker.acquire_gpu_lock()
+    finally:
+        os.close(fd)
+
+
+def test_cuda_session_readback_rejects_cpu_fallback_and_wrong_cap() -> None:
+    class Session:
+        def __init__(self, providers: list[str], limit: str) -> None:
+            self.providers = providers
+            self.limit = limit
+
+        def get_providers(self) -> list[str]:
+            return self.providers
+
+        def get_provider_options(self) -> dict[str, dict[str, str]]:
+            return {"CUDAExecutionProvider": {
+                "device_id": "0", "gpu_mem_limit": self.limit,
+            }}
+
+    expected = str(2 * 1024 ** 3)
+    assert worker.verify_cuda_session(
+        Session(["CUDAExecutionProvider", "CPUExecutionProvider"], expected),
+        gpu_mem_gb=2,
+    ) == (("CUDAExecutionProvider", "CPUExecutionProvider"), {
+        "device_id": "0", "gpu_mem_limit": expected,
+    })
+    with pytest.raises(RuntimeError, match="fell back"):
+        worker.verify_cuda_session(Session(["CPUExecutionProvider"], expected), gpu_mem_gb=2)
+    with pytest.raises(RuntimeError, match="memory cap"):
+        worker.verify_cuda_session(Session(["CUDAExecutionProvider"], "0"), gpu_mem_gb=2)
+
+
+def test_cuda_model_schema_pins_named_float32_heads_and_planes() -> None:
+    input_head = SimpleNamespace(name="/input/planes", type="tensor(float)", shape=["N", 112, 8, 8])
+    policy_head = SimpleNamespace(name="/output/policy", type="tensor(float)", shape=["N", 1858])
+    wdl_head = SimpleNamespace(name="/output/wdl", type="tensor(float)", shape=["N", 3])
+
+    class Session:
+        def get_inputs(self) -> list[Any]:
+            return [input_head]
+
+        def get_outputs(self) -> list[Any]:
+            return [policy_head, wdl_head]
+
+    def verify() -> None:
+        worker.verify_cuda_model_schema(
+            Session(), input_name="/input/planes", input_dtype="float32",
+            policy_output="/output/policy", wdl_output="/output/wdl",
+            wdl_kind="probabilities",
+        )
+
+    verify()
+    policy_head.shape[-1] = 4672
+    with pytest.raises(ValueError, match="named head"):
+        verify()
+    policy_head.shape[-1] = 1858
+    input_head.shape[1] = 111
+    with pytest.raises(ValueError, match="input name/type/planes"):
+        verify()
+    input_head.shape[1] = 112
+    with pytest.raises(ValueError, match="probability WDL"):
+        worker.verify_cuda_model_schema(
+            Session(), input_name="/input/planes", input_dtype="float32",
+            policy_output="/output/policy", wdl_output="/output/wdl",
+            wdl_kind="logits",
+        )
+
+
+def test_cuda_open_refuses_missing_ep_before_model_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import onnxruntime as ort
+
+    monkeypatch.setattr(ort, "get_available_providers", lambda: ["CPUExecutionProvider"])
+    with pytest.raises(RuntimeError, match="no CUDAExecutionProvider"):
+        worker.open_worker_session(
+            "unused.onnx", requested_provider="cuda", gpu_mem_gb=1,
+            threads=2, profile_prefix=tmp_path / "profile",
+        )
+
+
+def test_first_root_profile_requires_cuda_neural_compute(tmp_path: Path) -> None:
+    profile_path = tmp_path / "ort-profile.json"
+    events = [
+        {"args": {"provider": "CUDAExecutionProvider", "op_name": "Conv"}},
+        {"args": {"provider": "CPUExecutionProvider", "op_name": "Shape"}},
+    ]
+    profile_path.write_text(json.dumps(events))
+
+    class Session:
+        def end_profiling(self) -> str:
+            return str(profile_path)
+
+        def get_providers(self) -> list[str]:
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    class Evaluator:
+        def evaluate_roots(
+            self, boards: list[chess.Board], x_batch: np.ndarray,
+        ) -> list[BT4RootOutput]:
+            _ = boards, x_batch
+            return []
+
+    out = tmp_path / "output"
+    out.mkdir()
+    qualified = worker.CudaQualifiedEvaluator(Evaluator(), Session(), out)
+    assert qualified.evaluate_roots([], np.empty((0,), dtype=np.float32)) == []
+    assert qualified.proof is not None
+    assert qualified.proof["cuda_neural_nodes"] == 1
+    assert qualified.proof["cpu_nodes"] == 1
+    assert (out / "provider_profile.json").exists()
+    assert (out / "provider_proof.json").exists()
+    profile_path.write_text(json.dumps([
+        {"args": {"provider": "CPUExecutionProvider", "op_name": "Conv"}},
+    ]))
+    bad_out = tmp_path / "bad_output"
+    bad_out.mkdir()
+    unqualified = worker.CudaQualifiedEvaluator(Evaluator(), Session(), bad_out)
+    with pytest.raises(RuntimeError, match="no neural"):
+        unqualified.evaluate_roots([], np.empty((0,), dtype=np.float32))
+    assert not list(bad_out.iterdir())
+
+
+def test_cuda_run_never_publishes_game_without_profile(tmp_path: Path) -> None:
+    cuda = replace(
+        spec(tmp_path), requested_provider="cuda", gpu_mem_gb=1.0,
+        providers=("CUDAExecutionProvider", "CPUExecutionProvider"),
+        provider_options={"device_id": "0", "gpu_mem_limit": str(1024 ** 3)},
+    )
+    profile = tmp_path / "cpu-only-profile.json"
+    profile.write_text(json.dumps([
+        {"args": {"provider": "CPUExecutionProvider", "op_name": "Conv"}},
+    ]))
+
+    class Session:
+        def end_profiling(self) -> str:
+            return str(profile)
+
+        def get_providers(self) -> list[str]:
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    qualified = worker.CudaQualifiedEvaluator(FakeEvaluator(), Session(), cuda.out)
+    with pytest.raises(RuntimeError, match="no neural"):
+        worker.run_worker(cuda, qualified, fake_tablebase())
+    assert not list((tmp_path / "run" / "games").iterdir())
+    assert not (tmp_path / "run" / "summary.json").exists()
