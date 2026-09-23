@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, cast
 
 import chess
 import chess.syzygy
@@ -32,11 +32,34 @@ class FakeTablebase:
         return self.raw_wdl
 
 
+class FakeMatchTablebase:
+    def __init__(self, raw_wdl: int | None, dtz: int | None) -> None:
+        self.raw_wdl = raw_wdl
+        self.raw_dtz = dtz
+        self.wdl = {"KQBNRvK": object()}
+        self.dtz = {"KQBNRvK": object()}
+        self.wdl_probes = 0
+        self.dtz_probes = 0
+
+    def probe_wdl(self, board: chess.Board) -> int:
+        self.wdl_probes += 1
+        if self.raw_wdl is None:
+            raise chess.syzygy.MissingTableError(board.fen())
+        return self.raw_wdl
+
+    def probe_dtz(self, board: chess.Board) -> int:
+        self.dtz_probes += 1
+        if self.raw_dtz is None:
+            raise chess.syzygy.MissingTableError(board.fen())
+        return self.raw_dtz
+
+
 def _decision(
     board: chess.Board, *, plies: int = 0, max_plies: int = 8
 ) -> BT4OutcomeDecision | None:
     return decide_bt4_outcome(
-        board, plies=plies, max_plies=max_plies, syzygy_path="fake:pair"
+        board, plies=plies, max_plies=max_plies, syzygy_path="fake:pair",
+        outcome_mode="theoretical_wdl",
     )
 
 
@@ -179,3 +202,61 @@ def test_pair_preflight_requires_both_components_and_wdl_dtz(
     )
     with pytest.raises(ValueError, match="did not open"):
         preflight_six_man_tablebases(path)
+
+
+@pytest.mark.parametrize(
+    ("wdl", "dtz", "clock", "expected_result", "expected_termination"),
+    [
+        (2, 1, 0, "1-0", "syzygy"),
+        (-2, -1, 0, "0-1", "syzygy"),
+        (1, 101, 0, "1/2-1/2", "syzygy"),
+        (-1, -101, 0, "1/2-1/2", "syzygy"),
+        (0, 0, 0, "1/2-1/2", "syzygy"),
+        (2, 1, 1, None, "rule50_unresolved"),
+        (-2, -1, 1, None, "rule50_unresolved"),
+    ],
+)
+def test_explicit_rule50_mode_uses_wdl_dtz_and_discards_ambiguous_clock(
+    wdl: int, dtz: int, clock: int,
+    expected_result: str | None, expected_termination: str,
+) -> None:
+    board = chess.Board(_SIX_MAN_FEN.format(turn="w", clock=clock))
+    fake = FakeMatchTablebase(wdl, dtz)
+    decision = decide_bt4_outcome(
+        board, plies=8, max_plies=8, syzygy_path="fake:pair",
+        outcome_mode="rule50_match_v1",
+        match_tablebase=cast(chess.syzygy.Tablebase, cast(object, fake)),
+    )
+    assert decision is not None
+    assert (decision.result, decision.termination, decision.outcome_mode) == (
+        expected_result, expected_termination, "rule50_match_v1",
+    )
+    assert (fake.wdl_probes, fake.dtz_probes) == (1, 1)
+
+
+@pytest.mark.parametrize(("wdl", "dtz"), [(None, 1), (2, None)])
+def test_rule50_missing_eligible_component_fails_instead_of_discarding(
+    wdl: int | None, dtz: int | None,
+) -> None:
+    board = chess.Board(_SIX_MAN_FEN.format(turn="w", clock=0))
+    fake = FakeMatchTablebase(wdl, dtz)
+    with pytest.raises(tablebase.MatchTablebaseError, match="missing eligible"):
+        decide_bt4_outcome(
+            board, plies=0, max_plies=8, syzygy_path="fake:pair",
+            outcome_mode="rule50_match_v1",
+            match_tablebase=cast(chess.syzygy.Tablebase, cast(object, fake)),
+        )
+
+
+def test_rule50_natural_claim_precedes_wdl_and_dtz_probe() -> None:
+    board = chess.Board(_SIX_MAN_FEN.format(turn="w", clock=99))
+    fake = FakeMatchTablebase(None, None)
+    decision = decide_bt4_outcome(
+        board, plies=0, max_plies=8, syzygy_path="fake:pair",
+        outcome_mode="rule50_match_v1",
+        match_tablebase=cast(chess.syzygy.Tablebase, cast(object, fake)),
+    )
+    assert decision == BT4OutcomeDecision(
+        "1/2-1/2", "natural", "fifty_moves", "rule50_match_v1",
+    )
+    assert (fake.wdl_probes, fake.dtz_probes) == (0, 0)
