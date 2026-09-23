@@ -124,3 +124,5 @@ analysis workflow.
 - [2026-09-22: 500M shared CPU/GPU capacity requirements](2026-09-22-scale-compute-budget.md)
 
 - [2026-09-23: live E loader profile and prepared CPU comparison](2026-09-23-loader-profile.md)
+
+- [2026-09-23: three-worker CPU optimization plan](2026-09-23-optimization-work-plan.md)
