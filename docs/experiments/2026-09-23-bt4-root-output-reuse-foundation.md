@@ -38,10 +38,18 @@ Leaf counters remain separate and count successful leaf batches and real rows.
 This makes batching possible for a later scheduler, without measuring a batch
 size, selecting an actor temperature, or implementing that scheduler.
 
+Root-only consumers now retain just the float32 teacher prior and native WDL
+arrays. `search_inputs()` derives independent compact policy and WDL logits on
+demand, preserving the prior four-array record's returned bytes. In a three-root
+CPU fixture with float64 WDL, the sum of retained `ndarray.nbytes` is 22,368
+versus 44,700 for the prior layout, a 22,332-byte payload reduction. This
+excludes Python object and allocator overhead, and it is not a throughput
+measurement. Search still requests and receives its logits when used.
+
 CPU fake-session tests cover reversed policy/WDL output order, both colors,
 castling, promotion, en passant, stale root/leaf histories, mismatched legal
 sets, exact input/source keys, native float16 and float64 WDL, extreme finite
 logits, root-only sampling, and an actual C-search call with padded leaf batches.
-The focused adapter and neighboring conversion/WDL tests pass (95 cases);
+The focused adapter and neighboring conversion/WDL tests pass (97 cases);
 scoped Ruff and basedpyright report no findings. These are interface and
 numerical-contract checks, not evidence of playing strength or speedup.
