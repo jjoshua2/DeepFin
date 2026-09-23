@@ -1,0 +1,14 @@
+{
+  "branch": "feat/bend-fill-intervals-20260922",
+  "head": "0d0b325be4e8b0790b482aebbe096000fe989819",
+  "qualified_source": "c54ad2f1080f11a1885a83d49429fd863bc5463a",
+  "qualification_run": 35790621404,
+  "artifact_id": 10722639257,
+  "artifact_sha256": "095dae2e6dfe9395694d03d9c7dc2694c6142e32af7998a27853b440db31caf4",
+  "retained_laws": 95,
+  "retained_rejection_controls": 195,
+  "rerun_for_this_patch": false,
+  "parent_tip_followup": "Review document only; verified compare result",
+  "restored_archive_base": "d8de6e46fd04c4b34385d754224df37722a6a118",
+  "restored_archive_tree": "99f19d5ef816a238e89da12ec19529088943012d"
+}

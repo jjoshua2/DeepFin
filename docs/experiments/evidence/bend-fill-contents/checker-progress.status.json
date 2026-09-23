@@ -1,0 +1,10 @@
+{
+  "command": [
+    "/mnt/data/fill-tools/bun",
+    "/mnt/data/fill-evidence/check-progress.ts",
+    "/mnt/data/fill-work/native/bend_engine/standalone/proofs/contents/consumer.bend",
+    "/mnt/data/fill-evidence/check-progress-names.log"
+  ],
+  "exit_code": 124,
+  "elapsed_seconds": 600.1034531969999
+}

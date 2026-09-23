@@ -1,0 +1,5 @@
+{
+  "original_filename": "whole-lint.log",
+  "original_sha256": "d7a52e7c555cce9ff4ea34eb6c981c31d0693f0c7495ed19e838097de2aa6112",
+  "raw_text": "\n::: running lint tools in parallel\n\n::: ruff check\nenv: \u2018ruff\u2019: No such file or directory\n\n::: basedpyright\n./scripts/lint.sh: line 135: basedpyright: command not found\n\n::: vulture (dead code, min confidence 80)\n./scripts/lint.sh: line 116: vulture: command not found\n"
+}

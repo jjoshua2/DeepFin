@@ -1,0 +1,5 @@
+{
+  "original_filename": "actual-check.log",
+  "original_sha256": "34faca9af45b01b86de8c284e6cb0db3b7a274b589b7fae31644767f3513507f",
+  "raw_text": "Error:\n- expected : a\n- observed : a (consumed more than once)\nLocation: complete_pair\n63 | \n64>| def complete_pair(a: Array<U64>,+n: Nat,+i: Nat,+at: U32,+end: U32,+sq: U32,+bishop: Bool,+mask: U64,\n65 |   shape: {O.shape(a) == C.full(17n) : O.Shape},\n"
+}

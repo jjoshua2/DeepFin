@@ -1,0 +1,9 @@
+{
+  "command": [
+    "/mnt/data/fill-tools/bun",
+    "/mnt/data/fill-tools/bend/bend2/main.ts",
+    "/mnt/data/fill-evidence/large-budget-isolation.bend"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 3.271642045000135
+}

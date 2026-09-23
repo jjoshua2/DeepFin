@@ -1,0 +1,9 @@
+{
+  "command": [
+    "/mnt/data/fill-tools/bun",
+    "/mnt/data/fill-native-mutation/native/bend_engine/standalone/proofs/contents/verify_native.js",
+    "/mnt/data/fill-tools/bend"
+  ],
+  "exit_code": 1,
+  "elapsed_seconds": 12.184949881999955
+}

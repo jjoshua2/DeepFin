@@ -1,0 +1,9 @@
+{
+  "command": [
+    "/mnt/data/fill-tools/bun",
+    "/mnt/data/fill-tools/bend/bend2/main.ts",
+    "/mnt/data/fill-work/native/bend_engine/standalone/proofs/prefix/PROOF.bend"
+  ],
+  "exit_code": 124,
+  "elapsed_seconds": 180.101761677
+}

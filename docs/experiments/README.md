@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Computed fill contents](2026-09-23-bend-fill-contents.md) | Actual bounded fill interior values and full returned-array pairs; three source laws checked locally; full aggregate/lint/hosted qualification and complete builder/ray refinement remain separate |
 | [Whole fill intervals](2026-09-22-bend-fill-intervals.md) | Six laws derive actual fill-clear certificates from numeric budgets and prove every complete slider block preserves outside queried values; stored headers and final contents/geometry remain separate |
 | [Relative table-address bounds](2026-09-22-bend-relative-address-bounds.md) | Six source laws connect actual U32 prefix-plus-index sums to bounded ordered regions and real cross-block array preservation; metadata and final fill contents remain separate |
 | [Complete-tree route separation](2026-09-22-bend-complete-tree-routes.md) | Four real-array laws derive separated leaf paths and other-index preservation from complete shape and bounded unequal addresses; actual initialization/builders supply shape |
