@@ -1,0 +1,222 @@
+name: Strengthen extras native preservation coverage
+'on':
+  push:
+    branches: [feat/bend-extras-preservation-dev-20260923]
+    paths: [.github/workflows/bend-extras-native-strengthening.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 4e67992355efb3722dc837e482bec3ef67c6deb1
+      TARGET: feat/bend-extras-preservation-20260923
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 4e67992355efb3722dc837e482bec3ef67c6deb1
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Preserve the completed aggregate and apply only the tested native reinforcement
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/strengthening-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          gh api repos/jjoshua2/DeepFin/actions/jobs/107384441109 > "$EVIDENCE/original-job.json"
+          gh api repos/jjoshua2/DeepFin/git/blobs/f158c44f2cfef5eb8f3c37584f6de109b2762022 --jq .content | base64 --decode > "$RUNNER_TEMP/reinforcement.b64"
+          test "$(git hash-object "$RUNNER_TEMP/reinforcement.b64")" = f158c44f2cfef5eb8f3c37584f6de109b2762022
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          job=json.loads((e/'original-job.json').read_text())
+          assert job['id']==107384441109 and job['run_id']==35920944024
+          assert job['head_sha']=='3ae0ffe92b941c2c6145f71d788bfa48d8f36695'
+          assert job['status']=='completed' and job['conclusion']=='success'
+          assert all(s['conclusion']=='success' for s in job['steps'])
+          d=Path('docs/experiments/evidence/bend-extras-preservation')
+          p=json.loads((d/'hosted-proofs.json').read_text())
+          assert p['proof_gate']=='PASS' and p['aggregate_law_count']==100
+          assert p['inherited_negative_controls']==212 and len(p['negative_controls'])==14
+          old=json.loads((d/'hosted-candidate-source-sha256.json').read_text())
+          for f,h in old.items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          patch=lzma.decompress(base64.b64decode(Path(os.environ['RUNNER_TEMP'],'reinforcement.b64').read_bytes(),validate=True),memlimit=256*1024*1024)
+          assert len(patch)==8975
+          assert hashlib.sha256(patch).hexdigest()=='d7f509c7ad5abc894c87227d396e8313b4d2d9b29c081adb2ee26e4eda2a295e'
+          (e/'reinforcement.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(e/'reinforcement.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'reinforcement.patch')],check=True)
+          expected={'native/bend_engine/standalone/proofs/extras/unique_probe.bend':'4eefb729856161457b77b42b257d7140c1677652e5359790de643323ba223200','native/bend_engine/standalone/proofs/extras/focused.js':'6e879d05d298ac55bcb9620db0e73fdba67a2cdf9c89ae19f2783756d861698f','native/bend_engine/standalone/proofs/extras/verify_native.js':'57cf2317331a1c4bf48da6fbbeaa6e767645f27a46c753fe98cfd644b303f3fb'}
+          files=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          assert set(files)==set(expected)
+          for f,h in expected.items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          for f,h in old.items():
+              if f not in expected:
+                  assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          native=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          manifest={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in native if Path(f).is_file()}
+          (e/'candidate-source-sha256.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          (e/'scope.json').write_text(json.dumps({'base':os.environ['BASE'],'changed_paths':files,'source_aggregate_reused_from_run':35920944024,'source_aggregate_rerun':False,'all_previous_bend_proofs_and_runtime_unchanged':True,'old_native_fixtures_retained':True},indent=2)+'\n')
+          PY
+          git diff --cached --check
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'test: catch protected-cell copying with distinct extras buffer values'
+          git rev-parse HEAD > "$EVIDENCE/source-sha.txt"
+          git cat-file commit HEAD > "$EVIDENCE/source-commit.raw"
+      - name: Recheck unchanged two-law consumer and all fourteen controls with the expanded manifest
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/extras/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Retain five original buffers and add three distinct-cell buffers in all four modes
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/extras/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Require the strengthened native reference and existing source chain to reject header copying
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,os,re,shutil,subprocess,time
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'copy-control'
+          s=root/'standalone'
+          shutil.copytree('native/bend_engine/standalone',s)
+          f=s/'Tables.bend';text=f.read_text()
+          old='extras(p, U32.inc(sq), a)'
+          assert text.count(old)==1
+          text=text.replace(old,'extras(p, U32.inc(sq), copy_header_for_review(Array.get(U64,a,6)))')
+          helper='def copy_header_for_review(r: Array<U64> & U64) -> Array<U64>:\n  (a,v) = r\n  Array.set(U64,a,7,v)\n\n'
+          assert text.count('def extras(')==1
+          text=text.replace('def extras(',helper+'def extras(',1)
+          f.write_text(text)
+          e=Path(os.environ['EVIDENCE'])
+          commands={'native':['bun',str(s/'proofs/extras/verify_native.js'),str(Path('.compiler').resolve())], 'source':['bun',str(Path('.compiler/bend2/main.ts').resolve()),str(s/'proofs/extras/consumer.bend')]}
+          results={}
+          for kind,cmd in commands.items():
+              started=time.monotonic();p=subprocess.run(cmd,capture_output=True,timeout=240)
+              raw=p.stdout+p.stderr;diag=raw.decode()
+              assert p.returncode==1,(kind,diag[-1500:])
+              if kind=='native':
+                  assert 'unique case 1 cell 7' in diag,diag[-2000:]
+              else:
+                  assert re.search('expected[\\s\\S]*observed',diag)
+                  assert 'Location: ../storage/Build.extras' in diag
+                  assert not re.search('no such file|RangeError|a decreasing self-call|more than once',diag)
+              (e/(kind+'-copy-rejection.log')).write_bytes(raw)
+              results[kind]={'exit_code':p.returncode,'seconds':time.monotonic()-started,'diagnostic_bytes':len(raw),'diagnostic_sha256':hashlib.sha256(raw).hexdigest(),'excerpt':diag[:200]+'\n...\n'+diag[-1500:]}
+          results['mutation']='After every extras iteration, copy protected header cell6 into cell7'
+          results['interpretation']='Native rejection is in added distinct-cell fixture after original five buffers and seven malformed requests have passed. Source failure is in inherited implementation-linked Build.extras, not a new public theorem.'
+          results['mutated_tables_sha256']=hashlib.sha256(f.read_bytes()).hexdigest()
+          (e/'copy-regression.json').write_text(json.dumps(results,indent=2)+'\n')
+          shutil.rmtree(root)
+          PY
+      - name: Recheck unchanged compiler-pin tests
+        run: bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools with the normal compiler
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint after native-test changes
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify exact local agreement and fast-forward only the unchanged feature branch
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$(cat "$EVIDENCE/source-sha.txt")"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$BASE"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);d=Path('docs/experiments/evidence/bend-extras-preservation')
+          p=json.loads((e/'focused.json').read_text());n=json.loads((e/'native.json').read_text())
+          original=json.loads((d/'hosted-proofs.json').read_text())
+          def digest(obj):
+              return hashlib.sha256(json.dumps(obj,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          assert digest(p)=='11c32732ce65e97e18e7a0bd1e62f06132613a0849eb0ae781b4f66978e75d10'
+          assert digest({k:v for k,v in n.items() if k!='cc'})=='9803b290d1418792bf2bd07ade98459445a62470cb841781fb6d84e75e49b49d'
+          assert p['focused_gate']=='PASS' and p['new_law_count']==2 and p['inherited_gate_run'] is False
+          assert p['negative_controls']==original['negative_controls']
+          changed={'standalone/proofs/extras/focused.js','standalone/proofs/extras/verify_native.js'}
+          for f,h in original['source_sha256s'].items():
+              if f not in changed:assert p['source_sha256s'][f]==h,f
+          assert set(p['source_sha256s'])-set(original['source_sha256s'])=={'standalone/proofs/extras/unique_probe.bend'}
+          assert n['total_full_buffers_per_mode']==8 and n['total_cell_comparisons_per_mode']==1048576
+          assert n['modes']==json.loads((d/'hosted-native.json').read_text())['modes']
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for f,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          for name in ['focused.json','native.json','copy-regression.json','candidate-source-sha256.json','scope.json']:
+              shutil.copyfile(e/name,d/('strengthened-hosted-'+name))
+          for name in ['pin.log','lint.log']:
+              raw=(e/name).read_bytes()
+              (d/('strengthened-hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];source=(e/'source-sha.txt').read_text().strip()
+          summary=f"Native-fixture reinforcement run **{run}** on source `{source}` passes the unchanged two-law consumer and all 14 controls, eight full buffers / 1,048,576 cell comparisons per mode, the protected-cell-copy regression, 12 compiler-pin checks and unchanged whole-repository lint."
+          paragraphs=['## Native fixture reinforcement after full source qualification',summary,
+            'Self-review exposed a native fixture blind spot: copying protected header cell6 into cell7 passes the original five uniformly seeded buffers because those cells have equal seed values. This is a test-coverage limitation, not a product failure or a successful full qualification of corrupted source. The existing source-proof chain rejects the mutation in storage/Build.extras; the source manifest also changes.',
+            'The permanent opt-in verifier retains all five original buffers, all seven malformed requests, and their original output digest unchanged. It adds three complete arrays whose every cell starts with a distinct index-derived U64 value, covering zero, two middle squares and the full extras pass. These compare another 393216 cells per mode, for eight buffers and 1048576 cells total. Original report fields retain their five-buffer meaning; unique_* and total_* fields distinguish the additive coverage.',
+            'The exact same corrupt copy now fails the strengthened native verifier at unique case1 cell7, after original fixtures passed. The candidate uses actual Array/Tables operations; no proof image or expected result is fed to it. Expected values are independently computed from flat arrays and signed-coordinate moves. Same fixtures repeat in all modes, not disjoint data sets.',
+            f"All new native results and source hashes match the local final report except the separately reported C compiler identity ({n['cc']}). The new focused proof/control report matches its local canonical SHA256. All previous Bend laws/proofs, compiler inputs, production code and inherited gates are byte-identical to full qualification 35920944024. The only executable changes are the new unique_probe.bend, additive verify_native.js checks, and adding that probe to focused.js's source manifest.",
+            'The 100-law/226-control full aggregate was actually completed in run35920944024 on the unchanged logical proof sources. It was not redundantly rerun after this native-only reinforcement. The final focused run rechecks both public laws and all fourteen controls; the final native/reference and whole-repository lint gates were rerun. The original full reports remain intact rather than being rewritten to describe new fixtures.',
+            'No public theorem or control count is inflated by the supplementary checks. No production logic, model, GPU, training, perft or benchmark is changed. Source/native/lifetime trust limits and remaining stored-header/complete independent-ray refinement are unchanged. Self-review only, not independent review. Fast-forward publication requires the original feature head unchanged; no force push, merge or deployment.'
+          ]
+          r=Path('docs/experiments/2026-09-23-bend-extras-preservation.md');r.write_text(r.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          r=Path('native/bend_engine/standalone/proofs/extras/README.md');r.write_text(r.read_text()+'\n\n## Distinct-cell native regression coverage\n\nThe same native command now retains five original buffers and seven malformed requests, and additionally compares three complete uniquely initialized arrays. Each mode checks eight buffers / 1048576 cells total. This catches copies between ordinary protected cells that uniform seeds could conceal. Original five-buffer fields and output hashes are retained; unique_* and total_* fields describe additive coverage. The proof statements and fourteen controls are unchanged; the focused source manifest includes the new probe. See the dated readout for separate full-aggregate and post-reinforcement qualification.\n')
+          r=Path('docs/bend_migration_proofs.md');title,rest=r.read_text().split('\n',1)
+          r.write_text(title+'\n\n## Extras native coverage reinforcement: September 23, 2026\n\n'+summary+' Full source aggregate100/226 was completed in run35920944024 on the same unchanged logical proof sources, not rerun for native-only changes. The added distinct-cell fixtures close a documented copy-corruption blind spot while preserving all old cases. Stored headers and independent blocker-ray refinement remain separate.\n'+rest)
+          r=Path('docs/experiments/README.md');text=r.read_text()
+          old='Two locally checked actual-array laws preserve all headers and slider-data locations through bounded/final extras; actual pipeline supplies shape; full aggregate/lint/remote publication not qualified'
+          assert text.count(old)==1
+          r.write_text(text.replace(old,'Two hosted-qualified actual-array laws preserve headers and slider-data locations through extras; full source aggregate100/226; reinforced eight-buffer native tests catch protected-cell copying; stored-header and ray refinement remain separate'))
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-23-bend-extras-preservation.md docs/experiments/evidence/bend-extras-preservation native/bend_engine/standalone/proofs/extras/README.md
+          git diff --cached --check
+          git commit -m 'docs: qualify distinct-cell extras tests and retain full proof evidence'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/extras > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-extras-native-strengthening
+          path: ${{ runner.temp }}/strengthening-evidence/
+          retention-days: 30
