@@ -1,0 +1,35 @@
+name: Recover exact extras baseline
+'on':
+  push:
+    branches: [feat/bend-extras-preservation-dev-20260923]
+    paths: [.github/workflows/bend-extras-source-recovery.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 6f2c71fa9bd1d1537c1f5ae0ff6e70e31e495c53
+          persist-credentials: false
+      - name: Archive the exact tracked tree and original commit only
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 6f2c71fa9bd1d1537c1f5ae0ff6e70e31e495c53
+          test "$(git rev-parse HEAD^{tree})" = 99da6fbe20da28e99b4dff4dc5fe3908fdb67616
+          mkdir -p "$RUNNER_TEMP/extras-baseline"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/extras-baseline/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/extras-baseline/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/extras-baseline/tree.txt"
+          cd "$RUNNER_TEMP/extras-baseline"
+          sha256sum source.tar.gz commit.raw > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-extras-full-baseline
+          path: ${{ runner.temp }}/extras-baseline/
+          retention-days: 3
