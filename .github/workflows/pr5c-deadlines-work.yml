@@ -1,0 +1,25 @@
+name: PR5c cohort deadline workspace
+on:
+  push:
+    branches: [work/pr5c-cohort-deadlines-20260923]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 57bb9636e3e6fcfb6832bb2cd494279bacae4d38
+      - name: Archive tracked source only
+        run: |
+          mkdir -p /tmp/pr5c-source
+          git archive HEAD | gzip > /tmp/pr5c-source/source.tar.gz
+          git rev-parse HEAD > /tmp/pr5c-source/revision.txt
+          sha256sum /tmp/pr5c-source/source.tar.gz > /tmp/pr5c-source/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepfin-pr5c-source
+          path: /tmp/pr5c-source
+          retention-days: 7
