@@ -1,0 +1,9 @@
+{
+  "command": [
+    "/mnt/data/fill-tools/bun",
+    "/mnt/data/fill-tools/bend/bend2/main.ts",
+    "/mnt/data/fill-work/native/bend_engine/standalone/proofs/contents/Schedule.bend"
+  ],
+  "exit_code": 1,
+  "elapsed_seconds": 0.7494338960000277
+}

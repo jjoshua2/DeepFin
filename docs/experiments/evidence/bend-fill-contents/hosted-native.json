@@ -1,0 +1,52 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "fixture_rows": 452,
+  "chess_keys": 128,
+  "full_block_rows": 384,
+  "written_entry_rows": 412,
+  "untouched_control_rows": 40,
+  "entries_followed_by_later_writes": 264,
+  "all_seed_values_differ_from_expected_computed_values": true,
+  "observed": "Selected entry value, full mask/prefix metadata, size/count/index/capacity; not every output cell",
+  "candidate": "Actual Tables.build supplies persistent metadata; actual fill runs on a fresh seeded complete allocation for each case. No proof model or host answers enter candidate.",
+  "oracle": "Independent signed-coordinate rays, direct compact-bit deposition and mathematical prefix sums",
+  "modes": [
+    {
+      "mode": "generic",
+      "fixture_rows": 452,
+      "invalid_rejections": 6,
+      "output_sha256": "ae998c57111da290688df18aa4cd19df97121b6164afab25dd2a88ea17ea895c"
+    },
+    {
+      "mode": "portable",
+      "fixture_rows": 452,
+      "invalid_rejections": 6,
+      "output_sha256": "ae998c57111da290688df18aa4cd19df97121b6164afab25dd2a88ea17ea895c"
+    },
+    {
+      "mode": "native",
+      "fixture_rows": 452,
+      "invalid_rejections": 6,
+      "output_sha256": "ae998c57111da290688df18aa4cd19df97121b6164afab25dd2a88ea17ea895c"
+    },
+    {
+      "mode": "ubsan",
+      "fixture_rows": 452,
+      "invalid_rejections": 6,
+      "output_sha256": "ae998c57111da290688df18aa4cd19df97121b6164afab25dd2a88ea17ea895c"
+    }
+  ],
+  "source_sha256s": {
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/contents/probe.bend": "dd1cb7de6ee9fed0e802cfa5e05a3eb8cb79eb958e9c26bc5f1280f65cf3c8f1",
+    "standalone/proofs/contents/verify_native.js": "523beda7e47b3368312ff1d6d2dba6e8014f1f83b524fb084d168a5541f87a0b"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "bun": "1.4.2",
+  "scope": "Native evidence covers zero-start chess masks and selected offsets, not every arbitrary starting subset/array or a quantified independent geometry theorem"
+}
