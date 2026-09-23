@@ -1,5 +1,15 @@
 # Bend migration and proof inventory
 
+## Latest whole-fill interval qualification: September 22, 2026
+
+Hosted run **35790621404**, development workflow `e91f23707a541243b073aca5ecd1e58158039c42`, passes all **95 accepted laws and 195 rejection controls**, four native modes, original compiler source/pin checks and unchanged whole-repository lint on the exact inspected candidate.
+
+`fill_interval/bounded_clear_before` and `bounded_clear_after` derive the existing clear predicate from complete depth-17 shape and mathematical count/start budgets. The corresponding bounded-fill laws preserve actual queried values. `block_fill_preserves_before` and `block_fill_preserves_after` use actual block masks/counts/prefixes with existing prefix proof producers; no caller supplies a per-write clear or size equality. The actual U32 increment is related to Nat successor, and widened endpoint facts give an exact Nat loop budget.
+
+This supersedes the historical unproved interval-to-fill-clear step for these bounded/full-block domains. The before theorem requires an exclusive endpoint below 131072 (all actual slider blocks satisfy this); the after theorem permits a query at the exclusive endpoint. Theorems preserve query values, not a complete final contents specification. Complete shape remains required.
+
+Remaining P2 acceptance: establish every stored header and inside-block computed value, combine the block frame results across actual builder metadata/extras writes, and prove lookup equals independent blocker-ray attacks. Native selected-cell observations do not replace those quantified source contracts. See [the dated readout](experiments/2026-09-22-bend-fill-intervals.md) and committed identities/results. No application migration, model/GPU or performance result is added.
+
 ## Latest relative-address qualification: September 22, 2026
 
 Hosted run **35777583835**, workflow commit `95bde5c08c5dacf52c50a514b3ec93a9bc0e00f6`, passed the complete **89-law / 176-control** aggregate, four native modes, original compiler source/pin checks and unchanged whole-repository lint on source commit `ce9d5e5442cf44cde50a4c8da66e3ea9ffdd5bdc`.

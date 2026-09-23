@@ -1,0 +1,6 @@
+{
+  "file": "native/bend_engine/standalone/proofs/fill_interval/LAWS.bend",
+  "source_check_input_sha256": "a08eb3debdfac39beb94ead80759839abf19905d5bf8ee0459d124c450dd2bd9",
+  "candidate_sha256": "71c1d4f800b590a97d3286bb410ff7553404b84f8e58c39697e6c8ed888b9fe0",
+  "change": "Only one extra empty EOF line removed after the successful local consumer check; all law/implementation tokens unchanged. Hosted source gate must run the exact final candidate."
+}
