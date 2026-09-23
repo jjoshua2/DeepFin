@@ -142,7 +142,7 @@ def verify(command: list[str], package: Path, checkpoint: Path, oracle_binary: P
                 elif fields[:3] == ['info', 'string', 'native_reply']:
                     values = list(map(int, fields[3:]))
                     epoch, request, node = values[:3]
-                    assert (epoch, request, node) == (1, ref.seq, ref.next())
+                    assert (epoch, request, node) == (searches + 1, ref.seq, ref.next())
                     path = paths.pop((epoch, request, node))
                     assert path == history_path(ref, node)
                     leaf = descendant(root, path)
@@ -194,6 +194,7 @@ def verify(command: list[str], package: Path, checkpoint: Path, oracle_binary: P
             assert len(metrics) == 1, 'missing/duplicate per-search work report'
             work = metrics[0]
             assert work['schema'] == 'deepfin.neural-work.v1'
+            assert work['search_epoch'] == searches + 1
             assert work['completed_simulations'] == ref.completed
             assert work['executed_real_rows'] == work['accepted_neural_rows'] == work['forward_calls'] == seen
             assert work['dispatched_real_rows'] == seen

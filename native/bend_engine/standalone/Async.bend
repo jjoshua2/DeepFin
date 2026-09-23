@@ -29,11 +29,11 @@ def Async.drain(token: U32, epoch: U32, request: U32, node: U32) -> IO(U32):
 def Async.shutdown() -> IO(Unit):
   import "./async_call.c"
 
-def cancel(id: Identity) -> IO(Unit):
+def cancel_identity(id: Identity) -> IO(Unit):
   Identity{token, epoch, request, node} = id
   Async.cancel(token, epoch, request, node)
 
-def drain(id: Identity) -> IO(U32):
+def drain_identity(id: Identity) -> IO(U32):
   Identity{token, epoch, request, node} = id
   Async.drain(token, epoch, request, node)
 

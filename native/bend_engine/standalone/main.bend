@@ -12,7 +12,8 @@ import ./EncodingDiagnostic.bend as EncodingDiagnostic
 import ./ModelInputDiagnostic.bend as ModelInputDiagnostic
 import ./PolicyDiagnostic.bend as PolicyDiagnostic
 import ./EvaluationDiagnostic.bend as EvaluationDiagnostic
-import ./NativeEvaluation.bend as NativeEvaluation
+import ./EngineRuntime.bend as NativeEvaluation
+import ./Async.bend as Async
 import ./NeuralWork.bend as Work
 import ./ModelBuffers.bend as Buffers
 
@@ -25,6 +26,7 @@ def Wire.poll() -> IO(Packet):
 type Mode is Type:
   Idle{}
   Running{tree: Search.Tree, budget: U32, infinite: Bool, started: Work.Run, duration: U32, fallback: U32}
+  Awaiting{tree: Search.Tree, pending: NativeEvaluation.Pending, budget: U32, infinite: Bool, started: Work.Run, duration: U32, fallback: U32}
   Held{key: U32, completed: U32, stop: U32, report: String}
 
 type State is Type:
@@ -133,14 +135,38 @@ def resume_reply(neural: Bool, root: Pos.Game, tree: Search.Tree, ticket: Search
   resume_result(neural, before, root, Search.Tree{pool, used, cap, before, pending, epoch, request, stop, limit},
     ticket, budget, inf, started, duration, fallback, r)
 
-def adjudicated(cache: NativeEvaluation.Cache, +model: U32, +root: Pos.Game, game: Pos.Game, tree: Search.Tree, +ticket: Search.Ticket, budget: U32,
-  inf: Bool, +started: Work.Run, duration: U32, fallback: U32, r: Array<U64> & Rules.Facts) -> IO(State):
+def await_submitted(root: Pos.Game, tree: Search.Tree, budget: U32, inf: Bool,
+  started: Work.Run, duration: U32, fallback: U32, r: NativeEvaluation.Submission) -> IO(State):
+  NativeEvaluation.Submission{cache, table, pending, enc} = r
+  IO.pure(State, State{cache, root, table, Awaiting{tree, pending, budget, inf, Work.submitted(started, enc), duration, fallback}, False{}})
+
+def adjudicated_mode(asynchronous: Bool, cache: NativeEvaluation.Cache, +model: U32, +code: U32,
+  +root: Pos.Game, game: Pos.Game, tree: Search.Tree, +ticket: Search.Ticket, table: Array<U64>,
+  budget: U32, inf: Bool, +started: Work.Run, duration: U32, fallback: U32) -> IO(State):
+  match asynchronous:
+    case True{}:
+      do IO<State>:
+        r : NativeEvaluation.Submission <- NativeEvaluation.submit(cache, Work.profiling(started), model, game, ticket, table)
+        await_submitted(root, tree, budget, inf, started, duration, fallback, r)
+    case False{}:
+      do IO<State>:
+        r : NativeEvaluation.Result <- evaluate_reply(cache, Work.profiling(started), model, code, root, game, ticket, table)
+        resume_reply(Bool.and(U32.is_gt(model, 0), U32.is_zero(code)), root, tree, ticket, budget, inf, started, duration, fallback, r)
+
+def adjudicated_cache(+model: U32, +code: U32, root: Pos.Game, game: Pos.Game, tree: Search.Tree,
+  ticket: Search.Ticket, table: Array<U64>, budget: U32, inf: Bool, started: Work.Run,
+  duration: U32, fallback: U32, r: NativeEvaluation.Cache & Bool) -> IO(State):
+  (cache, enabled) = r
+  adjudicated_mode(Bool.and(enabled, Bool.and(U32.is_gt(model, 0), U32.is_zero(code))), cache, model, code,
+    root, game, tree, ticket, table, budget, inf, started, duration, fallback)
+
+def adjudicated(cache: NativeEvaluation.Cache, +model: U32, root: Pos.Game, game: Pos.Game, tree: Search.Tree, +ticket: Search.Ticket, budget: U32,
+  inf: Bool, started: Work.Run, duration: U32, fallback: U32, r: Array<U64> & Rules.Facts) -> IO(State):
   Search.Ticket{epoch, request, id, b, moves, reply} = ticket
   (table, Rules.Facts{+code, count, half}) = r
   do IO<State>:
     rule_notice(code, id, count, half)
-    r : NativeEvaluation.Result <- evaluate_reply(cache, Work.profiling(started), model, code, root, game, ticket, table)
-    resume_reply(Bool.and(U32.is_gt(model, 0), U32.is_zero(code)), root, tree, ticket, budget, inf, started, duration, fallback, r)
+    adjudicated_cache(model, code, root, game, tree, ticket, table, budget, inf, started, duration, fallback, NativeEvaluation.enabled(cache))
 
 def history_checked(cache: NativeEvaluation.Cache, +model: U32, ok: Bool, root: Pos.Game, +game: Pos.Game, table: Array<U64>, tree: Search.Tree,
   +ticket: Search.Ticket, budget: U32, inf: Bool, started: Work.Run, duration: U32, fallback: U32) -> IO(State):
@@ -229,11 +255,35 @@ def finish(cache: NativeEvaluation.Cache, run: Work.Run, hold: Bool, root: Pos.G
   Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
   picked(cache, run, hold, root, table, fallback, n, stop, pick(U32.to_nat(used), 0, Pick{pool, 4294967295, 0}))
 
+def cancelled_output(quitting: Bool, cache: NativeEvaluation.Cache, run: Work.Run, root: Pos.Game,
+  table: Array<U64>, fallback: U32, tree: Search.Tree) -> IO(State):
+  match quitting:
+    case True{}: IO.pure(State, State{cache, root, table, Idle{}, True{}})
+    case False{}: finish(cache, run, False{}, root, table, fallback, tree)
+
+def cancel_wait(cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  pending: NativeEvaluation.Pending, run: Work.Run, fallback: U32, +code: U32, quitting: Bool) -> IO(State):
+  Search.Tree{pool, used, cap, +n, ignored, epoch, request, stop, limit} = tree
+  NativeEvaluation.Pending{+id, ticket, game, entries} = pending
+  +cancelled = Work.cancel_pending(run)
+  do IO<State>:
+    Async.cancel_identity(id)
+    cancelled_output(quitting, NativeEvaluation.retiring(cache, id, cancelled, n, code), cancelled,
+      root, table, fallback, Search.Tree{pool, used, cap, n, 4096, epoch, request, code, limit})
+
 def stop(cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
   match mode:
     case Idle{}: IO.pure(State, State{cache, root, table, Idle{}, False{}})
     case Held{key, n, code, report}: output(cache, report, root, table, key, n, code)
     case Running{tree, budget, inf, started, duration, fallback}: finish(cache, started, False{}, root, table, fallback, tree)
+    case Awaiting{tree, pending, budget, inf, started, duration, fallback}:
+      cancel_wait(cache, root, table, tree, pending, started, fallback, 2, False{})
+
+def request_quit(cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
+  match mode:
+    case Awaiting{tree, pending, budget, inf, started, duration, fallback}:
+      cancel_wait(cache, root, table, tree, pending, started, fallback, 2, True{})
+    case _: IO.pure(State, State{cache, root, table, Idle{}, True{}})
 
 def selected(cache: NativeEvaluation.Cache, model: U32, root: Pos.Game, budget: U32, inf: Bool, +started: Work.Run,
   duration: U32, fallback: U32, t0: Nat, p: Search.Prepared) -> IO(State):
@@ -263,26 +313,99 @@ def idle(s: State) -> IO(State):
     IO.sleep(10)
     return s
 
-def tick_mode(cache: NativeEvaluation.Cache, +model: U32, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
+def await_polled(+root: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  +pending: NativeEvaluation.Pending, budget: U32, inf: Bool, +run: Work.Run, duration: U32,
+  fallback: U32, r: NativeEvaluation.Cache & U32) -> IO(State):
+  NativeEvaluation.Pending{id, ticket, game, entries} = pending
+  (cache, status) = r
+  match status:
+    case 1:
+      do IO<State>:
+        IO.sleep(1)
+        return State{cache, root, table, Awaiting{tree, pending, budget, inf, run, duration, fallback}, False{}}
+    case 2:
+      do IO<State>:
+        r : NativeEvaluation.Result <- NativeEvaluation.complete(cache, Work.profiling(run), root, pending, table)
+        resume_reply(True{}, root, tree, ticket, budget, inf, run, duration, fallback, r)
+    case _: IO.die(State, 2, "native async poll failed; no result applied to search")
+
+def await_live(cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  +pending: NativeEvaluation.Pending, budget: U32, inf: Bool, run: Work.Run,
+  duration: U32, fallback: U32) -> IO(State):
+  NativeEvaluation.Pending{id, ticket, game, entries} = pending
+  do IO<State>:
+    r : NativeEvaluation.Cache & U32 <- NativeEvaluation.poll(cache, id)
+    await_polled(root, table, tree, pending, budget, inf, run, duration, fallback, r)
+
+def await_deadline(expired: Bool, cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  pending: NativeEvaluation.Pending, budget: U32, inf: Bool, run: Work.Run,
+  duration: U32, fallback: U32) -> IO(State):
+  match expired:
+    case True{}: cancel_wait(cache, root, table, tree, pending, run, fallback, 0, False{})
+    case False{}: await_live(cache, root, table, tree, pending, budget, inf, run, duration, fallback)
+
+def past_deadline(now: Nat, +duration: U32, run: Work.Run) -> Bool:
+  Bool.and(U32.is_gt(duration, 0), Nat.is_ge(Work.wall(now, run), U32.to_nat(duration)))
+
+# A replacement go is represented by Running with its own epoch and clock, but
+# cannot select/dispatch until the old slot retires. Its timer still expires.
+def blocked_running(expired: Bool, cache: NativeEvaluation.Cache, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  budget: U32, inf: Bool, run: Work.Run, duration: U32, fallback: U32) -> IO(State):
+  match expired:
+    case True{}: finish(cache, run, False{}, root, table, fallback, tree)
+    case False{}:
+      do IO<State>:
+        IO.sleep(1)
+        return ready_state(cache, root, table, tree, budget, inf, run, duration, fallback)
+
+def tick_running(busy: Bool, cache: NativeEvaluation.Cache, model: U32, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  budget: U32, inf: Bool, +run: Work.Run, +duration: U32, fallback: U32) -> IO(State):
+  match busy:
+    case True{}:
+      do IO<State>:
+        now : Nat <- IO.now()
+        blocked_running(past_deadline(now, duration, run), cache, root, table, tree, budget, inf, run, duration, fallback)
+    case False{}:
+      do IO<State>:
+        now : Nat <- IO.now()
+        elapsed(cache, model, now, root, table, tree, budget, inf, run, duration, fallback)
+
+def tick_retired(r: NativeEvaluation.Cache & Bool, model: U32, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
+  (cache, busy) = r
   match mode:
     case Idle{}: idle(State{cache, root, table, Idle{}, False{}})
     case Held{k, n, code, report}: idle(State{cache, root, table, Held{k, n, code, report}, False{}})
     case Running{tree, budget, inf, started, duration, fallback}:
+      tick_running(busy, cache, model, root, table, tree, budget, inf, started, duration, fallback)
+    case Awaiting{tree, pending, budget, inf, +started, +duration, fallback}:
       do IO<State>:
         now : Nat <- IO.now()
-        elapsed(cache, model, now, root, table, tree, budget, inf, started, duration, fallback)
+        await_deadline(past_deadline(now, duration, started), cache, root, table, tree, pending, budget, inf, started, duration, fallback)
+
+def tick_mode(cache: NativeEvaluation.Cache, model: U32, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
+  do IO<State>:
+    r : NativeEvaluation.Cache & Bool <- NativeEvaluation.retire(cache)
+    tick_retired(r, model, root, table, mode)
 
 def fallback(ms: List<&2, Chess.Ply>, best: U32) -> U32:
   match ms:
     case Nil{}: best
     case Con{m, rest}: fallback(rest, U32.min(best, Search.key(m)))
 
-def start_search(cache: NativeEvaluation.Cache, +root: Pos.Game, lim: Protocol.Limits, r: Array<U64> & List<&2, Chess.Ply>) -> IO(State):
+def start_identified(+root: Pos.Game, lim: Protocol.Limits, table: Array<U64>, ms: List<&2, Chess.Ply>,
+  r: NativeEvaluation.Cache & U32) -> IO(State):
   Protocol.Limits{budget, depth, +duration, inf, seen, valid, evals} = lim
-  (table, ms) = r
+  (cache, +epoch) = r
   do IO<State>:
     now : Nat <- IO.now()
-    return State{cache, root, table, Running{Search.start(Pos.board(root), 4096, 1, depth), budget, inf, Work.start(now, evals, duration, U32.is_gt(U32.and(seen, 32), 0)), duration, fallback(ms, 4294967295)}, False{}}
+    return State{cache, root, table, Running{Search.start(Pos.board(root), 4096, epoch, depth), budget, inf,
+      Work.identified(Work.start(now, evals, duration, U32.is_gt(U32.and(seen, 32), 0)), epoch), duration, fallback(ms, 4294967295)}, False{}}
+
+def start_search(cache: NativeEvaluation.Cache, root: Pos.Game, lim: Protocol.Limits, r: Array<U64> & List<&2, Chess.Ply>) -> IO(State):
+  (table, ms) = r
+  do IO<State>:
+    r : NativeEvaluation.Cache & U32 <- NativeEvaluation.next(cache)
+    start_identified(root, lim, table, ms, r)
 
 def checked_go(cache: NativeEvaluation.Cache, ok: Bool, +root: Pos.Game, table: Array<U64>, lim: Protocol.Limits) -> IO(State):
   match ok:
@@ -373,6 +496,7 @@ def available(cache: NativeEvaluation.Cache, code: U32, args: List<&2, String>, 
   match mode:
     case Idle{}: idle_command(cache, code, args, root, table)
     case Running{t, n, inf, start, ms, fb}: message(State{cache, root, table, Running{t, n, inf, start, ms, fb}, False{}}, "busy; stop before changing position or search")
+    case Awaiting{t, pending, n, inf, start, ms, fb}: message(State{cache, root, table, Awaiting{t, pending, n, inf, start, ms, fb}, False{}}, "busy; stop before changing position or search")
     case Held{k, n, stop, report}: message(State{cache, root, table, Held{k, n, stop, report}, False{}}, "busy; stop before changing position or search")
 
 def handle(code: U32, args: List<&2, String>, s: State) -> IO(State):
@@ -392,7 +516,7 @@ def handle(code: U32, args: List<&2, String>, s: State) -> IO(State):
       stop(cache, root, table, mode)
     case 6:
       State{cache, root, table, mode, quit} = s
-      IO.pure(State, State{cache, root, table, Idle{}, True{}})
+      request_quit(cache, root, table, mode)
     case 8: debug(s)
     case _:
       State{cache, root, table, mode, quit} = s
@@ -403,13 +527,42 @@ def dispatch(words: List<&2, String>, s: State) -> IO(State):
     case Nil{}: IO.pure(State, s)
     case Con{h, t}: handle(Protocol.command(h), t, s)
 
+def command_deadline(expired: Bool, s: State) -> IO(State):
+  match expired:
+    case False{}: IO.pure(State, s)
+    case True{}:
+      State{cache, root, table, mode, quit} = s
+      match mode:
+        case Awaiting{tree, pending, budget, inf, run, duration, fallback}:
+          cancel_wait(cache, root, table, tree, pending, run, fallback, 0, False{})
+        case Running{tree, budget, inf, run, duration, fallback}: finish(cache, run, False{}, root, table, fallback, tree)
+        case _: IO.pure(State, State{cache, root, table, mode, quit})
+
+def command_checked(s: State) -> IO(State):
+  State{cache, root, table, mode, +quit} = s
+  match mode:
+    case Running{tree, budget, inf, +run, +duration, fallback}:
+      do IO<State>:
+        now : Nat <- IO.now()
+        command_deadline(past_deadline(now, duration, run), State{cache, root, table, Running{tree, budget, inf, run, duration, fallback}, quit})
+    case Awaiting{tree, pending, budget, inf, +run, +duration, fallback}:
+      do IO<State>:
+        now : Nat <- IO.now()
+        command_deadline(past_deadline(now, duration, run), State{cache, root, table, Awaiting{tree, pending, budget, inf, run, duration, fallback}, quit})
+    case _: IO.pure(State, State{cache, root, table, mode, quit})
+
+def command_packet(words: List<&2, String>, s: State) -> IO(State):
+  do IO<State>:
+    next : State <- dispatch(words, s)
+    command_checked(next)
+
 def packet(+model: U32, p: Packet, s: State) -> IO(State):
   Packet{kind, text} = p
   match kind:
     case 0:
       State{cache, root, table, mode, quit} = s
       tick_mode(cache, model, root, table, mode)
-    case 1: dispatch(Text.words(text), s)
+    case 1: command_packet(Text.words(text), s)
     case 2: handle(6, Nil{}, s)
     case _: message(s, "invalid or overlong input record")
 
@@ -419,7 +572,7 @@ def serve(+model: U32, fuel: Nat, s: State) -> IO(Unit):
     case 1n+p:
       State{cache, root, table, mode, quit} = s
       match quit:
-        case True{}: IO.pure(Unit, Unit{})
+        case True{}: NativeEvaluation.shutdown(cache)
         case False{}:
           do IO<Unit>:
             input : Packet <- Wire.poll()
@@ -429,7 +582,8 @@ def serve(+model: U32, fuel: Nat, s: State) -> IO(Unit):
 def launch(+model: U32) -> IO(Unit):
   do IO<Unit>:
     diagnostics : Bool <- Buffers.Native.diagnostics()
-    serve(model, 1000000000n, State{NativeEvaluation.cache(model, diagnostics), Pos.start(), Tables.build(), Idle{}, False{}})
+    asynchronous : Bool <- Async.Async.enabled()
+    serve(model, 1000000000n, State{NativeEvaluation.cache(model, diagnostics, asynchronous), Pos.start(), Tables.build(), Idle{}, False{}})
 
 def native_launch(+model: U32) -> IO(Unit):
   do IO<Unit>:
