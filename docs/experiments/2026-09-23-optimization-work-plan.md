@@ -6,9 +6,9 @@ This is a work plan, not a new experiment admission or a production deployment.
 
 | Owner | Current deliverable | Next action after primary review |
 |---|---|---|
-| `sol_hotload_runner` | Pinned, bounded CPU comparison for PR810's overlay-validation reuse; decoded-array/plan parity and meaningful small gate/cleanup tests | Admit the small real-shard comparison only after checking E input wait and competing work; use measured load benefit to decide a trainer comparison |
+| `sol_hotload_runner` | Eight-shard ABBA completed: exact parity and 62.38% less measured hot-load time; now independently reviewing host-overlap fixes | Rebase reusable diagnostic tooling onto current origin/main, fix publication typechecks, then prepare trainer-level validation after E and its arena |
 | `sol_host_overlap` | Executable raw/prepared OFF/ON CPU qualification producer plus bounded GPU comparison runner; exact runtime and checkpoint/optimizer contracts | Qualify the actual batch/augmentation stream in an admitted CPU slot, then prepare the GPU comparison after E and its queued paired arena |
-| `sol_generation_readout` | Publish audited c4 and recovered c8 bank with original cleanup failure preserved | Trace exact BT4/Ceres output reuse requirements and existing adapters; propose the smallest CPU-testable implementation without changing target semantics |
+| `sol_generation_readout` | Audited c4/c8 readout published; BT4 compact-policy helper now reused by collector with caller-owned output buffer | Publish independently reviewed helper and exact parity tests; future generator integration must retain history, value convention and six-man outcomes |
 
 The primary agent owns prioritization, independent code review, resource admission,
 result interpretation and publication readiness. A worker finishing one task reports
@@ -41,3 +41,7 @@ launches GPU workloads, changes E, or restores the held second training seed.
 Related: [shared compute requirements](2026-09-22-scale-compute-budget.md) and
 [live loader profile](2026-09-23-loader-profile.md). No new compute has been launched
 by this plan.
+
+## Completed small CPU measurement
+
+The [actual-loader ABBA](2026-09-23-overlay-hotload-diagnostic.md) was admitted after a host check and completed with exact parity. Median loading time fell from 10.925 to 4.110 seconds. This establishes the next trainer candidate; it does not authorize GPU work or claim a 500M throughput result. The host-overlap independent review found false-PASS and input-binding gaps; revised tooling is under re-review before any full-stream run.

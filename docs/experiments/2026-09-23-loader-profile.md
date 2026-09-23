@@ -70,3 +70,7 @@ Independent review reproduced every sample count, verified all three frozen sour
 hashes and the candidate's code path, and checked the draft loader initialization.
 It confirmed the diagnostic scope and identified the missing expected source/receipt
 pins; those remain explicitly required before admission.
+
+## Completed small loader follow-up
+
+The [eight-shard ABBA](2026-09-23-overlay-hotload-diagnostic.md) subsequently passed exact parity and measured 62.38% less hot-load time (10.925 to 4.110 s median). It establishes a loader-stage benefit, not full training or external-drive throughput. The original prepared evidence above remains historical.
