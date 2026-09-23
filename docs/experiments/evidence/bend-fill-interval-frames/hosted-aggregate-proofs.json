@@ -1,0 +1,168 @@
+{
+  "proof_gate": "PASS",
+  "aggregate_law_count": 95,
+  "new_law_count": 6,
+  "inherited_law_count": 89,
+  "total_rejection_controls": 196,
+  "inherited_negative_controls": 176,
+  "negative_controls": [
+    {
+      "name": "outside-includes-first-write",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Clear.bend",
+      "failure_location": "outside_ne",
+      "diagnostic_sha256": "92196fed4792ac8c1280a16ad3d3d6655d489b31ce9b0a0dfcabf94468beffa6",
+      "diagnostic": "Error:\n- expected : {Bool.or(Cmp.is_lt(U32.cmp(q, at)), Cmp.is_le(U32.cmp(end, q))) == True{} : Bool}\n- observed : {Bool.or(Cmp.is_le(U32.cmp(q, at)), Cmp.is_le(U32.cmp(end, q))) == True{} : Bool}\nContext:\n- q    : U32\n- at   : U32\n- end  : U32\n- head : {Cmp.is_lt(U32.cmp(at, end)) == True{} : Bool}\n- e    : {Bool.or(Cmp.is_le(U32.cmp(q, at)), Cmp.is_le(U32.cmp(end, q))) == True{} : Bool}\nLocation: outside_ne\n50 |   either({U32.is_eq(at,q) == False{} : Bool},U32.is_lt(q,at),U32.is_le(end,q),\n51>|     p=>N.reverse_ne(at,q,p),p=>Order.lt_ne(at,q,Order.lt_le(at,end,q,head,p)),e)\n52 |"
+    },
+    {
+      "name": "outside-after-start-not-end",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Clear.bend",
+      "failure_location": "outside_ne",
+      "diagnostic_sha256": "fea77b866739b6dbdadbc3831d7994a3da8a6622e9750eb8c78d5dbda65c8f5f",
+      "diagnostic": "Error:\n- expected : {Bool.or(Cmp.is_lt(U32.cmp(q, at)), Cmp.is_le(U32.cmp(end, q))) == True{} : Bool}\n- observed : {Bool.or(Cmp.is_lt(U32.cmp(q, at)), Cmp.is_le(U32.cmp(at, q))) == True{} : Bool}\nContext:\n- q    : U32\n- at   : U32\n- end  : U32\n- head : {Cmp.is_lt(U32.cmp(at, end)) == True{} : Bool}\n- e    : {Bool.or(Cmp.is_lt(U32.cmp(q, at)), Cmp.is_le(U32.cmp(at, q))) == True{} : Bool}\nLocation: outside_ne\n50 |   either({U32.is_eq(at,q) == False{} : Bool},U32.is_lt(q,at),U32.is_le(end,q),\n51>|     p=>N.reverse_ne(at,q,p),p=>Order.lt_ne(at,q,Order.lt_le(at,end,q,head,p)),e)\n52 |"
+    },
+    {
+      "name": "omit-write-count",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Clear.bend",
+      "failure_location": "induction",
+      "diagnostic_sha256": "b160c58cac415f0e24f11d40b90c6cadf53b40a13cdf89fb924aad3b7bb3369a",
+      "diagnostic": "Error:\n- expected : {Cmp.is_le(Nat.cmp(1n+Nat.add(p, U32.to_nat(at)), U32.to_nat(end))) == True{} : Bool}\n- observed : {Cmp.is_le(Nat.cmp(U32.to_nat(at), U32.to_nat(end))) == True{} : Bool}\nContext:\n- d       : Nat\n- t       : ../storage/Observe.Shape\n- p       : Nat\n- at      : U32\n- end     : U32\n- q       : U32\n- shape   : {t == ../complete/Spec.full(d) : ../storage/Observe.Shape}\n- size    : {../separation/Spec.size(../complete/Spec.full(d)) == 131072 : U32}\n- cap     : {U32{../normalization/Bound.limit(32n, d)} == 131072 : U32}\n- depth   : {Cmp.is_lt(Nat.cmp(d, 18n)) == True{} : Bool}\n- eb      : {Cmp.is_lt(U32.cmp(end, 131072)) == True{} : Bool}\n- qb      : {Cmp.is_lt(U32.cmp(q, 131072)) == True{} : Bool}\n- room    : {Cmp.is_le(Nat.cmp(U32.to_nat(at), U32.to_nat(end))) == True{} : Bool}\n- outside : {Bool.or(Cmp.is_lt(U32.cmp(q, at)), Cmp.is_le(U32.cmp(end, q))) == True{} : Bool}\nLocation: induction\n71 |     case 1n+p:\n72>|       +head = N.room_head(p,at,end,room)\n73 |       +safe = Order.lt_lt(at,end,131072,head,eb)"
+    },
+    {
+      "name": "increment-twice",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Increment.bend",
+      "failure_location": "exact",
+      "diagnostic_sha256": "067d1b4286eb4be9420c844eb3d10a8a815a68ea08f0224e808121a5bab4dacc",
+      "diagnostic": "Error:\n- expected : {Word.to_nat(32n, Word.inc(32n, Word.inc(32n, w))) == 1n+Word.to_nat(32n, w) : Nat}\n- observed : {Word.to_nat(32n, Word.inc(32n, w)) == 1n+Word.to_nat(32n, w) : Nat}\nContext:\n- w : Word.Con<31n>\n- e : {Cmp.is_lt(Word.cmp(32n, w, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{True{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}})) == True{} : Bool}\nLocation: exact\n38 |   match i:\n39>|     case U32{w}: word(32n,17n,w,e)\n40 |"
+    },
+    {
+      "name": "allow-nonzero-final-carry",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "AddNat.bend",
+      "failure_location": "word",
+      "diagnostic_sha256": "cc8485e664192b1482ba3d32a6c7951d45823c186f8674db14faede3d070e08a",
+      "diagnostic": "Error:\n- expected : {True{} == False{} : Bool}\n- observed : {True{} == True{} : Bool}\nContext:\n- a : Word.Nil\n- b : Word.Nil\n- e : {True{} == True{} : Bool}\nLocation: word\n62 |         case True{}:\n63>|           Old.false_true({0n == 1n : Nat},Equal.sym(Bool,True{},False{},e))\n64 |     case 1n+p:"
+    },
+    {
+      "name": "discard-addition-carry-in-numeric-step",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "AddNat.bend",
+      "failure_location": "step",
+      "diagnostic_sha256": "fbf7efec17e90524eacaede189ec29757c334a303bc5c1d0a41182750180b223",
+      "diagnostic": "Error:\n- expected : {Nat.double(Nat.add(x, y)) == 1n+Nat.add(Nat.double(x), 1n+Nat.double(y)) : Nat}\n- observed : {2n+Nat.double(Nat.add(x, y)) == 1n+Nat.add(Nat.double(x), 1n+Nat.double(y)) : Nat}\nContext:\n- x : Nat\n- y : Nat\nLocation: step\n29 |     case False{} True{} True{}:\n30>|       Equal.trans(Nat,2n+Nat.double(Nat.add(x,y)),2n+Nat.add(Nat.double(x),Nat.double(y)),\n31 |         1n+Nat.add(Nat.double(x),1n+Nat.double(y)),"
+    },
+    {
+      "name": "actual-fill-writes-next-address",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Frame.bend",
+      "failure_location": "../storage/Build.fill",
+      "diagnostic_sha256": "0b5d49b54a0b7be85af56b02b0bb5ff80204a6ed5180b4a023de5f559bd31f66",
+      "diagnostic": "Error:\n- expected : {../storage/Observe.shape(../../Tables.fill(p, U32.inc(at), sq, bishop, mask, U64.and(U64.sub(subset, mask), mask), Array.set.fin(U64, Array.swap.at(U64, U32.inc(at), U64.or(U64.or(../../Tables.ray(6n, Bool.or(Cmp.is_eq(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(Bool.pick(U32, bishop, 4, 0))), 64)), Bool.not(Cmp.is_eq(U64.cmp(U64.and(subset, U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(Bool.pick(U32, bishop, 4, 0)))), 64n), U64{1, 0})), U64{0, 0})))), ../../Tables.jump(sq, ../../Tables.delta(Bool.pick(U32, bishop, 4, 0))), Bool.pick(U32, bishop, 4, 0), subset, False{}, U64.or(U64{0, 0}, Bool.pick(U64, Bool.and(Cmp.is_lt(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(Bool.pick(U32, bishop, 4, 0))), 64)), True{}), U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(Bool.pick(U32, bishop, 4, 0)))), 64n), U64{1, 0}), U64{0, 0}))), ../../Tables.ray(6n, Bool.or(Cmp.is_eq(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.inc(Bool.pick(U32, bishop, 4, 0)))), 64)), Bool.not(Cmp.is_eq(U64.cmp(U64.and(subset, U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.inc(Bool.pick(U32, bishop, 4, 0))))), 64n), U64{1, 0})), U64{0, 0})))), ../../Tables.jump(sq, ../../Tables.delta(U32.inc(Bool.pick(U32, bishop, 4, 0)))), U32.inc(Bool.pick(U32, bishop, 4, 0)), subset, False{}, U64.or(U64{0, 0}, Bool.pick(U64, Bool.and(Cmp.is_lt(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.inc(Bool.pick(U32, bishop, 4, 0)))), 64)), True{}), U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.inc(Bool.pick(U32, bishop, 4, 0))))), 64n), U64{1, 0}), U64{0, 0})))), U64.or(../../Tables.ray(6n, Bool.or(Cmp.is_eq(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 2))), 64)), Bool.not(Cmp.is_eq(U64.cmp(U64.and(subset, U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 2)))), 64n), U64{1, 0})), U64{0, 0})))), ../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 2))), U32.add(Bool.pick(U32, bishop, 4, 0), 2), subset, False{}, U64.or(U64{0, 0}, Bool.pick(U64, Bool.and(Cmp.is_lt(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 2))), 64)), True{}), U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 2)))), 64n), U64{1, 0}), U64{0, 0}))), ../../Tables.ray(6n, Bool.or(Cmp.is_eq(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 3))), 64)), Bool.not(Cmp.is_eq(U64.cmp(U64.and(subset, U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 3)))), 64n), U64{1, 0})), U64{0, 0})))), ../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 3))), U32.add(Bool.pick(U32, bishop, 4, 0), 3), subset, False{}, U64.or(U64{0, 0}, Bool.pick(U64, Bool.and(Cmp.is_lt(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 3))), 64)), True{}), U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 3)))), 64n), U64{1, 0}), U64{0, 0}))))), Array.size(U64, ../storage/Observe.pack(c)))))) == ../storage/Observe.shape(../storage/Observe.pack(c)) : ../storage/Observe.Shape}\n- observed : {../storage/Observe.shape(../../Tables.fill(p, U32.inc(at), sq, bishop, mask, U64.and(U64.sub(subset, mask), mask), Array.set.fin(U64, Array.swap.at(U64, at, U64.or(U64.or(../../Tables.ray(6n, Bool.or(Cmp.is_eq(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(Bool.pick(U32, bishop, 4, 0))), 64)), Bool.not(Cmp.is_eq(U64.cmp(U64.and(subset, U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(Bool.pick(U32, bishop, 4, 0)))), 64n), U64{1, 0})), U64{0, 0})))), ../../Tables.jump(sq, ../../Tables.delta(Bool.pick(U32, bishop, 4, 0))), Bool.pick(U32, bishop, 4, 0), subset, False{}, U64.or(U64{0, 0}, Bool.pick(U64, Bool.and(Cmp.is_lt(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(Bool.pick(U32, bishop, 4, 0))), 64)), True{}), U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(Bool.pick(U32, bishop, 4, 0)))), 64n), U64{1, 0}), U64{0, 0}))), ../../Tables.ray(6n, Bool.or(Cmp.is_eq(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.inc(Bool.pick(U32, bishop, 4, 0)))), 64)), Bool.not(Cmp.is_eq(U64.cmp(U64.and(subset, U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.inc(Bool.pick(U32, bishop, 4, 0))))), 64n), U64{1, 0})), U64{0, 0})))), ../../Tables.jump(sq, ../../Tables.delta(U32.inc(Bool.pick(U32, bishop, 4, 0)))), U32.inc(Bool.pick(U32, bishop, 4, 0)), subset, False{}, U64.or(U64{0, 0}, Bool.pick(U64, Bool.and(Cmp.is_lt(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.inc(Bool.pick(U32, bishop, 4, 0)))), 64)), True{}), U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.inc(Bool.pick(U32, bishop, 4, 0))))), 64n), U64{1, 0}), U64{0, 0})))), U64.or(../../Tables.ray(6n, Bool.or(Cmp.is_eq(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 2))), 64)), Bool.not(Cmp.is_eq(U64.cmp(U64.and(subset, U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 2)))), 64n), U64{1, 0})), U64{0, 0})))), ../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 2))), U32.add(Bool.pick(U32, bishop, 4, 0), 2), subset, False{}, U64.or(U64{0, 0}, Bool.pick(U64, Bool.and(Cmp.is_lt(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 2))), 64)), True{}), U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 2)))), 64n), U64{1, 0}), U64{0, 0}))), ../../Tables.ray(6n, Bool.or(Cmp.is_eq(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 3))), 64)), Bool.not(Cmp.is_eq(U64.cmp(U64.and(subset, U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 3)))), 64n), U64{1, 0})), U64{0, 0})))), ../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 3))), U32.add(Bool.pick(U32, bishop, 4, 0), 3), subset, False{}, U64.or(U64{0, 0}, Bool.pick(U64, Bool.and(Cmp.is_lt(U32.cmp(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 3))), 64)), True{}), U64.shln.go(Nat.min(U32.to_nat(../../Tables.jump(sq, ../../Tables.delta(U32.add(Bool.pick(U32, bishop, 4, 0), 3)))), 64n), U64{1, 0}), U64{0, 0}))))), Array.size(U64, ../storage/Observe.pack(c)))))) == ../storage/Observe.shape(../storage/Observe.pack(c)) : ../storage/Observe.Shape}\nContext:\n- p      : Nat\n- at     : U32\n- sq     : U32\n- bishop : Bool\n- mask   : U64\n- subset : U64\n- a      : Array<U64>\n- c      : ../storage/Observe.Cells\nLocation: ../storage/Build.fill\n16 |       R.shape_transfer(a,x => Tables.fill(1n+p,at,sq,bishop,mask,subset,x),\n17>|         +c => Equal.trans(O.Shape,\n18 |           O.shape(Tables.fill(p,U32.inc(at),sq,bishop,mask,Subsets.next(subset,mask),Array.set(U64,O.pack(c),at,Tables.slider(sq,bishop,subset,False{})))),"
+    },
+    {
+      "name": "actual-fill-zero-count-writes",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Frame.bend",
+      "failure_location": "../storage/Build.fill",
+      "diagnostic_sha256": "3784caaad22662c2ad0364728b7090378caecc6f6ac5ef19849b435a67e194cb",
+      "diagnostic": "Error:\n- expected : ../storage/Observe.shape(Array.set.fin(U64, Array.swap.at(U64, 0, U64{0, 0}, Array.size(U64, a))))\n- observed : ../storage/Observe.shape(a)\nContext:\n- at     : U32\n- sq     : U32\n- bishop : Bool\n- mask   : U64\n- subset : U64\n- a      : Array<U64>\nLocation: ../storage/Build.fill\n13 |   match n:\n14>|     case 0n: {==}\n15 |     case 1n+p:"
+    },
+    {
+      "name": "clear-schedule-skips-first-write",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Clear.bend",
+      "failure_location": "induction",
+      "diagnostic_sha256": "50e78d13b8b40cf14ce710a0ae5a3d3b90b3d0bfdcba4e4acdb15ed717c1f369",
+      "diagnostic": "Error:\n- expected : {Bool.and(../separation/Spec.apart(t, ../separation/Spec.size(t), U32.and(U32.inc(at), U32.sub(../separation/Spec.size(t), 1)), U32.and(q, U32.sub(../separation/Spec.size(t), 1))), ../separation/Spec.clear(t, p, U32.inc(at), q)) == True{} : Bool}\n- observed : {Bool.and(../separation/Spec.apart(t, ../separation/Spec.size(t), U32.and(at, U32.sub(../separation/Spec.size(t), 1)), U32.and(q, U32.sub(../separation/Spec.size(t), 1))), ../separation/Spec.clear(t, p, U32.inc(at), q)) == True{} : Bool}\nContext:\n- d       : Nat\n- t       : ../storage/Observe.Shape\n- p       : Nat\n- at      : U32\n- end     : U32\n- q       : U32\n- shape   : {t == ../complete/Spec.full(d) : ../storage/Observe.Shape}\n- size    : {../separation/Spec.size(../complete/Spec.full(d)) == 131072 : U32}\n- cap     : {U32{../normalization/Bound.limit(32n, d)} == 131072 : U32}\n- depth   : {Cmp.is_lt(Nat.cmp(d, 18n)) == True{} : Bool}\n- eb      : {Cmp.is_lt(U32.cmp(end, 131072)) == True{} : Bool}\n- qb      : {Cmp.is_lt(U32.cmp(q, 131072)) == True{} : Bool}\n- room    : {Cmp.is_le(Nat.cmp(1n+Nat.add(p, U32.to_nat(at)), U32.to_nat(end))) == True{} : Bool}\n- outside : {Bool.or(Cmp.is_lt(U32.cmp(q, at)), Cmp.is_le(U32.cmp(end, q))) == True{} : Bool}\n- head    : {Cmp.is_lt(U32.cmp(at, end)) == True{} : Bool}\n- safe    : {Cmp.is_lt(U32.cmp(at, 131072)) == True{} : Bool}\n- first   : {../separation/Spec.apart(t, ../separation/Spec.size(t), U32.and(at, U32.sub(../separation/Spec.size(t), 1)), U32.and(q, U32.sub(../separation/Spec.size(t), 1))) == True{} : Bool}\n- rest    : {../separation/Spec.clear(t, p, U32.inc(at), q) == True{} : Bool}\nLocation: induction\n75 |       +rest = induction(d,t,p,U32.inc(at),end,q,shape,size,cap,depth,eb,qb,N.next_room(p,at,end,safe,room),outside_next(q,at,end,safe,outside))\n76>|       %Equal.sym(Bool,S.disjoint(t,at,q),True{},first) : {Bool.and(_,S.clear(t,p,U32.inc(at),q)) == True{} : Bool}\n77 |       rest"
+    },
+    {
+      "name": "clear-schedule-repeats-address",
+      "rejected": true,
+      "kind": "affected source refinement",
+      "entry": "Clear.bend",
+      "failure_location": "induction",
+      "diagnostic_sha256": "11620ec7820c36e71a1799232ac8b379628f4cc70979db78e515cfa3b607eef8",
+      "diagnostic": "Error:\n- expected : {Bool.and(../separation/Spec.apart(t, ../separation/Spec.size(t), U32.and(at, U32.sub(../separation/Spec.size(t), 1)), U32.and(q, U32.sub(../separation/Spec.size(t), 1))), ../separation/Spec.clear(t, p, at, q)) == True{} : Bool}\n- observed : {Bool.and(../separation/Spec.apart(t, ../separation/Spec.size(t), U32.and(at, U32.sub(../separation/Spec.size(t), 1)), U32.and(q, U32.sub(../separation/Spec.size(t), 1))), ../separation/Spec.clear(t, p, U32.inc(at), q)) == True{} : Bool}\nContext:\n- d       : Nat\n- t       : ../storage/Observe.Shape\n- p       : Nat\n- at      : U32\n- end     : U32\n- q       : U32\n- shape   : {t == ../complete/Spec.full(d) : ../storage/Observe.Shape}\n- size    : {../separation/Spec.size(../complete/Spec.full(d)) == 131072 : U32}\n- cap     : {U32{../normalization/Bound.limit(32n, d)} == 131072 : U32}\n- depth   : {Cmp.is_lt(Nat.cmp(d, 18n)) == True{} : Bool}\n- eb      : {Cmp.is_lt(U32.cmp(end, 131072)) == True{} : Bool}\n- qb      : {Cmp.is_lt(U32.cmp(q, 131072)) == True{} : Bool}\n- room    : {Cmp.is_le(Nat.cmp(1n+Nat.add(p, U32.to_nat(at)), U32.to_nat(end))) == True{} : Bool}\n- outside : {Bool.or(Cmp.is_lt(U32.cmp(q, at)), Cmp.is_le(U32.cmp(end, q))) == True{} : Bool}\n- head    : {Cmp.is_lt(U32.cmp(at, end)) == True{} : Bool}\n- safe    : {Cmp.is_lt(U32.cmp(at, 131072)) == True{} : Bool}\n- first   : {../separation/Spec.apart(t, ../separation/Spec.size(t), U32.and(at, U32.sub(../separation/Spec.size(t), 1)), U32.and(q, U32.sub(../separation/Spec.size(t), 1))) == True{} : Bool}\n- rest    : {../separation/Spec.clear(t, p, U32.inc(at), q) == True{} : Bool}\nLocation: induction\n75 |       +rest = induction(d,t,p,U32.inc(at),end,q,shape,size,cap,depth,eb,qb,N.next_room(p,at,end,safe,room),outside_next(q,at,end,safe,outside))\n76>|       %Equal.sym(Bool,S.disjoint(t,at,q),True{},first) : {Bool.and(_,S.clear(t,p,U32.inc(at),q)) == True{} : Bool}\n77 |       rest"
+    },
+    {
+      "name": "omitted-law",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "omitted-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-laws-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-prefix-producer",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-relative-producer",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-consumer-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "proof-hole",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "foreign-witness",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "symlinked-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe-frame",
+      "rejected": true,
+      "kind": "policy and exact output",
+      "raw_cli_status": 0
+    }
+  ],
+  "new_laws": [
+    "interval_clear",
+    "interval_fill_preserves_query",
+    "chess_fill_clear",
+    "chess_fill_preserves_query",
+    "fill_preserves_later_lookup",
+    "fill_preserves_reserved_query"
+  ],
+  "consumer": "PASS",
+  "source": "cf0dea478acaf43c9f1bf95d1b8d7ccc1a4d4925",
+  "tree": "e3b5dc68e284190bbad06b7a1740aede33b34add",
+  "run": 35888318491,
+  "execution": "Fresh unchanged relative/verify.js and fresh fill_frame/focused.js in separate parallel jobs of this run; this record aggregates their successful results. The sequential fill_frame/verify.js wrapper was not separately executed.",
+  "focused_local_raw_sha256": "71a92367a76ab16a2606a5cbda6ed60d263f998752e2854a8ea81f1ac96be9fc",
+  "focused_canonical_sha256": "4c85bbd15fddfed431609c5c6952758c6e8a66ed8ad4a07749a4cdedae80419c",
+  "native_except_cc_canonical_sha256": "10fdc9108b0e3566ee79d2f8f973f135c506157677184b87f81c95093efc94dc",
+  "candidate_source_entries": 268
+}

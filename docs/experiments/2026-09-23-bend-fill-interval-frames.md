@@ -93,3 +93,22 @@ C-lowering limitations are unchanged. No production code or additional applicati
 responsibility moved from Python to Bend. Export, external references, data/control
 orchestration and training remain dependencies; C++/LibTorch/AOTI is transitional
 inference. No full-engine/model/GPU, perft, training, benchmark or strength result.
+
+
+## Completed hosted qualification
+
+Hosted run **35888318491**, workflow commit `2a611c4f4580e0feb046b114eff48ccece60348a`, qualifies exact source `cf0dea478acaf43c9f1bf95d1b8d7ccc1a4d4925` and tree `e3b5dc68e284190bbad06b7a1740aede33b34add`. Fresh unchanged parent and new focused jobs together pass **95 laws and 196 rejection controls**. Four native modes, original compiler source/pin checks and unchanged whole-repository lint pass.
+
+The proof jobs are intentionally parallel and separate: unchanged relative/verify.js checks all 89 prior laws and 176 controls; fill_frame/focused.js checks six new contracts, their importing consumer and 20 controls. The dependent publication job verifies both reports and records the aggregate. The sequential fill_frame/verify.js convenience wrapper was not additionally run. No inherited obligation is dropped and no historical report substitutes for these fresh executions.
+
+The corrected complete local consumer and all 20 controls passed in 615.93 seconds after removal of the invalid +range binder. Hosted focused data matches its local canonical identity exactly. The native report matches locally except the independently recorded C compiler version. Every one of 268 native-source manifest entries is unchanged; all proof/native recorded source hashes match.
+
+Native: 1024 rows per mode, all 128 chess blocks, 768 full-count, 128 one-write and 128 zero-write calls; 768 protected and 256 deliberately overwritten queries. Each mode executes 646016 fill writes in addition to metadata builds and rejects seven invalid requests. Tools: Bun 1.4.2, Ubuntu clang version 18.1.3 (1ubuntu1). Clang selection is native-step-only; the locked Python 3.13 CPU environment uses its normal compiler with uv 0.12.10. Ruff/Basedpyright/Vulture pass unchanged, resolving the historical local missing-tools gap.
+
+The candidate reads actual metadata and calls the real fill body, while the reference uses independent coordinates, BigInt deposition and integer prefix sums. Observations include selected values, first/last block entries, metadata and capacity, not every returned array cell. Modes repeat fixtures, not disjoint datasets or exhaustive native U64 coverage.
+
+This establishes interval-derived clear-path certificates and actual full slider-fill frames, including later-lookup and reserved-query preservation. It does not prove the preceding header writes, all stored metadata, every computed in-block result, the final all-block/extras state or independent blocker-ray lookup equality. Complete shape and the stated strict bounds remain essential.
+
+Postqualification edits add reports, the experiment index and migration inventory only. Full logs are retained for 30 days in the fill-frame artifacts and bend-fill-frame-qualification; compact reports are committed. Self-review only, not independent review. No production code, earlier accepted law, compiler input, existing test, permanent workflow or routine perft-budget changes. No Python application responsibility moved, model/GPU/training/strength/performance result or native pointer/lifetime theorem is implied.
+
+Publication fast-forwards `feat/bend-fill-frame-20260923` only after all needed jobs succeed and both parent/source heads still match. No merge, force push, deployment or live-process operation. Earlier stalled/overlapping candidates and compiler TypeScript/diagnostic/raw-internal-lowering limitations remain separate and unchanged.

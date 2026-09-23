@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest fill-interval qualification: September 23, 2026
+
+Hosted run **35888318491**, workflow commit `2a611c4f4580e0feb046b114eff48ccece60348a`, qualifies exact source `cf0dea478acaf43c9f1bf95d1b8d7ccc1a4d4925` and tree `e3b5dc68e284190bbad06b7a1740aede33b34add`. Fresh unchanged parent and new focused jobs together pass **95 laws and 196 rejection controls**. Four native modes, original compiler source/pin checks and unchanged whole-repository lint pass.
+
+`fill_frame/interval_clear` derives the existing clear-write-path predicate from complete depth-17 shape, a bounded half-open interval and mathematical count room. `interval_fill_preserves_query` applies it to actual Tables.fill. `chess_fill_clear` and `chess_fill_preserves_query` obtain the actual full count and endpoint certificates from the previously discharged prefix/size laws. `fill_preserves_later_lookup` and `fill_preserves_reserved_query` derive exclusion from ordered keys or q<512 without caller-supplied clear/index bounds.
+
+These six laws supersede the historical open full-count fill-clear step for each slider-fill component. Header writes before the component, stored offset/mask correctness, final computed in-block contents, preservation through all other builders/extras and independent blocker-ray lookup refinement remain P2 obligations. Source observation uses actual arrays but is not physical identity or native allocation/lifetime proof. See the dated fill-interval readout and committed reports. No production logic or Python responsibility moved, and no model/GPU/benchmark result is added.
+
 ## Latest relative-address qualification: September 22, 2026
 
 Hosted run **35777583835**, workflow commit `95bde5c08c5dacf52c50a514b3ec93a9bc0e00f6`, passed the complete **89-law / 176-control** aggregate, four native modes, original compiler source/pin checks and unchanged whole-repository lint on source commit `ce9d5e5442cf44cde50a4c8da66e3ea9ffdd5bdc`.

@@ -1,0 +1,24 @@
+{
+  "base": "d8de6e46fd04c4b34385d754224df37722a6a118",
+  "source": "cf0dea478acaf43c9f1bf95d1b8d7ccc1a4d4925",
+  "tree": "e3b5dc68e284190bbad06b7a1740aede33b34add",
+  "changed_files": [
+    "docs/experiments/2026-09-23-bend-fill-interval-frames.md",
+    "native/bend_engine/standalone/proofs/fill_frame/AddNat.bend",
+    "native/bend_engine/standalone/proofs/fill_frame/Certified.bend",
+    "native/bend_engine/standalone/proofs/fill_frame/Clear.bend",
+    "native/bend_engine/standalone/proofs/fill_frame/Frame.bend",
+    "native/bend_engine/standalone/proofs/fill_frame/Increment.bend",
+    "native/bend_engine/standalone/proofs/fill_frame/LAWS.bend",
+    "native/bend_engine/standalone/proofs/fill_frame/Nats.bend",
+    "native/bend_engine/standalone/proofs/fill_frame/PROOF.bend",
+    "native/bend_engine/standalone/proofs/fill_frame/README.md",
+    "native/bend_engine/standalone/proofs/fill_frame/Spec.bend",
+    "native/bend_engine/standalone/proofs/fill_frame/consumer.bend",
+    "native/bend_engine/standalone/proofs/fill_frame/focused.js",
+    "native/bend_engine/standalone/proofs/fill_frame/probe.bend",
+    "native/bend_engine/standalone/proofs/fill_frame/verify.js",
+    "native/bend_engine/standalone/proofs/fill_frame/verify_native.js"
+  ],
+  "transfer": "Direct Git tree entries; complete tree matches isolated local candidate"
+}
