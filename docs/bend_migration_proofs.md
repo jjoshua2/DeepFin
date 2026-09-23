@@ -1,5 +1,28 @@
 # Bend migration and proof inventory
 
+## Local extras-stage preservation — September 23, 2026
+
+Two new source laws and their importing consumer pass; all 14 focused rejection
+controls and four full-buffer native modes pass. The complete 100-law aggregate
+is **not run**, hosted qualification is not performed, and whole-repository lint
+fails because its tools are absent. This remains a local patch based on #861,
+not a new remote branch or PR. Parent98-law/212-control evidence remains retained.
+
+`extras/bounded_extras_read` preserves the complete final read pair outside
+[256,512) for complete depth17 arrays, n+k<=64 and q<131072.
+`extras/table_pipeline_extras_read` derives the complete shape from actual
+allocation and the actual prior table loop; depth stays symbolic with d=17.
+Neither law assumes the desired query value or that prior headers are correct.
+
+This closes the final-extras preservation obligation for incoming header and
+slider values, not the remaining stored-header/other-block/independent-ray
+contracts. The actual full pipeline can specialize the symbolic theorem;
+fully expanded closed consumer attempts remain documented as unqualified drafts.
+See [the dated record](experiments/2026-09-23-bend-extras-preservation.md), source
+identities and retained failures. No production logic, old laws or compiler input
+changed; no Python application responsibility moved. No native allocation/lifetime,
+model/GPU or performance guarantee is implied.
+
 ## Current computed-fill hosted qualification: September 23, 2026
 
 Hosted run **35896688343**, workflow commit `c118f74d060f9e183f1cac6a212413dc42dd6e97`, passes the complete **98-law / 212-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on source `94e380d218d1713828fd192427282588bf7df910`. The three public laws are the unchanged saved candidate, not three additional laws beyond that candidate. The historical local-only/aggregate-unrun/lint-unqualified statements below remain records of their original commands; these gaps are now closed for the exact hosted candidate. No broader geometry or full-builder theorem is implied. See the dated fill-contents readout and committed hosted reports.

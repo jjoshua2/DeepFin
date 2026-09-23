@@ -1,0 +1,9 @@
+{
+  "command": [
+    "/mnt/data/header-toolchain/bun",
+    "/mnt/data/header-toolchain/bend/tests/run/u64_proofs.js"
+  ],
+  "timeout": 60,
+  "exit_code": 0,
+  "elapsed_seconds": 5.702422004000027
+}

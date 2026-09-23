@@ -1,0 +1,10 @@
+{
+  "remote_target": "6f2c71fa9bd1d1537c1f5ae0ff6e70e31e495c53",
+  "remote_branch": "feat/bend-fill-contents-20260923",
+  "qualified_source_commit": "94e380d218d1713828fd192427282588bf7df910",
+  "qualified_complete_source_tree": "731bf2a90704324e1dd34727d3f1aaad07162a67",
+  "local_patch_basis_tree": "ccc9f8de9be57979515bad6ae9d9fca413535129",
+  "current_matrix_git_blob": "12494a9efc781f685eb215c5f4a7067c6e341484",
+  "current_index_git_blob": "40ae452979243b6ce106cdb860219ff4a3d91a31",
+  "scope": "Complete qualified source checkout, with exact current target matrix. Remote compare shows later changes are documentation/evidence only. Other post-qualification documentation/evidence additions are not reconstructed locally. Patch touches only verified current files and new paths; not a claimed complete current-head tree."
+}
