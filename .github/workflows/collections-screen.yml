@@ -1,0 +1,160 @@
+name: Isolated collections screen
+on:
+  push:
+    branches: [work/bend-collections-screen-20260923]
+    paths: [.github/workflows/collections-screen.yml, .collections-payload.b64]
+permissions:
+  contents: write
+concurrency:
+  group: collections-screen-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      BASE: 4e8d463e1df6871a2b73b066c95506258d028800
+      FEATURE: feat/bend-collections-screen-20260923
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      BEND_NO_TELEMETRY: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact payload and prepare isolated main checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/collections-work" "$BASE"
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, subprocess, zlib
+          text = pathlib.Path('.collections-payload.b64').read_text().strip()
+          # Repair transcription insertions in transport only; exact SHA remains mandatory.
+          for old, new in [('DVUSUSzCUiCO', 'DVUSUzCUiCO'), ('B/MvwZZJK', 'B/MvwZJK'), ('voPMSZZwa', 'voPMSZwa'), ('FpYiBiQP3', 'FpYiBQP3'), ('ArYlary1RZZ/r', 'ArYlary1RZ/r')]:
+              text = text.replace(old, new)
+          raw = zlib.decompress(base64.b64decode(text, validate=True))
+          assert hashlib.sha256(raw).hexdigest() == 'c19d86dc1842c5feada014b781b89312a3f4d4c9304e1cab991522dbe0b719e6'
+          data = json.loads(raw)
+          work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'collections-work'
+          for name, content in data['files'].items():
+              p = work / name
+              assert not p.exists() and '..' not in pathlib.Path(name).parts
+              p.parent.mkdir(parents=True, exist_ok=True)
+              p.write_text(content)
+          search = work / 'native/bend_engine/session_probe/Search.bend'
+          assert subprocess.check_output(['git', 'hash-object', str(search)], text=True).strip() == '19f54561ee7ebc0e07c0673e52a43a6849512e34'
+          source = search.read_text()
+          for old, new in data['replacements']:
+              assert source.count(old) == 1
+              source = source.replace(old, new)
+          search.write_text(source)
+          index = work / 'docs/experiments/README.md'
+          index.write_text(index.read_text() + '\n- [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.\n')
+          paths = sorted([*data['files'], 'native/bend_engine/session_probe/Search.bend', 'docs/experiments/README.md'])
+          (pathlib.Path(os.environ['RUNNER_TEMP']) / 'collections-paths.json').write_text(json.dumps(paths))
+          manifest = {name: hashlib.sha256((work/name).read_bytes()).hexdigest() for name in paths if name.endswith(('.bend', '.py'))}
+          (pathlib.Path(os.environ['RUNNER_TEMP']) / 'collections-source.json').write_text(json.dumps(manifest, indent=2))
+          subprocess.run(['git', '-C', str(work), 'add', '--', *paths], check=True)
+          subprocess.run(['git', '-C', str(work), 'diff', '--cached', '--check'], check=True)
+          print('Exact source payload verified; prepared', len(paths), 'intended paths')
+          PY
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment and unchanged source compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/collections-work"
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+          clang-18 --version
+      - name: Static and focused Python contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/collections-work"
+          source .venv/bin/activate
+          ./scripts/lint.sh
+          ruff check native/bend_engine/collections_probe/run_probe.py tests/test_bend_collections.py
+          basedpyright native/bend_engine/collections_probe/run_probe.py tests/test_bend_collections.py
+          python -m pytest -q tests/test_bend_collections.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py --junitxml=artifacts/collections-pytest.xml
+      - name: Compiled owning queue, traversal boundaries, mutation and timing screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/collections-work"
+          source .venv/bin/activate
+          python -m native.bend_engine.collections_probe.run_probe --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --cc clang-18 --benchmark --report artifacts/collections.json
+      - name: Existing independent chess session and root-advance oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/collections-work"
+          source .venv/bin/activate
+          python -m native.bend_engine.session_probe.root_probe --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --cc clang-18 --report artifacts/collections-sessions.json
+      - name: Reconcile exact source and publish clean feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/collections-work"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, shutil, subprocess, xml.etree.ElementTree as ET
+          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
+          paths = json.loads((temp/'collections-paths.json').read_text())
+          manifest = json.loads((temp/'collections-source.json').read_text())
+          for name, expected in manifest.items():
+              assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest() == expected, name
+          report = json.loads(pathlib.Path('artifacts/collections.json').read_text())
+          assert report['status'] == 'passed' and report['lifo_mutation_rejected'] is True
+          tests = ET.parse('artifacts/collections-pytest.xml').getroot()
+          cases = list(tests.iter('testcase'))
+          assert cases and not list(tests.iter('failure')) and not list(tests.iter('error')) and not list(tests.iter('skipped'))
+          ev = pathlib.Path('docs/experiments/evidence/bend-collections-screen')
+          ev.mkdir(parents=True, exist_ok=True)
+          for src, name in [('artifacts/collections.json', 'collections.json'), ('artifacts/collections-sessions.json', 'sessions.json')]:
+              shutil.copyfile(src, ev/name)
+              paths.append(str(ev/name))
+          (ev/'source.json').write_text(json.dumps(manifest, indent=2)+'\n')
+          paths.append(str(ev/'source.json'))
+          doc = pathlib.Path('docs/experiments/2026-09-23-bend-collections-screen.md')
+          text = '\n\n### Completed hosted qualification\n\nRun: https://github.com/jjoshua2/DeepFin/actions/runs/' + os.environ['GITHUB_RUN_ID'] + '\n\n'
+          text += f'Whole-repository lint and explicit new-file static checks passed. {len(cases)} focused Python tests passed without skips. '
+          text += f"FIFO: {report['trace_rows_per_mode']} exact output rows in each of generic/native/UBSan modes. "
+          text += f"Traversal: {report['traversal_rows_per_mode']} exact output rows in each of generic/UBSan modes. "
+          text += 'The compiled LIFO mutation was rejected. The unchanged independent root/session verifier passed in its default modes. These repeated modes are not disjoint datasets.\n\n'
+          text += 'Raw timing samples and exact source hashes are in evidence/bend-collections-screen/. Short samples remain flagged. This is not an owning-root scheduler benchmark, GPU/model run, formal proof, independent review, EPS result or Elo result. Self-review only. No third-party source was imported.\n'
+          doc.write_text(doc.read_text().replace('Pending execution. Raw artifacts and completed check status will be recorded\nseparately; this preregistration is not a performance or correctness result.','The preregistered checks below were executed; raw observations are retained.') + text)
+          subprocess.run(['git', 'add', '--', *paths], check=True)
+          subprocess.run(['git', 'diff', '--cached', '--check'], check=True)
+          actual = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines()
+          assert sorted(actual) == sorted(paths), (actual, paths)
+          pathlib.Path('artifacts/qualified.patch').write_bytes(subprocess.check_output(['git', 'diff', '--cached', '--binary']))
+          subprocess.run(['git', 'config', 'user.name', 'github-actions[bot]'], check=True)
+          subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
+          tree = subprocess.check_output(['git', 'write-tree'], text=True).strip()
+          commit = subprocess.check_output(['git', 'commit-tree', tree, '-p', os.environ['BASE'], '-m', 'native: short-circuit search traversals and qualify owning FIFO'], text=True).strip()
+          # Create only; never overwrite a branch created by another process.
+          subprocess.run(['git', 'push', '--force-with-lease=refs/heads/'+os.environ['FEATURE']+':', 'origin', commit+':refs/heads/'+os.environ['FEATURE']], check=True)
+          pathlib.Path('artifacts/feature.txt').write_text(commit+'\n')
+          print('QUALIFIED_FEATURE', os.environ['FEATURE'], commit)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-collections-screen
+          path: |
+            ${{ runner.temp }}/collections-work/artifacts/collections*
+            ${{ runner.temp }}/collections-work/artifacts/qualified.patch
+            ${{ runner.temp }}/collections-work/artifacts/feature.txt
+            ${{ runner.temp }}/collections-source.json
+            .collections-payload.b64
+          retention-days: 30
