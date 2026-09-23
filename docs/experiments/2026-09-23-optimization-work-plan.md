@@ -45,3 +45,33 @@ by this plan.
 ## Completed small CPU measurement
 
 The [actual-loader ABBA](2026-09-23-overlay-hotload-diagnostic.md) was admitted after a host check and completed with exact parity. Median loading time fell from 10.925 to 4.110 seconds. This establishes the next trainer candidate; it does not authorize GPU work or claim a 500M throughput result. The host-overlap independent review found false-PASS and input-binding gaps; revised tooling is under re-review before any full-stream run.
+
+## Review and handoff continuation
+
+After the user identified an idle handoff, the primary checked live agent status:
+all three workers had completed and were awaiting reassignment. The primary
+resumed review and reassigned each worker. Within an active parent turn, the
+primary owns completion-message intake, independent diff/test review, publication
+and the next bounded assignment; another user prompt should not be needed for
+those handoffs. A final response does not establish an unattended restart loop.
+
+Completed publications: [BT4 output conversion #841](https://github.com/jjoshua2/DeepFin/pull/841),
+[host-overlap qualification #842](https://github.com/jjoshua2/DeepFin/pull/842), and
+[revised loader tooling #843](https://github.com/jjoshua2/DeepFin/pull/843).
+
+The next active assignments are:
+
+- Generation worker: a CPU-testable BT4 evaluator retaining native root policy and
+  value output, with correct board-dependent mapping and exact encoded history.
+  No generator command or real inference is enabled by this slice.
+- Outcome worker: opt-in six-man outcome policy matching SF generation's natural
+  terminal and theoretical Syzygy convention; missing tables and unresolved caps
+  must not silently produce draw labels. Legacy generator behavior stays intact.
+- Loader worker: direct cached-loader mutation regression using tiny schema-2
+  fixtures, covering changed targets, base data and qualification receipt.
+
+The primary reviews each resulting diff before integration. GPU benchmarks and
+full-stream CPU qualification remain held; neither publication nor unit-test
+success authorizes their launch.
+
+The direct cached-loader regression subsequently passed 15 author and independent parent tests and was published as [#844](https://github.com/jjoshua2/DeepFin/pull/844), stacked on #810. That worker moved to independent review of the two generation changes without another user prompt.
