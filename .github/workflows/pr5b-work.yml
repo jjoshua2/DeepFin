@@ -4,22 +4,67 @@ on:
     branches: [work/pr5b-async-cohort-20260923]
 permissions:
   contents: read
+  actions: read
 jobs:
-  snapshot:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 12
+    env:
+      BEND_NO_TELEMETRY: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           ref: dbe12bd862bbe04573f0e4d3aeb26c910406f74c
-      - name: Archive pinned tracked source
+      - name: Recover exact authored candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p /tmp/pr5b-source
-          git archive HEAD | gzip > /tmp/pr5b-source/source.tar.gz
-          git rev-parse HEAD > /tmp/pr5b-source/revision.txt
-          sha256sum /tmp/pr5b-source/source.tar.gz > /tmp/pr5b-source/sha256.txt
-      - uses: actions/upload-artifact@v4
+          set -euo pipefail
+          mkdir -p /tmp/pr5b-evidence
+          python - <<'PY'
+          import base64,gzip,hashlib,json,subprocess
+          from pathlib import Path
+          parts=[]
+          for i,sha in enumerate(['0d31131e0ece2e02f64713cac203fef3a2363f9a','5167fefb26f1ca70a2089af2cfc9700469af91f4','c95768809b11cdc528a8cd255ce36f0c09891238']):
+              data=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+              part=base64.b64decode(data['content'])
+              Path(f'/tmp/pr5b-evidence/part-{i}.bin').write_bytes(part)
+              parts.append(part)
+          packed=b''.join(parts)
+          assert hashlib.sha256(packed).hexdigest()=='0dbe47b18b10d273c202c647d4b12fe06bfa7030a2056275979c743bd6eedde2', hashlib.sha256(packed).hexdigest()
+          patch=gzip.decompress(packed)
+          assert hashlib.sha256(patch).hexdigest()=='7f51003d51da7fbaa131cea860191a39fac3041cad5d0f873c08be8f041a260b'
+          subprocess.run(['git','apply','--check','-'],input=patch,check=True)
+          subprocess.run(['git','apply','-'],input=patch,check=True)
+          subprocess.run(['git','add','-N','.'],check=True)
+          subprocess.run(['git','diff','--check'],check=True)
+          paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
+          assert len(paths)==11 and not any(p.startswith('.github/') for p in paths)
+          Path('/tmp/pr5b-evidence/initial.patch').write_bytes(patch)
+          Path('/tmp/pr5b-evidence/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths},indent=2))
+          PY
+      - uses: oven-sh/setup-bun@v2
         with:
-          name: deepfin-pr5b-source
-          path: /tmp/pr5b-source
-          retention-days: 7
+          bun-version: 1.4.2
+      - name: Verify pinned compiler and generate full cohort application
+        run: |
+          set -euo pipefail
+          single=native/bend_engine/standalone
+          revision="$(bun "$single/verify_compiler.js" --revision)"
+          repository="$(bun "$single/verify_compiler.js" --repository)"
+          git init -q /tmp/pr5b-compiler
+          git -C /tmp/pr5b-compiler fetch -q --depth=1 "$repository" "$revision"
+          git -C /tmp/pr5b-compiler checkout -q --detach FETCH_HEAD
+          bun "$single/verify_compiler.js" /tmp/pr5b-compiler | tee /tmp/pr5b-evidence/compiler.txt
+          bun /tmp/pr5b-compiler/bend2/main.ts native/bend_engine/multi_root/main.bend -o /tmp/pr5b-runner.c 2>&1 | tee /tmp/pr5b-evidence/build.txt
+          sha256sum /tmp/pr5b-runner.c > /tmp/pr5b-evidence/generated.txt
+      - name: Preserve generated source if present
+        if: always()
+        run: |
+          if test -f /tmp/pr5b-runner.c; then gzip -c /tmp/pr5b-runner.c > /tmp/pr5b-evidence/runner.c.gz; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deepfin-pr5b-first-build
+          path: /tmp/pr5b-evidence
+          retention-days: 30
