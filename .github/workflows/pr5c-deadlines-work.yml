@@ -6,182 +6,57 @@ permissions:
   contents: write
   actions: read
 jobs:
-  qualify:
+  docs:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      PYTHONPATH: .
-      CAE_TEST_THREADS: '2'
-      OMP_NUM_THREADS: '2'
-      MAX_JOBS: '1'
-      TORCHINDUCTOR_COMPILE_THREADS: '1'
-      BEND_NO_TELEMETRY: '1'
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 57bb9636e3e6fcfb6832bb2cd494279bacae4d38
+          ref: 948a72be1ec7d9d463c3af21a330a0256490fde3
       - uses: actions/download-artifact@v4
         with:
-          name: deepfin-pr5c-generated
-          run-id: 35918586010
+          name: deepfin-pr5c-deadline-qualification
+          run-id: 35919463117
           github-token: ${{ github.token }}
-          path: /tmp/pr5c-generated
-      - name: Reconstruct exact authored source and verified generated C
+          path: /tmp/pr5c-qualified
+      - name: Verify tested source and apply documentation only
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir /tmp/pr5c-evidence
+          mkdir /tmp/pr5c-docs
           python - <<'PY'
-          import base64,gzip,hashlib,json,subprocess
+          import base64,hashlib,json,subprocess
           from pathlib import Path
-          saved=Path('/tmp/pr5c-generated')
-          patch=(saved/'runtime.patch').read_bytes()
-          assert hashlib.sha256(patch).hexdigest()=='451832e41f1fd841296519ebefdf5992193173282948a07196225b40494a54d0'
-          subprocess.run(['git','apply','--check','-'],input=patch,check=True)
-          subprocess.run(['git','apply','-'],input=patch,check=True)
-          original=json.loads((saved/'source-manifest.json').read_text())
-          for path,digest in original.items():
+          manifest=json.loads(Path('/tmp/pr5c-qualified/source-manifest.json').read_text())
+          assert len(manifest)==13
+          for path,digest in manifest.items():
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
-          rec=json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/git/blobs/1820a7d1a61d870b74ab784b06c01eee09a7124e']))
-          transferred=base64.b64decode(rec['content'])
-          assert hashlib.sha256(transferred).hexdigest()=='68a0f1a686345dcbd6bf080c33ab615374df57207c9aaf086bf207d14259d237'
-          # Transfer-only preflight recovered these exact authored byte corrections.
-          text=base64.b64encode(transferred).decode()
-          for lo,hi,old,new in [(12839,12840,'=',''),(3947,3947,'','Q'),(442,443,'g','k')]:
-              assert text[lo:hi]==old
-              text=text[:lo]+new+text[hi:]
-          packed=base64.b64decode(text,validate=True)
-          assert hashlib.sha256(packed).hexdigest()=='823f7fbae3b64c1bae969dec46da4d3a11734c0bc20bffca44e18cc75605f084'
-          patch=gzip.decompress(packed)
-          assert hashlib.sha256(patch).hexdigest()=='29891e7f9cb7b69e02bdabccb0bfd6d7817c3b4639f33304d369b89042c02dd3'
-          subprocess.run(['git','apply','--check','-'],input=patch,check=True)
-          subprocess.run(['git','apply','-'],input=patch,check=True)
-          for path,digest in original.items():
-              assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
-          generated=gzip.decompress((saved/'runner.c.gz').read_bytes())
-          assert hashlib.sha256(generated).hexdigest()=='fcb787241c29f10c0fa33fbd8983f9630d3ab52914c109de2449b52a93251a24'
-          Path('/tmp/pr5c-runner.c').write_bytes(generated)
-          subprocess.run(['git','add','-N','.'],check=True)
+          rec=json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/git/blobs/8e7b3191e84109f32c856125937aaf8fc45531e5']))
+          script=base64.b64decode(rec['content'])
+          assert hashlib.sha256(script).hexdigest()=='6e64c54143f1749c191e3748fa72562d179adceae5661dc36fe5fe5e0cebc2c4'
+          exec(compile(script,'authored-readout','exec'))
           paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
-          assert len(paths)==13 and not any(p.startswith('.github/') for p in paths)
-          Path('/tmp/pr5c-evidence/qualified.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
-          Path('/tmp/pr5c-evidence/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths},indent=2))
+          expected=['docs/experiments/2026-09-23-cohort-deadlines.md','native/bend_engine/multi_root/README.md']
+          assert sorted(paths)==expected,paths
+          for path,digest in manifest.items():
+              if path not in expected:
+                  assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
+          Path('/tmp/pr5c-docs/documentation.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
+          Path('/tmp/pr5c-docs/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths},indent=2))
           PY
           git diff --check
-          cp /tmp/pr5c-generated/{build.txt,compiler.txt,generated.txt} /tmp/pr5c-evidence/
-      - uses: actions/setup-python@v5
-        with:
-          python-version-file: .python-version
-      - uses: astral-sh/setup-uv@v7
-        with:
-          version: 0.12.10
-      - name: Locked CPU environment
-        run: |
-          uv sync --locked --extra dev --extra cpu
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - name: Static and inexpensive parser/accounting regressions
-        run: |
-          set -o pipefail
-          bash scripts/lint.sh 2>&1 | tee /tmp/pr5c-evidence/lint.txt
-          bash scripts/lint.sh native/bend_engine/multi_root/verify.py native/bend_engine/multi_root/verify_deadlines.py 2>&1 | tee /tmp/pr5c-evidence/native-lint.txt
-          python -m pytest tests/test_bend_cohort_deadlines.py tests/test_bend_async_cohort.py tests/test_bend_multi_root.py tests/test_bend_async_search.py tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py -q --junitxml=/tmp/pr5c-evidence/tests.xml | tee /tmp/pr5c-evidence/tests.txt
-          bash -n native/bend_engine/multi_root/qualify_deadlines.sh
-      - name: Unchanged serial/async reference matrix and new deadline controls
-        run: |
-          set -o pipefail
-          single=native/bend_engine/standalone
-          revision="$(bun "$single/verify_compiler.js" --revision)"
-          repository="$(bun "$single/verify_compiler.js" --repository)"
-          git init -q /tmp/pr5c-compiler
-          git -C /tmp/pr5c-compiler fetch -q --depth=1 "$repository" "$revision"
-          git -C /tmp/pr5c-compiler checkout -q --detach FETCH_HEAD
-          clang -std=c11 -O3 -DLEGAL_ORACLE -I "$PWD" native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/pr5c-oracle
-          bash native/bend_engine/multi_root/qualify_async.sh /tmp/pr5c-runner.c /tmp/pr5c-oracle /tmp/pr5c-matrix 2>&1 | tee /tmp/pr5c-evidence/matrix.txt
-          bash native/bend_engine/multi_root/qualify_deadlines.sh /tmp/pr5c-compiler /tmp/pr5c-matrix /tmp/pr5c-deadlines 2>&1 | tee /tmp/pr5c-evidence/deadlines.txt
-      - uses: actions/download-artifact@v4
-        with:
-          name: deepfin-pr1-validation
-          run-id: 35759888019
-          github-token: ${{ github.token }}
-          path: /tmp/pr5c-fixture
-      - name: Recover exact saved fixture and export only batch four
-        run: |
-          set -o pipefail
-          tar -xzf /tmp/pr5c-fixture/native-build.tar.gz -C /tmp
-          echo '9654a1e334fb5f875d164b82068846bfeab3df2ef2a994737e44789c2623ee6e  /tmp/pr1-model/fixture.pt2' | sha256sum -c -
-          python - <<'PY'
-          from pathlib import Path
-          import torch
-          from native.bend_engine.neural_probe.checkpoint import load_checkpoint,export_checkpoint
-          assert str(torch.__version__)=='2.14.0+cpu'
-          torch.set_num_threads(2)
-          Path('/tmp/pr5c-model').mkdir()
-          export_checkpoint(load_checkpoint(Path('/tmp/pr1-model/fixture.pt')),Path('/tmp/pr5c-model/b4.pt2'),batch=4,device='cpu',device_index=0)
-          PY
-      - name: Actual selected-leaf CPU model with no-deadline controls
-        run: |
-          set -o pipefail
-          prefix="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
-          single=native/bend_engine/standalone
-          for batch in 1 4; do
-            package=/tmp/pr1-model/fixture.pt2
-            if test "$batch" = 4; then package=/tmp/pr5c-model/b4.pt2; fi
-            dir=/tmp/pr5c-real-$batch; mkdir "$dir"
-            bun "$single/bind_model.js" --batch-header "$package" "$dir/model_contract.h" > /tmp/pr5c-evidence/binding-$batch.json
-            cmake -S "$single" -B "$dir/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH="$prefix" -DBEND_GENERATED_C=/tmp/pr5c-runner.c -DBEND_CONTRACT_DIR="$dir" -DBEND_TARGET_NAME=deepfin-bend-multi-root -DBEND_CUDA_MODEL=OFF -DBEND_ASYNC_BATCH=ON
-            cmake --build "$dir/build" --parallel 1
-            for mode in sync async; do
-              flags=(); if test "$mode" = async; then flags=(--asynchronous); fi
-              python -m native.bend_engine.multi_root.verify --binary "$dir/build/deepfin-bend-multi-root" --oracle /tmp/pr5c-oracle --batch "$batch" --channels 175 --package "$package" --checkpoint /tmp/pr1-model/fixture.pt "${flags[@]}" --report "/tmp/pr5c-evidence/model-$batch-$mode.json"
-            done
-            sha256sum "$dir/build/deepfin-bend-multi-root" >> /tmp/pr5c-evidence/executables.txt
-          done
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          evidence=Path('/tmp/pr5c-evidence'); results=[]
-          for batch in (1,4):
-              a=json.loads((evidence/f'model-{batch}-sync.json').read_text())
-              b=json.loads((evidence/f'model-{batch}-async.json').read_text())
-              for ep,r in a['root_results'].items():
-                  assert all(b['root_results'][ep][k]==v for k,v in r.items())
-              assert a['counters']==b['counters']
-              assert a['complete_tree_sha256']==b['complete_tree_sha256']
-              results.append({'batch':batch,'root_results_work_and_tree_bits_match':True})
-          (evidence/'model-parity.json').write_text(json.dumps({'status':'passed','comparisons':results,'deadline_injection':False,'speed_qualified':False}))
-          PY
-      - name: Publish only source that passed every qualification
-        id: publish
+          git diff --stat
+      - name: Fast-forward only documentation on the qualified feature branch
         run: |
           set -euo pipefail
-          git diff --check
-          test -z "$(git ls-remote --heads origin refs/heads/feat/native-cohort-deadlines-20260923)"
-          git switch -c feat/native-cohort-deadlines-20260923
-          git add docs/experiments/2026-09-23-cohort-deadlines.md docs/experiments/README.md native/bend_engine/multi_root tests/test_bend_cohort_deadlines.py
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'native: enforce per-root async cohort deadlines without refunding physical work'
+          git add docs/experiments/2026-09-23-cohort-deadlines.md native/bend_engine/multi_root/README.md
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'docs: record per-root deadline and no-deadline model qualification'
           git push origin HEAD:refs/heads/feat/native-cohort-deadlines-20260923
-          git rev-parse HEAD | tee /tmp/pr5c-evidence/published-head.txt
-      - name: Preserve compact reports and failure evidence
-        if: always()
-        run: |
-          for suite in matrix deadlines; do
-            if test -d "/tmp/pr5c-$suite"; then
-              mkdir -p "/tmp/pr5c-evidence/$suite"
-              find "/tmp/pr5c-$suite" -name '*.json' -o -name 'probe-*.txt' | while read -r f; do cp "$f" "/tmp/pr5c-evidence/$suite/$(basename "$(dirname "$f")")-$(basename "$f")"; done
-            fi
-          done
+          git rev-parse HEAD | tee /tmp/pr5c-docs/published-head.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: deepfin-pr5c-deadline-qualification
-          path: /tmp/pr5c-evidence
+          name: deepfin-pr5c-documentation
+          path: /tmp/pr5c-docs
           retention-days: 30
-      - name: Require completed qualification and publication
-        if: always()
-        env:
-          PUBLISHED: ${{ steps.publish.outcome }}
-        run: test "$PUBLISHED" = success
