@@ -71,3 +71,8 @@ writes. It also does not source-prove the values *inside* the extras region.
 The independent native oracle tests those values, which is a separate evidence type.
 Source equality does not establish pointer identity, native allocation success,
 physical lifetime, or correctness of compiler/runtime/OS/hardware.
+
+
+## Distinct-cell native regression coverage
+
+The same native command now retains five original buffers and seven malformed requests, and additionally compares three complete uniquely initialized arrays. Each mode checks eight buffers / 1048576 cells total. This catches copies between ordinary protected cells that uniform seeds could conceal. Original five-buffer fields and output hashes are retained; unique_* and total_* fields describe additive coverage. The proof statements and fourteen controls are unchanged; the focused source manifest includes the new probe. See the dated readout for separate full-aggregate and post-reinforcement qualification.

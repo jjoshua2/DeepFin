@@ -182,3 +182,20 @@ Publication creates `feat/bend-extras-preservation-20260923` only after checking
 Preservation of an arbitrary incoming value does not prove initial stored-header correctness or inside-extras geometric correctness. Stored mask/prefix values, survival through later table-header and other-block writes, and independent blocker-ray lookup equality remain open. Source equality still trusts the pinned checker/Base; native lowering, allocation, ownership/lifetime, ABI, toolchain, libraries, OS and hardware remain separate trust boundaries. Existing compiler TypeScript and diagnostic-depth/raw-helper limitations are untouched.
 
 No production runtime code or Python application responsibility changed. Python export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No model/GPU, whole-engine build, increased perft, training or benchmark result is added.
+
+
+## Native fixture reinforcement after full source qualification
+
+Native-fixture reinforcement run **35924465983** on source `3c52e6469b3ba9cf133077f73d8f96ca8dcc76cd` passes the unchanged two-law consumer and all 14 controls, eight full buffers / 1,048,576 cell comparisons per mode, the protected-cell-copy regression, 12 compiler-pin checks and unchanged whole-repository lint.
+
+Self-review exposed a native fixture blind spot: copying protected header cell6 into cell7 passes the original five uniformly seeded buffers because those cells have equal seed values. This is a test-coverage limitation, not a product failure or a successful full qualification of corrupted source. The existing source-proof chain rejects the mutation in storage/Build.extras; the source manifest also changes.
+
+The permanent opt-in verifier retains all five original buffers, all seven malformed requests, and their original output digest unchanged. It adds three complete arrays whose every cell starts with a distinct index-derived U64 value, covering zero, two middle squares and the full extras pass. These compare another 393216 cells per mode, for eight buffers and 1048576 cells total. Original report fields retain their five-buffer meaning; unique_* and total_* fields distinguish the additive coverage.
+
+The exact same corrupt copy now fails the strengthened native verifier at unique case1 cell7, after original fixtures passed. The candidate uses actual Array/Tables operations; no proof image or expected result is fed to it. Expected values are independently computed from flat arrays and signed-coordinate moves. Same fixtures repeat in all modes, not disjoint data sets.
+
+All new native results and source hashes match the local final report except the separately reported C compiler identity (Ubuntu clang version 18.1.3 (1ubuntu1)). The new focused proof/control report matches its local canonical SHA256. All previous Bend laws/proofs, compiler inputs, production code and inherited gates are byte-identical to full qualification 35920944024. The only executable changes are the new unique_probe.bend, additive verify_native.js checks, and adding that probe to focused.js's source manifest.
+
+The 100-law/226-control full aggregate was actually completed in run35920944024 on the unchanged logical proof sources. It was not redundantly rerun after this native-only reinforcement. The final focused run rechecks both public laws and all fourteen controls; the final native/reference and whole-repository lint gates were rerun. The original full reports remain intact rather than being rewritten to describe new fixtures.
+
+No public theorem or control count is inflated by the supplementary checks. No production logic, model, GPU, training, perft or benchmark is changed. Source/native/lifetime trust limits and remaining stored-header/complete independent-ray refinement are unchanged. Self-review only, not independent review. Fast-forward publication requires the original feature head unchanged; no force push, merge or deployment.

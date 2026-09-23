@@ -1,5 +1,9 @@
 # Bend migration and proof inventory
 
+## Extras native coverage reinforcement: September 23, 2026
+
+Native-fixture reinforcement run **35924465983** on source `3c52e6469b3ba9cf133077f73d8f96ca8dcc76cd` passes the unchanged two-law consumer and all 14 controls, eight full buffers / 1,048,576 cell comparisons per mode, the protected-cell-copy regression, 12 compiler-pin checks and unchanged whole-repository lint. Full source aggregate100/226 was completed in run35920944024 on the same unchanged logical proof sources, not rerun for native-only changes. The added distinct-cell fixtures close a documented copy-corruption blind spot while preserving all old cases. Stored headers and independent blocker-ray refinement remain separate.
+
 ## Current extras-preservation hosted qualification: September 23, 2026
 
 Hosted run **35920944024**, workflow commit `3ae0ffe92b941c2c6145f71d788bfa48d8f36695`, passes the full **100-law / 226-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on exact source `c60a5e83958acef579f50593e970d40b1a0019e9`. These are the unchanged saved two laws, not additional contracts beyond that candidate. Historical local-only/full-aggregate-unrun/lint-unqualified statements below retain their original context; these gaps are now closed for the exact hosted candidate. Stored headers and full independent ray lookup remain separate P2 obligations. See the dated extras readout and committed hosted evidence.

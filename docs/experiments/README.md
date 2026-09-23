@@ -9,7 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [Extras-stage preservation](2026-09-23-bend-extras-preservation.md) | Two locally checked actual-array laws preserve all headers and slider-data locations through bounded/final extras; actual pipeline supplies shape; full aggregate/lint/remote publication not qualified |
+| [Extras-stage preservation](2026-09-23-bend-extras-preservation.md) | Two hosted-qualified actual-array laws preserve headers and slider-data locations through extras; full source aggregate100/226; reinforced eight-buffer native tests catch protected-cell copying; stored-header and ray refinement remain separate |
 | [Computed fill contents](2026-09-23-bend-fill-contents.md) | Actual bounded fill interior values and full returned-array pairs; three source laws checked locally; full aggregate/lint/hosted qualification and complete builder/ray refinement remain separate |
 | [Whole fill intervals](2026-09-22-bend-fill-intervals.md) | Six laws derive actual fill-clear certificates from numeric budgets and prove every complete slider block preserves outside queried values; stored headers and final contents/geometry remain separate |
 | [Relative table-address bounds](2026-09-22-bend-relative-address-bounds.md) | Six source laws connect actual U32 prefix-plus-index sums to bounded ordered regions and real cross-block array preservation; metadata and final fill contents remain separate |
