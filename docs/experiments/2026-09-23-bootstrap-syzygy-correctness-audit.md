@@ -184,3 +184,83 @@ was attempted; local dependency resolution blocked whole Basedpyright. Shared
 helper PR #853 subsequently passed hosted lint and PEXT checks (ordinary test
 job still pending when checked). No actual GPU match or production-network result
 is claimed by these checks. Other evaluation routes remain unqualified.
+
+## Bootstrap consumer implementation and publication
+
+The reviewed SF corpus implementation is published in
+[PR #856](https://github.com/jjoshua2/DeepFin/pull/856), exact head
+`ba5cbaa9a6c72ad1d0ccbc73e016ab346767f9e8`, stacked on shared helper
+PR #853. New generation explicitly selects the outcome convention; strict
+mode requests six-man, rule-aware Stockfish probing and uses the shared
+adjudicator. The convention travels through raw rows, qualified manifests,
+derived summaries and committed shard attributes. The raw-baseline audit,
+ordinary and selected policy rewrites, and rank sidecar validate it against
+qualified source provenance. Review caught and fixed both omitted consumer
+arguments and a raw-versus-derived summary-shape mismatch.
+
+Independent review passed. Four strict serialized-source consumer fixtures and
+67 nearby selected tests passed, supplementing the earlier 481 selected cases.
+Scoped lint passed; whole local type checking remained dependency-blocked.
+Shared helper PR #853 subsequently passed all hosted lint, PEXT and test jobs.
+The [SF implementation record](https://github.com/jjoshua2/DeepFin/blob/ba5cbaa9a6c72ad1d0ccbc73e016ab346767f9e8/docs/experiments/2026-09-23-sf-rule50-corpus-mode.md) is on
+PR #856's branch until the stacked changes are merged. Its actual-engine
+seven-to-six capture fixture observed 73 tablebase hits within 1,024 nodes;
+this demonstrates one real search path, not historical corpus coverage.
+
+The future BT4 outcome/stepper integration is separately published as
+[PR #855](https://github.com/jjoshua2/DeepFin/pull/855), head
+`85051aa078022c5a2a8b1833b9204236d3ccf80a`. These are reviewed changes,
+not a claim of deployment. Historical source data is not rewritten. Raw neural
+teacher outputs remain raw outputs; a tablebase-corrected training target is
+an explicit different recipe. Existing A–E value recipes give terminal game
+outcomes zero weight. Full BT4/Ceres generation/writer integration and every
+evaluation route are not yet qualified.
+
+A read-only entrypoint inventory further limits the coverage claim. BT4 raw,
+derived-WDL and policy sidecars, and the Ceres derived sidecar, run direct ONNX
+inference on saved positions; none performs a tablebase-guided search. The
+reviewed BT4 root stepper is an in-memory actor with root adjudication, not a
+runnable searched generator with a corpus writer. A future BT4 worker must wire
+the strict probe into search leaves before claiming tablebase-guided move choice
+from seven-piece roots; Ceres needs a live root/leaf adapter as well. The older
+random bootstrap generators also lack this integration and are not qualified
+alternatives for the planned corpus. None of these observations changes saved
+teacher predictions or the running E recipe.
+
+
+## Corrected evaluation registration
+
+The separately reviewed operation is now queued as
+`factorial58_sffree_20260923_E_D_rule50`, after the active E training job.
+The [registration receipt](evidence/bootstrap-syzygy-audit-20260923/ed-rule50-registration.json)
+records the atomic queue edit; every pre-existing item was preserved, including
+the original held E_D and second-seed holds. The serial supervisor waits for E;
+the operation additionally requires successful complete E/D donor receipts
+before taking the GPU lease. The queue's dependency label alone is not the gate.
+
+Runtime is the immutable arena commit
+`6d22d1d6e3b8503144987bfda206559594af2039`. Final plan SHA256 is
+`2e21158bb1dba36b2446d60d10f736ca89416328cf104e0649092ab959570d5a`;
+registered descriptor SHA256 is
+`5400361b4adeee9dd60178ea71191f9aff545b26b11df7353017c8594159ed03`.
+The operation directory is
+`/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D_rule50_20260923`.
+The copied original D_C configuration is pinned via
+`CHESS_ANTI_ENGINE_LIVE_CONFIG` in both supervisor and arena environments;
+its complete realized search record is compared with the old D_C baseline.
+This prevents newer runtime defaults from silently changing the contrast.
+
+Independent review closed a completion-gate issue: the runner now retains its
+unreaped session leader as an ownership anchor and verifies process-group
+cleanup before PASS. Fourteen focused CPU tests and the parent's final static
+check passed. Completion requires all 256 games/128 pairs, bank/result/PGN
+consistency, strict Syzygy telemetry, exact donor binding and start/end input
+integrity checks. The outer supervision limit is 7,860 seconds, allowing cleanup
+beyond the preregistered internal bound; this is not an ETA.
+
+Tablebase provenance checks inventory names/sizes, not file-content hashes.
+PGNs start at opening FEN, so the independent verifier cannot reprove every
+natural repetition draw involving pre-opening history; it admits only the
+explicit limited draw case, never an unproved decisive result. No completed
+GPU result is claimed at registration. Any later second-seed release must also
+amend its dependency from the old held E_D item; it is not released here.
