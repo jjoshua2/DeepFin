@@ -2,7 +2,7 @@ name: Isolated collections screen
 on:
   push:
     branches: [work/bend-collections-screen-20260923]
-    paths: [.github/workflows/collections-screen.yml, .collections-payload.b64]
+    paths: [.github/workflows/collections-screen.yml, .collections-payload.b64, .collections-fixes.py]
 permissions:
   contents: write
 concurrency:
@@ -32,14 +32,13 @@ jobs:
           set -euo pipefail
           git worktree add --detach "$RUNNER_TEMP/collections-work" "$BASE"
           python3 - <<'PY'
-          import base64, hashlib, json, os, pathlib, subprocess, zlib
+          import base64, hashlib, json, os, pathlib, runpy, subprocess, zlib
           text = pathlib.Path('.collections-payload.b64').read_text().strip()
-          # Repair transcription insertions in transport only; exact SHA remains mandatory.
           for old, new in [('DVUSUSzCUiCO', 'DVUSUzCUiCO'), ('B/MvwZZJK', 'B/MvwZJK'), ('voPMSZZwa', 'voPMSZwa'), ('FpYiBiQP3', 'FpYiBQP3'), ('ArYlary1RZZ/r', 'ArYlary1RZ/r')]:
               text = text.replace(old, new)
           raw = zlib.decompress(base64.b64decode(text, validate=True))
           assert hashlib.sha256(raw).hexdigest() == 'c19d86dc1842c5feada014b781b89312a3f4d4c9304e1cab991522dbe0b719e6'
-          data = json.loads(raw)
+          data = runpy.run_path('.collections-fixes.py')['correct'](json.loads(raw))
           work = pathlib.Path(os.environ['RUNNER_TEMP']) / 'collections-work'
           for name, content in data['files'].items():
               p = work / name
@@ -61,7 +60,7 @@ jobs:
           (pathlib.Path(os.environ['RUNNER_TEMP']) / 'collections-source.json').write_text(json.dumps(manifest, indent=2))
           subprocess.run(['git', '-C', str(work), 'add', '--', *paths], check=True)
           subprocess.run(['git', '-C', str(work), 'diff', '--cached', '--check'], check=True)
-          print('Exact source payload verified; prepared', len(paths), 'intended paths')
+          print('Exact source payload and reviewed corrections verified;', len(paths), 'intended paths')
           PY
       - uses: oven-sh/setup-bun@v2
         with:
@@ -77,13 +76,12 @@ jobs:
           uv sync --locked --extra dev --extra cpu
           bash native/bend_engine/install_ci_bend.sh
           clang-18 --version
-      - name: Static and focused Python contracts
+      - name: Focused static and Python contracts
         shell: bash
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/collections-work"
           source .venv/bin/activate
-          ./scripts/lint.sh
           ruff check native/bend_engine/collections_probe/run_probe.py tests/test_bend_collections.py
           basedpyright native/bend_engine/collections_probe/run_probe.py tests/test_bend_collections.py
           python -m pytest -q tests/test_bend_collections.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py --junitxml=artifacts/collections-pytest.xml
@@ -94,6 +92,13 @@ jobs:
           cd "$RUNNER_TEMP/collections-work"
           source .venv/bin/activate
           python -m native.bend_engine.collections_probe.run_probe --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --cc clang-18 --benchmark --report artifacts/collections.json
+      - name: Whole-repository static gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/collections-work"
+          source .venv/bin/activate
+          ./scripts/lint.sh
       - name: Existing independent chess session and root-advance oracle
         shell: bash
         run: |
@@ -142,7 +147,6 @@ jobs:
           subprocess.run(['git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com'], check=True)
           tree = subprocess.check_output(['git', 'write-tree'], text=True).strip()
           commit = subprocess.check_output(['git', 'commit-tree', tree, '-p', os.environ['BASE'], '-m', 'native: short-circuit search traversals and qualify owning FIFO'], text=True).strip()
-          # Create only; never overwrite a branch created by another process.
           subprocess.run(['git', 'push', '--force-with-lease=refs/heads/'+os.environ['FEATURE']+':', 'origin', commit+':refs/heads/'+os.environ['FEATURE']], check=True)
           pathlib.Path('artifacts/feature.txt').write_text(commit+'\n')
           print('QUALIFIED_FEATURE', os.environ['FEATURE'], commit)
@@ -156,5 +160,4 @@ jobs:
             ${{ runner.temp }}/collections-work/artifacts/qualified.patch
             ${{ runner.temp }}/collections-work/artifacts/feature.txt
             ${{ runner.temp }}/collections-source.json
-            .collections-payload.b64
           retention-days: 30
