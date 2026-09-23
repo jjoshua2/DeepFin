@@ -114,13 +114,6 @@ def show_work(w: Work) -> IO(Unit):
     ++ " " ++ U32.show(request) ++ " " ++ U32.show(stop) ++ " " ++ U32.show(limit),
     history, Array.get(S.Node, nodes, 0))
 
-def drained(b: Bag) -> IO(Unit):
-  match b:
-    case Broken{}: IO.die(Unit, 2, "broken owning collection")
-    case Linked{xs}: IO.print("length " ++ Nat.show(List.length(&1, Work, xs)))
-    case Queued{q}: queue_length(Q.length(&1, Work, q))
-    case Ringed{r}: ring_length(R.length(Work, r))
-
 def queue_length(r: Q.Queue<&1, Work> & Nat) -> IO(Unit):
   (q, n) = r
   IO.print("length " ++ Nat.show(n))
@@ -128,6 +121,18 @@ def queue_length(r: Q.Queue<&1, Work> & Nat) -> IO(Unit):
 def ring_length(r: R.Ring<Work> & U32) -> IO(Unit):
   (q, n) = r
   IO.print("length " ++ U32.show(n))
+
+def drained(b: Bag) -> IO(Unit):
+  match b:
+    case Broken{}: IO.die(Unit, 2, "broken owning collection")
+    case Linked{xs}: IO.print("length " ++ Nat.show(List.length(&1, Work, xs)))
+    case Queued{q}: queue_length(Q.length(&1, Work, q))
+    case Ringed{r}: ring_length(R.length(Work, r))
+
+law dump:
+  for n: Nat
+  for b: Bag
+  IO(Unit)
 
 def dump_taken(n: Nat, r: Bag & Maybe<&1, Work>) -> IO(Unit):
   (b, got) = r
@@ -137,11 +142,6 @@ def dump_taken(n: Nat, r: Bag & Maybe<&1, Work>) -> IO(Unit):
       do IO<Unit>:
         a : Unit <- show_work(w)
         dump(n, b)
-
-law dump:
-  for n: Nat
-  for b: Bag
-  IO(Unit)
 
 def dump(n, b):
   match n:

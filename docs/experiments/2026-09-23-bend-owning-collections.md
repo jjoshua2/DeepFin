@@ -71,6 +71,27 @@ The Python harness sets this only in its child process environment.
 
 ## Readout
 
-Pending native execution. The 32 independent Python parser/oracle/timing tests
+Pending native execution. The 36 independent Python parser/oracle/timing tests
 passed locally; that result does not qualify the Bend implementation. Compiled
 results and any failed attempts will be added after execution.
+
+### Initial static failure
+
+Run 35934827960 stopped at Ruff B023: push/pop closures were nested inside the
+capacity loop. The helpers are now scoped to a per-capacity function, with no
+suppression and unchanged expected trace. No native check ran in that attempt.
+Self-review also added rejection of duplicate timing identities, unequal work
+counts and impossible durations, plus Search/Chess source fingerprints.
+
+Run 35935123234 passed focused static checks, all 61 collection Python tests,
+and the existing native FIFO/traversal/mutation checks. The first ring compile
+then rejected destructuring r in the second Boolean branch after its use in
+the first. Dedicated push_open/pop_open helpers now destructure their own
+parameters. Neither the compiler nor the behavioral oracle changed.
+
+Run 35935298901 passed 37,416 bounded-ring trace rows in each of generic,
+native-target and UBSan builds with identical hashes, and rejected the compiled
+wrong-head mutation. The owning-root benchmark then failed name resolution:
+its length helpers followed their caller. Helpers and the recursive dump law
+are now declared before use. No runtime expectation changed; timings had not
+started, and these partial checks are not a completed qualification.
