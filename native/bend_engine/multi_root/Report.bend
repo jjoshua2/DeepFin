@@ -94,9 +94,14 @@ def roots(+cfg: C.Config, rs: List<C.Root>, total: Totals) -> IO(Totals):
         t : Totals <- root(cfg,r)
         roots(cfg,rest,add(total,t))
 
+def deadline_text(began: Nat,due: Maybe<&2,Nat>) -> String:
+  match due:
+    case None{}: "null"
+    case Some{stamp}: Nat.show(Nat.sub(stamp,began))
+
 # Async final rows separate delivered/accepted work from cancelled physical work.
 def async_picked(ok: Bool, cfg: C.Config,+ep: U32,+used: U32,+n: U32,+stop: U32,+neural: U32,+draws: U32,
-  +sent: U32,+wasted: U32,cancelled: Bool,p: Pick) -> IO(Totals):
+  +sent: U32,+wasted: U32,cancelled: Bool,due: Maybe<&2,Nat>,expired: Bool,began: Nat,p: Pick) -> IO(Totals):
   match ok:
     case False{}: IO.die(Totals,2,"async root admission does not reconcile")
     case True{}:
@@ -106,6 +111,7 @@ def async_picked(ok: Bool, cfg: C.Config,+ep: U32,+used: U32,+n: U32,+stop: U32,
         IO.print("info string cohort_root {\"root\":" ++ U32.show(ep) ++ ",\"completed_simulations\":" ++ U32.show(n)
           ++ ",\"dispatched_real_rows\":" ++ U32.show(sent) ++ ",\"executed_real_rows\":" ++ U32.show(sent)
           ++ ",\"accepted_neural_rows\":" ++ U32.show(neural) ++ ",\"cancelled_rows\":" ++ U32.show(wasted)
+          ++ ",\"deadline_offset_ms\":" ++ deadline_text(began,due) ++ ",\"deadline_expired\":" ++ boolean(expired)
           ++ ",\"cancel_requested\":" ++ boolean(cancelled) ++ ",\"rule_draw_replies\":" ++ U32.show(draws)
           ++ ",\"used_nodes\":" ++ U32.show(used) ++ ",\"stop_code\":" ++ U32.show(stop)
           ++ ",\"simulation_budget\":" ++ U32.show(sims) ++ ",\"neural_budget\":" ++ U32.show(budget)
@@ -113,9 +119,9 @@ def async_picked(ok: Bool, cfg: C.Config,+ep: U32,+used: U32,+n: U32,+stop: U32,
           ++ ",\"searched_move\":" ++ boolean(Bool.not(U32.is_eq(key,4294967295))) ++ ",\"bestmove\":\"" ++ move(key) ++ "\"}")
         return Totals{n,neural,draws,1}
 
-def async_root(+cfg: C.Config,r: C.Root,+sent: U32,+wasted: U32,cancelled: Bool) -> IO(Totals):
+def async_root(+cfg: C.Config,r: C.Root,+sent: U32,+wasted: U32,cancelled: Bool,due: Maybe<&2,Nat>,expired: Bool,began: Nat) -> IO(Totals):
   C.Config{sims,depth,budget,diagnostics} = cfg
   C.Root{game,S.Tree{pool,+used,cap,+n,pending,+ep,request,+stop,lim},+neural,+draws} = r
   do IO<Totals>:
     p : Pick <- pick(U32.to_nat(used),0,ep,diagnostics,Pick{pool,4294967295,0})
-    async_picked(U32.is_eq(sent,U32.add(neural,wasted)),cfg,ep,used,n,stop,neural,draws,sent,wasted,cancelled,p)
+    async_picked(U32.is_eq(sent,U32.add(neural,wasted)),cfg,ep,used,n,stop,neural,draws,sent,wasted,cancelled,due,expired,began,p)

@@ -64,6 +64,8 @@ def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
         raise ValueError('unsupported batch')
     roots, nodes, events, batches = {}, {}, [], []
     work = None
+    deadlines: set[int] = set()
+    expired: set[int] = set()
     for line in stdout.splitlines():
         if work is not None or not line.startswith(PREFIX):
             raise ValueError('extra/malformed output')
@@ -72,7 +74,22 @@ def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
         if asynchronous and name == 'cohort_ready' and not sep:
             continue
         if asynchronous and name == 'cohort_control':
-            if tail not in ('stop', 'quit', 'error invalid-root', 'error invalid-command', 'error malformed-line') and not re.fullmatch(r'cancel (?:[1-9]|1[0-6])', tail):
+            deadline = re.fullmatch(r'deadline ([1-9]|1[0-6]) (0|[1-9][0-9]*)', tail)
+            expiry = re.fullmatch(r'expired ([1-9]|1[0-6])', tail)
+            if deadline:
+                root = integer(int(deadline[1]), 1, root_count)
+                integer(int(deadline[2]), 0, 3600000)
+                if root in expired:
+                    raise ValueError('deadline revived expired root')
+                deadlines.add(root)
+            elif expiry:
+                root = integer(int(expiry[1]), 1, root_count)
+                if root not in deadlines or root in expired:
+                    raise ValueError('invalid or duplicate deadline expiry')
+                expired.add(root)
+            elif tail not in ('stop', 'quit', 'error invalid-root', 'error invalid-command',
+                              'error malformed-line', 'error invalid-deadline',
+                              'error inactive-root', 'error deadline-extension') and not re.fullmatch(r'cancel (?:[1-9]|1[0-6])', tail):
                 raise ValueError('invalid control acknowledgment')
             if tail.startswith('cancel '):
                 integer(int(tail.split()[1]), 1, root_count)
@@ -144,8 +161,28 @@ def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
         raise ValueError('missing roots or summary')
     schema = 'deepfin.multi-root-async-work.v1' if asynchronous else 'deepfin.multi-root-work.v1'
     scope = 'bounded_async_cohort' if asynchronous else 'bounded_cohort'
-    if work.get('schema') != schema or work.get('scope') != scope:
+    schemas = (schema, 'deepfin.multi-root-async-work.v2') if asynchronous else (schema,)
+    if work.get('schema') not in schemas or work.get('scope') != scope:
         raise ValueError('wrong accounting schema')
+    if work.get('schema') == 'deepfin.multi-root-async-work.v2':
+        observed_mask = 0
+        for ep, r in roots.items():
+            if 'deadline_offset_ms' not in r or type(r.get('deadline_expired')) is not bool:
+                raise ValueError('missing/invalid deadline status')
+            due = r['deadline_offset_ms']
+            if due is not None:
+                integer(due, 0, 2**63 - 1)
+            if (due is not None) != (ep in deadlines) or r['deadline_expired'] != (ep in expired):
+                raise ValueError('deadline acknowledgments/status mismatch')
+            if r['deadline_expired']:
+                if not r['cancel_requested'] or r['stop_code'] != 2:
+                    raise ValueError('expired root not logically stopped')
+                observed_mask |= 1 << ep
+        if integer(work.get('deadline_expired_mask'), 0, (1 << (root_count + 1)) - 2) != observed_mask:
+            raise ValueError('deadline expiry mask mismatch')
+    elif deadlines or expired or 'deadline_expired_mask' in work or any(
+            'deadline_offset_ms' in r or 'deadline_expired' in r for r in roots.values()):
+        raise ValueError('deadline metadata requires async v2 schema')
     calls = integer(work.get('forward_calls'))
     real = integer(work.get('executed_real_rows'))
     physical = integer(work.get('physical_rows'))
