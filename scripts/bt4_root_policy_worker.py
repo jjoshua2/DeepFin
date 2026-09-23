@@ -10,13 +10,16 @@ buffered until its outcome is known, then published as one atomic NPZ file.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import math
 import os
+import tempfile
+import time
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -42,6 +45,9 @@ OUTCOME_MODE = "rule50_match_v1"
 MAX_BUFFERED_ROWS = 4096
 MAX_GAMES = 32
 MAX_TOTAL_REQUESTED_PLIES = 4096
+MAX_GPU_MEM_GB = 8.0
+GPU_LOCK = Path("/home/josh/projects/chess/scratchpad/gpu0_experiment.lock")
+_NEURAL_OPS = {"Conv", "FusedConv", "NhwcConv", "MatMul", "FusedMatMul", "Gemm", "FusedGemm"}
 _SOURCE_FILES = (
     "scripts/bt4_root_policy_worker.py",
     "scripts/bt4_root_policy_stepper.py",
@@ -66,6 +72,170 @@ class RootEvaluator(Protocol):
     ) -> list[bt4_generation_evaluator.BT4RootOutput]: ...
 
 
+def acquire_gpu_lock() -> int:
+    """Child owns the canonical GPU lease; a busy slot fails without waiting."""
+    fd = os.open(GPU_LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        os.close(fd)
+        raise RuntimeError(f"canonical GPU lock is busy: {GPU_LOCK}") from exc
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
+def cuda_profile_proof(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Prove that first root inference ran neural work on CUDA, not just ORT setup."""
+    cuda: Counter[str] = Counter()
+    cpu: Counter[str] = Counter()
+    for event in events:
+        details = event.get("args")
+        if not isinstance(details, dict):
+            continue
+        provider = details.get("provider")
+        operation = details.get("op_name")
+        if not isinstance(operation, str) or not operation:
+            continue
+        if provider == "CUDAExecutionProvider":
+            cuda[operation] += 1
+        elif provider == "CPUExecutionProvider":
+            cpu[operation] += 1
+        elif provider is not None:
+            raise RuntimeError(f"unexpected profiled provider {provider!r}")
+    neural = sum(cuda[op] for op in _NEURAL_OPS)
+    if neural == 0:
+        raise RuntimeError("CUDA profile has no neural model-compute node")
+    return {
+        "schema": 1, "scope": "first_root_inference_in_this_session",
+        "cuda_neural_nodes": neural, "cuda_nodes": sum(cuda.values()),
+        "cpu_nodes": sum(cpu.values()),
+        "cuda_ops": dict(sorted(cuda.items())), "cpu_ops": dict(sorted(cpu.items())),
+        "claim": "observed_cuda_neural_compute; not_all_ops_cuda",
+    }
+
+
+def verify_cuda_session(session: Any, *, gpu_mem_gb: float) -> tuple[tuple[str, ...], dict[str, str]]:
+    """Read back realized EP order and cap before any inference or output."""
+    providers = tuple(session.get_providers())
+    if not providers or providers[0] != "CUDAExecutionProvider":
+        raise RuntimeError("CUDA requested but ONNX Runtime fell back to CPU")
+    options = session.get_provider_options()
+    realized = {str(k): str(v) for k, v in options.get("CUDAExecutionProvider", {}).items()}
+    if (realized.get("device_id") != "0"
+            or realized.get("gpu_mem_limit") != str(int(gpu_mem_gb * 1024 ** 3))):
+        raise RuntimeError("CUDA device or memory cap differs from request")
+    return providers, realized
+
+
+def verify_cuda_model_schema(
+    session: Any, *, input_name: str, input_dtype: str,
+    policy_output: str, wdl_output: str, wdl_kind: str,
+) -> None:
+    """Pin this qualification to the preregistered BT4 input and named heads."""
+    inputs = session.get_inputs()
+    # The saved v2_threats tensor has more planes; the evaluator converts it
+    # to this exact LC0 model input before inference.
+    planes = 112
+    if (len(inputs) != 1 or inputs[0].name != input_name
+            or input_dtype != "float32" or inputs[0].type != "tensor(float)"
+            or len(inputs[0].shape) != 4
+            or list(inputs[0].shape[1:]) != [planes, 8, 8]):
+        raise ValueError("CUDA BT4 input name/type/planes differ from qualification contract")
+    outputs = session.get_outputs()
+    if policy_output == wdl_output or wdl_kind != "probabilities":
+        raise ValueError("CUDA BT4 requires distinct policy/WDL and probability WDL")
+    for name, width in ((policy_output, COMPACT_POLICY_SIZE), (wdl_output, 3)):
+        matches = [output for output in outputs if output.name == name]
+        if (len(matches) != 1 or matches[0].type != "tensor(float)"
+                or len(matches[0].shape) != 2 or matches[0].shape[1] != width):
+            raise ValueError(f"CUDA BT4 named head {name!r} differs from float32 width {width}")
+
+
+def open_worker_session(
+    onnx: str, *, requested_provider: str, gpu_mem_gb: float,
+    threads: int, profile_prefix: Path | None,
+) -> tuple[Any, str, np.dtype[Any], tuple[str, ...], dict[str, str]]:
+    if requested_provider == "cpu":
+        if gpu_mem_gb != 0 or profile_prefix is not None:
+            raise ValueError("CPU session does not accept CUDA settings")
+        session, name, dtype, providers = open_session(
+            onnx, gpu_mem_gb=0, threads=threads,
+        )
+        if providers != ["CPUExecutionProvider"]:
+            raise RuntimeError("CPU request realized another ONNX provider")
+        return session, name, dtype, tuple(providers), {}
+    if requested_provider != "cuda" or profile_prefix is None:
+        raise ValueError("CUDA session requires a profile prefix")
+    if not math.isfinite(gpu_mem_gb) or not 0 < gpu_mem_gb <= MAX_GPU_MEM_GB:
+        raise ValueError("CUDA memory cap must be finite and within (0, 8] GiB")
+    import onnxruntime as ort
+
+    if "CUDAExecutionProvider" not in ort.get_available_providers():
+        raise RuntimeError("CUDA requested but ONNX Runtime has no CUDAExecutionProvider")
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = threads
+    options.enable_profiling = True
+    options.profile_file_prefix = str(profile_prefix)
+    session = ort.InferenceSession(
+        onnx, sess_options=options,
+        providers=[
+            ("CUDAExecutionProvider", {
+                "device_id": 0, "gpu_mem_limit": int(gpu_mem_gb * 1024 ** 3),
+            }),
+            "CPUExecutionProvider",
+        ],
+        enable_fallback=False,
+    )
+    session.disable_fallback()
+    providers, realized = verify_cuda_session(session, gpu_mem_gb=gpu_mem_gb)
+    inputs = session.get_inputs()
+    if len(inputs) != 1 or inputs[0].type not in ("tensor(float16)", "tensor(float)"):
+        raise ValueError("BT4 CUDA model needs one float16/float32 input tensor")
+    dtype = np.dtype(np.float16 if inputs[0].type == "tensor(float16)" else np.float32)
+    return session, inputs[0].name, dtype, providers, realized
+
+
+class CudaQualifiedEvaluator:
+    """Profile the first root call before allowing a sampled move or game file."""
+
+    def __init__(self, base: RootEvaluator, session: Any, out: Path) -> None:
+        self.base = base
+        self.session = session
+        self.out = out
+        self.proof: dict[str, Any] | None = None
+        self.qualification_seconds = 0.0
+        self.qualified_at: float | None = None
+
+    def evaluate_roots(
+        self, boards: list[chess.Board], x_batch: np.ndarray,
+    ) -> list[bt4_generation_evaluator.BT4RootOutput]:
+        if self.proof is not None:
+            if self.session.get_providers()[0] != "CUDAExecutionProvider":
+                raise RuntimeError("CUDA provider changed after qualification")
+            return self.base.evaluate_roots(boards, x_batch)
+        started = time.monotonic()
+        outputs = self.base.evaluate_roots(boards, x_batch)
+        profile_path = Path(self.session.end_profiling())
+        events = json.loads(profile_path.read_text(encoding="utf-8"))
+        if not isinstance(events, list):
+            raise RuntimeError("ORT profile is not an event array")
+        proof = cuda_profile_proof(events)
+        raw_profile = profile_path.read_bytes()
+        _atomic_bytes(self.out / "provider_profile.json", raw_profile)
+        proof["profile_sha256"] = hashlib.sha256(raw_profile).hexdigest()
+        proof["providers_after_first_call"] = list(self.session.get_providers())
+        if not proof["providers_after_first_call"] or proof["providers_after_first_call"][0] != "CUDAExecutionProvider":
+            raise RuntimeError("CUDA provider fell back during first inference")
+        self.qualification_seconds = time.monotonic() - started
+        proof["qualification_seconds"] = self.qualification_seconds
+        _atomic_json(self.out / "provider_proof.json", proof)
+        self.proof = proof
+        self.qualified_at = time.monotonic()
+        return outputs
+
+
 @dataclass(frozen=True)
 class WorkerSpec:
     out: Path
@@ -80,8 +250,11 @@ class WorkerSpec:
     outcome_mode: str
     model_path: str
     providers: tuple[str, ...]
+    requested_provider: str = "cpu"
+    gpu_mem_gb: float = 0.0
+    provider_options: Mapping[str, str] = field(default_factory=dict)
 
-    def validate(self) -> None:
+    def validate(self, *, check_realized_provider: bool = True) -> None:
         if self.outcome_mode != OUTCOME_MODE:
             raise ValueError("BT4 worker requires explicit rule50_match_v1 outcome mode")
         if self.games < 1 or self.seed < 0 or self.max_plies < 1:
@@ -101,6 +274,19 @@ class WorkerSpec:
             raise ValueError("model_sha256 must be a lowercase SHA-256")
         if not self.syzygy_path or not self.providers or not self.model_path:
             raise ValueError("model, provider and Syzygy provenance are required")
+        if self.requested_provider == "cpu":
+            if self.gpu_mem_gb != 0 or (check_realized_provider and self.providers != ("CPUExecutionProvider",)):
+                raise ValueError("CPU worker requires zero GPU memory and CPU provider")
+        elif self.requested_provider == "cuda":
+            if (not math.isfinite(self.gpu_mem_gb) or not 0 < self.gpu_mem_gb <= MAX_GPU_MEM_GB
+                    or (check_realized_provider and self.providers[0] != "CUDAExecutionProvider")):
+                raise ValueError("CUDA worker requires realized CUDA and 0 < GPU memory <= 8 GiB")
+            limit = int(self.gpu_mem_gb * 1024 ** 3)
+            if check_realized_provider and (self.provider_options.get("device_id") != "0"
+                    or self.provider_options.get("gpu_mem_limit") != str(limit)):
+                raise ValueError("CUDA provider options differ from device 0 and memory cap")
+        else:
+            raise ValueError("worker provider must be cpu or cuda")
         board = chess.Board(self.initial_fen)
         if not board.is_valid() or chess.popcount(board.occupied) < 7:
             raise ValueError("initial FEN must be legal and have at least seven pieces")
@@ -135,16 +321,20 @@ def table_file_inventory(path: str) -> dict[str, Any]:
     }
 
 
-def _atomic_json(path: Path, document: Mapping[str, Any]) -> None:
+def _atomic_bytes(path: Path, payload: bytes) -> None:
     writing = path.with_name(path.name + ".writing")
     try:
         with writing.open("xb") as handle:
-            handle.write((json.dumps(document, sort_keys=True, indent=2) + "\n").encode())
+            handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(writing, path)
     finally:
         writing.unlink(missing_ok=True)
+
+
+def _atomic_json(path: Path, document: Mapping[str, Any]) -> None:
+    _atomic_bytes(path, (json.dumps(document, sort_keys=True, indent=2) + "\n").encode())
 
 
 def _game_payload(
@@ -252,6 +442,8 @@ def run_worker(
 ) -> dict[str, Any]:
     """Run a finite seeded corpus. A missing strict probe aborts without summary."""
     spec.validate()
+    if spec.requested_provider == "cuda" and not isinstance(evaluator, CudaQualifiedEvaluator):
+        raise TypeError("CUDA run requires the first-root profiled evaluator")
     if rep_fix.current() is not True:
         raise RuntimeError("history_rep_fix must be configured before BT4 boards")
     # Recheck the passed handle before creating output; do not trust its type.
@@ -260,6 +452,7 @@ def run_worker(
     )
     table_inventory = table_file_inventory(spec.syzygy_path)
     root = Path(__file__).resolve().parents[1]
+    run_started = time.monotonic()
     manifest: dict[str, Any] = {
         "schema": SCHEMA, "status": "launched", "actor": "bt4_root_policy_no_search",
         "outcome_mode": spec.outcome_mode, "minimum_emitted_root_pieces": 7,
@@ -269,7 +462,11 @@ def run_worker(
         "parallel_games": spec.parallel_games, "max_buffered_rows": MAX_BUFFERED_ROWS,
         "temperature": spec.temperature, "initial_fen": spec.initial_fen,
         "model": {"path": spec.model_path, "sha256": spec.model_sha256,
-                  "providers": list(spec.providers)},
+                  "providers": list(spec.providers),
+                  "requested_provider": spec.requested_provider,
+                  "gpu_mem_gb": spec.gpu_mem_gb,
+                  "provider_options": dict(spec.provider_options),
+                  "gpu_lock": str(GPU_LOCK) if spec.requested_provider == "cuda" else None},
         "input_history_encoding": INPUT_HISTORY_ENCODING,
         "input_extra_features": INPUT_EXTRA_FEATURES, "history_rep_fix": True,
         "syzygy": {
@@ -289,6 +486,8 @@ def run_worker(
     receipts: list[dict[str, Any]] = []
     discarded: Counter[str] = Counter()
     emitted = attempted = 0
+    writer_seconds = 0.0
+    gpu_proof_verified = False
     for first in range(0, spec.games, spec.parallel_games):
         ids = range(first, min(first + spec.parallel_games, spec.games))
         boards = {game_id: chess.Board(spec.initial_fen) for game_id in ids}
@@ -304,7 +503,11 @@ def run_worker(
         while stepper.counts.games_completed + stepper.counts.games_discarded < len(boards):
             batch, finalized = stepper.prepare_roots()
             for game in finalized:
+                if spec.requested_provider == "cuda" and not gpu_proof_verified:
+                    raise RuntimeError("CUDA game cannot publish before root provider proof")
+                writing_started = time.monotonic()
                 receipt = write_finalized_game(game, games_dir, initial_fen=spec.initial_fen)
+                writer_seconds += time.monotonic() - writing_started
                 receipts.append(receipt)
                 emitted += receipt["rows"]
                 attempted += receipt["rows"] + receipt["discarded_rows"]
@@ -314,18 +517,52 @@ def run_worker(
                 continue
             inference_boards, inputs = batch.inference_inputs()
             outputs = evaluator.evaluate_roots(inference_boards, inputs)
+            if spec.requested_provider == "cuda" and not gpu_proof_verified:
+                proof_file = spec.out / "provider_proof.json"
+                if not proof_file.exists():
+                    raise RuntimeError("CUDA root inference has no provider proof")
+                proof = json.loads(proof_file.read_text(encoding="utf-8"))
+                providers_after = proof.get("providers_after_first_call")
+                if (int(proof.get("cuda_neural_nodes", 0)) < 1
+                        or not isinstance(providers_after, list) or not providers_after
+                        or providers_after[0] != "CUDAExecutionProvider"
+                        or proof.get("profile_sha256") != file_sha256(spec.out / "provider_profile.json")):
+                    raise RuntimeError("CUDA provider proof is incomplete or changed")
+                gpu_proof_verified = True
             stepper.apply_root_outputs(
                 batch, outputs,
                 temperatures={root.slot_id: spec.temperature for root in batch.roots},
             )
     if table_file_inventory(spec.syzygy_path) != table_inventory:
         raise RuntimeError("Syzygy file inventory changed during BT4 generation")
+    if spec.requested_provider == "cuda":
+        if not gpu_proof_verified or not isinstance(evaluator, CudaQualifiedEvaluator):
+            raise RuntimeError("CUDA run had no profiled root inference")
+        proof = json.loads((spec.out / "provider_proof.json").read_text(encoding="utf-8"))
+        providers_after = proof.get("providers_after_first_call")
+        if (int(proof.get("cuda_neural_nodes", 0)) < 1
+                or not isinstance(providers_after, list) or not providers_after
+                or providers_after[0] != "CUDAExecutionProvider"
+                or proof.get("profile_sha256") != file_sha256(spec.out / "provider_profile.json")):
+            raise RuntimeError("CUDA profile changed before completion")
+    finished = time.monotonic()
+    qualified_at = getattr(evaluator, "qualified_at", None)
     summary: dict[str, Any] = {
         "schema": SCHEMA, "status": "complete", "games": spec.games,
         "completed": spec.games - sum(discarded.values()),
         "discarded": dict(discarded), "rows_emitted": emitted,
         "rows_attempted": attempted, "game_files": receipts,
         "launch_sha256": file_sha256(spec.out / "launch.json"),
+        "run_wall_seconds": finished - run_started,
+        "writer_wall_seconds": writer_seconds,
+        "post_qualification_wall_seconds": (
+            finished - qualified_at if spec.requested_provider == "cuda" and qualified_at is not None
+            else None
+        ),
+        "provider_proof_sha256": (
+            file_sha256(spec.out / "provider_proof.json") if spec.requested_provider == "cuda"
+            else None
+        ),
     }
     _atomic_json(spec.out / "summary.json", summary)
     return summary
@@ -347,36 +584,73 @@ def main() -> None:
     parser.add_argument("--temperature", required=True, type=float)
     parser.add_argument("--initial-fen", default=chess.STARTING_FEN)
     parser.add_argument("--threads", type=int, default=2)
+    parser.add_argument("--provider", choices=["cpu", "cuda"], default="cpu")
+    parser.add_argument("--gpu-mem-gb", type=float, default=0.0)
+    parser.add_argument("--expected-onnx-sha256")
+    parser.add_argument("--expected-input-name")
+    parser.add_argument("--expected-input-dtype", choices=["float16", "float32"])
     args = parser.parse_args()
     if args.threads not in (1, 2):
-        parser.error("experimental CPU worker requires --threads 1 or 2")
+        parser.error("experimental worker requires --threads 1 or 2")
+    if args.provider == "cuda":
+        if (not args.expected_onnx_sha256 or not args.expected_input_name
+                or not args.expected_input_dtype or not args.policy_output):
+            parser.error("CUDA requires explicit expected model/input and named policy output")
+        if os.environ.get("CUDA_VISIBLE_DEVICES") != "0":
+            parser.error("CUDA qualification requires CUDA_VISIBLE_DEVICES=0")
     model_path = args.onnx.resolve(strict=True)
     model_sha256 = file_sha256(model_path)
+    if args.expected_onnx_sha256 is not None and model_sha256 != args.expected_onnx_sha256:
+        raise ValueError("ONNX file SHA-256 differs from expected qualification model")
     spec = WorkerSpec(
         out=args.out.resolve(), games=args.games, seed=args.seed,
         max_plies=args.max_plies, parallel_games=args.parallel_games,
         temperature=args.temperature, initial_fen=args.initial_fen,
         syzygy_path=args.syzygy_path, model_sha256=model_sha256,
         outcome_mode=args.outcome_mode, model_path=str(model_path), providers=("pending",),
+        requested_provider=args.provider, gpu_mem_gb=args.gpu_mem_gb,
     )
-    spec.validate()
+    spec.validate(check_realized_provider=False)
     # No native board is constructed until the mode is installed. Validation
     # above only constructs python-chess boards.
     rep_fix.apply(True, boards_discarded=True)
     tb = tablebase.open_strict_match_tablebase(args.syzygy_path, max_pieces=6)
     try:
-        sess, input_name, input_dtype, providers = open_session(
-            str(model_path), gpu_mem_gb=0, threads=args.threads,
-        )
-        evaluator = bt4_generation_evaluator.BT4OnnxEvaluator(
-            sess, input_name=input_name, input_dtype=input_dtype,
-            policy_output=args.policy_output, wdl_output=args.wdl_output,
-            wdl_kind=args.wdl_kind, input_history_encoding=INPUT_HISTORY_ENCODING,
-            input_extra_features=INPUT_EXTRA_FEATURES, model_sha256=model_sha256,
-            history_rep_fix=True,
-        )
-        realized = replace(spec, providers=tuple(providers))
-        print(json.dumps(run_worker(realized, evaluator, tb), sort_keys=True))
+        if args.provider == "cuda":
+            # The CUDA session and its threads stay in this one process. The
+            # descriptor is deliberately held until process exit, including
+            # ORT teardown. An outer supervisor supplies the finite deadline.
+            _gpu_fd = acquire_gpu_lock()
+        with tempfile.TemporaryDirectory(prefix="bt4_root_ort_") as profile_dir:
+            prefix = Path(profile_dir) / "first_root" if args.provider == "cuda" else None
+            sess, input_name, input_dtype, providers, provider_options = open_worker_session(
+                str(model_path), requested_provider=args.provider,
+                gpu_mem_gb=args.gpu_mem_gb, threads=args.threads,
+                profile_prefix=prefix,
+            )
+            if args.provider == "cuda":
+                verify_cuda_model_schema(
+                    sess, input_name=args.expected_input_name,
+                    input_dtype=args.expected_input_dtype,
+                    policy_output=args.policy_output, wdl_output=args.wdl_output,
+                    wdl_kind=args.wdl_kind,
+                )
+            evaluator = bt4_generation_evaluator.BT4OnnxEvaluator(
+                sess, input_name=input_name, input_dtype=input_dtype,
+                policy_output=args.policy_output, wdl_output=args.wdl_output,
+                wdl_kind=args.wdl_kind, input_history_encoding=INPUT_HISTORY_ENCODING,
+                input_extra_features=INPUT_EXTRA_FEATURES, model_sha256=model_sha256,
+                history_rep_fix=True,
+            )
+            realized = replace(
+                spec, providers=providers, provider_options=provider_options,
+            )
+            realized.validate()
+            actor: RootEvaluator = (
+                CudaQualifiedEvaluator(evaluator, sess, realized.out)
+                if args.provider == "cuda" else evaluator
+            )
+            print(json.dumps(run_worker(realized, actor, tb), sort_keys=True))
     finally:
         tb.close()
 
