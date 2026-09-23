@@ -5,26 +5,55 @@ on:
 permissions:
   contents: read
 jobs:
-  snapshot:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 12
+    env:
+      BEND_NO_TELEMETRY: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           ref: bb1847d2d7f3c4e8b94e5dfb9f64bfc87e0c3390
-      - name: Preserve exact source and pinned compiler
+      - name: Apply exact authored source
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir /tmp/pr5d-source
-          git archive HEAD | gzip > /tmp/pr5d-source/source.tar.gz
-          git rev-parse HEAD > /tmp/pr5d-source/revision.txt
+          set -euo pipefail
+          mkdir /tmp/pr5d-built
           python - <<'PY'
-          import json,subprocess
+          import base64,hashlib,json,subprocess
           from pathlib import Path
-          pin=json.loads(Path('native/bend_engine/standalone/toolchain.json').read_text())
-          print(pin)
+          sha='3191ba47845805f52fa1fd9b8712c2108fafaefa'
+          rec=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+          code=base64.b64decode(rec['content'])
+          assert hashlib.sha1(b'blob '+str(len(code)).encode()+b'\0'+code).hexdigest()==sha
+          exec(compile(code,'authored-source','exec'))
+          subprocess.run(['git','add','-N','.'],check=True)
+          paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
+          assert len(paths)==3 and not any(p.startswith('.github/') for p in paths)
+          Path('/tmp/pr5d-built/source.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
+          Path('/tmp/pr5d-built/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths},indent=2))
           PY
-      - uses: actions/upload-artifact@v4
+          git diff --check
+      - uses: oven-sh/setup-bun@v2
         with:
-          name: deepfin-pr5d-source
-          path: /tmp/pr5d-source
-          retention-days: 7
+          bun-version: 1.4.2
+      - name: Verify pinned compiler and generate fresh coordinator
+        run: |
+          set -o pipefail
+          single=native/bend_engine/standalone
+          revision="$(bun "$single/verify_compiler.js" --revision)"
+          repository="$(bun "$single/verify_compiler.js" --repository)"
+          git init -q /tmp/pr5d-compiler
+          git -C /tmp/pr5d-compiler fetch -q --depth=1 "$repository" "$revision"
+          git -C /tmp/pr5d-compiler checkout -q --detach FETCH_HEAD
+          bun "$single/verify_compiler.js" /tmp/pr5d-compiler | tee /tmp/pr5d-built/compiler.txt
+          bun /tmp/pr5d-compiler/bend2/main.ts native/bend_engine/multi_root/main.bend -o /tmp/pr5d-runner.c 2>&1 | tee /tmp/pr5d-built/build.txt
+          sha256sum /tmp/pr5d-runner.c > /tmp/pr5d-built/generated.txt
+          gzip -c /tmp/pr5d-runner.c > /tmp/pr5d-built/runner.c.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deepfin-pr5d-generated
+          path: /tmp/pr5d-built
+          retention-days: 30
