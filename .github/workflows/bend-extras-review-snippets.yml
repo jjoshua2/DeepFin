@@ -1,0 +1,50 @@
+name: Verify extras supplementary source record
+'on':
+  push:
+    branches: [feat/bend-extras-preservation-dev-20260923]
+    paths: [.github/workflows/bend-extras-review-snippets.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a2bb4ddd10868adadea9c7cd39c79030f5263940
+          persist-credentials: false
+      - name: Parse documentation without executing its reconstruction code
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = a2bb4ddd10868adadea9c7cd39c79030f5263940
+          test "$(git hash-object docs/experiments/evidence/bend-extras-preservation/supplementary-review.md)" = a039b98453b7c5014fcaafdda5c3b7e5182199be
+          python3 - <<'PY'
+          import ast,hashlib,json,os,re,shutil
+          from pathlib import Path
+          doc=Path('docs/experiments/evidence/bend-extras-preservation/supplementary-review.md')
+          text=doc.read_text();out=Path(os.environ['RUNNER_TEMP'])/'review-sources';out.mkdir()
+          generator=re.search(r'```python\n(.*?)```',text,re.S).group(1)
+          tree=ast.parse(generator)
+          parts={n.targets[0].id:ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and isinstance(n.targets[0],ast.Name) and n.targets[0].id in {'pre','post'}}
+          facts=parts['pre']+''.join(f'    case {i}n: ({{==}},({{==}},{{==}}))\n' for i in range(128))+parts['post']
+          expected={'Facts.bend':'20f3c18270e859fc068c0643f37b7ce80efaa21b026abef1f00adbbd464555ef','Header.bend':'36e7c9251069bc9db4b8d2a82951ab785c4f3599641f924315e6e381d7145264','OneBlock.bend':'e40b249d5862d7574bf66f7f49d48d5ac1dd208618eb0650ebda127dab0c737b'}
+          sources={'Facts.bend':facts}
+          for name in ['Header.bend','OneBlock.bend']:
+              sources[name]=re.search(r'## '+re.escape(name)+r'\n.*?```text\n(.*?)```',text,re.S).group(1)
+          observed={name:hashlib.sha256(value.encode()).hexdigest() for name,value in sources.items()}
+          assert observed==expected,observed
+          for name,value in sources.items():(out/name).write_text(value)
+          shutil.copyfile(doc,out/doc.name)
+          (out/'verification.json').write_text(json.dumps({'status':'PASS','documentation_commit':'a2bb4ddd10868adadea9c7cd39c79030f5263940','source_sha256s':observed,'generator_executed':False,'proof_checker_rerun':False,'scope':'Exact reproduction of the already locally checked supplementary sources, not an extra public theorem or fresh proof execution'},indent=2)+'\n')
+          print(json.dumps(observed,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-extras-supplementary-sources
+          path: ${{ runner.temp }}/review-sources/
+          retention-days: 30
