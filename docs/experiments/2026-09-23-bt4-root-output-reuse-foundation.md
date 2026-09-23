@@ -46,10 +46,18 @@ versus 44,700 for the prior layout, a 22,332-byte payload reduction. This
 excludes Python object and allocator overhead, and it is not a throughput
 measurement. Search still requests and receives its logits when used.
 
+Repetition-plane encoding has a separate process-global switch. The evaluator
+now requires an explicit boolean `history_rep_fix`, verifies that
+`rep_fix.current()` matches it at construction and before every root or leaf
+batch, and records the mode with each root observation. It refuses an unset or
+changed mode even when a nonrepeating board's planes happen to match. The
+evaluator never changes the switch: a future worker must configure it once
+before constructing any CBoard and keep it fixed for the game's lifetime.
+
 CPU fake-session tests cover reversed policy/WDL output order, both colors,
 castling, promotion, en passant, stale root/leaf histories, mismatched legal
 sets, exact input/source keys, native float16 and float64 WDL, extreme finite
 logits, root-only sampling, and an actual C-search call with padded leaf batches.
-The focused adapter and neighboring conversion/WDL tests pass (97 cases);
+The focused adapter and neighboring conversion/WDL tests pass (100 cases);
 scoped Ruff and basedpyright report no findings. These are interface and
 numerical-contract checks, not evidence of playing strength or speedup.
