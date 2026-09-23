@@ -1,0 +1,41 @@
+{
+  "status": "PREPARED_HELD_FOR_UNCONTENDED_CPU_SLOT",
+  "hypothesis": "PR810 eliminates redundant schema2 dense semantic checks in actual GameAwareEpochBuffer._load_one while preserving every decoded array and identity check.",
+  "script": "/tmp/benchmark_overlay_hotload_20260923.py",
+  "script_sha256": "6a72f5806420b314d7039cedf907cb1e9fa0fc35e9047794ed5da3801caeae5f",
+  "sources": {
+    "control": "/tmp/deepfin-factorial58-runtime",
+    "candidate": "/home/josh/projects/chess-worktrees/overlay-validation-reuse-20260921"
+  },
+  "order": [
+    "control",
+    "candidate",
+    "candidate",
+    "control"
+  ],
+  "fixture": "Same first8Bschema2shards from previous audited constructor screen;65,536rows,batch128planning. Per-shard content checked against the read receipt; receipt/source hashes recorded but expected pins still required before admission.",
+  "primary": "Median sum of8per-record actual _load_one wall seconds, measured after constructor validations; also count semantic validations.",
+  "correctness": "All per-field shape/dtype/bytehashes, completeplan, objectivecounts, orderedtargethashes must match across4arms.",
+  "decision": "At least10%median hotload reduction with exactparity => worthwhile fulltrainer qualification, not promotion.",
+  "bounds": {
+    "seconds_per_arm": 180,
+    "cpu_seconds_per_arm": 120,
+    "max_arms": 4,
+    "affinity": [
+      16,
+      17
+    ],
+    "nice": 19,
+    "threads": 2,
+    "minimum_memory_gib": 40,
+    "minimum_disk_gib": 150,
+    "new_output_limit_mib": 4,
+    "gpu": false,
+    "per_arm_output_limit_mib": 1
+  },
+  "limitations": [
+    "Bfixture not fullEepoch; same schema2hotloader but targets differ.",
+    "Known existing macro slowdown means not admitted yet; no automatic launch.",
+    "Prepare full source pins and independent runner review before launch."
+  ]
+}

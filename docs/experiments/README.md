@@ -122,3 +122,5 @@ links to supporting experiments. The `experiment-readout` Skill covers the reusa
 analysis workflow.
 
 - [2026-09-22: 500M shared CPU/GPU capacity requirements](2026-09-22-scale-compute-budget.md)
+
+- [2026-09-23: live E loader profile and prepared CPU comparison](2026-09-23-loader-profile.md)

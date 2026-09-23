@@ -92,3 +92,6 @@ quality evidence for removing SF from the main value blend on existing data.
 Validation: a separate reviewer reproduced the calculator output exactly, checked
 the resource accounting and source claims, and approved this record. Local JSON,
 relative-link and whitespace checks passed.
+
+A subsequent [live loader profile](2026-09-23-loader-profile.md) identified repeated
+overlay validation during training as another priority for controlled measurement.

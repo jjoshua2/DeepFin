@@ -1,0 +1,42 @@
+{
+  "status": "DESCRIPTIVE_SHORT_LIVE_PROFILE",
+  "pid": 2156939,
+  "runtime_commit": "502cd02e072471c901255f3fdb580d6ea7b826d0",
+  "duration_seconds": 20,
+  "sampling_hz": 20,
+  "nonblocking": true,
+  "sampling_errors": 0,
+  "counts": {
+    "all_thread_samples": 1198,
+    "main_samples": 397,
+    "load_next": 173,
+    "overlay_validation": 109,
+    "host_sample": 187,
+    "collate": 6,
+    "gather": 3,
+    "loss_account": 43,
+    "prepare": 5
+  },
+  "main_thread_fraction": {
+    "load_next": 0.4357682619647355,
+    "overlay_validation": 0.27455919395465994,
+    "host_sample": 0.47103274559193953,
+    "collate": 0.015113350125944584,
+    "gather": 0.007556675062972292,
+    "loss_account": 0.10831234256926953,
+    "prepare": 0.012594458438287154
+  },
+  "raw_sha256": "1e9b83fdef4d0204de9c07c55b4198c73bfdcd30cf78dd25f9cf736fed20366c",
+  "source_sha256": {
+    "chess_anti_engine/replay/target_overlay.py": "31ae70cceb684632a402be26ada1018fd05033fd9d8ff5a4ef5b4929f61010a4",
+    "chess_anti_engine/replay/game_epoch.py": "a84ad58fd68719e42513fa0411ca64f02ce848167cc1496a0a6add1ff4664b78",
+    "chess_anti_engine/replay/shard.py": "2af196fdd669eb1fe050ce4fe7f5a68c479aa0b3736d7a86b902abc4cc141d8c"
+  },
+  "limitations": [
+    "Single20second sample during concurrent c8generation; not representative completeepoch speed estimate.",
+    "All-thread samples include idle/empty stacks; percentages use397identifiedmainthreadsamples only.",
+    "Nested categories overlap; do not sum fractions.",
+    "Repeated validation path is covered by existingPR810, whose5.42xmeasurement covers startup only.",
+    "No live runtime changes or GPUbenchmark."
+  ]
+}
