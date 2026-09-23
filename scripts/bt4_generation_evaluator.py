@@ -11,6 +11,7 @@ A future writer must enforce the raw collector's full provenance contract.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -118,6 +119,7 @@ class BT4OnnxEvaluator:
         self.model_sha256 = model_sha256
         self._tree: Any | None = None
         self.root_calls = 0
+        self.root_rows = 0
         self.leaf_calls = 0
         self.leaf_rows = 0
 
@@ -137,10 +139,14 @@ class BT4OnnxEvaluator:
             )
         return arr
 
-    def _infer(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _infer(self, x: np.ndarray, *, root: bool = False) -> tuple[np.ndarray, np.ndarray]:
         feed = x_to_lc0_planes(
             x, input_history_encoding=self.input_history_encoding,
         ).astype(self.input_dtype, copy=False)
+        if root:
+            # Count submitted ONNX calls/rows, including a session failure.
+            self.root_calls += 1
+            self.root_rows += len(x)
         fetched = self.sess.run(
             [self.policy_output, self.wdl_contract["output"]], {self.input_name: feed},
         )
@@ -154,41 +160,60 @@ class BT4OnnxEvaluator:
         return policy, values
 
     def evaluate_root(self, board: chess.Board, x: np.ndarray) -> BT4RootOutput:
-        """Check the exact played history and retain one root forward output."""
+        """Singleton convenience path with the same validation as batched roots."""
         root = np.asarray(x)
-        arr = self._checked_inputs(root[None])
-        if board.legal_moves.count() == 0:
-            raise ValueError("BT4 root has no legal move")
-        expected = encode_cboard(
-            CBoard.from_board(board),
-            input_history_encoding=self.input_history_encoding,
-            input_extra_features=self.input_extra_features,
-        )
-        if not np.array_equal(arr[0], expected):
-            raise ValueError("BT4 root board/history does not match encoded input")
-        policy_rows, native_values = self._infer(arr)
-        self.root_calls += 1
-        _, _, dense = compact_legal_policy(board, policy_rows[0])
+        return self.evaluate_roots([board], root[None])[0]
+
+    def evaluate_roots(
+        self, boards: Sequence[chess.Board], x_batch: np.ndarray,
+    ) -> list[BT4RootOutput]:
+        """Validate every root, then retain aligned outputs from one ONNX call.
+
+        History/shape/identity failures reject the entire batch before inference.
+        The session is never asked to evaluate padding or an empty root batch.
+        """
+        arr = self._checked_inputs(x_batch)
+        if not boards or len(boards) != len(arr):
+            raise ValueError("BT4 root boards and encoded batch must have equal nonzero length")
+        for idx, board in enumerate(boards):
+            if board.legal_moves.count() == 0:
+                raise ValueError(f"BT4 root {idx} has no legal move")
+            expected = encode_cboard(
+                CBoard.from_board(board),
+                input_history_encoding=self.input_history_encoding,
+                input_extra_features=self.input_extra_features,
+            )
+            if not np.array_equal(arr[idx], expected):
+                raise ValueError(f"BT4 root {idx} board/history does not match encoded input")
         source_keys = position_fingerprints(
             arr, input_history_encoding=self.input_history_encoding,
         )
-        if len(source_keys) != 1 or len(source_keys[0]) != FINGERPRINT_BYTES:
+        if len(source_keys) != len(arr) or any(
+            len(key) != FINGERPRINT_BYTES for key in source_keys
+        ):
             raise ValueError("BT4 root source fingerprint is unavailable")
-        raw = native_values[0].copy()
-        search_policy = _search_policy_logits(dense)
-        search_wdl = _search_wdl_logits(raw, self.wdl_contract["kind"])
-        for value in (dense, raw, search_policy, search_wdl):
-            value.flags.writeable = False
-        return BT4RootOutput(
-            fen=board.fen(), input_key=corpus.input_tensor_key(arr[0]),
-            source_key=source_keys[0], policy_t1=dense, wdl_raw=raw,
-            policy_output=self.policy_output, wdl_output=self.wdl_contract["output"],
-            wdl_kind=self.wdl_contract["kind"], model_sha256=self.model_sha256,
-            input_name=self.input_name, input_dtype=self.input_dtype.name,
-            input_history_encoding=self.input_history_encoding,
-            input_extra_features=self.input_extra_features,
-            _search_policy_logits=search_policy, _search_wdl_logits=search_wdl,
-        )
+        fens = [board.fen() for board in boards]
+        input_keys = [corpus.input_tensor_key(row) for row in arr]
+        policy_rows, native_values = self._infer(arr, root=True)
+        outputs = []
+        for idx, board in enumerate(boards):
+            _, _, dense = compact_legal_policy(board, policy_rows[idx])
+            raw = native_values[idx].copy()
+            search_policy = _search_policy_logits(dense)
+            search_wdl = _search_wdl_logits(raw, self.wdl_contract["kind"])
+            for value in (dense, raw, search_policy, search_wdl):
+                value.flags.writeable = False
+            outputs.append(BT4RootOutput(
+                fen=fens[idx], input_key=input_keys[idx], source_key=source_keys[idx],
+                policy_t1=dense, wdl_raw=raw,
+                policy_output=self.policy_output, wdl_output=self.wdl_contract["output"],
+                wdl_kind=self.wdl_contract["kind"], model_sha256=self.model_sha256,
+                input_name=self.input_name, input_dtype=self.input_dtype.name,
+                input_history_encoding=self.input_history_encoding,
+                input_extra_features=self.input_extra_features,
+                _search_policy_logits=search_policy, _search_wdl_logits=search_wdl,
+            ))
+        return outputs
 
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,
