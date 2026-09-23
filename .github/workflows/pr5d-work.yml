@@ -23,7 +23,7 @@ jobs:
           python - <<'PY'
           import base64,hashlib,json,subprocess
           from pathlib import Path
-          sha='3191ba47845805f52fa1fd9b8712c2108fafaefa'
+          sha='8d30179e9bb9c1aa2c485b639707fbcc25dc3fe5'
           rec=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
           code=base64.b64decode(rec['content'])
           assert hashlib.sha1(b'blob '+str(len(code)).encode()+b'\0'+code).hexdigest()==sha
