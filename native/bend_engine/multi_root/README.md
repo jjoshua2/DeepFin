@@ -1,4 +1,4 @@
-# Bounded multi-root search (PR5a/PR5b)
+# Bounded multi-root search (PR5a-PR5c)
 
 This is an explicit **CPU-F32, fixed-batch, offline cohort runner**, not a replacement
 for the UCI application. It owns 1–16 independent Bend search trees, visits roots
@@ -70,9 +70,9 @@ python -m native.bend_engine.multi_root.verify \
   --checkpoint /path/to/checkpoint.pt --report /tmp/cohort-model.json
 ```
 
-No production defaults change. PR5b adds opt-in async polling and per-root
-cancellation below. Live root arrival/removal, persistent self-play integration,
-bounded wall-time admission, measured bucket selection, trained-model CUDA
+No production defaults change. PR5b adds async polling/cancellation and PR5c adds
+per-root deadline controls below. Live root arrival/removal, persistent self-play
+integration, service-time-driven admission/bucket selection, trained-model CUDA
 qualification and same-tree concurrency remain later work. PR4's UCI decision
 semantics do not apply to this separate headless executable. Fewer forward calls
 are not a speedup or Elo claim.
@@ -120,8 +120,9 @@ normalization/search resume. Every real raw logit is checked before any neural
 backup, including logits of cancelled rows; cancellation cannot hide backend or
 nonfinite-output failure. There is one slot, not overlapping model execution.
 
-Async final work uses `deepfin.multi-root-async-work.v1`; the synchronous schema is
-unchanged. `cohort_root` gains `dispatched_real_rows`, `cancelled_rows` and
+PR5b introduced `deepfin.multi-root-async-work.v1`; PR5c extends it to
+`deepfin.multi-root-async-work.v2` with the deadline fields below. The synchronous
+schema is unchanged. `cohort_root` gains `dispatched_real_rows`, `cancelled_rows` and
 `cancel_requested`. `cancelled_rows` counts discarded admitted evaluations, not
 cancel commands or undispatched roots. On a successful final report:
 `dispatched = executed = accepted + cancelled`, with padding separate and no
