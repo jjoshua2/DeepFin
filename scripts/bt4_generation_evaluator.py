@@ -20,6 +20,7 @@ import chess
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.encoding.encode import input_plane_count
 from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding, x_to_lc0_planes
@@ -76,6 +77,7 @@ class BT4RootOutput:
     input_dtype: str
     input_history_encoding: str
     input_extra_features: str
+    history_rep_fix: bool
 
     def search_inputs(self) -> tuple[np.ndarray, np.ndarray]:
         """Fresh batched logits for search; root-only actors retain no derived copy."""
@@ -96,8 +98,12 @@ class BT4OnnxEvaluator:
         self, sess: Any, *, input_name: str, input_dtype: np.dtype[Any],
         policy_output: str | None, wdl_output: str, wdl_kind: str,
         input_history_encoding: str, input_extra_features: str,
-        model_sha256: str,
+        model_sha256: str, history_rep_fix: bool,
     ) -> None:
+        if type(history_rep_fix) is not bool:
+            raise ValueError("BT4 history_rep_fix must be an explicit boolean")  # pyright: ignore[reportUnreachable]
+        self.history_rep_fix = history_rep_fix
+        self._require_history_rep_fix()
         if not input_name or np.dtype(input_dtype) not in (np.dtype("float16"), np.dtype("float32")):
             raise ValueError("BT4 input needs a named float16/float32 tensor")
         if wdl_kind not in ("logits", "probabilities"):
@@ -124,6 +130,16 @@ class BT4OnnxEvaluator:
         self.root_rows = 0
         self.leaf_calls = 0
         self.leaf_rows = 0
+
+    def _require_history_rep_fix(self) -> None:
+        """Refuse a process-global mode change before any CBoard is accessed."""
+        actual = rep_fix.current()
+        if actual is not self.history_rep_fix:
+            raise RuntimeError(
+                f"BT4 history_rep_fix is {actual!r}; expected {self.history_rep_fix!r}. "
+                "Configure the process before constructing boards; the evaluator "
+                "never changes this mode.",
+            )
 
     def bind_tree(self, tree: Any | None) -> None:
         """Bind the same explicit MCTSTree passed to the C search, or unbind."""
@@ -174,6 +190,7 @@ class BT4OnnxEvaluator:
         History/shape/identity failures reject the entire batch before inference.
         The session is never asked to evaluate padding or an empty root batch.
         """
+        self._require_history_rep_fix()
         arr = self._checked_inputs(x_batch)
         if not boards or len(boards) != len(arr):
             raise ValueError("BT4 root boards and encoded batch must have equal nonzero length")
@@ -211,6 +228,7 @@ class BT4OnnxEvaluator:
                 input_name=self.input_name, input_dtype=self.input_dtype.name,
                 input_history_encoding=self.input_history_encoding,
                 input_extra_features=self.input_extra_features,
+                history_rep_fix=self.history_rep_fix,
             ))
         return outputs
 
@@ -218,6 +236,7 @@ class BT4OnnxEvaluator:
         self, x: np.ndarray, relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Map a C tree's pending real leaves; return neutral padded rows."""
+        self._require_history_rep_fix()
         if relations is not None:
             raise ValueError("BT4 evaluator does not support relation inputs")
         arr = self._checked_inputs(x)

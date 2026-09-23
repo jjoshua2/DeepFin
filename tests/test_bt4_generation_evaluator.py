@@ -10,6 +10,7 @@ import pytest
 
 from scripts import bt4_generation_evaluator as adapter
 from chess_anti_engine.encoding._lc0_ext import CBoard
+from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.encoding.lc0 import x_to_lc0_planes
 from chess_anti_engine.eval.rvg_surgery import position_fingerprints
@@ -24,6 +25,14 @@ from scripts.gen_sf_rooted_corpus import input_tensor_key
 HISTORY = "lc0_root_legacy_meta"
 FEATURES = "v2_threats"
 MODEL_SHA = "a" * 64
+HISTORY_REP_FIX = True
+
+
+@pytest.fixture(autouse=True)
+def expected_process_rep_fix(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The guard contract is tested without mutating native process-global mode.
+    # These fake-session boards do not repeat, so native default planes suffice.
+    monkeypatch.setattr(rep_fix, "current", lambda: HISTORY_REP_FIX)
 
 
 @dataclass
@@ -84,7 +93,7 @@ def make_evaluator(sess: FakeSession, *, history: str = HISTORY, features: str =
         sess, input_name="planes", input_dtype=np.dtype("float32"),
         policy_output=None, wdl_output="native_wdl", wdl_kind=sess.kind,
         input_history_encoding=history, input_extra_features=features,
-        model_sha256=MODEL_SHA,
+        model_sha256=MODEL_SHA, history_rep_fix=HISTORY_REP_FIX,
     )
 
 
@@ -127,6 +136,7 @@ def test_root_retains_native_output_and_legal_mapping(fen: str) -> None:
     assert root.input_name == "planes"
     assert root.input_dtype == "float32"
     assert root.input_history_encoding == HISTORY
+    assert root.history_rep_fix is HISTORY_REP_FIX
     assert root.input_key == input_tensor_key(x)
     assert root.source_key == position_fingerprints(x[None], input_history_encoding=HISTORY)[0]
     assert not root.policy_t1.flags.writeable
@@ -345,9 +355,48 @@ def test_invalid_wdl_kind_is_rejected_before_inference() -> None:
             sess, input_name="planes", input_dtype=np.dtype("float32"),
             policy_output=None, wdl_output="native_wdl", wdl_kind="unsupported",
             input_history_encoding=HISTORY, input_extra_features=FEATURES,
-            model_sha256=MODEL_SHA,
+            model_sha256=MODEL_SHA, history_rep_fix=HISTORY_REP_FIX,
         )
     assert sess.calls == []
+
+
+@pytest.mark.parametrize("actual_mode", [False, None])
+def test_constructor_requires_explicit_matching_rep_fix(
+    monkeypatch: pytest.MonkeyPatch, actual_mode: bool | None,
+) -> None:
+    sess = FakeSession()
+    with pytest.raises(ValueError, match="explicit boolean"):
+        BT4OnnxEvaluator(
+            sess, input_name="planes", input_dtype=np.dtype("float32"),
+            policy_output=None, wdl_output="native_wdl", wdl_kind="probabilities",
+            input_history_encoding=HISTORY, input_extra_features=FEATURES,
+            model_sha256=MODEL_SHA, history_rep_fix=1,  # pyright: ignore[reportArgumentType]
+        )
+    with monkeypatch.context() as patch:
+        patch.setattr(rep_fix, "current", lambda: actual_mode)
+        with pytest.raises(RuntimeError, match=f"history_rep_fix is {actual_mode!r}; expected True"):
+            make_evaluator(sess)
+    assert rep_fix.current() is HISTORY_REP_FIX
+    assert sess.calls == []
+
+
+def test_mode_drift_refuses_root_and_leaf_before_inference(monkeypatch: pytest.MonkeyPatch) -> None:
+    board = chess.Board()  # Its nonrepeating planes could match in either mode.
+    x = encoded(board)
+    sess = FakeSession()
+    evaluator = make_evaluator(sess)
+    with monkeypatch.context() as patch:
+        patch.setattr(rep_fix, "current", lambda: False)
+        with pytest.raises(RuntimeError, match="history_rep_fix is False; expected True"):
+            evaluator.evaluate_roots([board], x[None])
+        with pytest.raises(RuntimeError, match="history_rep_fix is False; expected True"):
+            evaluator.evaluate_encoded(x[None])
+    assert rep_fix.current() is HISTORY_REP_FIX
+    assert sess.calls == []
+    assert evaluator.root_calls == 0
+    assert evaluator.root_rows == 0
+    assert evaluator.leaf_calls == 0
+    assert evaluator.leaf_rows == 0
 
 
 def test_leaf_refuses_unbound_tree_and_relations() -> None:
