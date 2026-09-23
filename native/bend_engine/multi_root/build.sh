@@ -24,7 +24,7 @@ output="$(cd -- "$output" && pwd)"
 cmake -S "$single" -B "$output/build" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER="${CC:-clang}" -DCMAKE_CXX_COMPILER="${CXX:-clang++}" \
   -DCMAKE_PREFIX_PATH="$torch_prefix" -DBEND_GENERATED_C="$output/probe.c" \
-  -DBEND_CUDA_MODEL=OFF -DBEND_CONTRACT_DIR="$output" -DBEND_TARGET_NAME=deepfin-bend-multi-root
+  -DBEND_CUDA_MODEL=OFF -DBEND_ASYNC_BATCH=ON -DBEND_CONTRACT_DIR="$output" -DBEND_TARGET_NAME=deepfin-bend-multi-root
 cmake --build "$output/build" --parallel 1
 ldd "$output/build/deepfin-bend-multi-root" > "$output/libraries.txt"
 if grep -qi libpython "$output/libraries.txt"; then echo 'unexpected interpreter dependency' >&2; exit 2; fi
