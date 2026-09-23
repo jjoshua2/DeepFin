@@ -75,3 +75,34 @@ full-stream CPU qualification remain held; neither publication nor unit-test
 success authorizes their launch.
 
 The direct cached-loader regression subsequently passed 15 author and independent parent tests and was published as [#844](https://github.com/jjoshua2/DeepFin/pull/844), stacked on #810. That worker moved to independent review of the two generation changes without another user prompt.
+
+## Subsequent review cycles
+
+The primary kept the parent turn active and completed multiple author/reviewer
+handoffs. The following changes are published for review; none has been deployed
+into the pinned E runtime:
+
+| PR | Result |
+|---|---|
+| [#845](https://github.com/jjoshua2/DeepFin/pull/845) | Natural and six-man outcome helper; unresolved caps or unavailable tables discard games |
+| [#846](https://github.com/jjoshua2/DeepFin/pull/846) | BT4 root policy/native value adapter with exact history and legal mapping checks |
+| [#848](https://github.com/jjoshua2/DeepFin/pull/848) | One ONNX call for an ordered batch of validated roots |
+| [#849](https://github.com/jjoshua2/DeepFin/pull/849) | Derive search inputs on demand; retain fewer root arrays |
+| [#850](https://github.com/jjoshua2/DeepFin/pull/850) | Require explicit repetition mode and refuse drift before inference |
+
+These are stacked foundations for generation with reusable teacher outputs, not a
+measured generation-throughput gain or an enabled label writer. The next game
+stepper review found and corrected two issues: unset repetition mode acceptance,
+and loss of an earlier terminal event if a later root encoding failed. The revised snapshot passed independent review and all 56 combined focused tests. The generation worker is
+implementing strict session/model/input provenance with fake-session tests.
+
+A read-only host diagnostic during E recorded 2,542 compaction stalls over ten
+seconds (2,541 failed, one successful), no direct reclaim or swap I/O in that
+interval, and memory PSI avg60 around 9.69 percent. THP enable and defrag settings
+were both `madvise`. This is a candidate explanation to investigate, not a causal
+finding. No kernel setting, process environment or live job was changed. A source
+allocation audit is assigned before proposing a bounded quiet-slot comparison.
+
+E remained live at window 1079/1290 (94,952/113,459 updates) during these checks.
+Its paired E/D arena remains queued; the second seed remains held for the first
+seed decision. Full-stream CPU and GPU optimization benchmarks are still held.
