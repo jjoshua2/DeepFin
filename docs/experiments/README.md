@@ -127,3 +127,7 @@ analysis workflow.
 - [2026-09-23: live E loader profile and prepared CPU comparison](2026-09-23-loader-profile.md)
 
 - [2026-09-23: three-worker CPU optimization plan](2026-09-23-optimization-work-plan.md)
+
+- [2026-09-23: BT4 buffering capacity and loader huge-page audit](2026-09-23-generation-memory-loader-thp-audit.md) — source-based memory floor and proposed child-process loader comparison; unmeasured.
+
+- [2026-09-23: Process-local NumPy huge-page loader comparison](2026-09-23-numpy-thp-loader-proposal.md) — held ABBA proposal; runner revision and quiet-slot admission remain.

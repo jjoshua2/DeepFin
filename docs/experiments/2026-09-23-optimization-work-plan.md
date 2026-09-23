@@ -93,7 +93,7 @@ into the pinned E runtime:
 These are stacked foundations for generation with reusable teacher outputs, not a
 measured generation-throughput gain or an enabled label writer. The next game
 stepper review found and corrected two issues: unset repetition mode acceptance,
-and loss of an earlier terminal event if a later root encoding failed. The revised snapshot passed independent review and all 56 combined focused tests. The generation worker is
+and loss of an earlier terminal event if a later root encoding failed. The revised snapshot passed independent review and all 56 combined focused tests and is published as [#851](https://github.com/jjoshua2/DeepFin/pull/851). The generation worker is
 implementing strict session/model/input provenance with fake-session tests.
 
 A read-only host diagnostic during E recorded 2,542 compaction stalls over ten
@@ -106,3 +106,9 @@ allocation audit is assigned before proposing a bounded quiet-slot comparison.
 E remained live at window 1079/1290 (94,952/113,459 updates) during these checks.
 Its paired E/D arena remains queued; the second seed remains held for the first
 seed decision. Full-stream CPU and GPU optimization benchmarks are still held.
+
+The [generation memory and loader THP audit](2026-09-23-generation-memory-loader-thp-audit.md) records the buffering floor, transient allocations, and the next proposed child-process comparison. Its numbers do not establish an RSS bound or a throughput gain.
+
+The verified-session factory passed final independent review and 124 focused author tests; the parent also passed all 50 session/evaluator tests. It is published as [#852](https://github.com/jjoshua2/DeepFin/pull/852). Review closed sparse external-weight, realized GPU-cap, and batch-shape gaps. A future writer still needs physical row and serialized-input identity plus native/library provenance.
+
+All three bounded worker assignments and their review handoffs are complete. The next [NumPy advice ABBA proposal](2026-09-23-numpy-thp-loader-proposal.md) is banked with fixed inputs and acceptance criteria; its runner revision and quiet-slot admission remain. This is a saved plan, not a scheduled parent-agent restart or an executed experiment.
