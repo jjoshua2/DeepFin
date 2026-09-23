@@ -1,0 +1,25 @@
+name: PR5b async cohort workspace
+on:
+  push:
+    branches: [work/pr5b-async-cohort-20260923]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dbe12bd862bbe04573f0e4d3aeb26c910406f74c
+      - name: Archive pinned tracked source
+        run: |
+          mkdir -p /tmp/pr5b-source
+          git archive HEAD | gzip > /tmp/pr5b-source/source.tar.gz
+          git rev-parse HEAD > /tmp/pr5b-source/revision.txt
+          sha256sum /tmp/pr5b-source/source.tar.gz > /tmp/pr5b-source/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepfin-pr5b-source
+          path: /tmp/pr5b-source
+          retention-days: 7
