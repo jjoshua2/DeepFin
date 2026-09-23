@@ -46,8 +46,34 @@ def expected_trace()'''
     text = Path('.collections-session-check.py').read_text()
     assert hashlib.sha256(text.encode()).hexdigest() == '45f869c97c6af7827d27af6149d4a098bf1802552f5d20f05a5bedf3f6a33820'
     data['files']['native/bend_engine/collections_probe/session_check.py'] = text
+    name = 'native/bend_engine/collections_probe/main.bend'
+    text = replace_once(data['files'][name], 'def emit(q:', '''def emit_word(q: Q.Queue<&1, Array<U64>>, r: Array<U64> & U64) -> IO(Q.Queue<&1, Array<U64>>):
+  (arr, +x) = r
+  do IO<Q.Queue<&1, Array<U64>>>:
+    IO.print("value " ++ U32.show(U64.high(x)) ++ " " ++ U32.show(U64.low(x)))
+    return q
+
+def emit(q:''')
+    text = replace_once(text, '''      (arr, +x) = Array.get(U64, arr, 0)
+      do IO<Q.Queue<&1, Array<U64>>>:
+        IO.print("value " ++ U32.show(U64.high(x)) ++ " " ++ U32.show(U64.low(x)))
+        return q''', '''      emit_word(q, Array.get(U64, arr, 0))''')
+    assert hashlib.sha256(text.encode()).hexdigest() == '7acf9373ab842ffa4f148ef5b96c09a18e555700ec4ff3c33ce4a106ade53037'
+    data['files'][name] = text
+    name = 'native/bend_engine/collections_probe/benchmark.bend'
+    text = replace_once(data['files'][name], '''def queue_done(size: Nat, sample: Nat, started: Nat, r: Q.Queue<&2, U32> & U32) -> IO(Unit):
+  (q, sum) = r
+  (q, length) = Q.length(&2, U32, q)''', '''def queue_sized(size: Nat, sample: Nat, started: Nat, sum: U32, r: Q.Queue<&2, U32> & Nat) -> IO(Unit):
+  (q, length) = r''')
+    text = replace_once(text, 'def list_run(size:', '''def queue_done(size: Nat, sample: Nat, started: Nat, r: Q.Queue<&2, U32> & U32) -> IO(Unit):
+  (q, sum) = r
+  queue_sized(size, sample, started, sum, Q.length(&2, U32, q))
+
+def list_run(size:''')
+    assert hashlib.sha256(text.encode()).hexdigest() == 'b9e4d5a85b6b330a39cbd9f92d5c995e6d237537f8a9939372033b5a73a2606e'
+    data['files'][name] = text
     name = 'docs/experiments/2026-09-23-bend-collections-screen.md'
-    data['files'][name] += '\n\n### Preserved setup failures\n\nRun 35922817981 stopped at the first static gate: four Ruff findings in the new test file (one list-construction style issue and three broad exception assertions). Whole-repository type checking reported zero errors/warnings and Vulture had no findings. Hosted Python and native tests had not run. The corrected candidate uses list.extend and checks exception messages; no gate or expectation was suppressed.\n\nRun 35923458566 passed focused Ruff/Basedpyright and all 66 Python cases, then stopped before compilation: the new probe mistakenly imported a legacy compiler guard. The existing bitboard/session manifest pins 57bc84ed with fingerprint c178489e, whereas the CI installer and this preregistration pin aaeb9bc9 with fingerprint d9550e30. Neither manifest nor compiler source was changed. The new screen now verifies the intended 84-file fingerprint itself, and session_check.py builds the same existing session/CBoard sources and invokes the unchanged Python-chess/session/root-advance oracles under that verified compiler. It does not monkeypatch the legacy guard or call its build function with a mismatched compiler. These setup failures are not native coverage. The original 17 pure Python tests also passed locally.\n'
+    data['files'][name] += '\n\n### Preserved setup failures\n\nRun 35922817981 stopped at the first static gate: four Ruff findings in the new test file (one list-construction style issue and three broad exception assertions). Whole-repository type checking reported zero errors/warnings and Vulture had no findings. Hosted Python and native tests had not run. The corrected candidate uses list.extend and checks exception messages; no gate or expectation was suppressed.\n\nRun 35923458566 passed focused Ruff/Basedpyright and all 66 Python cases, then stopped before compilation: the new probe mistakenly imported a legacy compiler guard. The existing bitboard/session manifest pins 57bc84ed with fingerprint c178489e, whereas the CI installer and this preregistration pin aaeb9bc9 with fingerprint d9550e30. Neither manifest nor compiler source was changed. The new screen now verifies the intended 84-file fingerprint itself, and session_check.py builds the same existing session/CBoard sources and invokes the unchanged Python-chess/session/root-advance oracles under that verified compiler. It does not monkeypatch the legacy guard or call its build function with a mismatched compiler. These setup failures are not native coverage. The original 17 pure Python tests also passed locally.\n\nRun 35923899467 again passed the 66 Python cases and focused static checks, then the first Bend parser rejected computed-tuple destructuring in the owning trace emitter. The emitter and the analogous benchmark length read now pass the computed tuple to dedicated parameter-destructuring helpers. No compiler, behavior expectation or test fixture changed; no native runtime was executed in that failed attempt.\n'
     name = 'native/bend_engine/collections_probe/README.md'
     data['files'][name] += '\n\nThe current-compiler integration check is `python -m native.bend_engine.collections_probe.session_check --compiler-root PATH --cc clang-18 --report artifacts/collections-sessions.json`. It compiles the existing session driver and CBoard support with the same flags and calls the unchanged independent session/root oracles. The legacy bitboard/session toolchain manifest remains untouched; this screen explicitly verifies the CI installer\'s aaeb9bc9 84-file source fingerprint.\n'
     return data
