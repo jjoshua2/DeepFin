@@ -3,12 +3,12 @@ on:
   push:
     branches: [work/pr4b-async-search-20260922]
 permissions:
-  contents: read
+  contents: write
   actions: read
 jobs:
-  build:
+  qualify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       PYTHONPATH: .
       CAE_TEST_THREADS: '2'
@@ -20,31 +20,52 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: a63409180bc337591a97d8877c5dbc86483381c6
-      - name: Apply exact source candidate
+      - uses: actions/download-artifact@v4
+        with:
+          name: deepfin-pr4b-first-build
+          run-id: 35800772793
+          github-token: ${{ github.token }}
+          path: /tmp/pr4b-initial
+      - name: Reconstruct exact corrected source and test files
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/pr4b-evidence
           python - <<'PY'
-          import base64, gzip, hashlib, json, subprocess
+          import base64, hashlib, json, subprocess
           from pathlib import Path
-          pieces = [('3b2ee386fbd938c6cb1a4f565fa5d2f8006940e9','868e0647f7ad3c2c955f83f7f8f248d985084c51a822fbb21800d97141076875'),('60bad362642433f0888cace689ea70de7accd632','fb37020f66fbea1bda358d2d785304caa2b739eb603e691291806638e75d9e79')]
-          packed=b''
-          for sha,digest in pieces:
-              data=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
-              part=base64.b64decode(data['content'])
-              assert hashlib.sha256(part).hexdigest()==digest, (sha,hashlib.sha256(part).hexdigest())
-              packed+=part
-          patch=gzip.decompress(packed)
+          patch=Path('/tmp/pr4b-initial/candidate.patch').read_bytes()
           assert hashlib.sha256(patch).hexdigest()=='72fe6f12ec05bbe2f3ea3b6b95b3732e5275a4f772ce6ea2616f7a042b335ca8'
-          Path('/tmp/pr4b-evidence/candidate.patch').write_bytes(patch)
           subprocess.run(['git','apply','--check','-'],input=patch,check=True)
           subprocess.run(['git','apply','-'],input=patch,check=True)
+          here=Path('native/bend_engine/standalone')
+          p=here/'Async.bend'; s=p.read_text(); assert 'def cancel(id:' in s and 'def drain(id:' in s
+          p.write_text(s.replace('def cancel(id:','def cancel_identity(id:').replace('def drain(id:','def drain_identity(id:'))
+          for name,old,new in [('main.bend','Async.cancel(id)','Async.cancel_identity(id)'),('EngineRuntime.bend','Async.drain(id)','Async.drain_identity(id)')]:
+              p=here/name; s=p.read_text(); assert s.count(old)==1; p.write_text(s.replace(old,new))
+          files={
+              'native/bend_engine/async_probe/search_gate.cpp':(['1bd2aedd56f05f84a945afbc56d2a3a37bd61547'],'5e4c6af3f8d99226c33a96825eb1a597bb7e913bb41a59fe73aaf6875293682e'),
+              'native/bend_engine/async_probe/verify_search.py':(['efcdfe4cf62608800813015dc65e91286387f405','906af7e6cbbfaee7f019b8b7c9c4784bf8240554'],'b15dcbfbc4b16eb3a2bff542e7b43c1e6c6235b8bc483db1cb7bf75962476295'),
+              'native/bend_engine/async_probe/qualify_search.sh':(['6bfa13956351d2f9d54dad2d9adfd8d4140fe479'],'25084bfcdf697ae5684e4e33c2c8f413051fe51e650a83bd1e8bfccf13ca10fb'),
+              'native/bend_engine/async_probe/work_probe.bend':(['583ffc51dc52f41a9cf658eebaa34396aca7c85f'],'6189dbbf53f0b8cf492167ed3553e31718d01bdcf3e56732e8d78bae56b9f853'),
+              'native/bend_engine/async_probe/epoch_probe.bend':(['8d730d6b190c14588e3288d1c0464c0bd801fd0d'],'a3543920222841076a363f7484b7276bf83004ce924ac2814f3b0db6f69e9a54'),
+              'tests/test_bend_async_search.py':(['75bcd479e5d085b8f228b1ea1a59e64071bce267'],'b48c12a66c4d4f0b269d07645d3207c943654d3c7ea1f2a321b712ed979131fd'),
+          }
+          for filename,(shas,digest) in files.items():
+              content=b''
+              for sha in shas:
+                  data=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+                  content+=base64.b64decode(data['content'])
+              assert hashlib.sha256(content).hexdigest()==digest, filename
+              Path(filename).write_bytes(content)
+          Path('native/bend_engine/async_probe/qualify_search.sh').chmod(0o755)
           subprocess.run(['git','add','-N','.'],check=True)
           subprocess.run(['git','diff','--check'],check=True)
-          files=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
-          Path('/tmp/pr4b-evidence/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in files},indent=2))
+          paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
+          assert len(paths)==13 and not any(p.startswith('.github/') for p in paths)
+          Path('/tmp/pr4b-evidence/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths},indent=2))
+          Path('/tmp/pr4b-evidence/candidate.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
           PY
       - uses: actions/setup-python@v5
         with:
@@ -59,6 +80,13 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
+      - name: Static and inexpensive regression gates
+        run: |
+          set -o pipefail
+          bash scripts/lint.sh 2>&1 | tee /tmp/pr4b-evidence/lint.txt
+          bash scripts/lint.sh native/bend_engine/async_probe/verify_search.py native/bend_engine/standalone/verify_neural.py 2>&1 | tee /tmp/pr4b-evidence/native-lint.txt
+          python -m pytest tests/test_bend_async_search.py tests/test_bend_async_model_probe.py tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py -q --junitxml=/tmp/pr4b-evidence/tests.xml | tee /tmp/pr4b-evidence/tests.txt
+          bash -n native/bend_engine/async_probe/qualify_search.sh
       - uses: actions/download-artifact@v4
         with:
           name: deepfin-pr1-validation
@@ -69,12 +97,13 @@ jobs:
         run: |
           tar -xzf /tmp/pr4b-prior/native-build.tar.gz -C /tmp
           echo '9654a1e334fb5f875d164b82068846bfeab3df2ef2a994737e44789c2623ee6e  /tmp/pr1-model/fixture.pt2' | sha256sum -c -
+          python -c 'import torch; assert str(torch.__version__) == "2.14.0+cpu"; print(torch.__version__)' | tee /tmp/pr4b-evidence/runtime.txt
       - name: Full Bend type check and native build
         run: |
           set -o pipefail
           prefix="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
           bash native/bend_engine/standalone/build_neural.sh /tmp/pr4b-native /tmp/pr1-model/fixture.pt2 "$prefix" /tmp/pr4b-compiler 2>&1 | tee /tmp/pr4b-evidence/build.txt
-      - name: Existing material and composed real-model regressions
+      - name: Original material and synchronous/asynchronous selected-leaf model regressions
         run: |
           set -o pipefail
           clang -std=c11 -O3 -DLEGAL_ORACLE -I "$PWD" native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/pr4b-oracle
@@ -82,13 +111,36 @@ jobs:
           for mode in 0 1; do
             DEEPFIN_BEND_ASYNC="$mode" python -m native.bend_engine.standalone.verify_neural --checkpoint /tmp/pr1-model/fixture.pt --package /tmp/pr1-model/fixture.pt2 --oracle /tmp/pr4b-oracle --report /tmp/pr4b-evidence/neural-$mode.json --command /tmp/pr4b-native/neural/deepfin-bend-neural --threads 1
           done
+      - name: Blocked evaluator integration, accounting and epoch tests in normal and UBSan modes
+        run: |
+          set -o pipefail
+          bash native/bend_engine/async_probe/qualify_search.sh /tmp/pr4b-compiler /tmp/pr4b-native/engine.c /tmp/pr4b-gates 2>&1 | tee /tmp/pr4b-evidence/gates.txt
+          mkdir /tmp/pr4b-evidence/gates
+          cp /tmp/pr4b-gates/{*.json,*.txt,*.err} /tmp/pr4b-evidence/gates/
+      - name: Publish clean qualified source
+        id: publish
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -z "$(git ls-remote --heads origin refs/heads/feat/native-async-search-20260922)"
+          git switch -c feat/native-async-search-20260922
+          git add docs/experiments/2026-09-22-native-async-search.md native/bend_engine/standalone native/bend_engine/async_probe/{search_gate.cpp,verify_search.py,qualify_search.sh,work_probe.bend,epoch_probe.bend} tests/test_bend_async_search.py
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'native: integrate async selected-leaf search with cancellation and physical retirement'
+          git push origin HEAD:refs/heads/feat/native-async-search-20260922
+          git rev-parse HEAD | tee /tmp/pr4b-evidence/published-head.txt
       - name: Preserve generated source and diagnostics
         if: always()
         run: |
           if test -d /tmp/pr4b-native; then tar -czf /tmp/pr4b-evidence/native-build.tar.gz -C /tmp pr4b-native; fi
+          if test -d /tmp/pr4b-gates; then tar -czf /tmp/pr4b-evidence/gate-build.tar.gz -C /tmp pr4b-gates; fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: deepfin-pr4b-first-build
+          name: deepfin-pr4b-qualification
           path: /tmp/pr4b-evidence
           retention-days: 30
+      - name: Require qualification and publication
+        if: always()
+        env:
+          PUBLISHED: ${{ steps.publish.outcome }}
+        run: test "$PUBLISHED" = success
