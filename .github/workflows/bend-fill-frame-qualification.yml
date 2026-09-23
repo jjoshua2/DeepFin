@@ -1,0 +1,270 @@
+name: Bend fill interval frame qualification
+'on':
+  push:
+    branches: [feat/bend-fill-frame-dev-20260923]
+    paths: [.github/workflows/bend-fill-frame-qualification.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+env:
+  BEND_NO_TELEMETRY: '1'
+  OMP_NUM_THREADS: '2'
+  MKL_NUM_THREADS: '2'
+  OPENBLAS_NUM_THREADS: '2'
+  BASE: d8de6e46fd04c4b34385d754224df37722a6a118
+  SOURCE: cf0dea478acaf43c9f1bf95d1b8d7ccc1a4d4925
+  TREE: e3b5dc68e284190bbad06b7a1740aede33b34add
+  TARGET: feat/bend-fill-frame-20260923
+jobs:
+  inherited:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cf0dea478acaf43c9f1bf95d1b8d7ccc1a4d4925
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Run the unchanged complete 89-law inherited gate once
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          bun native/bend_engine/standalone/proofs/relative/verify.js "$PWD/.compiler" --report "$RUNNER_TEMP/evidence/parent-proofs.json" 2>&1 | tee "$RUNNER_TEMP/evidence/parent-source.log"
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fill-frame-parent
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 30
+  focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cf0dea478acaf43c9f1bf95d1b8d7ccc1a4d4925
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Check exact candidate identity, six public laws and twenty controls
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/evidence"
+          mkdir -p "$EVIDENCE"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^1)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          git diff "$BASE" HEAD --check
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          changed=subprocess.check_output(['git','diff',os.environ['BASE'],'HEAD','--name-only'],text=True).splitlines()
+          assert len(changed)==16
+          assert all(p.startswith('native/bend_engine/standalone/proofs/fill_frame/') or p=='docs/experiments/2026-09-23-bend-fill-interval-frames.md' for p in changed)
+          paths=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          manifest={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths if Path(p).is_file()}
+          assert len(manifest)==268
+          e=Path(os.environ['EVIDENCE'])
+          (e/'candidate-source-sha256.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          (e/'source-identity.json').write_text(json.dumps({'base':os.environ['BASE'],'source':os.environ['SOURCE'],'tree':os.environ['TREE'],'changed_files':changed,'transfer':'Direct Git tree entries; complete tree matches isolated local candidate'},indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          bun native/bend_engine/standalone/proofs/fill_frame/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused-proofs.json" 2>&1 | tee "$EVIDENCE/focused-source.log"
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fill-frame-focused
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 30
+  native_lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cf0dea478acaf43c9f1bf95d1b8d7ccc1a4d4925
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Qualify actual full, one and zero fills in all four native modes
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          bun native/bend_engine/standalone/proofs/fill_frame/verify_native.js "$PWD/.compiler" --report "$RUNNER_TEMP/evidence/native.json" 2>&1 | tee "$RUNNER_TEMP/evidence/native.log"
+      - name: Recheck original compiler source laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$RUNNER_TEMP/evidence/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$RUNNER_TEMP/evidence/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked external CPU development tools with the normal Python compiler
+        run: |
+          set -euo pipefail
+          env -u CC -u CXX uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint once
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          env -u CC -u CXX ./scripts/lint.sh 2>&1 | tee "$RUNNER_TEMP/evidence/lint.log"
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fill-frame-native-lint
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 30
+  publish:
+    needs: [inherited, focused, native_lint]
+    permissions:
+      contents: write
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cf0dea478acaf43c9f1bf95d1b8d7ccc1a4d4925
+          fetch-depth: 2
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fill-frame-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/evidence/
+      - name: Aggregate fresh exact-source checks and append durable qualification
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/evidence"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^1)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = "$TREE"
+          test "$(git ls-remote origin refs/heads/feat/bend-relative-address-bounds-20260922 | cut -f1)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          parent=json.loads((e/'parent-proofs.json').read_text())
+          f=json.loads((e/'focused-proofs.json').read_text())
+          n=json.loads((e/'native.json').read_text())
+          assert parent['proof_gate']=='PASS' and parent['aggregate_law_count']==89
+          assert parent['inherited_negative_controls']==156 and len(parent['negative_controls'])==20
+          assert all(c['rejected'] for c in parent['negative_controls'])
+          assert f['focused_gate']=='PASS' and f['new_law_count']==6 and f['consumer']=='PASS'
+          assert f['inherited_gate_run'] is False and len(f['negative_controls'])==20
+          assert all(c['rejected'] for c in f['negative_controls'])
+          def canonical(x):
+              return hashlib.sha256(json.dumps(x,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          assert canonical(f)=='4c85bbd15fddfed431609c5c6952758c6e8a66ed8ad4a07749a4cdedae80419c'
+          assert canonical({k:v for k,v in n.items() if k!='cc'})=='10fdc9108b0e3566ee79d2f8f973f135c506157677184b87f81c95093efc94dc'
+          assert n['native_gate']=='PASS' and n['fixture_rows']==1024 and n['chess_keys']==128
+          assert n['protected_query_rows']==768 and n['overwritten_query_rows']==256
+          assert n['actual_fill_writes_per_mode']==646016
+          assert len(n['modes'])==4 and all(m['invalid_rejections']==7 and m['output_sha256']=='b87290fe69a8cc25fe4cc9f7a53688d17a22f983c9b309fbf560d4961a1a389b' for m in n['modes'])
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          manifest=json.loads((e/'candidate-source-sha256.json').read_text());assert len(manifest)==268
+          for p,h in manifest.items():
+              assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          for report in [parent,f,n]:
+              assert report['compiler_revision']=='aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae'
+              assert report['source_files']==84
+              assert report['source_sha256']=='d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4'
+              for p,h in report['source_sha256s'].items():
+                  assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+          aggregate={'proof_gate':'PASS','aggregate_law_count':95,'new_law_count':6,'inherited_law_count':89,'total_rejection_controls':196,'inherited_negative_controls':176,'negative_controls':f['negative_controls'],'new_laws':f['new_laws'],'consumer':'PASS','source':os.environ['SOURCE'],'tree':os.environ['TREE'],'run':int(os.environ['GITHUB_RUN_ID']),'execution':'Fresh unchanged relative/verify.js and fresh fill_frame/focused.js in separate parallel jobs of this run; this record aggregates their successful results. The sequential fill_frame/verify.js wrapper was not separately executed.','focused_local_raw_sha256':'71a92367a76ab16a2606a5cbda6ed60d263f998752e2854a8ea81f1ac96be9fc','focused_canonical_sha256':canonical(f),'native_except_cc_canonical_sha256':canonical({k:v for k,v in n.items() if k!='cc'}),'candidate_source_entries':len(manifest)}
+          (e/'aggregate-proofs.json').write_text(json.dumps(aggregate,indent=2)+'\n')
+          d=Path('docs/experiments/evidence/bend-fill-interval-frames');d.mkdir(parents=True,exist_ok=False)
+          for name in ['aggregate-proofs.json','parent-proofs.json','focused-proofs.json','native.json','compiler-proofs.json','candidate-source-sha256.json','source-identity.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];sha=os.environ['GITHUB_SHA']
+          summary=f"Hosted run **{run}**, workflow commit `{sha}`, qualifies exact source `{os.environ['SOURCE']}` and tree `{os.environ['TREE']}`. Fresh unchanged parent and new focused jobs together pass **95 laws and 196 rejection controls**. Four native modes, original compiler source/pin checks and unchanged whole-repository lint pass."
+          r=Path('docs/experiments/2026-09-23-bend-fill-interval-frames.md')
+          paragraphs=['## Completed hosted qualification',summary,
+            'The proof jobs are intentionally parallel and separate: unchanged relative/verify.js checks all 89 prior laws and 176 controls; fill_frame/focused.js checks six new contracts, their importing consumer and 20 controls. The dependent publication job verifies both reports and records the aggregate. The sequential fill_frame/verify.js convenience wrapper was not additionally run. No inherited obligation is dropped and no historical report substitutes for these fresh executions.',
+            'The corrected complete local consumer and all 20 controls passed in 615.93 seconds after removal of the invalid +range binder. Hosted focused data matches its local canonical identity exactly. The native report matches locally except the independently recorded C compiler version. Every one of 268 native-source manifest entries is unchanged; all proof/native recorded source hashes match.',
+            f"Native: 1024 rows per mode, all 128 chess blocks, 768 full-count, 128 one-write and 128 zero-write calls; 768 protected and 256 deliberately overwritten queries. Each mode executes 646016 fill writes in addition to metadata builds and rejects seven invalid requests. Tools: Bun {n['bun']}, {n['cc']}. Clang selection is native-step-only; the locked Python 3.13 CPU environment uses its normal compiler with uv 0.12.10. Ruff/Basedpyright/Vulture pass unchanged, resolving the historical local missing-tools gap.",
+            'The candidate reads actual metadata and calls the real fill body, while the reference uses independent coordinates, BigInt deposition and integer prefix sums. Observations include selected values, first/last block entries, metadata and capacity, not every returned array cell. Modes repeat fixtures, not disjoint datasets or exhaustive native U64 coverage.',
+            'This establishes interval-derived clear-path certificates and actual full slider-fill frames, including later-lookup and reserved-query preservation. It does not prove the preceding header writes, all stored metadata, every computed in-block result, the final all-block/extras state or independent blocker-ray lookup equality. Complete shape and the stated strict bounds remain essential.',
+            'Postqualification edits add reports, the experiment index and migration inventory only. Full logs are retained for 30 days in the fill-frame artifacts and bend-fill-frame-qualification; compact reports are committed. Self-review only, not independent review. No production code, earlier accepted law, compiler input, existing test, permanent workflow or routine perft-budget changes. No Python application responsibility moved, model/GPU/training/strength/performance result or native pointer/lifetime theorem is implied.',
+            f"Publication fast-forwards `{os.environ['TARGET']}` only after all needed jobs succeed and both parent/source heads still match. No merge, force push, deployment or live-process operation. Earlier stalled/overlapping candidates and compiler TypeScript/diagnostic/raw-internal-lowering limitations remain separate and unchanged."
+          ]
+          r.write_text(r.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Actual fill interval frames](2026-09-23-bend-fill-interval-frames.md) | Six source laws derive full-count fill-clear certificates and actual outside/later/reserved-query preservation from bounded numeric intervals; metadata and final contents remain open |\n',1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          paragraphs=['## Latest fill-interval qualification: September 23, 2026',summary,
+            '`fill_frame/interval_clear` derives the existing clear-write-path predicate from complete depth-17 shape, a bounded half-open interval and mathematical count room. `interval_fill_preserves_query` applies it to actual Tables.fill. `chess_fill_clear` and `chess_fill_preserves_query` obtain the actual full count and endpoint certificates from the previously discharged prefix/size laws. `fill_preserves_later_lookup` and `fill_preserves_reserved_query` derive exclusion from ordered keys or q<512 without caller-supplied clear/index bounds.',
+            'These six laws supersede the historical open full-count fill-clear step for each slider-fill component. Header writes before the component, stored offset/mask correctness, final computed in-block contents, preservation through all other builders/extras and independent blocker-ray lookup refinement remain P2 obligations. Source observation uses actual arrays but is not physical identity or native allocation/lifetime proof. See the dated fill-interval readout and committed reports. No production logic or Python responsibility moved, and no model/GPU/benchmark result is added.'
+          ]
+          m.write_text(title+'\n\n'+'\n\n'.join(paragraphs)+'\n'+rest)
+          PY
+          git diff --check
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-23-bend-fill-interval-frames.md docs/experiments/evidence/bend-fill-interval-frames
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify full-count actual fill frames and preserve exact-source reports'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-fill-frame-qualification
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 30
