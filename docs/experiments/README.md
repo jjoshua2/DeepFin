@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Bounded Bend multi-root batching](2026-09-22-native-multi-root.md) | PR5a: real selected-leaf CPU cohorts, serial tree parity and physical work accounting; no live scheduler or GPU/speed claim |
 | [Native asynchronous selected-leaf search](2026-09-22-native-async-search.md) | PR4b: composed CPU engine, responsive stop/readiness, cancellation and physical retirement; no GPU/speed claim |
 | [Native async lifecycle](2026-09-22-native-async-lifecycle.md) | Bounded worker ownership, exact cancellation/retirement and separate real CPU-model qualification; no asynchronous UCI or GPU claim |
 | [Native policy-map and buffer reuse](2026-09-22-native-buffer-reuse.md) | Linear Bend-owned reusable storage, packed transport and opt-in diagnostics; bounded CPU qualification |

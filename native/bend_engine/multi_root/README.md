@@ -75,3 +75,13 @@ measured bucket selection, trained-model CUDA qualification and same-tree concur
 remain later work. Existing PR4 UCI responsiveness is not weakened or inherited by
 this separate synchronous executable. No speedup or Elo gain is implied by fewer
 forward calls. The experiment record specifies actual qualification and its limits.
+
+## Qualification evidence
+
+[The experiment record](../../../docs/experiments/2026-09-22-native-multi-root.md)
+contains the completed deterministic/UBSan matrix, actual CPU selected-leaf model
+checks, exact source/package identities and limits. Deterministic final trees are
+bit-identical across batch sizes; real model outputs are qualified numerically,
+not claimed bit-identical. The primary real batch-four cohort executes 34 accepted
+rows in 9 forwards with 2 padding rows, compared with 34 singleton forwards.
+This is a work-count observation, not a measured speedup.
