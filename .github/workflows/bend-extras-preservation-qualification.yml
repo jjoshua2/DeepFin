@@ -1,0 +1,199 @@
+name: Bend extras preservation qualification
+'on':
+  push:
+    branches: [feat/bend-extras-preservation-dev-20260923]
+    paths: [.github/workflows/bend-extras-preservation-qualification.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 6f2c71fa9bd1d1537c1f5ae0ff6e70e31e495c53
+      TARGET: feat/bend-extras-preservation-20260923
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 6f2c71fa9bd1d1537c1f5ae0ff6e70e31e495c53
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Restore exact saved patch on full checkout and preserve all parent sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/extras-evidence"
+          mkdir -p "$EVIDENCE" "$RUNNER_TEMP/extras-transport"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/extras-transport/patch.b64"
+          for blob in bbac8c519f1a51443eae9f30b0c08a6a089d4bb1 e5a22c532dbb20dac1303cd18a48ee93b21cd1e9 712e833c6672314dfcdd31f74bf526fd46b3fee0 201a1d78e419c6034721250df809131d88ea39a3; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/extras-transport/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/extras-transport/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/extras-transport/$blob" >> "$RUNNER_TEMP/extras-transport/patch.b64"
+          done
+          python3 - <<'PY'
+          import base64,hashlib,lzma,os,subprocess
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP'])/'extras-transport'
+          encoded=(t/'patch.b64').read_bytes()
+          assert len(encoded)==34032
+          patch=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(patch)==128899
+          assert hashlib.sha256(patch).hexdigest()=='90a8a37d5fe69e93fc0662f332bf2a0eb206432c0bcc709d1dc73e9e0960ca65'
+          (t/'candidate.patch').write_bytes(patch)
+          Path(os.environ['EVIDENCE'],'saved-source.patch').write_bytes(patch)
+          PY
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = 99da6fbe20da28e99b4dff4dc5fe3908fdb67616
+          test "$(git hash-object docs/development.md)" = dd076b8159db2e37841930d4b55d6828f5c63dde
+          test "$(git hash-object docs/branch_lifecycle.md)" = 64f69e864b074d1727e7d8535652a45d5a2ab2ed
+          test "$(git hash-object docs/bend_migration_proofs.md)" = 12494a9efc781f685eb215c5f4a7067c6e341484
+          test "$(git hash-object docs/experiments/README.md)" = 40ae452979243b6ce106cdb860219ff4a3d91a31
+          git apply --check "$RUNNER_TEMP/extras-transport/candidate.patch"
+          git apply --index "$RUNNER_TEMP/extras-transport/candidate.patch"
+          git diff --cached --check
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          files=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          allowed={'docs/bend_migration_proofs.md','docs/experiments/README.md','docs/experiments/2026-09-23-bend-extras-preservation.md'}
+          assert len(files)==39
+          assert all(f in allowed or f.startswith('native/bend_engine/standalone/proofs/extras/') or f.startswith('docs/experiments/evidence/bend-extras-preservation/') for f in files),files
+          parent=Path('docs/experiments/evidence/bend-fill-contents/hosted-candidate-source-sha256.json')
+          old=json.loads(parent.read_text());assert len(old)==283
+          for name,digest in old.items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==digest,name
+          d=Path('docs/experiments/evidence/bend-extras-preservation')
+          for name in ['focused.json','native.json']:
+              report=json.loads((d/name).read_text())
+              assert report['compiler_revision']=='aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae'
+              for rel,digest in report['source_sha256s'].items():
+                  p=Path('native/bend_engine')/rel
+                  assert hashlib.sha256(p.read_bytes()).hexdigest()==digest,str(p)
+          native=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in native if Path(f).is_file()}
+          e=Path(os.environ['EVIDENCE'])
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'source-identity.json').write_text(json.dumps({'base':os.environ['BASE'],'base_tree':'99da6fbe20da28e99b4dff4dc5fe3908fdb67616','candidate_tree':subprocess.check_output(['git','write-tree'],text=True).strip(),'patch_sha256':'90a8a37d5fe69e93fc0662f332bf2a0eb206432c0bcc709d1dc73e9e0960ca65','patch_bytes':128899,'unchanged_parent_native_sources':len(old),'changed_files':files,'scope':'Exact saved source and evidence patch applied to complete current PR 861 tree; postqualified parent documentation retained'},indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove final extras preserves headers and slider-data read pairs'
+          git rev-parse HEAD > "$EVIDENCE/qualified-source-sha.txt"
+          git cat-file commit HEAD > "$EVIDENCE/qualified-source-commit.raw"
+      - name: Check fresh extras buffers in four native modes
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/extras/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native-gate.log"
+      - name: Recheck original compiler laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools with normal build compiler
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint on exact candidate
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Execute complete 100-law and 226-control source aggregate once
+        timeout-minutes: 78
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/extras/verify.js "$PWD/.compiler" --report "$EVIDENCE/proofs.json" 2>&1 | tee "$EVIDENCE/source-gate.log"
+      - name: Check saved local agreement and publish exact qualified source
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$(cat "$EVIDENCE/qualified-source-sha.txt")"
+          test "$(git ls-remote origin refs/heads/feat/bend-fill-contents-20260923 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target-ref.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);d=Path('docs/experiments/evidence/bend-extras-preservation')
+          p=json.loads((e/'proofs.json').read_text());n=json.loads((e/'native.json').read_text())
+          oldp=json.loads((d/'focused.json').read_text());oldn=json.loads((d/'native.json').read_text())
+          assert p['proof_gate']=='PASS' and p['aggregate_law_count']==100 and p['new_law_count']==2
+          assert p['inherited_law_count']==98 and p['inherited_negative_controls']==212
+          assert len(p['negative_controls'])==14 and all(x['rejected'] for x in p['negative_controls'])
+          for key in ['compiler_revision','source_files','source_sha256','new_laws','negative_controls','source_sha256s','consumer','scope']:
+              assert p[key]==oldp[key],key
+          assert n['native_gate']=='PASS' and n['full_buffers_per_mode']==5 and n['cell_comparisons_per_mode']==655360
+          assert {k:v for k,v in n.items() if k!='cc'}=={k:v for k,v in oldn.items() if k!='cc'}
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          hashes=json.loads((e/'candidate-source-sha256.json').read_text())
+          for name,digest in hashes.items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==digest,name
+          comparison={'comparison':'PASS','source_controls':'All 14 exactly equal saved local records, including diagnostic hashes and classifications','native':'Entire native report equal except C compiler identity','complete_aggregate':'Newly executed unchanged parent wrapper plus new focused gate, not synthesized from historical reports','all_native_source_manifest_entries':len(hashes)}
+          (e/'local-hosted-comparison.json').write_text(json.dumps(comparison,indent=2)+'\n')
+          for name in ['proofs.json','native.json','compiler-proofs.json','candidate-source-sha256.json','source-identity.json','local-hosted-comparison.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];workflow=os.environ['GITHUB_SHA'];source=(e/'qualified-source-sha.txt').read_text().strip()
+          summary=f"Hosted run **{run}**, workflow commit `{workflow}`, passes the full **100-law / 226-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on exact source `{source}`."
+          sections=['## Hosted full-checkout qualification and publication',summary,
+              'These are the same two previously delivered public laws. The unchanged 128,899-byte patch with SHA-256 90a8a37d5fe69e93fc0662f332bf2a0eb206432c0bcc709d1dc73e9e0960ca65 was applied to the complete PR 861 checkout, parent 6f2c71fa9bd1d1537c1f5ae0ff6e70e31e495c53, tree 99da6fbe20da28e99b4dff4dc5fe3908fdb67616. All 283 inherited native-source entries and the saved candidate proof/native closure hashes match. No intended source, statement, mutation or timeout was changed.',
+              'The combined wrapper actually ran the unchanged 98-law/212-control parent, then both new laws and all 14 controls. Every local control record, diagnostic hash, proof-source identity and importing-consumer result agrees. The full native report matches the saved local result except the C compiler identity. Each mode checks five complete buffers, 655360 cells and seven malformed requests. Modes repeat fixtures; the candidate executes actual extras, not the prior table builder or proof representation.',
+              f"Hosted tools: Bun {n['bun']}, {n['cc']} scoped only to native checks, locked Python 3.13 CPU dependencies and uv 0.12.10 with normal Python build compiler. Original compiler laws/seven controls and 12 pin contracts pass. Unchanged Ruff/Basedpyright/Vulture passes. This resolves the prior full-aggregate, hosted, lint and incomplete-current-checkout gaps for this exact patch. Historical nonzero/time-limited local receipts remain unchanged.",
+              'The input source commit was made before checks and published only after all gates passed. Subsequent commit changes only docs and compact evidence. Full logs and saved patch are retained for 30 days in bend-extras-preservation-qualification. The compiler pin and all candidate source hashes were rechecked before publication. No permanent workflow or transport payload is included in the feature branch.',
+              f"Publication creates `{os.environ['TARGET']}` only after checking the parent is unchanged and the target does not exist. No force push, merge, deployment or live-process change. Self-review only, not independent review.",
+              'Preservation of an arbitrary incoming value does not prove initial stored-header correctness or inside-extras geometric correctness. Stored mask/prefix values, survival through later table-header and other-block writes, and independent blocker-ray lookup equality remain open. Source equality still trusts the pinned checker/Base; native lowering, allocation, ownership/lifetime, ABI, toolchain, libraries, OS and hardware remain separate trust boundaries. Existing compiler TypeScript and diagnostic-depth/raw-helper limitations are untouched.',
+              'No production runtime code or Python application responsibility changed. Python export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No model/GPU, whole-engine build, increased perft, training or benchmark result is added.'
+          ]
+          record=Path('docs/experiments/2026-09-23-bend-extras-preservation.md')
+          record.write_text(record.read_text()+'\n\n'+'\n\n'.join(sections)+'\n')
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          matrix.write_text(title+'\n\n## Current extras-preservation hosted qualification: September 23, 2026\n\n'+summary+' These are the unchanged saved two laws, not additional contracts beyond that candidate. Historical local-only/full-aggregate-unrun/lint-unqualified statements below retain their original context; these gaps are now closed for the exact hosted candidate. Stored headers and full independent ray lookup remain separate P2 obligations. See the dated extras readout and committed hosted evidence.\n'+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/2026-09-23-bend-extras-preservation.md docs/experiments/evidence/bend-extras-preservation
+          git diff --cached --check
+          git commit -m 'docs: record complete hosted qualification of unchanged extras preservation laws'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+          git ls-tree -r HEAD native/bend_engine/standalone/proofs/extras > "$EVIDENCE/published-source-blobs.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-extras-preservation-qualification
+          path: ${{ runner.temp }}/extras-evidence/
+          retention-days: 30
