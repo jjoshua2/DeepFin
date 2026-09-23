@@ -1,5 +1,9 @@
 # Bend migration and proof inventory
 
+## Current computed-fill hosted qualification: September 23, 2026
+
+Hosted run **35896688343**, workflow commit `c118f74d060f9e183f1cac6a212413dc42dd6e97`, passes the complete **98-law / 212-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on source `94e380d218d1713828fd192427282588bf7df910`. The three public laws are the unchanged saved candidate, not three additional laws beyond that candidate. The historical local-only/aggregate-unrun/lint-unqualified statements below remain records of their original commands; these gaps are now closed for the exact hosted candidate. No broader geometry or full-builder theorem is implied. See the dated fill-contents readout and committed hosted reports.
+
 ## Local computed-fill contents continuation: September 23, 2026
 
 Three new contents laws and their public consumer pass the pinned source checker; 17 rejection controls pass separately. New native tests pass 452 rows per mode in four builds on actual fills over fresh seeded storage. The parent 95-law/195-control hosted qualification is retained, not rerun or relabeled. Full candidate aggregate and hosted qualification are not claimed; repository lint remains nonzero because its tools are unavailable. This is a local patch, not a published branch or PR.

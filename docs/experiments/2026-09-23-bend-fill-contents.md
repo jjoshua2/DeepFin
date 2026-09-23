@@ -161,3 +161,24 @@ full report is preserved losslessly as compressed JSON in the review archive.
 Only reporting serialization changed; semantic assertions and public proof code
 remain unchanged. Public law statements, proof bodies, inherited inputs and native expectations were
 not altered to obtain a successful status. No timeout is counted as semantic rejection.
+
+
+## Hosted full-checkout qualification and publication
+
+Hosted run **35896688343**, workflow commit `c118f74d060f9e183f1cac6a212413dc42dd6e97`, passes the complete **98-law / 212-control aggregate**, four native modes, original compiler source/pin gates and unchanged whole-repository lint on source `94e380d218d1713828fd192427282588bf7df910`. The three public laws are the unchanged saved candidate, not three additional laws beyond that candidate.
+
+The exact saved 225,819-byte patch SHA-256 is `ba473c4cc0ec106f7c8cd5bfddeeaebfaf78c293c9dab6d586dc729975b9b866`. It applies without source edits to complete parent `0d0b325be4e8b0790b482aebbe096000fe989819`, tree `540dc223e40a84f4bb3a2626e0591d8b3ff0b621`; candidate tree `731bf2a90704324e1dd34727d3f1aaad07162a67` is recorded before qualification. All 283 native-source manifest entries match before and after. This closes the previous selected-dependency-snapshot gap for the hosted checks, without pretending the original local snapshot was a full checkout.
+
+The unchanged contents/verify.js aggregate runs all 95 inherited laws and 195 inherited controls before the three-law consumer and 17 new controls. The final new control diagnostics, categories, source identities and accepted names match saved local reports exactly. This is a fresh complete aggregate, not the earlier separate local commands relabeled. Semantic failures retain their intended locations; seven target new refinements and two intentionally target inherited actual-implementation dependencies. Eight policy/output controls complete the 17.
+
+All four native modes pass the same 452 rows and six malformed requests per mode; all 128 keys and 384 full-block samples are covered. There are 264 computed entries followed by later writes, 412 written entries and 40 untouched controls. Fresh seeded storage differs from every expected computed target, so an already-correct table cannot conceal no-op fills. Full mask/prefix metadata, selected entries and capacity are observed, not every returned cell. The independent coordinate/BigInt oracle never provides candidate values. Native results match saved local evidence except C compiler identity: `Ubuntu clang version 18.1.3 (1ubuntu1)`, Bun 1.4.2.
+
+Original compiler source laws/seven controls including cyclic-template rejection, and all 12 compiler-pin contracts pass. The unchanged Ruff/Basedpyright/Vulture repository gate passes using locked Python 3.13 CPU dependencies with uv 0.12.10 and the normal extension compiler. CC=clang-18 is scoped only to native checking. The original local missing-tool lint failure and proof timeouts remain historical failures, not passing results.
+
+The saved theorem statements, proof sources, gate timeouts, expected native values and rejection policies are unchanged. All old local diagnostics and scope records are retained. The earlier diagnostic-report compaction preserves complete diagnostic lengths and hashes; the final controls were rerun locally and now matched hosted. Compact hosted evidence is committed and full logs retained in artifact bend-fill-contents-qualification for 30 days.
+
+Publication creates `feat/bend-fill-contents-20260923` only after every qualification step. The first commit contains exactly the saved patch; the second adds only hosted evidence and current documentation. No merge, force push, deployment or live-process change. Temporary development workflows and encoded transport blobs are absent from the clean branch.
+
+Self-review only, not independent review. No production runtime, compiler/checker, earlier accepted law/gate, existing test, permanent workflow or routine perft budget changed. No additional Python application responsibility moves into Bend; export, references, data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No full-engine/model/GPU/training/benchmark/strength result is added.
+
+The proved target is actual Tables.slider at the selected enumeration state after the whole current fill, including the complete updated array in two laws. Stored header correctness, survival through later metadata/other-block/extras writes and independent blocker-ray equality remain separate P2 obligations. Pinned checker/Base, native lowering, allocation/lifetime, ABI, toolchain/libraries/OS/hardware remain trust boundaries. Earlier compiler TypeScript and diagnostic/raw-internal limitations are not fixed or suppressed.
