@@ -5,10 +5,25 @@ batch-friendly, in-memory game state. It is an interface and correctness check
 for future opt-in generation, not an active generator. It adds no CLI, shard
 writer, replay schema, real model inference, or played game.
 
-`BT4RootPolicyStepper.prepare_roots()` checks natural and claimable endings,
-six-man theoretical adjudication, missing tablebase coverage, and the unresolved
-ply cap before exposing any root to inference. The caller must preflight the
-two Syzygy directories once per worker. It must also configure the explicit
+`BT4RootPolicyStepper` requires an explicit `outcome_mode`. The historical
+`theoretical_wdl` mode keeps the original six-man training-label convention,
+including decisive cursed wins and discarding a game if a material probe is
+missing. The future `rule50_match_v1` mode requires a caller-owned handle from
+`open_strict_match_tablebase`; it checks six-man WDL/DTZ capacity at
+construction. The caller must separately retain the verified table-file
+identities; a path and table counts alone do not attest the files. A missing
+eligible WDL or DTZ probe raises and fails the run rather than quietly
+selecting a different accepted-game subset.
+
+`prepare_roots()` checks natural and claimable endings before Syzygy, and
+covered six-man outcomes before inference or the ply cap. In rule50 mode,
+cursed wins and blessed losses are draws. A decisive WDL at a zero halfmove
+clock resolves; a decisive WDL at a positive clock discards the whole game as
+`rule50_unresolved` because earlier history can permit a future repetition
+claim. Every completed or discarded in-memory game carries an outcome-mode,
+path, capacity-count and handle-contract stamp; the stepper also exposes it
+before any game is prepared. The stepper remains unwired to a manifest/writer.
+The caller must configure the explicit
 `history_rep_fix` process mode before constructing native boards. The stepper
 checks that mode at construction, before preparation/encoding, and before
 consumption, and checks the same mode on every evaluator output. It never
@@ -38,18 +53,27 @@ can reproduce the observation even after board history advances; a FEN alone
 cannot do so. The raw float32 input key must not be conflated with a later
 quantized corpus key. The stepper keeps full board history while playing, but
 does not retain a full board copy per ply. A resolved outcome backfills WDL
-targets from each ply's mover's perspective. An unresolved cap or missing
-six-man probe discards the whole buffered game before any labeled row is
+targets from each ply's mover's perspective. An unresolved cap or ambiguous
+match result discards the whole buffered game before any labeled row is
 returned. Separate counters expose completed/discarded games and rows and
-discard reasons.
+discard reasons. The native teacher arrays remain unchanged by the outcome
+choice; old experimental labels are not rewritten.
 
-Twelve CPU fake-evaluator/tablebase tests cover seven-to-six capture before the
+Focused CPU fake-evaluator/tablebase tests cover seven-to-six capture before the
 next inference, natural draw claims, both mover colors, terminal roots, an
 unresolved cap after buffering, immutable source inputs, policy ties, and
 all-batch rejection, head drift, and repetition-mode drift without RNG
-consumption. These
-tests do not validate ONNX
+consumption. They also check rule50 WDL/DTZ classes, positive-clock abstention,
+missing-probe failure before batch finalization, explicit mode and capacity,
+and provenance stamps. These tests do not validate ONNX
 weights, production throughput, corpus writer compatibility, or tablebase
 coverage on a real game stream. The model hash in the adapter remains a caller
 assertion; final model/provider and corpus provenance belong to future writer
 integration.
+
+This root-policy actor samples the retained teacher prior without BT4 search.
+The outcome policy determines whether game rows can receive a final result;
+it does not make neural BT4 predictions on seven-or-more-piece roots
+Syzygy-informed. An optional searched BT4 actor would need the separately
+reviewed rule-aware `SyzygyProbe` wired to its C search leaves. That route and
+the SF/Ceres bootstrap sources remain separate integration work.

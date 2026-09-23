@@ -9,7 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [BT4 in-memory root-policy stepper](2026-09-23-bt4-root-policy-stepper.md) | Batch-friendly root-policy game state with exact float32 source retention, outcome backfill and whole-game discard; CPU fakes only, no generator wiring |
+| [BT4 in-memory root-policy stepper](2026-09-23-bt4-root-policy-stepper.md) | Batch-friendly root-policy game state with explicit historical or rule50-aware six-man outcome mode, exact float32 source retention, outcome backfill and whole-game discard; CPU fakes only, no generator wiring |
 | [BT4 root-output reuse foundation](2026-09-23-bt4-root-output-reuse-foundation.md) | CPU-tested batched roots, explicit repetition-mode guard and optional C-search leaves; no game generator or throughput claim |
 | [BT4 output-adapter foundation](2026-09-23-bt4-output-adapter-foundation.md) | Shared legal BT4-to-compact float32 conversion with caller-owned buffer parity; CPU contract only, no generator or speedup claim |
 | [BT4 generation outcome policy](2026-09-22-bt4-outcome-policy.md) | Standalone six-man theoretical adjudication and unresolved-game discard contract; fake-tablebase CPU tests only, no generator wiring or real games |
