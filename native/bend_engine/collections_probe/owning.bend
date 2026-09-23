@@ -129,24 +129,22 @@ def drained(b: Bag) -> IO(Unit):
     case Queued{q}: queue_length(Q.length(&1, Work, q))
     case Ringed{r}: ring_length(R.length(Work, r))
 
-law dump:
-  for n: Nat
-  for b: Bag
-  IO(Unit)
-
-def dump_taken(n: Nat, r: Bag & Maybe<&1, Work>) -> IO(Unit):
+def dump_one(r: Bag & Maybe<&1, Work>) -> IO(Bag):
   (b, got) = r
   match got:
-    case None{}: IO.die(Unit, 2, "short owning collection")
+    case None{}: IO.die(Bag, 2, "short owning collection")
     case Some{w}:
-      do IO<Unit>:
+      do IO<Bag>:
         a : Unit <- show_work(w)
-        dump(n, b)
+        return b
 
-def dump(n, b):
+def dump(n: Nat, b: Bag) -> IO(Unit):
   match n:
     case 0n: drained(b)
-    case 1n+p: dump_taken(p, pop(b))
+    case 1n+p:
+      do IO<Unit>:
+        b : Bag <- dump_one(pop(b))
+        dump(p, b)
 
 def finish(arm: U32, +size: U32, steps: U32, started: Nat, r: Bag & U32) -> IO(Unit):
   (b, sum) = r
