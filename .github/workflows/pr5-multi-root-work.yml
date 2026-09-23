@@ -1,0 +1,25 @@
+name: PR5 multi-root workspace
+on:
+  push:
+    branches: [work/pr5-multi-root-20260922]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 31f376752d0baea75a6fbd65bf59f8bd1d92202c
+      - name: Preserve tracked source and identity
+        run: |
+          mkdir -p /tmp/pr5-source
+          git archive HEAD | gzip > /tmp/pr5-source/source.tar.gz
+          git rev-parse HEAD > /tmp/pr5-source/revision.txt
+          sha256sum /tmp/pr5-source/source.tar.gz > /tmp/pr5-source/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepfin-pr5-source
+          path: /tmp/pr5-source
+          retention-days: 7
