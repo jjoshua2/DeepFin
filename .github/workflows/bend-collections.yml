@@ -1,0 +1,65 @@
+name: Bend owning collections
+on:
+  push:
+    branches: [work/bend-collections-owning-20260923]
+  pull_request:
+    paths:
+      - '.github/workflows/bend-collections.yml'
+      - 'native/bend_engine/collections_probe/**'
+      - 'native/bend_engine/session_probe/Search.bend'
+      - 'native/bend_engine/legal_probe/Chess.bend'
+      - 'native/bend_engine/install_ci_bend.sh'
+      - 'native/bend_engine/bitboard_probe/run_probe.py'
+      - 'tests/test_bend*collections.py'
+permissions:
+  contents: read
+jobs:
+  collections:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      BEND_NO_TELEMETRY: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment and unchanged compiler
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Focused static and Python contracts
+        run: |
+          . .venv/bin/activate
+          ruff check native/bend_engine/collections_probe/*.py tests/test_bend*collections.py
+          basedpyright native/bend_engine/collections_probe/*.py tests/test_bend*collections.py
+          python -m pytest -q tests/test_bend_collections.py tests/test_bend_owning_collections.py --junitxml=artifacts/collections-python.xml
+      - name: Existing FIFO and traversal contracts
+        run: |
+          . .venv/bin/activate
+          python -m native.bend_engine.collections_probe.run_probe --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --cc clang-18 --report artifacts/collections-original.json
+      - name: Bounded ring and calibrated owning-state comparison
+        run: |
+          . .venv/bin/activate
+          python -m native.bend_engine.collections_probe.owning_benchmark --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --cc clang-18 --benchmark --report artifacts/collections-owning.json
+      - name: Whole-repository lint
+        run: |
+          . .venv/bin/activate
+          ./scripts/lint.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-owning-collections
+          path: artifacts/collections-*
+          retention-days: 30
