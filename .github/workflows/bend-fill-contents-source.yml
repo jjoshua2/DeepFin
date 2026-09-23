@@ -1,0 +1,35 @@
+name: Recover exact computed-fill baseline
+'on':
+  push:
+    branches: [feat/bend-fill-contents-dev-20260923]
+    paths: [.github/workflows/bend-fill-contents-source.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 0d0b325be4e8b0790b482aebbe096000fe989819
+          persist-credentials: false
+      - name: Archive exact full tree without executing source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 0d0b325be4e8b0790b482aebbe096000fe989819
+          test "$(git rev-parse HEAD^{tree})" = 540dc223e40a84f4bb3a2626e0591d8b3ff0b621
+          mkdir -p "$RUNNER_TEMP/full-source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/full-source/DeepFin.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/full-source/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/full-source/tree.txt"
+          cd "$RUNNER_TEMP/full-source"
+          sha256sum DeepFin.tar.gz commit.raw > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-fill-contents-full-baseline
+          path: ${{ runner.temp }}/full-source/
+          retention-days: 3
