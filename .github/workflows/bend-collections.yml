@@ -57,6 +57,12 @@ jobs:
         run: |
           . .venv/bin/activate
           ./scripts/lint.sh
+      - name: Preserve documentation context for readout
+        if: always()
+        run: |
+          mkdir -p artifacts/collections-context
+          cp docs/experiments/README.md artifacts/collections-context/experiment-index.md
+          cp native/bend_engine/collections_probe/README.md artifacts/collections-context/probe-readme.md
       - uses: actions/upload-artifact@v4
         if: always()
         with:

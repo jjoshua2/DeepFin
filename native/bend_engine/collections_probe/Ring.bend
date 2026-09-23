@@ -42,25 +42,29 @@ def pushed(-T: Type, h: U32, t: U32, n: U32, c: U32,
   (a, previous) = result
   (Ring{a, h, t, n, c}, previous)
 
+def push_open(-T: Type, r: Ring<T>, value: T) -> Ring<T> & Maybe<&1, T>:
+  Ring{a, h, +t, n, +c} = r
+  pushed(T, h, next(t, c), U32.inc(n), c,
+    Array.swap(Maybe<&1, T>, a, t, Some{value}))
+
 def push_if(-T: Type, r: Ring<T>, value: T, full: Bool) -> Ring<T> & Maybe<&1, T>:
   match full:
     case True{}: (r, Some{value})
-    case False{}:
-      Ring{a, h, +t, n, +c} = r
-      pushed(T, h, next(t, c), U32.inc(n), c,
-        Array.swap(Maybe<&1, T>, a, t, Some{value}))
+    case False{}: push_open(T, r, value)
 
 def push(-T: Type, r: Ring<T>, value: T) -> Ring<T> & Maybe<&1, T>:
   Ring{a, h, t, +n, +c} = r
   push_if(T, Ring{a, h, t, n, c}, value, U32.is_eq(n, c))
 
+def pop_open(-T: Type, r: Ring<T>) -> Ring<T> & Maybe<&1, T>:
+  Ring{a, +h, t, n, +c} = r
+  pushed(T, next(h, c), t, U32.sub(n, 1), c,
+    Array.swap(Maybe<&1, T>, a, h, None{}))
+
 def pop_if(-T: Type, r: Ring<T>, empty: Bool) -> Ring<T> & Maybe<&1, T>:
   match empty:
     case True{}: (r, None{})
-    case False{}:
-      Ring{a, +h, t, n, +c} = r
-      pushed(T, next(h, c), t, U32.sub(n, 1), c,
-        Array.swap(Maybe<&1, T>, a, h, None{}))
+    case False{}: pop_open(T, r)
 
 def pop(-T: Type, r: Ring<T>) -> Ring<T> & Maybe<&1, T>:
   Ring{a, h, t, +n, c} = r
