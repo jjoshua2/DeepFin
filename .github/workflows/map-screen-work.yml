@@ -1,0 +1,155 @@
+name: Matched numeric map screen
+on:
+  push:
+    branches: [work/bend-map-screen-20260924]
+permissions:
+  contents: write
+concurrency:
+  group: numeric-map-screen
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BASE: 59079d479e22b9cf6fe583c815a8e091775b1b2b
+      FEATURE: feat/bend-map-screen-qualified-20260924
+      BEND_NO_TELEMETRY: '1'
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Exact source identities and locked CPU environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,pathlib,subprocess
+          paths={
+            'native/bend_engine/u64_map_probe/ScanMap.bend':'3f259997e31bcd3f3ef83957d95f950f5f801534e625c525d0ee341c58e62ce9',
+            'native/bend_engine/u64_map_probe/benchmark.bend':'ffb56dc7c0263ed93919efbc8de9a1991fc24726bbd5ac82fc8247baf7546c58',
+            'native/bend_engine/u64_map_probe/benchmark.py':'cceddf8c7b14e4b2c4697e2a735c4c53a6c30bd3e707bc6198db0877535a9d66',
+            'tests/test_bend_map_benchmark.py':'cc8d2349a0bbb617dfb19a65246e5a3955c0001dfcd455d84cf0aff32abc3a4b',
+            'docs/experiments/2026-09-24-numeric-map-screen.md':'e0f47221829c6fdbcf93f1f921b2ab5b6396e7c3a7d232c459fc082cf439f292'}
+          for name,expected in paths.items():assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==expected,name
+          assert subprocess.check_output(['git','hash-object','native/bend_engine/u64_map_probe/U64Map.bend'],text=True).strip()=='bd27620668bdf42ba8d0a56a08c0f8f20c4017a3'
+          pathlib.Path('artifacts').mkdir(exist_ok=True)
+          pathlib.Path('artifacts/source.json').write_text(json.dumps(paths,indent=2)+'\n')
+          PY
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Explicit static and dictionary/measurement tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          ruff check native/bend_engine/u64_map_probe/*.py tests/test_bend_u64_map.py tests/test_bend_map_benchmark.py
+          basedpyright native/bend_engine/u64_map_probe/*.py tests/test_bend_u64_map.py tests/test_bend_map_benchmark.py
+          python -m pytest -q tests/test_bend_u64_map.py tests/test_bend_map_benchmark.py --junitxml=artifacts/map-tests.xml
+      - name: Whole-repository static gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          git diff --exit-code
+      - name: Native dictionary fixtures and matched operation timings
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python -m native.bend_engine.u64_map_probe.benchmark --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --bun bun --cc clang-18 --output artifacts/map-screen --measure
+          lscpu > artifacts/map-screen/cpu.txt
+      - name: Reconcile raw observations and publish a clean source-only continuation
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python - <<'PY'
+          import csv,hashlib,json,os,pathlib,subprocess,xml.etree.ElementTree as ET
+          from native.bend_engine.u64_map_probe.benchmark import summarize,workloads,parse,encode
+          repo=pathlib.Path.cwd();out=repo/'artifacts/map-screen'
+          report=json.loads((out/'report.json').read_text())
+          assert report['status']=='passed' and report['measured'] is True
+          assert report['contract_executions']==180
+          assert len(report['reference_checks'])==4 and all(r['cases']==32 and r['operations']==7042 for r in report['reference_checks'])
+          cases={c.name:c for c in workloads()}
+          assert len(cases)==15 and summarize(report['samples'],list(cases))==report['summary']
+          assert sum(r['phase']=='measurement' for r in report['samples'])==180
+          for i,row in enumerate(report['samples']):
+              stem=f"{i:04}-{row['case']}-{row['arm']}-{row['phase']}"
+              raw=(out/(stem+'.stdout')).read_bytes()
+              assert hashlib.sha256(raw).hexdigest()==row['stdout_sha256']
+              assert (out/(stem+'.stderr')).read_text()==''
+              assert parse(raw.decode(),cases[row['case']],row['rounds'])==row['milliseconds']
+              assert hashlib.sha256(encode(cases[row['case']],row['rounds']).encode()).hexdigest()==row['input_sha256']
+          xml=ET.parse('artifacts/map-tests.xml').getroot()
+          assert len(list(xml.iter('testcase')))==67 and not any(list(xml.iter(k)) for k in ('failure','error','skipped'))
+          manifest=json.loads(pathlib.Path('artifacts/source.json').read_text())
+          for name,expected in manifest.items():assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==expected,name
+          subprocess.run(['git','fetch','--depth=1','origin',os.environ['BASE']],check=True)
+          work=pathlib.Path(os.environ['RUNNER_TEMP'])/'map-feature'
+          subprocess.run(['git','worktree','add','--detach',str(work),os.environ['BASE']],check=True)
+          for name in manifest:
+              p=work/name;assert not p.exists();p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes((repo/name).read_bytes())
+          dest=work/'docs/experiments/evidence/numeric-map-screen';dest.mkdir(parents=True)
+          samples=report.pop('samples')
+          with (dest/'samples.csv').open('w',newline='') as stream:
+              writer=csv.DictWriter(stream,fieldnames=list(samples[0]),lineterminator='\n');writer.writeheader();writer.writerows(samples)
+          full_cases=report.pop('cases')
+          report['cases']=[{'name':c['name'],'bits':c['bits'],'entries':len(c['initial']),'operations_per_cycle':len(c['ops']),
+            'workload_sha256':hashlib.sha256(json.dumps(c,sort_keys=True).encode()).hexdigest()} for c in full_cases]
+          report.update({'workflow_run':int(os.environ['GITHUB_RUN_ID']),'tested_commit':os.environ['GITHUB_SHA'],'base_commit':os.environ['BASE'],
+            'published_source_sha256':manifest,'raw_report_sha256':hashlib.sha256((out/'report.json').read_bytes()).hexdigest(),
+            'focused_python_tests':67,'new_python_tests':33,'samples_file':'samples.csv',
+            'build_flags':'Clang 18 -O3 -ffp-contract=off; measured binaries also -march=native',
+            'binary_and_generated_c_sha256':{str(p.relative_to(out)):hashlib.sha256(p.read_bytes()).hexdigest() for arm in ('hash','scan') for p in (out/arm).iterdir() if p.name in ('bench.c','native','ubsan','trace.c','trace-native','trace-ubsan')},
+            'reference_sha256':{n:hashlib.sha256((repo/'native/bend_engine/u64_map_probe'/n).read_bytes()).hexdigest() for n in ('main.bend','run_probe.py')}})
+          (dest/'summary.json').write_text(json.dumps(report,indent=2)+'\n')
+          (dest/'cpu.txt').write_bytes((out/'cpu.txt').read_bytes())
+          doc=work/'docs/experiments/2026-09-24-numeric-map-screen.md';text=doc.read_text();assert text.count('Pending hosted execution.')==1
+          text=text.replace('Pending hosted execution.','The completed matched-work screen is recorded below.')
+          text+='\n\n### Completed hosted qualification\n\nRun https://github.com/jjoshua2/DeepFin/actions/runs/'+os.environ['GITHUB_RUN_ID']+' passed all preceding gates. All 67 focused Python cases passed without skips (33 new). Focused static and repository-wide Ruff/Basedpyright/Vulture passed. Both implementations passed all 32 existing dictionary traces (7,042 operations each) under optimized native-target and UBSan builds. All 180 zero/one/three-cycle benchmark-driver checks matched checksum and complete final dictionary. Modes repeat fixtures, not independent datasets.\n\n'
+          text+='All 180 measured observations passed the same checksum/final-state tests. Calibration samples are retained but excluded from paired comparisons. The generated workload definitions and raw stdout/stderr remain in the run artifact; source-qualified workload/input/output hashes, every sample and compact results are committed. Shared backing slot storage does not imply identical RSS or transient allocations.\n\n'
+          text+='| Workload | Cycles/sample | Hash median ms | Scan median ms | Median paired scan/hash | Screen decision |\n|---|---:|---:|---:|---:|---|\n'
+          for name,row in report['summary'].items():
+              ratio='below floor' if row['median_scan_over_hash'] is None else f"{row['median_scan_over_hash']:.3f}"
+              text+=f"| {name} | {row['rounds']} | {row['median_ms']['hash']} | {row['median_ms']['scan']} | {ratio} | {row['decision']} |\n"
+          text+='\nRatios above one favor hashing. They describe this operation loop versus the simple dense-scan control, not Base.Map, a tuned flat hash table, real chess keys, end-to-end search or a neural cache. The deliberately clustered input is synthetic and not a measured real-world frequency. No implementation is integrated or selected as a universal winner. Default map, engine, compiler and live settings are unchanged. Self-review only. Nothing merged or deployed.\n'
+          doc.write_text(text)
+          index=work/'docs/experiments/README.md';index.write_text(index.read_text()+'\n- [Numeric-map shared-slot performance screen](2026-09-24-numeric-map-screen.md): hash versus dense scan, exact dictionary controls and matched hit/miss/churn loops; no engine/cache adoption.\n')
+          readme=work/'native/bend_engine/u64_map_probe/README.md';readme.write_text(readme.read_text()+'\n\n## Matched-work numeric comparison\n\nSee [the numeric-map screen](../../../docs/experiments/2026-09-24-numeric-map-screen.md) for the benchmark-only ScanMap control, exact shared storage, calibrated hit/miss/churn comparisons and their limitations. `benchmark.py` runs both implementations against the existing dictionary fixtures and checks the driver in native/UBSan modes; pass --measure explicitly to run timings. Source-only map qualification remains separate. The control is not a production map selection or cache implementation.\n')
+          paths=list(manifest)+[str(p.relative_to(work)) for p in dest.iterdir()]+['docs/experiments/README.md','native/bend_engine/u64_map_probe/README.md']
+          for name,expected in manifest.items():
+              if not name.endswith('.md'):assert hashlib.sha256((work/name).read_bytes()).hexdigest()==expected,name
+          subprocess.run(['git','-C',str(work),'add','--',*paths],check=True);subprocess.run(['git','-C',str(work),'diff','--cached','--check'],check=True)
+          assert sorted(subprocess.check_output(['git','-C',str(work),'diff','--cached','--name-only'],text=True).splitlines())==sorted(paths)
+          subprocess.run(['git','-C',str(work),'config','user.name','github-actions[bot]'],check=True)
+          subprocess.run(['git','-C',str(work),'config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
+          tree=subprocess.check_output(['git','-C',str(work),'write-tree'],text=True).strip()
+          commit=subprocess.check_output(['git','-C',str(work),'commit-tree',tree,'-p',os.environ['BASE'],'-m','perf: compare numeric hash and dense-scan maps at a shared slot budget'],text=True).strip()
+          subprocess.run(['git','-C',str(work),'push','--force-with-lease=refs/heads/'+os.environ['FEATURE']+':','origin',commit+':refs/heads/'+os.environ['FEATURE']],check=True)
+          (out/'feature.txt').write_text(commit+'\n');print('PUBLISHED_MAP_SCREEN',commit)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: numeric-map-screen
+          path: |
+            artifacts/source.json
+            artifacts/map-tests.xml
+            artifacts/map-screen/*.json
+            artifacts/map-screen/*.stdout
+            artifacts/map-screen/*.stderr
+            artifacts/map-screen/*.txt
+          retention-days: 30
