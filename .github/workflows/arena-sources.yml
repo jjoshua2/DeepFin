@@ -13,9 +13,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - run: |
+          ref: 5f7991bc91906440f3baa66f732fa46a5f05bf49
+      - shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 5f7991bc91906440f3baa66f732fa46a5f05bf49
           mkdir -p artifacts
-          git archive 5f7991bc91906440f3baa66f732fa46a5f05bf49 | gzip > artifacts/source.tar.gz
+          git archive HEAD | gzip > artifacts/source.tar.gz
+          test "$(tar -tzf artifacts/source.tar.gz | wc -l)" -gt 100
           sha256sum artifacts/source.tar.gz > artifacts/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
