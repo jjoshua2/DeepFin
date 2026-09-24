@@ -39,9 +39,6 @@ env:
   MAX_JOBS: '1'
   CUDA_VISIBLE_DEVICES: ''
   PYTHONUNBUFFERED: '1'
-  CC: clang-18
-  CXX: clang++-18
-  BUN: bun
 jobs:
   native:
     runs-on: ubuntu-24.04
@@ -51,6 +48,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Native ownership, completion, exception cleanup and mutation
+        env:
+          CXX: clang++-18
         run: python3 -m native.bend_engine.multi_root.ci_completion native --output artifacts/completion-native
       - uses: actions/upload-artifact@v4
         if: always()
@@ -86,6 +85,10 @@ jobs:
           basedpyright native/bend_engine/multi_root/ci_completion.py tests/test_bend_completion_ci.py
           python -m pytest -q tests/test_bend_completion_ci.py tests/test_bend_completion_wait.py tests/test_bend_fifo_scheduler.py tests/test_bend_multi_root.py tests/test_bend_async_cohort.py tests/test_bend_cohort_deadlines.py tests/test_neural_work.py --junitxml=artifacts/completion-python.xml
       - name: Fresh actual coordinator and unchanged serial, control and deadline oracles
+        env:
+          CC: clang-18
+          CXX: clang++-18
+          BUN: bun
         run: |
           . .venv/bin/activate
           revision=$(python -c 'import json; print(json.load(open("native/bend_engine/standalone/toolchain.json"))["revision"])')
