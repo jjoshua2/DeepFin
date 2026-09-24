@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -214,6 +215,66 @@ def test_bounded_buffer_and_explicit_mode_before_output(tmp_path: Path) -> None:
         too_many.validate()
 
 
+def test_research_128x400_profile_is_exact_and_default_caps_remain(tmp_path: Path) -> None:
+    base = spec(tmp_path)
+    for parallel in (16, 32, 64):
+        large = replace(base, games=128, max_plies=400, parallel_games=parallel)
+        with pytest.raises(ValueError, match="games <= 32"):
+            large.validate()
+        replace(large, research_capacity_128x400=True).validate()
+    for changes in ({"games": 127}, {"max_plies": 401}, {"parallel_games": 8},
+                    {"parallel_games": 128}):
+        kwargs = {"games": 128, "max_plies": 400, "parallel_games": 64,
+                  "research_capacity_128x400": True, **changes}
+        with pytest.raises(ValueError, match="research capacity profile"):
+            replace(base, **kwargs).validate()
+    with pytest.raises(TypeError, match="explicit bool"):
+        replace(base, research_capacity_128x400="true").validate()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_research_profile_cli_reaches_worker_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool,
+) -> None:
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"fake model")
+    seen: list[worker.WorkerSpec] = []
+
+    def stop_at_validation(value: worker.WorkerSpec, **_kwargs: Any) -> None:
+        seen.append(value)
+        raise RuntimeError("stop before session")
+
+    monkeypatch.setattr(worker.WorkerSpec, "validate", stop_at_validation)
+    argv = [
+        "bt4_root_policy_worker.py", "--out", str(tmp_path / "out"),
+        "--onnx", str(model), "--syzygy-path", str(tmp_path),
+        "--outcome-mode", worker.OUTCOME_MODE, "--wdl-output", "wdl",
+        "--wdl-kind", "probabilities", "--policy-output", "policy",
+        "--games", "128", "--seed", "1", "--max-plies", "400",
+        "--parallel-games", "64", "--temperature", "0",
+    ]
+    if enabled:
+        argv.append("--research-capacity-128x400")
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(RuntimeError, match="stop before session"):
+        worker.main()
+    assert len(seen) == 1
+    assert seen[0].research_capacity_128x400 is enabled
+    assert (seen[0].games, seen[0].parallel_games, seen[0].max_plies) == (128, 64, 400)
+
+
+def test_effective_batch_histogram_records_underfilled_tail(tmp_path: Path) -> None:
+    short = replace(spec(tmp_path), games=3, parallel_games=2, max_plies=1,
+                    initial_fen=chess.STARTING_FEN)
+    summary = worker.run_worker(short, FakeEvaluator("e2e4"), fake_tablebase())
+    assert summary["requested_parallel_games"] == 2
+    assert summary["effective_batch_size_histogram"] == {"1": 1, "2": 1}
+    assert summary["inference_calls"] == 2
+    assert summary["full_batch_calls"] == 1
+    assert summary["underfilled_calls"] == 1
+    assert summary["max_effective_batch_size"] == 2
+
+
 def test_cuda_requires_realized_device_zero_and_bounded_arena(tmp_path: Path) -> None:
     base = spec(tmp_path)
     cuda = replace(
@@ -222,7 +283,7 @@ def test_cuda_requires_realized_device_zero_and_bounded_arena(tmp_path: Path) ->
         provider_options={"device_id": "0", "gpu_mem_limit": str(1024 ** 3)},
     )
     cuda.validate()
-    assert str(worker.GPU_LOCK) == "/home/josh/projects/chess/scratchpad/gpu0_experiment.lock"
+    assert Path.home() / "projects/chess/scratchpad/gpu0_experiment.lock" == worker.GPU_LOCK
     with pytest.raises(ValueError, match="realized CUDA"):
         replace(cuda, providers=("CPUExecutionProvider",)).validate()
     with pytest.raises(ValueError, match="memory cap"):
@@ -231,6 +292,23 @@ def test_cuda_requires_realized_device_zero_and_bounded_arena(tmp_path: Path) ->
         replace(cuda, gpu_mem_gb=9.0).validate()
     with pytest.raises(ValueError, match="zero GPU memory"):
         replace(base, gpu_mem_gb=1.0).validate()
+    conservative = replace(
+        cuda, cudnn_conv_algo_search="DEFAULT", cudnn_conv_use_max_workspace=0,
+        provider_options={
+            **cuda.provider_options,
+            "cudnn_conv_algo_search": "DEFAULT", "cudnn_conv_use_max_workspace": "0",
+        },
+    )
+    conservative.validate()
+    with pytest.raises(ValueError, match="cuDNN algorithm search"):
+        replace(conservative, provider_options=cuda.provider_options).validate()
+    with pytest.raises(ValueError, match="cuDNN maximum workspace"):
+        replace(
+            conservative,
+            provider_options={
+                **cuda.provider_options, "cudnn_conv_algo_search": "DEFAULT",
+            },
+        ).validate()
 
 
 def test_child_gpu_lease_fails_immediately_when_busy(
@@ -270,6 +348,141 @@ def test_cuda_session_readback_rejects_cpu_fallback_and_wrong_cap() -> None:
         worker.verify_cuda_session(Session(["CPUExecutionProvider"], expected), gpu_mem_gb=2)
     with pytest.raises(RuntimeError, match="memory cap"):
         worker.verify_cuda_session(Session(["CUDAExecutionProvider"], "0"), gpu_mem_gb=2)
+
+
+@pytest.mark.parametrize(
+    ("search", "workspace", "extra"),
+    [
+        (None, None, {}),
+        ("DEFAULT", 0, {
+            "cudnn_conv_algo_search": "DEFAULT", "cudnn_conv_use_max_workspace": "0",
+        }),
+    ],
+)
+def test_cuda_provider_controls_reach_real_session_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    search: str | None, workspace: int | None, extra: dict[str, str],
+) -> None:
+    import onnxruntime as ort
+
+    seen: dict[str, Any] = {}
+
+    class FakeOptions:
+        intra_op_num_threads = 0
+        enable_profiling = False
+        profile_file_prefix = ""
+
+    class FakeSession:
+        def disable_fallback(self) -> None:
+            pass
+
+        def get_providers(self) -> list[str]:
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+        def get_provider_options(self) -> dict[str, dict[str, str]]:
+            cuda = seen["providers"][0][1]
+            return {"CUDAExecutionProvider": {key: str(value) for key, value in cuda.items()}}
+
+        def get_inputs(self) -> list[Any]:
+            return [SimpleNamespace(name="planes", type="tensor(float)")]
+
+    def fake_session(*_args: Any, **kwargs: Any) -> FakeSession:
+        seen.update(kwargs)
+        return FakeSession()
+
+    monkeypatch.setattr(ort, "get_available_providers", lambda: ["CUDAExecutionProvider"])
+    monkeypatch.setattr(ort, "SessionOptions", FakeOptions)
+    monkeypatch.setattr(ort, "InferenceSession", fake_session)
+    _, _, _, providers, realized = worker.open_worker_session(
+        "unused.onnx", requested_provider="cuda", gpu_mem_gb=2,
+        threads=2, profile_prefix=tmp_path / "profile",
+        cudnn_conv_algo_search=search,
+        cudnn_conv_use_max_workspace=workspace,
+    )
+    expected = {"device_id": 0, "gpu_mem_limit": 2 * 1024 ** 3, **extra}
+    assert seen["providers"] == [("CUDAExecutionProvider", expected), "CPUExecutionProvider"]
+    assert seen["enable_fallback"] is False
+    assert providers[0] == "CUDAExecutionProvider"
+    assert realized == {key: str(value) for key, value in expected.items()}
+
+
+def test_cuda_provider_controls_reject_invalid_or_ignored_values(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="algorithm search"):
+        worker.open_worker_session(
+            "unused.onnx", requested_provider="cuda", gpu_mem_gb=2,
+            threads=2, profile_prefix=tmp_path / "profile",
+            cudnn_conv_algo_search="FAST",
+        )
+    with pytest.raises(ValueError, match="maximum workspace"):
+        worker.open_worker_session(
+            "unused.onnx", requested_provider="cuda", gpu_mem_gb=2,
+            threads=2, profile_prefix=tmp_path / "profile",
+            cudnn_conv_use_max_workspace=2,
+        )
+    with pytest.raises(ValueError, match="CUDA settings"):
+        worker.open_worker_session(
+            "unused.onnx", requested_provider="cpu", gpu_mem_gb=0,
+            threads=2, profile_prefix=None, cudnn_conv_algo_search="DEFAULT",
+        )
+
+    class IgnoringSession:
+        def get_providers(self) -> list[str]:
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+        def get_provider_options(self) -> dict[str, dict[str, str]]:
+            return {"CUDAExecutionProvider": {
+                "device_id": "0", "gpu_mem_limit": str(2 * 1024 ** 3),
+            }}
+
+    with pytest.raises(RuntimeError, match="algorithm search"):
+        worker.verify_cuda_session(
+            IgnoringSession(), gpu_mem_gb=2, cudnn_conv_algo_search="DEFAULT",
+        )
+    with pytest.raises(RuntimeError, match="maximum workspace"):
+        worker.verify_cuda_session(
+            IgnoringSession(), gpu_mem_gb=2, cudnn_conv_use_max_workspace=0,
+        )
+
+
+def test_cuda_cli_controls_reach_session_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"fake model")
+    model_sha = worker.file_sha256(model)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    monkeypatch.setattr(worker.rep_fix, "apply", lambda *args, **kwargs: None)
+
+    class FakeTablebase:
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(worker.tablebase, "open_strict_match_tablebase", lambda *args, **kwargs: FakeTablebase())
+    monkeypatch.setattr(worker, "acquire_gpu_lock", lambda: 123)
+    seen: dict[str, Any] = {}
+
+    def stop_at_session(*_args: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        raise RuntimeError("stop before model load")
+
+    monkeypatch.setattr(worker, "open_worker_session", stop_at_session)
+    monkeypatch.setattr(sys, "argv", [
+        "bt4_root_policy_worker.py", "--out", str(tmp_path / "out"),
+        "--onnx", str(model), "--syzygy-path", str(tmp_path),
+        "--outcome-mode", worker.OUTCOME_MODE,
+        "--wdl-output", "wdl", "--wdl-kind", "probabilities",
+        "--policy-output", "policy", "--games", "2", "--seed", "1",
+        "--max-plies", "8", "--temperature", "0",
+        "--provider", "cuda", "--gpu-mem-gb", "2",
+        "--expected-onnx-sha256", model_sha,
+        "--expected-input-name", "planes", "--expected-input-dtype", "float32",
+        "--cudnn-conv-algo-search", "DEFAULT",
+        "--cudnn-conv-use-max-workspace", "0",
+    ])
+    with pytest.raises(RuntimeError, match="stop before model load"):
+        worker.main()
+    assert seen["cudnn_conv_algo_search"] == "DEFAULT"
+    assert seen["cudnn_conv_use_max_workspace"] == 0
 
 
 def test_cuda_model_schema_pins_named_float32_heads_and_planes() -> None:

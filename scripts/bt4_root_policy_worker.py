@@ -45,8 +45,12 @@ OUTCOME_MODE = "rule50_match_v1"
 MAX_BUFFERED_ROWS = 4096
 MAX_GAMES = 32
 MAX_TOTAL_REQUESTED_PLIES = 4096
+RESEARCH_GAMES = 128
+RESEARCH_MAX_PLIES = 400
+RESEARCH_PARALLEL_GAMES = frozenset({16, 32, 64})
+RESEARCH_MAX_BUFFERED_ROWS = 64 * RESEARCH_MAX_PLIES
 MAX_GPU_MEM_GB = 8.0
-GPU_LOCK = Path("/home/josh/projects/chess/scratchpad/gpu0_experiment.lock")
+GPU_LOCK = Path.home() / "projects/chess/scratchpad/gpu0_experiment.lock"
 _NEURAL_OPS = {"Conv", "FusedConv", "NhwcConv", "MatMul", "FusedMatMul", "Gemm", "FusedGemm"}
 _SOURCE_FILES = (
     "scripts/bt4_root_policy_worker.py",
@@ -116,7 +120,29 @@ def cuda_profile_proof(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def verify_cuda_session(session: Any, *, gpu_mem_gb: float) -> tuple[tuple[str, ...], dict[str, str]]:
+def validate_cuda_provider_controls(
+    requested_provider: str, *, cudnn_conv_algo_search: str | None,
+    cudnn_conv_use_max_workspace: int | None,
+) -> None:
+    if cudnn_conv_algo_search is not None and cudnn_conv_algo_search not in (
+        "EXHAUSTIVE", "HEURISTIC", "DEFAULT",
+    ):
+        raise ValueError("invalid cuDNN convolution algorithm search mode")
+    if (cudnn_conv_use_max_workspace is not None
+            and (type(cudnn_conv_use_max_workspace) is not int
+                 or cudnn_conv_use_max_workspace not in (0, 1))):
+        raise ValueError("cuDNN maximum workspace must be 0 or 1")
+    if requested_provider == "cpu" and (
+        cudnn_conv_algo_search is not None or cudnn_conv_use_max_workspace is not None
+    ):
+        raise ValueError("CPU session does not accept CUDA settings")
+
+
+def verify_cuda_session(
+    session: Any, *, gpu_mem_gb: float,
+    cudnn_conv_algo_search: str | None = None,
+    cudnn_conv_use_max_workspace: int | None = None,
+) -> tuple[tuple[str, ...], dict[str, str]]:
     """Read back realized EP order and cap before any inference or output."""
     providers = tuple(session.get_providers())
     if not providers or providers[0] != "CUDAExecutionProvider":
@@ -126,6 +152,12 @@ def verify_cuda_session(session: Any, *, gpu_mem_gb: float) -> tuple[tuple[str, 
     if (realized.get("device_id") != "0"
             or realized.get("gpu_mem_limit") != str(int(gpu_mem_gb * 1024 ** 3))):
         raise RuntimeError("CUDA device or memory cap differs from request")
+    if (cudnn_conv_algo_search is not None
+            and realized.get("cudnn_conv_algo_search") != cudnn_conv_algo_search):
+        raise RuntimeError("CUDA cuDNN algorithm search differs from request")
+    if (cudnn_conv_use_max_workspace is not None
+            and realized.get("cudnn_conv_use_max_workspace") != str(cudnn_conv_use_max_workspace)):
+        raise RuntimeError("CUDA cuDNN maximum workspace differs from request")
     return providers, realized
 
 
@@ -156,7 +188,13 @@ def verify_cuda_model_schema(
 def open_worker_session(
     onnx: str, *, requested_provider: str, gpu_mem_gb: float,
     threads: int, profile_prefix: Path | None,
+    cudnn_conv_algo_search: str | None = None,
+    cudnn_conv_use_max_workspace: int | None = None,
 ) -> tuple[Any, str, np.dtype[Any], tuple[str, ...], dict[str, str]]:
+    validate_cuda_provider_controls(
+        requested_provider, cudnn_conv_algo_search=cudnn_conv_algo_search,
+        cudnn_conv_use_max_workspace=cudnn_conv_use_max_workspace,
+    )
     if requested_provider == "cpu":
         if gpu_mem_gb != 0 or profile_prefix is not None:
             raise ValueError("CPU session does not accept CUDA settings")
@@ -178,18 +216,27 @@ def open_worker_session(
     options.intra_op_num_threads = threads
     options.enable_profiling = True
     options.profile_file_prefix = str(profile_prefix)
+    cuda_options: dict[str, int | str] = {
+        "device_id": 0, "gpu_mem_limit": int(gpu_mem_gb * 1024 ** 3),
+    }
+    if cudnn_conv_algo_search is not None:
+        cuda_options["cudnn_conv_algo_search"] = cudnn_conv_algo_search
+    if cudnn_conv_use_max_workspace is not None:
+        cuda_options["cudnn_conv_use_max_workspace"] = str(cudnn_conv_use_max_workspace)
     session = ort.InferenceSession(
         onnx, sess_options=options,
         providers=[
-            ("CUDAExecutionProvider", {
-                "device_id": 0, "gpu_mem_limit": int(gpu_mem_gb * 1024 ** 3),
-            }),
+            ("CUDAExecutionProvider", cuda_options),
             "CPUExecutionProvider",
         ],
         enable_fallback=False,
     )
     session.disable_fallback()
-    providers, realized = verify_cuda_session(session, gpu_mem_gb=gpu_mem_gb)
+    providers, realized = verify_cuda_session(
+        session, gpu_mem_gb=gpu_mem_gb,
+        cudnn_conv_algo_search=cudnn_conv_algo_search,
+        cudnn_conv_use_max_workspace=cudnn_conv_use_max_workspace,
+    )
     inputs = session.get_inputs()
     if len(inputs) != 1 or inputs[0].type not in ("tensor(float16)", "tensor(float)"):
         raise ValueError("BT4 CUDA model needs one float16/float32 input tensor")
@@ -252,20 +299,36 @@ class WorkerSpec:
     providers: tuple[str, ...]
     requested_provider: str = "cpu"
     gpu_mem_gb: float = 0.0
+    cudnn_conv_algo_search: str | None = None
+    cudnn_conv_use_max_workspace: int | None = None
+    research_capacity_128x400: bool = False
     provider_options: Mapping[str, str] = field(default_factory=dict)
 
     def validate(self, *, check_realized_provider: bool = True) -> None:
+        validate_cuda_provider_controls(
+            self.requested_provider,
+            cudnn_conv_algo_search=self.cudnn_conv_algo_search,
+            cudnn_conv_use_max_workspace=self.cudnn_conv_use_max_workspace,
+        )
         if self.outcome_mode != OUTCOME_MODE:
             raise ValueError("BT4 worker requires explicit rule50_match_v1 outcome mode")
         if self.games < 1 or self.seed < 0 or self.max_plies < 1:
             raise ValueError("games/max_plies must be positive and seed nonnegative")
-        if self.games > MAX_GAMES or self.games * self.max_plies > MAX_TOTAL_REQUESTED_PLIES:
-            raise ValueError(
-                f"experimental run requires games <= {MAX_GAMES} and "
-                f"games * max_plies <= {MAX_TOTAL_REQUESTED_PLIES}"
-            )
-        if self.parallel_games < 1 or self.parallel_games * self.max_plies > MAX_BUFFERED_ROWS:
-            raise ValueError(f"parallel_games * max_plies must be <= {MAX_BUFFERED_ROWS}")
+        if type(self.research_capacity_128x400) is not bool:
+            raise TypeError("research capacity profile must be an explicit bool")
+        if self.research_capacity_128x400:
+            if (self.games != RESEARCH_GAMES or self.max_plies != RESEARCH_MAX_PLIES
+                    or self.parallel_games not in RESEARCH_PARALLEL_GAMES):
+                raise ValueError("research capacity profile requires 128 games, 400 plies, "
+                                 "and parallel_games in {16,32,64}")
+        else:
+            if self.games > MAX_GAMES or self.games * self.max_plies > MAX_TOTAL_REQUESTED_PLIES:
+                raise ValueError(
+                    f"experimental run requires games <= {MAX_GAMES} and "
+                    f"games * max_plies <= {MAX_TOTAL_REQUESTED_PLIES}"
+                )
+            if self.parallel_games < 1 or self.parallel_games * self.max_plies > MAX_BUFFERED_ROWS:
+                raise ValueError(f"parallel_games * max_plies must be <= {MAX_BUFFERED_ROWS}")
         if not math.isfinite(self.temperature) or self.temperature < 0:
             raise ValueError("temperature must be finite and nonnegative")
         if len(self.model_sha256) != 64 or any(
@@ -285,6 +348,14 @@ class WorkerSpec:
             if check_realized_provider and (self.provider_options.get("device_id") != "0"
                     or self.provider_options.get("gpu_mem_limit") != str(limit)):
                 raise ValueError("CUDA provider options differ from device 0 and memory cap")
+            if (check_realized_provider and self.cudnn_conv_algo_search is not None
+                    and self.provider_options.get("cudnn_conv_algo_search")
+                    != self.cudnn_conv_algo_search):
+                raise ValueError("CUDA provider options differ from cuDNN algorithm search")
+            if (check_realized_provider and self.cudnn_conv_use_max_workspace is not None
+                    and self.provider_options.get("cudnn_conv_use_max_workspace")
+                    != str(self.cudnn_conv_use_max_workspace)):
+                raise ValueError("CUDA provider options differ from cuDNN maximum workspace")
         else:
             raise ValueError("worker provider must be cpu or cuda")
         board = chess.Board(self.initial_fen)
@@ -459,12 +530,19 @@ def run_worker(
         "terminal_wdl_target": "game_result_from_root_side_to_move",
         "teacher_observation": "root_inference_compact_t1_policy_and_native_wdl_unmodified_by_outcome",
         "seed": spec.seed, "games": spec.games, "max_plies": spec.max_plies,
-        "parallel_games": spec.parallel_games, "max_buffered_rows": MAX_BUFFERED_ROWS,
+        "parallel_games": spec.parallel_games,
+        "research_capacity_128x400": spec.research_capacity_128x400,
+        "max_buffered_rows": (RESEARCH_MAX_BUFFERED_ROWS
+                              if spec.research_capacity_128x400 else MAX_BUFFERED_ROWS),
         "temperature": spec.temperature, "initial_fen": spec.initial_fen,
         "model": {"path": spec.model_path, "sha256": spec.model_sha256,
                   "providers": list(spec.providers),
                   "requested_provider": spec.requested_provider,
                   "gpu_mem_gb": spec.gpu_mem_gb,
+                  **({"cudnn_conv_algo_search": spec.cudnn_conv_algo_search}
+                     if spec.cudnn_conv_algo_search is not None else {}),
+                  **({"cudnn_conv_use_max_workspace": spec.cudnn_conv_use_max_workspace}
+                     if spec.cudnn_conv_use_max_workspace is not None else {}),
                   "provider_options": dict(spec.provider_options),
                   "gpu_lock": str(GPU_LOCK) if spec.requested_provider == "cuda" else None},
         "input_history_encoding": INPUT_HISTORY_ENCODING,
@@ -488,6 +566,7 @@ def run_worker(
     emitted = attempted = 0
     writer_seconds = 0.0
     gpu_proof_verified = False
+    effective_batch_sizes: Counter[int] = Counter()
     for first in range(0, spec.games, spec.parallel_games):
         ids = range(first, min(first + spec.parallel_games, spec.games))
         boards = {game_id: chess.Board(spec.initial_fen) for game_id in ids}
@@ -516,6 +595,7 @@ def run_worker(
             if batch is None:
                 continue
             inference_boards, inputs = batch.inference_inputs()
+            effective_batch_sizes[len(inference_boards)] += 1
             outputs = evaluator.evaluate_roots(inference_boards, inputs)
             if spec.requested_provider == "cuda" and not gpu_proof_verified:
                 proof_file = spec.out / "provider_proof.json"
@@ -555,6 +635,15 @@ def run_worker(
         "launch_sha256": file_sha256(spec.out / "launch.json"),
         "run_wall_seconds": finished - run_started,
         "writer_wall_seconds": writer_seconds,
+        "requested_parallel_games": spec.parallel_games,
+        "effective_batch_size_histogram": {
+            str(size): count for size, count in sorted(effective_batch_sizes.items())
+        },
+        "inference_calls": sum(effective_batch_sizes.values()),
+        "full_batch_calls": effective_batch_sizes[spec.parallel_games],
+        "underfilled_calls": sum(count for size, count in effective_batch_sizes.items()
+                                 if size < spec.parallel_games),
+        "max_effective_batch_size": max(effective_batch_sizes, default=0),
         "post_qualification_wall_seconds": (
             finished - qualified_at if spec.requested_provider == "cuda" and qualified_at is not None
             else None
@@ -581,11 +670,14 @@ def main() -> None:
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--max-plies", required=True, type=int)
     parser.add_argument("--parallel-games", type=int, default=4)
+    parser.add_argument("--research-capacity-128x400", action="store_true")
     parser.add_argument("--temperature", required=True, type=float)
     parser.add_argument("--initial-fen", default=chess.STARTING_FEN)
     parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--provider", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--gpu-mem-gb", type=float, default=0.0)
+    parser.add_argument("--cudnn-conv-algo-search", choices=["EXHAUSTIVE", "HEURISTIC", "DEFAULT"])
+    parser.add_argument("--cudnn-conv-use-max-workspace", type=int, choices=[0, 1])
     parser.add_argument("--expected-onnx-sha256")
     parser.add_argument("--expected-input-name")
     parser.add_argument("--expected-input-dtype", choices=["float16", "float32"])
@@ -609,6 +701,9 @@ def main() -> None:
         syzygy_path=args.syzygy_path, model_sha256=model_sha256,
         outcome_mode=args.outcome_mode, model_path=str(model_path), providers=("pending",),
         requested_provider=args.provider, gpu_mem_gb=args.gpu_mem_gb,
+        cudnn_conv_algo_search=args.cudnn_conv_algo_search,
+        cudnn_conv_use_max_workspace=args.cudnn_conv_use_max_workspace,
+        research_capacity_128x400=args.research_capacity_128x400,
     )
     spec.validate(check_realized_provider=False)
     # No native board is constructed until the mode is installed. Validation
@@ -627,6 +722,8 @@ def main() -> None:
                 str(model_path), requested_provider=args.provider,
                 gpu_mem_gb=args.gpu_mem_gb, threads=args.threads,
                 profile_prefix=prefix,
+                cudnn_conv_algo_search=args.cudnn_conv_algo_search,
+                cudnn_conv_use_max_workspace=args.cudnn_conv_use_max_workspace,
             )
             if args.provider == "cuda":
                 verify_cuda_model_schema(
