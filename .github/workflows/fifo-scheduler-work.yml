@@ -1,0 +1,38 @@
+name: Isolated FIFO scheduler work
+on:
+  push:
+    branches: [work/bend-fifo-scheduler-20260923]
+    paths: ['.github/workflows/fifo-scheduler-work.yml']
+permissions:
+  contents: read
+jobs:
+  sources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Archive pinned source and compiler for isolated CPU work
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash native/bend_engine/install_ci_bend.sh
+          mkdir -p artifacts/fifo-sources
+          git archive HEAD | gzip -1 > artifacts/fifo-sources/repository.tar.gz
+          tar -czf artifacts/fifo-sources/compiler.tar.gz -C build/bend_toolchain/sources aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          cp "$(command -v bun)" artifacts/fifo-sources/bun
+          curl --fail --location --silent --show-error https://raw.githubusercontent.com/jjoshua2/DeepFin/2f2f137e346658a60682b574c63679ebc88cfd74/native/bend_engine/collections_probe/Queue.bend -o artifacts/fifo-sources/Queue.bend
+          test "$(sha256sum artifacts/fifo-sources/Queue.bend | cut -d ' ' -f1)" = 643a330324cfb637b8bacb74d3fad7ac41d9081452bb74253c6592b65b061c9f
+          git rev-parse HEAD > artifacts/fifo-sources/commit.txt
+          sha256sum artifacts/fifo-sources/* > artifacts/fifo-sources/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fifo-pinned-sources
+          path: artifacts/fifo-sources
+          retention-days: 7
