@@ -1,0 +1,43 @@
+name: Bend ray proof workspace
+'on':
+  push:
+    branches: [feat/bend-ray-refinement-dev-20260924]
+    paths: [.github/workflows/bend-ray-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 5bf2220356b50431f88b1785404a8a25d4030fc9
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Archive exact source, compiler and locally usable checker runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ray-workspace"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" > "$RUNNER_TEMP/ray-workspace/compiler-identity.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/ray-workspace/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/ray-workspace/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/ray-workspace/tree.txt"
+          git -C .compiler archive --format=tar HEAD | gzip > "$RUNNER_TEMP/ray-workspace/compiler.tar.gz"
+          cp "$(command -v bun)" "$RUNNER_TEMP/ray-workspace/bun"
+          cd "$RUNNER_TEMP/ray-workspace"
+          sha256sum source.tar.gz commit.raw compiler.tar.gz bun > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-ray-workspace
+          path: ${{ runner.temp }}/ray-workspace/
+          retention-days: 3
