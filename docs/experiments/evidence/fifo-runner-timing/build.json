@@ -1,0 +1,20 @@
+{
+  "sha256": {
+    "reference_c": "fcb787241c29f10c0fa33fbd8983f9630d3ab52914c109de2449b52a93251a24",
+    "candidate_c": "7f348a6ad58c7e3abebbf876f4ada8862c9f6dbc5856f445e1e2310346d68b74",
+    "list_binary": "b81d799bbc9e8f3457213405d48b7d1d05b0bed3c394fac80ffc7cbb805d7b92",
+    "fifo_binary": "1f2e4c4c8e14a158d9c3fa41104689b23189d9e08520b237edcc9b0bb34c83e5",
+    "callback": "062611f98a7661ebebef82b31f1c2d326a2cf1f3376ebc103fab59cbccc67033",
+    "worker": "9c4626e56640a0d55ce6f3b6928c39ec8443c550d95f1ff217f179944fb83828",
+    "model_contract": "36801835341a7a0f04e82a99f61c6631806d67d82f26e380e278e033bd83b40c",
+    "benchmark": "b5631ad25fe5e5813ae97dcb0db1b05ac9f0d78b469bb35d868a5398af05a159",
+    "builder": "dfb18e83351d239d816840a881c51d6383a39b4f4f2206c18e2f169d648071d8",
+    "parser": "1a8051f96abc2128b938cb3d983c75326a7c82285da7e8eac5414fb6f4779f12",
+    "equivalence": "777c0d9acfd4afde01e942f6e0b5e6997cc445665a563f30b70b5db02d60c820"
+  },
+  "compiler": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\nUbuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n",
+  "optimization": "-O3 -ffp-contract=off",
+  "batch": 4,
+  "channels": 146,
+  "model": "unchanged deterministic callback, not a neural model"
+}

@@ -129,3 +129,5 @@ analysis workflow.
 - [Native CUDA/BF16 backend implementation and qualification limits](2026-09-22-native-cuda-backend.md)
 
 - [FIFO cohort integration](2026-09-23-fifo-cohort-integration.md): ready-root queue adoption with exact parent scheduling, tree, cancellation and deadline checks.
+
+- [Matched full-coordinator FIFO timing](2026-09-23-fifo-runner-timing.md): exact list/FIFO sources, optimized callback runner, strict realized-work checks and paired timings; no model/GPU claim.

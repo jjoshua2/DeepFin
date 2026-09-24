@@ -216,3 +216,8 @@ Run `qualify_fifo.sh VERIFIED_COMPILER PINNED_PARENT.c NEW_OUTPUT` explicitly
 for the deterministic native matrix and parent scheduling comparison. See
 [the experiment](../../../docs/experiments/2026-09-23-fifo-cohort-integration.md)
 for source/build identities, controls and qualification status.
+
+
+## Matched FIFO timing
+
+The opt-in `build_fifo_benchmark.sh` and `benchmark_fifo.py` compare exact qualified list/FIFO snapshots using the unchanged deterministic callback. See [the completed experiment](../../../docs/experiments/2026-09-23-fifo-runner-timing.md) for source hashes, commands, raw observations and measurement limits. Ordinary pytest exercises admission logic only; this is not a new production mode or real-model performance claim.
