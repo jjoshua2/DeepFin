@@ -1,0 +1,26 @@
+name: PR5d live-root recovery
+on:
+  push:
+    branches: [work/pr5d-live-recovery-20260924]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 42d4c78ebfca102e146720c818f5dba9db61fd57
+      - name: Archive tracked source and exact identity
+        run: |
+          mkdir /tmp/pr5d-current
+          git archive HEAD | gzip > /tmp/pr5d-current/source.tar.gz
+          git rev-parse HEAD > /tmp/pr5d-current/revision.txt
+          git rev-parse HEAD^{tree} > /tmp/pr5d-current/tree.txt
+          sha256sum /tmp/pr5d-current/source.tar.gz > /tmp/pr5d-current/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepfin-pr5d-current-source
+          path: /tmp/pr5d-current
+          retention-days: 7
