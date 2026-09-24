@@ -5,47 +5,58 @@ on:
 permissions:
   contents: read
 jobs:
-  generate:
+  qualify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       BEND_NO_TELEMETRY: '1'
+      PYTHONPATH: .
     steps:
       - uses: actions/checkout@v4
         with:
           ref: 42d4c78ebfca102e146720c818f5dba9db61fd57
-      - name: Recover and hash-check four authored runtime files
+      - name: Recover exact authored source and test files
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir /tmp/pr5d-generated
+          mkdir /tmp/pr5d-evidence
           python - <<'PY'
           import base64,hashlib,json,subprocess
           from pathlib import Path
           entries={
-              'LiveRegistry.bend':('7cd8e5513206ebee603fc4acf2e6ade517654366','f844fa37c8d713ae08a20e7c4db91ab7a5caa0d7a3af972dc06743ed926d892e'),
-              'LiveReport.bend':('c77593f8e423705138d55ca9bb871336a35e3e80','b5f6f1e7d2f0ecc4b9c8d2d1a8ff57523230a84df0a02f4638104847645441f1'),
-              'LiveRun.bend':('1296dfcfc91257b7bdf886c7db7f2367cb5f2356','35e02e934038b3b61c64f61a773fc1bba7166f4c686bf6b3e668338c110496ee'),
-              'live.bend':('d0619b351034a3ca2b7c137c74b4873aa46fdc1c','a17006d677eb09b7de18759c1ad475b9ce2642a6b0caaa1b062c793ed9059d00'),
+              'multi_root/LiveRegistry.bend':('7cd8e5513206ebee603fc4acf2e6ade517654366','f844fa37c8d713ae08a20e7c4db91ab7a5caa0d7a3af972dc06743ed926d892e'),
+              'multi_root/LiveReport.bend':('c77593f8e423705138d55ca9bb871336a35e3e80','b5f6f1e7d2f0ecc4b9c8d2d1a8ff57523230a84df0a02f4638104847645441f1'),
+              'multi_root/LiveRun.bend':('1296dfcfc91257b7bdf886c7db7f2367cb5f2356','35e02e934038b3b61c64f61a773fc1bba7166f4c686bf6b3e668338c110496ee'),
+              'multi_root/live.bend':('d0619b351034a3ca2b7c137c74b4873aa46fdc1c','a17006d677eb09b7de18759c1ad475b9ce2642a6b0caaa1b062c793ed9059d00'),
+              'batch_backend/batch_call.c':('75992a18395989c0ce336b43438943d2b6c477cd','48240a113d31bc459647759a495bd5f0b948a914bca3d3bef8718ac5331bf65c'),
+              'multi_root/verify_live.py':('831f853366e8bea53b906d64b9f7021f3cdaf6c0','b9abf6ea5984245dfa1b740b18f3d291bbff167c06fce99ba60172b62a7999c1'),
+              'multi_root/live_registry_probe.bend':('9545f8512b5ed4a486dfbf7afcd26ddd20805607','c03af3b2a6748fee5e6eba83cc897dff9fcf45db8c45b0b1e6121c6c9ab526d6'),
+              'multi_root/qualify_live.sh':('2eeeba3428afd54883eb6fb48d70df36e90d11b4','ab2712f41e6888d4ae11462d5d27f7fb6d00a5765ed2d27f67fd42d4c97a5c7f'),
+              'multi_root/qualify_live_registry.sh':('e6938a365c0030f9a875f969d9d40356412bcbb3','8bdaefce69ac65612917e4d0405a454dbad33043c0e076ec94f26042f158ad26'),
           }
+          entries={f'native/bend_engine/{p}':v for p,v in entries.items()}
+          entries['tests/test_bend_live_cohort.py']=('0ed54792653bc72a4234747584060033b3131f36','a097667e561d2247ada1748b7a1953c282cbe1fb6b25d734a7326d4ba0259b2e')
           manifest={}
           for name,(sha,digest) in entries.items():
-              data=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
-              raw=base64.b64decode(data['content'])
+              record=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+              raw=base64.b64decode(record['content'])
               assert hashlib.sha256(raw).hexdigest()==digest,name
-              path=Path('native/bend_engine/multi_root')/name
-              assert not path.exists(),name
-              path.write_bytes(raw); manifest[str(path)]=digest
+              path=Path(name); path.write_bytes(raw)
+              if path.suffix=='.sh': path.chmod(0o755)
+              manifest[name]=digest
           subprocess.run(['git','add','-N','.'],check=True)
           subprocess.run(['git','diff','--check'],check=True)
-          Path('/tmp/pr5d-generated/runtime.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
-          Path('/tmp/pr5d-generated/source-manifest.json').write_text(json.dumps(manifest,indent=2))
+          Path('/tmp/pr5d-evidence/source.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
+          Path('/tmp/pr5d-evidence/source-manifest.json').write_text(json.dumps(manifest,indent=2))
           PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Verify unchanged compiler and generate fresh live and reference C
+      - name: Fresh source-only full application tests
         run: |
           set -euo pipefail
           single=native/bend_engine/standalone
@@ -54,16 +65,33 @@ jobs:
           git init -q /tmp/pr5d-compiler
           git -C /tmp/pr5d-compiler fetch -q --depth=1 "$repository" "$revision"
           git -C /tmp/pr5d-compiler checkout -q --detach FETCH_HEAD
-          bun "$single/verify_compiler.js" /tmp/pr5d-compiler | tee /tmp/pr5d-generated/compiler.txt
-          free -m > /tmp/pr5d-generated/host-memory.txt
-          for entry in live main; do
-            /usr/bin/time -v timeout 360 bun /tmp/pr5d-compiler/bend2/main.ts "native/bend_engine/multi_root/$entry.bend" -o "/tmp/pr5d-generated/$entry.c" > "/tmp/pr5d-generated/$entry-build.txt" 2>&1
-            sha256sum "/tmp/pr5d-generated/$entry.c" >> /tmp/pr5d-generated/generated-sha256.txt
-            gzip "/tmp/pr5d-generated/$entry.c"
+          bash native/bend_engine/multi_root/qualify_live.sh /tmp/pr5d-compiler /tmp/pr5d-native > /tmp/pr5d-evidence/native.txt 2>&1
+      - name: Compiled registry mutation controls
+        run: |
+          bash native/bend_engine/multi_root/qualify_live_registry.sh /tmp/pr5d-compiler /tmp/pr5d-registry > /tmp/pr5d-evidence/registry.txt 2>&1
+      - name: Repeat live behavior with explicit larger arenas
+        run: |
+          set -euo pipefail
+          dir=/tmp/pr5d-native/normal-c175-b4
+          DEEPFIN_COHORT_ARENA_NODES=8192 python -m native.bend_engine.multi_root.verify_live --binary "$dir/live-test" --gate "$dir/live-control" --reference "$dir/reference" --report /tmp/pr5d-evidence/arena8192.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('/tmp/pr5d-evidence/arena8192.json').read_text())
+          roots=report['replacement']['roots']
+          assert roots and all(x['arena_capacity']==8192 for x in roots.values())
+          PY
+      - name: Preserve actual successes and failures
+        if: always()
+        run: |
+          for name in native registry; do
+            if test -d "/tmp/pr5d-$name"; then
+              tar -czf "/tmp/pr5d-evidence/$name.tar.gz" -C /tmp "pr5d-$name"
+            fi
           done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: deepfin-pr5d-reconciled-generation
-          path: /tmp/pr5d-generated
+          name: deepfin-pr5d-live-native-qualification
+          path: /tmp/pr5d-evidence
           retention-days: 30
