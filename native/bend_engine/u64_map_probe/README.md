@@ -78,3 +78,32 @@ upstream benchmark is not a numeric-map baseline. Review is self-review only.
 ## Matched-work numeric comparison
 
 See [the numeric-map screen](../../../docs/experiments/2026-09-24-numeric-map-screen.md) for the benchmark-only ScanMap control, exact shared storage, calibrated hit/miss/churn comparisons and their limitations. `benchmark.py` runs both implementations against the existing dictionary fixtures and checks the driver in native/UBSan modes; pass --measure explicitly to run timings. Source-only map qualification remains separate. The control is not a production map selection or cache implementation.
+
+
+## Explicit CPU target after the hosted feature-selection failure
+
+Run 36013240881 at 25599740 passed generic and portable cases, then the Clang 18
+`-march=native` build emitted an invalid AVX10 feature-combination diagnostic.
+The harness rejected stderr despite compiler exit zero. It did not run the
+accelerated/UBSan cases or mutations in that attempt; the failed run remains
+failed. Artifact 10814175152 has ZIP SHA-256
+`b6d0fb743fec7153d5c02874ac14f95b6179e349eccffce7643a739111e433c5`.
+
+Both current map drivers now use the explicit `bmi2-popcnt` target:
+`-march=x86-64 -mpopcnt -mbmi2`. This deliberately replaces host-wide automatic
+feature selection, rather than suppressing its warning or claiming all of that
+host's features are covered. A baseline x86-64 executable first checks BMI2 and
+POPCNT support. Unsupported/unknown hosts fail, not skip or silently downgrade.
+A second executable checks the target macros and performs PEXT/POPCNT on volatile
+high-bit data before map code is run. All compiler diagnostics and runtime errors
+still fail their commands. The reports record target flags and capability results.
+
+The original four correctness modes are now generic, forced-portable, explicit
+BMI2/POPCNT and UBSan. The comparison driver uses explicit BMI2/POPCNT and UBSan.
+This is a test/benchmark build change, not a Bend/compiler/map implementation
+change. Earlier performance records retain their original `-march=native` source
+and build identities. Their ratios are not measurements of this new target; no
+performance panel was rerun or relabeled as part of this repair.
+
+CI also runs the benchmark's dictionary/driver checks without `--measure`, so
+both map implementations remain covered without imposing a speed threshold.

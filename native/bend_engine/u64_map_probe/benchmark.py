@@ -14,6 +14,8 @@ import subprocess
 import time
 from typing import Any
 
+from . import cpu_target
+
 HERE = Path(__file__).resolve().parent
 MASK = (1 << 32) - 1
 MULT = 1664525
@@ -214,8 +216,9 @@ def main() -> None:
         env.pop('BEND_U64_CORRUPT', None)
         report['compiler'] = command([args.bun, str(HERE.parent / 'standalone/verify_compiler.js'), str(args.compiler_root.resolve())], 'compiler', env)
         report['cc'] = command([args.cc, '--version'], 'cc')
+        report['cpu_target'] = cpu_target.qualify(args.cc, output, command)
         report['source_sha256'] = {n: hashlib.sha256((HERE / n).read_bytes()).hexdigest()
-                                   for n in ('U64Map.bend', 'ScanMap.bend', 'benchmark.bend', 'benchmark.py')}
+                                   for n in ('U64Map.bend', 'ScanMap.bend', 'benchmark.bend', 'benchmark.py', 'cpu_target.py')}
         cases = workloads()
         for c in cases:
             if model(c)[1] != dict(c.initial):
@@ -234,7 +237,7 @@ def main() -> None:
             (folder / 'benchmark.bend').write_text(source)
             generated = folder / 'bench.c'
             command([args.bun, str(args.compiler_root.resolve() / 'bend2/main.ts'), str(folder / 'benchmark.bend'), '-o', str(generated)], 'generate-' + arm, env)
-            for mode, flags in [('native', ['-march=native']), ('ubsan', ['-fsanitize=undefined', '-fno-sanitize-recover=all'])]:
+            for mode, flags in [(cpu_target.TARGET_NAME, list(cpu_target.TARGET_FLAGS)), ('ubsan', ['-fsanitize=undefined', '-fno-sanitize-recover=all'])]:
                 binary = folder / mode
                 command([args.cc, '-std=c11', '-O3', '-ffp-contract=off', *flags, str(generated), '-pthread', '-lm', '-o', str(binary)], f'build-{arm}-{mode}')
                 binaries[arm, mode] = binary
@@ -251,7 +254,7 @@ def main() -> None:
             (folder / 'trace.bend').write_text(trace_source)
             generated = folder / 'trace.c'
             command([args.bun, str(args.compiler_root.resolve() / 'bend2/main.ts'), str(folder / 'trace.bend'), '-o', str(generated)], 'trace-generate-' + arm, env)
-            for mode, flags in [('native', ['-march=native']), ('ubsan', ['-fsanitize=undefined', '-fno-sanitize-recover=all'])]:
+            for mode, flags in [(cpu_target.TARGET_NAME, list(cpu_target.TARGET_FLAGS)), ('ubsan', ['-fsanitize=undefined', '-fno-sanitize-recover=all'])]:
                 binary = folder / ('trace-' + mode)
                 command([args.cc, '-std=c11', '-O3', '-ffp-contract=off', *flags, str(generated), '-pthread', '-lm', '-o', str(binary)], 'trace-build-' + arm + '-' + mode)
                 for case in reference_cases:
@@ -262,7 +265,7 @@ def main() -> None:
                                      'operations': sum(len(c.ops) for c in reference_cases)})
         report['reference_checks'] = trace_counts
 
-        def sample(case: Workload, arm: str, rounds: int, phase: str, pair: int, order: int, mode: str = 'native') -> int:
+        def sample(case: Workload, arm: str, rounds: int, phase: str, pair: int, order: int, mode: str = cpu_target.TARGET_NAME) -> int:
             encoded = encode(case, rounds)
             label = f'{len(rows):04}-{case.name}-{arm}-{phase}'
             text = command([str(binaries[arm, mode]), '--threads', '1'], label, dict(env, DEEPFIN_MAP_BENCH=encoded))
@@ -272,7 +275,7 @@ def main() -> None:
                          'input_sha256': hashlib.sha256(encoded.encode()).hexdigest(),
                          'stdout_sha256': hashlib.sha256(text.encode()).hexdigest()})
             return ms
-        for mode in ('native', 'ubsan'):
+        for mode in (cpu_target.TARGET_NAME, 'ubsan'):
             for case in cases:
                 for arm in ARMS:
                     for rounds in (0, 1, 3):

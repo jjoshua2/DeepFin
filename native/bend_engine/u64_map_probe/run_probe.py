@@ -11,10 +11,12 @@ import shutil
 import subprocess
 from typing import NamedTuple
 
+from . import cpu_target
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 MASK = (1 << 32) - 1
-MODES = {'generic': [], 'portable': ['-DBEND_U64_PORTABLE'], 'native': ['-march=native'],
+MODES = {'generic': [], 'portable': ['-DBEND_U64_PORTABLE'], cpu_target.TARGET_NAME: list(cpu_target.TARGET_FLAGS),
          'ubsan': ['-fsanitize=undefined', '-fno-sanitize-recover=all']}
 
 
@@ -172,8 +174,10 @@ def main() -> None:
         report['compiler'] = command([args.bun, str(HERE.parent / 'standalone/verify_compiler.js'),
                                       str(args.compiler_root.resolve())], 'compiler')
         report['cc'] = command([args.cc, '--version'], 'cc')
+        report['cpu_target'] = cpu_target.qualify(args.cc, output, command)
+        report['mode_flags'] = MODES
         report['source_sha256'] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                                   for p in (HERE / n for n in ('U64Map.bend', 'main.bend', 'run_probe.py'))}
+                                   for p in (HERE / n for n in ('U64Map.bend', 'main.bend', 'run_probe.py', 'cpu_target.py'))}
         cases = fixtures()
         report['cases'] = [{'name': c.name, 'bits': c.bits, 'operations': len(c.ops),
                             'input_sha256': hashlib.sha256(encode(c).encode()).hexdigest(),
