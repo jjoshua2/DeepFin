@@ -1,0 +1,207 @@
+name: Bend stored-data qualification
+'on':
+  push:
+    branches: [feat/bend-stored-data-dev-20260923]
+    paths: [.github/workflows/bend-stored-data-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: e5ae9977a9d7a6fa6338af42eb36dfb86414f117
+      SOURCE: 1ee5d0534a3ac8c2ed3514141f0e89be58ef500b
+      TARGET: feat/bend-stored-data-20260923
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 1ee5d0534a3ac8c2ed3514141f0e89be58ef500b
+          fetch-depth: 2
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Verify complete source tree and exact retained parent evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/data-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^1)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = 2b0dc51432a9f609a8bf7ede86846ed20978f2cd
+          test "$(git rev-parse HEAD^1^{tree})" = 800e408bd9f7ce1b972d60964e93cb320cd9af7f
+          git diff "$BASE" HEAD --check
+          for job in 107442237117 107384441109 107396095994; do
+            gh api "repos/jjoshua2/DeepFin/actions/jobs/$job" > "$EVIDENCE/parent-job-$job.json"
+          done
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);engine=Path('native/bend_engine')
+          def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          def load(p): return json.loads(p.read_text())
+          files=subprocess.check_output(['git','diff',os.environ['BASE'],'HEAD','--name-only'],text=True).splitlines()
+          assert len(files)==15 and all(f.startswith('native/bend_engine/standalone/proofs/data/') or f=='docs/experiments/2026-09-23-bend-stored-data.md' for f in files)
+          d=Path('docs/experiments/evidence/bend-stored-headers')
+          manifest=load(d/'hosted-candidate-source-sha256.json')
+          assert len(manifest)==315
+          for f,h in manifest.items(): assert digest(Path(f))==h,f
+          p=load(d/'hosted-focused.json')
+          assert p['focused_gate']=='PASS' and p['controls_gate']=='PASS' and p['consumer']=='PASS'
+          assert p['new_law_count']==3 and len(p['negative_controls'])==17 and all(c['rejected'] for c in p['negative_controls'])
+          for f,h in p['source_sha256s'].items(): assert digest(engine/f)==h,f
+          retained=load(d/'hosted-retained-parent-evidence.json')
+          assert retained['parent_laws']==100 and retained['parent_controls']==226
+          assert retained['new_full_103_law_aggregate_executed'] is False
+          for f,h in retained['checked_logical_sources'].items(): assert digest(Path(f))==h,f
+          old=Path('docs/experiments/evidence/bend-extras-preservation')
+          for f,h in retained['report_sha256s'].items(): assert digest(old/f)==h,f
+          aggregate=load(old/'hosted-proofs.json')
+          assert aggregate['proof_gate']=='PASS' and aggregate['aggregate_law_count']==100
+          assert aggregate['inherited_negative_controls']==212 and len(aggregate['negative_controls'])==14
+          assert all(c['rejected'] for c in aggregate['negative_controls'])
+          for key in ['source_sha256s','inherited_source_sha256s']:
+              for f,h in aggregate[key].items():
+                  if f.endswith('.bend'): assert digest(engine/f)==h,f
+          strengthened=load(old/'strengthened-hosted-focused.json')
+          assert strengthened['focused_gate']=='PASS' and strengthened['new_law_count']==2
+          for f,h in strengthened['source_sha256s'].items(): assert digest(engine/f)==h,f
+          jobs={107442237117:35938924299,107384441109:35920944024,107396095994:35924465983}
+          for job,run in jobs.items():
+              j=load(e/f'parent-job-{job}.json')
+              assert j['id']==job and j['run_id']==run and j['status']=='completed' and j['conclusion']=='success'
+          paths=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          hashes={f:digest(Path(f)) for f in paths if Path(f).is_file()}
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'retained-parent.json').write_text(json.dumps({'method':'Exact-source modular evidence; unchanged parent not rerun','parent_laws':103,'parent_controls':243,'header_qualification_run':35938924299,'parent_manifest_matches':315,'header_report_sha256':digest(d/'hosted-focused.json'),'earlier_retention_record_sha256':digest(d/'hosted-retained-parent-evidence.json'),'full_106_law_wrapper_executed':False,'changed_files':files},indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Run four native modes and require late metadata corruption rejection
+        timeout-minutes: 8
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/data/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native-gate.log"
+      - name: Recheck original compiler laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked external CPU development tools with normal compiler
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Check all three new public laws and importing consumer
+        timeout-minutes: 18
+        run: |
+          set -euo pipefail
+          bun .compiler/bend2/main.ts native/bend_engine/standalone/proofs/data/consumer.bend > "$EVIDENCE/consumer.log" 2>&1
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          text=(Path(os.environ['EVIDENCE'])/'consumer.log').read_text().strip()
+          assert text=='All terms check.',text[:2000]
+          print(text)
+          PY
+      - name: Check all seventeen controls against exact unchanged candidate
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/data/focused.js "$PWD/.compiler" --controls-only --report "$EVIDENCE/controls.json" 2>&1 | tee "$EVIDENCE/controls.log"
+      - name: Record qualification and fast-forward only the tested feature branch
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-stored-headers-20260923 | cut -f1)" = "$BASE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          c=json.loads((e/'controls.json').read_text());n=json.loads((e/'native.json').read_text())
+          assert c['controls_gate']=='PASS' and c['consumer']=='NOT_RUN' and c['focused_gate']=='NOT_RUN'
+          assert c['new_law_count']==3 and len(c['negative_controls'])==17 and all(x['rejected'] for x in c['negative_controls'])
+          assert (e/'consumer.log').read_text().strip()=='All terms check.'
+          assert n['native_gate']=='PASS' and n['late_metadata_corruption']['rejected']
+          b=n['baseline'];assert b['executions_per_mode']==9 and b['full_array_cells_per_mode']==1179648 and b['all_chess_keys']==128
+          assert len(b['modes'])==4 and all(m['invalid_rejections']==9 for m in b['modes'])
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for f,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          summary={'qualification':'PASS','method':'New source consumer and controls executed as separate commands; exact 103-law parent retained','new_laws':3,'new_controls':17,'retained_parent_laws':103,'retained_parent_controls':243,'modular_laws':106,'modular_controls':260,'combined_wrapper_executed':False,'source':os.environ['SOURCE'],'source_tree':'2b0dc51432a9f609a8bf7ede86846ed20978f2cd','run':os.environ['GITHUB_RUN_ID']}
+          (e/'qualification.json').write_text(json.dumps(summary,indent=2)+'\n')
+          d=Path('docs/experiments/evidence/bend-stored-data');d.mkdir(parents=True,exist_ok=False)
+          for name in ['qualification.json','controls.json','native.json','compiler-proofs.json','candidate-source-sha256.json','retained-parent.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['consumer.log','pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];sha=os.environ['GITHUB_SHA']
+          headline=f"Hosted qualification **{run}**, workflow commit `{sha}`, passes the three new public laws/importing consumer, all seventeen controls, four native modes and the late-write regression, original compiler checks and unchanged whole-repository lint on source `{os.environ['SOURCE']}`."
+          record=Path('docs/experiments/2026-09-23-bend-stored-data.md')
+          sections=['## Completed hosted qualification',headline,
+            'The source consumer and controls-only gate ran as separate successful commands. The latter deliberately records focused_gate and consumer as NOT_RUN; it is not relabeled a full focused execution. With exact-source retained parent evidence, modular coverage is 106 laws and 260 controls. The complete 106-law wrapper was not executed. All 315 inherited manifest entries and the historical logical source/report identities matched.',
+            'Eight semantic/refinement controls require ordinary failures at intended locations, including one explicitly inherited actual-implementation bridge. Eight enforce manifests/imports/no holes/unsafe/symlinks. One unit-tests the output wrapper with synthetic unsafe-warning output; it is not a new compiler execution. Errors, crashes, missing imports and timeouts are not counted as semantic rejection.',
+            'The unchanged full-buffer native verifier was freshly rerun in generic, forced-portable, native-target and UBSan builds: nine buffers, 1,179,648 cell comparisons and nine rejected malformed requests per mode, all 128 keys across cases. A disposable actual late metadata write to cell512 is rejected as a wrong-value mismatch after compilation. That first failing suffix case protects an arbitrary initialized earlier value; it is not mislabeled as a newly computed attack in that particular case. The normal full-table cases separately check computed entries through all subsequent writes. Modes repeat fixtures, not disjoint datasets or exhaustive native inputs.',
+            f"Hosted Bun1.4.2 and {b['cc']}; Clang is scoped to native checks only. Locked Python3.13 CPU tools with uv0.12.10 use the normal build compiler. The unchanged Ruff/Basedpyright/Vulture gate passes, resolving the retained local missing-tools gap for this candidate. Original compiler source suite and all seven controls, including cyclic-template rejection, and all12 pin tests pass.",
+            'Local constructive checking passed the final three-law consumer with exact success output in 277.501868 seconds. Earlier drafts failed affine-use, Type-versus-Data product binding and computed-product pattern restrictions; these were corrected by explicit proof binders and existing certificate eliminators, without changing the public domains or checker. Other checks based on known-invalid drafts were stopped and are not counted. The final source uses the corrected product handling. Native and pin checks also passed locally; compact local receipts are kept in the review package.',
+            'The complete source tree matches the locally checked candidate. Only evidence, the experiment index and migration inventory are added after qualification. Self-review only, not independent review; exact hashes are provenance, not a separate reviewer. No prior proof or production code changes, no merge, deployment, live-process change, permanent workflow or routine perft increase.',
+            'Current computed values still refer to actual Tables.slider on the proved enumeration state. Actual Chess lookup composition and independent blocker-ray/relevant-mask correctness remain separate P2 obligations. Source checker/Base, native lowering, physical ownership/allocation/lifetime, ABI, toolchain, libraries, OS and hardware remain trust boundaries. Python export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No model/GPU/training/benchmark result is added.'
+          ]
+          record.write_text(record.read_text()+'\n\n'+'\n\n'.join(sections)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          row='| [Stored slider data](2026-09-23-bend-stored-data.md) | Three actual-array contracts preserve computed entries through later metadata/blocks and extras; modular qualification106/260; actual lookup and independent rays remain open |\n'
+          index.write_text(text.replace(anchor,anchor+row,1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          update='## Latest computed-data persistence qualification\n\n'+headline+'\n\nCurrent P2 progress includes `data/later_tables_preserve_data`, `data/stored_data_after_tables` and `data/stored_data_after_extras`. These prove complete returned-pair preservation and the computed actual slider value after later metadata, other blocks and extras, under complete depth17 shape, bounded block/relative-index and extras budgets. Allocation supplies shape in the pipeline contract; no desired initial data or per-write correctness witness is assumed.\n\nThe new three-law consumer and seventeen controls executed separately. Parent103/243 is retained on exact logical sources, yielding modular106/260 coverage, not a new full aggregate execution. Historical statements below that final computed-data persistence is wholly unproved are superseded by these specific contracts. Actual Chess lookup composition and independently specified blocker rays remain open. No application responsibility moves from Python. See [the dated record](experiments/2026-09-23-bend-stored-data.md) and committed reports.\n'
+          m.write_text(title+'\n\n'+update+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-23-bend-stored-data.md docs/experiments/evidence/bend-stored-data
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify actual computed-data persistence and preserve exact modular evidence'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-stored-data-qualification
+          path: ${{ runner.temp }}/data-evidence/
+          retention-days: 30
