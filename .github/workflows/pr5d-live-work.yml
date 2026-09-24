@@ -5,25 +5,62 @@ on:
 permissions:
   contents: read
 jobs:
-  snapshot:
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BEND_NO_TELEMETRY: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           ref: 42d4c78ebfca102e146720c818f5dba9db61fd57
-      - name: Preserve exact tracked source and pinned toolchain
+      - name: Apply four exact authored runtime files
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir /tmp/pr5d-source
-          git archive HEAD | gzip > /tmp/pr5d-source/source.tar.gz
-          git rev-parse HEAD > /tmp/pr5d-source/revision.txt
-          git rev-parse HEAD^{tree} > /tmp/pr5d-source/tree.txt
-          git clone --no-checkout https://github.com/jjoshua2/bend /tmp/pr5d-compiler
-          git -C /tmp/pr5d-compiler archive aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae | gzip > /tmp/pr5d-source/compiler.tar.gz
-          sha256sum /tmp/pr5d-source/*.gz > /tmp/pr5d-source/hashes.txt
-      - uses: actions/upload-artifact@v4
+          mkdir /tmp/pr5d-built
+          python3 - <<'PY'
+          import base64,gzip,hashlib,json,subprocess
+          from pathlib import Path
+          record=json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/git/blobs/80142408e178fe6b6439e6bd3f1c42200aacd035']))
+          packed=base64.b64decode(record['content'])
+          assert hashlib.sha256(packed).hexdigest()=='36afa24c475053ff56b67daae9582ab1d4b75eeba7ff7419cb6c99a985faeba7'
+          payload=gzip.decompress(packed)
+          assert hashlib.sha256(payload).hexdigest()=='d7196824b35d12b8b5108b6f575833cc425b04a22e9c32091ebd00a40cbfc8a0'
+          files=json.loads(payload)
+          assert len(files)==4
+          for p,text in files.items():
+              assert p.startswith('native/bend_engine/multi_root/') and p.endswith('.bend') and not Path(p).exists()
+              Path(p).write_text(text)
+          subprocess.run(['git','add','-N','.'],check=True)
+          Path('/tmp/pr5d-built/runtime.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
+          Path('/tmp/pr5d-built/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in files},indent=2))
+          PY
+          git diff --check
+          free -h > /tmp/pr5d-built/memory.txt
+      - uses: oven-sh/setup-bun@v2
         with:
-          name: deepfin-pr5d-arena-source
-          path: /tmp/pr5d-source
-          retention-days: 7
+          bun-version: 1.4.2
+      - name: Verify compiler and generate full live and reference C
+        run: |
+          set -euo pipefail
+          single=native/bend_engine/standalone
+          revision="$(bun "$single/verify_compiler.js" --revision)"
+          repository="$(bun "$single/verify_compiler.js" --repository)"
+          git init -q /tmp/pr5d-compiler
+          git -C /tmp/pr5d-compiler fetch -q --depth=1 "$repository" "$revision"
+          git -C /tmp/pr5d-compiler checkout -q --detach FETCH_HEAD
+          bun "$single/verify_compiler.js" /tmp/pr5d-compiler > /tmp/pr5d-built/compiler.txt
+          for entry in live main; do
+            /usr/bin/time -v timeout 420 bun /tmp/pr5d-compiler/bend2/main.ts "native/bend_engine/multi_root/$entry.bend" -o "/tmp/pr5d-built/$entry.c" > "/tmp/pr5d-built/$entry-build.txt" 2>&1
+            gzip -k "/tmp/pr5d-built/$entry.c"
+          done
+          sha256sum /tmp/pr5d-built/*.c > /tmp/pr5d-built/generated.txt
+          rm /tmp/pr5d-built/*.c
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deepfin-pr5d-reconciled-build
+          path: /tmp/pr5d-built
+          retention-days: 30
