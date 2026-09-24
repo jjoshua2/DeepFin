@@ -1,0 +1,29 @@
+name: PR5d live-root workspace
+on:
+  push:
+    branches: [work/pr5d-live-reconcile-20260924]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 42d4c78ebfca102e146720c818f5dba9db61fd57
+      - name: Preserve exact tracked source and pinned toolchain
+        run: |
+          set -euo pipefail
+          mkdir /tmp/pr5d-source
+          git archive HEAD | gzip > /tmp/pr5d-source/source.tar.gz
+          git rev-parse HEAD > /tmp/pr5d-source/revision.txt
+          git rev-parse HEAD^{tree} > /tmp/pr5d-source/tree.txt
+          git clone --no-checkout https://github.com/jjoshua2/bend /tmp/pr5d-compiler
+          git -C /tmp/pr5d-compiler archive aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae | gzip > /tmp/pr5d-source/compiler.tar.gz
+          sha256sum /tmp/pr5d-source/*.gz > /tmp/pr5d-source/hashes.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepfin-pr5d-arena-source
+          path: /tmp/pr5d-source
+          retention-days: 7
