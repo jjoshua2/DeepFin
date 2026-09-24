@@ -1,0 +1,190 @@
+name: Public Bend lookup qualification
+'on':
+  push:
+    branches: [feat/bend-lookup-qualification-dev-20260924]
+    paths: [.github/workflows/bend-public-lookup-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      SOURCE: feb2dd7dbd12acc3e3f1eb4d13b2cb1b63d0cb6a
+      BASE: 9e7f433e0a6e139751b8a3b5f0871868df25a635
+      TARGET: feat/bend-lookup-contracts-20260924
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feb2dd7dbd12acc3e3f1eb4d13b2cb1b63d0cb6a
+          fetch-depth: 2
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Verify exact candidate and retained parent proof receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/lookup-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^1)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = 18b81b7652a7aab395f0cc21a74d43a6f19a9b55
+          git diff HEAD^1 HEAD --check
+          gh api repos/jjoshua2/DeepFin/actions/jobs/107490473484 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);engine=Path('native/bend_engine')
+          def load(p): return json.loads(p.read_text())
+          def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()
+          files=subprocess.check_output(['git','diff','HEAD^1','HEAD','--name-only'],text=True).splitlines()
+          assert len(files)==13
+          assert all(f.startswith('native/bend_engine/standalone/proofs/lookup/') or f=='docs/experiments/2026-09-24-bend-public-lookup.md' for f in files)
+          d=Path('docs/experiments/evidence/bend-stored-data')
+          manifest=load(d/'hosted-candidate-source-sha256.json');assert len(manifest)==329
+          for f,h in manifest.items(): assert digest(Path(f))==h,f
+          q=load(d/'hosted-qualification.json')
+          assert q['qualification']=='PASS' and q['modular_laws']==106 and q['modular_controls']==260
+          assert q['combined_wrapper_executed'] is False and q['source']=='1ee5d0534a3ac8c2ed3514141f0e89be58ef500b'
+          c=load(d/'hosted-controls.json')
+          assert c['controls_gate']=='PASS' and c['consumer']=='NOT_RUN' and c['new_law_count']==3
+          assert len(c['negative_controls'])==17 and all(x['rejected'] for x in c['negative_controls'])
+          for f,h in c['source_sha256s'].items(): assert digest(engine/f)==h,f
+          receipt=load(d/'hosted-consumer.log.json');assert receipt['raw_text'].strip()=='All terms check.'
+          assert hashlib.sha256(receipt['raw_text'].encode()).hexdigest()==receipt['original_sha256']
+          retained=load(d/'hosted-retained-parent.json')
+          hd=Path('docs/experiments/evidence/bend-stored-headers')
+          assert digest(hd/'hosted-focused.json')==retained['header_report_sha256']
+          assert digest(hd/'hosted-retained-parent-evidence.json')==retained['earlier_retention_record_sha256']
+          hp=load(hd/'hosted-focused.json');assert hp['focused_gate']=='PASS' and hp['consumer']=='PASS'
+          for f,h in hp['source_sha256s'].items(): assert digest(engine/f)==h,f
+          job=load(e/'parent-job.json')
+          assert job['id']==107490473484 and job['run_id']==35954718944
+          assert job['status']=='completed' and job['conclusion']=='success'
+          s=engine/'standalone/proofs/lookup';archive=d/'supplementary'
+          for name in ['Route.bend','Pipeline.bend','Canonical.bend','MaskedLookup.bend','probe.bend']:
+              assert (s/name).read_bytes()==(archive/(name+'.txt')).read_bytes(),name
+          paths=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          hashes={f:digest(Path(f)) for f in paths if Path(f).is_file()}
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          (e/'retained-parent.json').write_text(json.dumps({'parent_laws':106,'parent_controls':260,'parent_job':107490473484,'parent_source_manifest_matches':329,'parent_qualification_sha256':digest(d/'hosted-qualification.json'),'parent_controls_sha256':digest(d/'hosted-controls.json'),'parent_consumer_sha256':digest(d/'hosted-consumer.log.json'),'combined_109_law_wrapper_executed':False,'promoted_proof_bytes_identical':True},indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+      - name: Check all public laws and importing consumer
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          bun .compiler/bend2/main.ts native/bend_engine/standalone/proofs/lookup/consumer.bend > "$EVIDENCE/consumer.log" 2>&1
+          python3 -c 'import os;from pathlib import Path;p=Path(os.environ["EVIDENCE"])/"consumer.log";assert p.read_text().strip()=="All terms check.",p.read_text()[-2000:]'
+      - name: Check all seventeen semantic and policy controls
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/lookup/focused.js "$PWD/.compiler" --controls-only --report "$EVIDENCE/controls.json" > "$EVIDENCE/controls.log" 2>&1
+      - name: Execute actual lookup in four native modes and reject shifted routing
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/lookup/verify_native.py "$PWD" "$PWD/.compiler" --bun "$(command -v bun)" --cc clang-18 --report "$EVIDENCE/native.json" > "$EVIDENCE/native.log" 2>&1
+      - name: Recheck original compiler laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js > "$EVIDENCE/pin.log" 2>&1
+          (cd .compiler && bun tests/run/u64_proofs.js) > "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint and inspect new native driver
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh > "$EVIDENCE/lint.log" 2>&1
+          ./scripts/lint.sh native/bend_engine/standalone/proofs/lookup/verify_native.py > "$EVIDENCE/driver-lint.log" 2>&1
+      - name: Record passed qualification and fast-forward evidence only
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-stored-data-20260923 | cut -f1)" = "$BASE"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def load(n):return json.loads((e/n).read_text())
+          c=load('controls.json');n=load('native.json')
+          assert c['controls_gate']=='PASS' and c['focused_gate']=='NOT_RUN' and c['consumer']=='NOT_RUN'
+          assert c['new_law_count']==3 and c['archive_bend_sources_identical']
+          assert len(c['negative_controls'])==17 and all(x['rejected'] for x in c['negative_controls'])
+          assert (e/'consumer.log').read_text().strip()=='All terms check.'
+          assert n['native_review']=='PASS' and n['rows_per_mode']==1024 and n['distinct_key_occupancy_pairs']==1022 and n['all_keys']==128
+          assert [m['mode'] for m in n['modes']]==['generic','portable','native','ubsan']
+          assert all(m['rows']==1024 and m['invalid_rejections']==6 and m['output_sha256']=='051545922146762d9c772fb4c7de6334ed42b4c583c0b9611885dd7b8ed48d86' for m in n['modes'])
+          assert n['actual_lookup_mutation']['native_wrong_value_rejected'] and n['actual_lookup_mutation']['source_rejection_status']==1
+          assert load('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          for name in ['lint.log','driver-lint.log']:assert (e/name).read_text().strip().endswith('lint: OK')
+          for f,h in load('candidate-source-sha256.json').items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          q={'qualification':'PASS','source':os.environ['SOURCE'],'source_tree':'18b81b7652a7aab395f0cc21a74d43a6f19a9b55','run':os.environ['GITHUB_RUN_ID'],'new_registered_laws':3,'new_controls':17,'retained_laws':106,'retained_controls':260,'modular_laws':109,'modular_controls':277,'combined_wrapper_executed':False,'consumer_and_controls_separate_commands':True,'archived_derivations_preserved':True}
+          (e/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          d=Path('docs/experiments/evidence/bend-public-lookup');d.mkdir(parents=True,exist_ok=False)
+          for name in ['qualification.json','controls.json','native.json','compiler-proofs.json','retained-parent.json','candidate-source-sha256.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['consumer.log','pin.log','lint.log','driver-lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID']
+          headline=f"Hosted run **{run}** qualified source `{os.environ['SOURCE']}`: all three registered contracts and importing consumer,17 controls, four native modes, original compiler checks, unchanged whole-repository lint and additional driver lint pass."
+          paragraphs=['## Completed hosted qualification',headline,
+            'Consumer and controls-only checks ran as separate commands; NOT_RUN fields in the latter are preserved. Exact-source parent106/260 receipts are retained, yielding modular109/277 coverage, not a newly executed109-law wrapper. The three contracts promote previously checked derivations rather than adding three new mathematical discoveries. The five archived Bend files remain byte-identical.',
+            'Native tests execute actual Tables.build then retained-array Chess.slide for1024 rows (1022 distinct key/occupancy pairs) across all128 keys in each of generic, portable, native-target and UBSan modes. Six invalid requests per mode are rejected. The shifted actual routing mutation fails the independent native reference and source routing lemma. These are selected query results, not full-buffer or exhaustive native coverage. Modes repeat fixtures.',
+            'Eight controls require ordinary semantic failures at intended locations; eight enforce manifests/imports and reject holes, unsafe/foreign and symlinked inputs. One synthetic warning check tests only the output wrapper. Crashes, missing imports and timeouts do not pass. Exact safe checker output is mandatory.',
+            f"Native compiler: {n['cc']}; Bun1.4.2, locked Python3.13 CPU development environment and uv0.12.10. Clang selection is native-only. The final whole-repository gate and the additional new-driver lint both pass. No production, compiler input, earlier proof, permanent workflow or routine perft changes. Only reports/docs are added after qualification.",
+            'The public initialized result now derives correct final lookup from actual header/data producers without caller-supplied expected values. Independent relevant-mask and blocker-ray geometry remain unproved. Source checker/Base, lowering, allocation/lifetime, ABI, toolchain and hardware remain trust boundaries. Self-review only; no independent review. Python export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No model/GPU/training/benchmark result is added.'
+          ]
+          record=Path('docs/experiments/2026-09-24-bend-public-lookup.md');record.write_text(record.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          note='## Public lookup contracts: September 24, 2026\n\n'+headline+'\n\n`lookup/lookup_from_headers`, `lookup/selected_state_is_masked` and `lookup/initialized_lookup` promote the archived actual lookup derivations into the public gate. The pipeline contract requires only depth and block/extras budgets, with arbitrary seed and occupancy; actual producers derive complete shape, stored headers, data and index facts. Earlier supplementary-only status is superseded by these three registered contracts.\n\nModular coverage109/277 retains exact parent106/260 evidence, not a new full-chain run. The right-hand side is production Tables.slider at masked occupancy; an independent relevant-mask/blocker-ray theorem remains the decisive P2 gap. No production code or Python responsibility moves. See [the dated readout](experiments/2026-09-24-bend-public-lookup.md).\n'
+          matrix.write_text(title+'\n\n'+note+rest)
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Public actual lookup](2026-09-24-bend-public-lookup.md) | Three promoted lookup contracts, actual initialized source-to-source result and mutation gate; independent ray geometry remains open |\n',1))
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-24-bend-public-lookup.md docs/experiments/evidence/bend-public-lookup
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: record qualified public lookup contracts and exact modular evidence'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' > "$EVIDENCE/published-commits.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-public-lookup-qualification
+          path: ${{ runner.temp }}/lookup-evidence/
+          retention-days: 30
