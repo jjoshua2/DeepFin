@@ -1,0 +1,213 @@
+name: Qualify stored table headers
+'on':
+  push:
+    branches: [feat/bend-header-persistence-dev-20260923]
+    paths: [.github/workflows/bend-stored-header-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    env:
+      BEND_NO_TELEMETRY: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: a2bb4ddd10868adadea9c7cd39c79030f5263940
+      TARGET: feat/bend-stored-headers-20260923
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a2bb4ddd10868adadea9c7cd39c79030f5263940
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact candidate and verify retained parent qualification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/header-evidence"
+          mkdir -p "$EVIDENCE" "$RUNNER_TEMP/header-transport"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/header-transport/source.xz"
+          for blob in 497be10e7391d944e713fc572cab96a0f0cf6d14 18dcec51cf1a3e6e0105b5f779e8322941637b9f b1bc3fb9af90bc5778d1e557fa0c55a3b6e82392; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/header-transport/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/header-transport/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/header-transport/$blob" >> "$RUNNER_TEMP/header-transport/source.xz"
+          done
+          python3 - <<'PY'
+          import hashlib,lzma,os
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP'])/'header-transport'
+          raw=(t/'source.xz').read_bytes()
+          assert len(raw)==17140 and hashlib.sha256(raw).hexdigest()=='2ba58435729fe958ff1700d8fd25c90ebe6836f0440c895a8dad1546d382545d'
+          patch=lzma.decompress(raw,memlimit=256*1024*1024)
+          assert len(patch)==83967 and hashlib.sha256(patch).hexdigest()=='ff61e8bb67d5c1fefc046c72947d03d65420c9a96949a43e47db7f7957767f0a'
+          (t/'candidate.patch').write_bytes(patch)
+          Path(os.environ['EVIDENCE'],'source.patch').write_bytes(patch)
+          PY
+          test "$(git rev-parse HEAD)" = "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = cb7f23738248dae857a1cb29a680d8c762599a66
+          git apply --check "$RUNNER_TEMP/header-transport/candidate.patch"
+          git apply --index "$RUNNER_TEMP/header-transport/candidate.patch"
+          git diff --cached --check
+          test "$(git write-tree)" = 267fc59aadc1fca9c68acae8222a742c45f5f13d
+          gh api repos/jjoshua2/DeepFin/actions/jobs/107384441109 > "$EVIDENCE/parent-aggregate-job.json"
+          gh api repos/jjoshua2/DeepFin/actions/jobs/107396095994 > "$EVIDENCE/parent-reinforcement-job.json"
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);d=Path('docs/experiments/evidence/bend-extras-preservation')
+          sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+          expected={'hosted-proofs.json':'f5a7d311ae07659efa9607ac876134d13a00f752a9d8752edf9959d93e03ce42','strengthened-hosted-focused.json':'12e5179e7e64e5529e2c223b8f57ed2397015949fd94da5ef185eee894a97e18','strengthened-hosted-candidate-source-sha256.json':'705cf05949469df3224b15663a8a38ea69ab7a9f8b67e695ccc7e538c8a37ca5'}
+          for name,h in expected.items(): assert sha(d/name)==h,name
+          p=json.loads((d/'hosted-proofs.json').read_text());f=json.loads((d/'strengthened-hosted-focused.json').read_text())
+          assert p['proof_gate']=='PASS' and p['aggregate_law_count']==100 and p['inherited_negative_controls']==212
+          assert len(p['negative_controls'])==14 and all(c['rejected'] for c in p['negative_controls'])
+          assert f['focused_gate']=='PASS' and f['negative_controls']==p['negative_controls']
+          m=json.loads((d/'strengthened-hosted-candidate-source-sha256.json').read_text());assert len(m)==298
+          differences=[]
+          for name,h in m.items():
+              observed=sha(Path(name))
+              if observed!=h: differences.append({'path':name,'recorded':h,'current':observed})
+          assert differences==[{'path':'native/bend_engine/standalone/proofs/extras/README.md','recorded':'ef7d587320171fbf5eb324d5d5131e9adc87bbe26d54f9cfc8580db3d5e4a0bf','current':'5ac0d62253a372b529c205e8350104ee6b8a0e86fc83e27ede35b1df10fdf65f'}]
+          checked={}
+          for report in [p,f]:
+              for key in ['source_sha256s','inherited_source_sha256s']:
+                  for rel,h in report.get(key,{}).items():
+                      if rel.endswith('.bend'):
+                          path=Path('native/bend_engine')/rel
+                          assert sha(path)==h,str(path)
+                          checked[str(path)]=h
+          for file,job_id,run_id in [('parent-aggregate-job.json',107384441109,35920944024),('parent-reinforcement-job.json',107396095994,35924465983)]:
+              job=json.loads((e/file).read_text())
+              assert job['id']==job_id and job['run_id']==run_id
+              assert job['status']=='completed' and job['conclusion']=='success'
+          files=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          assert len(files)==18
+          assert all(x.startswith('native/bend_engine/standalone/proofs/headers/') or x=='docs/experiments/2026-09-23-bend-stored-headers.md' for x in files)
+          assert not subprocess.check_output(['git','diff','--cached','--diff-filter=MD','--name-only'],text=True).strip()
+          native=subprocess.check_output(['git','ls-files','native/bend_engine'],text=True).splitlines()
+          hashes={x:sha(Path(x)) for x in native if Path(x).is_file()}
+          (e/'candidate-source-sha256.json').write_text(json.dumps(hashes,indent=2)+'\n')
+          reuse={'method':'Exact logical-source parent evidence reuse, not new aggregate execution','parent_laws':100,'parent_controls':226,'aggregate_run':35920944024,'reinforcement_run':35924465983,'report_sha256s':expected,'manifest_entries':298,'exact_manifest_matches':297,'documented_readme_only_difference':differences,'checked_logical_sources':checked,'new_full_103_law_aggregate_executed':False}
+          (e/'retained-parent-evidence.json').write_text(json.dumps(reuse,indent=2)+'\n')
+          (e/'source-identity.json').write_text(json.dumps({'base':os.environ['BASE'],'base_tree':'cb7f23738248dae857a1cb29a680d8c762599a66','candidate_tree':'267fc59aadc1fca9c68acae8222a742c45f5f13d','patch_sha256':'ff61e8bb67d5c1fefc046c72947d03d65420c9a96949a43e47db7f7957767f0a','patch_bytes':83967,'changed_files':files},indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove stored mask and prefix headers through later blocks and extras'
+          git rev-parse HEAD > "$EVIDENCE/source-commit.txt"
+          git cat-file commit HEAD > "$EVIDENCE/source-commit.raw"
+      - name: Compare actual complete and partial table buffers in four native modes
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/headers/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native-gate.log"
+      - name: Recheck original compiler source suite and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked external CPU development tools with normal compiler
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Check all three public header laws and seventeen controls
+        timeout-minutes: 55
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/headers/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/source-gate.log"
+      - name: Record exact modular qualification and publish a fresh feature branch
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$(cat "$EVIDENCE/source-commit.txt")"
+          test "$(git ls-remote origin refs/heads/feat/bend-extras-preservation-20260923 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target-ref.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);p=json.loads((e/'focused.json').read_text());n=json.loads((e/'native.json').read_text())
+          assert p['focused_gate']=='PASS' and p['controls_gate']=='PASS' and p['consumer']=='PASS' and p['new_law_count']==3
+          assert p['promoted_prior_supplementary_laws']==['own_block_header'] and p['inherited_gate_run'] is False
+          assert len(p['negative_controls'])==17 and all(c['rejected'] for c in p['negative_controls'])
+          assert n['native_gate']=='PASS' and n['executions_per_mode']==9 and n['full_array_cells_per_mode']==1179648
+          assert len(n['modes'])==4 and all(m['invalid_rejections']==9 for m in n['modes'])
+          canonical=lambda x:hashlib.sha256(json.dumps(x,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          assert canonical(p['negative_controls'])=='d56ed708f4ef6a03dbda85a91a914fbc06003560468219b3e58ceb79792ed6cb'
+          assert canonical({k:v for k,v in n.items() if k!='cc'})=='b262caf4db8ae7cdfe7615039d6d8961f1f1e4ec9c6a36921ebc02fcffeec4a1'
+          assert json.loads((e/'compiler-proofs.json').read_text())['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for name,h in json.loads((e/'candidate-source-sha256.json').read_text()).items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==h,name
+          d=Path('docs/experiments/evidence/bend-stored-headers');d.mkdir(parents=True,exist_ok=False)
+          for name in ['focused.json','native.json','compiler-proofs.json','candidate-source-sha256.json','source-identity.json','retained-parent-evidence.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes()
+              (d/('hosted-'+name+'.json')).write_text(json.dumps({'original_sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          run=os.environ['GITHUB_RUN_ID'];workflow=os.environ['GITHUB_SHA'];source=(e/'source-commit.txt').read_text().strip()
+          summary=f"Hosted modular qualification **{run}**, workflow `{workflow}`, freshly passes three public header laws, seventeen rejection controls, four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `{source}`. The exact-source parent100-law/226-control result is retained and verified, not rerun."
+          sections=['## Hosted modular qualification and publication',summary,
+            'One public law promotes the exact previously checked supplementary one-block theorem; two new contracts establish stored-header correctness after later blocks and final extras. The three original supplementary files remain byte-identical. All returned-pair statements include the final array. The public importing consumer and seventeen controls execute together in the fresh focused gate.',
+            'The complete parent source tree and candidate tree match the recorded identities. Retained parent job outcomes and report digests are checked, including the original full100-law aggregate and the subsequent native-only reinforcement. Of298 final parent manifest entries,297 match exactly; the sole non-executable extras README difference is checked against both exact old/current hashes. All original logical .bend sources match their qualified reports. This is modular evidence reuse, not a newly executed103-law/243-control aggregate. The unchanged full wrapper remains available opt-in.',
+            f"Each native mode passes nine fresh distinct-value buffers and1,179,648 public cell-value comparisons, with nine malformed requests rejected. The full native report matches local results except C compiler identity. Tools: Bun {n['bun']}, {n['cc']}, locked Python3.13 CPU development environment and uv0.12.10 using the normal extension build compiler. Ruff, Basedpyright and Vulture pass without changed rules or ignored errors.",
+            'Native execution covers zero, first, last, split rook/bishop, partial, suffix and full table runs, with and without actual extras. Candidate prefix calculation uses its own actual masks, never reference answers. Independent signed-coordinate geometry, direct deposition and mathematical prefixes supply only the external oracle. Every exposed cell is compared; this is not a native allocation/lifetime proof or a source theorem of independent ray geometry. Modes repeat fixtures rather than disjoint data sets.',
+            'Eight semantic controls require intended ordinary value/refinement failures; eight protect manifests/imports and one unit-tests exact-output warning rejection without claiming a compiler execution. Missing files, affine/termination errors, crashes and timeouts are not accepted as semantic rejection. The separate actual prefix-write mutation is classified at its inherited implementation bridge, not mislabeled as a new-law-only failure.',
+            f"Publication creates `{os.environ['TARGET']}` only after confirming unchanged parent and an absent target. No merge, force push, deployment or live-process work. Temporary workflows and transport payloads are excluded. Source patch SHA-256 ff61e8bb67d5c1fefc046c72947d03d65420c9a96949a43e47db7f7957767f0a; complete candidate tree267fc59aadc1fca9c68acae8222a742c45f5f13d. Only evidence/documentation is appended after qualification; all executable source hashes are rechecked.",
+            'Self-review only. No production operation, earlier accepted law, compiler input, existing test or routine perft budget changes. Python export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No full-engine/model/GPU/training/benchmark result. Source proofs still trust pinned checker/Base and separate native lowering, allocation/lifetime, ABI, toolchain and hardware.',
+            'Correct stored headers and their persistence are now established under the explicit bounded valid-key/complete-shape domains. Final slider-data preservation through later blocks and metadata, composition into actual lookup and equality with independently specified blocker-ray attacks remain unfinished P2 work.'
+          ]
+          record=Path('docs/experiments/2026-09-23-bend-stored-headers.md');record.write_text(record.read_text()+'\n\n'+'\n\n'.join(sections)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Stored table headers](2026-09-23-bend-stored-headers.md) | Correct mask/prefix values through actual later blocks and extras; three public laws, one promoted; final data/ray refinement remains open |\n',1))
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          update='## Current stored-header qualification: September23,2026\n\n'+summary+'\n\n`headers/own_block_header` promotes the checked one-block header theorem. `stored_header_after_tables` proves the selected actual mask or widened certified prefix survives every later table iteration. `stored_header_after_extras` derives shape from allocation and composes final extras preservation. Every contract returns the complete final array, not just a scalar. Bounds are explicit and satisfiable; expected initial header values are not assumed. These establish stored-header values, not independent relevant-mask geometry or final slider-data contents. Earlier statements that all stored-header correctness remains open are superseded within this bounded domain. See the dated stored-header readout and exact modular evidence.\n'
+          matrix.write_text(title+'\n\n'+update+rest)
+          PY
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/README.md docs/experiments/2026-09-23-bend-stored-headers.md docs/experiments/evidence/bend-stored-headers
+          git diff --cached --check
+          git commit -m 'docs: record exact-source modular qualification of stored headers'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' | tee "$EVIDENCE/published-commits.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-stored-header-qualification
+          path: ${{ runner.temp }}/header-evidence/
+          retention-days: 30
