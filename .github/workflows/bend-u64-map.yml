@@ -74,6 +74,10 @@ jobs:
         run: |
           . .venv/bin/activate
           python -m native.bend_engine.u64_map_probe.benchmark --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --bun bun --cc clang-18 --output artifacts/u64-map-chess --chess
+      - name: Single-search insert-once and stable CBoard-key bindings
+        run: |
+          . .venv/bin/activate
+          python -m native.bend_engine.u64_map_probe.insert_once --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --bun bun --cc clang-18 --output artifacts/u64-map-insert-once --chess
       - name: Whole-repository static gate
         run: |
           . .venv/bin/activate
@@ -94,4 +98,7 @@ jobs:
             artifacts/u64-map-chess/report.json
             artifacts/u64-map-chess/*.stdout
             artifacts/u64-map-chess/*.stderr
+            artifacts/u64-map-insert-once/summary.json
+            artifacts/u64-map-insert-once/*.stdout
+            artifacts/u64-map-insert-once/*.stderr
           retention-days: 30
