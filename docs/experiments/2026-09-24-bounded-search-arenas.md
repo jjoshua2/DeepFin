@@ -116,3 +116,14 @@ The native arena probe matched 76 exact output rows per normal/UBSan mode, inclu
 | 175 | True | 184 | 4095 | 256 | 5663 |
 
 This establishes actual search beyond the old node limit, not a throughput or Elo improvement. Default behavior remains capacity-limited and explicit default output/state matches absent configuration. Maximum-capacity validation is a small smoke plus high-ID storage/transaction tests, not an exhaustive search filling every slot. Fixed preallocation trades memory/startup work for room; no live setting changed. Source/readout evidence is retained under evidence/bounded-search-arenas/. Its source manifest describes the tested preregistration before this documentation-only readout. Self-review only; no independent review or formal proof. Nothing merged or deployed.
+
+
+### Reference initialization and publication follow-up
+
+The first run 35998021794 passed every build, native, default-matrix, larger-arena, Python and static gate. Its final branch push alone was refused because GITHUB_TOKEN lacked workflows permission for the changed persistent CI file. The exact already-created commit db10bd62 was published through the authorized GitHub connector without changing source or validation expectations. The overall first run remains marked failed; its successful validation stages are not relabeled as an entirely green workflow.
+
+Self-review also found the dedicated arena verifier should explicitly select the existing repetition-encoding mode before constructing reference boards. It now mirrors verify.qualify: two Torch threads and rep_fix.apply(True). This is a verifier initialization correction, not an engine encoding or fixture change.
+
+Run https://github.com/jjoshua2/DeepFin/actions/runs/35999628706 verified the original stage outcomes, all source fingerprints, 33 report hashes, JUnit counts and retained C hash, then rebuilt that unchanged qualified C at both widths plus the larger-arena UBSan configuration. With the explicit reference mode, all 37 diagnostic cases and their quiet repeats matched the earlier observations exactly; all storage/configuration/mutation controls passed. All 345 focused Python cases passed without skips and whole-repository Ruff/Basedpyright/Vulture passed. This focused follow-up does not claim a second fresh whole-coordinator generation/matrix or new performance result; ongoing PR CI still generates from source.
+
+The reference-check.json record distinguishes the corrected verifier source from the original source.json manifest. Runtime Bend/native sources are unchanged between these two commits. All previous memory, scope and review limitations still apply.

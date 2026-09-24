@@ -76,6 +76,8 @@ def compact(parsed: dict[str, Any]) -> dict[str, Any]:
 def main() -> None:
     # Heavy chess/runtime imports are only needed by this opt-in native verifier.
     import chess
+    import torch
+    from chess_anti_engine.encoding import rep_fix
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--compiler-root', type=Path, required=True)
@@ -92,6 +94,10 @@ def main() -> None:
     report: dict[str, Any] = {'status': 'failed', 'scope': 'fixed bounded arenas, not dynamic growth or performance',
                               'searches': [], 'source_sha256': {}}
     try:
+        # Match verify.qualify before any reference CBoard is constructed.
+        torch.set_num_threads(2)
+        rep_fix.apply(True)
+        report['reference_history_rep_fix'] = rep_fix.current()
         commands.run('compiler', [bun, str(HERE.parent / 'standalone/verify_compiler.js'), str(args.compiler_root)])
         for name in ('session_probe/Search.bend', 'multi_root/ArenaConfig.bend', 'multi_root/arena_probe.bend',
                      'multi_root/verify_arena.py', 'multi_root/main.bend', 'multi_root/AsyncRun.bend',
