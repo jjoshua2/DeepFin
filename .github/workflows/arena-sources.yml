@@ -1,0 +1,24 @@
+name: Arena source snapshot
+on:
+  push:
+    branches: [work/bend-arena-sources-20260924]
+    paths: [.github/workflows/arena-sources.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir -p artifacts
+          git archive 5f7991bc91906440f3baa66f732fa46a5f05bf49 | gzip > artifacts/source.tar.gz
+          sha256sum artifacts/source.tar.gz > artifacts/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arena-source-snapshot
+          path: artifacts
+          retention-days: 7
