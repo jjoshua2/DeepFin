@@ -119,3 +119,8 @@ checks. These generated legal walks are not recorded production access traces.
 The numeric map remains unaware of board fields, history and model identity;
 do not treat a hit as permission to reuse a neural value. No performance panel
 is part of this correctness extension.
+
+
+## Chess-derived timing result
+
+The separately preregistered [CBoard-key timing panel](../../../docs/experiments/2026-09-24-chess-map-timing.md) measures the existing `--chess --measure` path on the explicit CPU target. The source, keys and operation tapes are unchanged from their correctness qualification. It preserves paired results and all timing observations; it does not qualify a production cache consumer or add a CI speed gate.
