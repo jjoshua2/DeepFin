@@ -51,6 +51,6 @@ Run it only after an ordinary stage has a complete terminal, using the exact
 frozen plan and supervisor SHA-256s, the stage's bank and terminal, and a fresh
 audit output path outside the bank. Its full verifier reconstructs boards and
 input history, checks legal policy and native WDL, and verifies natural or
-rule50 Syzygy terminal results for every accepted game. The synthetic receipt
-tests exercise the contract only; no ordinary game bank has been audited or
-adapted by this change.
+rule50 Syzygy terminal results for every accepted game. The [September 23 readout](experiments/2026-09-23-bt4-own-game-source.md)
+records the first real ordinary-bank audit and source publication. It is a
+source-integrity result, not an admitted training recipe or a throughput result.

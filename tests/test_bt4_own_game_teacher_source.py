@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import cast
 
 import chess
 import numpy as np
@@ -93,14 +94,15 @@ def test_same_game_id_in_two_banks_has_distinct_source_ids(tmp_path: Path) -> No
     assert result["training_ready"] is False
     g0 = zarr.open_group(str(out / "bank_0000.zarr"), mode="r")
     g1 = zarr.open_group(str(out / "bank_0001.zarr"), mode="r")
-    assert int(g0["game_id"][0]) == int(g1["game_id"][0]) == 0
-    assert int(g0["ply_index"][0]) == 0
-    assert int(g1["ply_index"][0]) == 18
+    assert int(cast(np.ndarray, g0["game_id"][:])[0]) == int(cast(np.ndarray, g1["game_id"][:])[0]) == 0
+    assert int(cast(np.ndarray, g0["ply_index"][:])[0]) == 0
+    assert int(cast(np.ndarray, g1["ply_index"][:])[0]) == 18
     assert json.loads((out / "bank_0001.rows.jsonl").read_text())["ply_index"] == 18
-    assert not np.array_equal(g0["row_uid"][0], g1["row_uid"][0])
-    assert np.array_equal(g0["bt4_policy"][0],
+    assert not np.array_equal(cast(np.ndarray, g0["row_uid"][:])[0],
+                              cast(np.ndarray, g1["row_uid"][:])[0])
+    assert np.array_equal(cast(np.ndarray, g0["bt4_policy"][:])[0],
                           np.load(a / "games" / "game_00000000.npz")["policy_t1"][0])
-    assert np.array_equal(g1["bt4_wdl_raw"][0],
+    assert np.array_equal(cast(np.ndarray, g1["bt4_wdl_raw"][:])[0],
                           np.load(b / "games" / "game_00000000.npz")["wdl_raw"][0])
     assert (out / "manifest.json").is_file()
     assert not (out / "incomplete.json").exists()

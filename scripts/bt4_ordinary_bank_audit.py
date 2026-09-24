@@ -114,11 +114,13 @@ def audit_bank(*, auditor_sha256: str, plan_path: Path, plan_sha256: str, verifi
         stream.flush()
         os.fsync(stream.fileno())
     spec = importlib.util.spec_from_file_location("bt4_pinned_fullstrict_verifier", verifier_path)
-    require(spec is not None and spec.loader is not None, "cannot load pinned verifier")
+    if spec is None or spec.loader is None:
+        raise ValueError("cannot load pinned verifier")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    require(Path(module.__file__).resolve() == verifier_path
+    require(module.__file__ is not None
+            and Path(module.__file__).resolve() == verifier_path
             and callable(getattr(module, "verify_bank", None)),
             "verifier origin/function differs")
     facts = module.verify_bank(plan, stage, bank)

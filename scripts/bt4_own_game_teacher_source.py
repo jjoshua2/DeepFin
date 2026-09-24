@@ -11,7 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -349,7 +349,8 @@ def write_source(banks: list[dict[str, Any]], out: Path) -> dict[str, Any]:
                     group["bt4_wdl_raw"][first:last] = payload["wdl_raw"]
                     for stored, original in (("x", "x"), ("bt4_policy", "policy_t1"),
                                              ("bt4_wdl_raw", "wdl_raw")):
-                        require(np.array_equal(group[stored][first:last], payload[original]),
+                        require(np.array_equal(cast(np.ndarray, group[stored][first:last]),
+                                               cast(np.ndarray, payload[original])),
                                 f"written {stored} differs from saved teacher")
                     for position, row in entries:
                         row_index = int(row["row_index"])
