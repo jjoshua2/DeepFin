@@ -3,51 +3,93 @@ on:
   push:
     branches: [work/pr5d-live-reconcile-20260924]
 permissions:
-  contents: read
+  contents: write
+  actions: read
 jobs:
-  build:
+  qualify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
+      PYTHONPATH: .
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      TORCHINDUCTOR_COMPILE_THREADS: '1'
       BEND_NO_TELEMETRY: '1'
+      CUDA_VISIBLE_DEVICES: ''
     steps:
       - uses: actions/checkout@v4
         with:
           ref: 42d4c78ebfca102e146720c818f5dba9db61fd57
-      - name: Apply exact runtime files and reachable-effect registration fix
+      - uses: actions/download-artifact@v4
+        with:
+          name: deepfin-pr5d-effect-fixed-build
+          run-id: 36012330085
+          github-token: ${{ github.token }}
+          path: /tmp/pr5d-built
+      - name: Restore exact runtime and authored qualification files
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir /tmp/pr5d-built
+          mkdir /tmp/pr5d-evidence
           python3 - <<'PY'
           import base64,gzip,hashlib,json,subprocess
           from pathlib import Path
-          def blob(sha):
-              record=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
-              raw=base64.b64decode(record['content'])
+          saved=Path('/tmp/pr5d-built')
+          patch=(saved/'runtime.patch').read_bytes()
+          subprocess.run(['git','apply','--check','-'],input=patch,check=True)
+          subprocess.run(['git','apply','-'],input=patch,check=True)
+          manifest=json.loads((saved/'source-manifest.json').read_text())
+          assert len(manifest)==5
+          for p,h in manifest.items():
+              assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          parts=[]
+          for sha in ['d2d6d5528b8a09f06b77f09c78a0f1214a866df5','09f2d8ed19a73ec63063f8e560e79c5cf82af1b7']:
+              rec=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+              raw=base64.b64decode(rec['content'])
               assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
-              return raw
-          packed=blob('80142408e178fe6b6439e6bd3f1c42200aacd035')
-          assert hashlib.sha256(packed).hexdigest()=='36afa24c475053ff56b67daae9582ab1d4b75eeba7ff7419cb6c99a985faeba7'
+              parts.append(raw)
+          packed=b''.join(parts)
+          assert hashlib.sha256(packed).hexdigest()=='141c92193da67685d676bd6902f99b33e97721044c556422be73f465c0e48ab7'
           files=json.loads(gzip.decompress(packed))
-          assert len(files)==4
+          assert len(files)==6
           for p,text in files.items():
-              assert p.startswith('native/bend_engine/multi_root/') and p.endswith('.bend') and not Path(p).exists()
+              assert not Path(p).exists() and (p.startswith('native/bend_engine/multi_root/') or p=='tests/test_bend_live_cohort.py')
               Path(p).write_text(text)
-          p='native/bend_engine/batch_backend/batch_call.c'
-          Path(p).write_bytes(blob('7c0ea5e8c0c511873729f7d08ad4b763544cd82d'))
-          files[p]=Path(p).read_text()
+              if p.endswith('.sh'): Path(p).chmod(0o755)
+          for e in ['live','main']:
+              (saved/f'{e}.c').write_bytes(gzip.decompress((saved/f'{e}.c.gz').read_bytes()))
           subprocess.run(['git','add','-N','.'],check=True)
-          Path('/tmp/pr5d-built/runtime.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
-          Path('/tmp/pr5d-built/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in files},indent=2))
+          paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
+          assert len(paths)==11
+          Path('/tmp/pr5d-evidence/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths},indent=2))
+          Path('/tmp/pr5d-evidence/qualified.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
           PY
           git diff --check
-          free -h > /tmp/pr5d-built/memory.txt
+          cp /tmp/pr5d-built/{compiler.txt,generated.txt,live-build.txt,main-build.txt} /tmp/pr5d-evidence/
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.12.10
+      - name: Locked CPU dependencies
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Verify compiler and generate full live and reference C
+      - name: Focused Python contracts and complete static gate
+        run: |
+          set -euo pipefail
+          python -m pytest tests/test_bend_live_cohort.py tests/test_bend_arena.py tests/test_bend_cohort_deadlines.py tests/test_bend_async_cohort.py tests/test_neural_work.py tests/test_neural_search_benchmark.py -q --junitxml=/tmp/pr5d-evidence/tests.xml | tee /tmp/pr5d-evidence/tests.txt
+          bash scripts/lint.sh 2>&1 | tee /tmp/pr5d-evidence/lint.txt
+          bash scripts/lint.sh native/bend_engine/multi_root/verify_live.py 2>&1 | tee /tmp/pr5d-evidence/live-lint.txt
+          bash -n native/bend_engine/multi_root/{build_live,qualify_live,qualify_live_registry}.sh
+      - name: Full generated live application and registry in normal and sanitized modes
         run: |
           set -euo pipefail
           single=native/bend_engine/standalone
@@ -56,28 +98,86 @@ jobs:
           git init -q /tmp/pr5d-compiler
           git -C /tmp/pr5d-compiler fetch -q --depth=1 "$repository" "$revision"
           git -C /tmp/pr5d-compiler checkout -q --detach FETCH_HEAD
-          bun "$single/verify_compiler.js" /tmp/pr5d-compiler > /tmp/pr5d-built/compiler.txt
-          for entry in live main; do
-            /usr/bin/time -v timeout 420 bun /tmp/pr5d-compiler/bend2/main.ts "native/bend_engine/multi_root/$entry.bend" -o "/tmp/pr5d-built/$entry.c" > "/tmp/pr5d-built/$entry-build.txt" 2>&1
-            gzip -k "/tmp/pr5d-built/$entry.c"
-          done
-          sha256sum /tmp/pr5d-built/*.c > /tmp/pr5d-built/generated.txt
-      - name: Compile both actual generated entrypoints against the existing callback
+          bash native/bend_engine/multi_root/qualify_live.sh /tmp/pr5d-compiler /tmp/pr5d-live /tmp/pr5d-built 2>&1 | tee /tmp/pr5d-evidence/live.txt
+          bash native/bend_engine/multi_root/qualify_live_registry.sh /tmp/pr5d-compiler /tmp/pr5d-registry 2>&1 | tee /tmp/pr5d-evidence/registry.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: deepfin-pr1-validation
+          run-id: 35759888019
+          github-token: ${{ github.token }}
+          path: /tmp/pr5d-fixture
+      - name: Reuse saved untrained fixture and export only batch four
         run: |
           set -euo pipefail
-          d=/tmp/pr5d-built
-          printf '#define DEEPFIN_MODEL_BATCH 4\n#define DEEPFIN_MODEL_CHANNELS 175\n#define DEEPFIN_MODEL_PROFILE 4\n' > "$d/model_contract.h"
-          clang -std=c11 -O1 -I "$d" -c native/bend_engine/multi_root/test_backend.c -o "$d/callback.o"
-          for entry in live main; do
-            clang -std=c11 -O1 -ffp-contract=off -DDEEPFIN_BEND_NATIVE_MODEL -DDEEPFIN_ASYNC_BATCH -I "$d" -c "$d/$entry.c" -o "$d/$entry.o"
-            clang++ -std=c++20 -O1 -I "$d" "$d/$entry.o" "$d/callback.o" native/bend_engine/batch_backend/async_batch.cpp -pthread -lm -o "$d/$entry"
+          tar -xzf /tmp/pr5d-fixture/native-build.tar.gz -C /tmp
+          echo '9654a1e334fb5f875d164b82068846bfeab3df2ef2a994737e44789c2623ee6e  /tmp/pr1-model/fixture.pt2' | sha256sum -c -
+          python - <<'PY'
+          from pathlib import Path
+          import torch
+          from native.bend_engine.neural_probe.checkpoint import load_checkpoint,export_checkpoint
+          assert str(torch.__version__)=='2.14.0+cpu'
+          torch.set_num_threads(2)
+          Path('/tmp/pr5d-model').mkdir()
+          export_checkpoint(load_checkpoint(Path('/tmp/pr1-model/fixture.pt')),Path('/tmp/pr5d-model/b4.pt2'),batch=4,device='cpu',device_index=0)
+          PY
+      - name: Real CPU model through persistent and fresh-root owners
+        run: |
+          set -euo pipefail
+          prefix="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+          single=native/bend_engine/standalone
+          clang -std=c11 -O3 -DLEGAL_ORACLE -I "$PWD" native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/pr5d-oracle
+          for batch in 1 4; do
+            package=/tmp/pr1-model/fixture.pt2
+            if test "$batch" = 4; then package=/tmp/pr5d-model/b4.pt2; fi
+            dir=/tmp/pr5d-real-$batch; mkdir "$dir"
+            bun "$single/bind_model.js" --batch-header "$package" "$dir/model_contract.h" > /tmp/pr5d-evidence/model-binding-$batch.json
+            for entry in main live; do
+              cmake -S "$single" -B "$dir/$entry" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_PREFIX_PATH="$prefix" -DBEND_GENERATED_C="/tmp/pr5d-built/$entry.c" -DBEND_CONTRACT_DIR="$dir" -DBEND_TARGET_NAME=deepfin-bend-runner -DBEND_CUDA_MODEL=OFF -DBEND_ASYNC_BATCH=ON
+              cmake --build "$dir/$entry" --parallel 1
+              sha256sum "$dir/$entry/deepfin-bend-runner" >> /tmp/pr5d-evidence/executables.txt
+            done
+            python -m native.bend_engine.multi_root.verify --binary "$dir/main/deepfin-bend-runner" --oracle /tmp/pr5d-oracle --batch "$batch" --channels 175 --package "$package" --checkpoint /tmp/pr1-model/fixture.pt --report "/tmp/pr5d-evidence/reference-$batch.json" > "/tmp/pr5d-evidence/reference-$batch.txt"
+            DEEPFIN_BEND_MODEL_PACKAGE="$package" python - "$dir" "$batch" <<'PY'
+          import json,sys
+          from pathlib import Path
+          from native.bend_engine.multi_root.verify_live import serial_reuse
+          root=Path(sys.argv[1]); batch=int(sys.argv[2])
+          result=serial_reuse(root/'live/deepfin-bend-runner',root/'main/deepfin-bend-runner')
+          result.update(scope='actual CPU model persistent generations vs fresh native reference',batch=batch,cancellation_injected=False,gpu_qualified=False)
+          Path(f'/tmp/pr5d-evidence/live-model-{batch}.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result))
+          PY
           done
-          printf 'add startpos\n' | DEEPFIN_COHORT_ASYNC=1 "$d/live" --threads 1 -- 1 2 0 0 > "$d/smoke.txt"
-          grep -q 'live_work' "$d/smoke.txt"
-          rm "$d"/*.c "$d"/*.o "$d/live" "$d/main"
+      - name: Publish clean qualified source
+        id: publish
+        run: |
+          set -euo pipefail
+          test -z "$(git ls-remote --heads origin refs/heads/feat/native-live-roots-20260924)"
+          git diff --check
+          git switch -c feat/native-live-roots-20260924
+          git add native/bend_engine/multi_root/LiveRegistry.bend native/bend_engine/multi_root/LiveReport.bend native/bend_engine/multi_root/LiveRun.bend native/bend_engine/multi_root/live.bend native/bend_engine/multi_root/build_live.sh native/bend_engine/multi_root/live_registry_probe.bend native/bend_engine/multi_root/qualify_live.sh native/bend_engine/multi_root/qualify_live_registry.sh native/bend_engine/multi_root/verify_live.py native/bend_engine/batch_backend/batch_call.c tests/test_bend_live_cohort.py
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'native: add persistent generation-tagged live roots on the FIFO arena stack'
+          git push origin HEAD:refs/heads/feat/native-live-roots-20260924
+          git rev-parse HEAD > /tmp/pr5d-evidence/published-head.txt
+      - name: Retain reports without models or binaries
+        if: always()
+        run: |
+          for suite in live registry; do
+            if test -d "/tmp/pr5d-$suite"; then
+              mkdir -p "/tmp/pr5d-evidence/$suite"
+              find "/tmp/pr5d-$suite" -name '*.json' -o -name 'registry-*.txt' -o -name 'normal.txt' -o -name 'ubsan.txt' -o -name '*.err' | while read -r f; do
+                cp "$f" "/tmp/pr5d-evidence/$suite/$(basename "$(dirname "$f")")-$(basename "$f")"
+              done
+            fi
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: deepfin-pr5d-effect-fixed-build
-          path: /tmp/pr5d-built
+          name: deepfin-pr5d-live-qualification
+          path: /tmp/pr5d-evidence
           retention-days: 30
+      - name: Require all qualification and publication gates
+        if: always()
+        env:
+          PUBLISHED: ${{ steps.publish.outcome }}
+        run: test "$PUBLISHED" = success
