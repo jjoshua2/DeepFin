@@ -1,6 +1,6 @@
 // Completion notification contracts, not a scheduler/model latency benchmark.
 #include "async_batch.h"
-#include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <future>
 #include <iostream>
@@ -34,7 +34,13 @@ struct Gate {
     cv.notify_all();
   }
 };
-void case_run(uint32_t batch, uint32_t channels, unsigned fault) {
+// Declared after AsyncBatch so callback release precedes the worker's join,
+// including exceptions from assertions while evaluation is deliberately held.
+struct ReleaseOnExit {
+  Gate& gate;
+  ~ReleaseOnExit() { gate.release(); }
+};
+void case_run(uint32_t batch, uint32_t channels, unsigned fault, bool abort_held = false) {
   Gate gate;
   std::vector<float> input(size_t(batch) * channels * 64, 7.0f);
   std::vector<float> output(size_t(batch) * 1861 + 1, -99.0f);
@@ -45,9 +51,11 @@ void case_run(uint32_t batch, uint32_t channels, unsigned fault) {
     if (fault == 2) throw std::runtime_error("injected callback exception");
     return fault == 1 ? 1 : 0;
   });
+  ReleaseOnExit release_on_exit{gate};
   require(worker.wait_ready(1, 0ms) == AsyncBatch::unknown, "idle wait accepted");
   const auto token = worker.submit(input.data(), batch);
   gate.started();
+  if (abort_held) throw std::runtime_error("intentional held-callback assertion");
   // Only the native worker's snapshot may be referenced after submit returns.
   std::fill(input.begin(), input.end(), 999.0f);
   require(worker.wait_ready(token + 1, 1ms) == AsyncBatch::unknown, "wrong token wait accepted");
@@ -105,8 +113,13 @@ void case_run(uint32_t batch, uint32_t channels, unsigned fault) {
   require(worker.wait_ready(token, 0ms) == AsyncBatch::unknown, "shutdown revived token");
 }
 }
-int main() {
+int main(int argc, char** argv) {
   try {
+    if (argc == 2 && std::string(argv[1]) == "--abort-held") {
+      case_run(4, 146, 0, true);
+      throw std::runtime_error("held-callback assertion did not execute");
+    }
+    if (argc != 1) throw std::invalid_argument("unexpected test argument");
     for (uint32_t batch : {1u, 2u, 4u, 8u, 16u})
       for (uint32_t channels : {146u, 175u}) case_run(batch, channels, 0);
     for (unsigned fault : {1u, 2u}) case_run(4, 146, fault);
