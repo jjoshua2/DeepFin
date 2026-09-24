@@ -3,12 +3,16 @@
 import Base
 
 type Ring<-T: Type> is Type:
-  Ring{slots: Array<Maybe<&1, T>>, head: U32, tail: U32, size: U32, capacity: U32}
+  Ring{slots: Array<List<&1, T>>, head: U32, tail: U32, size: U32, capacity: U32}
 
+# Box slots as zero/one-element lists. Recursive list carriers keep a uniform
+# layout when the pinned backend erases generic T in this recursive builder.
+# Array<Maybe<T>> is not safe here: creation and access can choose different
+# strides for composite T. This adds allocation; measure rather than assume.
 # Allocate each empty owning slot separately; Array.new requires Data.
-def slots(-T: Type, depth: Nat) -> Array<Maybe<&1, T>>:
+def slots(-T: Type, depth: Nat) -> Array<List<&1, T>>:
   match depth:
-    case 0n: ALeaf{None{}}
+    case 0n: ALeaf{Nil{}}
     case 1n+p:
       +d = p
       ANode{slots(T, d), slots(T, d)}
@@ -38,14 +42,16 @@ def length(-T: Type, r: Ring<T>) -> Ring<T> & U32:
 
 # Success returns None; full returns the incoming value, retaining ownership.
 def pushed(-T: Type, h: U32, t: U32, n: U32, c: U32,
-  result: Array<Maybe<&1, T>> & Maybe<&1, T>) -> Ring<T> & Maybe<&1, T>:
+  result: Array<List<&1, T>> & List<&1, T>) -> Ring<T> & Maybe<&1, T>:
   (a, previous) = result
-  (Ring{a, h, t, n, c}, previous)
+  match previous:
+    case Nil{}: (Ring{a, h, t, n, c}, None{})
+    case Con{x, tail}: (Ring{a, h, t, n, c}, Some{x})
 
 def push_open(-T: Type, r: Ring<T>, value: T) -> Ring<T> & Maybe<&1, T>:
   Ring{a, h, +t, n, +c} = r
   pushed(T, h, next(t, c), U32.inc(n), c,
-    Array.swap(Maybe<&1, T>, a, t, Some{value}))
+    Array.swap(List<&1, T>, a, t, Con{value, Nil{}}))
 
 def push_if(-T: Type, r: Ring<T>, value: T, full: Bool) -> Ring<T> & Maybe<&1, T>:
   match full:
@@ -59,7 +65,7 @@ def push(-T: Type, r: Ring<T>, value: T) -> Ring<T> & Maybe<&1, T>:
 def pop_open(-T: Type, r: Ring<T>) -> Ring<T> & Maybe<&1, T>:
   Ring{a, +h, t, n, +c} = r
   pushed(T, next(h, c), t, U32.sub(n, 1), c,
-    Array.swap(Maybe<&1, T>, a, h, None{}))
+    Array.swap(List<&1, T>, a, h, Nil{}))
 
 def pop_if(-T: Type, r: Ring<T>, empty: Bool) -> Ring<T> & Maybe<&1, T>:
   match empty:
