@@ -199,3 +199,20 @@ held callbacks in normal and UBSan modes. See the
 [deadline experiment record](../../../docs/experiments/2026-09-23-cohort-deadlines.md)
 for scope and completed evidence. Test-only held callbacks are never linked into
 the model product. No GPU, throughput or Elo claim follows from functional passes.
+
+
+## FIFO ready-root scheduling
+
+The ready set and unvisited tail now use the owning two-list FIFO qualified in
+PR #864. Gathered roots remain in their existing Local/Pending tasks until
+retirement; completed tasks join the back after all unvisited roots. No root
+is revisited within an available sweep. Cancellation/live-mask scans preserve
+the queue split; flattening occurs only for final reporting. The initial
+1..16-root admission cap, physical worker, tickets, deadlines, budgets and
+output schemas are unchanged. This does not enable live admission or same-tree
+concurrency, and it is not an end-to-end speedup claim.
+
+Run `qualify_fifo.sh VERIFIED_COMPILER PINNED_PARENT.c NEW_OUTPUT` explicitly
+for the deterministic native matrix and parent scheduling comparison. See
+[the experiment](../../../docs/experiments/2026-09-23-fifo-cohort-integration.md)
+for source/build identities, controls and qualification status.
