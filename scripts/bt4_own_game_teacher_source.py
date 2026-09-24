@@ -20,6 +20,7 @@ from numcodecs import Blosc
 
 from chess_anti_engine.eval.rvg_surgery import position_fingerprints
 from chess_anti_engine.moves.leela_index import compact_index_for_move
+from scripts.bt4_ordinary_bank_audit import REVIEWED_FULL_STRICT_VERIFIERS, bank_identity
 
 SCHEMA = "bt4_own_teacher_source_v1"
 _COMPRESSOR = Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE)
@@ -55,6 +56,55 @@ def verify_audit(bank: Path, summary_sha256: str, rows: int,
                 and audit.get("overall_status") == "PASS_BT4_ROOT_CUDA_7_TO_6_CONSERVATIVE_CONTINUATION"
                 and bool(audit.get("source_origins_verified")),
                 "v4 independent audit does not bind this bank")
+    elif status == "PASS_INDEPENDENT_BT4_ORDINARY_BANK_AUDIT":
+        summary = json.loads((bank / "summary.json").read_text())
+        proof_sha256 = sha_file(bank / "provider_proof.json")
+        require(audit.get("bank") == str(bank)
+                and audit.get("summary_sha256") == summary_sha256
+                and audit.get("provider_proof_sha256") == summary.get("provider_proof_sha256")
+                == proof_sha256
+                and audit.get("accepted_rows") == rows
+                and audit.get("facts", {}).get("accepted_rows") == rows
+                and audit.get("facts", {}).get("summary_sha256") == summary_sha256
+                and bool(audit.get("facts", {}).get("pinned_source_origins"))
+                and audit.get("bank_identity") == bank_identity(bank),
+                "ordinary audit does not bind the current complete bank")
+        auditor = audit.get("auditor", {})
+        verifier = audit.get("verifier", {})
+        plan_pin = audit.get("plan", {})
+        terminal_pin = audit.get("terminal", {})
+        require(auditor.get("function") == "audit_bank"
+                and verifier.get("function") == "verify_bank"
+                and verifier.get("sha256") in REVIEWED_FULL_STRICT_VERIFIERS,
+                "ordinary audit function differs")
+        expected_auditor = Path(__file__).with_name("bt4_ordinary_bank_audit.py")
+        require(sha_file(expected_auditor) == auditor.get("sha256")
+                and sha_file(Path(auditor["path"]).resolve(strict=True)) == auditor["sha256"],
+                "ordinary audit producer source differs")
+        for pin in (verifier, plan_pin, terminal_pin):
+            require(sha_file(Path(pin["path"]).resolve(strict=True)) == pin["sha256"],
+                    "ordinary audit input pin differs")
+        plan = json.loads(Path(plan_pin["path"]).read_text())
+        terminal = json.loads(Path(terminal_pin["path"]).read_text())
+        stage = audit.get("stage")
+        facts = audit["facts"]
+        strict_fact_keys = ("accepted_rows", "attempted_plies", "completed_games",
+                            "discarded_games", "sixman_games", "natural_games",
+                            "summary_sha256", "provider_proof_sha256", "pinned_source_origins")
+        require(plan.get("supervisor_sha256") == verifier["sha256"]
+                and [item.get("name") for item in plan.get("stages", [])].count(stage) == 1
+                and bank == Path(plan["output_root"]).resolve() / stage / "bank"
+                and Path(terminal_pin["path"]).resolve() == bank.parent / "terminal.json"
+                and terminal.get("plan_sha256") == plan_pin["sha256"]
+                and terminal.get("status", "").startswith("PASS_")
+                and terminal.get("returncode") == 0
+                and terminal.get("summary_sha256") == summary_sha256
+                and terminal.get("provider_proof_sha256") == proof_sha256
+                and terminal.get("accepted_rows") == rows
+                and all(key in facts for key in strict_fact_keys)
+                and all(key in terminal and terminal[key] == value
+                        for key, value in facts.items()),
+                "ordinary plan or successful terminal does not bind this bank")
     else:
         raise ValueError("unsupported full-bank audit receipt; source cannot be qualified")
     return {"path": str(audit_path), "sha256": audit_sha256, "status": status}

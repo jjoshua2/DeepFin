@@ -6,9 +6,17 @@ source cohort for later labeling work, **not a training shard**.
 
 Each input is a closed `bt4_root_policy_games_v1` bank, its expected
 `summary.json` SHA-256, and a separately produced full-bank audit receipt with
-its SHA-256. The accepted audit profiles currently cover the saved two-game
-qualification and independent 32-game readback. An ordinary-opening bank needs
-an independent full-bank audit profile before this adapter can publish it.
+its SHA-256. The accepted audit profiles cover the saved two-game qualification,
+independent 32-game readback, and a separately rerun ordinary-bank strict
+audit. The latter is produced by `scripts/bt4_ordinary_bank_audit.py` from a
+completed ordinary pilot or parallel-screen stage. It imports only one of the
+two SHA-reviewed frozen supervisors, calls that supervisor's full `verify_bank`
+on the saved bank, and checks its facts against the original stage terminal.
+The receipt binds the plan, stage, verifier source, auditor source, terminal,
+summary, CUDA provider proof, accepted rows, and unchanged bank tree. It is
+written only after the strict verifier returns. The adapter requires the
+receipt's exact SHA. A new verifier source requires a reviewed allowlist
+update; a matching status string alone is insufficient.
 The adapter validates every NPZ receipt and game ID, exact input and position
 keys, actor move history, legal support of the saved T=1 root policy, native
 WDL probability contract, outcome POV, and model/head/history compatibility.
@@ -37,3 +45,12 @@ a later Ceres pass can use the original root input. Large-scale chunking and
 training-cohort admission are separate work. The saved forced 2+32-game banks
 are a schema regression only; their one-ply tablebase fixture is neither a
 throughput nor label-quality sample.
+
+The ordinary audit producer is CPU-only and requires `CUDA_VISIBLE_DEVICES=''`.
+Run it only after an ordinary stage has a complete terminal, using the exact
+frozen plan and supervisor SHA-256s, the stage's bank and terminal, and a fresh
+audit output path outside the bank. Its full verifier reconstructs boards and
+input history, checks legal policy and native WDL, and verifies natural or
+rule50 Syzygy terminal results for every accepted game. The synthetic receipt
+tests exercise the contract only; no ordinary game bank has been audited or
+adapted by this change.
