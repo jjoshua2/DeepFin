@@ -221,3 +221,8 @@ for source/build identities, controls and qualification status.
 ## Matched FIFO timing
 
 The opt-in `build_fifo_benchmark.sh` and `benchmark_fifo.py` compare exact qualified list/FIFO snapshots using the unchanged deterministic callback. See [the completed experiment](../../../docs/experiments/2026-09-23-fifo-runner-timing.md) for source hashes, commands, raw observations and measurement limits. Ordinary pytest exercises admission logic only; this is not a new production mode or real-model performance claim.
+
+
+## Completion wait
+
+The asynchronous cohort waits for native completion notification, with a one-millisecond requested wait budget before returning to Bend command/deadline service. Poll/take still owns retirement; notification never copies output or releases a batch slot. The [completion-wait experiment](../../../docs/experiments/2026-09-23-bounded-completion-wait.md) records validation and scope. `benchmark_wait.py` compares qualified callback runners with wall and child CPU observations; it is not an ordinary pytest workload or model/GPU benchmark.

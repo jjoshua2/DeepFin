@@ -1,0 +1,29 @@
+{
+  "status": "passed",
+  "no_notify_mutation_rejected": true,
+  "parent_c_sha256": "7f348a6ad58c7e3abebbf876f4ada8862c9f6dbc5856f445e1e2310346d68b74",
+  "candidate_c_sha256": "9d9be9cc67af90c52aec7113cecc2c141cbc5a5e37e8bdfc78cf795170e1d609",
+  "normal_matrix_configurations": 10,
+  "ubsan_matrix_configurations": 2,
+  "equivalence_pairs": 20,
+  "native_wait_cases_per_mode": 12,
+  "native_wait_assertions_per_mode": 326,
+  "workflow_run": 35952107892,
+  "tested_workflow_commit": "af7a8b3b8bc2efa6fb403cc53e9da3c1295c45de",
+  "base_commit": "d90f9cfbeb64b9d83f4296543307c377c5049917",
+  "python_tests_passed": 236,
+  "source_sha256": {
+    "native/bend_engine/batch_backend/Async.bend": "261446edd05546111279bf20548d7bea91b3fbe0e8bfb68bb4b68aacd3ac689d",
+    "native/bend_engine/batch_backend/async_batch.cpp": "17adb8be00f86c532b1029a074824c03b3fece5d5a5a1f481029b726f4401029",
+    "native/bend_engine/batch_backend/async_batch.h": "79ee5ac5e22040065ed82f82157e7eaf166d163ce640af4768480ee110955f6e",
+    "native/bend_engine/batch_backend/async_call.c": "82cb1b21c5beccb9c11803667f5f02282931342432cac0a02999d5b6d6501854",
+    "native/bend_engine/multi_root/AsyncRun.bend": "0af7113fd5d64974ae098d434ca56ac57d5430b3ca6667bcabc7e6d9865a7e91",
+    "native/bend_engine/batch_backend/async_wait_test.cpp": "632e204f67607b8306d1164b988af6aa0579e653c63188cb8164dc89ec156927",
+    "native/bend_engine/multi_root/benchmark_wait.py": "9005d0f553b45bb78e1c502e463f5e91845e6c472185e89ba6e5904153296fe3",
+    "tests/test_bend_completion_wait.py": "d27450707df8738dd9b8b76445f90d9461adae6badcbe9d749c8c977b552925c",
+    "docs/experiments/2026-09-23-bounded-completion-wait.md": "8e2dcd000fc9ac15825eef3ff8ca23b348727aac61fa7ef95d080279ed8c0ca5",
+    "docs/experiments/README.md": "b16cf0badc87880145e339cb65dd08a7f8abce538e9fdb546add53f1c87783b7",
+    "native/bend_engine/multi_root/README.md": "7edcc3e29052fe85086604cffb1643a46843df4eff4e78a870af7c149a8291c1",
+    "native/bend_engine/multi_root/qualify_wait.sh": "c87f12529da3b1467bd0489f59ef94f258f0d04942f309726d3a8d887a7b0188"
+  }
+}

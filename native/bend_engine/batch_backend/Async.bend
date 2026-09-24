@@ -12,5 +12,8 @@ def BatchAsync.submit(rows: U32, input: Array<F32>) -> IO(BatchSubmitted):
   import "./async_call.c"
 def BatchAsync.poll(token: U32, rows: U32, output: Array<F32>) -> IO(BatchPolled):
   import "./async_call.c"
+# Wait for notification or the native one-millisecond budget; do not take output.
+def BatchAsync.wait(token: U32) -> IO(Unit):
+  import "./async_call.c"
 def BatchAsync.shutdown() -> IO(Unit):
   import "./async_call.c"

@@ -6,6 +6,7 @@
 #ifdef DEEPFIN_ASYNC_BATCH
 extern uint32_t deepfin_async_batch_submit(const float*, uint32_t);
 extern uint32_t deepfin_async_batch_poll(uint32_t, float*, uint32_t);
+extern void deepfin_async_batch_wait(uint32_t);
 extern void deepfin_async_batch_shutdown(void);
 #endif
 static void async_batch_bad(void) {
@@ -58,6 +59,19 @@ static Term batchasync_poll_run(Env e, Term *f, IoWork *w) {
     (void)e; (void)f; async_batch_bad(); return 0;
 #endif
 }
+static Term batchasync_wait_run(Env e, Term *f, IoWork *w) {
+    (void)e; (void)w;
+#ifdef DEEPFIN_ASYNC_BATCH
+    if (!f[0]) async_batch_bad();
+    // Match IO.sleep's stream synchronization before waiting. In particular,
+    // quit disables later stdin polls, so they cannot flush its acknowledgement.
+    io_sync();
+    deepfin_async_batch_wait((uint32_t)f[0]);
+#else
+    (void)f; async_batch_bad();
+#endif
+    return term_pak(CID_UNIT,0);
+}
 static Term batchasync_shutdown_run(Env e, Term *f, IoWork *w) {
     (void)e; (void)f; (void)w;
 #ifdef DEEPFIN_ASYNC_BATCH
@@ -69,5 +83,6 @@ static void __attribute__((constructor)) async_batch_effects(void) {
     io_eff(CID_BATCHASYNC_ENABLED,batchasync_enabled_run,0);
     io_eff(CID_BATCHASYNC_SUBMIT,batchasync_submit_run,0);
     io_eff(CID_BATCHASYNC_POLL,batchasync_poll_run,0);
+    io_eff(CID_BATCHASYNC_WAIT,batchasync_wait_run,0);
     io_eff(CID_BATCHASYNC_SHUTDOWN,batchasync_shutdown_run,0);
 }
