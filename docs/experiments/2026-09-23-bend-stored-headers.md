@@ -123,3 +123,24 @@ The remaining P2 acceptance is final slider-data preservation through later
 metadata/other blocks, composition with stored-header and extras results, and
 actual lookup equality with independently specified blocker-ray attacks. Correct
 headers alone are not a complete table-contents or geometric correctness theorem.
+
+
+## Hosted modular qualification and publication
+
+Hosted modular qualification **35938924299**, workflow `493367c64aa2c304143a88b00ab5cf84ad779756`, freshly passes three public header laws, seventeen rejection controls, four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `eceb6329cbc000469884513c660c2a615060f83b`. The exact-source parent100-law/226-control result is retained and verified, not rerun.
+
+One public law promotes the exact previously checked supplementary one-block theorem; two new contracts establish stored-header correctness after later blocks and final extras. The three original supplementary files remain byte-identical. All returned-pair statements include the final array. The public importing consumer and seventeen controls execute together in the fresh focused gate.
+
+The complete parent source tree and candidate tree match the recorded identities. Retained parent job outcomes and report digests are checked, including the original full100-law aggregate and the subsequent native-only reinforcement. Of298 final parent manifest entries,297 match exactly; the sole non-executable extras README difference is checked against both exact old/current hashes. All original logical .bend sources match their qualified reports. This is modular evidence reuse, not a newly executed103-law/243-control aggregate. The unchanged full wrapper remains available opt-in.
+
+Each native mode passes nine fresh distinct-value buffers and1,179,648 public cell-value comparisons, with nine malformed requests rejected. The full native report matches local results except C compiler identity. Tools: Bun 1.4.2, Ubuntu clang version 18.1.3 (1ubuntu1), locked Python3.13 CPU development environment and uv0.12.10 using the normal extension build compiler. Ruff, Basedpyright and Vulture pass without changed rules or ignored errors.
+
+Native execution covers zero, first, last, split rook/bishop, partial, suffix and full table runs, with and without actual extras. Candidate prefix calculation uses its own actual masks, never reference answers. Independent signed-coordinate geometry, direct deposition and mathematical prefixes supply only the external oracle. Every exposed cell is compared; this is not a native allocation/lifetime proof or a source theorem of independent ray geometry. Modes repeat fixtures rather than disjoint data sets.
+
+Eight semantic controls require intended ordinary value/refinement failures; eight protect manifests/imports and one unit-tests exact-output warning rejection without claiming a compiler execution. Missing files, affine/termination errors, crashes and timeouts are not accepted as semantic rejection. The separate actual prefix-write mutation is classified at its inherited implementation bridge, not mislabeled as a new-law-only failure.
+
+Publication creates `feat/bend-stored-headers-20260923` only after confirming unchanged parent and an absent target. No merge, force push, deployment or live-process work. Temporary workflows and transport payloads are excluded. Source patch SHA-256 ff61e8bb67d5c1fefc046c72947d03d65420c9a96949a43e47db7f7957767f0a; complete candidate tree267fc59aadc1fca9c68acae8222a742c45f5f13d. Only evidence/documentation is appended after qualification; all executable source hashes are rechecked.
+
+Self-review only. No production operation, earlier accepted law, compiler input, existing test or routine perft budget changes. Python export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No full-engine/model/GPU/training/benchmark result. Source proofs still trust pinned checker/Base and separate native lowering, allocation/lifetime, ABI, toolchain and hardware.
+
+Correct stored headers and their persistence are now established under the explicit bounded valid-key/complete-shape domains. Final slider-data preservation through later blocks and metadata, composition into actual lookup and equality with independently specified blocker-ray attacks remain unfinished P2 work.
