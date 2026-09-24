@@ -1,0 +1,71 @@
+name: Record stored-data lookup review
+'on':
+  push:
+    branches: [feat/bend-stored-data-dev-20260923]
+    paths: [.github/workflows/bend-stored-data-review-record.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      SOURCE: b670730343ffe58bd32f0f26dd9cd825ac81129e
+      TARGET: feat/bend-stored-data-20260923
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b670730343ffe58bd32f0f26dd9cd825ac81129e
+      - name: Verify archived bytes and link supplementary status without executing proofs
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = 2d95e26e7593eea5a3a356ae1c7868934478cfc7
+          test "$(git rev-parse HEAD:docs/experiments/evidence/bend-stored-data/supplementary)" = 2f896d44deea0bfd7a994bfb4b10cbe89cc02807
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          evidence=Path('docs/experiments/evidence/bend-stored-data')
+          manifest=json.loads((evidence/'hosted-candidate-source-sha256.json').read_text())
+          assert len(manifest)==329
+          for name,digest in manifest.items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==digest,name
+          p=evidence/'supplementary'
+          hashes={'Route.bend.txt':'b2b6293c93eca3be2d91d37dae87437a8a1d213f2fd68ad9582dd31f6b907341','Pipeline.bend.txt':'7d123ca77391aaaa630f7e04f4f8df793efb9c6f22b806e81f1ba7c7536b4aee','Canonical.bend.txt':'bbc3e499a1afb0a8e795487bc3fe941a03c56b9f30e3a4aca5b40b1f81d339f9','MaskedLookup.bend.txt':'66b17f7fc2dca58a20dd51118baa4c91758246fe0d1f09c2ab8e34e13152afad','probe.bend.txt':'e40bd95607b7dbc62db84107d59642b0d589e5d3f18d99e190e5cf24a87691e9','review_native.py.txt':'e4a9c4983cf024ce168e0047818d74f9a610887313e2a4c9db49b6e269caaaff'}
+          for name,digest in hashes.items():
+              assert hashlib.sha256((p/name).read_bytes()).hexdigest()==digest,name
+          matrix=Path('docs/bend_migration_proofs.md')
+          title,rest=matrix.read_text().split('\n',1)
+          note='## Supplementary actual lookup composition, distinct from public-law counts\n\nA newly source-checked derived composition now connects actual `Chess.slide` on the initialized table/extras pipeline to the actual `Tables.slider` value on `occupancy & actual_relevant_mask`, returning the complete final array. The stored-header and stored-data producers discharge the intermediate certificates; callers supply only the bounded table/extras budgets and symbolic allocation depth equal to17, with arbitrary seed and occupancy. Exact reproducible source text, four successful checker receipts and the native reproduction driver are archived in [the supplementary record](experiments/evidence/bend-stored-data/supplementary/README.md).\n\nThis is not an extra registered LAWS obligation or an inflated 106-law/260-control aggregate. Local generic and UBSan execution of actual `Tables.build` followed by 1,024 `Chess.slide` queries per mode agrees with an independent ray reference; six invalid requests per mode and a shifted actual lookup are rejected. The same shifted lookup is rejected by the source routing lemma. These query tests are separate from the four-mode full-buffer qualification.\n\nEarlier statements that actual lookup composition is entirely unfinished are superseded only by this checked supplementary source-to-source result. Promotion into the public gate and independent relevant-mask/blocker-ray geometry remain open; native comparisons do not prove that geometry. No production, compiler or prior proof source changes.\n'
+          matrix.write_text(title+'\n\n'+note+rest)
+          record=Path('docs/experiments/2026-09-23-bend-stored-data.md')
+          record.write_text(record.read_text()+f"\n\n## Supplementary lookup review archived after qualification\n\nThe [exact supplementary sources and receipts](evidence/bend-stored-data/supplementary/README.md) connect the actual Chess.slide pipeline to the actual slider computation on masked occupancy, including the complete returned array. Four derived modules passed the pinned checker locally; none is added to the three public-law count. The separate actual lookup probe passed 1,024 queries over all128 keys in generic/UBSan and six invalid requests per mode; an actual off-by-one routing mutation fails both source refinement and the independent native oracle. The native test executes the real full builder once per execution but is not a complete-buffer check or an independent source geometry theorem.\n\nPublication verification checked the qualification artifact ZIP digest and all329 candidate source hashes. Full-buffer baseline native reports agree except compiler identity. Corruption diagnostics differ in temporary paths and a GitHub Actions annotation, while both reject the same cell512 value; originals remain unchanged, with the comparison limitation in publication-verification.json. No entire wrapper-report identity is claimed.\n\nDocumentation-only record run **{os.environ['GITHUB_RUN_ID']}** verifies the exact archived subtree and every original candidate source hash, then changes only this readout and the inventory. It does not rerun proofs, tests or lint. The archived source subtree is `2f896d44deea0bfd7a994bfb4b10cbe89cc02807`. No merge, force push or deployment. Self-review only.\n")
+          for name,digest in manifest.items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==digest,name
+          PY
+          git diff --check
+          test "$(git diff --name-only | wc -l)" = 2
+          git diff --exit-code -- native
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments/2026-09-23-bend-stored-data.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: distinguish checked actual lookup composition from remaining independent ray proof'
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/published-data"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/published-data/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/published-data/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/published-data/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/published-data/tree.txt"
+          cp docs/bend_migration_proofs.md docs/experiments/2026-09-23-bend-stored-data.md "$RUNNER_TEMP/published-data/"
+          (cd "$RUNNER_TEMP/published-data" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-stored-data-published-source
+          path: ${{ runner.temp }}/published-data/
+          retention-days: 7
