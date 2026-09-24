@@ -1,0 +1,30 @@
+name: Publish qualified FIFO coordinator
+on:
+  push:
+    branches: [work/bend-fifo-readout-20260923]
+    paths: ['.github/workflows/fifo-publish.yml', '.fifo-publish.py']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      QUALIFIED_RUN: '35943091398'
+      QUALIFIED_ARTIFACT: '10785862321'
+      QUALIFIED_HEAD: 65664d2c922325ad2f98922920283112c1a39666
+      QUALIFIED_SHA256: 8e892da29782d004e9209d65732a5fdaf95a439be7733f77e0a49874f6a799c7
+      BASE: bb1847d2d7f3c4e8b94e5dfb9f64bfc87e0c3390
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify completed evidence and publish exact qualified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCRIPT="$PWD/.fifo-publish.py"
+          git fetch --depth=1 origin "$BASE"
+          git worktree add --detach "$RUNNER_TEMP/fifo-publish-work" "$BASE"
+          cd "$RUNNER_TEMP/fifo-publish-work"
+          python3 "$SCRIPT"
