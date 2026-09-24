@@ -13,7 +13,7 @@ PINS={
  'batch_backend/Async.bend':('265b0d0525d7bcb46a650727173fedc805cb2c402323fb77a531076ae05fb9cc','261446edd05546111279bf20548d7bea91b3fbe0e8bfb68bb4b68aacd3ac689d'),
  'batch_backend/async_batch.cpp':('9c4626e56640a0d55ce6f3b6928c39ec8443c550d95f1ff217f179944fb83828','17adb8be00f86c532b1029a074824c03b3fece5d5a5a1f481029b726f4401029'),
  'batch_backend/async_batch.h':('2b3f060c99223c362ae5975291522ef739aee1070953cd68e187ba606a1eccff','79ee5ac5e22040065ed82f82157e7eaf166d163ce640af4768480ee110955f6e'),
- 'batch_backend/async_call.c':('64d1e204808fea285d58cf826405d5c29228106ace5129e267579fac175794e0','fad86c736582ab6818a06171e776137ed1ac9848baa7aa4cdc865405796fc08c'),
+ 'batch_backend/async_call.c':('64d1e204808fea285d58cf826405d5c29228106ace5129e267579fac175794e0','82cb1b21c5beccb9c11803667f5f02282931342432cac0a02999d5b6d6501854'),
  'multi_root/AsyncRun.bend':('b69813dfba31fc4269022f111a426ac97cf9822e99690a3948f80151808b292e','0af7113fd5d64974ae098d434ca56ac57d5430b3ca6667bcabc7e6d9865a7e91')}
 NEW={
  'native/bend_engine/batch_backend/async_wait_test.cpp':'632e204f67607b8306d1164b988af6aa0579e653c63188cb8164dc89ec156927',
@@ -62,6 +62,9 @@ s=once(s,'static Term batchasync_shutdown_run','''static Term batchasync_wait_ru
     (void)e; (void)w;
 #ifdef DEEPFIN_ASYNC_BATCH
     if (!f[0]) async_batch_bad();
+    // Match IO.sleep's stream synchronization before waiting. In particular,
+    // quit disables later stdin polls, so they cannot flush its acknowledgement.
+    io_sync();
     deepfin_async_batch_wait((uint32_t)f[0]);
 #else
     (void)f; async_batch_bad();
@@ -77,6 +80,8 @@ for name,(before,after) in PINS.items():assert sha((ROOT/BASE/name).read_bytes()
 for name,expected in NEW.items():
  data=(STAGING/name).read_bytes();assert sha(data)==expected,name
  p=ROOT/name;assert not p.exists(),name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(data)
+p=ROOT/'docs/experiments/2026-09-23-bounded-completion-wait.md'
+p.write_text(p.read_text()+'''\n\n### Preserved first hosted failure and stream synchronization correction\n\nRun 35951329817 passed all 236 focused Python cases, the 12-case/326-assertion native wait tests in normal and ASan+UBSan builds, and the compiled no-notification negative control. Fresh C generation and the first five 146-channel batch configurations passed in both sync/async modes. The first held-control suite then timed out waiting for the quit acknowledgement. Later configurations, deadlines, performance and whole-repository lint did not run; this is not a completed qualification.\n\nA local diagnostic using that exact retained generated C reproduced the distinction: stop was acknowledged while the callback remained held, but quit was only visible after callback release. The unchanged sleep-parent control acknowledged quit while held. The quit flag disables subsequent stdin polls, which previously helped flush stdout; IO.sleep also parks through the pinned runtime's stream synchronization. The synchronous foreign wait did neither. The corrective source now calls the runtime's checked io_sync() before waiting, preserving that existing visible-I/O behavior. The control verifier, deadlines, expectations and timeout thresholds are unchanged. No generated C is patched; full generation and all gates are repeated from the corrected source. No performance panel had executed before this correction.\n\nFailed-run artifact: 10788469658. Downloaded ZIP SHA-256: 2dbd944a5a442b7a6e99d5360c66abcef0ad42a29f13e3390744843294d13ee4. This failure is retained rather than counted as passing cancellation coverage.\n''')
 paths=[BASE+n for n in PINS]+list(NEW)
 for name,line in {
  'docs/experiments/README.md':'\n- [Bounded completion notification](2026-09-23-bounded-completion-wait.md): notification versus fixed pending sleep, matched callback runner and retained control/deadline checks.\n',
