@@ -11,6 +11,12 @@ from scripts import bt4_own_game_teacher_source as source
 from tests.test_bt4_own_game_teacher_source import _bank
 
 
+def test_reviewed_ordinary_retry_verifier_is_allowlisted() -> None:
+    assert "aa2e16ab1a78973f46839bc6228c4d783ceb6097db55f9f5a5d576fec3103d86" in (
+        audit.REVIEWED_FULL_STRICT_VERIFIERS
+    )
+
+
 def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
             *, fails: bool = False) -> dict:
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")

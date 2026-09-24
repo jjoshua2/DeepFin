@@ -21,6 +21,7 @@ STATUS = "PASS_INDEPENDENT_BT4_ORDINARY_BANK_AUDIT"
 # legal-policy checks and natural/rule50 Syzygy terminal adjudication.
 REVIEWED_FULL_STRICT_VERIFIERS = frozenset({
     "b1244e59bd703a0294dc23e637c815f9114968f10c7c6ccb51fe71bc4766d277",  # ordinary pilot
+    "aa2e16ab1a78973f46839bc6228c4d783ceb6097db55f9f5a5d576fec3103d86",  # ordinary retry
     "379dc054e06bb831c7a50824207740a43bdd726f2497790fe1d065450add240a",  # parallel screen
 })
 

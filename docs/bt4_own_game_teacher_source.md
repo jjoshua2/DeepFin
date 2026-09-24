@@ -9,8 +9,8 @@ Each input is a closed `bt4_root_policy_games_v1` bank, its expected
 its SHA-256. The accepted audit profiles cover the saved two-game qualification,
 independent 32-game readback, and a separately rerun ordinary-bank strict
 audit. The latter is produced by `scripts/bt4_ordinary_bank_audit.py` from a
-completed ordinary pilot or parallel-screen stage. It imports only one of the
-two SHA-reviewed frozen supervisors, calls that supervisor's full `verify_bank`
+completed ordinary pilot or parallel-screen stage. It imports only a
+SHA-reviewed frozen supervisor version, calls that supervisor's full `verify_bank`
 on the saved bank, and checks its facts against the original stage terminal.
 The receipt binds the plan, stage, verifier source, auditor source, terminal,
 summary, CUDA provider proof, accepted rows, and unchanged bank tree. It is
