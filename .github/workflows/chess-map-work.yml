@@ -1,0 +1,122 @@
+name: Actual CBoard key replay qualification
+on:
+  push:
+    branches: [work/bend-chess-map-20260924]
+permissions:
+  contents: write
+concurrency:
+  group: chess-map-replay
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      BASE: 4364c213561e417386c6f2dab229e0b63d42075b
+      FEATURE: feat/bend-chess-map-qualified-20260924
+      BEND_NO_TELEMETRY: '1'
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare exact isolated source
+        run: |
+          git fetch --depth=1 origin "$BASE"
+          git worktree add --detach "$RUNNER_TEMP/chess-map" "$BASE"
+          python3 .chess-map-apply.py "$RUNNER_TEMP/chess-map"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked environment and unchanged compiler
+        run: |
+          cd "$RUNNER_TEMP/chess-map"
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Source and native-key Python contracts
+        run: |
+          cd "$RUNNER_TEMP/chess-map"
+          . .venv/bin/activate
+          ruff check native/bend_engine/u64_map_probe/*.py tests/test_bend_u64_map.py tests/test_bend_map*.py
+          basedpyright native/bend_engine/u64_map_probe/*.py tests/test_bend_u64_map.py tests/test_bend_map*.py
+          python -m pytest -q tests/test_bend_u64_map.py tests/test_bend_map*.py --junitxml=artifacts/chess-map-tests.xml
+      - name: Original map and synthetic comparison controls
+        run: |
+          cd "$RUNNER_TEMP/chess-map"
+          . .venv/bin/activate
+          compiler=build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          python -m native.bend_engine.u64_map_probe.run_probe --compiler-root "$compiler" --bun bun --cc clang-18 --output artifacts/map-original
+          python -m native.bend_engine.u64_map_probe.benchmark --compiler-root "$compiler" --bun bun --cc clang-18 --output artifacts/map-synthetic
+      - name: Actual-key replay and driver contracts, no timing panel
+        run: |
+          cd "$RUNNER_TEMP/chess-map"
+          . .venv/bin/activate
+          python -m native.bend_engine.u64_map_probe.benchmark --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --bun bun --cc clang-18 --output artifacts/map-chess --chess
+      - name: Whole-repository static gate
+        run: |
+          cd "$RUNNER_TEMP/chess-map"
+          . .venv/bin/activate
+          ./scripts/lint.sh
+      - name: Reconcile and publish tested source with compact evidence
+        run: |
+          cd "$RUNNER_TEMP/chess-map"
+          . .venv/bin/activate
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess,xml.etree.ElementTree as ET
+          manifest=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'chess-map-source.json').read_text())
+          for p,sha in manifest.items():assert hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()==sha,p
+          xml=ET.parse('artifacts/chess-map-tests.xml').getroot()
+          assert len(list(xml.iter('testcase')))==102
+          assert not any(list(xml.iter(t)) for t in ('failure','error','skipped'))
+          raw=pathlib.Path('artifacts/map-chess/report.json').read_bytes();report=json.loads(raw)
+          old=json.loads(pathlib.Path('artifacts/map-original/summary.json').read_text())
+          syn=json.loads(pathlib.Path('artifacts/map-synthetic/report.json').read_text())
+          assert old['status']=='passed' and len(old['modes'])==4 and len(old['mutations_rejected'])==3
+          assert syn['status']=='passed' and syn['measured'] is False and syn['contract_executions']==180
+          assert report['status']=='passed' and report['measured'] is False and report['contract_executions']==144
+          assert len(report['reference_checks'])==4 and all(r['cases']==36 for r in report['reference_checks'])
+          assert len(report['chess_corpus']['identity_checks'])==6 and len(report['chess_replay_cases'])==4
+          for corpus in report['chess_corpus']['corpora']:
+              records=corpus.pop('records')
+              assert len(records)==corpus['observations']
+              assert hashlib.sha256(json.dumps(records,sort_keys=True).encode()).hexdigest()==corpus['records_sha256']
+          summary={k:report[k] for k in ('scope','status','measured','workload_source','cpu_target','source_sha256','reference_checks','contract_executions','chess_corpus','chess_replay_cases')}
+          summary.update({'workflow_run':int(os.environ['GITHUB_RUN_ID']),'tested_staging_commit':os.environ['GITHUB_SHA'],'base_commit':os.environ['BASE'],'focused_python_tests':102,'new_tests':17,'raw_report_sha256':hashlib.sha256(raw).hexdigest(),'tested_source_sha256':manifest})
+          dest=pathlib.Path('docs/experiments/evidence/chess-key-map-replay');dest.mkdir(parents=True)
+          (dest/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+          doc=pathlib.Path('docs/experiments/2026-09-24-chess-key-map-replay.md')
+          text='\n\n### Completed hosted qualification\n\nRun https://github.com/jjoshua2/DeepFin/actions/runs/'+os.environ['GITHUB_RUN_ID']+' passed all preceding validation stages. All 102 Python cases passed without skips (17 new), including native-key identity checks, rejection of the raw-hash substitution and full reconstruction of every recorded legal path. The original four-mode map, three executed mutations, synthetic comparison and whole-repository Ruff/Basedpyright/Vulture passed.\n\n'
+          text+='Both maps passed 36 exact dictionary traces per explicit-target/UBSan build: 32 prior cases plus four chess encounter streams. All 144 new operation-driver checks passed. Build modes reuse fixtures, not independent games. No performance panel ran.\n\n| Corpus | Position observations | Distinct keys | Revisits |\n|---|---:|---:|---:|\n'
+          for row in report['chess_corpus']['corpora']:
+              text+=f"| {row['name']} | {row['observations']} | {row['distinct_keys']} | {row['revisits']} |\n"
+          text+='\nThe raw report retains every FEN/move path/key plus all operation definitions and checks. Compact source, extension, corpus and expected-trace hashes are committed under evidence/chess-key-map-replay/. The tested-source manifest describes preregistration before this documentation-only readout. Same-key/different-history examples and the intentional raw-hash/collision negatives enforce test boundaries; they do not implement safe neural caching. No engine, map algorithm, cache key, compiler, model, live setting, merge or deployment changed. Self-review only.\n'
+          doc.write_text(doc.read_text()+text)
+          paths=[*manifest,str(dest/'summary.json')]
+          subprocess.run(['git','add','--',*paths],check=True);subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert sorted(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())==sorted(paths)
+          for p,sha in manifest.items():
+              if p.endswith('.py'):assert hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()==sha,p
+          subprocess.run(['git','config','user.name','github-actions[bot]'],check=True)
+          subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
+          tree=subprocess.check_output(['git','write-tree'],text=True).strip()
+          commit=subprocess.check_output(['git','commit-tree',tree,'-p',os.environ['BASE'],'-m','test: qualify numeric maps on CBoard keys and cache-identity boundaries'],text=True).strip()
+          subprocess.run(['git','push','--force-with-lease=refs/heads/'+os.environ['FEATURE']+':','origin',commit+':refs/heads/'+os.environ['FEATURE']],check=True)
+          pathlib.Path('artifacts/qualified-feature.txt').write_text(commit+'\n');print('QUALIFIED_FEATURE',commit)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chess-key-map-replay
+          path: |
+            ${{ runner.temp }}/chess-map/artifacts/chess-map-tests.xml
+            ${{ runner.temp }}/chess-map/artifacts/qualified-feature.txt
+            ${{ runner.temp }}/chess-map/artifacts/map-*/*.json
+            ${{ runner.temp }}/chess-map/artifacts/map-*/*.stdout
+            ${{ runner.temp }}/chess-map/artifacts/map-*/*.stderr
+          retention-days: 30
