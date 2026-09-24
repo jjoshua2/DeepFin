@@ -1,0 +1,19 @@
+{
+  "qualification": "PASS",
+  "run": "35996797725",
+  "source": "12134356d6e09f303c256a76f83439204292897a",
+  "new_public_laws": 4,
+  "new_controls": 16,
+  "retained_parent_laws": 106,
+  "retained_parent_controls": 260,
+  "modular_laws": 110,
+  "modular_controls": 276,
+  "combined_wrapper_executed": false,
+  "source_consumer_and_controls_separate": true,
+  "supplementary_geometry": "Independent step and complete relevant masks source/native rechecked; not added public-law counts",
+  "native_source_entries": 341,
+  "source_closure_matches_saved_candidate": true,
+  "native_report_matches_saved_except_cc": true,
+  "alternate_three_contract_branch_modified": false,
+  "independent_review": false
+}

@@ -17,3 +17,24 @@ Archived Step.actual and Masks.actual establish independent coordinate-step and 
 ## Execution status
 
 Source staged; hosted qualification is not yet complete. The previous local lint missing-tools failure remains historical and is not relabeled a pass. Final results will be appended only after all required jobs succeed.
+
+
+## Completed hosted qualification
+
+Hosted run **35996797725** passes the four preserved public laws, all16 controls, four native modes, original compiler source/pin gates, unchanged repository lint and the two archived independent step/mask checks on source `12134356d6e09f303c256a76f83439204292897a`.
+
+Consumer and controls executed separately on independent runners; the controls report correctly retains consumer and focused_gate as NOT_RUN. Exact-source parent106/260 evidence yields modular110/276 coverage. The full110-law wrapper was not executed. Every inherited law and gate remains unchanged.
+
+All twelve lookup-suite files and all eleven geometry-archive files are identical to the saved four-contract candidate. Source closure and complete native report (except recorded C compiler version) match its local reports. The original local-only logs remain in the saved review package. This branch has a new source commit; it does not falsely claim to be original local commit a51dc14037b8dc9e85ea2f3706f5b475a13f27b5.
+
+Native generic, forced-portable, native-target and UBSan each pass1,024 rows,1,022 distinct key/occupancy pairs, all128 keys and six invalid requests. The actual shifted-prefix mutation compiles/runs and is rejected for the wrong returned value. These are repeated selected queries, not full buffers or exhaustive occupancies.
+
+Independent Step.actual and Masks.actual were rechecked with exact safe source success. The archived generic/UBSan driver compares all512 step cases and128 complete masks; off-board and terminal-mask corruptions are rejected by both native values and intended source refinements. These remain two supplementary derived statements, not extra registered laws. Diagnostic text can differ in temporary paths and is preserved rather than forced byte-identical.
+
+The unchanged locked Python3.13 CPU environment and whole-repository Ruff/Basedpyright/Vulture gate pass. Clang18 is used only for native probes, not exported to Python extension builds. This resolves the saved local missing-lint-tools gap for these exact sources. Original compiler16-laws/seven-controls and12 pin checks pass.
+
+The alternate three-contract branch and its failed recovery remain untouched. This four-contract branch additionally registers initialized_indexed_lookup; equivalent routing/masked statements use the saved names. Neither previous branch is merged or overwritten. Do not apply both same-directory variants together.
+
+No production code, previous law, compiler input, routine perft budget, model/GPU/training/benchmark work changed. Proof results still trust pinned checker/Base; native allocation/lifetime, ABI, toolchain and hardware remain separate trust boundaries. Existing compiler limitations are not fixed. Python export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. Self-review only.
+
+Next decisive P2 acceptance is arbitrary-occupancy blocker traversal and terminal-edge occupancy irrelevance, composed with the now-public initialized lookup result. Independent finite step/mask foundations do not already establish the universal attack theorem.
