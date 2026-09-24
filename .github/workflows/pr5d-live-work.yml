@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: 42d4c78ebfca102e146720c818f5dba9db61fd57
-      - name: Apply four exact authored runtime files
+      - name: Apply exact runtime files and reachable-effect registration fix
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -23,16 +23,21 @@ jobs:
           python3 - <<'PY'
           import base64,gzip,hashlib,json,subprocess
           from pathlib import Path
-          record=json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/git/blobs/80142408e178fe6b6439e6bd3f1c42200aacd035']))
-          packed=base64.b64decode(record['content'])
+          def blob(sha):
+              record=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+              raw=base64.b64decode(record['content'])
+              assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
+              return raw
+          packed=blob('80142408e178fe6b6439e6bd3f1c42200aacd035')
           assert hashlib.sha256(packed).hexdigest()=='36afa24c475053ff56b67daae9582ab1d4b75eeba7ff7419cb6c99a985faeba7'
-          payload=gzip.decompress(packed)
-          assert hashlib.sha256(payload).hexdigest()=='d7196824b35d12b8b5108b6f575833cc425b04a22e9c32091ebd00a40cbfc8a0'
-          files=json.loads(payload)
+          files=json.loads(gzip.decompress(packed))
           assert len(files)==4
           for p,text in files.items():
               assert p.startswith('native/bend_engine/multi_root/') and p.endswith('.bend') and not Path(p).exists()
               Path(p).write_text(text)
+          p='native/bend_engine/batch_backend/batch_call.c'
+          Path(p).write_bytes(blob('7c0ea5e8c0c511873729f7d08ad4b763544cd82d'))
+          files[p]=Path(p).read_text()
           subprocess.run(['git','add','-N','.'],check=True)
           Path('/tmp/pr5d-built/runtime.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
           Path('/tmp/pr5d-built/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in files},indent=2))
@@ -57,10 +62,22 @@ jobs:
             gzip -k "/tmp/pr5d-built/$entry.c"
           done
           sha256sum /tmp/pr5d-built/*.c > /tmp/pr5d-built/generated.txt
-          rm /tmp/pr5d-built/*.c
+      - name: Compile both actual generated entrypoints against the existing callback
+        run: |
+          set -euo pipefail
+          d=/tmp/pr5d-built
+          printf '#define DEEPFIN_MODEL_BATCH 4\n#define DEEPFIN_MODEL_CHANNELS 175\n#define DEEPFIN_MODEL_PROFILE 4\n' > "$d/model_contract.h"
+          clang -std=c11 -O1 -I "$d" -c native/bend_engine/multi_root/test_backend.c -o "$d/callback.o"
+          for entry in live main; do
+            clang -std=c11 -O1 -ffp-contract=off -DDEEPFIN_BEND_NATIVE_MODEL -DDEEPFIN_ASYNC_BATCH -I "$d" -c "$d/$entry.c" -o "$d/$entry.o"
+            clang++ -std=c++20 -O1 -I "$d" "$d/$entry.o" "$d/callback.o" native/bend_engine/batch_backend/async_batch.cpp -pthread -lm -o "$d/$entry"
+          done
+          printf 'add startpos\n' | DEEPFIN_COHORT_ASYNC=1 "$d/live" --threads 1 -- 1 2 0 0 > "$d/smoke.txt"
+          grep -q 'live_work' "$d/smoke.txt"
+          rm "$d"/*.c "$d"/*.o "$d/live" "$d/main"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: deepfin-pr5d-reconciled-build
+          name: deepfin-pr5d-effect-fixed-build
           path: /tmp/pr5d-built
           retention-days: 30
