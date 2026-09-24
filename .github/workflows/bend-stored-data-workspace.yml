@@ -1,0 +1,31 @@
+name: Bend stored-data source workspace
+'on':
+  push:
+    branches: [feat/bend-stored-data-dev-20260923]
+    paths: [.github/workflows/bend-stored-data-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e5ae9977a9d7a6fa6338af42eb36dfb86414f117
+          persist-credentials: false
+      - name: Archive complete unmodified source and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stored-data-source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/stored-data-source/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/stored-data-source/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/stored-data-source/tree.txt"
+          cd "$RUNNER_TEMP/stored-data-source"
+          sha256sum source.tar.gz commit.raw > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bend-stored-data-source
+          path: ${{ runner.temp }}/stored-data-source/
+          retention-days: 3
