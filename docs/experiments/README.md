@@ -131,3 +131,5 @@ analysis workflow.
 - [FIFO cohort integration](2026-09-23-fifo-cohort-integration.md): ready-root queue adoption with exact parent scheduling, tree, cancellation and deadline checks.
 
 - [Matched full-coordinator FIFO timing](2026-09-23-fifo-runner-timing.md): exact list/FIFO sources, optimized callback runner, strict realized-work checks and paired timings; no model/GPU claim.
+
+- [Bounded completion notification](2026-09-23-bounded-completion-wait.md): notification versus fixed pending sleep, matched callback runner and retained control/deadline checks.
