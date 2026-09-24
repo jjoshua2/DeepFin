@@ -1,0 +1,186 @@
+name: Arena reference initialization check
+on:
+  push:
+    branches: [work/bend-arena-reference-20260924]
+    paths: [.github/workflows/arena-reference-work.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      BASE: db10bd62be839034482296068b0216d0d9d7af93
+      FEATURE: feat/bend-bounded-arenas-20260924
+      GH_TOKEN: ${{ github.token }}
+      BEND_NO_TELEMETRY: '1'
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify completed tests and prepare exact source with reference-only correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin "$BASE"
+          git worktree add --detach "$RUNNER_TEMP/arena-reference" "$BASE"
+          cd "$RUNNER_TEMP/arena-reference"
+          python3 - <<'PY'
+          import gzip,hashlib,io,json,pathlib,subprocess,xml.etree.ElementTree as ET,zipfile
+          def api(path):return subprocess.check_output(['gh','api',path],timeout=90)
+          repo='repos/jjoshua2/DeepFin'
+          jobs=json.loads(api(repo+'/actions/runs/35998021794/jobs'))['jobs']
+          assert len(jobs)==1 and jobs[0]['id']==107627522888
+          steps={s['number']:s for s in jobs[0]['steps']}
+          assert all(steps[i]['conclusion']=='success' for i in range(1,11))
+          assert steps[11]['name']=='Record completed evidence and publish clean feature branch'
+          assert steps[11]['conclusion']=='failure'
+          raw=api(repo+'/actions/artifacts/10806529575/zip')
+          assert hashlib.sha256(raw).hexdigest()=='f21aede54a4aa00a4689163d2a2e418f9479221fe3990f5480bc44a19bc523a5'
+          z=zipfile.ZipFile(io.BytesIO(raw))
+          summary=json.loads(z.read('arena-cohort/summary.json'))
+          assert summary['status']=='passed' and len(summary['verifier_reports'])==33
+          for name,digest in summary['source_sha256'].items():
+              assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==digest,name
+          for name,digest in summary['verifier_reports'].items():
+              assert hashlib.sha256(z.read('arena-cohort/'+name)).hexdigest()==digest,name
+          tests=ET.fromstring(z.read('arena-python.xml'))
+          assert len(list(tests.iter('testcase')))==345
+          assert not any(list(tests.iter(k)) for k in ('failure','error','skipped'))
+          previous=json.loads(z.read('arena-cohort/arena/summary.json'))
+          assert previous['status']=='passed' and len(previous['searches'])==37
+          out=pathlib.Path('artifacts/arena-reference');out.mkdir(parents=True)
+          (out/'previous.json').write_text(json.dumps(previous,indent=2)+'\n')
+          c=gzip.decompress(z.read('arena-cohort/runner.c.gz'))
+          assert hashlib.sha256(c).hexdigest()==summary['generated_c_sha256']=='8f9d1712af22a1ec40914ce2e53e60d5a3fde264b92c34a8561d4c3edb254b72'
+          (out/'runner.c').write_bytes(c)
+          path=pathlib.Path('native/bend_engine/multi_root/verify_arena.py');text=path.read_text()
+          old='    import chess\n\n    parser = argparse.ArgumentParser(description=__doc__)'
+          new='    import chess\n    import torch\n    from chess_anti_engine.encoding import rep_fix\n\n    parser = argparse.ArgumentParser(description=__doc__)'
+          assert text.count(old)==1;text=text.replace(old,new)
+          old="    try:\n        commands.run('compiler',"
+          new="    try:\n        # Match verify.qualify before any reference CBoard is constructed.\n        torch.set_num_threads(2)\n        rep_fix.apply(True)\n        report['reference_history_rep_fix'] = rep_fix.current()\n        commands.run('compiler',"
+          assert text.count(old)==1;text=text.replace(old,new)
+          assert hashlib.sha256(text.encode()).hexdigest()=='3d9690bf270fd694e7ee05af1ef959d74543d74b369b18480a8fde673ecd788f'
+          path.write_text(text)
+          print('All original tests and source hashes verified; only verifier initialization changed.')
+          PY
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment and unchanged compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/arena-reference"
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Build unchanged qualified coordinator for the arena verifier's two widths
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/arena-reference"
+          here=native/bend_engine/multi_root
+          out=artifacts/arena-reference
+          clang-18 -std=c11 -O3 -DLEGAL_ORACLE -I "$PWD" native/bend_engine/legal_probe/support.c -pthread -lm -o "$out/oracle"
+          for channels in 146 175; do
+            dir="$out/matrix/c${channels}-b4"; mkdir -p "$dir"
+            profile=2; test "$channels" != 175 || profile=4
+            printf '#define DEEPFIN_MODEL_BATCH 4\n#define DEEPFIN_MODEL_CHANNELS %s\n#define DEEPFIN_MODEL_PROFILE %s\n' "$channels" "$profile" > "$dir/model_contract.h"
+            clang-18 -std=c11 -O1 -ffp-contract=off -DDEEPFIN_BEND_NATIVE_MODEL -DDEEPFIN_ASYNC_BATCH -I "$dir" -c "$out/runner.c" -o "$dir/runner.o"
+            clang-18 -std=c11 -O1 -ffp-contract=off -I "$dir" -c "$here/test_backend.c" -o "$dir/callback.o"
+            clang++-18 -std=c++20 -O1 -ffp-contract=off -I "$dir" "$dir/runner.o" "$dir/callback.o" native/bend_engine/batch_backend/async_batch.cpp -pthread -lm -o "$dir/runner"
+          done
+          dir="$out/matrix/c146-b4"
+          flags=(-fsanitize=undefined -fno-sanitize-recover=all)
+          clang-18 -std=c11 -O1 -ffp-contract=off "${flags[@]}" -DDEEPFIN_BEND_NATIVE_MODEL -DDEEPFIN_ASYNC_BATCH -I "$dir" -c "$out/runner.c" -o "$dir/ubsan.o"
+          clang-18 -std=c11 -O1 -ffp-contract=off "${flags[@]}" -I "$dir" -c "$here/test_backend.c" -o "$dir/callback-ubsan.o"
+          clang++-18 -std=c++20 -O1 -ffp-contract=off "${flags[@]}" -I "$dir" "$dir/ubsan.o" "$dir/callback-ubsan.o" native/bend_engine/batch_backend/async_batch.cpp -pthread -lm -o "$dir/callback-ubsan"
+      - name: Corrected verifier, unchanged expected searches, and final static checks
+        shell: bash
+        env:
+          BUN: bun
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/arena-reference"
+          . .venv/bin/activate
+          ruff check native/bend_engine/multi_root/verify_arena.py tests/test_bend_arena.py
+          basedpyright native/bend_engine/multi_root/verify_arena.py tests/test_bend_arena.py
+          python -m pytest -q tests/test_bend_arena.py tests/test_bend_completion_ci.py tests/test_bend_completion_wait.py tests/test_bend_fifo_scheduler.py tests/test_bend_multi_root.py tests/test_bend_async_cohort.py tests/test_bend_cohort_deadlines.py tests/test_neural_work.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py --junitxml=artifacts/arena-reference/tests.xml
+          python -m native.bend_engine.multi_root.verify_arena --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --matrix artifacts/arena-reference/matrix --oracle artifacts/arena-reference/oracle --output artifacts/arena-reference/corrected
+          python - <<'PY'
+          import json,pathlib
+          out=pathlib.Path('artifacts/arena-reference')
+          old=json.loads((out/'previous.json').read_text());new=json.loads((out/'corrected/summary.json').read_text())
+          assert new['status']=='passed' and new['reference_history_rep_fix'] is True
+          for key in ('searches','capacity_effects','probe_sha256','executed_mutations_rejected','invalid_settings_rejected'):
+              assert new[key]==old[key],key
+          print('Explicit reference mode preserves all 37 search observations and all boundary controls.')
+          PY
+          ./scripts/lint.sh
+      - name: Publish only the checked verifier correction and its readout
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/arena-reference"
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess,xml.etree.ElementTree as ET
+          out=pathlib.Path('artifacts/arena-reference')
+          source=pathlib.Path('native/bend_engine/multi_root/verify_arena.py')
+          digest=hashlib.sha256(source.read_bytes()).hexdigest()
+          assert digest=='3d9690bf270fd694e7ee05af1ef959d74543d74b369b18480a8fde673ecd788f'
+          previous=json.loads((out/'previous.json').read_text());current=json.loads((out/'corrected/summary.json').read_text())
+          assert current['status']=='passed' and current['reference_history_rep_fix'] is True
+          assert current['searches']==previous['searches'] and len(current['searches'])==37
+          xml=ET.parse(out/'tests.xml').getroot()
+          assert len(list(xml.iter('testcase')))==345 and not any(list(xml.iter(k)) for k in ('failure','error','skipped'))
+          report={'status':'passed','workflow_run':int(os.environ['GITHUB_RUN_ID']),'tested_workflow_commit':os.environ['GITHUB_SHA'],
+            'base_commit':os.environ['BASE'],'prior_validation_run':35998021794,'prior_artifact':10806529575,
+            'prior_artifact_zip_sha256':'f21aede54a4aa00a4689163d2a2e418f9479221fe3990f5480bc44a19bc523a5',
+            'qualified_c_sha256':'8f9d1712af22a1ec40914ce2e53e60d5a3fde264b92c34a8561d4c3edb254b72',
+            'reference_history_rep_fix':True,'matching_diagnostic_cases':37,'matching_quiet_repeats':37,
+            'focused_python_tests':345,'verifier_sha256':digest,
+            'raw_report_sha256':hashlib.sha256((out/'corrected/summary.json').read_bytes()).hexdigest(),
+            'scope':'Reference setup correction; unchanged qualified C rebuilt, no repeated whole coordinator matrix or performance claim'}
+          evidence=pathlib.Path('docs/experiments/evidence/bounded-search-arenas/reference-check.json')
+          assert not evidence.exists();evidence.write_text(json.dumps(report,indent=2)+'\n')
+          doc=pathlib.Path('docs/experiments/2026-09-24-bounded-search-arenas.md')
+          text='\n\n### Reference initialization and publication follow-up\n\n'
+          text+='The first run 35998021794 passed every build, native, default-matrix, larger-arena, Python and static gate. Its final branch push alone was refused because GITHUB_TOKEN lacked workflows permission for the changed persistent CI file. The exact already-created commit db10bd62 was published through the authorized GitHub connector without changing source or validation expectations. The overall first run remains marked failed; its successful validation stages are not relabeled as an entirely green workflow.\n\n'
+          text+='Self-review also found the dedicated arena verifier should explicitly select the existing repetition-encoding mode before constructing reference boards. It now mirrors verify.qualify: two Torch threads and rep_fix.apply(True). This is a verifier initialization correction, not an engine encoding or fixture change.\n\n'
+          text+='Run https://github.com/jjoshua2/DeepFin/actions/runs/'+os.environ['GITHUB_RUN_ID']+' verified the original stage outcomes, all source fingerprints, 33 report hashes, JUnit counts and retained C hash, then rebuilt that unchanged qualified C at both widths plus the larger-arena UBSan configuration. With the explicit reference mode, all 37 diagnostic cases and their quiet repeats matched the earlier observations exactly; all storage/configuration/mutation controls passed. All 345 focused Python cases passed without skips and whole-repository Ruff/Basedpyright/Vulture passed. This focused follow-up does not claim a second fresh whole-coordinator generation/matrix or new performance result; ongoing PR CI still generates from source.\n\n'
+          text+='The reference-check.json record distinguishes the corrected verifier source from the original source.json manifest. Runtime Bend/native sources are unchanged between these two commits. All previous memory, scope and review limitations still apply.\n'
+          doc.write_text(doc.read_text()+text)
+          paths=[str(source),str(evidence),str(doc)]
+          changed=subprocess.check_output(['git','diff','--name-only'],text=True).splitlines()
+          assert sorted(changed)==sorted([str(source),str(doc)])
+          subprocess.run(['git','add','--',*paths],check=True);subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert sorted(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())==sorted(paths)
+          subprocess.run(['git','config','user.name','github-actions[bot]'],check=True)
+          subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
+          tree=subprocess.check_output(['git','write-tree'],text=True).strip()
+          commit=subprocess.check_output(['git','commit-tree',tree,'-p',os.environ['BASE'],'-m','test: explicitly initialize the arena reference and preserve matching qualification'],text=True).strip()
+          subprocess.run(['git','push','origin',commit+':refs/heads/'+os.environ['FEATURE']],check=True)
+          (out/'feature.txt').write_text(commit+'\n');print('PUBLISHED_REFERENCE_CORRECTION',commit)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arena-reference-check
+          path: |
+            ${{ runner.temp }}/arena-reference/artifacts/arena-reference/**/*.json
+            ${{ runner.temp }}/arena-reference/artifacts/arena-reference/**/*.xml
+            ${{ runner.temp }}/arena-reference/artifacts/arena-reference/**/*.stdout
+            ${{ runner.temp }}/arena-reference/artifacts/arena-reference/**/*.stderr
+            ${{ runner.temp }}/arena-reference/artifacts/arena-reference/feature.txt
+          retention-days: 30
