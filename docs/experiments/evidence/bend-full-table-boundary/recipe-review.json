@@ -1,0 +1,15 @@
+{
+  "supplementary_recipe_review": "PASS",
+  "checks": [
+    {"name": "harmless-comments-and-spacing", "outcome": "accepted"},
+    {"name": "commented-fake-builder", "outcome": "accepted"},
+    {"name": "second-real-definition", "outcome": "rejected", "layer": "source-token guard, not formal proof"},
+    {"name": "changed-symbolic-depth", "outcome": "rejected", "layer": "source-token guard, not formal proof"},
+    {"name": "changed-symbolic-count", "outcome": "rejected", "layer": "source-token guard, not formal proof"},
+    {"name": "changed-symbolic-seed", "outcome": "rejected", "layer": "source-token guard, not formal proof"},
+    {"name": "extra-statement", "outcome": "rejected", "layer": "source-token guard, not formal proof"},
+    {"name": "unsupported-expression", "outcome": "rejected", "layer": "source-token guard, not formal proof"}
+  ],
+  "registered_counts_changed": false,
+  "source_recipe_sha256": "01558a22a63f6c8ce35971f3664c561b1b70bca44869f8a99f90453030da066e"
+}

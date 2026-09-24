@@ -1,0 +1,22 @@
+// Supplementary source-guard robustness tests, outside registered control counts.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+const root=path.resolve(process.argv[2]);
+const suite=path.join(root,'native/bend_engine/standalone/proofs/builder');
+const {checkRecipe}=await import(path.join(suite,'recipe.js'));
+const table=fs.readFileSync(path.join(root,'native/bend_engine/standalone/Tables.bend'),'utf8');
+const spec=fs.readFileSync(path.join(suite,'Spec.bend'),'utf8');
+const report=[];
+function passed(name,text,s){assert.deepEqual(checkRecipe(text,s),checkRecipe(table,spec));report.push({name,outcome:'accepted'});}
+function rejected(name,text,s){assert.throws(()=>checkRecipe(text,s));report.push({name,outcome:'rejected',layer:'source-token guard, not formal proof'});}
+passed('harmless-comments-and-spacing',table.replace('extras(64n, 0, tables(128n, 0, 512, Array.new(U64, 17n, U64.zero())))','extras(64n, 0, # preserved defaults\n    tables(128n, 0, 512, Array.new(U64, 17n, U64.zero())))'),spec);
+passed('commented-fake-builder',table+'\n# def build() -> Array<U64>:\n#   extras(0n,0,Array.new(U64,1n,U64.zero()))\n',spec);
+rejected('second-real-definition',table+'\ndef build() -> Array<U64>:\n  Array.new(U64,0n,U64.zero())\n',spec);
+rejected('changed-symbolic-depth',table,spec.replace('Array.new(U64,d,seed)','Array.new(U64,16n,seed)'));
+rejected('changed-symbolic-count',table,spec.replace('Tables.tables(n,0,512,','Tables.tables(127n,0,512,'));
+rejected('changed-symbolic-seed',table,spec.replace('Array.new(U64,d,seed)','Array.new(U64,d,U64.zero())'));
+rejected('extra-statement',table.replace('def build() -> Array<U64>:', 'def build() -> Array<U64>:\n  ignored = 0'),spec);
+rejected('unsupported-expression',table.replace('tables(128n, 0, 512, Array.new','tables(127n+1n, 0, 512, Array.new'),spec);
+console.log(JSON.stringify({supplementary_recipe_review:'PASS',checks:report,registered_counts_changed:false,source_recipe_sha256:createHash('sha256').update(fs.readFileSync(path.join(suite,'recipe.js'))).digest('hex')},null,2));
