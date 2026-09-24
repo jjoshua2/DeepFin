@@ -1,0 +1,282 @@
+name: Independent Bend ray qualification
+'on':
+  push:
+    branches: [feat/bend-ray-refinement-dev-20260924]
+    paths: [.github/workflows/bend-independent-ray-qualification.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+env:
+  BEND_NO_TELEMETRY: '1'
+  OMP_NUM_THREADS: '2'
+  MKL_NUM_THREADS: '2'
+  OPENBLAS_NUM_THREADS: '2'
+  BASE: 5bf2220356b50431f88b1785404a8a25d4030fc9
+  TARGET: feat/bend-independent-ray-refinement-20260924
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      source: ${{ steps.stage.outputs.source }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 5bf2220356b50431f88b1785404a8a25d4030fc9
+      - name: Recover exact candidate and verify retained parent qualification
+        id: stage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ray-stage"
+          export EVIDENCE="$RUNNER_TEMP/ray-stage"
+          : > "$RUNNER_TEMP/candidate.b64"
+          for blob in b376736b66bf8bc7b4629cbadaaa40b771080123 d0d9c1f96f4d61719dbe7beb32924fd51782aab0 6de7b2dad527afaeeb6b46caa125c0484c59e047; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/candidate.b64"
+          done
+          for job in 107623611722 107623611820 107623611690; do
+            gh api "repos/jjoshua2/DeepFin/actions/jobs/$job" > "$EVIDENCE/parent-job-$job.json"
+          done
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          temp=Path(os.environ['RUNNER_TEMP']);e=Path(os.environ['EVIDENCE'])
+          encoded=(temp/'candidate.b64').read_bytes();assert len(encoded)==25820
+          patch=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(patch)==137058 and hashlib.sha256(patch).hexdigest()=='b364f599776dc662970f57c6e7e98c15e3d95235adc06676cb3ada0ef9ed34f2'
+          (temp/'candidate.patch').write_bytes(patch)
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='c3f1c20d0c8e77c932c984adf2d2e99cf0d43f98'
+          old=Path('docs/experiments/evidence/bend-lookup-contracts/hosted')
+          q=json.loads((old/'qualification.json').read_text());assert q['qualification']=='PASS' and q['modular_laws']==110 and q['modular_controls']==276
+          c=json.loads((old/'controls.json').read_text());assert c['controls_gate']=='PASS' and len(c['negative_controls'])==16 and all(x['rejected'] for x in c['negative_controls'])
+          assert json.loads((old/'source-consumer.log.json').read_text())['raw_text'].strip()=='All terms check.'
+          manifest=json.loads((old/'source-identity.json').read_text())['candidate_source_sha256s'];assert len(manifest)==341
+          for f,h in manifest.items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          for job in [107623611722,107623611820,107623611690]:
+              r=json.loads((e/f'parent-job-{job}.json').read_text());assert r['id']==job and r['run_id']==35996797725 and r['status']=='completed' and r['conclusion']=='success'
+          subprocess.run(['git','apply','--check',str(temp/'candidate.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(temp/'candidate.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='69648f55cc70d02f667576b3345140860e648f8a'
+          files=git('diff','--cached','--name-only').splitlines();assert len(files)==27
+          assert all(f.startswith('native/bend_engine/standalone/proofs/ray/') or f=='docs/experiments/2026-09-24-bend-independent-rays.md' for f in files)
+          suite=Path('native/bend_engine/standalone/proofs/ray')
+          for name in ['Grid','Rays','Masks']:
+              assert (suite/(name+'.bend')).read_bytes()==Path(f'docs/experiments/evidence/bend-lookup-contracts/geometry/{name}.bend.txt').read_bytes()
+          for name in ['Path','Frame']:
+              assert (suite/(name+'.bend')).read_bytes()==Path(f'docs/experiments/evidence/bend-lookup-contracts/terminal-path/{name}.bend.txt').read_bytes()
+          paths=git('ls-files','native/bend_engine').splitlines()
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in paths if Path(f).is_file()}
+          assert len(hashes)==367
+          result={'base':os.environ['BASE'],'candidate_tree':'69648f55cc70d02f667576b3345140860e648f8a','patch_sha256':hashlib.sha256(patch).hexdigest(),'changed_files':files,'candidate_source_sha256s':hashes,'retained_parent_laws':110,'retained_parent_controls':276,'parent_manifest_matches':341,'parent_qualification_sha256':hashlib.sha256((old/'qualification.json').read_bytes()).hexdigest(),'parent_source_identity_sha256':hashlib.sha256((old/'source-identity.json').read_bytes()).hexdigest(),'combined_115_law_wrapper_executed':False,'five_archived_helpers_reused_exactly':True,'cosmetic_cleanup':'One trailing blank line removed from new Algebra.bend before hosted qualification; no term or statement change.'}
+          (e/'source-identity.json').write_text(json.dumps(result,indent=2)+'\n')
+          PY
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          git switch -c "$TARGET"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove independent blocker rays and initialized slider lookup'
+          git push origin "HEAD:refs/heads/$TARGET"
+          echo "source=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ray-stage
+          path: ${{ runner.temp }}/ray-stage/
+          retention-days: 30
+  check:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [source, controls, runtime]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Verify unchanged compiler
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ray-${{ matrix.phase }}"
+          echo "EVIDENCE=$RUNNER_TEMP/ray-${{ matrix.phase }}" >> "$GITHUB_ENV"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+      - name: Check all five public laws and importing consumer
+        if: matrix.phase == 'source'
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          timeout 1700 bun .compiler/bend2/main.ts native/bend_engine/standalone/proofs/ray/consumer.bend > "$EVIDENCE/consumer.log" 2>&1
+          python3 -c 'import os;from pathlib import Path;t=(Path(os.environ["EVIDENCE"])/"consumer.log").read_text();assert t.strip()=="All terms check.",t[-2000:]'
+      - name: Check all nineteen source and policy controls
+        if: matrix.phase == 'controls'
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/ray/focused.js "$PWD/.compiler" --controls-only --report "$EVIDENCE/controls.json" 2>&1 | tee "$EVIDENCE/controls.log"
+      - name: Verify actual ray and initialized lookup in four native modes
+        if: matrix.phase == 'runtime'
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/ray/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/ray-native.json" 2>&1 | tee "$EVIDENCE/ray-native.log"
+          bun native/bend_engine/standalone/proofs/lookup/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/lookup-native.json" 2>&1 | tee "$EVIDENCE/lookup-native.log"
+      - name: Recheck original compiler source suite and pin tests
+        if: matrix.phase == 'runtime'
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        if: matrix.phase == 'runtime'
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        if: matrix.phase == 'runtime'
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development environment with normal host compiler
+        if: matrix.phase == 'runtime'
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        if: matrix.phase == 'runtime'
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify no source drift
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ray-${{ matrix.phase }}
+          path: ${{ runner.temp }}/ray-${{ matrix.phase }}/
+          retention-days: 30
+  publish:
+    needs: [prepare, check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ray-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/collected
+      - name: Verify successful receipts and publish durable evidence only
+        env:
+          SOURCE: ${{ needs.prepare.outputs.source }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-lookup-contracts-qualified-20260924 | cut -f1)" = "$BASE"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['RUNNER_TEMP'])/'collected'
+          def read(name):return json.loads((e/name).read_text())
+          ident=read('source-identity.json')
+          for f,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          c=read('controls.json');n=read('ray-native.json');l=read('lookup-native.json')
+          assert (e/'consumer.log').read_text().strip()=='All terms check.'
+          assert c['new_law_count']==5 and c['controls_gate']=='PASS' and c['consumer']=='NOT_RUN' and c['focused_gate']=='NOT_RUN'
+          assert len(c['negative_controls'])==19 and all(x['rejected'] for x in c['negative_controls'])
+          assert n['native_gate']=='PASS' and n['distinct_rows']==7008 and n['ray_rows']==4960 and n['first_blocker_positions']==1456
+          assert n['ray_domains']==512 and n['chess_keys']==128 and len(n['modes'])==4
+          assert all(x['invalid_rejections']==9 and x['output_sha256']=='c50da4a94410288cb78ede92d6c6f7c472819779092d572d18f681ad5ef933e7' for x in n['modes'])
+          assert len(n['mutations'])==2 and all(x['rejected'] for x in n['mutations'])
+          assert l['native_gate']=='PASS' and l['rows_per_mode']==1024 and l['distinct_input_pairs']==1022 and l['all_keys']==128
+          old=json.loads(Path('docs/experiments/evidence/bend-lookup-contracts/hosted/runtime-native.json').read_text())
+          assert {k:v for k,v in l.items() if k!='cc'}=={k:v for k,v in old.items() if k!='cc'}
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          for f,h in c['source_sha256s'].items():assert hashlib.sha256((Path('native/bend_engine')/f).read_bytes()).hexdigest()==h,f
+          d=Path('docs/experiments/evidence/bend-independent-rays');d.mkdir(exist_ok=False)
+          for name in ['source-identity.json','controls.json','ray-native.json','lookup-native.json','compiler-proofs.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['consumer.log','pin.log','lint.log']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          for f in e.glob('parent-job-*.json'):shutil.copyfile(f,d/f.name)
+          result={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':'69648f55cc70d02f667576b3345140860e648f8a','new_laws':5,'new_controls':19,'retained_parent_laws':110,'retained_parent_controls':276,'modular_laws':115,'modular_controls':295,'combined_wrapper_executed':False,'consumer_and_controls_separate':True,'candidate_source_entries':367,'independent_review':False,'claim':'Bounded actual initialized source pipeline returns independent coordinate first-blocker-inclusive attacks and the complete final array; native trust boundaries remain.'}
+          (d/'qualification.json').write_text(json.dumps(result,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes all five new public contracts/importing consumer, all19 controls, four native ray modes, four actual initialized-lookup modes, original compiler source/pin checks and unchanged whole-repository lint on source `{os.environ['SOURCE']}`."
+          paragraphs=['## Completed hosted qualification',headline,
+            'The consumer and controls-only gate executed separately. The controls report intentionally retains consumer/focused status NOT_RUN; the separate exact-safe consumer receipt supplies that result. Parent110/276 is retained on exact341-source manifest entries and successful source/control/runtime jobs, giving modular115-law/295-control coverage. The complete115-law wrapper was not executed or claimed.',
+            'The source result connects production accumulator ray traversal and masked slider computation to independently defined coordinates and first-blocker-inclusive paths for arbitrary U64 occupancies. It composes with actual stored-header/data/shape/index producers into the complete returned-pair initialized lookup theorem. Seven-step edge completeness and the actual full relevant-mask identity ensure this is not merely a truncated or circular production-to-production specification.',
+            'Ten ordinary semantic/refinement controls reject actual ignored/omitted blockers, dropped accumulator, wrong file boundary and terminal mask, truncated route/edge certificates, incorrect interior observations and the original-buffer return. Eight enforce manifests/import safety; one synthetic warning output test is not another compiler execution. Crashes, missing files and timeouts are not accepted as semantic controls.',
+            'Native ray/slider checks pass7,008 distinct cases per mode, all512 ray domains/128 keys and every1,456 first-blocker position, plus nine invalid requests per mode. Actual ignore-blocker/omit-blocker mutations compile and run before failing the independent values. Separately the unchanged real builder plus Chess.slide verifier passes1,024 rows/1,022 distinct inputs and six invalid requests in each of four modes, retaining its shifted-prefix rejection. Modes repeat fixtures, not disjoint or exhaustive U64 datasets; selected queries are not a full-array or lifetime proof.',
+            'Hosted Bun1.4.2/Clang18.1.3; Clang is scoped to native probes. Python3.13/uv0.12.10 locked CPU tools use the normal build compiler. Ruff/Basedpyright/Vulture pass unchanged, resolving the historical local missing-tools failure. Original compiler16-laws/seven-controls, including cyclic-template rejection, and12 pin tests pass. One trailing blank line in new Algebra.bend was removed before these exact-source hosted checks; no term or statement changed.',
+            'The complete candidate tree and all367 native-source hashes are verified before evidence publication. Only documentation/index/evidence is appended afterward. Five earlier archived helper files are reused byte-for-byte. The independent path terminal-occupancy lemma is now applied to actual masking/traversal rather than left as an unconnected specification result.',
+            'The initialized theorem retains symbolic depth=17, selected-block and extras budgets, arbitrary seed/occupancy and the complete final array. Its domains include the full build configuration; no separate closed normalization of the enormous literal Tables.build term is claimed. This addresses the P2 independent attack/storage connection within that supported source pipeline, not whole-engine legality, search, model or training correctness.',
+            'Self-review only. Pinned checker/Base, native lowering, allocation/ownership/lifetime, ABI, C/C++ toolchain, libraries, OS and hardware remain trusted boundaries. Existing compiler limitations remain unresolved. No production runtime, prior accepted law/gate, compiler input, permanent workflow, routine perft budget, model/GPU/training/benchmark change. No additional Python application responsibility moved into Bend; export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No merge, force push, deployment or live-process operation.'
+          ]
+          record=Path('docs/experiments/2026-09-24-bend-independent-rays.md');record.write_text(record.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          row='| [Independent blocker rays and initialized lookup](2026-09-24-bend-independent-rays.md) | Five source laws connect arbitrary-occupancy production rays, mask irrelevance and actual initialized lookup to independent coordinates; modular115/295 and bounded native qualification |\n'
+          index.write_text(text.replace(anchor,anchor+row,1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          update='## Latest independent ray and initialized-lookup refinement\n\n'+headline+'\n\nCurrent P2 source progress now includes independent geometric attack correctness, not only equality to the production slider definition. The five ray contracts prove full seven-step geometric coverage, arbitrary-occupancy/accumulator production ray refinement, unmasked and actual-relevant-mask slider refinement, and the complete returned-pair result for the actual initialized table/extras pipeline. The caller supplies only supported square/key/budget and symbolic depth conditions; actual shape, headers, data and index certificates are produced by existing proofs.\n\nThe independent attack definition uses explicit natural file/rank paths and first-blocker inclusion. Structural proofs derive preservation of all interior occupancy observations; actual full-mask identity and the terminal-path lemma connect masking to that definition. All old accepted statements/gates remain unchanged. Qualification is modular115 laws/295 controls, not a freshly executed full chain. Historical notes below calling the independent geometry connection wholly open are superseded within this bounded source pipeline.\n\nNo separate closed normalization of the huge literal Tables.build expression, native lowering/allocation/lifetime proof, or whole-chess legality/search/model theorem follows. P3-P7 and remaining application migration stay open. See [the current readout](experiments/2026-09-24-bend-independent-rays.md) and compact receipts for domains, independent reference checks, failures and trust boundaries.\n'
+          m.write_text(title+'\n\n'+update+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify independent blocker-ray refinement and actual initialized lookup'
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$RUNNER_TEMP/collected" "$RUNNER_TEMP/final/reports"
+          git log -2 --format='%H %s' > "$RUNNER_TEMP/final/published-commits.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ray-final
+          path: ${{ runner.temp }}/final/
+          retention-days: 14
