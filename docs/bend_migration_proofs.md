@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest computed-data persistence qualification
+
+Hosted qualification **35954718944**, workflow commit `eab56eba6394388e8b0cd52f4796989921e85943`, passes the three new public laws/importing consumer, all seventeen controls, four native modes and the late-write regression, original compiler checks and unchanged whole-repository lint on source `1ee5d0534a3ac8c2ed3514141f0e89be58ef500b`.
+
+Current P2 progress includes `data/later_tables_preserve_data`, `data/stored_data_after_tables` and `data/stored_data_after_extras`. These prove complete returned-pair preservation and the computed actual slider value after later metadata, other blocks and extras, under complete depth17 shape, bounded block/relative-index and extras budgets. Allocation supplies shape in the pipeline contract; no desired initial data or per-write correctness witness is assumed.
+
+The new three-law consumer and seventeen controls executed separately. Parent103/243 is retained on exact logical sources, yielding modular106/260 coverage, not a new full aggregate execution. Historical statements below that final computed-data persistence is wholly unproved are superseded by these specific contracts. Actual Chess lookup composition and independently specified blocker rays remain open. No application responsibility moves from Python. See [the dated record](experiments/2026-09-23-bend-stored-data.md) and committed reports.
+
 ## Current stored-header qualification: September23,2026
 
 Hosted modular qualification **35938924299**, workflow `493367c64aa2c304143a88b00ab5cf84ad779756`, freshly passes three public header laws, seventeen rejection controls, four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `eceb6329cbc000469884513c660c2a615060f83b`. The exact-source parent100-law/226-control result is retained and verified, not rerun.

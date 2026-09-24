@@ -73,3 +73,22 @@ Self-review only, not independent review. Python export, references, data/contro
 orchestration and training remain dependencies; C++/LibTorch/AOTI remains the
 transitional inference backend. No application responsibility moves into Bend in
 this increment. Existing compiler limitations are not changed or suppressed.
+
+
+## Completed hosted qualification
+
+Hosted qualification **35954718944**, workflow commit `eab56eba6394388e8b0cd52f4796989921e85943`, passes the three new public laws/importing consumer, all seventeen controls, four native modes and the late-write regression, original compiler checks and unchanged whole-repository lint on source `1ee5d0534a3ac8c2ed3514141f0e89be58ef500b`.
+
+The source consumer and controls-only gate ran as separate successful commands. The latter deliberately records focused_gate and consumer as NOT_RUN; it is not relabeled a full focused execution. With exact-source retained parent evidence, modular coverage is 106 laws and 260 controls. The complete 106-law wrapper was not executed. All 315 inherited manifest entries and the historical logical source/report identities matched.
+
+Eight semantic/refinement controls require ordinary failures at intended locations, including one explicitly inherited actual-implementation bridge. Eight enforce manifests/imports/no holes/unsafe/symlinks. One unit-tests the output wrapper with synthetic unsafe-warning output; it is not a new compiler execution. Errors, crashes, missing imports and timeouts are not counted as semantic rejection.
+
+The unchanged full-buffer native verifier was freshly rerun in generic, forced-portable, native-target and UBSan builds: nine buffers, 1,179,648 cell comparisons and nine rejected malformed requests per mode, all 128 keys across cases. A disposable actual late metadata write to cell512 is rejected as a wrong-value mismatch after compilation. That first failing suffix case protects an arbitrary initialized earlier value; it is not mislabeled as a newly computed attack in that particular case. The normal full-table cases separately check computed entries through all subsequent writes. Modes repeat fixtures, not disjoint datasets or exhaustive native inputs.
+
+Hosted Bun1.4.2 and Ubuntu clang version 18.1.3 (1ubuntu1); Clang is scoped to native checks only. Locked Python3.13 CPU tools with uv0.12.10 use the normal build compiler. The unchanged Ruff/Basedpyright/Vulture gate passes, resolving the retained local missing-tools gap for this candidate. Original compiler source suite and all seven controls, including cyclic-template rejection, and all12 pin tests pass.
+
+Local constructive checking passed the final three-law consumer with exact success output in 277.501868 seconds. Earlier drafts failed affine-use, Type-versus-Data product binding and computed-product pattern restrictions; these were corrected by explicit proof binders and existing certificate eliminators, without changing the public domains or checker. Other checks based on known-invalid drafts were stopped and are not counted. The final source uses the corrected product handling. Native and pin checks also passed locally; compact local receipts are kept in the review package.
+
+The complete source tree matches the locally checked candidate. Only evidence, the experiment index and migration inventory are added after qualification. Self-review only, not independent review; exact hashes are provenance, not a separate reviewer. No prior proof or production code changes, no merge, deployment, live-process change, permanent workflow or routine perft increase.
+
+Current computed values still refer to actual Tables.slider on the proved enumeration state. Actual Chess lookup composition and independent blocker-ray/relevant-mask correctness remain separate P2 obligations. Source checker/Base, native lowering, physical ownership/allocation/lifetime, ABI, toolchain, libraries, OS and hardware remain trust boundaries. Python export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No model/GPU/training/benchmark result is added.
