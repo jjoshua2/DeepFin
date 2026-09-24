@@ -1,6 +1,11 @@
 # Numeric maps on actual CBoard position keys
 
-## Scope and preregistration
+**Final qualified scope:** eight bounded legal walks per seed, at most 64 plies
+each, with 2,048 buckets for encounter replay. The original plan and its fixed-
+budget amendment are retained below. This is correctness qualification, not a
+performance result or a production cache integration.
+
+## Original scope and preregistration
 
 Parent: #876 at `4364c213561e417386c6f2dab229e0b63d42075b`. The repaired
 explicit CPU target's checks passed. The old synthetic-key benchmarks do not
@@ -77,33 +82,30 @@ comparison to a stronger map in this increment and no change to production
 cache keys, eviction, models, compiler, defaults, or running training. Self-review
 only; no independent review or formal proof. No merge or deployment.
 
-## Readout
+## Initial local checks
 
-Pending hosted qualification. Fourteen pure producer/admission tests passed
-locally without global conftest; the local environment lacks python-chess and
-the compiled project extension, so the three engine-dependent tests are not
-included in that local result.
-
+Fourteen pure producer/admission tests passed locally without global conftest;
+the local environment lacks python-chess and the compiled project extension,
+so the three engine-dependent tests were not included in that local result.
+The full hosted result follows below.
 
 ### Preserved first static failure
 
-Run 36032177266 passed source checks, the locked build and Ruff, then Basedpyright rejected the circular import between the benchmark and the new chess fixture producer. No hosted Python or native replay had run. The unchanged frozen Workload schema now lives in workload.py and both producers import it, rather than suppressing the cycle diagnostic. The existing benchmark still exposes Workload through its import. Fixtures, native implementations, oracles and expected results are unchanged. Fourteen pure tests passed locally after this refactor; full hosted qualification is still a separate gate.
-
+Run 36032177266 passed source checks, the locked build and Ruff, then Basedpyright rejected the circular import between the benchmark and the new chess fixture producer. No hosted Python or native replay had run. The unchanged frozen Workload schema now lives in workload.py and both producers import it, rather than suppressing the cycle diagnostic. The existing benchmark still exposes Workload through its import. Fixtures, native implementations, oracles and expected results are unchanged. Fourteen pure tests passed locally after this refactor; full hosted qualification remained a separate gate.
 
 ### Fixed corpus-budget amendment
 
 Run 36032729272 passed Ruff and Basedpyright, and 101 of 102 Python cases. All six native identity relationships and the raw-hash substitution negative passed. The corpus reproducibility case rejected the promotion seed because four bounded random legal walks did not supply the required 128 distinct keys. No native map replay or performance measurement ran. This is a fixture-coverage failure, not an observed map mismatch.
 
-The fixed budget is now eight walks per seed, still capped at 64 plies each, for at most 520 observations per corpus. All four seeds use the same expanded budget and deterministic RNG sequence; no keys or seeds are selected by hash bucket. The minimum 128 distinct-key requirement, 64-entry operation workloads and all equality/identity expectations are unchanged. The encounter replay now reserves 2,048 buckets / 1,024 entries so every possible observed key fits without eviction. Oversize/replay tests use the corresponding 520-record bound. This supersedes the original four-walk/1,024-bucket plan above and is recorded before native replay. No performance result was rerolled.
+The fixed budget is now eight walks per seed, still capped at 64 plies each, for at most 520 observations per corpus. All four seeds use the same expanded budget and deterministic RNG sequence; no keys or seeds are selected by hash bucket. The minimum 128 distinct-key requirement, 64-entry operation workloads and all equality/identity expectations are unchanged. The encounter replay now reserves 2,048 buckets / 1,024 entries so every possible observed key fits without eviction. Oversize/replay tests use the corresponding 520-record bound. This supersedes the original four-walk/1,024-bucket plan above and was recorded before native replay. No performance result was rerolled.
 
-Failure artifact 10823596752 retains the 102-case JUnit report (101 passed, one failed), ZIP SHA-256 dbf0b580d095ff914e471a364776ddd035443d81ce3505640d876c55c9d08f43. Fourteen pure tests passed locally after the bound amendment; engine-dependent tests remain a hosted gate.
+Failure artifact 10823596752 retains the 102-case JUnit report (101 passed, one failed), ZIP SHA-256 dbf0b580d095ff914e471a364776ddd035443d81ce3505640d876c55c9d08f43. Fourteen pure tests passed locally after the bound amendment; engine-dependent tests remained a hosted gate.
 
+## Completed hosted qualification
 
-### Completed hosted qualification
+Run https://github.com/jjoshua2/DeepFin/actions/runs/36033116416, job 107746508557, completed every stage successfully. All 102 Python cases passed without skips (17 new), including native-key identity checks, rejection of the raw-hash substitution and full reconstruction of every recorded legal path. The original four-mode map, three executed mutations, synthetic comparison and whole-repository Ruff/Basedpyright/Vulture passed.
 
-Run https://github.com/jjoshua2/DeepFin/actions/runs/36033116416 passed all preceding validation stages. All 102 Python cases passed without skips (17 new), including native-key identity checks, rejection of the raw-hash substitution and full reconstruction of every recorded legal path. The original four-mode map, three executed mutations, synthetic comparison and whole-repository Ruff/Basedpyright/Vulture passed.
-
-Both maps passed 36 exact dictionary traces per explicit-target/UBSan build: 32 prior cases plus four chess encounter streams. All 144 new operation-driver checks passed. Build modes reuse fixtures, not independent games. No performance panel ran.
+Both maps passed 36 exact dictionary traces / 12,061 operations per explicit-target/UBSan build: 32 prior cases plus four chess encounter streams. All 144 new operation-driver checks passed, in addition to 180 unchanged synthetic driver checks. Build modes reuse fixtures, not independent games. No performance panel ran.
 
 | Corpus | Position observations | Distinct keys | Revisits |
 |---|---:|---:|---:|
@@ -112,4 +114,29 @@ Both maps passed 36 exact dictionary traces per explicit-target/UBSan build: 32 
 | ep | 341 | 328 | 13 |
 | promotion | 329 | 317 | 12 |
 
-The raw report retains every FEN/move path/key plus all operation definitions and checks. Compact source, extension, corpus and expected-trace hashes are committed under evidence/chess-key-map-replay/. The tested-source manifest describes preregistration before this documentation-only readout. Same-key/different-history examples and the intentional raw-hash/collision negatives enforce test boundaries; they do not implement safe neural caching. No engine, map algorithm, cache key, compiler, model, live setting, merge or deployment changed. Self-review only.
+The 1,673 recorded observations contain 1,634 distinct keys overall. Their
+encounter replay adds 5,019 get/put/get operations. This is generated legal-
+position coverage, not a representative production lookup-frequency estimate.
+
+The raw report retains every FEN/move path/key plus all operation definitions and checks. Compact source, extension, corpus and expected-trace hashes are committed under evidence/chess-key-map-replay/. The tested-source manifest describes preregistration before the documentation-only readout. Same-key/different-history examples and the intentional raw-hash/collision negatives enforce test boundaries; they do not implement safe neural caching. No engine, map algorithm, cache key, compiler, model, live setting, merge or deployment changed. Self-review only.
+
+### Evidence verification and persistent CI
+
+Successful artifact: 10822733454, `chess-key-map-replay`; ZIP SHA-256
+`23dfe29cb49d6ef7c83d382e9e436fbcea6824a4bf5c746e0d9ce372f5c8d7d4`.
+Tested staging commit: `b6cb9d568d58dbe70505b4f2ad0e0dea6ad3d7ad`.
+Published source-qualified commit: `340e26a621d4f4757d3945b8dd18146ee003a2ad`.
+
+The downloaded artifact was rechecked outside the runner: all 102 JUnit cases,
+128 original-map traces, 128 synthetic comparison traces, 144 chess comparison
+traces, all 324 driver output/input hashes and parsed states, corpus record
+hashes and replay construction matched. Captured stderr was empty. The complete
+raw artifact has finite retention; committed generator code and source/corpus
+hashes preserve the reproducible workload definition and compact evidence.
+
+The subsequent workflow-only wiring and this documentation cleanup do not
+change the qualified Python/Bend sources. Persistent numeric-map CI now invokes
+`--chess` without `--measure`, includes all map tests, and triggers on the relevant
+encoding and graph-identity sources. It uses read-only permissions and the same
+locked CPU/compiler setup. New-head PR CI is separate from the dedicated run;
+no historical artifact is an input to future correctness checks.
