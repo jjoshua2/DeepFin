@@ -1,0 +1,102 @@
+name: Matched CBoard-key map timing
+on:
+  push:
+    branches: [work/bend-chess-map-timing-20260924]
+permissions:
+  contents: read
+concurrency:
+  group: chess-map-timing-screen
+  cancel-in-progress: false
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BEND_NO_TELEMETRY: '1'
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment and unchanged compiler
+        run: |
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Verify source and existing corpus before measurement
+        run: |
+          . .venv/bin/activate
+          python - <<'PY'
+          import hashlib,json,pathlib
+          from native.bend_engine.u64_map_probe.chess_workloads import collect
+          prior=json.loads(pathlib.Path('docs/experiments/evidence/chess-key-map-replay/summary.json').read_text())
+          here=pathlib.Path('native/bend_engine/u64_map_probe')
+          for name,digest in prior['source_sha256'].items():
+              assert hashlib.sha256((here/name).read_bytes()).hexdigest()==digest,name
+          cases,replays,corpus=collect()
+          assert len(cases)==12 and len(replays)==4
+          assert corpus['producer_source_sha256']==prior['chess_corpus']['producer_source_sha256']
+          assert corpus['identity_checks']==prior['chess_corpus']['identity_checks']
+          expected={c['name']:c['records_sha256'] for c in prior['chess_corpus']['corpora']}
+          assert {c['name']:c['records_sha256'] for c in corpus['corpora']}==expected
+          pathlib.Path('artifacts').mkdir(exist_ok=True)
+          pathlib.Path('artifacts/chess-map-preflight.json').write_text(json.dumps({'status':'passed','corpus_record_sha256':expected,'map_source_sha256':prior['source_sha256'],'producer_source_sha256':corpus['producer_source_sha256'],'extension_sha256':corpus['cboard_extension_sha256']},indent=2)+'\n')
+          PY
+          ruff check native/bend_engine/u64_map_probe/*.py tests/test_bend_u64_map.py tests/test_bend_map*.py
+          basedpyright native/bend_engine/u64_map_probe/*.py tests/test_bend_u64_map.py tests/test_bend_map*.py
+          python -m pytest -q tests/test_bend_u64_map.py tests/test_bend_map*.py --junitxml=artifacts/chess-map-timing-tests.xml
+      - name: Existing correctness controls and single paired timing panel
+        run: |
+          . .venv/bin/activate
+          python -m native.bend_engine.u64_map_probe.benchmark --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --bun bun --cc clang-18 --output artifacts/chess-map-timing --chess --measure
+      - name: Preserve build provenance and reconcile measurements
+        run: |
+          . .venv/bin/activate
+          lscpu > artifacts/chess-map-timing/cpu.txt
+          python - <<'PY'
+          import hashlib,json,pathlib,os
+          from native.bend_engine.u64_map_probe.benchmark import parse,encode,summarize
+          from native.bend_engine.u64_map_probe.workload import Workload
+          out=pathlib.Path('artifacts/chess-map-timing')
+          r=json.loads((out/'report.json').read_text())
+          assert r['status']=='passed' and r['measured'] is True and r['workload_source']=='chess'
+          cases={c['name']:Workload(c['name'],c['bits'],tuple(map(tuple,c['initial'])),tuple(map(tuple,c['ops']))) for c in r['cases']}
+          assert len(cases)==12 and r['contract_executions']==144
+          assert len(r['reference_checks'])==4 and all(x['cases']==36 and x['operations']==12061 for x in r['reference_checks'])
+          assert sum(x['phase']=='measurement' for x in r['samples'])==144
+          assert summarize(r['samples'],list(cases))==r['summary']
+          for i,row in enumerate(r['samples']):
+              label=f"{i:04}-{row['case']}-{row['arm']}-{row['phase']}"
+              raw=(out/(label+'.stdout')).read_bytes()
+              assert hashlib.sha256(raw).hexdigest()==row['stdout_sha256']
+              assert not (out/(label+'.stderr')).read_text()
+              assert parse(raw.decode(),cases[row['case']],row['rounds'])==row['milliseconds']
+              assert hashlib.sha256(encode(cases[row['case']],row['rounds']).encode()).hexdigest()==row['input_sha256']
+          files=[p for arm in ('hash','scan') for p in (out/arm).iterdir() if p.is_file()]
+          identity={'workflow_run':os.environ['GITHUB_RUN_ID'],'checkout_sha':os.environ['GITHUB_SHA'],'file_sha256':{str(p.relative_to(out)):hashlib.sha256(p.read_bytes()).hexdigest() for p in files}}
+          (out/'build.json').write_text(json.dumps(identity,indent=2)+'\n')
+          print(json.dumps(r['summary'],indent=2))
+          PY
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chess-map-timing
+          path: |
+            artifacts/chess-map-preflight.json
+            artifacts/chess-map-timing-tests.xml
+            artifacts/chess-map-timing/*.json
+            artifacts/chess-map-timing/*.stdout
+            artifacts/chess-map-timing/*.stderr
+            artifacts/chess-map-timing/*.txt
+          retention-days: 30
