@@ -50,7 +50,7 @@ RESEARCH_MAX_PLIES = 400
 RESEARCH_PARALLEL_GAMES = frozenset({16, 32, 64})
 RESEARCH_MAX_BUFFERED_ROWS = 64 * RESEARCH_MAX_PLIES
 MAX_GPU_MEM_GB = 8.0
-GPU_LOCK = Path("/home/josh/projects/chess/scratchpad/gpu0_experiment.lock")
+GPU_LOCK = Path.home() / "projects/chess/scratchpad/gpu0_experiment.lock"
 _NEURAL_OPS = {"Conv", "FusedConv", "NhwcConv", "MatMul", "FusedMatMul", "Gemm", "FusedGemm"}
 _SOURCE_FILES = (
     "scripts/bt4_root_policy_worker.py",

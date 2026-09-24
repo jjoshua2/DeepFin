@@ -9,7 +9,7 @@ accepts the provider change.
 ## Frozen inputs and semantics
 
 The selected model is
-`/home/josh/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx`,
+`~/projects/chess/data/lc0/onnx/BT4-it332-vanilla-winner.onnx`,
 SHA-256 `1d3c0bd28ebfb42b015d18f67831cb1d6d15ad5d358b25b8a8cf500786262fc0`
 (read from the file on September 23; the prior G10 raw sidecar records the
 same SHA). ONNX graph inspection found `/input/planes` float32
@@ -27,7 +27,7 @@ separately from the native WDL and from the game-result target. No search
 policy or tablebase-informed move choice is claimed.
 
 The canonical shared GPU lock is
-`/home/josh/projects/chess/scratchpad/gpu0_experiment.lock` on device 0,
+`~/projects/chess/scratchpad/gpu0_experiment.lock` on device 0,
 with `CUDA_VISIBLE_DEVICES=0`, a 2 GiB ORT arena cap, and two CPU threads.
 The worker refuses absent CUDA, provider fallback, changed provider options,
 and a first-root profile with no CUDA Conv/MatMul/Gemm-family model work. It
@@ -40,7 +40,8 @@ process group, starts its timer before launching the child, and treats a busy
 lock as failed admission rather than waiting on the GPU slot.
 
 The strict six-man pair is
-`/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6`.
+`~/projects/chess/data/syzygy_3-4-5:~/projects/chess/data/syzygy_6`.
+Expand both home-directory prefixes before passing this pair to an engine.
 The earlier real-file smoke opened 1,000 WDL and 1,000 DTZ material entries;
 the pilot must recheck capacity and file-stat inventory itself. The fixed
 seven-piece FEN is `4Q3/8/8/8/1BR4r/8/2p2k1K/8 w - - 0 1`.
