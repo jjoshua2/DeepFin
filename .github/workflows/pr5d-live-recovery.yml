@@ -5,22 +5,65 @@ on:
 permissions:
   contents: read
 jobs:
-  snapshot:
+  generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 15
+    env:
+      BEND_NO_TELEMETRY: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           ref: 42d4c78ebfca102e146720c818f5dba9db61fd57
-      - name: Archive tracked source and exact identity
+      - name: Recover and hash-check four authored runtime files
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir /tmp/pr5d-current
-          git archive HEAD | gzip > /tmp/pr5d-current/source.tar.gz
-          git rev-parse HEAD > /tmp/pr5d-current/revision.txt
-          git rev-parse HEAD^{tree} > /tmp/pr5d-current/tree.txt
-          sha256sum /tmp/pr5d-current/source.tar.gz > /tmp/pr5d-current/sha256.txt
-      - uses: actions/upload-artifact@v4
+          set -euo pipefail
+          mkdir /tmp/pr5d-generated
+          python - <<'PY'
+          import base64,hashlib,json,subprocess
+          from pathlib import Path
+          entries={
+              'LiveRegistry.bend':('7cd8e5513206ebee603fc4acf2e6ade517654366','f844fa37c8d713ae08a20e7c4db91ab7a5caa0d7a3af972dc06743ed926d892e'),
+              'LiveReport.bend':('c77593f8e423705138d55ca9bb871336a35e3e80','b5f6f1e7d2f0ecc4b9c8d2d1a8ff57523230a84df0a02f4638104847645441f1'),
+              'LiveRun.bend':('1296dfcfc91257b7bdf886c7db7f2367cb5f2356','35e02e934038b3b61c64f61a773fc1bba7166f4c686bf6b3e668338c110496ee'),
+              'live.bend':('a05297f9d7986d0e688263b131b07419585dd251','a47605984c673760a7a779a0be8819a8f39b16a141e3692f6019cddab15d8ca8'),
+          }
+          manifest={}
+          for name,(sha,digest) in entries.items():
+              data=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+              raw=base64.b64decode(data['content'])
+              assert hashlib.sha256(raw).hexdigest()==digest,name
+              path=Path('native/bend_engine/multi_root')/name
+              assert not path.exists(),name
+              path.write_bytes(raw); manifest[str(path)]=digest
+          subprocess.run(['git','add','-N','.'],check=True)
+          subprocess.run(['git','diff','--check'],check=True)
+          Path('/tmp/pr5d-generated/runtime.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
+          Path('/tmp/pr5d-generated/source-manifest.json').write_text(json.dumps(manifest,indent=2))
+          PY
+      - uses: oven-sh/setup-bun@v2
         with:
-          name: deepfin-pr5d-current-source
-          path: /tmp/pr5d-current
-          retention-days: 7
+          bun-version: 1.4.2
+      - name: Verify unchanged compiler and generate fresh live and reference C
+        run: |
+          set -euo pipefail
+          single=native/bend_engine/standalone
+          revision="$(bun "$single/verify_compiler.js" --revision)"
+          repository="$(bun "$single/verify_compiler.js" --repository)"
+          git init -q /tmp/pr5d-compiler
+          git -C /tmp/pr5d-compiler fetch -q --depth=1 "$repository" "$revision"
+          git -C /tmp/pr5d-compiler checkout -q --detach FETCH_HEAD
+          bun "$single/verify_compiler.js" /tmp/pr5d-compiler | tee /tmp/pr5d-generated/compiler.txt
+          free -m > /tmp/pr5d-generated/host-memory.txt
+          for entry in live main; do
+            /usr/bin/time -v timeout 360 bun /tmp/pr5d-compiler/bend2/main.ts "native/bend_engine/multi_root/$entry.bend" -o "/tmp/pr5d-generated/$entry.c" > "/tmp/pr5d-generated/$entry-build.txt" 2>&1
+            sha256sum "/tmp/pr5d-generated/$entry.c" >> /tmp/pr5d-generated/generated-sha256.txt
+            gzip "/tmp/pr5d-generated/$entry.c"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deepfin-pr5d-reconciled-generation
+          path: /tmp/pr5d-generated
+          retention-days: 30
