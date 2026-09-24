@@ -1,0 +1,89 @@
+name: Matched FIFO full-runner timing
+on:
+  push:
+    branches: [work/bend-fifo-timing-20260923]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: fifo-full-runner-timing
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Exact authored source and locked CPU environment
+        run: |
+          set -euo pipefail
+          echo 'b5631ad25fe5e5813ae97dcb0db1b05ac9f0d78b469bb35d868a5398af05a159  native/bend_engine/multi_root/benchmark_fifo.py' | sha256sum -c -
+          echo 'dfb18e83351d239d816840a881c51d6383a39b4f4f2206c18e2f169d648071d8  native/bend_engine/multi_root/build_fifo_benchmark.sh' | sha256sum -c -
+          echo 'dc77d9adbd1740c6747f78e900581f375baee5a0009adea28cdd0b7704085a6b  tests/test_bend_fifo_benchmark.py' | sha256sum -c -
+          echo '2dd0e4409ed12ab0c471048cafc459bbd28c8f9930e7f048231ddcf2653a3ff5  docs/experiments/2026-09-23-fifo-runner-timing.md' | sha256sum -c -
+          uv sync --locked --extra dev --extra cpu
+      - name: Static checks and measurement admission tests
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          ruff check native/bend_engine/multi_root/benchmark_fifo.py tests/test_bend_fifo_benchmark.py
+          basedpyright native/bend_engine/multi_root/benchmark_fifo.py tests/test_bend_fifo_benchmark.py
+          bash -n native/bend_engine/multi_root/build_fifo_benchmark.sh
+          python -m pytest -q tests/test_bend_fifo_benchmark.py tests/test_bend_fifo_scheduler.py --junitxml=artifacts/fifo-timing-tests.xml
+      - name: Verify retained generated C from both qualified sources
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import gzip,hashlib,io,pathlib,subprocess,zipfile
+          out=pathlib.Path('artifacts/fifo-timing-input');out.mkdir(parents=True)
+          for artifact,zip_hash,c_hash,arm in [
+              (10775514198,'ad81e37c2499280a8b4497fdfa8fc5134a386198f2756754f3e0dbcb6eafc713','fcb787241c29f10c0fa33fbd8983f9630d3ab52914c109de2449b52a93251a24','list'),
+              (10785862321,'8e892da29782d004e9209d65732a5fdaf95a439be7733f77e0a49874f6a799c7','7f348a6ad58c7e3abebbf876f4ada8862c9f6dbc5856f445e1e2310346d68b74','fifo')]:
+              data=subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/actions/artifacts/{artifact}/zip'],timeout=90)
+              assert hashlib.sha256(data).hexdigest()==zip_hash
+              z=zipfile.ZipFile(io.BytesIO(data));names=[n for n in z.namelist() if n.endswith('runner.c.gz')]
+              assert len(names)==1
+              code=gzip.decompress(z.read(names[0]));assert hashlib.sha256(code).hexdigest()==c_hash
+              (out/(arm+'.c')).write_bytes(code)
+          PY
+      - name: Identical optimized native builds
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          CC=clang-18 CXX=clang++-18 bash native/bend_engine/multi_root/build_fifo_benchmark.sh artifacts/fifo-timing-input/list.c artifacts/fifo-timing-input/fifo.c artifacts/fifo-timing-build
+          lscpu > artifacts/fifo-timing-build/cpu.txt
+      - name: Full semantic checks and paired timing panel
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python -m native.bend_engine.multi_root.benchmark_fifo --reference artifacts/fifo-timing-build/list --candidate artifacts/fifo-timing-build/fifo --report artifacts/fifo-timing.json
+      - name: Whole-repository static validation
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fifo-full-runner-timing
+          path: |
+            artifacts/fifo-timing.json
+            artifacts/fifo-timing-tests.xml
+            artifacts/fifo-timing-build/build.json
+            artifacts/fifo-timing-build/compiler.txt
+            artifacts/fifo-timing-build/cpu.txt
+          retention-days: 30
