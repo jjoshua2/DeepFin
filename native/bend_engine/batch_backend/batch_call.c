@@ -11,6 +11,9 @@ static uint32_t batch_log2(void) {
     while (n > 1) { n >>= 1; ++bits; }
     return bits;
 }
+/* The pinned compiler emits this shared import even when only one effect is
+ * reachable. Register only its real generated IDs; never synthesize missing IDs. */
+#ifdef CID_BATCH_OPEN
 static Term batch_open_run(Env e, Term *f, IoWork *w) {
     (void)f; (void)w;
     const uint32_t profile = deepfin_model_open_batch();
@@ -24,6 +27,8 @@ static Term batch_open_run(Env e, Term *f, IoWork *w) {
     e.mem[result + 4] = 11 + batch_log2();
     return term_ctr(CID_CAPABILITIES, result);
 }
+#endif
+#ifdef CID_BATCH_RUN
 static Term batch_run_run(Env e, Term *f, IoWork *w) {
     (void)w;
     const uint32_t rows = f[0];
@@ -46,7 +51,12 @@ static Term batch_run_run(Env e, Term *f, IoWork *w) {
     e.mem[result + 4] = rows * 1861;
     return term_ctr(CID_RESULT, result);
 }
+#endif
 static void __attribute__((constructor)) batch_effects_use(void) {
+#ifdef CID_BATCH_OPEN
     io_eff(CID_BATCH_OPEN, batch_open_run, 0);
+#endif
+#ifdef CID_BATCH_RUN
     io_eff(CID_BATCH_RUN, batch_run_run, 0);
+#endif
 }
