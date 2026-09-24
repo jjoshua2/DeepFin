@@ -1,6 +1,7 @@
 # Bounded single-owner multi-root search. One prepared leaf per root per sweep.
 # No host scheduler, shared tree, asynchronous return or cached history shortcut.
 import Base
+import ../collections_probe/Queue.bend as Q
 import ../legal_probe/Chess.bend as Chess
 import ../batch_backend/Batch.bend as B
 import ../session_probe/Search.bend as S
@@ -30,7 +31,22 @@ type Task is Type:
   Pending{root: Root, game: Pos.Game, ticket: S.Ticket, entries: List<&2, Policy.Entry>, row: U32}
 
 type Gathered is Type:
-  Gathered{tail: List<Root>, tasks: List<Task>, store: Store, rows: U32, steps: U32}
+  Gathered{tail: Q.Queue<&1, Root>, tasks: List<Task>, store: Store, rows: U32, steps: U32}
+
+# Only retired tasks are requeued; unvisited roots always remain ahead.
+# Initial admission is still bounded by the runner to sixteen roots.
+def requeue(roots: List<Root>, q: Q.Queue<&1, Root>) -> Q.Queue<&1, Root>:
+  match roots:
+    case Nil{}: q
+    case Con{root, rest}: requeue(rest, Q.push(&1, Root, q, root))
+
+def queued(roots: List<Root>) -> Q.Queue<&1, Root>:
+  requeue(roots, Q.new(&1, Root))
+
+# Flatten only for final reporting, never between gather/dispatch rounds.
+def queue_list(q: Q.Queue<&1, Root>) -> List<Root>:
+  Q.Queue{front, rear, size} = q
+  List.append(&1, Root, front, List.reverse(&1, Root, rear))
 
 def copy_seen(dst: Array<F32>, at: U32, r: Array<F32> & F32) -> Array<F32> & Array<F32>:
   (src, value) = r
@@ -54,7 +70,7 @@ def rule_reply(ticket: S.Ticket) -> S.Reply:
   S.Reply{epoch, request, node, 3, 0.0, 1.0, 0.0, 0, Array.new(F32, 8n, 0.0)}
 
 def row_copied(root: Root, game: Pos.Game, ticket: S.Ticket, entries: List<&2, Policy.Entry>,
-  tail: List<Root>, tasks: List<Task>, +row: U32, steps: U32, table: Array<U64>, maps: Policy.Maps,
+  tail: Q.Queue<&1, Root>, tasks: List<Task>, +row: U32, steps: U32, table: Array<U64>, maps: Policy.Maps,
   logits: Array<F32>, output: Array<F32>, cap: B.Capabilities, r: Array<F32> & Array<F32>) -> Gathered:
   (scratch, input) = r
   Gathered{tail, Con{Pending{root, game, ticket, entries, row}, tasks},
@@ -69,7 +85,7 @@ def cap_profile(cap: B.Capabilities) -> U32:
   profile
 
 def encoded_checked(ok: Bool, root: Root, game: Pos.Game, ticket: S.Ticket,
-  entries: List<&2, Policy.Entry>, tail: List<Root>, tasks: List<Task>, +row: U32, steps: U32,
+  entries: List<&2, Policy.Entry>, tail: Q.Queue<&1, Root>, tasks: List<Task>, +row: U32, steps: U32,
   table: Array<U64>, maps: Policy.Maps, scratch: Array<F32>, logits: Array<F32>, input: Array<F32>,
   output: Array<F32>, cap: B.Capabilities, +width: U32) -> IO(Gathered):
   match ok:
@@ -82,7 +98,7 @@ def ticket_moves(t: S.Ticket) -> List<&2, Chess.Ply>:
   S.Ticket{epoch, request, node, board, moves, needs} = t
   moves
 
-def encoded(root: Root, game: Pos.Game, +ticket: S.Ticket, tail: List<Root>, tasks: List<Task>, row: U32, steps: U32,
+def encoded(root: Root, game: Pos.Game, +ticket: S.Ticket, tail: Q.Queue<&1, Root>, tasks: List<Task>, row: U32, steps: U32,
   logits: Array<F32>, input: Array<F32>, output: Array<F32>, +cap: B.Capabilities, prepared: E.Preparation) -> IO(Gathered):
   match prepared:
     case E.Invalid{table, maps}: IO.die(Gathered, 2, "multi-root leaf encoding failed")
@@ -90,12 +106,12 @@ def encoded(root: Root, game: Pos.Game, +ticket: S.Ticket, tail: List<Root>, tas
       encoded_checked(Bool.and(U32.is_eq(channels, cap_channels(cap)), L.aligned(entries, ticket_moves(ticket))),
         root, game, ticket, entries, tail, tasks, row, steps, table, maps, scratch, logits, input, output, cap, U32.mul(channels, 64))
 
-def rule_checked(ok: Bool, root: Root, tail: List<Root>, tasks: List<Task>, row: U32, steps: U32, store: Store) -> IO(Gathered):
+def rule_checked(ok: Bool, root: Root, tail: Q.Queue<&1, Root>, tasks: List<Task>, row: U32, steps: U32, store: Store) -> IO(Gathered):
   match ok:
     case False{}: IO.die(Gathered, 2, "multi-root rule reply was not accepted")
     case True{}: IO.pure(Gathered, Gathered{tail, Con{Local{root}, tasks}, store, row, steps})
 
-def rule_applied(root: Pos.Game, neural: U32, draws: U32, tail: List<Root>, tasks: List<Task>,
+def rule_applied(root: Pos.Game, neural: U32, draws: U32, tail: Q.Queue<&1, Root>, tasks: List<Task>,
   row: U32, steps: U32, store: Store, before: U32, tree: S.Tree) -> IO(Gathered):
   S.Tree{pool, used, cap, +n, pending, epoch, request, +stop, lim} = tree
   rule_checked(Bool.and(U32.is_zero(stop), U32.is_eq(n, U32.inc(before))),
@@ -106,7 +122,7 @@ def rule_notice(enabled: Bool, ep: U32, req: U32, node: U32, code: U32) -> IO(Un
     case False{}: IO.pure(Unit, Unit{})
     case True{}: IO.print("info string cohort_rule " ++ U32.show(ep) ++ " " ++ U32.show(req) ++ " " ++ U32.show(node) ++ " " ++ U32.show(code))
 
-def apply_rule(cfg: Config, root: Root, +ticket: S.Ticket, tail: List<Root>, tasks: List<Task>,
+def apply_rule(cfg: Config, root: Root, +ticket: S.Ticket, tail: Q.Queue<&1, Root>, tasks: List<Task>,
   row: U32, steps: U32, store: Store, code: U32) -> IO(Gathered):
   Config{sims, depth, budget, diagnostics} = cfg
   Root{g, S.Tree{pool, used, capacity, +before, pending, epoch, request, stop, lim}, neural, draws} = root
@@ -117,7 +133,7 @@ def apply_rule(cfg: Config, root: Root, +ticket: S.Ticket, tail: List<Root>, tas
       S.resume(S.Tree{pool, used, capacity, before, pending, epoch, request, stop, lim}, ticket, rule_reply(ticket)))
 
 def adjudicated(cfg: Config, root: Root, +game: Pos.Game, ticket: S.Ticket,
-  tail: List<Root>, tasks: List<Task>, row: U32, steps: U32, maps: Policy.Maps,
+  tail: Q.Queue<&1, Root>, tasks: List<Task>, row: U32, steps: U32, maps: Policy.Maps,
   scratch: Array<F32>, logits: Array<F32>, input: Array<F32>, output: Array<F32>, +cap: B.Capabilities,
   r: Array<U64> & Rules.Facts) -> IO(Gathered):
   (table, Rules.Facts{code, count, half}) = r
@@ -129,7 +145,7 @@ def adjudicated(cfg: Config, root: Root, +game: Pos.Game, ticket: S.Ticket,
       apply_rule(cfg, root, ticket, tail, tasks, row, steps, Store{table, maps, scratch, logits, input, output, cap}, code)
 
 def history_checked(ok: Bool, cfg: Config, root: Pos.Game, neural: U32, draws: U32, +ticket: S.Ticket,
-  tail: List<Root>, tasks: List<Task>, row: U32, steps: U32, store: Store, tree: S.Tree, +game: Pos.Game) -> IO(Gathered):
+  tail: Q.Queue<&1, Root>, tasks: List<Task>, row: U32, steps: U32, store: Store, tree: S.Tree, +game: Pos.Game) -> IO(Gathered):
   match ok:
     case False{}: IO.die(Gathered, 2, "multi-root invalid leaf history")
     case True{}:
@@ -138,24 +154,24 @@ def history_checked(ok: Bool, cfg: Config, root: Pos.Game, neural: U32, draws: U
         scratch, logits, input, output, cap, Rules.automatic(game, ticket_moves(ticket), table))
 
 def rebuilt(cfg: Config, root: Pos.Game, neural: U32, draws: U32, ticket: S.Ticket,
-  tail: List<Root>, tasks: List<Task>, row: U32, steps: U32, store: Store, rebuilt: History.Rebuilt) -> IO(Gathered):
+  tail: Q.Queue<&1, Root>, tasks: List<Task>, row: U32, steps: U32, store: Store, rebuilt: History.Rebuilt) -> IO(Gathered):
   History.Rebuilt{tree, game, valid} = rebuilt
   history_checked(valid, cfg, root, neural, draws, ticket, tail, tasks, row, steps, store, tree, game)
 
-def prepared_needs(needs: Bool, cfg: Config, +game: Pos.Game, neural: U32, draws: U32, tail: List<Root>, tasks: List<Task>,
+def prepared_needs(needs: Bool, cfg: Config, +game: Pos.Game, neural: U32, draws: U32, tail: Q.Queue<&1, Root>, tasks: List<Task>,
   row: U32, steps: U32, store: Store, tree: S.Tree, ticket: S.Ticket, node: U32, board: Chess.Board) -> IO(Gathered):
   match needs:
     case False{}: IO.pure(Gathered, Gathered{tail, Con{Local{Root{game, tree, neural, draws}}, tasks}, store, row, steps})
     case True{}: rebuilt(cfg, game, neural, draws, ticket, tail, tasks, row, steps, store, History.rebuild(game, node, board, tree))
 
-def prepared(cfg: Config, game: Pos.Game, neural: U32, draws: U32, tail: List<Root>, tasks: List<Task>, row: U32, steps: U32,
+def prepared(cfg: Config, game: Pos.Game, neural: U32, draws: U32, tail: Q.Queue<&1, Root>, tasks: List<Task>, row: U32, steps: U32,
   maps: Policy.Maps, scratch: Array<F32>, logits: Array<F32>, input: Array<F32>, output: Array<F32>, cap: B.Capabilities, p: S.Prepared) -> IO(Gathered):
   S.Prepared{table, tree, +ticket} = p
   S.Ticket{epoch, request, node, board, moves, needs} = ticket
   prepared_needs(needs, cfg, game, neural, draws, tail, tasks, row, steps,
     Store{table, maps, scratch, logits, input, output, cap}, tree, ticket, node, board)
 
-def visit_active(enabled: Bool, cfg: Config, root: Root, tail: List<Root>, tasks: List<Task>, row: U32, steps: U32, store: Store) -> IO(Gathered):
+def visit_active(enabled: Bool, cfg: Config, root: Root, tail: Q.Queue<&1, Root>, tasks: List<Task>, row: U32, steps: U32, store: Store) -> IO(Gathered):
   match enabled:
     case False{}: IO.pure(Gathered, Gathered{tail, Con{Local{root}, tasks}, store, row, steps})
     case True{}:
@@ -163,18 +179,23 @@ def visit_active(enabled: Bool, cfg: Config, root: Root, tail: List<Root>, tasks
       Store{table, maps, scratch, logits, input, output, cap} = store
       prepared(cfg, game, neural, draws, tail, tasks, row, U32.inc(steps), maps, scratch, logits, input, output, cap, S.prepare(table, tree))
 
-def visit(cfg: Config, tail: List<Root>, tasks: List<Task>, row: U32, steps: U32, store: Store, r: Root & Bool) -> IO(Gathered):
+def visit(cfg: Config, tail: Q.Queue<&1, Root>, tasks: List<Task>, row: U32, steps: U32, store: Store, r: Root & Bool) -> IO(Gathered):
   (root, enabled) = r
   visit_active(enabled, cfg, root, tail, tasks, row, steps, store)
+
+def gather_popped(+cfg: Config, tasks: List<Task>, store: Store, row: U32, steps: U32,
+  r: Q.Queue<&1, Root> & Maybe<&1, Root>) -> IO(Gathered):
+  (tail, item) = r
+  match item:
+    case None{}: IO.pure(Gathered, Gathered{tail, tasks, store, row, steps})
+    case Some{root}: visit(cfg, tail, tasks, row, steps, store, active(cfg, root))
 
 def gather_next(full: Bool, +cfg: Config, g: Gathered) -> IO(Gathered):
   match full:
     case True{}: IO.pure(Gathered, g)
     case False{}:
       Gathered{tail, tasks, store, row, steps} = g
-      match tail:
-        case Nil{}: IO.pure(Gathered, Gathered{Nil{}, tasks, store, row, steps})
-        case Con{root, rest}: visit(cfg, rest, tasks, row, steps, store, active(cfg, root))
+      gather_popped(cfg, tasks, store, row, steps, Q.pop(&1, Root, tail))
 
 def gather(fuel: Nat, +cfg: Config, +batch: U32, g: Gathered) -> IO(Gathered):
   match fuel:

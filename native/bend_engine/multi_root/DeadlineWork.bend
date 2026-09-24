@@ -1,6 +1,7 @@
 # Deadline-aware ownership transformations for the existing cohort algorithm.
 # No timers or root identities move into the native worker.
 import Base
+import ../collections_probe/Queue.bend as Q
 import ./Cohort.bend as C
 import ./Control.bend as Ctrl
 import ./Deadlines.bend as D
@@ -28,6 +29,19 @@ def scan_roots(+cfg: C.Config,rs: List<C.Root>,+mask: U32) -> List<C.Root> & U32
       ok = is_active(cfg,n,stop,neural)
       root : C.Root = C.Root{g,S.Tree{pool,used,cap,n,pending,ep,req,stop,lim},neural,draws}
       prepend_root(root,scan_roots(cfg,rest,U32.or(mask,Bool.pick(U32,ok,D.bit(ep),0))))
+
+# Read masks in both physical lists without reversing or changing the FIFO.
+def scan_queue_rear(front: List<C.Root>, size: Nat, r: List<C.Root> & U32) -> Q.Queue<&1, C.Root> & U32:
+  (rear, mask) = r
+  (Q.Queue{front, rear, size}, mask)
+
+def scan_queue_front(cfg: C.Config, rear: List<C.Root>, size: Nat, r: List<C.Root> & U32) -> Q.Queue<&1, C.Root> & U32:
+  (front, mask) = r
+  scan_queue_rear(front, size, scan_roots(cfg, rear, mask))
+
+def scan_queue(+cfg: C.Config, q: Q.Queue<&1, C.Root>, mask: U32) -> Q.Queue<&1, C.Root> & U32:
+  Q.Queue{front, rear, size} = q
+  scan_queue_front(cfg, rear, size, scan_roots(cfg, front, mask))
 
 def prepend_task(task: C.Task,r: List<C.Task> & U32) -> List<C.Task> & U32:
   (rest,mask) = r
@@ -93,20 +107,20 @@ type Admission is Type:
 def checked(+before: U32,g: C.Gathered,+flags: Ctrl.Flags) -> Admission:
   Admission{g,flags,U32.is_eq(before,Ctrl.stopped(flags))}
 
-def compacted(+live: U32,+before: U32,tail: List<C.Root>,table: Array<U64>,maps: Policy.Maps,scratch: Array<F32>,logits: Array<F32>,output: Array<F32>,cap: B.Capabilities,+steps: U32,+flags: Ctrl.Flags,c: Compact) -> IO(Admission):
+def compacted(+live: U32,+before: U32,tail: Q.Queue<&1, C.Root>,table: Array<U64>,maps: Policy.Maps,scratch: Array<F32>,logits: Array<F32>,output: Array<F32>,cap: B.Capabilities,+steps: U32,+flags: Ctrl.Flags,c: Compact) -> IO(Admission):
   Compact{ts,input,rows} = c
   do IO<Admission>:
     flags : Ctrl.Flags <- Ctrl.tick(live,flags)
     return checked(before,C.Gathered{tail,ts,C.Store{table,maps,scratch,logits,input,output,cap},rows,steps},flags)
 
-def scanned_scan_tasks(tail: List<C.Root>,table: Array<U64>,maps: Policy.Maps,scratch: Array<F32>,logits: Array<F32>,input: Array<F32>,output: Array<F32>,+cap: B.Capabilities,+steps: U32,+flags: Ctrl.Flags,r: List<C.Task> & U32) -> IO(Admission):
+def scanned_scan_tasks(tail: Q.Queue<&1, C.Root>,table: Array<U64>,maps: Policy.Maps,scratch: Array<F32>,logits: Array<F32>,input: Array<F32>,output: Array<F32>,+cap: B.Capabilities,+steps: U32,+flags: Ctrl.Flags,r: List<C.Task> & U32) -> IO(Admission):
   (ts,+live) = r
   do IO<Admission>:
     +flags : Ctrl.Flags <- Ctrl.tick(live,flags)
     compacted(live,Ctrl.stopped(flags),tail,table,maps,scratch,logits,output,cap,steps,flags,
       compact(Ctrl.stopped(flags),U32.mul(C.cap_channels(cap),64),ts,Compact{Nil{},input,0}))
 
-def scanned_scan_roots(+cfg: C.Config,ts: List<C.Task>,table: Array<U64>,maps: Policy.Maps,scratch: Array<F32>,logits: Array<F32>,input: Array<F32>,output: Array<F32>,cap: B.Capabilities,+steps: U32,+flags: Ctrl.Flags,r: List<C.Root> & U32) -> IO(Admission):
+def scanned_scan_roots(+cfg: C.Config,ts: List<C.Task>,table: Array<U64>,maps: Policy.Maps,scratch: Array<F32>,logits: Array<F32>,input: Array<F32>,output: Array<F32>,cap: B.Capabilities,+steps: U32,+flags: Ctrl.Flags,r: Q.Queue<&1, C.Root> & U32) -> IO(Admission):
   (tail,live) = r
   scanned_scan_tasks(tail,table,maps,scratch,logits,input,output,cap,steps,flags,scan_tasks(cfg,ts,live))
 
@@ -115,7 +129,7 @@ def prepare_step(+settled: Bool,+cfg: C.Config,g: C.Gathered,+flags: Ctrl.Flags)
     case True{}: IO.pure(Admission,Admission{g,flags,True{}})
     case False{}:
       C.Gathered{tail,ts,C.Store{table,maps,scratch,logits,input,output,cap},rows,steps} = g
-      scanned_scan_roots(cfg,ts,table,maps,scratch,logits,input,output,cap,steps,flags,scan_roots(cfg,tail,0))
+      scanned_scan_roots(cfg,ts,table,maps,scratch,logits,input,output,cap,steps,flags,scan_queue(cfg,tail,0))
 
 # Check again after input compaction. Only newly stopped roots require another
 # pass; after at most sixteen removals the final observation is stable.
