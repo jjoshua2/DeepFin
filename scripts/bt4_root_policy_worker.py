@@ -45,6 +45,10 @@ OUTCOME_MODE = "rule50_match_v1"
 MAX_BUFFERED_ROWS = 4096
 MAX_GAMES = 32
 MAX_TOTAL_REQUESTED_PLIES = 4096
+RESEARCH_GAMES = 128
+RESEARCH_MAX_PLIES = 400
+RESEARCH_PARALLEL_GAMES = frozenset({16, 32, 64})
+RESEARCH_MAX_BUFFERED_ROWS = 64 * RESEARCH_MAX_PLIES
 MAX_GPU_MEM_GB = 8.0
 GPU_LOCK = Path("/home/josh/projects/chess/scratchpad/gpu0_experiment.lock")
 _NEURAL_OPS = {"Conv", "FusedConv", "NhwcConv", "MatMul", "FusedMatMul", "Gemm", "FusedGemm"}
@@ -297,6 +301,7 @@ class WorkerSpec:
     gpu_mem_gb: float = 0.0
     cudnn_conv_algo_search: str | None = None
     cudnn_conv_use_max_workspace: int | None = None
+    research_capacity_128x400: bool = False
     provider_options: Mapping[str, str] = field(default_factory=dict)
 
     def validate(self, *, check_realized_provider: bool = True) -> None:
@@ -309,13 +314,21 @@ class WorkerSpec:
             raise ValueError("BT4 worker requires explicit rule50_match_v1 outcome mode")
         if self.games < 1 or self.seed < 0 or self.max_plies < 1:
             raise ValueError("games/max_plies must be positive and seed nonnegative")
-        if self.games > MAX_GAMES or self.games * self.max_plies > MAX_TOTAL_REQUESTED_PLIES:
-            raise ValueError(
-                f"experimental run requires games <= {MAX_GAMES} and "
-                f"games * max_plies <= {MAX_TOTAL_REQUESTED_PLIES}"
-            )
-        if self.parallel_games < 1 or self.parallel_games * self.max_plies > MAX_BUFFERED_ROWS:
-            raise ValueError(f"parallel_games * max_plies must be <= {MAX_BUFFERED_ROWS}")
+        if type(self.research_capacity_128x400) is not bool:
+            raise TypeError("research capacity profile must be an explicit bool")
+        if self.research_capacity_128x400:
+            if (self.games != RESEARCH_GAMES or self.max_plies != RESEARCH_MAX_PLIES
+                    or self.parallel_games not in RESEARCH_PARALLEL_GAMES):
+                raise ValueError("research capacity profile requires 128 games, 400 plies, "
+                                 "and parallel_games in {16,32,64}")
+        else:
+            if self.games > MAX_GAMES or self.games * self.max_plies > MAX_TOTAL_REQUESTED_PLIES:
+                raise ValueError(
+                    f"experimental run requires games <= {MAX_GAMES} and "
+                    f"games * max_plies <= {MAX_TOTAL_REQUESTED_PLIES}"
+                )
+            if self.parallel_games < 1 or self.parallel_games * self.max_plies > MAX_BUFFERED_ROWS:
+                raise ValueError(f"parallel_games * max_plies must be <= {MAX_BUFFERED_ROWS}")
         if not math.isfinite(self.temperature) or self.temperature < 0:
             raise ValueError("temperature must be finite and nonnegative")
         if len(self.model_sha256) != 64 or any(
@@ -517,7 +530,10 @@ def run_worker(
         "terminal_wdl_target": "game_result_from_root_side_to_move",
         "teacher_observation": "root_inference_compact_t1_policy_and_native_wdl_unmodified_by_outcome",
         "seed": spec.seed, "games": spec.games, "max_plies": spec.max_plies,
-        "parallel_games": spec.parallel_games, "max_buffered_rows": MAX_BUFFERED_ROWS,
+        "parallel_games": spec.parallel_games,
+        "research_capacity_128x400": spec.research_capacity_128x400,
+        "max_buffered_rows": (RESEARCH_MAX_BUFFERED_ROWS
+                              if spec.research_capacity_128x400 else MAX_BUFFERED_ROWS),
         "temperature": spec.temperature, "initial_fen": spec.initial_fen,
         "model": {"path": spec.model_path, "sha256": spec.model_sha256,
                   "providers": list(spec.providers),
@@ -550,6 +566,7 @@ def run_worker(
     emitted = attempted = 0
     writer_seconds = 0.0
     gpu_proof_verified = False
+    effective_batch_sizes: Counter[int] = Counter()
     for first in range(0, spec.games, spec.parallel_games):
         ids = range(first, min(first + spec.parallel_games, spec.games))
         boards = {game_id: chess.Board(spec.initial_fen) for game_id in ids}
@@ -578,6 +595,7 @@ def run_worker(
             if batch is None:
                 continue
             inference_boards, inputs = batch.inference_inputs()
+            effective_batch_sizes[len(inference_boards)] += 1
             outputs = evaluator.evaluate_roots(inference_boards, inputs)
             if spec.requested_provider == "cuda" and not gpu_proof_verified:
                 proof_file = spec.out / "provider_proof.json"
@@ -617,6 +635,15 @@ def run_worker(
         "launch_sha256": file_sha256(spec.out / "launch.json"),
         "run_wall_seconds": finished - run_started,
         "writer_wall_seconds": writer_seconds,
+        "requested_parallel_games": spec.parallel_games,
+        "effective_batch_size_histogram": {
+            str(size): count for size, count in sorted(effective_batch_sizes.items())
+        },
+        "inference_calls": sum(effective_batch_sizes.values()),
+        "full_batch_calls": effective_batch_sizes[spec.parallel_games],
+        "underfilled_calls": sum(count for size, count in effective_batch_sizes.items()
+                                 if size < spec.parallel_games),
+        "max_effective_batch_size": max(effective_batch_sizes, default=0),
         "post_qualification_wall_seconds": (
             finished - qualified_at if spec.requested_provider == "cuda" and qualified_at is not None
             else None
@@ -643,6 +670,7 @@ def main() -> None:
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--max-plies", required=True, type=int)
     parser.add_argument("--parallel-games", type=int, default=4)
+    parser.add_argument("--research-capacity-128x400", action="store_true")
     parser.add_argument("--temperature", required=True, type=float)
     parser.add_argument("--initial-fen", default=chess.STARTING_FEN)
     parser.add_argument("--threads", type=int, default=2)
@@ -675,6 +703,7 @@ def main() -> None:
         requested_provider=args.provider, gpu_mem_gb=args.gpu_mem_gb,
         cudnn_conv_algo_search=args.cudnn_conv_algo_search,
         cudnn_conv_use_max_workspace=args.cudnn_conv_use_max_workspace,
+        research_capacity_128x400=args.research_capacity_128x400,
     )
     spec.validate(check_realized_provider=False)
     # No native board is constructed until the mode is installed. Validation

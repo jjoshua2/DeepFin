@@ -215,6 +215,66 @@ def test_bounded_buffer_and_explicit_mode_before_output(tmp_path: Path) -> None:
         too_many.validate()
 
 
+def test_research_128x400_profile_is_exact_and_default_caps_remain(tmp_path: Path) -> None:
+    base = spec(tmp_path)
+    for parallel in (16, 32, 64):
+        large = replace(base, games=128, max_plies=400, parallel_games=parallel)
+        with pytest.raises(ValueError, match="games <= 32"):
+            large.validate()
+        replace(large, research_capacity_128x400=True).validate()
+    for changes in ({"games": 127}, {"max_plies": 401}, {"parallel_games": 8},
+                    {"parallel_games": 128}):
+        kwargs = {"games": 128, "max_plies": 400, "parallel_games": 64,
+                  "research_capacity_128x400": True, **changes}
+        with pytest.raises(ValueError, match="research capacity profile"):
+            replace(base, **kwargs).validate()
+    with pytest.raises(TypeError, match="explicit bool"):
+        replace(base, research_capacity_128x400="true").validate()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_research_profile_cli_reaches_worker_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool,
+) -> None:
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"fake model")
+    seen: list[worker.WorkerSpec] = []
+
+    def stop_at_validation(value: worker.WorkerSpec, **_kwargs: Any) -> None:
+        seen.append(value)
+        raise RuntimeError("stop before session")
+
+    monkeypatch.setattr(worker.WorkerSpec, "validate", stop_at_validation)
+    argv = [
+        "bt4_root_policy_worker.py", "--out", str(tmp_path / "out"),
+        "--onnx", str(model), "--syzygy-path", str(tmp_path),
+        "--outcome-mode", worker.OUTCOME_MODE, "--wdl-output", "wdl",
+        "--wdl-kind", "probabilities", "--policy-output", "policy",
+        "--games", "128", "--seed", "1", "--max-plies", "400",
+        "--parallel-games", "64", "--temperature", "0",
+    ]
+    if enabled:
+        argv.append("--research-capacity-128x400")
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(RuntimeError, match="stop before session"):
+        worker.main()
+    assert len(seen) == 1
+    assert seen[0].research_capacity_128x400 is enabled
+    assert (seen[0].games, seen[0].parallel_games, seen[0].max_plies) == (128, 64, 400)
+
+
+def test_effective_batch_histogram_records_underfilled_tail(tmp_path: Path) -> None:
+    short = replace(spec(tmp_path), games=3, parallel_games=2, max_plies=1,
+                    initial_fen=chess.STARTING_FEN)
+    summary = worker.run_worker(short, FakeEvaluator("e2e4"), fake_tablebase())
+    assert summary["requested_parallel_games"] == 2
+    assert summary["effective_batch_size_histogram"] == {"1": 1, "2": 1}
+    assert summary["inference_calls"] == 2
+    assert summary["full_batch_calls"] == 1
+    assert summary["underfilled_calls"] == 1
+    assert summary["max_effective_batch_size"] == 2
+
+
 def test_cuda_requires_realized_device_zero_and_bounded_arena(tmp_path: Path) -> None:
     base = spec(tmp_path)
     cuda = replace(
