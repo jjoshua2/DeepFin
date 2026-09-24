@@ -120,3 +120,5 @@ For durable knowledge, use [model heads](../model_heads.md),
 [the loop audit](../rl_loop_audit.md) and [operations](../operations.md), following their
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
+
+- [Numeric-map shared-slot performance screen](2026-09-24-numeric-map-screen.md): hash versus dense scan, exact dictionary controls and matched hit/miss/churn loops; no engine/cache adoption.

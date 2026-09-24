@@ -73,3 +73,8 @@ made. This first increment qualifies behavior, not the hash quality or the faste
 layout. Next compare actual numeric lookup/update/delete workloads and equal
 memory budgets before using this instead of another map or cache. The string-keyed
 upstream benchmark is not a numeric-map baseline. Review is self-review only.
+
+
+## Matched-work numeric comparison
+
+See [the numeric-map screen](../../../docs/experiments/2026-09-24-numeric-map-screen.md) for the benchmark-only ScanMap control, exact shared storage, calibrated hit/miss/churn comparisons and their limitations. `benchmark.py` runs both implementations against the existing dictionary fixtures and checks the driver in native/UBSan modes; pass --measure explicitly to run timings. Source-only map qualification remains separate. The control is not a production map selection or cache implementation.
