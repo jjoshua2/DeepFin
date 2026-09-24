@@ -48,6 +48,21 @@ for name,text in {
  'docs/experiments/README.md':'\n- [CBoard-key map replay](2026-09-24-chess-key-map-replay.md): actual source-derived position keys, exact dictionary replay and explicit history/EP cache-identity limits; no performance or cache-adoption claim.\n',
  'native/bend_engine/u64_map_probe/README.md':'\n\n## Actual chess-key fixtures\n\nAdd `--chess` to the comparison driver to generate deterministic legal-position\nworkloads using the inspected checkout\'s actual CBoard transposition-key code.\nSee [the chess-key replay record](../../../docs/experiments/2026-09-24-chess-key-map-replay.md).\nIt includes full encounter replays and native EP/castling/history-key boundary\nchecks. These generated legal walks are not recorded production access traces.\nThe numeric map remains unaware of board fields, history and model identity;\ndo not treat a hit as permission to reuse a neural value. No performance panel\nis part of this correctness extension.\n'}.items():
  p=work/name;p.write_text(p.read_text()+text);paths.append(name)
+# Fixed-budget amendment before native replay: sparse promotion walks can end early.
+p=work/'native/bend_engine/u64_map_probe/chess_workloads.py';s=p.read_text()
+s=s.replace('WALKS = 4','WALKS = 8')
+s=s.replace("raise ValueError('chess corpus too small or exceeds bounded replay')", "raise ValueError(f'chess corpus {name}: {len(unique)} distinct / {len(keys)} observed; '\n                         f'requires at least {ENTRIES * 2} distinct and at most {WALKS * (PLIES + 1)} observed')")
+s=s.replace('# 1,024 buckets / 512-entry limit exceeds this bounded corpus without eviction.', '# 2,048 buckets / 1,024-entry limit exceeds the 520-record bound without eviction.')
+s=s.replace("Case('chess-' + name + '-encounters', 10, replay)", "Case('chess-' + name + '-encounters', 11, replay)")
+assert hashlib.sha256(s.encode()).hexdigest()=='2b707b1093a524b6fa24245399a95f6de84b2672330ab8d27eeeb393dc4ed161'
+p.write_text(s)
+p=work/'tests/test_bend_map_chess.py';s=p.read_text()
+s=s.replace('replay.bits == 10','replay.bits == 11').replace('list(range(261))','list(range(521))')
+s=s.replace("corpus['observations'] <= 260", "corpus['observations'] <= 520").replace("startswith('begin 10\\n')", "startswith('begin 11\\n')")
+assert hashlib.sha256(s.encode()).hexdigest()=='83d79871486089880a150ca3e0025a7f506108832bcc0348ad22003d0e4bb61f'
+p.write_text(s)
+p=work/'docs/experiments/2026-09-24-chess-key-map-replay.md'
+p.write_text(p.read_text()+'''\n\n### Fixed corpus-budget amendment\n\nRun 36032729272 passed Ruff and Basedpyright, and 101 of 102 Python cases. All six native identity relationships and the raw-hash substitution negative passed. The corpus reproducibility case rejected the promotion seed because four bounded random legal walks did not supply the required 128 distinct keys. No native map replay or performance measurement ran. This is a fixture-coverage failure, not an observed map mismatch.\n\nThe fixed budget is now eight walks per seed, still capped at 64 plies each, for at most 520 observations per corpus. All four seeds use the same expanded budget and deterministic RNG sequence; no keys or seeds are selected by hash bucket. The minimum 128 distinct-key requirement, 64-entry operation workloads and all equality/identity expectations are unchanged. The encounter replay now reserves 2,048 buckets / 1,024 entries so every possible observed key fits without eviction. Oversize/replay tests use the corresponding 520-record bound. This supersedes the original four-walk/1,024-bucket plan above and is recorded before native replay. No performance result was rerolled.\n\nFailure artifact 10823596752 retains the 102-case JUnit report (101 passed, one failed), ZIP SHA-256 dbf0b580d095ff914e471a364776ddd035443d81ce3505640d876c55c9d08f43. Fourteen pure tests passed locally after the bound amendment; engine-dependent tests remain a hosted gate.\n''')
 subprocess.run(['git','-C',str(work),'add','--',*paths],check=True)
 subprocess.run(['git','-C',str(work),'diff','--cached','--check'],check=True)
 manifest={n:hashlib.sha256((work/n).read_bytes()).hexdigest() for n in paths}
