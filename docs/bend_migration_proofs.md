@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Supplementary actual lookup composition, distinct from public-law counts
+
+A newly source-checked derived composition now connects actual `Chess.slide` on the initialized table/extras pipeline to the actual `Tables.slider` value on `occupancy & actual_relevant_mask`, returning the complete final array. The stored-header and stored-data producers discharge the intermediate certificates; callers supply only the bounded table/extras budgets and symbolic allocation depth equal to17, with arbitrary seed and occupancy. Exact reproducible source text, four successful checker receipts and the native reproduction driver are archived in [the supplementary record](experiments/evidence/bend-stored-data/supplementary/README.md).
+
+This is not an extra registered LAWS obligation or an inflated 106-law/260-control aggregate. Local generic and UBSan execution of actual `Tables.build` followed by 1,024 `Chess.slide` queries per mode agrees with an independent ray reference; six invalid requests per mode and a shifted actual lookup are rejected. The same shifted lookup is rejected by the source routing lemma. These query tests are separate from the four-mode full-buffer qualification.
+
+Earlier statements that actual lookup composition is entirely unfinished are superseded only by this checked supplementary source-to-source result. Promotion into the public gate and independent relevant-mask/blocker-ray geometry remain open; native comparisons do not prove that geometry. No production, compiler or prior proof source changes.
+
 ## Latest computed-data persistence qualification
 
 Hosted qualification **35954718944**, workflow commit `eab56eba6394388e8b0cd52f4796989921e85943`, passes the three new public laws/importing consumer, all seventeen controls, four native modes and the late-write regression, original compiler checks and unchanged whole-repository lint on source `1ee5d0534a3ac8c2ed3514141f0e89be58ef500b`.

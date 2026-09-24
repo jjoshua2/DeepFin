@@ -92,3 +92,12 @@ Local constructive checking passed the final three-law consumer with exact succe
 The complete source tree matches the locally checked candidate. Only evidence, the experiment index and migration inventory are added after qualification. Self-review only, not independent review; exact hashes are provenance, not a separate reviewer. No prior proof or production code changes, no merge, deployment, live-process change, permanent workflow or routine perft increase.
 
 Current computed values still refer to actual Tables.slider on the proved enumeration state. Actual Chess lookup composition and independent blocker-ray/relevant-mask correctness remain separate P2 obligations. Source checker/Base, native lowering, physical ownership/allocation/lifetime, ABI, toolchain, libraries, OS and hardware remain trust boundaries. Python export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No model/GPU/training/benchmark result is added.
+
+
+## Supplementary lookup review archived after qualification
+
+The [exact supplementary sources and receipts](evidence/bend-stored-data/supplementary/README.md) connect the actual Chess.slide pipeline to the actual slider computation on masked occupancy, including the complete returned array. Four derived modules passed the pinned checker locally; none is added to the three public-law count. The separate actual lookup probe passed 1,024 queries over all128 keys in generic/UBSan and six invalid requests per mode; an actual off-by-one routing mutation fails both source refinement and the independent native oracle. The native test executes the real full builder once per execution but is not a complete-buffer check or an independent source geometry theorem.
+
+Publication verification checked the qualification artifact ZIP digest and all329 candidate source hashes. Full-buffer baseline native reports agree except compiler identity. Corruption diagnostics differ in temporary paths and a GitHub Actions annotation, while both reject the same cell512 value; originals remain unchanged, with the comparison limitation in publication-verification.json. No entire wrapper-report identity is claimed.
+
+Documentation-only record run **35957045667** verifies the exact archived subtree and every original candidate source hash, then changes only this readout and the inventory. It does not rerun proofs, tests or lint. The archived source subtree is `2f896d44deea0bfd7a994bfb4b10cbe89cc02807`. No merge, force push or deployment. Self-review only.
