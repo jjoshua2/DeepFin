@@ -27,7 +27,7 @@ jobs:
               'LiveRegistry.bend':('7cd8e5513206ebee603fc4acf2e6ade517654366','f844fa37c8d713ae08a20e7c4db91ab7a5caa0d7a3af972dc06743ed926d892e'),
               'LiveReport.bend':('c77593f8e423705138d55ca9bb871336a35e3e80','b5f6f1e7d2f0ecc4b9c8d2d1a8ff57523230a84df0a02f4638104847645441f1'),
               'LiveRun.bend':('1296dfcfc91257b7bdf886c7db7f2367cb5f2356','35e02e934038b3b61c64f61a773fc1bba7166f4c686bf6b3e668338c110496ee'),
-              'live.bend':('a05297f9d7986d0e688263b131b07419585dd251','a47605984c673760a7a779a0be8819a8f39b16a141e3692f6019cddab15d8ca8'),
+              'live.bend':('d0619b351034a3ca2b7c137c74b4873aa46fdc1c','a17006d677eb09b7de18759c1ad475b9ce2642a6b0caaa1b062c793ed9059d00'),
           }
           manifest={}
           for name,(sha,digest) in entries.items():
