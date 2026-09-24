@@ -1,0 +1,311 @@
+name: Qualify saved four-law lookup
+'on':
+  push:
+    branches: [feat/bend-saved-lookup-qualification-dev-20260924]
+    paths: [.github/workflows/bend-saved-lookup-qualification.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+env:
+  BEND_NO_TELEMETRY: '1'
+  OMP_NUM_THREADS: '2'
+  MKL_NUM_THREADS: '2'
+  OPENBLAS_NUM_THREADS: '2'
+  BASE: 9e7f433e0a6e139751b8a3b5f0871868df25a635
+  TARGET: feat/bend-lookup-contracts-qualified-20260924
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      source: ${{ steps.stage.outputs.source }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 9e7f433e0a6e139751b8a3b5f0871868df25a635
+      - name: Recover exact saved sources and retain the alternate branch
+        id: stage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/lookup-stage"
+          export EVIDENCE="$RUNNER_TEMP/lookup-stage"
+          : > "$RUNNER_TEMP/source.b64"
+          for blob in afc85245cf3dd3a5d432c03a05c6a936ffe9abcf f1f25cb65a0af681684dc1716eb6f5ac5c89e72c; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/source.b64"
+          done
+          gh api repos/jjoshua2/DeepFin/actions/jobs/107490473484 > "$EVIDENCE/retained-parent-job.json"
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          temp=Path(os.environ['RUNNER_TEMP']);e=Path(os.environ['EVIDENCE'])
+          encoded=(temp/'source.b64').read_bytes()
+          assert len(encoded)==23624
+          patch=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(patch)==94261 and hashlib.sha256(patch).hexdigest()=='46f1110f3e7a87efd7b61e5a8b41f2ab39216b553c91d971b05535a7b7f979f1'
+          (temp/'source.patch').write_bytes(patch)
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='b2550922a6e10199947eba5960ed1d0b9ef54e66'
+          subprocess.run(['git','apply','--check',str(temp/'source.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(temp/'source.patch')],check=True)
+          assert git('write-tree')=='521cb1e1d409d970610bf406ca1a051289dce0e4'
+          files=git('diff','--cached','--name-only').splitlines()
+          assert len(files)==23
+          assert all(f.startswith('native/bend_engine/standalone/proofs/lookup/') or f.startswith('docs/experiments/evidence/bend-lookup-contracts/geometry/') for f in files)
+          old=Path('docs/experiments/evidence/bend-stored-data')
+          q=json.loads((old/'hosted-qualification.json').read_text())
+          assert q['qualification']=='PASS' and q['modular_laws']==106 and q['modular_controls']==260
+          p=json.loads((old/'hosted-controls.json').read_text())
+          assert p['controls_gate']=='PASS' and len(p['negative_controls'])==17 and all(x['rejected'] for x in p['negative_controls'])
+          assert json.loads((old/'hosted-consumer.log.json').read_text())['raw_text'].strip()=='All terms check.'
+          manifest=json.loads((old/'hosted-candidate-source-sha256.json').read_text())
+          assert len(manifest)==329
+          for f,h in manifest.items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          job=json.loads((e/'retained-parent-job.json').read_text())
+          assert job['id']==107490473484 and job['run_id']==35954718944 and job['status']=='completed' and job['conclusion']=='success'
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in git('ls-files','native/bend_engine').splitlines() if Path(f).is_file()}
+          record={'base':os.environ['BASE'],'saved_local_commit':'a51dc14037b8dc9e85ea2f3706f5b475a13f27b5','source_promotion_tree':'521cb1e1d409d970610bf406ca1a051289dce0e4','source_patch_sha256':hashlib.sha256(patch).hexdigest(),'changed_files':files,'candidate_source_sha256s':hashes,'retained_parent_laws':106,'retained_parent_controls':260,'full_110_law_wrapper_executed':False,'alternate_branch_preserved':'feat/bend-lookup-contracts-20260924@feb2dd7dbd12acc3e3f1eb4d13b2cb1b63d0cb6a'}
+          (e/'source-identity.json').write_text(json.dumps(record,indent=2)+'\n')
+          paragraphs=['# Four-law lookup publication and qualification','## Scope recorded before hosted execution',
+            'This candidate preserves all twelve lookup-suite files and the complete eleven-file geometry archive from saved local commit a51dc14037b8dc9e85ea2f3706f5b475a13f27b5 byte-for-byte. It is based directly on PR #872 at '+os.environ['BASE']+'. The original local commit also contains local-only logs and documentation; this publication does not claim to reproduce that entire local commit identity.',
+            'The existing alternate branch feat/bend-lookup-contracts-20260924 at feb2dd7dbd12acc3e3f1eb4d13b2cb1b63d0cb6a has three registered contracts, including the same underlying routing and masked result, but does not register the intermediate indexed result. Its recovery run 35994246166 failed. Both that branch and its history remain untouched. This new branch preserves the four saved public statements without treating the alternate variant as completed qualification.',
+            'Acceptance requires fresh safe source-consumer success, all sixteen saved rejection controls, all four native modes and actual shifted-lookup rejection, original compiler source/pin checks, unchanged whole-repository lint, and renewed source/native checks of the two archived geometry foundations. The inherited 106-law/260-control result is retained only after exact source, report and successful job checks. Full combined wrapper execution is not implied.',
+            'Compiler remains aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae, Bend 2.0.21 plus U64, fingerprint d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4. No production runtime, old law, compiler input, permanent workflow or routine perft changes. No merge, deployment, model/GPU, training or benchmark work. Self-review only; independent review is not claimed.',
+            'The four public contracts are certified_header_route, selected_state_is_masked, initialized_indexed_lookup and initialized_masked_lookup. The first is conditional on explicit header reads; the initialized contracts derive header/data/shape certificates from actual allocation/table/extras operations. Domain: symbolic depth equal to17, bounded selected-block and extras budgets, arbitrary seed and occupancy. Full returned-array equality is not a native ownership/lifetime theorem.',
+            'Archived Step.actual and Masks.actual establish independent coordinate-step and complete relevant-mask correspondence. They remain supplementary statements, not added public-law counts. Arbitrary-occupancy blocker traversal and terminal-edge irrelevance are still separate P2 obligations. Native query tests do not replace those quantified source proofs.',
+            '## Execution status','Source staged; hosted qualification is not yet complete. The previous local lint missing-tools failure remains historical and is not relabeled a pass. Final results will be appended only after all required jobs succeed.']
+          Path('docs/experiments/2026-09-24-bend-lookup-publication.md').write_text('\n\n'.join(paragraphs)+'\n')
+          PY
+          git diff --cached --check
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          git switch -c "$TARGET"
+          git add docs/experiments/2026-09-24-bend-lookup-publication.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: preserve all four saved lookup contracts and independent geometry foundations'
+          git push origin "HEAD:refs/heads/$TARGET"
+          echo "source=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/staged-commit.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lookup-saved-stage
+          path: ${{ runner.temp }}/lookup-stage/
+          retention-days: 30
+  check:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        phase: [source, controls, runtime, geometry]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Verify unchanged compiler and prepare result directory
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/check-${{ matrix.phase }}"
+          echo "EVIDENCE=$RUNNER_TEMP/check-${{ matrix.phase }}" >> "$GITHUB_ENV"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+      - name: Check all four public source contracts and importing consumer
+        if: matrix.phase == 'source'
+        run: |
+          set -euo pipefail
+          timeout 1200 bun .compiler/bend2/main.ts native/bend_engine/standalone/proofs/lookup/consumer.bend > "$EVIDENCE/source-consumer.log" 2>&1
+          python3 -c 'import os;from pathlib import Path;p=Path(os.environ["EVIDENCE"])/"source-consumer.log";assert p.read_text().strip()=="All terms check.",p.read_text()[-2000:]'
+      - name: Check all sixteen preserved rejection controls
+        if: matrix.phase == 'controls'
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/lookup/focused.js "$PWD/.compiler" --controls-only --report "$EVIDENCE/controls.json" 2>&1 | tee "$EVIDENCE/controls.log"
+      - name: Compare actual initialized lookup in four native modes
+        if: matrix.phase == 'runtime'
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/lookup/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/runtime-native.json" 2>&1 | tee "$EVIDENCE/runtime-native.log"
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/runtime-pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/runtime-compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        if: matrix.phase == 'runtime'
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        if: matrix.phase == 'runtime'
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools with normal host compiler
+        if: matrix.phase == 'runtime'
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        if: matrix.phase == 'runtime'
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/runtime-lint.log"
+      - name: Recheck archived independent step and mask foundations
+        if: matrix.phase == 'geometry'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,shutil
+          from pathlib import Path
+          archive=Path('docs/experiments/evidence/bend-lookup-contracts/geometry')
+          target=Path('native/bend_engine/standalone/proofs/geometry_review')
+          target.mkdir(exist_ok=False)
+          for p in archive.glob('*.bend.txt'):
+              shutil.copyfile(p,target/p.name.removesuffix('.txt'))
+          manifest=json.loads((archive/'source-manifest.json').read_text())
+          for name,h in manifest.items():
+              p=Path('native/bend_engine')/name
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==h,name
+          PY
+          timeout 600 bun .compiler/bend2/main.ts native/bend_engine/standalone/proofs/geometry_review/Step.bend > "$EVIDENCE/geometry-Step.log" 2>&1
+          timeout 600 bun .compiler/bend2/main.ts native/bend_engine/standalone/proofs/geometry_review/Masks.bend > "$EVIDENCE/geometry-Masks.log" 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          for name in ['geometry-Step.log','geometry-Masks.log']:
+              text=(Path(os.environ['EVIDENCE'])/name).read_text()
+              assert text.strip()=='All terms check.',text[-2000:]
+          PY
+          python3 docs/experiments/evidence/bend-lookup-contracts/geometry/verify_geometry.py.txt "$PWD" "$PWD/.compiler" --bun "$(command -v bun)" --cc clang-18 --report "$EVIDENCE/geometry-native.json" > "$EVIDENCE/geometry-native.log" 2>&1
+      - name: Verify no tracked sources changed
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lookup-saved-${{ matrix.phase }}
+          path: ${{ runner.temp }}/check-${{ matrix.phase }}/
+          retention-days: 30
+  publish:
+    needs: [prepare, check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lookup-saved-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/collected
+      - name: Verify all outcomes and record qualification without weakening gates
+        env:
+          SOURCE: ${{ needs.prepare.outputs.source }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-stored-data-20260923 | cut -f1)" = "$BASE"
+          python3 - <<'PY'
+          import hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['RUNNER_TEMP'])/'collected'
+          def read(n):return json.loads((e/n).read_text())
+          def canon(x):return hashlib.sha256(json.dumps(x,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          original=read('source-identity.json')
+          for f,h in original['candidate_source_sha256s'].items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          c=read('controls.json');n=read('runtime-native.json');g=read('geometry-native.json')
+          assert (e/'source-consumer.log').read_text().strip()=='All terms check.'
+          assert c['new_law_count']==4 and c['controls_gate']=='PASS' and c['consumer']=='NOT_RUN' and c['focused_gate']=='NOT_RUN'
+          assert len(c['negative_controls'])==16 and all(x['rejected'] for x in c['negative_controls'])
+          assert canon(c['source_sha256s'])=='08dcd95c6f0aba63203e5026fdc1522abd853fdea32e95583aab7576cc4ce2c2'
+          assert n['native_gate']=='PASS' and n['rows_per_mode']==1024 and n['distinct_input_pairs']==1022 and n['all_keys']==128
+          assert canon({k:v for k,v in n.items() if k!='cc'})=='2a7495b60748b9a48c20976f9d8d615dc61aed0447d66bab7f2a9a5aff8491bb'
+          assert read('runtime-compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'runtime-pin.log').read_text() and '0 fail' in (e/'runtime-pin.log').read_text()
+          assert (e/'runtime-lint.log').read_text().strip().endswith('lint: OK')
+          for name in ['geometry-Step.log','geometry-Masks.log']:assert (e/name).read_text().strip()=='All terms check.'
+          assert g['supplementary_geometry']=='PASS' and len(g['modes'])==2
+          assert all(x['step_cases']==512 and x['mask_cases']==128 for x in g['modes'])
+          assert len(g['mutations'])==2 and all(x['native_wrong_value_rejected'] and x['source_rejection_status']==1 for x in g['mutations'])
+          local_geometry=json.loads(Path('docs/experiments/evidence/bend-lookup-contracts/geometry/native-report.json').read_text())
+          assert g['modes']==local_geometry['modes'] and g['source_sha256s']==local_geometry['source_sha256s'] and g['driver_sha256']==local_geometry['driver_sha256']
+          d=Path('docs/experiments/evidence/bend-lookup-contracts/hosted');d.mkdir(exist_ok=False)
+          for name in ['source-identity.json','retained-parent-job.json','controls.json','runtime-native.json','runtime-compiler-proofs.json','geometry-native.json']:
+              shutil.copyfile(e/name,d/name)
+          for name in ['source-consumer.log','runtime-pin.log','runtime-lint.log','geometry-Step.log','geometry-Masks.log']:
+              raw=(e/name).read_bytes()
+              (d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          result={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'new_public_laws':4,'new_controls':16,'retained_parent_laws':106,'retained_parent_controls':260,'modular_laws':110,'modular_controls':276,'combined_wrapper_executed':False,'source_consumer_and_controls_separate':True,'supplementary_geometry':'Independent step and complete relevant masks source/native rechecked; not added public-law counts','native_source_entries':len(original['candidate_source_sha256s']),'source_closure_matches_saved_candidate':True,'native_report_matches_saved_except_cc':True,'alternate_three_contract_branch_modified':False,'independent_review':False}
+          (d/'qualification.json').write_text(json.dumps(result,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes the four preserved public laws, all16 controls, four native modes, original compiler source/pin gates, unchanged repository lint and the two archived independent step/mask checks on source `{os.environ['SOURCE']}`."
+          paragraphs=['## Completed hosted qualification',headline,
+            'Consumer and controls executed separately on independent runners; the controls report correctly retains consumer and focused_gate as NOT_RUN. Exact-source parent106/260 evidence yields modular110/276 coverage. The full110-law wrapper was not executed. Every inherited law and gate remains unchanged.',
+            'All twelve lookup-suite files and all eleven geometry-archive files are identical to the saved four-contract candidate. Source closure and complete native report (except recorded C compiler version) match its local reports. The original local-only logs remain in the saved review package. This branch has a new source commit; it does not falsely claim to be original local commit a51dc14037b8dc9e85ea2f3706f5b475a13f27b5.',
+            'Native generic, forced-portable, native-target and UBSan each pass1,024 rows,1,022 distinct key/occupancy pairs, all128 keys and six invalid requests. The actual shifted-prefix mutation compiles/runs and is rejected for the wrong returned value. These are repeated selected queries, not full buffers or exhaustive occupancies.',
+            'Independent Step.actual and Masks.actual were rechecked with exact safe source success. The archived generic/UBSan driver compares all512 step cases and128 complete masks; off-board and terminal-mask corruptions are rejected by both native values and intended source refinements. These remain two supplementary derived statements, not extra registered laws. Diagnostic text can differ in temporary paths and is preserved rather than forced byte-identical.',
+            'The unchanged locked Python3.13 CPU environment and whole-repository Ruff/Basedpyright/Vulture gate pass. Clang18 is used only for native probes, not exported to Python extension builds. This resolves the saved local missing-lint-tools gap for these exact sources. Original compiler16-laws/seven-controls and12 pin checks pass.',
+            'The alternate three-contract branch and its failed recovery remain untouched. This four-contract branch additionally registers initialized_indexed_lookup; equivalent routing/masked statements use the saved names. Neither previous branch is merged or overwritten. Do not apply both same-directory variants together.',
+            'No production code, previous law, compiler input, routine perft budget, model/GPU/training/benchmark work changed. Proof results still trust pinned checker/Base; native allocation/lifetime, ABI, toolchain and hardware remain separate trust boundaries. Existing compiler limitations are not fixed. Python export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. Self-review only.',
+            'Next decisive P2 acceptance is arbitrary-occupancy blocker traversal and terminal-edge occupancy irrelevance, composed with the now-public initialized lookup result. Independent finite step/mask foundations do not already establish the universal attack theorem.'
+          ]
+          record=Path('docs/experiments/2026-09-24-bend-lookup-publication.md')
+          record.write_text(record.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          row='| [Four public lookup contracts](2026-09-24-bend-lookup-publication.md) | Preserves saved lookup sources and independent step/mask foundations; hosted modular110/276 with repository lint; arbitrary-occupancy attack geometry remains open |\n'
+          index.write_text(text.replace(anchor,anchor+row,1))
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          update='## Latest public lookup and independent geometry qualification\n\n'+headline+' The four contracts are certified_header_route, selected_state_is_masked, initialized_indexed_lookup and initialized_masked_lookup. They retain actual affine buffers and obtain header/data/index/shape certificates from earlier producers. Caller bounds and symbolic depth=17 remain explicit.\n\nModular coverage is110 laws/276 controls, not a newly executed full aggregate. The exact saved supplementary Step.actual and Masks.actual are now rechecked hosted: actual movement agrees with independent coordinates, and full relevant masks agree with independent ray interiors. These two statements do not increase the four public-law count. Arbitrary-occupancy blocker traversal and terminal-edge irrelevance remain open. See [the current record](experiments/2026-09-24-bend-lookup-publication.md) and committed reports. Historical local-only and supplementary-only lookup status below is superseded only within this stated scope. No additional application responsibility moves into Bend.\n'
+          matrix.write_text(title+'\n\n'+update+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git switch -c "$TARGET"
+          git add docs/experiments docs/bend_migration_proofs.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify preserved four-law lookup and independent geometry foundations'
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$RUNNER_TEMP/collected" "$RUNNER_TEMP/final/reports"
+          git log -2 --format='%H %s' > "$RUNNER_TEMP/final/published-commits.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lookup-saved-final
+          path: ${{ runner.temp }}/final/
+          retention-days: 14
