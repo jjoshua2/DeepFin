@@ -107,3 +107,15 @@ performance panel was rerun or relabeled as part of this repair.
 
 CI also runs the benchmark's dictionary/driver checks without `--measure`, so
 both map implementations remain covered without imposing a speed threshold.
+
+
+## Actual chess-key fixtures
+
+Add `--chess` to the comparison driver to generate deterministic legal-position
+workloads using the inspected checkout's actual CBoard transposition-key code.
+See [the chess-key replay record](../../../docs/experiments/2026-09-24-chess-key-map-replay.md).
+It includes full encounter replays and native EP/castling/history-key boundary
+checks. These generated legal walks are not recorded production access traces.
+The numeric map remains unaware of board fields, history and model identity;
+do not treat a hit as permission to reuse a neural value. No performance panel
+is part of this correctness extension.

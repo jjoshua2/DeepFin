@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 import hashlib
 import json
 import os
@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from . import cpu_target
+from .workload import Workload
 
 HERE = Path(__file__).resolve().parent
 MASK = (1 << 32) - 1
@@ -23,14 +24,6 @@ ARMS = ('hash', 'scan')
 PAIRS = 6
 MIN_MS = 50
 MAX_ROUNDS = 16384
-
-
-@dataclass(frozen=True)
-class Workload:
-    name: str
-    bits: int
-    initial: tuple[tuple[int, int], ...]
-    ops: tuple[tuple[int, int, int], ...]  # get=0, put=1, remove=2
 
 
 def bucket(key: int, mask: int) -> int:
@@ -196,6 +189,7 @@ def main() -> None:
     parser.add_argument('--cc', default=shutil.which('clang'))
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--measure', action='store_true')
+    parser.add_argument('--chess', action='store_true', help='use actual CBoard keys from deterministic legal positions')
     args = parser.parse_args()
     if not args.bun or not args.cc or args.output.exists():
         parser.error('Bun, Clang and a fresh output directory are required')
@@ -203,7 +197,8 @@ def main() -> None:
     output.mkdir(parents=True)
     rows: list[dict[str, Any]] = []
     report: dict[str, Any] = {'status': 'failed', 'scope': 'hash versus dense scan, shared slots and entry budget',
-                             'samples': rows, 'cases': [asdict(c) for c in workloads()], 'measured': args.measure}
+                             'samples': rows, 'cases': [], 'measured': args.measure,
+                             'workload_source': 'chess' if args.chess else 'synthetic'}
     def command(argv: list[str], label: str, env: dict[str, str] | None = None) -> str:
         run = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=60, check=False)
         (output / f'{label}.stdout').write_text(run.stdout)
@@ -219,7 +214,13 @@ def main() -> None:
         report['cpu_target'] = cpu_target.qualify(args.cc, output, command)
         report['source_sha256'] = {n: hashlib.sha256((HERE / n).read_bytes()).hexdigest()
                                    for n in ('U64Map.bend', 'ScanMap.bend', 'benchmark.bend', 'benchmark.py', 'cpu_target.py')}
-        cases = workloads()
+        chess_traces = []
+        if args.chess:
+            from .chess_workloads import collect
+            cases, chess_traces, report['chess_corpus'] = collect()
+        else:
+            cases = workloads()
+        report['cases'] = [asdict(c) for c in cases]
         for c in cases:
             if model(c)[1] != dict(c.initial):
                 raise ValueError('non-neutral workload')
@@ -242,7 +243,13 @@ def main() -> None:
                 command([args.cc, '-std=c11', '-O3', '-ffp-contract=off', *flags, str(generated), '-pthread', '-lm', '-o', str(binary)], f'build-{arm}-{mode}')
                 binaries[arm, mode] = binary
         from . import run_probe as reference
-        reference_cases = reference.fixtures()
+        reference_cases = reference.fixtures() + chess_traces
+        if args.chess:
+            report['chess_replay_cases'] = [
+                {'name': c.name, 'bits': c.bits, 'operations': len(c.ops),
+                 'input_sha256': hashlib.sha256(reference.encode(c).encode()).hexdigest(),
+                 'expected_sha256': hashlib.sha256(reference.expected(c).encode()).hexdigest()}
+                for c in chess_traces]
         trace_counts = []
         for arm in ARMS:
             folder = output / arm

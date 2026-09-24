@@ -122,3 +122,5 @@ links to supporting experiments. The `experiment-readout` Skill covers the reusa
 analysis workflow.
 
 - [Numeric-map shared-slot performance screen](2026-09-24-numeric-map-screen.md): hash versus dense scan, exact dictionary controls and matched hit/miss/churn loops; no engine/cache adoption.
+
+- [CBoard-key map replay](2026-09-24-chess-key-map-replay.md): actual source-derived position keys, exact dictionary replay and explicit history/EP cache-identity limits; no performance or cache-adoption claim.
