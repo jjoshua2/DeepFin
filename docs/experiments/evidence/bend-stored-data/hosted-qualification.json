@@ -1,0 +1,14 @@
+{
+  "qualification": "PASS",
+  "method": "New source consumer and controls executed as separate commands; exact 103-law parent retained",
+  "new_laws": 3,
+  "new_controls": 17,
+  "retained_parent_laws": 103,
+  "retained_parent_controls": 243,
+  "modular_laws": 106,
+  "modular_controls": 260,
+  "combined_wrapper_executed": false,
+  "source": "1ee5d0534a3ac8c2ed3514141f0e89be58ef500b",
+  "source_tree": "2b0dc51432a9f609a8bf7ede86846ed20978f2cd",
+  "run": "35954718944"
+}

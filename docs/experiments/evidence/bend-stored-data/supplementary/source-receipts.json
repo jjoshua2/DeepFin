@@ -1,0 +1,54 @@
+{
+  "supplementary_only": true,
+  "not_public_law_count": true,
+  "checks": [
+    {
+      "command": [
+        "/mnt/data/data-continuation/compiler/bun",
+        "/mnt/data/data-continuation/compiler/bend/bend2/main.ts",
+        "/mnt/data/data-continuation/lookup-review/native/bend_engine/standalone/proofs/lookup_review/Route.bend"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.5165617299999212,
+      "name": "lookup-route",
+      "raw_text": "All terms check.\n",
+      "log_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+    },
+    {
+      "command": [
+        "/mnt/data/data-continuation/compiler/bun",
+        "/mnt/data/data-continuation/compiler/bend/bend2/main.ts",
+        "/mnt/data/data-continuation/lookup-review/native/bend_engine/standalone/proofs/lookup_review/Pipeline.bend"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 281.71049049400017,
+      "name": "lookup-pipeline",
+      "raw_text": "All terms check.\n",
+      "log_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+    },
+    {
+      "command": [
+        "/mnt/data/data-continuation/compiler/bun",
+        "/mnt/data/data-continuation/compiler/bend/bend2/main.ts",
+        "/mnt/data/data-continuation/lookup-review/native/bend_engine/standalone/proofs/lookup_review/Canonical.bend"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 178.0932457680001,
+      "name": "lookup-canonical",
+      "raw_text": "All terms check.\n",
+      "log_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+    },
+    {
+      "command": [
+        "/mnt/data/data-continuation/compiler/bun",
+        "/mnt/data/data-continuation/compiler/bend/bend2/main.ts",
+        "/mnt/data/data-continuation/lookup-review/native/bend_engine/standalone/proofs/lookup_review/MaskedLookup.bend"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 294.55528307899976,
+      "name": "lookup-masked",
+      "raw_text": "All terms check.\n",
+      "log_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84"
+    }
+  ]
+}
