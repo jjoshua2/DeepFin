@@ -1,0 +1,25 @@
+name: PR5d live root workspace
+on:
+  push:
+    branches: [work/pr5d-live-roots-20260924]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: bb1847d2d7f3c4e8b94e5dfb9f64bfc87e0c3390
+      - name: Archive tracked source only
+        run: |
+          mkdir -p /tmp/pr5d-source
+          git archive HEAD | gzip > /tmp/pr5d-source/source.tar.gz
+          git rev-parse HEAD > /tmp/pr5d-source/revision.txt
+          sha256sum /tmp/pr5d-source/source.tar.gz > /tmp/pr5d-source/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepfin-pr5d-source
+          path: /tmp/pr5d-source
+          retention-days: 7
