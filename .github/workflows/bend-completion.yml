@@ -81,9 +81,9 @@ jobs:
       - name: CI admission and existing Python contracts
         run: |
           . .venv/bin/activate
-          ruff check native/bend_engine/multi_root/ci_completion.py tests/test_bend_completion_ci.py
-          basedpyright native/bend_engine/multi_root/ci_completion.py tests/test_bend_completion_ci.py
-          python -m pytest -q tests/test_bend_completion_ci.py tests/test_bend_completion_wait.py tests/test_bend_fifo_scheduler.py tests/test_bend_multi_root.py tests/test_bend_async_cohort.py tests/test_bend_cohort_deadlines.py tests/test_neural_work.py --junitxml=artifacts/completion-python.xml
+          ruff check native/bend_engine/multi_root/ci_completion.py tests/test_bend_completion_ci.py native/bend_engine/multi_root/verify_arena.py tests/test_bend_arena.py
+          basedpyright native/bend_engine/multi_root/ci_completion.py tests/test_bend_completion_ci.py native/bend_engine/multi_root/verify_arena.py tests/test_bend_arena.py
+          python -m pytest -q tests/test_bend_arena.py tests/test_bend_completion_ci.py tests/test_bend_completion_wait.py tests/test_bend_fifo_scheduler.py tests/test_bend_multi_root.py tests/test_bend_async_cohort.py tests/test_bend_cohort_deadlines.py tests/test_neural_work.py --junitxml=artifacts/completion-python.xml
       - name: Fresh actual coordinator and unchanged serial, control and deadline oracles
         env:
           CC: clang-18

@@ -1,0 +1,18 @@
+{
+  ".github/workflows/bend-completion.yml": "65c97c12cb9938a590c4437ddd8d7e08b8309314edab953db0e7f409cc5ac778",
+  "docs/experiments/2026-09-24-bounded-search-arenas.md": "2fa700478684e0ddebcbfd13830aa2480b19b0ca53ea89251c7b2e063e3d96b3",
+  "docs/experiments/README.md": "2be04763ada570b7b9d1a2cdacb7dc530aa9c18ea8d46b064584e5e2becdaebf",
+  "native/bend_engine/multi_root/ArenaConfig.bend": "4af16e283a00153dd1ec8106b64a50e47e710d79dc4ad033706b550dd907bd9a",
+  "native/bend_engine/multi_root/AsyncRun.bend": "4eeafaec1a7ca67635b6bccd4cf0d366d057d64f0be9a1edbda4d3d8f958f91e",
+  "native/bend_engine/multi_root/CI.md": "9f23db0fe613e3ef9d40d5c7d4ccc879a1063a22c34ce8f76b13f66cfb175c68",
+  "native/bend_engine/multi_root/DeadlineWork.bend": "42642bcd45d12d40dabed6c5e32a0513cf5b1b12256d6777f2c3ce3ef1e2974e",
+  "native/bend_engine/multi_root/README.md": "35e8337076731ebc87e008a36beb4af4c055ea3e32f43a10d8844454eb1b2243",
+  "native/bend_engine/multi_root/arena_probe.bend": "a50788e37f5a16bd04bdc8ade5f98d60632c59e85dcfcfa3d6201ef3d83cb679",
+  "native/bend_engine/multi_root/ci_completion.py": "26320cdc20ab3a392c236264c89e0d1b65c2517641ecc861204edc2296f32269",
+  "native/bend_engine/multi_root/main.bend": "25331378849d35ed5c5bacf0bbd35b384e352c1dfc787368916df528c555aeff",
+  "native/bend_engine/multi_root/verify.py": "b2ebebcd9102cb63aacffce642243cd12abed14e0387b8f79bd7ff51011ac83f",
+  "native/bend_engine/multi_root/verify_arena.py": "01e839902ad7647ffddee2525d0e5093bacd6453d475af5922d6c1843f8c4247",
+  "native/bend_engine/session_probe/Search.bend": "f64956f67f431959b997d01273213a32ba93e1c1b4c82a348bd41f3ad9ac88dc",
+  "native/bend_engine/session_probe/run_probe.py": "ed3d4086cbb19d71549be58de8718ce0ed92018b9a6d1ea0cd4463732b193c57",
+  "tests/test_bend_arena.py": "784aeadbe468b8dffe1f31daf6a6850780199ec2e16f5bfc93700bb2caacb494"
+}

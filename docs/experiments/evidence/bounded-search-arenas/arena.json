@@ -1,0 +1,1516 @@
+{
+  "status": "passed",
+  "scope": "fixed bounded arenas, not dynamic growth or performance",
+  "searches": [
+    {
+      "channels": 146,
+      "async": false,
+      "case": "default",
+      "arena_nodes": 4096,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "980773ba5ea3927cda6ce50682bb90be5cabdf5e5bf4c49e3f6b399eb24184a0"
+    },
+    {
+      "channels": 146,
+      "async": false,
+      "case": "explicit-default",
+      "arena_nodes": 4096,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "980773ba5ea3927cda6ce50682bb90be5cabdf5e5bf4c49e3f6b399eb24184a0"
+    },
+    {
+      "channels": 146,
+      "async": false,
+      "case": "8192",
+      "arena_nodes": 8192,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 256,
+        "forwards": 256,
+        "padding": 768,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 5662,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 5663
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "rule_draw_replies": 0,
+          "used_nodes": 5663,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "86783c7814b2c903f77119b630356760e53457f550677a42bfd107b8184f0b63"
+    },
+    {
+      "channels": 146,
+      "async": false,
+      "case": "1",
+      "arena_nodes": 1,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 0,
+        "forwards": 0,
+        "padding": 0,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 0,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 1
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 0,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "9db32d564facfb3511c9be811ca91ab5998e29583fa0e0ade6748b9788564f8d"
+    },
+    {
+      "channels": 146,
+      "async": false,
+      "case": "20",
+      "arena_nodes": 20,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 0,
+        "forwards": 0,
+        "padding": 0,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 0,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 1
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 0,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "9db32d564facfb3511c9be811ca91ab5998e29583fa0e0ade6748b9788564f8d"
+    },
+    {
+      "channels": 146,
+      "async": false,
+      "case": "21",
+      "arena_nodes": 21,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 1,
+        "forwards": 1,
+        "padding": 3,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 20,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 21
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 1,
+          "executed_real_rows": 1,
+          "accepted_neural_rows": 1,
+          "rule_draw_replies": 0,
+          "used_nodes": 21,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "b1a3"
+        }
+      },
+      "semantic_sha256": "cef957d0631147e186a46916829563707055fe06e4f2cf0d5a5332f3baf3cdf7"
+    },
+    {
+      "channels": 146,
+      "async": false,
+      "case": "4097",
+      "arena_nodes": 4097,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "980773ba5ea3927cda6ce50682bb90be5cabdf5e5bf4c49e3f6b399eb24184a0"
+    },
+    {
+      "channels": 146,
+      "async": false,
+      "case": "65536",
+      "arena_nodes": 65536,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 4,
+        "forwards": 4,
+        "padding": 12,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 80,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 81
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 4,
+          "executed_real_rows": 4,
+          "accepted_neural_rows": 4,
+          "rule_draw_replies": 0,
+          "used_nodes": 81,
+          "stop_code": 0,
+          "simulation_budget": 4,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c3"
+        }
+      },
+      "semantic_sha256": "e5dacee183adc239b4d6c6c2fdc81d36f0a6efe7b324c74d40404ac0a1e050ee"
+    },
+    {
+      "channels": 146,
+      "async": false,
+      "case": "mixed",
+      "arena_nodes": 16384,
+      "oracle": {
+        "roots": 3,
+        "real_rows": 512,
+        "forwards": 256,
+        "padding": 512,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 13287,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 13290
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "rule_draw_replies": 0,
+          "used_nodes": 5663,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        },
+        "2": {
+          "root": 2,
+          "completed_simulations": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "rule_draw_replies": 0,
+          "used_nodes": 7626,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        },
+        "3": {
+          "root": 3,
+          "completed_simulations": 256,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "fa1a705642f54693fbbfa4c7b6f482f55b4bc828bd9f577f67c21ef203caadec"
+    },
+    {
+      "channels": 146,
+      "async": true,
+      "case": "default",
+      "arena_nodes": 4096,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "dispatched_real_rows": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "d11c318cdcec5340c528de94f33ef4229393301dd961be6a6e0480be73f06166"
+    },
+    {
+      "channels": 146,
+      "async": true,
+      "case": "explicit-default",
+      "arena_nodes": 4096,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "dispatched_real_rows": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "d11c318cdcec5340c528de94f33ef4229393301dd961be6a6e0480be73f06166"
+    },
+    {
+      "channels": 146,
+      "async": true,
+      "case": "8192",
+      "arena_nodes": 8192,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 256,
+        "forwards": 256,
+        "padding": 768,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 5662,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 5663
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 256,
+          "dispatched_real_rows": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 5663,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "f79ea910cc31b68f7bab3573f6cd3af22690c8c6844c07f2d5710d0b8efe86eb"
+    },
+    {
+      "channels": 146,
+      "async": true,
+      "case": "1",
+      "arena_nodes": 1,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 0,
+        "forwards": 0,
+        "padding": 0,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 0,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 1
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 0,
+          "dispatched_real_rows": 0,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "a201239a7ef035de325a8dcb1aac8096fd1982b7e1260b14e476e1fa37fc5f15"
+    },
+    {
+      "channels": 146,
+      "async": true,
+      "case": "20",
+      "arena_nodes": 20,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 0,
+        "forwards": 0,
+        "padding": 0,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 0,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 1
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 0,
+          "dispatched_real_rows": 0,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "a201239a7ef035de325a8dcb1aac8096fd1982b7e1260b14e476e1fa37fc5f15"
+    },
+    {
+      "channels": 146,
+      "async": true,
+      "case": "21",
+      "arena_nodes": 21,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 1,
+        "forwards": 1,
+        "padding": 3,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 20,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 21
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 1,
+          "dispatched_real_rows": 1,
+          "executed_real_rows": 1,
+          "accepted_neural_rows": 1,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 21,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "b1a3"
+        }
+      },
+      "semantic_sha256": "66f1b1e376cb8b02eba0cc65a920d44137ac14946247ae14ae5b753d8886bc3f"
+    },
+    {
+      "channels": 146,
+      "async": true,
+      "case": "4097",
+      "arena_nodes": 4097,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "dispatched_real_rows": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "d11c318cdcec5340c528de94f33ef4229393301dd961be6a6e0480be73f06166"
+    },
+    {
+      "channels": 146,
+      "async": true,
+      "case": "65536",
+      "arena_nodes": 65536,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 4,
+        "forwards": 4,
+        "padding": 12,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 80,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 81
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 4,
+          "dispatched_real_rows": 4,
+          "executed_real_rows": 4,
+          "accepted_neural_rows": 4,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 81,
+          "stop_code": 0,
+          "simulation_budget": 4,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c3"
+        }
+      },
+      "semantic_sha256": "991ee1a76b1871c1c4fe52bf6de74cacfde19812b6e1608b8231af012855c4c4"
+    },
+    {
+      "channels": 146,
+      "async": true,
+      "case": "mixed",
+      "arena_nodes": 16384,
+      "oracle": {
+        "roots": 3,
+        "real_rows": 512,
+        "forwards": 256,
+        "padding": 512,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 13287,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 13290
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 256,
+          "dispatched_real_rows": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 5663,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        },
+        "2": {
+          "root": 2,
+          "completed_simulations": 256,
+          "dispatched_real_rows": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 7626,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        },
+        "3": {
+          "root": 3,
+          "completed_simulations": 256,
+          "dispatched_real_rows": 0,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "3ef0b7a86303d06e8ff1ff1a7d1f776db1f9fd0a7f2d9609efd7c8b31be9bb51"
+    },
+    {
+      "channels": 175,
+      "async": false,
+      "case": "default",
+      "arena_nodes": 4096,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "980773ba5ea3927cda6ce50682bb90be5cabdf5e5bf4c49e3f6b399eb24184a0"
+    },
+    {
+      "channels": 175,
+      "async": false,
+      "case": "explicit-default",
+      "arena_nodes": 4096,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "980773ba5ea3927cda6ce50682bb90be5cabdf5e5bf4c49e3f6b399eb24184a0"
+    },
+    {
+      "channels": 175,
+      "async": false,
+      "case": "8192",
+      "arena_nodes": 8192,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 256,
+        "forwards": 256,
+        "padding": 768,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 5662,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 5663
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "rule_draw_replies": 0,
+          "used_nodes": 5663,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "86783c7814b2c903f77119b630356760e53457f550677a42bfd107b8184f0b63"
+    },
+    {
+      "channels": 175,
+      "async": false,
+      "case": "1",
+      "arena_nodes": 1,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 0,
+        "forwards": 0,
+        "padding": 0,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 0,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 1
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 0,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "9db32d564facfb3511c9be811ca91ab5998e29583fa0e0ade6748b9788564f8d"
+    },
+    {
+      "channels": 175,
+      "async": false,
+      "case": "20",
+      "arena_nodes": 20,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 0,
+        "forwards": 0,
+        "padding": 0,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 0,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 1
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 0,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "9db32d564facfb3511c9be811ca91ab5998e29583fa0e0ade6748b9788564f8d"
+    },
+    {
+      "channels": 175,
+      "async": false,
+      "case": "21",
+      "arena_nodes": 21,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 1,
+        "forwards": 1,
+        "padding": 3,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 20,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 21
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 1,
+          "executed_real_rows": 1,
+          "accepted_neural_rows": 1,
+          "rule_draw_replies": 0,
+          "used_nodes": 21,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "b1a3"
+        }
+      },
+      "semantic_sha256": "cef957d0631147e186a46916829563707055fe06e4f2cf0d5a5332f3baf3cdf7"
+    },
+    {
+      "channels": 175,
+      "async": false,
+      "case": "4097",
+      "arena_nodes": 4097,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "980773ba5ea3927cda6ce50682bb90be5cabdf5e5bf4c49e3f6b399eb24184a0"
+    },
+    {
+      "channels": 175,
+      "async": false,
+      "case": "65536",
+      "arena_nodes": 65536,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 4,
+        "forwards": 4,
+        "padding": 12,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 80,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 81
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 4,
+          "executed_real_rows": 4,
+          "accepted_neural_rows": 4,
+          "rule_draw_replies": 0,
+          "used_nodes": 81,
+          "stop_code": 0,
+          "simulation_budget": 4,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c3"
+        }
+      },
+      "semantic_sha256": "e5dacee183adc239b4d6c6c2fdc81d36f0a6efe7b324c74d40404ac0a1e050ee"
+    },
+    {
+      "channels": 175,
+      "async": false,
+      "case": "mixed",
+      "arena_nodes": 16384,
+      "oracle": {
+        "roots": 3,
+        "real_rows": 512,
+        "forwards": 256,
+        "padding": 512,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 13287,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 13290
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "rule_draw_replies": 0,
+          "used_nodes": 5663,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        },
+        "2": {
+          "root": 2,
+          "completed_simulations": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "rule_draw_replies": 0,
+          "used_nodes": 7626,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        },
+        "3": {
+          "root": 3,
+          "completed_simulations": 256,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "fa1a705642f54693fbbfa4c7b6f482f55b4bc828bd9f577f67c21ef203caadec"
+    },
+    {
+      "channels": 175,
+      "async": true,
+      "case": "default",
+      "arena_nodes": 4096,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "dispatched_real_rows": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "d11c318cdcec5340c528de94f33ef4229393301dd961be6a6e0480be73f06166"
+    },
+    {
+      "channels": 175,
+      "async": true,
+      "case": "explicit-default",
+      "arena_nodes": 4096,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "dispatched_real_rows": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "d11c318cdcec5340c528de94f33ef4229393301dd961be6a6e0480be73f06166"
+    },
+    {
+      "channels": 175,
+      "async": true,
+      "case": "8192",
+      "arena_nodes": 8192,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 256,
+        "forwards": 256,
+        "padding": 768,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 5662,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 5663
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 256,
+          "dispatched_real_rows": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 5663,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "f79ea910cc31b68f7bab3573f6cd3af22690c8c6844c07f2d5710d0b8efe86eb"
+    },
+    {
+      "channels": 175,
+      "async": true,
+      "case": "1",
+      "arena_nodes": 1,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 0,
+        "forwards": 0,
+        "padding": 0,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 0,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 1
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 0,
+          "dispatched_real_rows": 0,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "a201239a7ef035de325a8dcb1aac8096fd1982b7e1260b14e476e1fa37fc5f15"
+    },
+    {
+      "channels": 175,
+      "async": true,
+      "case": "20",
+      "arena_nodes": 20,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 0,
+        "forwards": 0,
+        "padding": 0,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 0,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 1
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 0,
+          "dispatched_real_rows": 0,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "a201239a7ef035de325a8dcb1aac8096fd1982b7e1260b14e476e1fa37fc5f15"
+    },
+    {
+      "channels": 175,
+      "async": true,
+      "case": "21",
+      "arena_nodes": 21,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 1,
+        "forwards": 1,
+        "padding": 3,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 20,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 21
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 1,
+          "dispatched_real_rows": 1,
+          "executed_real_rows": 1,
+          "accepted_neural_rows": 1,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 21,
+          "stop_code": 1,
+          "simulation_budget": 2,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "b1a3"
+        }
+      },
+      "semantic_sha256": "66f1b1e376cb8b02eba0cc65a920d44137ac14946247ae14ae5b753d8886bc3f"
+    },
+    {
+      "channels": 175,
+      "async": true,
+      "case": "4097",
+      "arena_nodes": 4097,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 184,
+        "forwards": 184,
+        "padding": 552,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 4094,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 4095
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 184,
+          "dispatched_real_rows": 184,
+          "executed_real_rows": 184,
+          "accepted_neural_rows": 184,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 4095,
+          "stop_code": 1,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "d11c318cdcec5340c528de94f33ef4229393301dd961be6a6e0480be73f06166"
+    },
+    {
+      "channels": 175,
+      "async": true,
+      "case": "65536",
+      "arena_nodes": 65536,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 4,
+        "forwards": 4,
+        "padding": 12,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 80,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 81
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 4,
+          "dispatched_real_rows": 4,
+          "executed_real_rows": 4,
+          "accepted_neural_rows": 4,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 81,
+          "stop_code": 0,
+          "simulation_budget": 4,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c3"
+        }
+      },
+      "semantic_sha256": "991ee1a76b1871c1c4fe52bf6de74cacfde19812b6e1608b8231af012855c4c4"
+    },
+    {
+      "channels": 175,
+      "async": true,
+      "case": "mixed",
+      "arena_nodes": 16384,
+      "oracle": {
+        "roots": 3,
+        "real_rows": 512,
+        "forwards": 256,
+        "padding": 512,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 13287,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 13290
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 256,
+          "dispatched_real_rows": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 5663,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        },
+        "2": {
+          "root": 2,
+          "completed_simulations": 256,
+          "dispatched_real_rows": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 7626,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        },
+        "3": {
+          "root": 3,
+          "completed_simulations": 256,
+          "dispatched_real_rows": 0,
+          "executed_real_rows": 0,
+          "accepted_neural_rows": 0,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 1,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": false,
+          "bestmove": "0000"
+        }
+      },
+      "semantic_sha256": "3ef0b7a86303d06e8ff1ff1a7d1f776db1f9fd0a7f2d9609efd7c8b31be9bb51"
+    },
+    {
+      "channels": 146,
+      "async": true,
+      "case": "ubsan-8192",
+      "arena_nodes": 8192,
+      "oracle": {
+        "roots": 1,
+        "real_rows": 256,
+        "forwards": 256,
+        "padding": 768,
+        "rule_draw_replies": 0,
+        "legal_priors_compared": 5662,
+        "max_logit_absolute_error": 0.0,
+        "final_tree_nodes_compared": 5663
+      },
+      "roots": {
+        "1": {
+          "root": 1,
+          "completed_simulations": 256,
+          "dispatched_real_rows": 256,
+          "executed_real_rows": 256,
+          "accepted_neural_rows": 256,
+          "cancelled_rows": 0,
+          "deadline_offset_ms": null,
+          "deadline_expired": false,
+          "cancel_requested": false,
+          "rule_draw_replies": 0,
+          "used_nodes": 5663,
+          "stop_code": 0,
+          "simulation_budget": 256,
+          "neural_budget": 0,
+          "neural_budget_met": null,
+          "searched_move": true,
+          "bestmove": "c2c4"
+        }
+      },
+      "semantic_sha256": "f79ea910cc31b68f7bab3573f6cd3af22690c8c6844c07f2d5710d0b8efe86eb"
+    }
+  ],
+  "source_sha256": {
+    "session_probe/Search.bend": "f64956f67f431959b997d01273213a32ba93e1c1b4c82a348bd41f3ad9ac88dc",
+    "multi_root/ArenaConfig.bend": "4af16e283a00153dd1ec8106b64a50e47e710d79dc4ad033706b550dd907bd9a",
+    "multi_root/arena_probe.bend": "a50788e37f5a16bd04bdc8ade5f98d60632c59e85dcfcfa3d6201ef3d83cb679",
+    "multi_root/verify_arena.py": "01e839902ad7647ffddee2525d0e5093bacd6453d475af5922d6c1843f8c4247",
+    "multi_root/main.bend": "25331378849d35ed5c5bacf0bbd35b384e352c1dfc787368916df528c555aeff",
+    "multi_root/AsyncRun.bend": "4eeafaec1a7ca67635b6bccd4cf0d366d057d64f0be9a1edbda4d3d8f958f91e",
+    "multi_root/DeadlineWork.bend": "42642bcd45d12d40dabed6c5e32a0513cf5b1b12256d6777f2c3ce3ef1e2974e",
+    "multi_root/verify.py": "b2ebebcd9102cb63aacffce642243cd12abed14e0387b8f79bd7ff51011ac83f",
+    "session_probe/run_probe.py": "ed3d4086cbb19d71549be58de8718ce0ed92018b9a6d1ea0cd4463732b193c57"
+  },
+  "probe_rows_per_mode": 76,
+  "probe_sha256": {
+    "normal": "051360aed1144c41eed197b2030821b140d263aede9a0f914b7ac76c95f0253a",
+    "ubsan": "051360aed1144c41eed197b2030821b140d263aede9a0f914b7ac76c95f0253a"
+  },
+  "invalid_settings_rejected": 14,
+  "executed_mutations_rejected": [
+    "allocation",
+    "sentinel",
+    "live-node"
+  ],
+  "capacity_effects": [
+    {
+      "channels": 146,
+      "async": false,
+      "default_simulations": 184,
+      "default_nodes": 4095,
+      "larger_simulations": 256,
+      "larger_nodes": 5663
+    },
+    {
+      "channels": 146,
+      "async": true,
+      "default_simulations": 184,
+      "default_nodes": 4095,
+      "larger_simulations": 256,
+      "larger_nodes": 5663
+    },
+    {
+      "channels": 175,
+      "async": false,
+      "default_simulations": 184,
+      "default_nodes": 4095,
+      "larger_simulations": 256,
+      "larger_nodes": 5663
+    },
+    {
+      "channels": 175,
+      "async": true,
+      "default_simulations": 184,
+      "default_nodes": 4095,
+      "larger_simulations": 256,
+      "larger_nodes": 5663
+    }
+  ],
+  "workflow_run": 35998021794,
+  "tested_workflow_commit": "084b365c48172b4c0b985ffcb4581fbcd09a56e7",
+  "base_commit": "5f7991bc91906440f3baa66f732fa46a5f05bf49",
+  "focused_python_tests": 345,
+  "new_python_tests": 38,
+  "candidate_c_sha256": "8f9d1712af22a1ec40914ce2e53e60d5a3fde264b92c34a8561d4c3edb254b72"
+}

@@ -57,3 +57,14 @@ same fixtures; sanitizer coverage is not a proof for all interleavings.
 No throughput assertion is made or gated here. The earlier callback performance
 observations retain their original source identities and limitations. This is
 continuous regression coverage, not a new performance experiment or deployment.
+
+## Arena regression extension
+
+After the existing 33 default-capacity reports, `ci_completion.py cohort` invokes
+`verify_arena.py` using the same freshly generated callback executables. It checks
+fixed-array boundaries and ticket sentinels, invalid environment settings, three
+compiled semantic mutations, and 37 real coordinator cases with quiet repeats.
+An 8,192-node start-position search must both pass the independent numerical/tree
+oracle and complete 256 simulations using more than 4,096 nodes. Missing/partial
+arena reports fail the gate. No historical artifact input or throughput assertion
+is added. The default coordinator/cancellation/deadline matrix remains intact.
