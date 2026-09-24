@@ -1,0 +1,29 @@
+name: Publish qualified owning collection evidence
+on:
+  push:
+    branches: [work/bend-owning-readout-20260923]
+    paths: [.github/workflows/owning-readout.yml, .owning-publish.py, .owning-amendment.md]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      QUALIFIED: c7b00c19a69bdc2242e9f1931695b2bbb73f8a7a
+      EVIDENCE_ARTIFACT: '10782673975'
+      EVIDENCE_SHA256: 9fdbc4ace8e4a915b5143ec4e5b73442589af602540326fb615302060a3b762a
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify completed evidence and create a source-identical review branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCRIPT="$PWD/.owning-publish.py"
+          export AMENDMENT_FILE="$PWD/.owning-amendment.md"
+          git fetch --depth=1 origin "$QUALIFIED"
+          git worktree add --detach "$RUNNER_TEMP/owning-qualified" "$QUALIFIED"
+          cd "$RUNNER_TEMP/owning-qualified"
+          PYTHONPATH="$PWD" python3 "$SCRIPT"
