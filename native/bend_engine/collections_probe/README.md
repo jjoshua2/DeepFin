@@ -78,3 +78,19 @@ These are native tests and self-review, not formal proof or independent review.
 The current-compiler integration wrapper compiles the existing session driver and CBoard support with the same flags and calls the unchanged independent session/root oracles. The legacy bitboard/session toolchain manifest remains untouched; this screen explicitly verifies the CI installer's aaeb9bc9 84-file source fingerprint.
 
 The session driver has existing foreign transport I/O. Its build explicitly requires and records the exact pinned compiler's 18-definition foreign-dependency notice; it is not labeled a pure proof. Unexpected diagnostics fail. Collection/traversal compilation still requires no stderr.
+
+
+## Owning state and bounded ring follow-up
+
+See [the owning collection experiment](../../../docs/experiments/2026-09-23-bend-owning-collections.md) for the calibrated list/FIFO/ring comparison.
+`owning_benchmark.py --benchmark` uses actual Search.Tree values and validates every final root.
+Run it as a module with the same compiler pin and an explicit --report path.
+The bounded single-owner Ring accepts capacities 0..4096. Full pushes return
+the incoming owning value, and empty pops leave the ring unchanged. Its slots
+are boxed zero/one-element lists to avoid a demonstrated generic Maybe-slot
+layout mismatch in this pinned compiler. The singleton allocation cost is
+included in measured rotations; this is not an allocation-free or lock-free
+queue. Use the constructor and preserve its invariants. The exposed
+representation and low-level helpers are not a validated deserialization API.
+The persistent Bend owning collections CI checks both old and new contracts.
+No scheduler adoption follows from this microbenchmark alone.
