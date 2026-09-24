@@ -58,8 +58,10 @@ def histogram(value: object, batch: int) -> dict[int, int]:
 
 
 def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
-          diagnostics: bool, *, asynchronous: bool = False) -> dict[str, Any]:
+          diagnostics: bool, *, asynchronous: bool = False, arena_nodes: int = 4096) -> dict[str, Any]:
     integer(root_count, 1, 16)
+    integer(arena_nodes, 1, 65536)
+    arena_seen = False
     if type(batch) is not int or batch not in BATCHES:
         raise ValueError('unsupported batch')
     roots, nodes, events, batches = {}, {}, [], []
@@ -71,6 +73,12 @@ def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
             raise ValueError('extra/malformed output')
         content = line[len(PREFIX):]
         name, sep, tail = content.partition(' ')
+        if name == 'cohort_arena':
+            expected = f'{arena_nodes} {max(4096, 1 << (arena_nodes - 1).bit_length())}'
+            if arena_nodes == 4096 or arena_seen or roots or nodes or events or tail != expected:
+                raise ValueError('invalid or duplicate arena declaration')
+            arena_seen = True
+            continue
         if asynchronous and name == 'cohort_ready' and not sep:
             continue
         if asynchronous and name == 'cohort_control':
@@ -118,7 +126,7 @@ def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
             elif integer(r.get('executed_real_rows')) != accepted:
                 raise ValueError('root execution/acceptance mismatch')
             integer(r.get('rule_draw_replies'), 0, n - accepted)
-            integer(r.get('used_nodes'), 1, 4096)
+            integer(r.get('used_nodes'), 1, arena_nodes)
             integer(r.get('stop_code'), 0, 2 if asynchronous else 1)
             if integer(r.get('simulation_budget')) != sims or integer(r.get('neural_budget')) != budget:
                 raise ValueError('root budget mismatch')
@@ -137,7 +145,7 @@ def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
             roots[epoch] = r
         elif name == 'cohort_node' and diagnostics:
             ep, index, payload = tail.split(' ', 2)
-            epoch, at = integer(int(ep), 1, root_count), integer(int(index), 0, 4095)
+            epoch, at = integer(int(ep), 1, root_count), integer(int(index), 0, arena_nodes - 1)
             row = json.loads(payload)
             if not isinstance(row, list) or len(row) != 29:
                 raise ValueError('invalid node')
@@ -240,6 +248,8 @@ def parse(stdout: str, root_count: int, batch: int, sims: int, budget: int,
     phases = work.get('phase_seconds')
     if phases != {'queue_wait': None, 'h2d': None, 'gpu': None, 'd2h': None}:
         raise ValueError('unmeasured phases must be null')
+    if arena_nodes != 4096 and not arena_seen:
+        raise ValueError('missing arena declaration')
     return {'roots': roots, 'nodes': nodes, 'events': events, 'work': work}
 
 
@@ -264,7 +274,8 @@ def execute(binary: Path, roots: list[Any], env: dict[str, str], sims: int = 4,
 
 def oracle_check(parsed: dict[str, Any], roots: list[Any], trace: Path, oracle_binary: Path,
                  channels: int, batch: int, sims: int, depth: int, budget: int,
-                 eager: Any = None, history_encoding: str = 'lc0_root_legacy_meta') -> dict[str, Any]:
+                 eager: Any = None, history_encoding: str = 'lc0_root_legacy_meta',
+                 arena_nodes: int = 4096) -> dict[str, Any]:
     import torch
     from chess_anti_engine.encoding._lc0_ext import CBoard
     from chess_anti_engine.moves.encode import FULL_TO_COMPACT_POLICY, move_to_index
@@ -275,7 +286,7 @@ def oracle_check(parsed: dict[str, Any], roots: list[Any], trace: Path, oracle_b
     from native.bend_engine.standalone.verify_policy import key
 
     oracle = sessions.Oracle(oracle_binary, with_python_chess=True)
-    refs = {i: sessions.Reference(board_position(r), oracle, cap=4096, depth=depth, budget=sims)
+    refs = {i: sessions.Reference(board_position(r), oracle, cap=arena_nodes, depth=depth, budget=sims)
             for i, r in enumerate(roots, 1)}
     paths, evaluated, draws = {}, dict.fromkeys(refs, 0), dict.fromkeys(refs, 0)
     current: list[tuple[np.ndarray, np.ndarray]] = []
@@ -372,7 +383,7 @@ def oracle_check(parsed: dict[str, Any], roots: list[Any], trace: Path, oracle_b
             row = parsed['nodes'][ep][at]
             converted.append([at, row[20], row[19], row[28], row[27], row[23],
                               row[24], row[25], row[26], row[21], row[22], *row[:19]])
-        ref.check_snapshot(converted, [ep, ref.completed, len(ref.nodes), ref.stop, 4096, ref.seq], best, ep)
+        ref.check_snapshot(converted, [ep, ref.completed, len(ref.nodes), ref.stop, max(4096, arena_nodes), ref.seq], best, ep)
     if len(roots) >= 14:
         assert not np.array_equal(root_inputs[13][:104], root_inputs[14][:104])
     return {'roots': len(roots), 'real_rows': sum(evaluated.values()), 'forwards': sequence,

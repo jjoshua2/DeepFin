@@ -1,6 +1,7 @@
 # Opt-in bounded cohort runner: actual independent trees, actual gathered leaves.
 # CPU fixed-batch model only in the build script. This is not the UCI product.
 import Base
+import ./ArenaConfig.bend as Arena
 import ../collections_probe/Queue.bend as Q
 import ./Cohort.bend as C
 import ./AsyncRun.bend as AsyncRun
@@ -152,31 +153,31 @@ def depth(cfg: C.Config) -> U32:
   C.Config{sims,depth,budget,diagnostics} = cfg
   depth
 
-def position_parsed(cfg: C.Config, remaining: List<String>, roots: List<C.Root>, +count: U32, r: Array<U64> & Maybe<&2,Pos.Game>) -> IO(Setup):
+def position_parsed(cfg: C.Config, capacity: U32, remaining: List<String>, roots: List<C.Root>, +count: U32, r: Array<U64> & Maybe<&2,Pos.Game>) -> IO(Setup):
   (table,maybe) = r
   match maybe:
     case None{}: IO.die(Setup,2,"invalid multi-root position/history")
     case Some{+game}:
-      IO.pure(Setup,Setup{remaining,Con{C.Root{game,S.start(Pos.board(game),4096,U32.inc(count),depth(cfg)),0,0},roots},table,U32.inc(count)})
+      IO.pure(Setup,Setup{remaining,Con{C.Root{game,S.start(Pos.board(game),capacity,U32.inc(count),depth(cfg)),0,0},roots},table,U32.inc(count)})
 
-def position_checked(ok: Bool,cfg: C.Config,text: String,rest: List<String>,roots: List<C.Root>,table: Array<U64>,count: U32) -> IO(Setup):
+def position_checked(ok: Bool,cfg: C.Config,capacity: U32,text: String,rest: List<String>,roots: List<C.Root>,table: Array<U64>,count: U32) -> IO(Setup):
   match ok:
     case False{}: IO.die(Setup,2,"multi-root position argument is too long")
-    case True{}: position_parsed(cfg,rest,roots,count,Protocol.position(Protocol.parse_position(Text.words(text)),table))
+    case True{}: position_parsed(cfg,capacity,rest,roots,count,Protocol.position(Protocol.parse_position(Text.words(text)),table))
 
-def load_one(cfg: C.Config,setup: Setup) -> IO(Setup):
+def load_one(cfg: C.Config,capacity: U32,setup: Setup) -> IO(Setup):
   Setup{remaining,roots,table,count} = setup
   match remaining:
     case Nil{}: IO.pure(Setup,Setup{Nil{},roots,table,count})
-    case Con{+text,rest}: position_checked(Nat.is_le(String.length(text),16384n),cfg,text,rest,roots,table,count)
+    case Con{+text,rest}: position_checked(Nat.is_le(String.length(text),16384n),cfg,capacity,text,rest,roots,table,count)
 
-def load(fuel: Nat,+cfg: C.Config,setup: Setup) -> IO(Setup):
+def load(fuel: Nat,+cfg: C.Config,+capacity: U32,setup: Setup) -> IO(Setup):
   match fuel:
     case 0n: IO.pure(Setup,setup)
     case 1n+p:
       do IO<Setup>:
-        setup : Setup <- load_one(cfg,setup)
-        load(p,cfg,setup)
+        setup : Setup <- load_one(cfg,capacity,setup)
+        load(p,cfg,capacity,setup)
 
 def synchronous(cfg: C.Config,roots: List<C.Root>,table: Array<U64>,+cap: B.Capabilities) -> IO(Unit):
   B.Capabilities{profile,batch,channels,ilog,olog} = cap
@@ -206,13 +207,19 @@ def loaded(cfg: C.Config,setup: Setup) -> IO(Unit):
         opened(cfg,List.reverse(&1,C.Root,roots),table,cap)
     case _ _: IO.die(Unit,2,"at most sixteen roots are supported")
 
+def configured_capacity(+capacity: U32,+cfg: C.Config,positions: List<String>) -> IO(Unit):
+  do IO<Unit>:
+    setup : Setup <- load(16n,cfg,capacity,Setup{positions,Nil{},Tables.build(),0})
+    Arena.notice(capacity)
+    loaded(cfg,setup)
+
 def configured(ok: Bool,+cfg: C.Config,positions: List<String>) -> IO(Unit):
   match ok:
     case False{}: IO.die(Unit,2,"expected sims 1..256, depth 1..32, evals 0..256, diagnostics 0..1")
     case True{}:
       do IO<Unit>:
-        setup : Setup <- load(16n,cfg,Setup{positions,Nil{},Tables.build(),0})
-        loaded(cfg,setup)
+        capacity : U32 <- Arena.read()
+        configured_capacity(capacity,cfg,positions)
 
 def numbers(s: Maybe<&2,U32>,d: Maybe<&2,U32>,e: Maybe<&2,U32>,t: Maybe<&2,U32>,positions: List<String>) -> IO(Unit):
   match s d e t:

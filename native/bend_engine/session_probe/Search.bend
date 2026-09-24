@@ -74,8 +74,31 @@ def node_depth(a: Node) -> U32:
 def blank(b: Chess.Board) -> Node:
   Node{b, Chess.Ply{0, 0, 0, 0}, 0, 0, 0, 0, 0.0, 1.0, 0.0, 0, 0}
 
-def start(b: Chess.Board, cap: U32, epoch: U32, depth: U32) -> Tree:
-  Tree{Array.new(Node, 12n, blank(b)), 1, cap, 0, 4096, epoch, 1, 0, depth}
+# Fixed preallocation selected at construction; no resize/copy during search.
+# Preserve the old physical allocation and sentinel for capacities <= 4096.
+def capacity_valid(+cap: U32) -> Bool:
+  Bool.and(U32.is_gt(cap, 0), U32.is_le(cap, 65536))
+
+def storage_depth(+cap: U32) -> Nat:
+  Bool.pick(Nat, U32.is_le(cap, 4096), 12n,
+    Bool.pick(Nat, U32.is_le(cap, 8192), 13n,
+      Bool.pick(Nat, U32.is_le(cap, 16384), 14n,
+        Bool.pick(Nat, U32.is_le(cap, 32768), 15n, 16n))))
+
+def no_pending(cap: U32) -> U32:
+  U32.max(4096, cap)
+
+def start_checked(valid: Bool, b: Chess.Board, +cap: U32, epoch: U32, depth: U32) -> Tree:
+  match valid:
+    case False{}:
+      # Fail before allocating a large array. The stopped one-node tree cannot
+      # be mistaken for a silently clamped successful request.
+      Tree{Array.new(Node, 0n, blank(b)), 1, 1, 0, 4096, epoch, 1, 4, depth}
+    case True{}:
+      Tree{Array.new(Node, storage_depth(cap), blank(b)), 1, cap, 0, no_pending(cap), epoch, 1, 0, depth}
+
+def start(b: Chess.Board, +cap: U32, epoch: U32, depth: U32) -> Tree:
+  start_checked(capacity_valid(cap), b, cap, epoch, depth)
 
 def key(m: Chess.Ply) -> U32:
   Chess.Ply{src, dst, promotion, flag} = m
@@ -190,8 +213,8 @@ def backup(fuel: Nat, b: Backing) -> Array<Node>:
     case 1n+p: backup(p, backup_step(b))
 
 def complete(id: U32, value: F32, tree: Tree) -> Tree:
-  Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
-  Tree{backup(33n, Backing{pool, True{}, id, value}), used, cap, U32.inc(n), 4096,
+  Tree{pool, used, +cap, n, pending, epoch, request, stop, limit} = tree
+  Tree{backup(33n, Backing{pool, True{}, id, value}), used, cap, U32.inc(n), no_pending(cap),
     epoch, request, stop, limit}
 
 def mark(a: Node, first: U32, count: U32, status: U32, value: F32) -> Node:
@@ -199,8 +222,8 @@ def mark(a: Node, first: U32, count: U32, status: U32, value: F32) -> Node:
   Node{b, m, parent, first, count, n, w, prior, value, status, depth}
 
 def halt(tree: Tree, code: U32) -> Tree:
-  Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
-  Tree{pool, used, cap, n, 4096, epoch, request, code, limit}
+  Tree{pool, used, +cap, n, pending, epoch, request, stop, limit} = tree
+  Tree{pool, used, cap, n, no_pending(cap), epoch, request, code, limit}
 
 def terminal_finish(+id: U32, +a: Node, tree: Tree, r: Array<U64> & Bool) -> Prepared:
   Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
@@ -399,7 +422,7 @@ def reply_checked(valid: Bool, id: U32, ms: List<&2, Chess.Ply>, tree: Tree, rep
       reply_status(status, id, ms, tree, Reply{epoch, request, node, status, win, draw, loss, count, policy})
 
 def resume(tree: Tree, ticket: Ticket, reply: Reply) -> Tree:
-  Tree{pool, used, cap, n, +pending, +epoch, +request, +stop, limit} = tree
+  Tree{pool, +used, +cap, n, +pending, +epoch, +request, +stop, limit} = tree
   Ticket{te, tr, +id, board, +ms, needs_reply} = ticket
   Reply{+re, +rr, +rn, +status, win, draw, loss, +count, policy} = reply
   identity = Bool.and(needs_reply, Bool.and(U32.is_eq(te, epoch), Bool.and(U32.is_eq(tr, request),
@@ -407,6 +430,7 @@ def resume(tree: Tree, ticket: Ticket, reply: Reply) -> Tree:
       Bool.and(U32.is_eq(epoch, re), Bool.and(U32.is_eq(request, rr), U32.is_eq(id, rn))))))))
   evaluated = Bool.or(U32.is_zero(status), U32.is_eq(status, 4))
   shape = Bool.or(Bool.not(evaluated), U32.is_eq(count, U32.from_nat(List.length(&2, Chess.Ply, ms))))
-  reply_checked(Bool.and(identity, Bool.and(shape, U32.is_le(count, 256))), id, ms,
+  live_node = Bool.and(U32.is_lt(id, used), U32.is_lt(id, cap))
+  reply_checked(Bool.and(live_node, Bool.and(identity, Bool.and(shape, U32.is_le(count, 256)))), id, ms,
     Tree{pool, used, cap, n, pending, epoch, request, stop, limit},
     Reply{re, rr, rn, status, win, draw, loss, count, policy})

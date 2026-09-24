@@ -226,3 +226,26 @@ The opt-in `build_fifo_benchmark.sh` and `benchmark_fifo.py` compare exact quali
 ## Completion wait
 
 The asynchronous cohort waits for native completion notification, with a one-millisecond requested wait budget before returning to Bend command/deadline service. Poll/take still owns retirement; notification never copies output or releases a batch slot. The [completion-wait experiment](../../../docs/experiments/2026-09-23-bounded-completion-wait.md) records validation and scope. `benchmark_wait.py` compares qualified callback runners with wall and child CPU observations; it is not an ordinary pytest workload or model/GPU benchmark.
+
+## Explicit fixed arena size
+
+`DEEPFIN_COHORT_ARENA_NODES=8192` opts this cohort runner into 8,192 logical nodes
+per root. The default remains 4,096. Accepted settings are decimal integers 1..65,536
+with at most five ASCII digits; invalid values fail before evaluation. A nondefault
+setting prints `info string cohort_arena LOGICAL PHYSICAL` before search results.
+Physical storage rounds up to a power of two, with a 4,096-slot minimum. Every root
+preallocates its arena; there is no automatic growth or memory-sharing promise.
+With 16 roots, the maximum setting reserves 1,048,576 node slots plus other memory.
+This is not a byte/RSS guarantee or a live-training recommendation.
+
+The ordinary standalone/UCI and session transport limits are unchanged. Existing
+verifier calls still enforce 4,096 unless explicitly given and shown a different
+capacity. The source-only completion workflow now tests both old defaults and the
+larger-arena path, including actual search past node 4,096. See the
+[bounded-arena experiment](../../../docs/experiments/2026-09-24-bounded-search-arenas.md)
+for controls, source identities and qualification limits.
+
+
+## Arena footprint screen
+
+The opt-in `build_arena_memory.sh` and `benchmark_arena_memory.py` compare the exact qualified arena program at matched work. See [the measured arena-memory record](../../../docs/experiments/2026-09-24-arena-memory-screen.md) for per-child RSS, rounding boundaries, startup-dominated timings and reproduction. This is separate from source-only correctness CI and does not set a live memory budget.

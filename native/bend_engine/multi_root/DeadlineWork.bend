@@ -11,8 +11,8 @@ import ../batch_backend/Batch.bend as B
 import ../session_probe/Search.bend as S
 
 def halt(root: C.Root) -> C.Root:
-  C.Root{g,S.Tree{pool,used,cap,n,pending,ep,req,stop,depth},neural,draws} = root
-  C.Root{g,S.Tree{pool,used,cap,n,4096,ep,req,2,depth},neural,draws}
+  C.Root{g,S.Tree{pool,used,+cap,n,pending,ep,req,stop,depth},neural,draws} = root
+  C.Root{g,S.Tree{pool,used,cap,n,S.no_pending(cap),ep,req,2,depth},neural,draws}
 
 def is_active(+cfg: C.Config,+n: U32,+stop: U32,+neural: U32) -> Bool:
   C.Config{sims,depth,+budget,diagnostics} = cfg
