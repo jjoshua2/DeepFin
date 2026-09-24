@@ -28,39 +28,40 @@ jobs:
           run-id: 36012330085
           github-token: ${{ github.token }}
           path: /tmp/pr5d-built
-      - name: Restore exact runtime and authored qualification files
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: deepfin-pr5d-live-qualification
+          run-id: 36013339832
+          github-token: ${{ github.token }}
+          path: /tmp/pr5d-first
+      - name: Restore exact source and correct only two decorator styles
         run: |
           set -euo pipefail
           mkdir /tmp/pr5d-evidence
           python3 - <<'PY'
-          import base64,gzip,hashlib,json,subprocess
+          import gzip,hashlib,json,subprocess
           from pathlib import Path
-          saved=Path('/tmp/pr5d-built')
-          patch=(saved/'runtime.patch').read_bytes()
+          saved=Path('/tmp/pr5d-built'); prior=Path('/tmp/pr5d-first')
+          patch=(prior/'qualified.patch').read_bytes()
+          assert hashlib.sha256(patch).hexdigest()=='fa105358a02912f98ed480f7a5a73e1d78b11bd995151acf4bb9620b5796fbdb'
           subprocess.run(['git','apply','--check','-'],input=patch,check=True)
           subprocess.run(['git','apply','-'],input=patch,check=True)
-          manifest=json.loads((saved/'source-manifest.json').read_text())
-          assert len(manifest)==5
+          manifest=json.loads((prior/'source-manifest.json').read_text())
+          assert len(manifest)==11
           for p,h in manifest.items():
               assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
-          parts=[]
-          for sha in ['d2d6d5528b8a09f06b77f09c78a0f1214a866df5','09f2d8ed19a73ec63063f8e560e79c5cf82af1b7']:
-              rec=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
-              raw=base64.b64decode(rec['content'])
-              assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()==sha
-              parts.append(raw)
-          packed=b''.join(parts)
-          assert hashlib.sha256(packed).hexdigest()=='141c92193da67685d676bd6902f99b33e97721044c556422be73f465c0e48ab7'
-          files=json.loads(gzip.decompress(packed))
-          assert len(files)==6
-          for p,text in files.items():
-              assert not Path(p).exists() and (p.startswith('native/bend_engine/multi_root/') or p=='tests/test_bend_live_cohort.py')
-              Path(p).write_text(text)
-              if p.endswith('.sh'): Path(p).chmod(0o755)
-          for e in ['live','main']:
-              (saved/f'{e}.c').write_bytes(gzip.decompress((saved/f'{e}.c.gz').read_bytes()))
+          test=Path('tests/test_bend_live_cohort.py'); text=test.read_text()
+          for old,new in [('"logical,physical,used"','("logical", "physical", "used")'),('"logical,physical"','("logical", "physical")')]:
+              assert text.count(old)==1
+              text=text.replace(old,new)
+          test.write_text(text)
+          assert hashlib.sha256(test.read_bytes()).hexdigest()=='84a9b005b15799b5099fc744690f1869f03aa6ddcd3b7b8d9c85bba597d6826a'
+          for p,h in json.loads((saved/'source-manifest.json').read_text()).items():
+              assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          for e,h in [('live','d740d4a35cc334184ea154c94269727541e7dbcaf07f2e08ada2cec1b23ccc73'),('main','993b5878a1ec84b5511576868e952616d561d904d9640ac8445a93c545080382')]:
+              raw=gzip.decompress((saved/f'{e}.c.gz').read_bytes())
+              assert hashlib.sha256(raw).hexdigest()==h
+              (saved/f'{e}.c').write_bytes(raw)
           subprocess.run(['git','add','-N','.'],check=True)
           paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
           assert len(paths)==11
