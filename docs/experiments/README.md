@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Full-table boundary](2026-09-24-bend-full-table-boundary.md) | Two uniform full-table lookup laws, separate public-builder recipe guard and late-block omission regression; modular117/315; no closed-builder equality claim |
 | [Independent blocker rays and initialized lookup](2026-09-24-bend-independent-rays.md) | Five source laws connect arbitrary-occupancy production rays, mask irrelevance and actual initialized lookup to independent coordinates; modular115/295 and bounded native qualification |
 | [Four public lookup contracts](2026-09-24-bend-lookup-publication.md) | Preserves saved lookup sources and independent step/mask foundations; hosted modular110/276 with repository lint; arbitrary-occupancy attack geometry remains open |
 | [Stored slider data](2026-09-23-bend-stored-data.md) | Three actual-array contracts preserve computed entries through later metadata/blocks and extras; modular qualification106/260; actual lookup and independent rays remain open |

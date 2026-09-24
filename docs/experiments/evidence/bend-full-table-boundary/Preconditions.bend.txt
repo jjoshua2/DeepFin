@@ -1,0 +1,21 @@
+# Source-derived P3 domain counterexamples, not a new move-legality theorem.
+import Base
+import ../legal_probe/Chess.bend as Chess
+import ./Position.bend as Position
+
+# The optimized decoder has no empty-square variant: its final fallback is king.
+def empty_square_decoder_fallback() ->
+  {Chess.piece(Position.empty(),0) == 5 : U32}:
+  {==}
+
+# Parser insertion is additive, not replacement on an arbitrary occupied square.
+def collision() -> Chess.Board:
+  Position.put(0,True{},0,Position.put(1,False{},0,Position.empty()))
+
+def both_colors_can_be_set() ->
+  {U64.and(Chess.get_white(collision()),Chess.get_black(collision())) == U64.bit(0n) : U64}:
+  {==}
+
+def both_piece_kinds_can_be_set() ->
+  {U64.and(Chess.get_pawns(collision()),Chess.get_knights(collision())) == U64.bit(0n) : U64}:
+  {==}
