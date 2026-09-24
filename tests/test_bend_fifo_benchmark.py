@@ -42,7 +42,7 @@ def test_mismatched_panel_rejected(fault: str) -> None:
         rows[-1]['repeats'] = 3
     else:
         rows[-1]['order'] ^= 1
-    with pytest.raises(ValueError, match='panel|work|order'):
+    with pytest.raises(ValueError, match=r'panel|work|order'):
         bench.summarize(rows)
 
 
@@ -127,9 +127,12 @@ def test_execute_disables_trace_and_uses_requested_mode(monkeypatch: pytest.Monk
     monkeypatch.setattr(bench.subprocess, 'run', run)
     monkeypatch.setattr(bench, 'parse', parse)
     parsed, wall, hashed = bench.execute(Path('runner'), ('startpos',), True, False)
-    assert parsed == {'work': {}} and wall >= 0 and len(hashed) == 64
+    assert parsed == {'work': {}}
+    assert wall >= 0
+    assert len(hashed) == 64
     assert seen['cmd'][1:] == ['--threads', '1', '--', '256', '8', '0', '0', 'startpos']
     assert seen['env']['DEEPFIN_COHORT_ASYNC'] == '1'
     assert 'DEEPFIN_BEND_MODEL_TRACE' not in seen['env']
     assert 'DEEPFIN_MULTI_TEST_FAULT' not in seen['env']
-    assert seen['timeout'] == 60 and seen['input'] == ''
+    assert seen['timeout'] == 60
+    assert seen['input'] == ''

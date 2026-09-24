@@ -32,7 +32,7 @@ jobs:
           set -euo pipefail
           echo 'b5631ad25fe5e5813ae97dcb0db1b05ac9f0d78b469bb35d868a5398af05a159  native/bend_engine/multi_root/benchmark_fifo.py' | sha256sum -c -
           echo 'dfb18e83351d239d816840a881c51d6383a39b4f4f2206c18e2f169d648071d8  native/bend_engine/multi_root/build_fifo_benchmark.sh' | sha256sum -c -
-          echo 'dc77d9adbd1740c6747f78e900581f375baee5a0009adea28cdd0b7704085a6b  tests/test_bend_fifo_benchmark.py' | sha256sum -c -
+          echo 'c0adff6ef851115b4cab8aaa85796ace6038222fd9908fbd484715fbcedc48e0  tests/test_bend_fifo_benchmark.py' | sha256sum -c -
           echo '2dd0e4409ed12ab0c471048cafc459bbd28c8f9930e7f048231ddcf2653a3ff5  docs/experiments/2026-09-23-fifo-runner-timing.md' | sha256sum -c -
           uv sync --locked --extra dev --extra cpu
       - name: Static checks and measurement admission tests
