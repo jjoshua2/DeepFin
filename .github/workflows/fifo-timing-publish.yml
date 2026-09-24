@@ -1,0 +1,39 @@
+name: Publish qualified FIFO timing
+on:
+  push:
+    branches: [work/bend-fifo-timing-readout-20260923]
+    paths: ['.github/workflows/fifo-timing-publish.yml', '.fifo-timing-publish.py']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      QUALIFIED_RUN: '35945654847'
+      QUALIFIED_ARTIFACT: '10787165583'
+      QUALIFIED_HEAD: 7d2beda3fca4284fae622052537e0e85ead032b1
+      QUALIFIED_SHA256: 1b2d87308893e6e3beabaa07116d41ca4c590e93a062e9c65bdab6da863948e8
+      BASE: f45ae893a8eb0ac23285cab0d4c953adfc4f20e0
+      GH_TOKEN: ${{ github.token }}
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Reconcile complete measurements and publish identical tested scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCRIPT="$PWD/.fifo-timing-publish.py"
+          git fetch --depth=1 origin "$BASE"
+          git worktree add --detach "$RUNNER_TEMP/fifo-timing-publish" "$BASE"
+          cd "$RUNNER_TEMP/fifo-timing-publish"
+          uv sync --locked --extra dev --extra cpu
+          PYTHONPATH="$PWD" .venv/bin/python "$SCRIPT"
