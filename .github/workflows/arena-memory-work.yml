@@ -1,0 +1,145 @@
+name: Equal-work arena memory screen
+on:
+  push:
+    branches: [work/bend-arena-memory-20260924]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: arena-memory-screen
+  cancel-in-progress: false
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BASE: de48b98e1e3343033041f622407c0542ea550c03
+      FEATURE: feat/bend-arena-memory-qualified-20260924
+      GH_TOKEN: ${{ github.token }}
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Verify authored sources and install locked CPU environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '75f8eb83f05c50fbb3b78a1435903cc9733e769d4caea3b39193ee3bc8147c50  native/bend_engine/multi_root/benchmark_arena_memory.py' | sha256sum -c -
+          echo 'be7f6bdc881b325f668842232deb78a7193e645d31127f75463235662d4817d4  native/bend_engine/multi_root/build_arena_memory.sh' | sha256sum -c -
+          echo 'b9d5e3a2230d4cb482392780931ee7740cf5f9936a3d69369129fc24f19af185  tests/test_bend_arena_memory.py' | sha256sum -c -
+          echo 'a58d1dbdaefd7d4d866f7b5d7402f431e8f0200a1dec409268a36937deed4ef5  docs/experiments/2026-09-24-arena-memory-screen.md' | sha256sum -c -
+          uv sync --locked --extra dev --extra cpu
+      - name: Measurement admission and existing parser regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          ruff check native/bend_engine/multi_root/benchmark_arena_memory.py tests/test_bend_arena_memory.py
+          basedpyright native/bend_engine/multi_root/benchmark_arena_memory.py tests/test_bend_arena_memory.py
+          bash -n native/bend_engine/multi_root/build_arena_memory.sh
+          python -m pytest -q tests/test_bend_arena_memory.py tests/test_bend_arena.py tests/test_bend_fifo_benchmark.py tests/test_bend_completion_wait.py --junitxml=artifacts/arena-memory-tests.xml
+      - name: Verify qualified C and rebuild identical callback program
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python - <<'PY'
+          import gzip,hashlib,io,pathlib,subprocess,zipfile
+          blob=subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/actions/artifacts/10806529575/zip'],timeout=90)
+          assert hashlib.sha256(blob).hexdigest()=='f21aede54a4aa00a4689163d2a2e418f9479221fe3990f5480bc44a19bc523a5'
+          code=gzip.decompress(zipfile.ZipFile(io.BytesIO(blob)).read('arena-cohort/runner.c.gz'))
+          assert hashlib.sha256(code).hexdigest()=='8f9d1712af22a1ec40914ce2e53e60d5a3fde264b92c34a8561d4c3edb254b72'
+          pathlib.Path('artifacts/arena-memory.c').write_bytes(code)
+          PY
+          CC=clang-18 CXX=clang++-18 bash native/bend_engine/multi_root/build_arena_memory.sh artifacts/arena-memory.c artifacts/arena-memory-build
+          lscpu > artifacts/arena-memory-build/cpu.txt
+      - name: Independent search checks and complete per-child measurement panel
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python -m native.bend_engine.multi_root.benchmark_arena_memory --binary artifacts/arena-memory-build/runner --oracle artifacts/arena-memory-build/oracle --output artifacts/arena-memory-screen
+      - name: Whole-repository static validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          git diff --exit-code
+      - name: Preserve source-identical scripts and compact measured evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          . .venv/bin/activate
+          python - <<'PY'
+          import csv,hashlib,json,os,pathlib,subprocess,xml.etree.ElementTree as ET
+          from native.bend_engine.multi_root.benchmark_arena_memory import summarize,rss_result
+          repo=pathlib.Path.cwd();out=repo/'artifacts/arena-memory-screen';build=repo/'artifacts/arena-memory-build'
+          raw=(out/'report.json').read_bytes();report=json.loads(raw)
+          assert report['status']=='passed' and len(report['samples'])==100
+          assert len(report['warmups'])==20 and len(report['diagnostics'])==20
+          assert sum(d['independent_oracle'] is not None for d in report['diagnostics'])==4
+          assert summarize(report['samples'])==report['summary']
+          for row in report['samples']:
+              folder=out/f"measure-r{row['roots']}-s{row['simulations']}-p{row['sample']}-c{row['capacity']}"
+              assert rss_result((folder/'rss.txt').read_text())==row['peak_rss_kib']
+              assert hashlib.sha256((folder/'stdout.txt').read_bytes()).hexdigest()==row['stdout_sha256']
+              assert (folder/'stderr.txt').read_text()==''
+          xml=ET.parse(repo/'artifacts/arena-memory-tests.xml').getroot()
+          assert len(list(xml.iter('testcase')))==133
+          assert not any(list(xml.iter(k)) for k in ('failure','error','skipped'))
+          sources=['native/bend_engine/multi_root/benchmark_arena_memory.py','native/bend_engine/multi_root/build_arena_memory.sh','tests/test_bend_arena_memory.py','docs/experiments/2026-09-24-arena-memory-screen.md']
+          manifest={name:hashlib.sha256((repo/name).read_bytes()).hexdigest() for name in sources}
+          subprocess.run(['git','fetch','--depth=1','origin',os.environ['BASE']],check=True)
+          work=pathlib.Path(os.environ['RUNNER_TEMP'])/'arena-memory-feature'
+          subprocess.run(['git','worktree','add','--detach',str(work),os.environ['BASE']],check=True)
+          for name in sources:
+              p=work/name;assert not p.exists(),name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes((repo/name).read_bytes())
+          dest=work/'docs/experiments/evidence/arena-memory-screen';dest.mkdir(parents=True)
+          samples=report.pop('samples')
+          with (dest/'samples.csv').open('w',newline='') as stream:
+              writer=csv.DictWriter(stream,fieldnames=list(samples[0]),lineterminator='\n');writer.writeheader();writer.writerows(samples)
+          report.update({'workflow_run':int(os.environ['GITHUB_RUN_ID']),'tested_commit':os.environ['GITHUB_SHA'],'base_commit':os.environ['BASE'],'source_sha256':manifest,'raw_report_sha256':hashlib.sha256(raw).hexdigest(),'measured_child_executions':100,'focused_python_tests':133,'new_python_tests':42,'samples_file':'samples.csv'})
+          (dest/'summary.json').write_text(json.dumps(report,indent=2)+'\n')
+          (dest/'build.json').write_bytes((build/'build.json').read_bytes())
+          (dest/'cpu.txt').write_bytes((build/'cpu.txt').read_bytes())
+          doc=work/sources[-1];text=doc.read_text();pending='Pending hosted execution. No measured memory or initialization verdict yet.';assert text.count(pending)==1
+          text=text.replace(pending,'The completed equal-work panel is recorded below; successful measurement is not a performance or live-adoption verdict.')
+          text+='\n\n### Completed hosted screen\n\nRun https://github.com/jjoshua2/DeepFin/actions/runs/'+os.environ['GITHUB_RUN_ID']+' completed all preceding stages. All 133 focused Python tests passed without skips (42 new), explicit static checks and whole-repository Ruff/Basedpyright/Vulture passed. The exact qualified C was rebuilt with Clang 18 and unchanged callback/worker. No new Bend generation or runtime change is claimed.\n\n'
+          text+='All 100 measured child runs completed equal requested work, with 20 separately excluded warmups. Four baseline diagnostics passed the independent CBoard/Python-chess input/tree/accounting oracle; all 20 diagnostic runs matched across capacities within each workload. Each measured RSS record and stdout hash was reconciled to raw files. Five observations per cell, rotating capacity order.\n\n'
+          text+='| Roots | Simulations/root | Logical capacity | Physical slots/root | Peak RSS median MiB | Peak RSS range MiB | Whole-process median ms |\n|---:|---:|---:|---:|---:|---|---:|\n'
+          for row in report['summary']:
+              text+=f"| {row['roots']} | {row['simulations']} | {row['capacity']} | {row['physical_capacity']} | {row['peak_rss_kib_median']/1024:.2f} | {row['peak_rss_kib_min']/1024:.2f}..{row['peak_rss_kib_max']/1024:.2f} | {row['process_seconds_median']*1000:.2f} |\n"
+          text+='\nMiB uses 1,024 KiB. Process RSS includes non-arena memory; it is not node bytes or a model-inclusive budget. One-simulation wall times include initialization, a real simulation, reporting and exit, not pure initialization. These single-host timing medians are descriptive, not a speedup-significance claim. All individual observations and compact provenance are retained in evidence/arena-memory-screen/. No automatic arena growth, compiler update, model execution, live setting, merge or deployment occurred. Self-review only.\n'
+          doc.write_text(text)
+          index=work/'docs/experiments/README.md';index.write_text(index.read_text()+'\n- [Bounded arena memory and initialization-cost screen](2026-09-24-arena-memory-screen.md): equal-work per-child peak RSS and process timing across capacities; no model/GPU or live-memory budget claim.\n')
+          readme=work/'native/bend_engine/multi_root/README.md';readme.write_text(readme.read_text()+'\n\n## Arena footprint screen\n\nThe opt-in `build_arena_memory.sh` and `benchmark_arena_memory.py` compare the exact qualified arena program at matched work. See [the measured arena-memory record](../../../docs/experiments/2026-09-24-arena-memory-screen.md) for per-child RSS, rounding boundaries, startup-dominated timings and reproduction. This is separate from source-only correctness CI and does not set a live memory budget.\n')
+          paths=sources+[str(p.relative_to(work)) for p in dest.iterdir()]+['docs/experiments/README.md','native/bend_engine/multi_root/README.md']
+          for name in sources[:-1]:assert hashlib.sha256((work/name).read_bytes()).hexdigest()==manifest[name]
+          subprocess.run(['git','-C',str(work),'add','--',*paths],check=True)
+          subprocess.run(['git','-C',str(work),'diff','--cached','--check'],check=True)
+          actual=subprocess.check_output(['git','-C',str(work),'diff','--cached','--name-only'],text=True).splitlines();assert sorted(actual)==sorted(paths)
+          subprocess.run(['git','-C',str(work),'config','user.name','github-actions[bot]'],check=True)
+          subprocess.run(['git','-C',str(work),'config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
+          tree=subprocess.check_output(['git','-C',str(work),'write-tree'],text=True).strip()
+          commit=subprocess.check_output(['git','-C',str(work),'commit-tree',tree,'-p',os.environ['BASE'],'-m','perf: retain equal-work arena memory measurements and admission tests'],text=True).strip()
+          subprocess.run(['git','-C',str(work),'push','--force-with-lease=refs/heads/'+os.environ['FEATURE']+':','origin',commit+':refs/heads/'+os.environ['FEATURE']],check=True)
+          (out/'feature.txt').write_text(commit+'\n');print('PUBLISHED_MEASURED_ARENA',commit)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arena-memory-screen
+          path: |
+            artifacts/arena-memory-tests.xml
+            artifacts/arena-memory-screen/**
+            artifacts/arena-memory-build/*.json
+            artifacts/arena-memory-build/*.txt
+          retention-days: 30
