@@ -116,3 +116,42 @@ jobs:
             artifacts/completion-cohort/*.stderr
             artifacts/completion-cohort/runner.c.gz
           retention-days: 30
+  live:
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Source-pinned compiler without model or Torch installation
+        run: bash native/bend_engine/install_ci_bend.sh
+      - name: Fresh live owner, held replacement and registry mutation controls
+        env:
+          CC: clang-18
+          CXX: clang++-18
+          BUN: bun
+          PYTHONPATH: .
+        run: |
+          revision=$(bun native/bend_engine/standalone/verify_compiler.js --revision)
+          compiler="build/bend_toolchain/sources/$revision"
+          bash native/bend_engine/multi_root/qualify_live.sh "$compiler" artifacts/completion-live
+          bash native/bend_engine/multi_root/qualify_live_registry.sh "$compiler" artifacts/completion-live-registry
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-completion-live
+          path: |
+            artifacts/completion-live/**/*.json
+            artifacts/completion-live/**/*.txt
+            artifacts/completion-live-registry/**/*.json
+            artifacts/completion-live-registry/**/*.txt
+            artifacts/completion-live-registry/**/*.err
+          retention-days: 30
