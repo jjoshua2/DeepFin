@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Four public lookup contracts](2026-09-24-bend-lookup-publication.md) | Preserves saved lookup sources and independent step/mask foundations; hosted modular110/276 with repository lint; arbitrary-occupancy attack geometry remains open |
 | [Stored slider data](2026-09-23-bend-stored-data.md) | Three actual-array contracts preserve computed entries through later metadata/blocks and extras; modular qualification106/260; actual lookup and independent rays remain open |
 | [Stored table headers](2026-09-23-bend-stored-headers.md) | Correct mask/prefix values through actual later blocks and extras; three public laws, one promoted; final data/ray refinement remains open |
 | [Extras-stage preservation](2026-09-23-bend-extras-preservation.md) | Two hosted-qualified actual-array laws preserve headers and slider-data locations through extras; full source aggregate100/226; reinforced eight-buffer native tests catch protected-cell copying; stored-header and ray refinement remain separate |

@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Latest public lookup and independent geometry qualification
+
+Hosted run **35996797725** passes the four preserved public laws, all16 controls, four native modes, original compiler source/pin gates, unchanged repository lint and the two archived independent step/mask checks on source `12134356d6e09f303c256a76f83439204292897a`. The four contracts are certified_header_route, selected_state_is_masked, initialized_indexed_lookup and initialized_masked_lookup. They retain actual affine buffers and obtain header/data/index/shape certificates from earlier producers. Caller bounds and symbolic depth=17 remain explicit.
+
+Modular coverage is110 laws/276 controls, not a newly executed full aggregate. The exact saved supplementary Step.actual and Masks.actual are now rechecked hosted: actual movement agrees with independent coordinates, and full relevant masks agree with independent ray interiors. These two statements do not increase the four public-law count. Arbitrary-occupancy blocker traversal and terminal-edge irrelevance remain open. See [the current record](experiments/2026-09-24-bend-lookup-publication.md) and committed reports. Historical local-only and supplementary-only lookup status below is superseded only within this stated scope. No additional application responsibility moves into Bend.
+
 ## Supplementary actual lookup composition, distinct from public-law counts
 
 A newly source-checked derived composition now connects actual `Chess.slide` on the initialized table/extras pipeline to the actual `Tables.slider` value on `occupancy & actual_relevant_mask`, returning the complete final array. The stored-header and stored-data producers discharge the intermediate certificates; callers supply only the bounded table/extras budgets and symbolic allocation depth equal to17, with arbitrary seed and occupancy. Exact reproducible source text, four successful checker receipts and the native reproduction driver are archived in [the supplementary record](experiments/evidence/bend-stored-data/supplementary/README.md).
