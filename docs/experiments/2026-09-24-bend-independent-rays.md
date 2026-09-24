@@ -88,3 +88,24 @@ is asserted; the universal budgets include its full configuration.
 Self-review only, not independent review. Pinned checker/Base and existing
 compiler limitations remain explicit. Python export/references/data/control/
 training and transitional C++/LibTorch/AOTI remain application dependencies.
+
+
+## Completed hosted qualification
+
+Hosted run **36002630448** passes all five new public contracts/importing consumer, all19 controls, four native ray modes, four actual initialized-lookup modes, original compiler source/pin checks and unchanged whole-repository lint on source `58c9136bccdf6667a36776fb48480eab7ebfe5a2`.
+
+The consumer and controls-only gate executed separately. The controls report intentionally retains consumer/focused status NOT_RUN; the separate exact-safe consumer receipt supplies that result. Parent110/276 is retained on exact341-source manifest entries and successful source/control/runtime jobs, giving modular115-law/295-control coverage. The complete115-law wrapper was not executed or claimed.
+
+The source result connects production accumulator ray traversal and masked slider computation to independently defined coordinates and first-blocker-inclusive paths for arbitrary U64 occupancies. It composes with actual stored-header/data/shape/index producers into the complete returned-pair initialized lookup theorem. Seven-step edge completeness and the actual full relevant-mask identity ensure this is not merely a truncated or circular production-to-production specification.
+
+Ten ordinary semantic/refinement controls reject actual ignored/omitted blockers, dropped accumulator, wrong file boundary and terminal mask, truncated route/edge certificates, incorrect interior observations and the original-buffer return. Eight enforce manifests/import safety; one synthetic warning output test is not another compiler execution. Crashes, missing files and timeouts are not accepted as semantic controls.
+
+Native ray/slider checks pass7,008 distinct cases per mode, all512 ray domains/128 keys and every1,456 first-blocker position, plus nine invalid requests per mode. Actual ignore-blocker/omit-blocker mutations compile and run before failing the independent values. Separately the unchanged real builder plus Chess.slide verifier passes1,024 rows/1,022 distinct inputs and six invalid requests in each of four modes, retaining its shifted-prefix rejection. Modes repeat fixtures, not disjoint or exhaustive U64 datasets; selected queries are not a full-array or lifetime proof.
+
+Hosted Bun1.4.2/Clang18.1.3; Clang is scoped to native probes. Python3.13/uv0.12.10 locked CPU tools use the normal build compiler. Ruff/Basedpyright/Vulture pass unchanged, resolving the historical local missing-tools failure. Original compiler16-laws/seven-controls, including cyclic-template rejection, and12 pin tests pass. One trailing blank line in new Algebra.bend was removed before these exact-source hosted checks; no term or statement changed.
+
+The complete candidate tree and all367 native-source hashes are verified before evidence publication. Only documentation/index/evidence is appended afterward. Five earlier archived helper files are reused byte-for-byte. The independent path terminal-occupancy lemma is now applied to actual masking/traversal rather than left as an unconnected specification result.
+
+The initialized theorem retains symbolic depth=17, selected-block and extras budgets, arbitrary seed/occupancy and the complete final array. Its domains include the full build configuration; no separate closed normalization of the enormous literal Tables.build term is claimed. This addresses the P2 independent attack/storage connection within that supported source pipeline, not whole-engine legality, search, model or training correctness.
+
+Self-review only. Pinned checker/Base, native lowering, allocation/ownership/lifetime, ABI, C/C++ toolchain, libraries, OS and hardware remain trusted boundaries. Existing compiler limitations remain unresolved. No production runtime, prior accepted law/gate, compiler input, permanent workflow, routine perft budget, model/GPU/training/benchmark change. No additional Python application responsibility moved into Bend; export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No merge, force push, deployment or live-process operation.
