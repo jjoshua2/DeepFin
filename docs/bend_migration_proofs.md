@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Current stored-header qualification: September23,2026
+
+Hosted modular qualification **35938924299**, workflow `493367c64aa2c304143a88b00ab5cf84ad779756`, freshly passes three public header laws, seventeen rejection controls, four native modes, original compiler source/pin checks and unchanged whole-repository lint on source `eceb6329cbc000469884513c660c2a615060f83b`. The exact-source parent100-law/226-control result is retained and verified, not rerun.
+
+`headers/own_block_header` promotes the checked one-block header theorem. `stored_header_after_tables` proves the selected actual mask or widened certified prefix survives every later table iteration. `stored_header_after_extras` derives shape from allocation and composes final extras preservation. Every contract returns the complete final array, not just a scalar. Bounds are explicit and satisfiable; expected initial header values are not assumed. These establish stored-header values, not independent relevant-mask geometry or final slider-data contents. Earlier statements that all stored-header correctness remains open are superseded within this bounded domain. See the dated stored-header readout and exact modular evidence.
+
 ## Extras native coverage reinforcement: September 23, 2026
 
 Native-fixture reinforcement run **35924465983** on source `3c52e6469b3ba9cf133077f73d8f96ca8dcc76cd` passes the unchanged two-law consumer and all 14 controls, eight full buffers / 1,048,576 cell comparisons per mode, the protected-cell-copy regression, 12 compiler-pin checks and unchanged whole-repository lint. Full source aggregate100/226 was completed in run35920944024 on the same unchanged logical proof sources, not rerun for native-only changes. The added distinct-cell fixtures close a documented copy-corruption blind spot while preserving all old cases. Stored headers and independent blocker-ray refinement remain separate.
