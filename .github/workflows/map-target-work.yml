@@ -1,0 +1,121 @@
+name: Explicit map CPU target qualification
+on:
+  push:
+    branches: [work/bend-map-target-20260924]
+permissions:
+  contents: write
+concurrency:
+  group: map-target-qualification
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      BASE: 25599740bd0330008f5161b094d657972a79ef2d
+      FEATURE: feat/bend-map-target-qualified-20260924
+      BEND_NO_TELEMETRY: '1'
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare isolated exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin "$BASE"
+          git worktree add --detach "$RUNNER_TEMP/map-target" "$BASE"
+          python3 .map-target-apply.py "$RUNNER_TEMP/map-target"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment and unchanged Bend compiler
+        run: |
+          cd "$RUNNER_TEMP/map-target"
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Static and Python target, dictionary and driver checks
+        run: |
+          cd "$RUNNER_TEMP/map-target"
+          . .venv/bin/activate
+          ruff check native/bend_engine/u64_map_probe/*.py tests/test_bend_u64_map.py tests/test_bend_map*.py
+          basedpyright native/bend_engine/u64_map_probe/*.py tests/test_bend_u64_map.py tests/test_bend_map*.py
+          python -m pytest -q tests/test_bend_u64_map.py tests/test_bend_map_benchmark.py tests/test_bend_map_target.py --junitxml=artifacts/map-target-tests.xml
+      - name: Four-mode numeric map and executed mutations
+        run: |
+          cd "$RUNNER_TEMP/map-target"
+          . .venv/bin/activate
+          python -m native.bend_engine.u64_map_probe.run_probe --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --bun bun --cc clang-18 --output artifacts/map-target
+      - name: Both implementations and benchmark driver, no timing panel
+        run: |
+          cd "$RUNNER_TEMP/map-target"
+          . .venv/bin/activate
+          python -m native.bend_engine.u64_map_probe.benchmark --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --bun bun --cc clang-18 --output artifacts/map-target-benchmark
+      - name: Whole-repository static checks
+        run: |
+          cd "$RUNNER_TEMP/map-target"
+          . .venv/bin/activate
+          ./scripts/lint.sh
+      - name: Reconcile and publish source-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/map-target"
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess,xml.etree.ElementTree as ET
+          manifest=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'target-sources.json').read_text())
+          for name,expected in manifest.items():assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==expected,name
+          tests=ET.parse('artifacts/map-target-tests.xml').getroot()
+          assert len(list(tests.iter('testcase')))==85
+          assert not any(list(tests.iter(k)) for k in ('failure','error','skipped'))
+          core=json.loads(pathlib.Path('artifacts/map-target/summary.json').read_text())
+          bench=json.loads(pathlib.Path('artifacts/map-target-benchmark/report.json').read_text())
+          assert core['status']=='passed' and len(core['modes'])==4 and len(core['mutations_rejected'])==3
+          assert [r['mode'] for r in core['modes']]==['generic','portable','bmi2-popcnt','ubsan']
+          assert bench['status']=='passed' and bench['measured'] is False and bench['contract_executions']==180
+          assert len(bench['reference_checks'])==4
+          assert all(r['phase']=='contract' for r in bench['samples'])
+          assert core['cpu_target']==bench['cpu_target']
+          assert core['cpu_target']['flags']==['-march=x86-64','-mpopcnt','-mbmi2']
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          changed=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          assert sorted(changed)==sorted(manifest)
+          subprocess.run(['git','config','user.name','github-actions[bot]'],check=True)
+          subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
+          tree=subprocess.check_output(['git','write-tree'],text=True).strip()
+          commit=subprocess.check_output(['git','commit-tree',tree,'-p',os.environ['BASE'],'-m','test: pin map CPU features and verify host capability before execution'],text=True).strip()
+          subprocess.run(['git','push','--force-with-lease=refs/heads/'+os.environ['FEATURE']+':','origin',commit+':refs/heads/'+os.environ['FEATURE']],check=True)
+          pathlib.Path('artifacts/map-target-feature.txt').write_text(commit+'\n')
+          print('QUALIFIED_SOURCE',commit)
+          PY
+      - name: Preserve exact source and raw test records
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/map-target/artifacts/target-source"
+          cp "$RUNNER_TEMP/target-sources.json" "$RUNNER_TEMP/map-target/artifacts/target-source/manifest.json"
+          cd "$RUNNER_TEMP/map-target"
+          git diff --cached --binary > artifacts/target-source/source.patch
+          git diff --cached --name-only -z | tar --null -T - -czf artifacts/target-source/files.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: map-target-qualification
+          path: |
+            ${{ runner.temp }}/map-target/artifacts/map-target-tests.xml
+            ${{ runner.temp }}/map-target/artifacts/map-target-feature.txt
+            ${{ runner.temp }}/map-target/artifacts/target-source/**
+            ${{ runner.temp }}/map-target/artifacts/map-target/*.json
+            ${{ runner.temp }}/map-target/artifacts/map-target/*.stdout
+            ${{ runner.temp }}/map-target/artifacts/map-target/*.stderr
+            ${{ runner.temp }}/map-target/artifacts/map-target-benchmark/*.json
+            ${{ runner.temp }}/map-target/artifacts/map-target-benchmark/*.stdout
+            ${{ runner.temp }}/map-target/artifacts/map-target-benchmark/*.stderr
+          retention-days: 30
