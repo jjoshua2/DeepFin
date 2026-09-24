@@ -1,0 +1,179 @@
+name: Bounded arena qualification
+on:
+  push:
+    branches: [work/bend-bounded-arena-20260924]
+    paths: [.github/workflows/bounded-arena-work.yml, '.arena-payload-*.b64', .arena-fixes.py]
+permissions:
+  contents: write
+concurrency:
+  group: bounded-arena-qualification
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BASE: 5f7991bc91906440f3baa66f732fa46a5f05bf49
+      FEATURE: feat/bend-bounded-arenas-20260924
+      BEND_NO_TELEMETRY: '1'
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify authored patch and isolate exact parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin "$BASE"
+          git worktree add --detach "$RUNNER_TEMP/arena-work" "$BASE"
+          python3 - <<'PY'
+          import base64,hashlib,json,os,pathlib,runpy,subprocess,zlib
+          text=''.join(pathlib.Path(f'.arena-payload-{i}.b64').read_text().strip() for i in (1,2))
+          raw=zlib.decompress(base64.b64decode(text,validate=True))
+          assert hashlib.sha256(raw).hexdigest()=='a76f0e3f609cd727204d14f985769155da2384bcf41ff87960de1b3d2a1e504a'
+          temp=pathlib.Path(os.environ['RUNNER_TEMP']);work=temp/'arena-work';patch=temp/'arena.patch'
+          patch.write_bytes(raw)
+          subprocess.run(['git','-C',str(work),'apply','--check',str(patch)],check=True)
+          subprocess.run(['git','-C',str(work),'apply','--index',str(patch)],check=True)
+          paths=subprocess.check_output(['git','-C',str(work),'diff','--cached','--name-only'],text=True).splitlines()
+          assert len(paths)==16
+          if pathlib.Path('.arena-fixes.py').exists():runpy.run_path('.arena-fixes.py')['apply'](work)
+          subprocess.run(['git','-C',str(work),'add','--',*paths],check=True)
+          subprocess.run(['git','-C',str(work),'diff','--cached','--check'],check=True)
+          assert paths==subprocess.check_output(['git','-C',str(work),'diff','--cached','--name-only'],text=True).splitlines()
+          manifest={p:hashlib.sha256((work/p).read_bytes()).hexdigest() for p in paths}
+          (temp/'arena-source.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          patch.write_bytes(subprocess.check_output(['git','-C',str(work),'diff','--cached','--binary']))
+          print('Exact candidate prepared: 16 intended paths')
+          PY
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment and unchanged source compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/arena-work"
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Focused static and Python regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/arena-work"
+          . .venv/bin/activate
+          ruff check native/bend_engine/multi_root/verify_arena.py native/bend_engine/multi_root/ci_completion.py native/bend_engine/multi_root/verify.py native/bend_engine/session_probe/run_probe.py tests/test_bend_arena.py
+          basedpyright native/bend_engine/multi_root/verify_arena.py native/bend_engine/multi_root/ci_completion.py native/bend_engine/multi_root/verify.py native/bend_engine/session_probe/run_probe.py tests/test_bend_arena.py
+          python -m pytest -q tests/test_bend_arena.py tests/test_bend_completion_ci.py tests/test_bend_completion_wait.py tests/test_bend_fifo_scheduler.py tests/test_bend_multi_root.py tests/test_bend_async_cohort.py tests/test_bend_cohort_deadlines.py tests/test_neural_work.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py --junitxml=artifacts/arena-python.xml
+      - name: Existing native ownership and completion regression
+        shell: bash
+        env:
+          CXX: clang++-18
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/arena-work"
+          . .venv/bin/activate
+          python -m native.bend_engine.multi_root.ci_completion native --output artifacts/arena-native
+      - name: Fresh coordinator, unchanged default matrix, and larger-arena oracle
+        shell: bash
+        env:
+          CC: clang-18
+          CXX: clang++-18
+          BUN: bun
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/arena-work"
+          . .venv/bin/activate
+          python -m native.bend_engine.multi_root.ci_completion cohort --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --output artifacts/arena-cohort
+      - name: Whole-repository static gate and exact-source reconciliation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/arena-work"
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib
+          manifest=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'arena-source.json').read_text())
+          for path,expected in manifest.items():assert hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()==expected,path
+          PY
+      - name: Record completed evidence and publish clean feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/arena-work"
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess,xml.etree.ElementTree as ET
+          temp=pathlib.Path(os.environ['RUNNER_TEMP']);out=pathlib.Path('artifacts/arena-cohort')
+          manifest=json.loads((temp/'arena-source.json').read_text())
+          for path,expected in manifest.items():assert hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()==expected,path
+          native=json.loads(pathlib.Path('artifacts/arena-native/summary.json').read_text());assert native['status']=='passed'
+          cohort=json.loads((out/'summary.json').read_text());assert cohort['status']=='passed' and len(cohort['verifier_reports'])==33
+          arena=json.loads((out/'arena/summary.json').read_text())
+          assert arena['status']=='passed' and len(arena['searches'])==37 and len(arena['capacity_effects'])==4
+          assert arena['executed_mutations_rejected']==['allocation','sentinel','live-node']
+          assert arena['probe_rows_per_mode']==76 and arena['invalid_settings_rejected']==14
+          xml=ET.parse('artifacts/arena-python.xml').getroot();tests=list(xml.iter('testcase'))
+          assert tests and not any(list(xml.iter(tag)) for tag in ('failure','error','skipped'))
+          assert len([x for x in tests if x.attrib['classname'].endswith('test_bend_arena')])==38
+          dest=pathlib.Path('docs/experiments/evidence/bounded-search-arenas');assert not dest.exists();dest.mkdir(parents=True)
+          arena.update({'workflow_run':int(os.environ['GITHUB_RUN_ID']),'tested_workflow_commit':os.environ['GITHUB_SHA'],'base_commit':os.environ['BASE'],'focused_python_tests':len(tests),'new_python_tests':38,'candidate_c_sha256':cohort['generated_c_sha256']})
+          (dest/'arena.json').write_text(json.dumps(arena,indent=2)+'\n')
+          (dest/'source.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          (dest/'regression.json').write_text(json.dumps({'native_reports':native['native_reports'],'no_notify_rejected':native['no_notify_rejected'],'held_assertion_unwinds':native['held_assertion_unwinds'],'default_verifier_report_sha256':cohort['verifier_reports']},indent=2)+'\n')
+          doc=pathlib.Path('docs/experiments/2026-09-24-bounded-search-arenas.md');text=doc.read_text()
+          old='Pending hosted qualification. Local storage success is not full-search validation.'
+          assert text.count(old)==1
+          text=text.replace(old,'The completed hosted qualification is recorded below.')
+          text+='\n\n### Completed hosted qualification\n\nRun https://github.com/jjoshua2/DeepFin/actions/runs/'+os.environ['GITHUB_RUN_ID']+' passed all preceding gates. '
+          text+=f'{len(tests)} focused Python cases passed without skips, including 38 new cases. Focused static checks and whole-repository Ruff/Basedpyright/Vulture passed. '
+          text+='The unchanged native completion/worker tests and negative controls passed. Fresh source generation passed the existing 33 default-capacity reports: ten batch/width configurations in both modes, coordinator UBSan, held cancellation/stop/quit and deadline gates.\n\n'
+          text+='The native arena probe matched 76 exact output rows per normal/UBSan mode, including IDs 4,096 and 65,535 and actual cancellation/deadline helper calls. Fourteen invalid environment settings were rejected; all three compiled-and-executed semantic mutations failed the independent output oracle. All 37 additional diagnostics-on search cases passed independent leaf input, numerical, complete-tree and accounting checks; their 37 quiet repeats preserved summaries/work. The larger-arena UBSan coordinator case is included in that count. Repeated modes reuse fixtures, not independent games.\n\n'
+          text+='| Width | Async | Default simulations | Default nodes | 8,192 simulations | 8,192 nodes |\n|---|---|---:|---:|---:|---:|\n'
+          for r in arena['capacity_effects']:
+              text+=f"| {r['channels']} | {r['async']} | {r['default_simulations']} | {r['default_nodes']} | {r['larger_simulations']} | {r['larger_nodes']} |\n"
+          text+='\nThis establishes actual search beyond the old node limit, not a throughput or Elo improvement. Default behavior remains capacity-limited and explicit default output/state matches absent configuration. Maximum-capacity validation is a small smoke plus high-ID storage/transaction tests, not an exhaustive search filling every slot. Fixed preallocation trades memory/startup work for room; no live setting changed. Source/readout evidence is retained under evidence/bounded-search-arenas/. Its source manifest describes the tested preregistration before this documentation-only readout. Self-review only; no independent review or formal proof. Nothing merged or deployed.\n'
+          doc.write_text(text)
+          paths=list(manifest)+[str(p) for p in dest.iterdir()]
+          subprocess.run(['git','add','--',*paths],check=True);subprocess.run(['git','diff','--cached','--check'],check=True)
+          actual=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines();assert sorted(actual)==sorted(paths)
+          for path,expected in manifest.items():
+              if not path.endswith('.md'):assert hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()==expected,path
+          subprocess.run(['git','config','user.name','github-actions[bot]'],check=True)
+          subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
+          tree=subprocess.check_output(['git','write-tree'],text=True).strip()
+          commit=subprocess.check_output(['git','commit-tree',tree,'-p',os.environ['BASE'],'-m','native: support explicit bounded search arenas beyond 4096 nodes'],text=True).strip()
+          subprocess.run(['git','push','--force-with-lease=refs/heads/'+os.environ['FEATURE']+':','origin',commit+':refs/heads/'+os.environ['FEATURE']],check=True)
+          (out/'feature.txt').write_text(commit+'\n');print('PUBLISHED_QUALIFIED_ARENA',commit)
+          PY
+      - name: Retain raw diagnostics and exact tested source
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import gzip,os,pathlib,shutil,subprocess
+          temp=pathlib.Path(os.environ['RUNNER_TEMP']);work=temp/'arena-work';dest=temp/'arena-artifact';dest.mkdir(exist_ok=True)
+          for name in ('arena-source.json','arena.patch'):
+              if (temp/name).exists():shutil.copyfile(temp/name,dest/name)
+          if work.exists():
+              out=work/'artifacts'
+              for p in out.rglob('*'):
+                  if p.is_file() and (p.suffix in ('.json','.xml','.txt','.stdout','.stderr') or p.name=='runner.c'):
+                      target=dest/p.relative_to(out);target.parent.mkdir(parents=True,exist_ok=True)
+                      if p.name=='runner.c':target.with_suffix('.c.gz').write_bytes(gzip.compress(p.read_bytes()))
+                      else:shutil.copyfile(p,target)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bounded-arena-qualification
+          path: ${{ runner.temp }}/arena-artifact
+          retention-days: 30
