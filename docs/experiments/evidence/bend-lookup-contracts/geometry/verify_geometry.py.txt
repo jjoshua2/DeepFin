@@ -1,0 +1,58 @@
+"""Supplementary primitive geometry checks. No original source is modified."""
+from pathlib import Path
+import subprocess, os, hashlib, shutil, json, tempfile, argparse, re
+
+def main():
+ p=argparse.ArgumentParser();p.add_argument('repository',type=Path);p.add_argument('compiler',type=Path);p.add_argument('--bun',required=True,type=Path);p.add_argument('--report',required=True,type=Path);p.add_argument('--cc',default='clang');a=p.parse_args()
+ e=a.repository.resolve()/'native/bend_engine'; cli=a.compiler.resolve()/'bend2/main.ts';bun=a.bun.resolve();s=e/'standalone/proofs/geometry_review'
+ def digest(b):return hashlib.sha256(b).hexdigest()
+ env=dict(os.environ,BEND_NO_TELEMETRY='1')
+ def run(argv,ok=True,timeout=180):
+  r=subprocess.run([str(x) for x in argv],capture_output=True,text=True,timeout=timeout,env=env)
+  if ok:assert r.returncode==0 and not r.stderr,(r.returncode,r.stdout[-2000:],r.stderr[-2000:])
+  return r
+ identity=run([bun,e/'standalone/verify_compiler.js',a.compiler]).stdout
+ tables=e/'standalone/Tables.bend';original=tables.read_bytes()
+ tracked={str(f.relative_to(e)):digest(f.read_bytes()) for f in sorted(s.glob('*.bend'))};tracked['standalone/Tables.bend']=digest(original)
+ dirs=[(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]
+ expected=[]
+ for sq in range(64):
+  x,y=sq%8,sq//8
+  for di,(dx,dy) in enumerate(dirs):
+   f,r=x+dx,y+dy;n=r*8+f if 0<=f<8 and 0<=r<8 else 64
+   expected.append(f's {sq} {di} {n}')
+ for key in range(128):
+  sq=key%64;x,y=sq%8,sq//8;mask=0
+  for dx,dy in (dirs[:4] if key<64 else dirs[4:]):
+   ray=[];f,r=x+dx,y+dy
+   while 0<=f<8 and 0<=r<8:ray.append(r*8+f);f+=dx;r+=dy
+   for bit in ray[:-1]:mask|=1<<bit
+  expected.append(f'm {key} {mask>>32} {mask&0xffffffff}')
+ modes=[];controls=[]
+ with tempfile.TemporaryDirectory(prefix='deepfin-geometry-') as t:
+  t=Path(t);c=t/'probe.c';run([bun,cli,s/'probe.bend','-o',c])
+  for mode,flags in [('generic',[]),('ubsan',['-fsanitize=undefined','-fno-sanitize-recover=all'])]:
+   exe=t/mode;run([a.cc,'-std=c11','-O1','-Werror=shift-count-overflow',*flags,c,'-pthread','-lm','-o',exe])
+   out=run([exe,'--threads','1']).stdout;assert out.splitlines()==expected
+   modes.append({'mode':mode,'step_cases':512,'mask_cases':128,'output_sha256':digest(out.encode())})
+  for name,needle,change,entry,location in [
+   ('offboard-file-admitted','U32.is_lt(x, 8)','U32.is_le(x, 8)','Step.bend','square_7'),
+   ('terminal-mask-squares-retained','Bool.and(mask, U32.is_eq(later, 64))','False{}','Masks.bend','finite')]:
+   m=t/name;shutil.copytree(e,m);mt=m/'standalone/Tables.bend';text=mt.read_text();assert text.count(needle)==1;mt.write_text(text.replace(needle,change))
+   c=t/(name+'.c');exe=t/(name+'.bin');run([bun,cli,m/'standalone/proofs/geometry_review/probe.bend','-o',c]);run([a.cc,'-std=c11','-O1',c,'-pthread','-lm','-o',exe]);out=run([exe,'--threads','1']).stdout.splitlines();assert len(out)==len(expected)
+   mismatch=next((i for i,(x,y) in enumerate(zip(out,expected)) if x!=y),None);assert mismatch is not None
+   q=run([bun,cli,m/'standalone/proofs/geometry_review'/entry],ok=False,timeout=300);diag=(q.stdout+q.stderr).strip()
+   assert q.returncode==1 and re.search(r'expected[\s\S]*observed',diag),(name,q.returncode,diag[-2000:])
+   assert 'Location: '+location in diag,(name,diag[-2000:])
+   assert not re.search(r'no such file|RangeError|more than once|a defined name|Segmentation fault',diag)
+   controls.append({'name':name,'native_wrong_value_rejected':True,'first_mismatch_row':mismatch,'observed':out[mismatch],'expected':expected[mismatch],
+    'source_rejection_status':q.returncode,'source_location':location,'diagnostic_sha256':digest(diag.encode()),'diagnostic_bytes':len(diag.encode()),'mutated_Tables_sha256':digest(mt.read_bytes())})
+   print('PASS mutation',name,flush=True)
+ assert tables.read_bytes()==original
+ assert run([bun,e/'standalone/verify_compiler.js',a.compiler]).stdout==identity
+ for rel,h in tracked.items():assert digest((e/rel).read_bytes())==h
+ result={'supplementary_geometry':'PASS','compiler_identity':identity.strip(),'source_sha256s':tracked,'modes':modes,'mutations':controls,
+         'scope':'Exhaustive primitive step/mask inputs, not arbitrary-occupancy ray or final lookup proof; no extra public-law/control counts','driver_sha256':digest(Path(__file__).read_bytes()),'cc':run([a.cc,'--version']).stdout.splitlines()[0]}
+ a.report.parent.mkdir(parents=True,exist_ok=True);a.report.write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))
+
+if __name__=='__main__':main()

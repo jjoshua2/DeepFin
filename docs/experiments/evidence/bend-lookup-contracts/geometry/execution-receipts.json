@@ -1,0 +1,67 @@
+[
+  {
+    "command": [
+      "/mnt/data/lookup-continuation/compiler/bun",
+      "/mnt/data/lookup-continuation/compiler/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/geometry_review/Step.bend"
+    ],
+    "exit_code": 1,
+    "elapsed_seconds": 0.1160177729999532,
+    "log_sha256": "40be74358928a656ec2df2b1ee9c885e49115de19f08333a062e3ef1b74df60b",
+    "name": "geometry-step",
+    "raw_text": "Error:\n- message  : a match on a parameter or field (this name is a def or a consumed binder: give the value its own def)\nLocation:\n19 |   +r = Nat.div(sq,8n)\n20>|   match dir:\n21 |     case 0n: flatten(positive(f),Some{r})\n"
+  },
+  {
+    "command": [
+      "/mnt/data/lookup-continuation/compiler/bun",
+      "/mnt/data/lookup-continuation/compiler/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/geometry_review/Step.bend"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 8.208223521000036,
+    "log_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84",
+    "name": "geometry-step-final",
+    "raw_text": "All terms check.\n"
+  },
+  {
+    "command": [
+      "/mnt/data/lookup-continuation/compiler/bun",
+      "/mnt/data/lookup-continuation/compiler/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/geometry_review/Masks.bend"
+    ],
+    "exit_code": 1,
+    "elapsed_seconds": 0.26958531800005403,
+    "log_sha256": "0f3f822881c8e6888d19279e3c2855e46f076231fc941184c8e85bfb9d23d84e",
+    "name": "geometry-masks",
+    "raw_text": "Error:\n- expected : Data\n- observed : Type\nContext:\n- x : Nat\nLocation: Rays.interior\n19 |     case Nil{}: Nil{}\n20>|     case x <> +tail: Bool.pick(List<Nat>,nonempty(tail),x <> interior(tail),Nil{})\n21 | \n"
+  },
+  {
+    "command": [
+      "/mnt/data/lookup-continuation/compiler/bun",
+      "/mnt/data/lookup-continuation/compiler/bend/bend2/main.ts",
+      "native/bend_engine/standalone/proofs/geometry_review/Masks.bend"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 265.56968647400004,
+    "log_sha256": "3155557f2fa6b6fe55b661347e56893dc0b52fa1977b6800a8d26dbff1d3db84",
+    "name": "geometry-masks-final",
+    "raw_text": "All terms check.\n"
+  },
+  {
+    "command": [
+      "python",
+      "/mnt/data/lookup-continuation/geometry_native.py",
+      "/mnt/data/lookup-continuation/repo",
+      "/mnt/data/lookup-continuation/compiler/bend",
+      "--bun",
+      "/mnt/data/lookup-continuation/compiler/bun",
+      "--report",
+      "/mnt/data/lookup-continuation/evidence/geometry-native.json"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 10.611774330000117,
+    "log_sha256": "6ef08139ef8e1e99a3501ae164ab8815a7ab0aad304460dce81280bd41043de7",
+    "name": "geometry-native",
+    "raw_text": "PASS mutation offboard-file-admitted\nPASS mutation terminal-mask-squares-retained\n{\n  \"supplementary_geometry\": \"PASS\",\n  \"compiler_identity\": \"verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\",\n  \"source_sha256s\": {\n    \"standalone/proofs/geometry_review/Grid.bend\": \"c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a\",\n    \"standalone/proofs/geometry_review/Masks.bend\": \"6cb7c3e645356caf92ca2ca860156da3bcfdb8d6c4c997d04adb992ce0ab0db3\",\n    \"standalone/proofs/geometry_review/Rays.bend\": \"f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054\",\n    \"standalone/proofs/geometry_review/Step.bend\": \"dc3583eed5bf26c025f7a4b606dfc7ed1024bec248e3c3d8ac7686de1e28f8e9\",\n    \"standalone/proofs/geometry_review/probe.bend\": \"33a5a16d86169dacb9940074d07eb823586a0575d97a8c6a60422006c18b0d4d\",\n    \"standalone/Tables.bend\": \"8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e\"\n  },\n  \"modes\": [\n    {\n      \"mode\": \"generic\",\n      \"step_cases\": 512,\n      \"mask_cases\": 128,\n      \"output_sha256\": \"f525ac644dddbcd9a0beef5927fd037763267e7dbfacb8ed2286df45df683bb4\"\n    },\n    {\n      \"mode\": \"ubsan\",\n      \"step_cases\": 512,\n      \"mask_cases\": 128,\n      \"output_sha256\": \"f525ac644dddbcd9a0beef5927fd037763267e7dbfacb8ed2286df45df683bb4\"\n    }\n  ],\n  \"mutations\": [\n    {\n      \"name\": \"offboard-file-admitted\",\n      \"native_wrong_value_rejected\": true,\n      \"first_mismatch_row\": 56,\n      \"observed\": \"s 7 0 8\",\n      \"expected\": \"s 7 0 64\",\n      \"source_rejection_status\": 1,\n      \"source_location\": \"square_7\",\n      \"diagnostic_sha256\": \"d50ad86d3aa034ef3aee2179625a5d1fc9e467040251a77425e020322e9062a7\",\n      \"diagnostic_bytes\": 165,\n      \"mutated_Tables_sha256\": \"52c67188d2ac70f221d2a5a74f5bf4593d306986263cc4135f395c11692d106e\"\n    },\n    {\n      \"name\": \"terminal-mask-squares-retained\",\n      \"native_wrong_value_rejected\": true,\n      \"first_mismatch_row\": 512,\n      \"observed\": \"m 0 16843009 16843262\",\n      \"expected\": \"m 0 65793 16843134\",\n      \"source_rejection_status\": 1,\n      \"source_location\": \"finite\",\n      \"diagnostic_sha256\": \"4b5af94f26000ce0e3b431873ef85f17846c36144ff5b9b13084a999ec5604c1\",\n      \"diagnostic_bytes\": 197,\n      \"mutated_Tables_sha256\": \"57a67968e66cd236698b95264b913a9b4595b484c0da4e515dc616db08c5548a\"\n    }\n  ],\n  \"scope\": \"Exhaustive primitive step/mask inputs, not arbitrary-occupancy ray or final lookup proof; no extra public-law/control counts\",\n  \"driver_sha256\": \"b55b9d6afa08dbedaf3088e307c0cbe2e1dd927840c81dc913e89b7c67246b96\",\n  \"cc\": \"clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)\"\n}\n"
+  }
+]

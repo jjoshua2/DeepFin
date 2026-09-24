@@ -1,0 +1,28 @@
+# All primitive geometry inputs; the reference supplies no expected values.
+import Base
+import ../../Tables.bend as Tables
+
+def steps(n: Nat,+at: U32) -> IO(Unit):
+  match n:
+    case 0n: IO.pure(Unit,Unit{})
+    case 1n+p:
+      +sq = U32.div(at,8)
+      +dir = U32.mod(at,8)
+      +next = Tables.jump(sq,Tables.delta(dir))
+      do IO<Unit>:
+        IO.print("s " ++ U32.show(sq) ++ " " ++ U32.show(dir) ++ " " ++ U32.show(next))
+        steps(p,U32.inc(at))
+
+def masks(n: Nat,+key: U32) -> IO(Unit):
+  match n:
+    case 0n: IO.pure(Unit,Unit{})
+    case 1n+p:
+      +m = Tables.slider(U32.mod(key,64),U32.is_ge(key,64),U64.zero(),True{})
+      do IO<Unit>:
+        IO.print("m " ++ U32.show(key) ++ " " ++ U32.show(U64.high(m)) ++ " " ++ U32.show(U64.low(m)))
+        masks(p,U32.inc(key))
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    steps(512n,0)
+    masks(128n,0)
