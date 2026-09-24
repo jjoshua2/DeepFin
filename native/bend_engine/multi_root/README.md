@@ -244,3 +244,8 @@ capacity. The source-only completion workflow now tests both old defaults and th
 larger-arena path, including actual search past node 4,096. See the
 [bounded-arena experiment](../../../docs/experiments/2026-09-24-bounded-search-arenas.md)
 for controls, source identities and qualification limits.
+
+
+## Arena footprint screen
+
+The opt-in `build_arena_memory.sh` and `benchmark_arena_memory.py` compare the exact qualified arena program at matched work. See [the measured arena-memory record](../../../docs/experiments/2026-09-24-arena-memory-screen.md) for per-child RSS, rounding boundaries, startup-dominated timings and reproduction. This is separate from source-only correctness CI and does not set a live memory budget.
