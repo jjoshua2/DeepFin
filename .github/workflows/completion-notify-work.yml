@@ -1,0 +1,184 @@
+name: Bounded completion notification qualification
+on:
+  push:
+    branches: [work/bend-completion-notify-20260923]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: bounded-completion-notify
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      BASE: d90f9cfbeb64b9d83f4296543307c377c5049917
+      FEATURE: feat/bend-completion-notify-20260923
+      GH_TOKEN: ${{ github.token }}
+      BEND_NO_TELEMETRY: '1'
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare exact isolated candidate and untouched baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin "$BASE"
+          git worktree add --detach "$RUNNER_TEMP/wait-work" "$BASE"
+          git worktree add --detach "$RUNNER_TEMP/wait-baseline" "$BASE"
+          python3 .wait-apply.py "$RUNNER_TEMP/wait-work"
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,shutil,subprocess
+          temp=pathlib.Path(os.environ['RUNNER_TEMP']);work=temp/'wait-work'
+          name='native/bend_engine/multi_root/qualify_wait.sh'
+          data=pathlib.Path(name).read_bytes()
+          assert hashlib.sha256(data).hexdigest()=='c87f12529da3b1467bd0489f59ef94f258f0d04942f309726d3a8d887a7b0188'
+          (work/name).write_bytes(data)
+          manifest=json.loads((temp/'wait-sources.json').read_text())
+          manifest[name]=hashlib.sha256(data).hexdigest()
+          (temp/'wait-sources.json').write_text(json.dumps(manifest,indent=2)+'\n')
+          subprocess.run(['git','-C',str(work),'add','--',name],check=True)
+          assert len(manifest)==12
+          PY
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment and preserved FIFO control
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/wait-work"
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+          python3 - <<'PY'
+          import gzip,hashlib,io,pathlib,subprocess,zipfile
+          blob=subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/actions/artifacts/10785862321/zip'],timeout=90)
+          assert hashlib.sha256(blob).hexdigest()=='8e892da29782d004e9209d65732a5fdaf95a439be7733f77e0a49874f6a799c7'
+          raw=gzip.decompress(zipfile.ZipFile(io.BytesIO(blob)).read('qualification/runner.c.gz'))
+          assert hashlib.sha256(raw).hexdigest()=='7f348a6ad58c7e3abebbf876f4ada8862c9f6dbc5856f445e1e2310346d68b74'
+          out=pathlib.Path('artifacts');out.mkdir(exist_ok=True);(out/'wait-parent.c').write_bytes(raw)
+          PY
+      - name: Explicit static and focused regression checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/wait-work"
+          . .venv/bin/activate
+          ruff check native/bend_engine/multi_root/benchmark_wait.py tests/test_bend_completion_wait.py
+          basedpyright native/bend_engine/multi_root/benchmark_wait.py tests/test_bend_completion_wait.py
+          bash -n native/bend_engine/multi_root/qualify_wait.sh
+          python -m pytest -q tests/test_bend_completion_wait.py tests/test_bend_fifo_scheduler.py tests/test_bend_multi_root.py tests/test_bend_async_cohort.py tests/test_bend_cohort_deadlines.py tests/test_neural_work.py --junitxml=artifacts/wait-python.xml
+      - name: Native wait, full coordinator controls, and paired performance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/wait-work"
+          . .venv/bin/activate
+          BUN=bun CC=clang-18 CXX=clang++-18 bash native/bend_engine/multi_root/qualify_wait.sh build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae artifacts/wait-parent.c "$RUNNER_TEMP/wait-baseline" artifacts/wait-qualified
+      - name: Whole-repository static gate and source reconciliation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/wait-work"
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib
+          manifest=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'wait-sources.json').read_text())
+          for name,expected in manifest.items():assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==expected,name
+          PY
+      - name: Preserve complete evidence and publish clean source-only feature
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/wait-work"
+          . .venv/bin/activate
+          python - <<'PY'
+          import csv,hashlib,json,os,pathlib,subprocess,xml.etree.ElementTree as ET
+          from native.bend_engine.multi_root.benchmark_wait import summarize
+          temp=pathlib.Path(os.environ['RUNNER_TEMP']);out=pathlib.Path('artifacts/wait-qualified')
+          manifest=json.loads((temp/'wait-sources.json').read_text())
+          for name,expected in manifest.items():assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==expected,name
+          summary=json.loads((out/'summary.json').read_text());assert summary['status']=='passed'
+          timing=json.loads((out/'timing.json').read_text());assert timing['status']=='passed'
+          assert summarize(timing['samples'])==timing['summary']
+          tests=ET.parse('artifacts/wait-python.xml').getroot();cases=list(tests.iter('testcase'))
+          assert cases and not any(list(tests.iter(tag)) for tag in ('failure','error','skipped'))
+          dest=pathlib.Path('docs/experiments/evidence/bounded-completion-wait');assert not dest.exists();dest.mkdir(parents=True)
+          summary.update({'workflow_run':int(os.environ['GITHUB_RUN_ID']),'tested_workflow_commit':os.environ['GITHUB_SHA'],'base_commit':os.environ['BASE'],'python_tests_passed':len(cases),'source_sha256':manifest})
+          (dest/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+          observations=[]
+          for row in timing['samples']:
+              for i,obs in enumerate(row['observations']):
+                  observations.append({k:row[k] for k in ('case','async','pair','order','arm','repeats','work_sha256')}|{'repeat':i}|obs)
+          with (dest/'samples.csv').open('w',newline='') as stream:
+              writer=csv.DictWriter(stream,fieldnames=list(observations[0]),lineterminator='\n');writer.writeheader();writer.writerows(observations)
+          timing.pop('samples');timing['measured_child_executions']=len(observations)
+          (dest/'timing.json').write_text(json.dumps(timing,indent=2)+'\n')
+          reports={str(p.relative_to(out)):json.loads(p.read_text()) for p in out.rglob('*.json') if p.name not in ('summary.json','timing.json')}
+          (dest/'controls.json').write_text(json.dumps(reports,indent=2)+'\n')
+          (dest/'cpu.txt').write_bytes((out/'optimized/cpu.txt').read_bytes())
+          (dest/'compiler.txt').write_bytes((out/'optimized/compiler.txt').read_bytes())
+          doc=pathlib.Path('docs/experiments/2026-09-23-bounded-completion-wait.md')
+          old='Pending qualification. Local native checks do not qualify the full application.'
+          text=doc.read_text();assert text.count(old)==1
+          text=text.replace(old,'The completed hosted qualification is recorded below. A passing measurement run is not itself a speedup verdict.')
+          text+='\n\n### Completed hosted qualification\n\nRun https://github.com/jjoshua2/DeepFin/actions/runs/'+os.environ['GITHUB_RUN_ID']+' completed all preceding static, build, behavior and timing stages. '
+          text+=f'{len(cases)} Python cases passed without skips; whole-repository Ruff/Basedpyright/Vulture passed. Native completion checks passed 12 cases / 326 assertions in each normal and ASan+UBSan build. Removing the notification was rejected by the compiled test. '
+          text+='The unchanged serial-reference matrix passed ten configurations in both modes, two coordinator UBSan configurations, held cancellation/stop/quit checks and deadline checks at both widths. The original worker ownership tests also passed normal and ASan+UBSan. Twenty additional exact parent/candidate pairs matched all trees/events/non-time work. Repeated modes reuse fixtures, not independent games.\n\n'
+          text+=f'Six diagnostic comparisons and all {len(observations)} timed child executions matched realized semantic work. There were 72 measured arm-groups and 12 excluded warmups. Per-child wall/CPU observations and output hashes are retained in evidence/bounded-completion-wait/samples.csv.\n\n'
+          text+='| Case/mode | Old process ms | New process ms | Median paired old/new | New/old CPU | Verdict |\n|---|---:|---:|---:|---:|---|\n'
+          for name,row in timing['summary'].items():
+              med=row['medians_per_invocation'];ratio=row['median_sleep_over_notify'];cpu=row['notify_over_sleep_cpu']
+              r='unresolved' if ratio is None else f'{ratio:.4f}';c='unresolved' if cpu is None else f'{cpu:.4f}'
+              text+=f"| {name} | {1000*med['sleep']['wall_seconds']:.2f} | {1000*med['notify']['wall_seconds']:.2f} | {r} | {c} | {row['decision']} |\n"
+          text+='\nRatios use paired groups; displayed times are unpaired medians per invocation. These callback-only single-host results do not establish neural-model/GPU speed, playing strength, all interleavings or an OS response-time guarantee. Waiting requests at most one millisecond before control service; callback completion can end the wait early. Shutdown still joins physical work. Self-review only; no independent review or formal proof. Nothing merged or deployed.\n\n'
+          text+='Reproduce with `BUN=bun CC=clang-18 CXX=clang++-18 bash native/bend_engine/multi_root/qualify_wait.sh COMPILER PARENT.c PARENT_SOURCE NEW_OUTPUT`. Use the source and parent C identities in the committed summary; the historical parent C artifact has finite retention.\n'
+          doc.write_text(text)
+          paths=list(manifest)+[str(p) for p in sorted(dest.iterdir())]
+          subprocess.run(['git','add','--',*paths],check=True);subprocess.run(['git','diff','--cached','--check'],check=True)
+          actual=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines();assert sorted(actual)==sorted(paths)
+          for name,expected in manifest.items():
+              if not name.endswith('.md'):assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==expected,name
+          subprocess.run(['git','config','user.name','github-actions[bot]'],check=True)
+          subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
+          tree=subprocess.check_output(['git','write-tree'],text=True).strip()
+          commit=subprocess.check_output(['git','commit-tree',tree,'-p',os.environ['BASE'],'-m','native: wake bounded cohort waits on batch completion'],text=True).strip()
+          subprocess.run(['git','push','--force-with-lease=refs/heads/'+os.environ['FEATURE']+':','origin',commit+':refs/heads/'+os.environ['FEATURE']],check=True)
+          (out/'feature.txt').write_text(commit+'\n');print('PUBLISHED_QUALIFIED_FEATURE',commit)
+          PY
+      - name: Collect raw evidence and exact source patch
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import gzip,os,pathlib,shutil,subprocess
+          temp=pathlib.Path(os.environ['RUNNER_TEMP']);work=temp/'wait-work';dest=temp/'wait-artifact';dest.mkdir(exist_ok=True)
+          if (temp/'wait-sources.json').exists():shutil.copyfile(temp/'wait-sources.json',dest/'source.json')
+          if work.exists():
+              (dest/'source.patch').write_bytes(subprocess.check_output(['git','-C',str(work),'diff','--cached','--binary']))
+              p=work/'artifacts/wait-python.xml'
+              if p.exists():shutil.copyfile(p,dest/'tests.xml')
+              out=work/'artifacts/wait-qualified'
+              for p in out.rglob('*'):
+                  if p.is_file() and (p.suffix in ('.json','.txt','.log','.stdout','.stderr') or p.name=='runner.c'):
+                      target=dest/'qualification'/p.relative_to(out);target.parent.mkdir(parents=True,exist_ok=True)
+                      if p.name=='runner.c':target.with_suffix('.c.gz').write_bytes(gzip.compress(p.read_bytes()))
+                      else:shutil.copyfile(p,target)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bounded-completion-wait
+          path: ${{ runner.temp }}/wait-artifact
+          retention-days: 30
