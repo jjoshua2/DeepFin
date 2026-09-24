@@ -1,0 +1,28 @@
+{
+  "verification": "PASS",
+  "artifact_id": 10790662571,
+  "zip_sha256": "b5a39fcc36233f2f98d684496ee3dcdda13990c42aad23b511d9541435caad1d",
+  "all_candidate_source_entries_match": 329,
+  "baseline_native_report_equal_except_cc": true,
+  "native_wrapper_source_identity_matches": true,
+  "late_metadata_failure_same_behavior": {
+    "cell": 512,
+    "actual": "0 0",
+    "expected": "2147483648 513",
+    "exit_code": 1
+  },
+  "original_diagnostic_reports_unchanged": true,
+  "full_native_report_byte_or_json_identity_claimed": false,
+  "observed_differences": [
+    "baseline.cc",
+    "late_metadata_corruption.diagnostic_sha256",
+    "late_metadata_corruption.diagnostic_bytes",
+    "late_metadata_corruption.excerpt"
+  ],
+  "diagnostic_difference": "Temporary directory identity and an additional GitHub Actions annotation; same wrong-value assertion. An initial overstrict report comparison failed and was not treated as an implementation/test failure.",
+  "local_diagnostic_bytes": 1110,
+  "hosted_diagnostic_bytes": 1416,
+  "new_consumer_exact_success": true,
+  "new_controls_passed": 17,
+  "complete_106_law_wrapper_executed": false
+}
