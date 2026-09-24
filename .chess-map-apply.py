@@ -18,7 +18,32 @@ changes=[
 for old,new in changes:
  assert s.count(old)==1;s=s.replace(old,new)
 assert hashlib.sha256(s.encode()).hexdigest()=='1935a842213561abfbb734253921918b91950b26a689f1d47a36acd30f3ba069'
+block='''@dataclass(frozen=True)
+class Workload:
+    name: str
+    bits: int
+    initial: tuple[tuple[int, int], ...]
+    ops: tuple[tuple[int, int, int], ...]  # get=0, put=1, remove=2
+'''
+assert s.count(block)==1
+s=s.replace('from dataclasses import asdict, dataclass','from dataclasses import asdict').replace('from . import cpu_target','from . import cpu_target\nfrom .workload import Workload').replace(block+'\n\n','')
+assert hashlib.sha256(s.encode()).hexdigest()=='ff3bbe0a5762da9f7a8bc4e15129d26b75a0cef2a556b58cc72ea3b866e2d4ae'
 p.write_text(s); paths=[*files,str(p.relative_to(work))]
+schema='''"""Shared immutable input schema for numeric-map operation drivers."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+'''+block
+assert hashlib.sha256(schema.encode()).hexdigest()=='710ba181e2298a02e71e1f80377b4d7694c8a706419afca03dc5234657c5d558'
+p=work/'native/bend_engine/u64_map_probe/workload.py';assert not p.exists();p.write_text(schema);paths.append(str(p.relative_to(work)))
+p=work/'native/bend_engine/u64_map_probe/chess_workloads.py';s=p.read_text();assert s.count('from .benchmark import Workload')==1
+s=s.replace('from .benchmark import Workload','from .workload import Workload')
+assert hashlib.sha256(s.encode()).hexdigest()=='844f8c14e81b61c11e7b820e6a9ff79f551a8929bdd5870cf2322fb3226942ae'
+p.write_text(s)
+p=work/'docs/experiments/2026-09-24-chess-key-map-replay.md'
+p.write_text(p.read_text()+'''\n\n### Preserved first static failure\n\nRun 36032177266 passed source checks, the locked build and Ruff, then Basedpyright rejected the circular import between the benchmark and the new chess fixture producer. No hosted Python or native replay had run. The unchanged frozen Workload schema now lives in workload.py and both producers import it, rather than suppressing the cycle diagnostic. The existing benchmark still exposes Workload through its import. Fixtures, native implementations, oracles and expected results are unchanged. Fourteen pure tests passed locally after this refactor; full hosted qualification is still a separate gate.\n''')
 for name,text in {
  'docs/experiments/README.md':'\n- [CBoard-key map replay](2026-09-24-chess-key-map-replay.md): actual source-derived position keys, exact dictionary replay and explicit history/EP cache-identity limits; no performance or cache-adoption claim.\n',
  'native/bend_engine/u64_map_probe/README.md':'\n\n## Actual chess-key fixtures\n\nAdd `--chess` to the comparison driver to generate deterministic legal-position\nworkloads using the inspected checkout\'s actual CBoard transposition-key code.\nSee [the chess-key replay record](../../../docs/experiments/2026-09-24-chess-key-map-replay.md).\nIt includes full encounter replays and native EP/castling/history-key boundary\nchecks. These generated legal walks are not recorded production access traces.\nThe numeric map remains unaware of board fields, history and model identity;\ndo not treat a hit as permission to reuse a neural value. No performance panel\nis part of this correctness extension.\n'}.items():
