@@ -1,0 +1,20 @@
+name: Record qualified chess-map timing
+on:
+  push:
+    branches: [work/bend-chess-map-record-20260924]
+    paths: ['.github/workflows/chess-map-timing-record.yml', '.chess-map-publish.py']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  record:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      TIMING_ARTIFACT: '10834874698'
+      TIMING_SHA256: 760e2a50d6de23b53ec42c2b5073639114c988b5be1d5f7dcee18df5a4c358c5
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify completed run and publish documentation-only feature commit
+        run: PYTHONPATH="$PWD" python3 .chess-map-publish.py
