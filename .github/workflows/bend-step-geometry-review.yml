@@ -1,0 +1,93 @@
+name: Independent Bend step geometry review
+'on':
+  push:
+    branches: [feat/bend-lookup-qualification-dev-20260924]
+    paths: [.github/workflows/bend-step-geometry-review.yml]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feb2dd7dbd12acc3e3f1eb4d13b2cb1b63d0cb6a
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact supplementary generator and all source identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^{tree})" = 18b81b7652a7aab395f0cc21a74d43a6f19a9b55
+          mkdir -p "$RUNNER_TEMP/geometry"
+          echo "EVIDENCE=$RUNNER_TEMP/geometry" >> "$GITHUB_ENV"
+          gh api repos/jjoshua2/DeepFin/git/blobs/b3777e8e2c7458e4b02261e3f7fa31450cf50503 --jq .content | base64 --decode > "$RUNNER_TEMP/geometry/generate.py.txt"
+          gh api repos/jjoshua2/DeepFin/git/blobs/33e2ed0f905e1eab05e299f0ad6ead04b0d58cf5 --jq .content | base64 --decode > "$RUNNER_TEMP/geometry/source-manifest.json"
+          test "$(git hash-object "$RUNNER_TEMP/geometry/generate.py.txt")" = b3777e8e2c7458e4b02261e3f7fa31450cf50503
+          test "$(git hash-object "$RUNNER_TEMP/geometry/source-manifest.json")" = 33e2ed0f905e1eab05e299f0ad6ead04b0d58cf5
+          echo "c658fc273218b763a82e10680b38d1f0a91ae907af6ad935626dbc7a49559deb  $RUNNER_TEMP/geometry/generate.py.txt" | sha256sum --check
+          python3 "$RUNNER_TEMP/geometry/generate.py.txt" native/bend_engine/standalone/proofs/geometry_review
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$RUNNER_TEMP/geometry/compiler-identity.txt"
+      - name: Check all numeric-domain steps and three actual-implementation mutations
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,os,re,shutil,subprocess,time
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);engine=Path('native/bend_engine').resolve()
+          cli=Path('.compiler/bend2/main.ts').resolve();bun=shutil.which('bun');assert bun
+          manifest=json.loads((e/'source-manifest.json').read_text())
+          def digest(b):return hashlib.sha256(b).hexdigest()
+          for f,h in manifest.items():
+              p=engine/f
+              assert p.is_file() and not p.is_symlink() and digest(p.read_bytes())==h,f
+          def check(name,p):
+              start=time.monotonic()
+              r=subprocess.run([bun,str(cli),str(p)],capture_output=True,text=True,timeout=65,env=os.environ.copy())
+              raw=r.stdout+r.stderr
+              (e/(name+'.log')).write_text(raw)
+              return r.returncode,raw,time.monotonic()-start
+          code,raw,seconds=check('consumer',engine/'standalone/proofs/geometry_review/consumer.bend')
+          assert code==0 and raw.strip()=='All terms check.',raw[-2000:]
+          result={'review':'PASS','scope':'Independent coordinate-step source theorem only; not public-law count or full ray geometry','source':'feb2dd7dbd12acc3e3f1eb4d13b2cb1b63d0cb6a','source_files':10,'numeric_square_domain':'Nat(U32 square)<64','numeric_direction_domain':'Nat(U32 direction)<8','consumer':{'exit_code':code,'elapsed_seconds':seconds,'log_sha256':digest(raw.encode())},'mutations':[],'run':os.environ['GITHUB_RUN_ID']}
+          original=(engine/'standalone/Tables.bend').read_bytes()
+          cases=[('inclusive_file_edge','U32.is_lt(x, 8)','U32.is_le(x, 8)','23f20deec8fafd5cf2936038815655bec3865768930534c7259fa99593083b58'),('wrong_northeast','case 4: (1, 1)','case 4: (1, 0)','cfe4628b945e587a292999176be5bbc8549c17230fc0b8936344f95b7e72540f'),('wrong_offboard_sentinel','U32.add(x, U32.mul(y, 8)), 64)','U32.add(x, U32.mul(y, 8)), 63)','a9ebbaa49ff99a3c22ebb3a1814543cb1787e5df840ebbef7417d22b0d442518')]
+          for name,old,new,expected_hash in cases:
+              mutant=Path(os.environ['RUNNER_TEMP'])/('geometry-mutant-'+name)
+              shutil.copytree(engine,mutant)
+              text=original.decode();assert text.count(old)==1
+              (mutant/'standalone/Tables.bend').write_text(text.replace(old,new))
+              code,raw,seconds=check(name,mutant/'standalone/proofs/geometry_review/Recovery.bend')
+              assert code==1 and re.search(r'expected[\s\S]*observed',raw) and re.search(r'Location: (Step\.)?step\b',raw),raw[-2000:]
+              assert not re.search(r'RangeError|more than once|no such file|a defined name|Segmentation fault',raw),raw[-2000:]
+              assert digest(raw.encode())==expected_hash,(name,digest(raw.encode()))
+              result['mutations'].append({'name':name,'exit_code':code,'elapsed_seconds':seconds,'intended_location':'Step.step','log_sha256':digest(raw.encode()),'diagnostic_identical_to_local':True})
+              shutil.rmtree(mutant)
+          for f,h in manifest.items():assert digest((engine/f).read_bytes())==h,f
+          shutil.copytree(engine/'standalone/proofs/geometry_review',e/'source')
+          (e/'review.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          PY
+          git diff --exit-code
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-independent-step-geometry
+          path: ${{ runner.temp }}/geometry/
+          retention-days: 30
