@@ -83,3 +83,24 @@ source-linked defaults must not be presented as an additional closed theorem.
 Independent review and board representation/move legality (P3), followed by the
 separate P4-P7 obligations, remain meaningful next work rather than repeating
 already-proved ray or storage results.
+
+
+## Completed hosted qualification
+
+Hosted run **36009970976** passes both uniform full-table laws and importing consumer, all20 classified controls, four native modes, the short-public-builder regression, original compiler source/pin checks and unchanged whole-repository lint on source `12327c34c5279fd41ae66eb10ab42470bb06d199`.
+
+The public laws are full_table_lookup and u32_full_table_lookup. Every valid key refers to the same symbolic full128-block table, rather than a selected-key-dependent before/after decomposition. The second exposes the actual U32 key interface. Prior independent-ray and initialized-data proofs are reused, not replaced; arbitrary seed/occupancy and bounded extras remain supported. Both results contain the complete final array.
+
+Public Tables.build linkage is explicitly a separate exact signature/body token guard. It checks depth17,128 blocks,start key0,prefix512,64 extras from square0 and zero seed, ignoring comments/whitespace. It is not a checker-discharge of the huge closed Tables.build equality. A direct closed equality exceeded the earlier30-second local limit; that failed attempt is retained and not relabeled a theorem.
+
+Consumer and controls ran separately. Exact-source parent115/295 is retained on367 manifest entries and successful jobs, yielding modular117 laws/315 controls, not a complete wrapper execution. The20 new controls comprise four semantic/refinement rejections, seven source-recipe guard rejections, eight manifest/import checks and one synthetic warning-output unit check. The seven guard controls are not formal theorem rejections, and the synthetic control is not a compiler execution.
+
+The unchanged actual builder/lookup verifier passes1,024 rows,1,022 distinct key/occupancy pairs,all128 keys and six malformed requests in each of generic,portable,native-target and UBSan. Its prior shifted-lookup regression is retained. A separate mutation changes only public Tables.build to127 blocks: it compiles/runs, then fails row1016/key127 with observed127 65793 16843134 versus expected127 4202512 134480385. The new source guard also rejects it. These are repeated selected queries, not full-buffer or exhaustive U64 coverage.
+
+The native baseline report agrees with prior qualified results except the recorded C compiler. Mutation diagnostics may differ by temporary directory and CI annotation; originals are retained. Hosted uses Bun1.4.2 and Clang18 scoped only to native probes. Python3.13/uv0.12.10 locked CPU tools use the normal build compiler. Ruff/Basedpyright/Vulture passes unchanged, resolving the historical local missing-tools failure.
+
+All379 native-source entries match before evidence publication. The existing full-domain helper is promoted byte-for-byte. Only evidence, index and inventory changes follow source checking. Local closed-normalization and parser-draft failures remain described in the record. One trailing blank line in Binding.bend was removed before hosted checking without changing a term. No old law, production code or checker was modified.
+
+Self-review only. Uniform full-table source results and the public recipe guard are separate evidence layers, not a closed-builder or native lifetime proof. Pinned checker/Base,native lowering,allocation/ownership/lifetime,ABI,toolchain,libraries,OS and hardware remain trust boundaries. No merge,force push,deployment,live-process,model/GPU,training,benchmark or routine perft change. No Python application responsibility moved into Bend; export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies.
+
+Next substantive target is the independent board-representation and move specification (P3). The supported P2 initialized-pipeline geometry is established, with the public wrapper now guarded against recipe drift; a literal closed-builder equality remains separately unqualified rather than silently assumed.

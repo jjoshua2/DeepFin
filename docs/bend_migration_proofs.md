@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest full-table public-boundary consolidation
+
+Hosted run **36009970976** passes both uniform full-table laws and importing consumer, all20 classified controls, four native modes, the short-public-builder regression, original compiler source/pin checks and unchanged whole-repository lint on source `12327c34c5279fd41ae66eb10ab42470bb06d199`.
+
+The builder suite removes selected-key-dependent before/after parameters from the full-table interface and exposes both Nat and actual U32 keys. It reuses the independent-ray result and full-domain certificates. The symbolic table construction is identical for every key; complete returned-array equality, arbitrary seed/occupancy,depth17 and128-block certificates remain explicit.
+
+The actual zero-argument Tables.build body is linked by a separate fail-closed source-token recipe guard and native public-builder mutation test. This guard is not a source equality witness; closed literal builder normalization remains unqualified. Modular117/315 includes4 new semantic,7 recipe,8 policy and1 synthetic controls, not20 semantic theorem rejections. The full combined wrapper was not executed. See [the dated readout](experiments/2026-09-24-bend-full-table-boundary.md) for exact scope and receipts. P3-P7 remain separate; no application responsibility newly moved into Bend.
+
 ## Latest independent ray and initialized-lookup refinement
 
 Hosted run **36002630448** passes all five new public contracts/importing consumer, all19 controls, four native ray modes, four actual initialized-lookup modes, original compiler source/pin checks and unchanged whole-repository lint on source `58c9136bccdf6667a36776fb48480eab7ebfe5a2`.

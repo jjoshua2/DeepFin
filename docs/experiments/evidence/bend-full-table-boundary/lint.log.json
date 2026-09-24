@@ -1,0 +1,4 @@
+{
+  "sha256": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc",
+  "raw_text": "\n::: running lint tools in parallel\n\n::: ruff check\nAll checks passed!\n\n::: basedpyright\n0 errors, 0 warnings, 0 notes\n\n::: vulture (dead code, min confidence 80)\n\nlint: OK\n"
+}
