@@ -4,6 +4,7 @@ on:
     branches: [work/pr5d-live-qualification-20260925]
 permissions:
   contents: read
+  actions: read
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -14,32 +15,36 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: 42d4c78ebfca102e146720c818f5dba9db61fd57
-      - name: Recover exact authored runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: deepfin-pr5d-reconciled-build
+          run-id: 36159277912
+          github-token: ${{ github.token }}
+          path: /tmp/pr5d-prior
+      - name: Apply original runtime and bounded ownership correction
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir /tmp/pr5d-build
           python - <<'PY'
-          import base64,gzip,hashlib,json,subprocess
+          import base64,hashlib,json,subprocess
           from pathlib import Path
-          blob=json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/git/blobs/331aa8721bedcc80657abf36435cddce151f77f2']))
-          raw=base64.b64decode(blob['content'])
-          Path('/tmp/pr5d-build/transferred.bin').write_bytes(raw)
-          assert hashlib.sha256(raw).hexdigest()=='6d52562cc1993163fb150805669328515ae59c3d58ba9ea824a603b9faef15ff'
-          text=base64.b64encode(raw).decode()
-          assert len(text)==10444 and text[9559:9561]=='sb'
-          text=text[:9559]+'j'+text[9561:]+'='
-          raw=base64.b64decode(text,validate=True)
-          assert hashlib.sha256(raw).hexdigest()=='372368a9ee353af04e85a1b1b0ccc290b05299ca78a01609f08fb3f2e266d2b0'
-          patch=gzip.decompress(raw)
+          patch=Path('/tmp/pr5d-prior/runtime.patch').read_bytes()
           assert hashlib.sha256(patch).hexdigest()=='e6bfc1015e3dcacc2ee8e6076155a88a975d546f4a4a1924f5ccb2f5e15f228e'
           subprocess.run(['git','apply','--check','-'],input=patch,check=True)
           subprocess.run(['git','apply','-'],input=patch,check=True)
+          data=json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/git/blobs/8a3f0e8a117d094c12cffb95b68de77b31d6473e']))
+          script=base64.b64decode(data['content'])
+          assert hashlib.sha1(b'blob '+str(len(script)).encode()+b'\0'+script).hexdigest()=='8a3f0e8a117d094c12cffb95b68de77b31d6473e'
+          exec(compile(script,'ownership-correction','exec'))
+          assert hashlib.sha256(Path('native/bend_engine/multi_root/live.bend').read_bytes()).hexdigest()=='5b1c32e7dc1a4a8013ab0bd40b8bca7a0c9c5b0f72afce79bb5b12932d9f9772'
+          assert hashlib.sha256(Path('native/bend_engine/multi_root/LiveRun.bend').read_bytes()).hexdigest()=='9f5f5b382b3567b3b95060c2b1b1a5cd389a1020cefbdbf96305f5085b3e955c'
           subprocess.run(['git','add','-N','.'],check=True)
-          Path('/tmp/pr5d-build/runtime.patch').write_bytes(patch)
+          subprocess.run(['git','diff','--check'],check=True)
           files=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
           assert len(files)==5 and all(p.endswith('.bend') for p in files)
+          Path('/tmp/pr5d-build/runtime.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
           Path('/tmp/pr5d-build/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in files},indent=2))
           PY
       - uses: oven-sh/setup-bun@v2
@@ -68,6 +73,5 @@ jobs:
             /tmp/pr5d-build/*.json
             /tmp/pr5d-build/*.txt
             /tmp/pr5d-build/*.gz
-            /tmp/pr5d-build/*.bin
             /tmp/pr5d-build/*.patch
           retention-days: 30
