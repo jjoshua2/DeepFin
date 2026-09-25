@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Supplementary en-passant update refinement
+
+Two newly source-checked derived statements now cover actual flag1/promotion0 make_move: exact complete-Board update and partition preservation. A structural mask identity connects removal of source,destination and destination XOR8 to existing deletion/fresh-insertion producers. Caller input consistency is required only for preservation; legal EP,pawn/source/rank/history conditions and king safety remain unproved here. Exact archived sources and the portable driver are in [the supplementary record](experiments/evidence/bend-move-promotion-publication/en-passant-review/README.md).
+
+The local generic/UBSan reference checks4,316 complete Boards per mode and two actual capture-selection corruptions. Both corruptions pass the old flag0 consumers but fail the new source bridge and native values. This is supplementary local evidence,not two added registered laws or a newly hosted EP suite. Primary totals remain150/436 modular. Deliberate public-suite promotion and castling refinement remain next; no runtime implementation changed.
+
 ## Latest P3 ordinary-move and promotion publication
 
 Hosted run **36169939079** passes both unchanged focused source suites (five ordinary laws/eighteen controls and four promotion laws/seventeen controls), both four-mode native verifiers, all five compiled/executed corruption checks, original compiler source/pin checks and unchanged repository lint on source `36c2ac370a00ea91f8f7e136d0167e0abcc24fd1`.

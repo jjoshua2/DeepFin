@@ -36,3 +36,10 @@ All472 native-source manifest entries match before evidence publication. Subsequ
 Self-review only,not independent review. Pinned checker/Base,native lowering/storage,ABI,toolchain,libraries,OS and hardware remain trust boundaries. Structural snapshot lowering,closed literal builder equality and strict-TypeScript limitations remain unchanged. No production function,permanent workflow,routine perft,model/GPU,training,search or benchmark change. No Python application responsibility moved into Bend; export/references,data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No merge,force push,deployment or live-process operation.
 
 Next substantive acceptance is en-passant and castling update refinement under explicit conditions,then connection to legal move producers and king safety. Saved ordinary and promotion proofs should be reused rather than reproved.
+
+
+## New supplementary flag-one update review
+
+The [archived en-passant review](evidence/bend-move-promotion-publication/en-passant-review/README.md) records new actual complete-update and consistency refinements for arbitrary raw U32 source/destination inputs. These are local derived statements,not registered public laws and not legal-move validation. Generic/UBSan each pass4,316 complete Board cases and nine malformed requests. Two capture-square mutations fail new source/native checks while the previous ordinary/promotion consumers pass. Original compiler and primary source identities stay unchanged.
+
+Documentation-only record run **36170976229** verifies every472-entry primary source hash,all archived supplementary source/probe dependencies and the driver identity. It does not execute proofs,native tests or lint. The prior complete hosted qualification remains tied to its exact primary sources; the new archived review sources have separately labeled local evidence. Final archive transport SHA-256 is701b587306d58746e004dbfc5f4a3b84654a2ae3e551949fe37c9a0499bd11a9. Self-review only,no merge/deployment.
