@@ -107,3 +107,24 @@ ABI, toolchain, libraries, OS and hardware remain trusted boundaries. No merge,
 force push, deployment or live-process action. No Python application logic moves
 into Bend here; export/references/data/control/training and transitional
 C++/LibTorch/AOTI remain dependencies.
+
+
+## Completed hosted qualification
+
+Hosted run **36144541680** passes the five-law focused source gate and all17 controls, four native complete-state modes and both actual-code corruption controls, original compiler source/pin checks and unchanged repository lint on source `c3e1fe63d48790859685dc91eabf9012c2378495`.
+
+The focused command actually executes its five-law consumer and all17 controls together. Eight controls are ordinary intended semantic/refinement failures, eight enforce manifests/import safety, and one is a synthetic zero-exit warning unit rather than a compiler execution. Missing names/imports, affine errors, crashes and timeouts do not count as semantic proof rejection.
+
+Exact-source parent132/367 is retained on416 source-manifest entries and its successful focused qualification job, giving modular137-law/384-control coverage. The complete137-law wrapper was not executed. The inherited structural snapshot lowering failure remains unresolved and is not relabeled by this parser qualification.
+
+All1,295 native input cases pass in generic,portable,native-target and UBSan modes, comparing89,355 U32 fields per mode across full prefix/split/fused Layout states. These include768 single-piece placements,every split of initial/empty layouts,malformed input,Unicode,boundary cursors and three initial Board seeds with arbitrary metadata. There are830 accepted final rows and382 invalid-prefix rows; distinct input tuples do not mean distinct layout strings. Nine bounded-probe malformed requests are rejected per mode.
+
+Actual invalidity-revival and character-discard mutations both compile and execute before wrong-state rejection: row0 field25 observed1 instead of0, and row0 field23 observed0 instead of8. Modes repeat the fixtures, not disjoint or exhaustive String/Board datasets. The independent reference supplies no candidate input states or decisions; candidate arguments are the raw test strings/cursors/seed selector/metadata, not reference outputs. No proof representation executes in the probe.
+
+The complete focused report matches local except measured consumer seconds; the complete native report matches except the C compiler identity. All429 candidate source entries match before publication. Hosted uses Bun1.4.2/Clang18.1.3, with Clang scoped to native probes. Locked Python3.13/uv0.12.10 CPU tools use the normal host compiler; Ruff/Basedpyright/Vulture passes unchanged, resolving the recorded local missing-tools gap.
+
+These statements prove actual prefix composition and acceptance safety, not cursor freshness or board consistency for every accepted placement. Raw invalid parsing can modify a working Board before layout_result discards it; no raw-state rollback claim is made. Arbitrary source Strings/Layout values are distinguished from the bounded native Unicode/cursor domain. Full six-field FEN semantics, metadata validity and legal reachability remain separate.
+
+Only documentation,index and evidence are added after qualification. No production function, earlier accepted law, compiler input, permanent workflow, routine perft, search,model/GPU,training or benchmark changes. Self-review only. Source checker/Base,native lowering/storage,ABI,toolchain,libraries,OS and hardware remain trust boundaries. No additional Python application responsibility moves into Bend; export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. Nothing merged,force-pushed,deployed or changed in a live process.
+
+Next decisive acceptance: derive bounded nonoverlapping cursor addresses along actual accepted traversals and connect them to existing fresh-insertion preservation. This suite provides the accepted-prefix and exact-transition prerequisites without assuming that remaining conclusion.
