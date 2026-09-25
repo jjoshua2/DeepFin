@@ -1,0 +1,202 @@
+name: Bend parser prefix safety qualification
+'on':
+  push:
+    branches: [feat/bend-parser-prefix-dev-20260925]
+    paths: [.github/workflows/bend-parser-prefix-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 0aa3794344f3cd2fcb683251d9cb905809bd1560
+      TARGET: feat/bend-parser-prefix-safety-20260925
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 0aa3794344f3cd2fcb683251d9cb905809bd1560
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact source-only candidate and verify retained parent receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/parser-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/source.b64"
+          for blob in ac1757e4e9b2d322e139e329dd477bf10a8ec404 02d9098581d47acd83524a96b0806a4ee697d9b6 a53c2c648d48b9fcaaa80b7be2f724880b1246db; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/source.b64"
+          done
+          gh api repos/jjoshua2/DeepFin/actions/jobs/107917774878 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP']);e=Path(os.environ['EVIDENCE'])
+          encoded=(t/'source.b64').read_bytes();assert len(encoded)==21048
+          patch=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(patch)==62332 and hashlib.sha256(patch).hexdigest()=='8d137c655e8bd1e15b714736780910b3d85dde1021f663c4c56cf79ae08e9f37'
+          (e/'source.patch').write_bytes(patch)
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='8dc290537eae8058dd7999c3c6d6748a4f0f26c7'
+          old=Path('docs/experiments/evidence/bend-whole-board-roundtrip')
+          q=json.loads((old/'qualification.json').read_text())
+          assert q['qualification']=='PASS_WITH_EXPLICIT_LOWERING_LIMIT' and q['modular_laws']==132 and q['modular_controls']==367
+          assert q['structural_snapshot_native_lowering'] is False
+          f=json.loads((old/'hosted-focused.json').read_text())
+          assert f['focused_gate']=='PASS' and f['consumer']=='PASS' and f['new_law_count']==5
+          assert len(f['negative_controls'])==17 and all(x['rejected'] for x in f['negative_controls'])
+          manifest=json.loads((old/'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(manifest)==416
+          for name,h in manifest.items():assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==h,name
+          j=json.loads((e/'parent-job.json').read_text())
+          assert j['id']==107917774878 and j['run_id']==36085950814 and j['status']=='completed' and j['conclusion']=='success'
+          subprocess.run(['git','apply','--check',str(e/'source.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'source.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='e5417c334f702e6d5876d905f601d3ccad551ddf'
+          files=git('diff','--cached','--name-only').splitlines();assert len(files)==14
+          assert all(f.startswith('native/bend_engine/standalone/proofs/parser/') or f=='docs/experiments/2026-09-25-bend-parser-prefix-safety.md' for f in files)
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in git('ls-files','native/bend_engine').splitlines() if Path(f).is_file()}
+          assert len(hashes)==429
+          r={'base':os.environ['BASE'],'source_tree':'e5417c334f702e6d5876d905f601d3ccad551ddf','patch_sha256':hashlib.sha256(patch).hexdigest(),'changed_files':files,'candidate_source_sha256s':hashes,'retained_parent_laws':132,'retained_parent_controls':367,'parent_manifest_matches':416,'parent_qualification_sha256':hashlib.sha256((old/'qualification.json').read_bytes()).hexdigest(),'combined_wrapper_executed':False,'parent_snapshot_lowering_limit_unchanged':True,'independent_review':False}
+          (e/'source-identity.json').write_text(json.dumps(r,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove actual parser prefix composition and acceptance safety'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - name: Check five public source laws and all seventeen controls
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/parser/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Compare complete actual parser states in four native modes
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/parser/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Recheck original compiler source suite and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools with the normal host compiler
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify final evidence and publish only the qualified feature branch
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-whole-board-roundtrip-20260924 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(name):return json.loads((e/name).read_text())
+          def canon(x):return hashlib.sha256(json.dumps(x,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          ident=read('source-identity.json');f=read('focused.json');n=read('native.json')
+          for name,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(name).read_bytes()).hexdigest()==h,name
+          assert f['focused_gate']=='PASS' and f['controls_gate']=='PASS' and f['consumer']=='PASS' and f['new_law_count']==5
+          assert f['universal_laws']==5 and f['closed_laws']==0 and len(f['negative_controls'])==17
+          assert all(x['rejected'] for x in f['negative_controls'])
+          kinds=collections.Counter(x['kind'] for x in f['negative_controls']);assert kinds['source semantic/refinement']==8 and kinds['manifest/import policy']==8
+          assert canon({k:v for k,v in f.items() if k!='consumer_seconds'})=='393ebd8e1c2e7324ab1699d65771dbddf53b32a774fe0d265db188afb33061c2'
+          assert n['native_gate']=='PASS' and n['rows_per_mode']==1295 and n['fields_per_mode']==89355 and n['distinct_inputs']==1295
+          assert n['accepted_final_rows']==830 and n['invalid_prefix_rows']==382
+          assert len(n['modes'])==4 and all(x['invalid_rejections']==9 and x['output_sha256']=='7e26d5895d0edb38e67ae66775411f9228988308cedba97f1374fad63b08fcb2' for x in n['modes'])
+          assert len(n['mutations'])==2 and all(x['rejected'] and x['compiled_and_executed'] for x in n['mutations'])
+          assert canon({k:v for k,v in n.items() if k!='cc'})=='246dfb076e7f002bbb21cff99d8bc4d405dc3975a76833899d9174fdeac5f417'
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-parser-prefix-safety');d.mkdir(exist_ok=False)
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          result={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':'e5417c334f702e6d5876d905f601d3ccad551ddf','new_laws':5,'new_controls':17,'control_categories':dict(kinds),'retained_parent_laws':132,'retained_parent_controls':367,'modular_laws':137,'modular_controls':384,'combined_wrapper_executed':False,'native_source_entries':429,'parser_wide_freshness_proved':False,'whole_FEN_validity_proved':False,'raw_Layout_rollback_proved':False,'parent_snapshot_lowering_limit_unchanged':True,'focused_report_matches_local_except_seconds':True,'native_report_matches_local_except_cc':True,'independent_review':False}
+          (d/'qualification.json').write_text(json.dumps(result,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes the five-law focused source gate and all17 controls, four native complete-state modes and both actual-code corruption controls, original compiler source/pin checks and unchanged repository lint on source `{os.environ['SOURCE']}`."
+          paras=['## Completed hosted qualification',headline,
+            'The focused command actually executes its five-law consumer and all17 controls together. Eight controls are ordinary intended semantic/refinement failures, eight enforce manifests/import safety, and one is a synthetic zero-exit warning unit rather than a compiler execution. Missing names/imports, affine errors, crashes and timeouts do not count as semantic proof rejection.',
+            'Exact-source parent132/367 is retained on416 source-manifest entries and its successful focused qualification job, giving modular137-law/384-control coverage. The complete137-law wrapper was not executed. The inherited structural snapshot lowering failure remains unresolved and is not relabeled by this parser qualification.',
+            'All1,295 native input cases pass in generic,portable,native-target and UBSan modes, comparing89,355 U32 fields per mode across full prefix/split/fused Layout states. These include768 single-piece placements,every split of initial/empty layouts,malformed input,Unicode,boundary cursors and three initial Board seeds with arbitrary metadata. There are830 accepted final rows and382 invalid-prefix rows; distinct input tuples do not mean distinct layout strings. Nine bounded-probe malformed requests are rejected per mode.',
+            'Actual invalidity-revival and character-discard mutations both compile and execute before wrong-state rejection: row0 field25 observed1 instead of0, and row0 field23 observed0 instead of8. Modes repeat the fixtures, not disjoint or exhaustive String/Board datasets. The independent reference supplies no candidate input states or decisions; candidate arguments are the raw test strings/cursors/seed selector/metadata, not reference outputs. No proof representation executes in the probe.',
+            'The complete focused report matches local except measured consumer seconds; the complete native report matches except the C compiler identity. All429 candidate source entries match before publication. Hosted uses Bun1.4.2/Clang18.1.3, with Clang scoped to native probes. Locked Python3.13/uv0.12.10 CPU tools use the normal host compiler; Ruff/Basedpyright/Vulture passes unchanged, resolving the recorded local missing-tools gap.',
+            'These statements prove actual prefix composition and acceptance safety, not cursor freshness or board consistency for every accepted placement. Raw invalid parsing can modify a working Board before layout_result discards it; no raw-state rollback claim is made. Arbitrary source Strings/Layout values are distinguished from the bounded native Unicode/cursor domain. Full six-field FEN semantics, metadata validity and legal reachability remain separate.',
+            'Only documentation,index and evidence are added after qualification. No production function, earlier accepted law, compiler input, permanent workflow, routine perft, search,model/GPU,training or benchmark changes. Self-review only. Source checker/Base,native lowering/storage,ABI,toolchain,libraries,OS and hardware remain trust boundaries. No additional Python application responsibility moves into Bend; export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. Nothing merged,force-pushed,deployed or changed in a live process.',
+            'Next decisive acceptance: derive bounded nonoverlapping cursor addresses along actual accepted traversals and connect them to existing fresh-insertion preservation. This suite provides the accepted-prefix and exact-transition prerequisites without assuming that remaining conclusion.'
+          ]
+          record=Path('docs/experiments/2026-09-25-bend-parser-prefix-safety.md');record.write_text(record.read_text()+'\n\n'+'\n\n'.join(paras)+'\n')
+          index=Path('docs/experiments/README.md');s=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert s.count(anchor)==1
+          index.write_text(s.replace(anchor,anchor+'| [Parser prefix safety](2026-09-25-bend-parser-prefix-safety.md) | Five actual placement-parser laws for prefix composition, sticky invalidity, metadata and typed transitions; modular137/384; parser-wide freshness and full FEN validity remain open |\n',1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          note='## Latest P3 placement-parser prefix foundation\n\n'+headline+'\n\nThe parser suite proves full-Layout concatenation composition, rejection after invalid prefixes, validity of every prefix of an accepted traversal, unchanged metadata and exact typed piece transitions. It refers to the actual Position parser, not just a surrogate model. All five laws are universal over their stated raw input domains.\n\nQualification is modular137/384 with exact132/367 parent evidence retained; the full aggregate did not run. This is not parser-wide freshness, partition preservation, six-field FEN validity, legal reachability or rollback of raw rejected layouts. The consumer explicitly preserves the rejected-input mutation counterexample. Next is cursor/address separation on accepted paths. See [the readout](experiments/2026-09-25-bend-parser-prefix-safety.md). Prior snapshot lowering and closed-builder limits remain unchanged; no application responsibility moved from Python.\n'
+          m.write_text(title+'\n\n'+note+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git switch -c "$TARGET"
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify parser-prefix safety and distinguish remaining freshness obligations'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' > "$EVIDENCE/published-commits.txt"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-parser-prefix-qualification
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/parser-evidence/
+          retention-days: 14
