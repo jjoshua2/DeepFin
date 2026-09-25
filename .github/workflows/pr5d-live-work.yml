@@ -1,0 +1,25 @@
+name: PR5d live qualification workspace
+on:
+  push:
+    branches: [work/pr5d-live-qualification-20260925]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 42d4c78ebfca102e146720c818f5dba9db61fd57
+      - name: Archive exact tracked source
+        run: |
+          mkdir -p /tmp/pr5d-source
+          git archive HEAD | gzip > /tmp/pr5d-source/source.tar.gz
+          git rev-parse HEAD > /tmp/pr5d-source/revision.txt
+          sha256sum /tmp/pr5d-source/source.tar.gz > /tmp/pr5d-source/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepfin-pr5d-current-source
+          path: /tmp/pr5d-source
+          retention-days: 7
