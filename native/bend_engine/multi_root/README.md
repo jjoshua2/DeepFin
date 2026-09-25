@@ -249,3 +249,11 @@ for controls, source identities and qualification limits.
 ## Arena footprint screen
 
 The opt-in `build_arena_memory.sh` and `benchmark_arena_memory.py` compare the exact qualified arena program at matched work. See [the measured arena-memory record](../../../docs/experiments/2026-09-24-arena-memory-screen.md) for per-child RSS, rounding boundaries, startup-dominated timings and reproduction. This is separate from source-only correctness CI and does not set a live memory budget.
+
+## Persistent live-root entrypoint (PR5d)
+
+The separate [live owner](LIVE.md) starts empty and supports generation-tagged
+add/replace/remove controls while retaining FIFO, completion notification and
+configured arena capacity. Existing fixed-cohort/UCI modes remain unchanged.
+The native callback lifecycle qualification is complete; actual live-model/GPU
+composition and self-play integration remain separate gates.
