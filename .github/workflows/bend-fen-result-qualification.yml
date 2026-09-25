@@ -72,8 +72,8 @@ jobs:
           for p,h in manifest.items():assert digest(Path(p))==h,p
           first=load(e/'parent-job-108120960214.json')
           assert first['id']==108120960214 and first['run_id']==36150116903 and first['conclusion']=='failure'
-          proof_steps=[s for s in first['steps'] if 'source' in s['name'].lower() and ('law' in s['name'].lower() or 'control' in s['name'].lower())]
-          assert proof_steps and all(s['conclusion']=='success' for s in proof_steps),first['steps']
+          proof_steps=[s for s in first['steps'] if s['name']=='Check four public laws and seventeen controls on actual parser dependencies']
+          assert len(proof_steps)==1 and proof_steps[0]['conclusion']=='success',first['steps']
           recovery=load(e/'parent-job-108122790012.json')
           assert recovery['id']==108122790012 and recovery['run_id']==36150660570 and recovery['conclusion']=='success'
           patch=lzma.decompress((t/'source.xz').read_bytes(),memlimit=256*1024*1024)
