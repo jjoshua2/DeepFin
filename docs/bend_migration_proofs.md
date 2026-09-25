@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest P3 placement-parser prefix foundation
+
+Hosted run **36144541680** passes the five-law focused source gate and all17 controls, four native complete-state modes and both actual-code corruption controls, original compiler source/pin checks and unchanged repository lint on source `c3e1fe63d48790859685dc91eabf9012c2378495`.
+
+The parser suite proves full-Layout concatenation composition, rejection after invalid prefixes, validity of every prefix of an accepted traversal, unchanged metadata and exact typed piece transitions. It refers to the actual Position parser, not just a surrogate model. All five laws are universal over their stated raw input domains.
+
+Qualification is modular137/384 with exact132/367 parent evidence retained; the full aggregate did not run. This is not parser-wide freshness, partition preservation, six-field FEN validity, legal reachability or rollback of raw rejected layouts. The consumer explicitly preserves the rejected-input mutation counterexample. Next is cursor/address separation on accepted paths. See [the readout](experiments/2026-09-25-bend-parser-prefix-safety.md). Prior snapshot lowering and closed-builder limits remain unchanged; no application responsibility moved from Python.
+
 ## Latest P3 whole-board abstraction and ordering
 
 Hosted run **36085950814** passes the five-law focused source gate and all17 controls, four native actual-observation modes and both corruption checks, original compiler source/pin tests and unchanged repository lint on source `92737251af190ebddba5b83d146e462ae1049ec6`. The separately reproduced structural snapshot C-lowering limitation remains unresolved.
