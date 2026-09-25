@@ -1,0 +1,11 @@
+
+::: running lint tools in parallel
+
+::: ruff check
+env: ‘ruff’: No such file or directory
+
+::: basedpyright
+/mnt/data/p3-continuation/repo/scripts/lint.sh: line 135: basedpyright: command not found
+
+::: vulture (dead code, min confidence 80)
+/mnt/data/p3-continuation/repo/scripts/lint.sh: line 116: vulture: command not found

@@ -1,0 +1,12 @@
+{
+  "evidence_commit": "76589e042dfc9ebd7cbe434170c43de7cb30017f",
+  "evidence_tree": "cfcafd2fc461f2b0f0fdea00d6f1be1865f3f361",
+  "tracked_paths": 3772,
+  "candidate_native_entries": 472,
+  "primary_sources_identical": 28,
+  "source_commit": "36c2ac370a00ea91f8f7e136d0167e0abcc24fd1",
+  "source_tree": "7313cdeed1254f94366fc4385dc95029c1b75f47",
+  "artifact_sha256": "5c5a17b2a13099d897f7ea9b5f84ce9b640d661831284c381c61bbbf6b97edea",
+  "focused_reports_match_except_consumer_seconds": true,
+  "native_reports_match_except_cc": true
+}

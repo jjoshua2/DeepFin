@@ -1,5 +1,19 @@
 # Bend migration and proof inventory
 
+## Supplementary en-passant update refinement
+
+Two newly source-checked derived statements now cover actual flag1/promotion0 make_move: exact complete-Board update and partition preservation. A structural mask identity connects removal of source,destination and destination XOR8 to existing deletion/fresh-insertion producers. Caller input consistency is required only for preservation; legal EP,pawn/source/rank/history conditions and king safety remain unproved here. Exact archived sources and the portable driver are in [the supplementary record](experiments/evidence/bend-move-promotion-publication/en-passant-review/README.md).
+
+The local generic/UBSan reference checks4,316 complete Boards per mode and two actual capture-selection corruptions. Both corruptions pass the old flag0 consumers but fail the new source bridge and native values. This is supplementary local evidence,not two added registered laws or a newly hosted EP suite. Primary totals remain150/436 modular. Deliberate public-suite promotion and castling refinement remain next; no runtime implementation changed.
+
+## Latest P3 ordinary-move and promotion publication
+
+Hosted run **36169939079** passes both unchanged focused source suites (five ordinary laws/eighteen controls and four promotion laws/seventeen controls), both four-mode native verifiers, all five compiled/executed corruption checks, original compiler source/pin checks and unchanged repository lint on source `36c2ac370a00ea91f8f7e136d0167e0abcc24fd1`.
+
+The five move-update and four promotion contracts are now hosted-qualified on the exact saved primary sources. They provide complete update and partition guarantees for flag0 ordinary/typed-promotion calls,plus actual promotion-choice ordering and tail preservation. They do not prove legal source pieces,promotion ranks,king safety,castling,en-passant or independently correct metadata.
+
+Coverage is modular150/436 with parent141/401 retained on exact source evidence; both saved focused gates and native suites reran,but the full aggregate did not. No old contract was weakened. See [the publication record](experiments/2026-09-25-bend-move-promotion-publication.md). No application responsibility moved into Bend.
+
 ## Latest P3 initialized parser frontier
 
 Qualification combines the passed four-law/17-control source gate from run36150116903 with fresh native/compiler/lint success in recovery run36150660570, both on exact source tree efa431703a1d47208655595f816a3008d0c4a27a. Published source commit: `be5afc6308d159d52f42b2fcccb59a9c20109b4c`.
