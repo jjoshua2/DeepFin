@@ -3,143 +3,55 @@ on:
   push:
     branches: [work/live-model-composition-20260925]
 permissions:
-  contents: read
+  contents: write
   actions: read
-env:
-  PYTHONPATH: .
-  CAE_TEST_THREADS: '2'
-  OMP_NUM_THREADS: '2'
-  MKL_NUM_THREADS: '2'
-  MAX_JOBS: '1'
-  TORCHINDUCTOR_COMPILE_THREADS: '1'
-  CUDA_VISIBLE_DEVICES: ''
-  BEND_NO_TELEMETRY: '1'
 jobs:
-  qualify:
+  publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Apply exact test-client and removal-protocol corrections
+          ref: 52175f1bf2cb53732e774ed1e5ad32f8c3703748
+      - uses: actions/download-artifact@v4
+        with:
+          name: deepfin-live-model-composition
+          run-id: 36170337509
+          github-token: ${{ github.token }}
+          path: /tmp/live-model-evidence
+      - name: Verify completed run and apply source-identical tests with evidence
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p artifacts/live-model
+          mkdir -p /tmp/live-model-publication
           python3 - <<'PY'
-          from pathlib import Path
           import base64,hashlib,json,subprocess
-          p=Path('native/bend_engine/multi_root/verify_live.py')
-          s=p.read_text()
-          changes=[
-            ('fault: str = "", arena: int = 4096, depth: int = 2):','fault: str = "", arena: int = 4096, depth: int = 2,\n                 environment: dict[str, str] | None = None, diagnostics: bool = True):'),
-            ('env = {**os.environ, "DEEPFIN_COHORT_ASYNC": "1", "DEEPFIN_COHORT_ARENA_NODES": str(arena)}','env = {**(os.environ if environment is None else environment),\n               "DEEPFIN_COHORT_ASYNC": "1", "DEEPFIN_COHORT_ARENA_NODES": str(arena)}'),
-            ('str(simulations), str(depth), "0", "1"],','str(simulations), str(depth), "0", str(int(diagnostics))],')]
-          for old,new in changes:
-              assert s.count(old)==1,old
-              s=s.replace(old,new)
-          p.write_text(s)
-          rec=json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/git/blobs/07055622db08fcdc47a421b4b61a980cfe038ed7']))
-          correction=base64.b64decode(rec['content'])
-          assert hashlib.sha256(correction).hexdigest()=='3f621296a8052658ecad5cebd33578e8ea29ef5ff34416e7859edc98660ed248'
-          exec(compile(correction,'authored-removal-parser-correction','exec'))
-          expected={
-            'native/bend_engine/multi_root/verify_live.py':'26a219e76472a3798b959ce15ad90d85ab5a3ffe5a24d05f75ca0d25f9729b31',
-            'native/bend_engine/multi_root/verify_live_model.py':'6038c467f4e4f2daba85abf0cfaeb8f89d31abda03de9d57f1a187ab339803be',
-            'tests/test_bend_live_model.py':'4f8c34b3c73b9b53224fbe3ed5c9e2b4123e020a5ff0cc4c6228b9426e0ffb4b'}
-          for path,digest in expected.items():
-              assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
-          Path('artifacts/live-model/source.json').write_text(json.dumps(expected,indent=2)+'\n')
+          def api(path):
+              return json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/'+path]))
+          run=api('actions/runs/36170337509')
+          assert run['status']=='completed' and run['conclusion']=='success'
+          assert run['head_sha']=='b15626b14843b727836c67a2152c46a25635d378'
+          artifact=api('actions/artifacts/10879714453')
+          assert artifact['digest']=='sha256:6109b78bafa187af65b04fe58c417740e7d0dcbfe5e2c8e2e02b6a0cdb8c2479'
+          script=base64.b64decode(api('git/blobs/05c75fb94005780e11923714c44dba36b609741c')['content'])
+          assert hashlib.sha256(script).hexdigest()=='7d681463271c4bcd3d9c9ce3f59eab33fddfa5b5cbd202487f85592347adc901'
+          exec(compile(script,'authored-completed-live-model-readout','exec'))
           PY
-      - uses: actions/setup-python@v5
-        with:
-          python-version-file: .python-version
-      - uses: astral-sh/setup-uv@v7
-        with:
-          version: 0.12.10
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - name: Locked CPU dependencies and static controls
+      - name: Publish only the clean follow-up commit to an isolated branch
         run: |
           set -euo pipefail
-          uv sync --locked --extra dev --extra cpu
-          . .venv/bin/activate
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-          python -c 'import torch; assert str(torch.__version__) == "2.14.0+cpu"; print(torch.__version__)'
-          bash scripts/lint.sh 2>&1 | tee artifacts/live-model/lint.txt
-          bash scripts/lint.sh native/bend_engine/multi_root/verify_live_model.py native/bend_engine/multi_root/verify_live.py 2>&1 | tee artifacts/live-model/verifier-lint.txt
-          python -m pytest tests/test_bend_live_model.py tests/test_bend_live_cohort.py tests/test_bend_cohort_deadlines.py tests/test_bend_async_cohort.py tests/test_bend_multi_root.py tests/test_bend_async_search.py tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py -q --junitxml=artifacts/live-model/tests.xml 2>&1 | tee artifacts/live-model/tests.txt
-      - uses: actions/download-artifact@v4
-        with:
-          name: deepfin-pr5d-live-qualification
-          run-id: 36163025335
-          github-token: ${{ github.token }}
-          path: /tmp/live-prior
-      - uses: actions/download-artifact@v4
-        with:
-          name: deepfin-pr1-validation
-          run-id: 35759888019
-          github-token: ${{ github.token }}
-          path: /tmp/live-fixture
-      - name: Recover exact generated source and saved untrained checkpoint
-        run: |
-          set -euo pipefail
-          tar -xzf /tmp/live-fixture/native-build.tar.gz -C /tmp
-          echo '9654a1e334fb5f875d164b82068846bfeab3df2ef2a994737e44789c2623ee6e  /tmp/pr1-model/fixture.pt2' | sha256sum -c -
-          echo 'bb9934134c0d9a39c515c10fa870122c3dfd28259bece392be026e32a9ca60d7  /tmp/pr1-model/fixture.pt' | sha256sum -c -
-          python - <<'PY'
-          from pathlib import Path
-          import gzip,hashlib,json
-          previous=json.loads(Path('/tmp/live-prior/source-manifest.json').read_text())
-          for path,digest in previous.items():
-              if path.endswith(('.bend','.c','.cpp','.h')):
-                  assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
-          data=gzip.decompress(Path('/tmp/live-prior/live.c.gz').read_bytes())
-          digest=hashlib.sha256(data).hexdigest()
-          assert digest=='0febc12b7a6a8a27ddf894cf7bfdc01115413f2792a3be5c93fa814ba610e471'
-          Path('/tmp/live-model.c').write_bytes(data)
-          Path('artifacts/live-model/generated.json').write_text(json.dumps({'sha256':digest,'source_run':36162016314,'reused_not_regenerated':True,'runtime_manifest_verified':True},indent=2))
-          PY
-      - name: Export one CPU batch-four package for this corrected attempt
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import torch
-          from native.bend_engine.neural_probe.checkpoint import load_checkpoint,export_checkpoint
-          torch.set_num_threads(2)
-          Path('/tmp/live-model-packages').mkdir()
-          export_checkpoint(load_checkpoint(Path('/tmp/pr1-model/fixture.pt')),Path('/tmp/live-model-packages/b4.pt2'),batch=4,device='cpu',device_index=0)
-          PY
-      - name: Link and execute the real live-model products at batches one and four
-        run: |
-          set -euo pipefail
-          single=native/bend_engine/standalone
-          prefix="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
-          clang-18 -std=c11 -O3 -DLEGAL_ORACLE -I "$PWD" native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/live-oracle
-          for batch in 1 4; do
-            package=/tmp/pr1-model/fixture.pt2
-            if test "$batch" = 4; then package=/tmp/live-model-packages/b4.pt2; fi
-            out=/tmp/live-model-$batch; mkdir "$out"
-            bun "$single/bind_model.js" --batch-header "$package" "$out/model_contract.h" > "artifacts/live-model/binding-$batch.json"
-            cmake -S "$single" -B "$out/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DCMAKE_PREFIX_PATH="$prefix" -DBEND_GENERATED_C=/tmp/live-model.c -DBEND_CONTRACT_DIR="$out" -DBEND_CUDA_MODEL=OFF -DBEND_ASYNC_BATCH=ON -DBEND_TARGET_NAME=deepfin-bend-live
-            cmake --build "$out/build" --parallel 1
-            ldd "$out/build/deepfin-bend-live" > "artifacts/live-model/libraries-$batch.txt"
-            if grep -qi libpython "artifacts/live-model/libraries-$batch.txt"; then exit 2; fi
-            python -m native.bend_engine.multi_root.verify_live_model --binary "$out/build/deepfin-bend-live" --package "$package" --checkpoint /tmp/pr1-model/fixture.pt --oracle /tmp/live-oracle --report "artifacts/live-model/model-$batch.json"
-          done
-      - name: Preserve exactly the tested Python changes
-        if: always()
-        run: |
-          git diff --check
-          git diff --binary 52175f1bf2cb53732e774ed1e5ad32f8c3703748 -- native/bend_engine/multi_root/verify_live.py native/bend_engine/multi_root/verify_live_model.py tests/test_bend_live_model.py docs/experiments/2026-09-25-live-model-composition.md > artifacts/live-model/qualified.patch
-          git rev-parse HEAD > artifacts/live-model/staging-commit.txt
+          branch=work/live-model-publication-20260925
+          test -z "$(git ls-remote --heads origin "refs/heads/$branch")"
+          git diff --cached --check
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'test: qualify persistent live roots with actual CPU model execution'
+          git push origin "HEAD:refs/heads/$branch"
+          git rev-parse HEAD > /tmp/live-model-publication/commit.txt
+          git diff --stat HEAD^ HEAD > /tmp/live-model-publication/diff-stat.txt
+          git show --format=fuller --no-patch HEAD
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: deepfin-live-model-composition
-          path: artifacts/live-model
+          name: deepfin-live-model-publication
+          path: /tmp/live-model-publication
           retention-days: 30
