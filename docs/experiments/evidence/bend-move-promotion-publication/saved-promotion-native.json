@@ -1,0 +1,101 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "board_rows_per_mode": 16944,
+  "distinct_board_inputs": 16944,
+  "board_fields_per_mode": 321936,
+  "consistent_inputs": 16816,
+  "cases_by_operation": {
+    "all_pairs_four_choices": 16384,
+    "pawn_final_rank_geometry": 176,
+    "raw_metadata": 256,
+    "inconsistent_input": 128
+  },
+  "choice_requests_per_mode": 256,
+  "fixture_sha256": "91bba9b025de673595cfae1cd56b42262733b58abfa1b8bb37ccfb84179ecc04",
+  "modes": [
+    {
+      "mode": "generic",
+      "board_rows": 16944,
+      "board_fields": 321936,
+      "invalid_board_requests": 10,
+      "choice_requests": 256,
+      "choice_entries": 1280,
+      "invalid_choice_requests": 6,
+      "output_sha256": "1236b5f72f8d9fa2fa90e547d6c26fa55ecb81786c2f369742aeb8fe561c2a5e",
+      "choices_sha256": "8e7a1303b05e3f1141a3f2cd1ad73164420ca5a5c4f2f0d2378d1837699c03d0"
+    },
+    {
+      "mode": "portable",
+      "board_rows": 16944,
+      "board_fields": 321936,
+      "invalid_board_requests": 10,
+      "choice_requests": 256,
+      "choice_entries": 1280,
+      "invalid_choice_requests": 6,
+      "output_sha256": "1236b5f72f8d9fa2fa90e547d6c26fa55ecb81786c2f369742aeb8fe561c2a5e",
+      "choices_sha256": "8e7a1303b05e3f1141a3f2cd1ad73164420ca5a5c4f2f0d2378d1837699c03d0"
+    },
+    {
+      "mode": "native",
+      "board_rows": 16944,
+      "board_fields": 321936,
+      "invalid_board_requests": 10,
+      "choice_requests": 256,
+      "choice_entries": 1280,
+      "invalid_choice_requests": 6,
+      "output_sha256": "1236b5f72f8d9fa2fa90e547d6c26fa55ecb81786c2f369742aeb8fe561c2a5e",
+      "choices_sha256": "8e7a1303b05e3f1141a3f2cd1ad73164420ca5a5c4f2f0d2378d1837699c03d0"
+    },
+    {
+      "mode": "ubsan",
+      "board_rows": 16944,
+      "board_fields": 321936,
+      "invalid_board_requests": 10,
+      "choice_requests": 256,
+      "choice_entries": 1280,
+      "invalid_choice_requests": 6,
+      "output_sha256": "1236b5f72f8d9fa2fa90e547d6c26fa55ecb81786c2f369742aeb8fe561c2a5e",
+      "choices_sha256": "8e7a1303b05e3f1141a3f2cd1ad73164420ca5a5c4f2f0d2378d1837699c03d0"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "actual-ignores-promotion",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "message": "actual-ignores-promotion row 0 (all_pairs_four_choices) field 1\n\n1 !== 0\n",
+      "actual": 1,
+      "expected": 0
+    },
+    {
+      "name": "actual-forces-queen",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "message": "actual-forces-queen row 0 (all_pairs_four_choices) field 3\n\n0 !== 1\n",
+      "actual": 0,
+      "expected": 1
+    },
+    {
+      "name": "actual-duplicates-knight-choice",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "message": "actual-duplicates-knight-choice\n+ actual - expected\n\n+ '0 8 1 0\\n0 8 1 0\\n0 8 3 0\\n0 8 4 0\\n9 10 0 3\\n'\n- '0 8 1 0\\n0 8 2 0\\n0 8 3 0\\n0 8 4 0\\n9 10 0 3\\n'\n",
+      "actual": "0 8 1 0\n0 8 1 0\n0 8 3 0\n0 8 4 0\n9 10 0 3\n",
+      "expected": "0 8 1 0\n0 8 2 0\n0 8 3 0\n0 8 4 0\n9 10 0 3\n"
+    }
+  ],
+  "source_sha256s": {
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/promotion/probe.bend": "3da2878ff168b72c75bb24ed19a125f4730b0083aff5411fcf9f6023756e5e2d",
+    "standalone/proofs/promotion/choices_probe.bend": "e57903d49f4f8ef7ae69adbfe8bd5d31391a20b4056c38fd3e569bce26f0c28e",
+    "standalone/proofs/promotion/verify_native.js": "ca257dc5ab24d8d84b783f066a84f6586c67f8e66d79e5c5574db0c38087896d"
+  },
+  "cc": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
+  "scope": "Actual flag-zero promotion updates and actual put_move four-choice lists with sentinel tail. All source/destination/choice combinations are raw updates, not legal chess moves. Complete Board comparison; no proof model, search, tables, or model executes in the candidate."
+}

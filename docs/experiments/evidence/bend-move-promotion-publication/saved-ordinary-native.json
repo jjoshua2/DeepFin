@@ -1,0 +1,80 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "rows_per_mode": 6656,
+  "complete_board_fields_per_mode": 126464,
+  "cases_by_operation": {
+    "quiet": 768,
+    "capture": 768,
+    "all_source_destination_pairs": 4096,
+    "empty_source": 64,
+    "raw_metadata": 64,
+    "inconsistent_input": 128,
+    "clear_mask": 256,
+    "scalar_update": 512
+  },
+  "representation_consistent_move_inputs": 5760,
+  "inconsistent_move_diagnostics": 128,
+  "malformed_requests_per_mode": 9,
+  "fixture_sha256": "54d0346e9996df162ceb9c53da93343a0c7f76d1b8b96ef3a3266bd8929313ac",
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 6656,
+      "complete_board_fields": 126464,
+      "invalid_rejections": 9,
+      "output_sha256": "4c6b45ff7f8a069d9bcf8573b2f1d7ca78551743ee37747427d82e542c868a6f"
+    },
+    {
+      "mode": "portable",
+      "rows": 6656,
+      "complete_board_fields": 126464,
+      "invalid_rejections": 9,
+      "output_sha256": "4c6b45ff7f8a069d9bcf8573b2f1d7ca78551743ee37747427d82e542c868a6f"
+    },
+    {
+      "mode": "native",
+      "rows": 6656,
+      "complete_board_fields": 126464,
+      "invalid_rejections": 9,
+      "output_sha256": "4c6b45ff7f8a069d9bcf8573b2f1d7ca78551743ee37747427d82e542c868a6f"
+    },
+    {
+      "mode": "ubsan",
+      "rows": 6656,
+      "complete_board_fields": 126464,
+      "invalid_rejections": 9,
+      "output_sha256": "4c6b45ff7f8a069d9bcf8573b2f1d7ca78551743ee37747427d82e542c868a6f"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "actual-ordinary-move-noop",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "message": "actual-ordinary-move-noop row 0 (quiet), field 1\n+ actual - expected\n\n+ 2124801\n- 2255872\n",
+      "actual": 2124801,
+      "expected": 2255872
+    },
+    {
+      "name": "actual-kernel-keeps-removed-bits",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "message": "actual-kernel-keeps-removed-bits row 0 (quiet), field 1\n+ actual - expected\n\n+ 2255873\n- 2255872\n        ^\n",
+      "actual": 2255873,
+      "expected": 2255872
+    }
+  ],
+  "source_sha256s": {
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/move_update/probe.bend": "7a01cad4116d29c7f2e5c30418e788b4fc0208bd525936d7ec8e1299cfed8cae",
+    "standalone/proofs/move_update/verify_native.js": "85e788b32f51d3268a8fb3d77dc9f78cba6c4aaa5da488a23418ba34a3d0b3d4"
+  },
+  "cc": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
+  "scope": "Actual flag0/promotion0 make_move plus scalar-kernel/probe deletion lift. Includes explicitly nonlegal raw calls; not a legal-move generator or castling/promotion/EP theorem. No proof model executes in the native candidate."
+}
