@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest P3 whole-board abstraction and ordering
+
+Hosted run **36085950814** passes the five-law focused source gate and all17 controls, four native actual-observation modes and both corruption checks, original compiler source/pin tests and unchanged repository lint on source `92737251af190ebddba5b83d146e462ae1049ec6`. The separately reproduced structural snapshot C-lowering limitation remains unresolved.
+
+The abstraction suite now reconstructs the complete actual consistent Board, including eight bitboards and all three metadata fields, from64 independent square observations. Equal snapshots identify equal consistent Boards; every bounded snapshot square agrees with the existing actual-square abstraction. This closes the pointwise-to-whole-Board left-inverse step, not unrestricted Snapshot bijection or legal-position validity. The explicit empty-square law from the saved alternate decode candidate is retained as a checked consequence.
+
+Source qualification is modular132/367 with the exact127/350 parent retained; the full wrapper was not executed. Native tests reconstruct actual decoder observations externally, not by running structural Spec.observe/restore. The direct structural probe still fails the pinned compiler C-lowering arity limit and is explicitly unqualified. See [the dated readout](experiments/2026-09-24-bend-whole-board-roundtrip.md). Parser freshness and removal/move invariants are the next P3 obligations; no application responsibility moved from Python.
+
 ## Latest P3 occupied-decoder correspondence
 
 Hosted run **36083420058** passes all four universal laws, importing consumer, eighteen classified controls, four native modes and three actual corruption witnesses, original compiler checks and unchanged whole-repository lint on source `4c5232cc1e6fceb8adc66dcc2dd5479b373ead3f`.
