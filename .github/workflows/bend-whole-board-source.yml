@@ -1,0 +1,30 @@
+name: Whole-board source recovery
+'on':
+  push:
+    branches: [feat/bend-whole-board-roundtrip-dev-20260924]
+    paths: [.github/workflows/bend-whole-board-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d8629e31a55ceda25edef836f8f34a895416dba4
+          persist-credentials: false
+      - name: Archive original tree and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/whole-board-source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/whole-board-source/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/whole-board-source/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/whole-board-source/tree.txt"
+          (cd "$RUNNER_TEMP/whole-board-source" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whole-board-source
+          path: ${{ runner.temp }}/whole-board-source/
+          retention-days: 7
