@@ -1,0 +1,165 @@
+{
+  "focused_gate": "PASS",
+  "controls_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "new_law_count": 6,
+  "universal_laws": 4,
+  "closed_laws": 2,
+  "new_laws": [
+    "empty_representation",
+    "initial_representation",
+    "fresh_put_preserves_representation",
+    "put_preserves_metadata",
+    "metadata_preserves_representation",
+    "put_exact_bitboard_update"
+  ],
+  "inherited_gate_run": false,
+  "consumer": "PASS",
+  "consumer_seconds": 2.756101272,
+  "negative_controls": [
+    {
+      "name": "actual-put-noop",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "a2f53d76cbdaa44aa5d69933ef3b29b061ee47bdd2768417957fdb42d98f3ece",
+      "diagnostic_bytes": 2473,
+      "excerpt": "64{0, 0})), turn, rights, ep}\n- observed : ../../../legal_probe/Chess.Board{U64.or(p, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 0)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(n, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 1)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(bi, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 2)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(r, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 3)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(q, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 4)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(k, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 5)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(w, ../../../legal_probe/Chess.select_u64(white, U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(bl, ../../../legal_probe/Chess.select_u64(white, U64{0, 0}, U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}))), turn, rights, ep}\nContext:\n- p      : U64\n- n      : U64\n- bi     : U64\n- r      : U64\n- q      : U64\n- k      : U64\n- w      : U64\n- bl     : U64\n- turn   : U32\n- rights : U32\n- ep     : U32\n- sq     : U32\n- piece  : Spec.Piece\n- white  : Bool\nLocation: bridge\n14 |   match b:\n15>|     case Chess.Board{p,n,bi,r,q,k,w,bl,turn,rights,ep}: {==}\n16 |"
+    },
+    {
+      "name": "actual-put-wrong-color",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "f520e8811d0cdcefb877e0889f46705f70767ba5ae9fa377c63a5851431be9bf",
+      "diagnostic_bytes": 2760,
+      "excerpt": "4{1, 0}))), turn, rights, ep}\n- observed : ../../../legal_probe/Chess.Board{U64.or(p, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 0)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(n, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 1)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(bi, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 2)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(r, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 3)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(q, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 4)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(k, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 5)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(w, ../../../legal_probe/Chess.select_u64(white, U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(bl, ../../../legal_probe/Chess.select_u64(white, U64{0, 0}, U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}))), turn, rights, ep}\nContext:\n- p      : U64\n- n      : U64\n- bi     : U64\n- r      : U64\n- q      : U64\n- k      : U64\n- w      : U64\n- bl     : U64\n- turn   : U32\n- rights : U32\n- ep     : U32\n- sq     : U32\n- piece  : Spec.Piece\n- white  : Bool\nLocation: bridge\n14 |   match b:\n15>|     case Chess.Board{p,n,bi,r,q,k,w,bl,turn,rights,ep}: {==}\n16 |"
+    },
+    {
+      "name": "actual-put-wrong-kind",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "008fdd0a2cce61c1b2fcabac8282537813ddabba909bac83c3a3e74789c3dced",
+      "diagnostic_bytes": 2817,
+      "excerpt": "4{1, 0}))), turn, rights, ep}\n- observed : ../../../legal_probe/Chess.Board{U64.or(p, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 0)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(n, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 1)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(bi, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 2)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(r, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 3)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(q, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 4)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(k, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 5)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(w, ../../../legal_probe/Chess.select_u64(white, U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(bl, ../../../legal_probe/Chess.select_u64(white, U64{0, 0}, U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}))), turn, rights, ep}\nContext:\n- p      : U64\n- n      : U64\n- bi     : U64\n- r      : U64\n- q      : U64\n- k      : U64\n- w      : U64\n- bl     : U64\n- turn   : U32\n- rights : U32\n- ep     : U32\n- sq     : U32\n- piece  : Spec.Piece\n- white  : Bool\nLocation: bridge\n14 |   match b:\n15>|     case Chess.Board{p,n,bi,r,q,k,w,bl,turn,rights,ep}: {==}\n16 |"
+    },
+    {
+      "name": "actual-put-changes-turn",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "529f785bc8308d80eee227d686e082991e8ad4d7639f6e31925a2fcf6ac9bea6",
+      "diagnostic_bytes": 2829,
+      "excerpt": "U32.xor(turn, 1), rights, ep}\n- observed : ../../../legal_probe/Chess.Board{U64.or(p, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 0)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(n, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 1)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(bi, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 2)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(r, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 3)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(q, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 4)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(k, ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(Spec.tag(piece), 5)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(w, ../../../legal_probe/Chess.select_u64(white, U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}), U64{0, 0})), U64.or(bl, ../../../legal_probe/Chess.select_u64(white, U64{0, 0}, U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0}))), turn, rights, ep}\nContext:\n- p      : U64\n- n      : U64\n- bi     : U64\n- r      : U64\n- q      : U64\n- k      : U64\n- w      : U64\n- bl     : U64\n- turn   : U32\n- rights : U32\n- ep     : U32\n- sq     : U32\n- piece  : Spec.Piece\n- white  : Bool\nLocation: bridge\n14 |   match b:\n15>|     case Chess.Board{p,n,bi,r,q,k,w,bl,turn,rights,ep}: {==}\n16 |"
+    },
+    {
+      "name": "omit-freshness",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "2a4f078d110756afb3682866dcc1800d649deee0136541231cf811043daf0da1",
+      "diagnostic_bytes": 595,
+      "excerpt": "Error:\n- expected : {Spec.fresh_mask(b, U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})) == True{} : Bool}\n- observed : {True{} == True{} : Bool}\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- sq    : U32\n- piece : Spec.Piece\n- white : Bool\n- good  : {Spec.valid(b) == True{} : Bool}\n- fresh : {True{} == True{} : Bool}\nLocation: insert\n74 |     Equal.cong(Chess.Board,Bool,x => S.valid(x),Position.put(S.tag(piece),white,sq,b),S.insert_mask(b,U64.bit(U32.to_nat(sq)),piece,white),bridge(b,sq,piece,white)),\n75>|     mask_valid(b,U64.bit(U32.to_nat(sq)),piece,white,good,fresh))\n76 |"
+    },
+    {
+      "name": "invalid-piece-tag",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Rows.bend",
+      "diagnostic_sha256": "ac4f1def469572afc28b465b1ac0bdb69b8fef0682ab343545163c435092b3ea",
+      "diagnostic_bytes": 288,
+      "excerpt": "Error:\n- expected : False{}\n- observed : True{}\nContext:\n- good  : {True{} == True{} : Bool}\n- fresh : {True{} == True{} : Bool}\nLocation: keep\n11 |         case S.Pawn{} False{} False{}: {==}\n12>|         case S.Pawn{} False{} True{}: {==}\n13 |         case S.Pawn{} True{} False{}: {==}"
+    },
+    {
+      "name": "corrupt-initial-board",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "PROOF.bend",
+      "diagnostic_sha256": "b78e23968f6ed66e9d8d70a11b92b9e906fd2093549ab104d6af05380c8a2d2e",
+      "diagnostic_bytes": 249,
+      "excerpt": "Error:\n- expected : False{}\n- observed : True{}\nLocation: LAWS.initial_representation\n5 | def Laws.empty_representation(): {==}\n6>| def Laws.initial_representation(): {==}\n7 | def Laws.fresh_put_preserves_representation(b,sq,piece,white,good,fresh):"
+    },
+    {
+      "name": "metadata-destroys-piece-plane",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "8be068cb7dffd775755c2aa76fb2e4cb3e9da712310ec5be6240bdb6bd46dc3f",
+      "diagnostic_bytes": 2056,
+      "excerpt": "False{}, WCon{False{}, WCon{False{}, WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}, nl, bil, rl, ql, kl, wl, bll), Spec.words(32n, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WCon{False{}, WNil{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}, nh, bih, rh, qh, kh, wh, blh))\n- observed : Bool.and(Spec.words(32n, pl, nl, bil, rl, ql, kl, wl, bll), Spec.words(32n, ph, nh, bih, rh, qh, kh, wh, blh))\nContext:\n- pl        : Word.Con<31n>\n- ph        : Word.Con<31n>\n- nl        : Word.Con<31n>\n- nh        : Word.Con<31n>\n- bil       : Word.Con<31n>\n- bih       : Word.Con<31n>\n- rl        : Word.Con<31n>\n- rh        : Word.Con<31n>\n- ql        : Word.Con<31n>\n- qh        : Word.Con<31n>\n- kl        : Word.Con<31n>\n- kh        : Word.Con<31n>\n- wl        : Word.Con<31n>\n- wh        : Word.Con<31n>\n- bll       : Word.Con<31n>\n- blh       : Word.Con<31n>\n- oldturn   : U32\n- oldrights : U32\n- oldep     : U32\n- turn      : U32\n- rights    : U32\n- ep        : U32\nLocation: metadata\n84 |   match b:\n85>|     case Chess.Board{U64{U32{pl},U32{ph}},U64{U32{nl},U32{nh}},U64{U32{bil},U32{bih}},U64{U32{rl},U32{rh}},U64{U32{ql},U32{qh}},U64{U32{kl},U32{kh}},U64{U32{wl},U32{wh}},U64{U32{bll},U32{blh}},oldturn,oldrights,oldep}: {==}\n86 |"
+    },
+    {
+      "name": "missing-law",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-laws-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-consumer-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "hole",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "foreign-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "symlink",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe-warning-zero-exit",
+      "rejected": true,
+      "kind": "synthetic exact-output unit, not compiler execution"
+    }
+  ],
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/board/Actual.bend": "c27ac87812368df1f565cfd2f0406a28ceaf212f4f1cd93d9e3c0f4f28ac4b5b",
+    "standalone/proofs/board/LAWS.bend": "d4e846830b6b2cb244ad3b2f3a6bc33e50132f71cd79b083824efc1c2fd42f21",
+    "standalone/proofs/board/PROOF.bend": "e1072ffc1f8eab14a9d3fa40fe37e65daf3e7c193512a433465b0e402cd2a5d8",
+    "standalone/proofs/board/Rows.bend": "5a03bfbd266f4ef984127a86a9007a5e73a79e135a43acc6e90ce47bb831a342",
+    "standalone/proofs/board/Spec.bend": "d0e60648dc7a0b803fa715c05c53ad92274657995a994996470afb7fc45f581a",
+    "standalone/proofs/board/Words.bend": "614c05950398a65d56d5c4953882ec3c7952236b71029624ccabc5db2bd94fff",
+    "standalone/proofs/board/consumer.bend": "21e2ef4ebc600e02e2345f5021ebd07f396c87250dd5275bd98e2125bcb9a241",
+    "standalone/proofs/board/focused.js": "129e757b696d1952a230af2f967029ad29c543394a0c9ec6c2d92dd96f6c69fa",
+    "standalone/proofs/board/probe.bend": "d47e2ae81bca39b9c0c9dc8c3bd74170840a7c1d5a041e6141217cf771ee1079",
+    "standalone/proofs/board/verify.js": "4fd9b134dd80ca1911fbb650e5bcadf28d268950a28fe4cdb6b9d55b7b2631c4",
+    "standalone/proofs/board/verify_native.js": "1b66b8dd4e07f40f62724f7fbf1fae9e1f681c27139e9ca78e827cadd2877b2f",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Frame.bend": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/ray/Masking.bend": "c129c86d11aeda8ccc417f57906ebddbf8607550e8fe6bc881df89254d235149",
+    "standalone/proofs/ray/Path.bend": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+    "standalone/proofs/ray/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba"
+  },
+  "scope": "Board bitboard partition and exact fresh insertion; not king counts, metadata validity, occupied decoding, FEN reachability, or legal moves."
+}

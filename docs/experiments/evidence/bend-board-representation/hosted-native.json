@@ -1,0 +1,79 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "rows_per_mode": 1026,
+  "cases_by_operation": {
+    "fresh_insert": 768,
+    "repeated_insert": 64,
+    "conflicting_insert": 64,
+    "metadata_valid": 64,
+    "metadata_invalid": 64,
+    "empty": 1,
+    "initial": 1
+  },
+  "fresh_square_kind_color_cases": 768,
+  "complete_board_fields_per_mode": 19494,
+  "malformed_requests_per_mode": 9,
+  "native_query_square_domain": "0..63; broader source bit-mask invariant does not make out-of-board squares meaningful",
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 1026,
+      "output_fields": 19494,
+      "invalid_rejections": 9,
+      "output_sha256": "514e7686bce93cfeaa4a65d4a8ae0c11927a9826e536246d2225f37c6b27b59d"
+    },
+    {
+      "mode": "portable",
+      "rows": 1026,
+      "output_fields": 19494,
+      "invalid_rejections": 9,
+      "output_sha256": "514e7686bce93cfeaa4a65d4a8ae0c11927a9826e536246d2225f37c6b27b59d"
+    },
+    {
+      "mode": "native",
+      "rows": 1026,
+      "output_fields": 19494,
+      "invalid_rejections": 9,
+      "output_sha256": "514e7686bce93cfeaa4a65d4a8ae0c11927a9826e536246d2225f37c6b27b59d"
+    },
+    {
+      "mode": "ubsan",
+      "rows": 1026,
+      "output_fields": 19494,
+      "invalid_rejections": 9,
+      "output_sha256": "514e7686bce93cfeaa4a65d4a8ae0c11927a9826e536246d2225f37c6b27b59d"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "noop",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "diagnostic": "row 0, field 1: fresh_insert\n\n131328 !== 131329\n",
+      "scope": "first generic-mode full-board mismatch; other corrupted modes not run"
+    },
+    {
+      "name": "wrong-color",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "diagnostic": "row 0, field 13: fresh_insert\n+ actual - expected\n\n+ 272961305\n- 272961304\n          ^\n",
+      "scope": "first generic-mode full-board mismatch; other corrupted modes not run"
+    }
+  ],
+  "source_sha256s": {
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/proofs/board/probe.bend": "d47e2ae81bca39b9c0c9dc8c3bd74170840a7c1d5a041e6141217cf771ee1079",
+    "standalone/proofs/board/verify_native.js": "1b66b8dd4e07f40f62724f7fbf1fae9e1f681c27139e9ca78e827cadd2877b2f"
+  },
+  "fixture_sha256": "a93381b997371d85ad8f8020475ad650cbed6b27dff45c5b73755302b548d367",
+  "oracle": "Independent 64-square sets of piece kinds/colors; encode all eight bitboards and all three metadata fields. No proof predicates execute in candidate.",
+  "scope": "Representation insertion and metadata only, including explicit collision/outside-premise cases; not legal chess positions, FEN reachability or legal moves.",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "bun": "1.4.2"
+}
