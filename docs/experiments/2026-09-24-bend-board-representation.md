@@ -117,3 +117,26 @@ Self-review only; checker/Base, native lowering/storage, ABI, toolchain, OS and
 hardware remain trust boundaries. No application responsibility moved from
 Python to Bend: export, external references, data/control/training and transitional
 C++/LibTorch/AOTI remain dependencies. No merge, force push or deployment.
+
+
+## Completed hosted qualification
+
+Hosted run **36080761492** passes all six public laws, importing consumer, seventeen controls, four native modes with full-Board comparisons, two compiled/executed corruption controls, original compiler checks and unchanged whole-repository lint on source `ad0c9e379a0b1bfbb91b7c5d7755e22668bf1004`.
+
+This is the first P3 partition-invariant suite, not another P2 table proof. Four statements are universal and two are closed empty/initial consistency facts. Metadata values, king counts, pawn ranks, occupied decoding, reachability and move legality remain separate. Every earlier accepted law and compiler input is unchanged.
+
+The focused source gate executes its six-law consumer and all17 controls in one successful command. Eight controls are ordinary implementation/refinement failures; eight enforce proof manifests and imports; one synthetic zero-exit warning checks the wrapper and is not another compiler execution. No crash, malformed import, affine-use error or timeout is counted as semantic rejection.
+
+Exact-source117-law/315-control parent evidence is retained, yielding modular123-law/332-control coverage. The complete123-law wrapper did not run. All379 parent manifest entries and successful source/control/runtime job identities were checked before application; all391 candidate native-source entries match before publication.
+
+Each native mode passes1,026 complete Board rows and19,494 U32 field comparisons:768 fresh square/kind/color insertions,64 repeated insertions,64 deliberate conflicts,64 valid and64 invalid metadata inputs,empty andstart. Nine malformed probe requests are rejected. The real no-op and wrong-color insertions compile and execute before failing the independent per-square-set reference. Modes repeat fixtures; this is not exhaustive arbitrary-board or legal-game coverage. Collision cases describe behavior outside freshness, not rejection by Position.put.
+
+The source insertion law intentionally covers raw U32 square inputs via the actual bit-mask semantics; native insertion is restricted to0..63. Metadata framing permits arbitrary U32 field values and does not certify them as valid chess metadata. Freshness is sufficient, not necessary: identical repeated insertion can remain consistent. A no-op preserves consistency, so the separate exact-update equality is essential.
+
+Hosted Bun1.4.2/Clang18.1.3; Clang is scoped to native probes. Locked Python3.13/uv0.12.10 CPU tools use the normal build compiler. Ruff/Basedpyright/Vulture passes unchanged, resolving the preserved local missing-tools gap for this candidate. Original compiler16-laws/seven-controls, including cyclic-template rejection, and12 pin tests pass. A trailing blank line in new Spec.bend was removed before final local and hosted rechecks without changing any term.
+
+Only documentation,index and evidence are added after checking. The full source tree matches the recovered local candidate. No permanent workflow, production function, earlier proof, compiler input or routine perft budget changed. No search/table build, model/GPU, training or performance run is added. Nothing merged, force-pushed,deployed or changed in a live process.
+
+FIDE English rules applied1January2023 are the explicitly pinned future P3 semantic reference, not a claim of current-edition or full-rule compliance. The current independent Boolean-row partition supplies only square/color/kind consistency. Next: occupied decoding and abstract-board correspondence, parser freshness, and invariant-preserving removal/move/special-move semantics.
+
+Self-review only. Checker/Base,native lowering/storage,ABI,toolchain,OS and hardware remain trust boundaries. Existing compiler limitations are unchanged. No Python application responsibility moved into Bend; export,references,data/control/training and transitional C++/LibTorch/AOTI remain dependencies.
