@@ -1,0 +1,29 @@
+name: Parser frontier workspace
+on:
+  push:
+    branches: [feat/bend-parser-frontier-dev-20260925]
+    paths: [.github/workflows/bend-parser-frontier-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c3f9dd30cf58c90f91dbac6a7f74ec0d8ee18241
+          persist-credentials: false
+      - name: Archive complete parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/frontier-source"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/frontier-source/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/frontier-source/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/frontier-source/tree.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parser-frontier-source
+          path: ${{ runner.temp }}/frontier-source/
+          retention-days: 7
