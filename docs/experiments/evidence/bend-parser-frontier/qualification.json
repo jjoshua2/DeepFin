@@ -1,0 +1,24 @@
+{
+  "qualification": "PASS_ACROSS_EXACT_SOURCE_RUNS",
+  "source_run": 36150116903,
+  "source_job": 108120960214,
+  "runtime_lint_recovery_run": "36150660570",
+  "source": "be5afc6308d159d52f42b2fcccb59a9c20109b4c",
+  "source_tree": "efa431703a1d47208655595f816a3008d0c4a27a",
+  "first_run_commit": "0b5041a600d7dbbaec2e4d4ffa068945595a3a3d",
+  "new_laws": 4,
+  "new_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic exact-output unit, not compiler execution": 1
+  },
+  "retained_parent_laws": 137,
+  "retained_parent_controls": 384,
+  "modular_laws": 141,
+  "modular_controls": 401,
+  "combined_wrapper_executed": false,
+  "source_gate_rerun_in_recovery": false,
+  "native_source_entries": 444,
+  "independent_review": false
+}

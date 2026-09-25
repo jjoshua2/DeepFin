@@ -1,0 +1,181 @@
+{
+  "focused_gate": "PASS",
+  "controls_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "new_law_count": 4,
+  "universal_laws": 4,
+  "closed_laws": 0,
+  "new_laws": [
+    "layout_preserves_frontier",
+    "accepted_prefix_has_frontier",
+    "live_typed_insertion_is_fresh",
+    "accepted_placement_has_consistent_board"
+  ],
+  "inherited_gate_run": false,
+  "consumer": "PASS",
+  "consumer_seconds": 15.087047386,
+  "negative_controls": [
+    {
+      "name": "current-square-omitted-from-frontier",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Facts.bend",
+      "diagnostic_sha256": "cca08d769a033ea0849c90fae2473e65cf317e22cd0f4ccc40001a13bb643920",
+      "diagnostic_bytes": 304,
+      "excerpt": "Error:\n- expected : False{}\n- observed : True{}\nContext:\n- fb  : {True{} == True{} : Bool}\n- rb  : {True{} == True{} : Bool}\n- fit : {True{} == True{} : Bool}\nLocation: piece_nat\n18 |   match f r:\n19>|     case 0n 0n: ({==},({==},({==},({==},{==}))))\n20 |     case 0n 1n: ({==},({==},({==},({==},{==}))))"
+    },
+    {
+      "name": "lower-ranks-omitted-from-frontier",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Facts.bend",
+      "diagnostic_sha256": "96b743dd6c34725c253fb840434460e46377645dd6e2218c4c24d4c103f356c2",
+      "diagnostic_bytes": 307,
+      "excerpt": "Error:\n- expected : False{}\n- observed : True{}\nContext:\n- fb  : {True{} == True{} : Bool}\n- rb  : {True{} == True{} : Bool}\n- fit : {True{} == True{} : Bool}\nLocation: slash_nat\n968 |     case 8n 0n: L.impossible(slash_statement(8,0),fit)\n969>|     case 8n 1n: ({==},{==})\n970 |     case 8n 2n: ({==},{==})"
+    },
+    {
+      "name": "inclusive-file-eight-insertion",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Facts.bend",
+      "diagnostic_sha256": "b5031bc1df95498580ae8f83269391444969a8911f1af9fe1d863cf5b3e9364d",
+      "diagnostic_bytes": 416,
+      "excerpt": "Error:\n- expected : {False{} == True{} : Bool}\n- observed : {True{} == True{} : Bool}\nContext:\n- fb  : {True{} == True{} : Bool}\n- rb  : {True{} == True{} : Bool}\n- fit : {True{} == True{} : Bool}\nLocation: piece_nat\n90 |     case 7n 8n+p: D.impossible(piece_statement(7,U32.from_nat(8n+p)),p,rb)\n91>|     case 8n 0n: L.impossible(piece_statement(8,0),fit)\n92 |     case 8n 1n: L.impossible(piece_statement(8,1),fit)"
+    },
+    {
+      "name": "assume-no-freshness",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Fresh.bend",
+      "diagnostic_sha256": "466e03b838a1aa2d6aa24b97693ad3f39409879a0eaf6a96ed4eec81d3a98e27",
+      "diagnostic_bytes": 331,
+      "excerpt": "Error:\n- expected : {False{} == True{} : Bool}\n- observed : {True{} == True{} : Bool}\nContext:\n- old : {True{} == True{} : Bool}\n- sub : {True{} == True{} : Bool}\nLocation: narrow_row\n20 |     case False{} True{} True{} False{}: sub\n21>|     case False{} True{} True{} True{}: old\n22 |     case True{} False{} False{} False{}: {==}"
+    },
+    {
+      "name": "actual-piece-reuses-file",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "../parser/Typed.bend",
+      "diagnostic_sha256": "ff1aa43778ec8dcc63fa4a37421d2fbf89449e7dab4a12555a7367475624c625",
+      "diagnostic_bytes": 544,
+      "excerpt": "Error:\n- expected : ../../Position.Layout{../../Position.put(0, False{}, U32.add(file, U32.mul(rank, 8)), b), file, rank, Bool.and(valid, Cmp.is_lt(U32.cmp(file, 8)))}\n- observed : ../../Position.Layout{../../Position.put(0, False{}, U32.add(file, U32.mul(rank, 8)), b), U32.inc(file), rank, Bool.and(valid, Cmp.is_lt(U32.cmp(file, 8)))}\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- file  : U32\n- rank  : U32\n- valid : Bool\nLocation: step\n12 |   match p white:\n13>|     case BS.Pawn{} False{}: {==}\n14 |     case BS.Pawn{} True{}: {==}"
+    },
+    {
+      "name": "actual-slash-reuses-rank",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Step.bend",
+      "diagnostic_sha256": "abf6b43b86f6535e2db4f56c7f559af1a2aba31502518c9b37568bd2af5f4f0f",
+      "diagnostic_bytes": 923,
+      "excerpt": "Error:\n- expected : P(../../Position.Layout{b, 0, rank, Bool.and(valid, Bool.and(Cmp.is_eq(U32.cmp(file, 8)), Cmp.is_gt(U32.cmp(rank, 0))))})\n- observed : P(../../Position.Layout{b, 0, U32.sub(rank, 1), Bool.and(valid, Bool.and(Cmp.is_eq(U32.cmp(file, 8)), Cmp.is_gt(U32.cmp(rank, 0))))})\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- file  : U32\n- rank  : U32\n- valid : Bool\n- P     : @_:../../Position.Layout -> Type\n- left  : P(../../Position.Layout{b, 0, U32.sub(rank, 1), Bool.and(valid, Bool.and(Cmp.is_eq(U32.cmp(file, 8)), Cmp.is_gt(U32.cmp(rank, 0))))})\n- right : P(../../Position.Layout{../../Position.put(6, True{}, U32.add(file, U32.mul(rank, 8)), b), U32.inc(file), rank, Bool.and(valid, False{})})\nLocation: ../parser/Dispatch.bits\n16 |       match l:\n17>|         case Position.Layout{b,file,rank,valid}: left\n18 |     case False{} _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _: right"
+    },
+    {
+      "name": "initial-board-not-empty",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Traversal.bend",
+      "diagnostic_sha256": "6dc5b4570ee679bd970d662c2d8ffa81ba008deef00670a8cdbe9d3f1849fc07",
+      "diagnostic_bytes": 215,
+      "excerpt": "Error:\n- expected : False{}\n- observed : True{}\nContext:\n- s : String\nLocation: initialized\n21 | def initialized(+s: String) -> {S.safe(P.layout(s,S.initial())) == True{} : Bool}:\n22>|   all(s,S.initial(),{==})\n23 |"
+    },
+    {
+      "name": "unconditional-prefix-frontier",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "PROOF.bend",
+      "diagnostic_sha256": "5ccc154e13ebf9535f9fdfec79a80671d664138f49921171c2b351aaff0d8f3e",
+      "diagnostic_bytes": 608,
+      "excerpt": "Error:\n- expected : {../parser/Spec.accepted(../../Position.layout_result(../../Position.layout(String.append(prefix, suffix), ../../Position.Layout{../../../legal_probe/Chess.Board{U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, 1, 0, 64}, 0, 7, True{}}))) == True{} : Bool}\n- observed : {True{} == True{} : Bool}\nContext:\n- prefix   : String\n- suffix   : String\n- accepted : {True{} == True{} : Bool}\nLocation: LAWS.accepted_prefix_has_frontier\n 8 | def Laws.accepted_prefix_has_frontier(prefix,suffix,accepted):\n 9>|   T.accepted_prefix(prefix,suffix,accepted)\n10 |"
+    },
+    {
+      "name": "missing-law",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-laws-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-consumer-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "hole",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "foreign-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "symlink",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe-warning-zero-exit",
+      "rejected": true,
+      "kind": "synthetic exact-output unit, not compiler execution"
+    }
+  ],
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/board/Actual.bend": "c27ac87812368df1f565cfd2f0406a28ceaf212f4f1cd93d9e3c0f4f28ac4b5b",
+    "standalone/proofs/board/Rows.bend": "5a03bfbd266f4ef984127a86a9007a5e73a79e135a43acc6e90ce47bb831a342",
+    "standalone/proofs/board/Spec.bend": "d0e60648dc7a0b803fa715c05c53ad92274657995a994996470afb7fc45f581a",
+    "standalone/proofs/board/Words.bend": "614c05950398a65d56d5c4953882ec3c7952236b71029624ccabc5db2bd94fff",
+    "standalone/proofs/frontier/Facts.bend": "879bcde609fea05dc2a7c5f9cb2234f10b771575f763c901ebf4483861f221f3",
+    "standalone/proofs/frontier/Finite.bend": "26a7aefbab457d3867891d981c803793d69a83dc4fb5be63633168ffd16cb741",
+    "standalone/proofs/frontier/Fresh.bend": "07f05151e45773bce16d2e0166dc890c07bae420354b8bbb7ededcb238d88b84",
+    "standalone/proofs/frontier/LAWS.bend": "e9848138f5bb6838fce303eb95a12b71066503337526655ab4090afffe8f5654",
+    "standalone/proofs/frontier/Logic.bend": "ef30fdd870560f6763e7311e7255461182594f38c6ac5dd768905db3f22fb5af",
+    "standalone/proofs/frontier/PROOF.bend": "d76350ef932861a9bb9406c58ab989daf9dc3f37c3f7bd6bd1222ff1cc8b5ac0",
+    "standalone/proofs/frontier/Spec.bend": "f42a7ccb9f8c590a763a2e22e784d1c69463adb477cd4776a2d7e5fa188553a7",
+    "standalone/proofs/frontier/Step.bend": "ed1183427707b7e802e77c36b5a435e1c13f06cee97ded9f2a18a6682f9c8cec",
+    "standalone/proofs/frontier/Traversal.bend": "85028147f90661acd5954eba47a96b380ee542a77286c91881dbf1d06da326d4",
+    "standalone/proofs/frontier/consumer.bend": "c4eccfb0db55b5338c7fd2799cab0903c6d732fbf14c01831fc6ff13116e8c9c",
+    "standalone/proofs/frontier/focused.js": "c72b4d0d0b81cf18b7b3e12be8bbbaea7392f1d3411c86b9947195a4a7cdddae",
+    "standalone/proofs/frontier/probe.bend": "d936ae1eab9c14564a2ec15fc714be7d8153e504e92a4f4bf9d9f989f9adfe69",
+    "standalone/proofs/frontier/verify.js": "e4a09efde476832db32a128edfe0b05065ed6b20c457b92222ff0c5b8ad1e893",
+    "standalone/proofs/frontier/verify_native.js": "8489ee129d589584cc283413002824ef92ba90ed45762ad5e3282dd09e98ef09",
+    "standalone/proofs/index/Bits.bend": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb",
+    "standalone/proofs/layout/Domain.bend": "5acad280e9df6975f63fa0fe51c18c08cb4f5ae9296c89a7e10673d5fa2e87b6",
+    "standalone/proofs/normalization/Compare.bend": "620a62659f35af28a0490d45dfd0dd65f1b4b0ee9209b3c9d0469936c9790ea3",
+    "standalone/proofs/parser/Actual.bend": "6ecd682ed5251bd8460b525468ae1cd5ce197a7045bd6fd989fae15ba6d0ed5f",
+    "standalone/proofs/parser/Dispatch.bend": "c816149eca41922abeaaa362035662d3f338d373b4e7e2d7cb8c7c21a72d999a",
+    "standalone/proofs/parser/Spec.bend": "751ddbe447eb3efe23b4cbe97705ce18d64676b41a355c9b56adb39ac0afea03",
+    "standalone/proofs/parser/Typed.bend": "88130545081b254ef582c798f77e22e9daafb8aaeb5970687775b3967dd95726",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Frame.bend": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/ray/Masking.bend": "c129c86d11aeda8ccc417f57906ebddbf8607550e8fe6bc881df89254d235149",
+    "standalone/proofs/ray/Path.bend": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+    "standalone/proofs/ray/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/relative/Add.bend": "b5e7f37a125544e771e85f54f224c26d878db3fce74dcac9065ec0a971717ee8",
+    "standalone/proofs/relative/Order.bend": "23e25537703c789312c334acbeb7f8096be575b4d517e67ffc39735f2b175646",
+    "standalone/proofs/successor/Borrow.bend": "55527289635c5191bb7857d123c67e6ccc4438d75bc16337e5318b2513302180",
+    "standalone/proofs/successor/Value.bend": "8e97a14a3659bda32dc061ae458338827d66b60dbb5749c71e2f3300140ceccf",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba"
+  },
+  "scope": "Accepted actual initialized placement paths have bounded consistent empty-ahead frontiers and fresh typed insertion addresses. The actual optional placement result is consistent when present; not six-field FEN semantics, rollback, metadata legality or reachability."
+}

@@ -1,0 +1,14 @@
+{
+  "checks": [
+    {
+      "compiler": "/usr/bin/clang",
+      "version": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "selected": "/usr/bin/clang",
+  "warning_suppression_flags_added": false,
+  "candidate_compile_flags_changed": false
+}
