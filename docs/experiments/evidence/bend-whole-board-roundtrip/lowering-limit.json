@@ -1,0 +1,8 @@
+{
+  "status": "UNQUALIFIED_NATIVE_LOWERING",
+  "diagnostic": "Error: an arity over 255\n",
+  "source_sha256": "e3e5b55bc07b0448afd48dd3546a6eea21dbfba0bf00711f440f5fd1aa7522a7",
+  "reproduction": "Copy the .bend.txt file to proofs/abstraction/lowering-probe.bend in a disposable candidate checkout; invoke pinned bend2/main.ts with -o /tmp/lowering.c.",
+  "not_a_negative_control": true,
+  "separate_native_probe": "Actual Board/decoder observations only; does not import abstraction Spec"
+}
