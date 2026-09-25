@@ -57,3 +57,26 @@ Local unchanged repository lint failed because its tools are unavailable; its
 exact log is retained. Hosted lint remains required for publication. One trailing
 blank line in Finite.bend was removed after the first successful focused run;
 a full final local focused run was started on the cleaned source before staging.
+
+
+## Completed hosted qualification across exact-source runs
+
+Qualification combines the passed four-law/17-control source gate from run36150116903 with fresh native/compiler/lint success in recovery run36150660570, both on exact source tree efa431703a1d47208655595f816a3008d0c4a27a. Published source commit: `be5afc6308d159d52f42b2fcccb59a9c20109b4c`.
+
+The first workflow passed the four-law consumer and all17 controls, then failed native-target compilation because Clang18 emitted invalid-feature-combination warnings for the host AVX10 feature set. Generic and portable fixtures had passed, but no complete native result or lint pass is attributed to that run. Its original failure log is committed.
+
+Recovery retained the exact passed source result, checked the complete444-entry manifest, and selected an installed host compiler accepting the unchanged native flags without warnings. The full actual four-mode native gate was rerun successfully; no warning-suppression flag, expected result, proof statement or candidate source was changed. The selected compiler and every compatibility attempt are recorded. It is scoped to native tests only; Python tools use the normal compiler.
+
+All four public laws and17 controls ran together in the first focused command. Eight controls are ordinary semantic/refinement failures, eight enforce manifests/import policy, and one synthetic warning-output test is not a compiler execution. Two actual cursor mutations fail existing implementation bridges and are explicitly not credited as isolated new lemma failures. Missing files, crashes, affine errors and timeouts are not semantic rejection.
+
+The invariant derives bounds, partition consistency and empty unvisited squares along the actual initialized parser trajectory. Every live typed insertion has a target below64 that was fresh in its input Board. Every Some result of actual placement finalization is consistent. Rejected temporary Boards may be inconsistent; no raw rollback or full six-field FEN correctness is claimed.
+
+The new native verifier passes1614 distinct strings,29526 full character-boundary Layout states and679098 fields per mode:26879 live,2647 invalid,899 accepted final strings and7197 live typed insertions. All768 single-piece combinations are included. Two malformed probe-budget requests and two compiled/executed cursor-corruption controls are rejected. Modes repeat fixtures, not exhaustive strings or legal-game coverage. The probe exercises actual layout_char/layout_result; source induction connects those to actual layout.
+
+Exact-source parent137/384 is retained, producing modular141-law/401-control coverage. The full141-law wrapper was not executed. The first passed source gate is not falsely described as rerun in recovery. Fresh original compiler16-law/seven-control and12 pin tests pass. Locked Python3.13/uv0.12.10 CPU tools pass unchanged Ruff/Basedpyright/Vulture, resolving only the local missing-tools lint gap.
+
+All444 candidate sources and native outputs agree with the cleaned local candidate; the full native report differs only in cc. Earlier proof construction, native parsing and discarded transport identity errors remain recorded. The saved parser-rejection variant remains unchanged and is not substituted for the qualified #881 parent.
+
+Only evidence, index and inventory are appended after checking. Self-review only. No production function, earlier law, compiler input, permanent workflow, routine perft, search, model/GPU, training or benchmark change. No additional Python responsibility moves into Bend; export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No merge,force push,deployment or live-process action.
+
+Next: invariant-preserving removal and moves, plus separately scoped exact placement and full FEN/metadata semantics. Legal reachability, king safety and generation completeness remain distinct. Pinned checker/Base, native lowering/storage, ABI, toolchain, OS and hardware are trust boundaries; prior snapshot-lowering and closed-builder limitations remain unresolved.

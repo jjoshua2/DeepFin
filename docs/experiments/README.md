@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Accepted parser frontiers](2026-09-25-bend-parser-frontier.md) | Four actual-source laws derive fresh bounded insertion and accepted-placement consistency; modular141/401 with separate exact-source compiler recovery |
 | [Parser prefix safety](2026-09-25-bend-parser-prefix-safety.md) | Five actual placement-parser laws for prefix composition, sticky invalidity, metadata and typed transitions; modular137/384; parser-wide freshness and full FEN validity remain open |
 | [Whole-board reconstruction](2026-09-24-bend-whole-board-roundtrip.md) | Five source contracts for lossless Board snapshots, coordinate order and injectivity; actual decoder native checks; structural snapshot lowering remains unqualified; modular132/367 |
 | [Occupied decoder and abstract squares](2026-09-24-bend-occupied-decoder.md) | Four universal source laws connect actual occupied decoding to independent local square states; modular127/350; parser and move semantics remain open |
