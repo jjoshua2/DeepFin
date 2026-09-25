@@ -22,59 +22,57 @@ jobs:
           ref: 42d4c78ebfca102e146720c818f5dba9db61fd57
       - uses: actions/download-artifact@v4
         with:
-          name: deepfin-pr5d-reconciled-build
-          run-id: 36159917663
+          name: deepfin-pr5d-live-qualification
+          run-id: 36160911561
           github-token: ${{ github.token }}
-          path: /tmp/pr5d-built
-      - name: Reconstruct exact source and native reachability correction
-        env:
-          GH_TOKEN: ${{ github.token }}
+          path: /tmp/pr5d-prior
+      - name: Recover preserved source and apply only test corrections
         run: |
           set -euo pipefail
           mkdir /tmp/pr5d-evidence
           python - <<'PY'
-          import base64,gzip,hashlib,json,subprocess
+          import hashlib,json,subprocess
           from pathlib import Path
-          prior=Path('/tmp/pr5d-built')
-          patch=(prior/'runtime.patch').read_bytes()
+          prior=Path('/tmp/pr5d-prior')
+          patch=(prior/'qualified.patch').read_bytes()
           subprocess.run(['git','apply','--check','-'],input=patch,check=True)
           subprocess.run(['git','apply','-'],input=patch,check=True)
           original=json.loads((prior/'source-manifest.json').read_text())
-          assert len(original)==5
+          assert len(original)==15
           for path,digest in original.items():
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
-          pieces=[]
-          shas=['4e3fd4c80dba87db5c06f5fb5a9258693d8f57d3','f3c6dc12da19df8ec03f786fe724f9dc6264c926','9d3a564c97bf8dd42fb7f060efb46772b775438a']
-          digests=['c8da91047acf4665a2db1b02558827951e41052f734f750638cde8cdc045e0bc','7c8650e5e0654918f819a580f42fe78cf45c642298e5ffd37c9278015c9fcc57','31382be724a149d4dbbd1193eca91288aa715c2bfe6822e9c0dfe53d606c5a88']
-          for i,sha in enumerate(shas):
-              data=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
-              raw=base64.b64decode(data['content'])
-              Path(f'/tmp/pr5d-evidence/transfer-{i}.bin').write_bytes(raw)
-              if i==0:
-                  text=base64.b64encode(raw).decode()
-                  assert text.count('GoNVdNL+m2cW3Se')==1
-                  text=text.replace('GoNVdNL+m2cW3Se','GoNVdNL+m2c2Se')
-                  text=text[:7792]+'AHHXw1fH'
-                  raw=base64.b64decode(text,validate=True)
-              assert hashlib.sha256(raw).hexdigest()==digests[i],(i,len(raw),hashlib.sha256(raw).hexdigest())
-              pieces.append(raw)
-          compressed=b''.join(pieces)
-          assert hashlib.sha256(compressed).hexdigest()=='a1fa329164c396cf99b00da18f9ee0356936b66342acbab1bdf41b6458d52544'
-          patch=gzip.decompress(compressed)
-          assert hashlib.sha256(patch).hexdigest()=='bef2de6277ef0cae6b4d5bdbf9b18e9dbdf1bd6b87849fde07dca5d83241c694'
-          subprocess.run(['git','apply','--check','-'],input=patch,check=True)
-          subprocess.run(['git','apply','-'],input=patch,check=True)
-          p=Path('native/bend_engine/batch_backend/batch_call.c');s=p.read_text()
-          assert s.count('static Term batch_open_run')==1 and s.count('static Term batch_run_run')==1
-          s=s.replace('static Term batch_open_run','/* The pinned compiler emits CIDs only for reachable effects. An async-only\n * entrypoint opens this backend without importing Batch.run or its Result. */\n#ifdef CID_BATCH_OPEN\nstatic Term batch_open_run',1)
-          s=s.replace('static Term batch_run_run','#endif\n#ifdef CID_BATCH_RUN\nstatic Term batch_run_run',1)
-          s=s.replace('}\nstatic void __attribute__((constructor)) batch_effects_use(void) {','}\n#endif\nstatic void __attribute__((constructor)) batch_effects_use(void) {',1)
-          s=s.replace('    io_eff(CID_BATCH_OPEN, batch_open_run, 0);','#ifdef CID_BATCH_OPEN\n    io_eff(CID_BATCH_OPEN, batch_open_run, 0);\n#endif')
-          s=s.replace('    io_eff(CID_BATCH_RUN, batch_run_run, 0);','#ifdef CID_BATCH_RUN\n    io_eff(CID_BATCH_RUN, batch_run_run, 0);\n#endif')
+          p=Path('tests/test_bend_live_cohort.py');s=p.read_text()
+          assert s.count('"capacity,physical",')==1 and s.count('"capacity,physical,used",')==1
+          p.write_text(s.replace('"capacity,physical",','("capacity", "physical"),').replace('"capacity,physical,used",','("capacity", "physical", "used"),'))
+          p=Path('native/bend_engine/multi_root/verify_live.py');s=p.read_text()
+          needle='def replacement(gate: Path) -> dict[str, Any]:\n'
+          assert s.count(needle)==1
+          addition='''def invalid_replacement_preserves_root(gate: Path) -> dict[str, Any]:
+              """A rejected position must not cancel the existing admitted evaluation."""
+              c = Client(gate, gate=True)
+              try:
+                  c.send("add startpos")
+                  c.until(CONTROL + "admitted 1 1")
+                  c.started()
+                  c.send("replace 1 1 startpos moves e2e5")
+                  c.until(CONTROL + "error invalid-position", 0.75)
+                  c.release()
+                  old = c.result(1, 1)
+                  assert (old["accepted_neural_rows"], old["cancelled_rows"]) == (1, 0)
+                  assert not any(x.startswith(CONTROL + "pending-install") for x in c.lines)
+                  c.send("quit")
+                  result = c.finish()
+                  assert set(result["roots"]) == {"1:1"}
+                  return result
+              finally:
+                  c.close()
+          '''
+          s=s.replace(needle,addition+'\n\n'+needle)
+          s=s.replace('"replacement": replacement(gate),','"invalid_replacement_preserves_root": invalid_replacement_preserves_root(gate),\n            "replacement": replacement(gate),')
           p.write_text(s)
-          assert hashlib.sha256(p.read_bytes()).hexdigest()=='67f6be24fe2c8f1f492c26d5ccaf1f896039e8462b140b3a821649c7b4314bef'
           for path,digest in original.items():
-              assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
+              if path not in ('tests/test_bend_live_cohort.py','native/bend_engine/multi_root/verify_live.py'):
+                  assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
           subprocess.run(['git','add','-N','.'],check=True)
           subprocess.run(['git','diff','--check'],check=True)
           paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
