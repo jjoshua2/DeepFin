@@ -67,3 +67,55 @@ def inspected(+next_id: Maybe<&2, U32>, r: M.Table & U32) -> Registry & Info:
 def inspect(r: Registry) -> Registry & Info:
   Registry{t, next_id} = r
   inspected(next_id, M.length(t))
+
+# Two-phase admission for a caller that may fail while preparing external data.
+# A reservation owns the table; no other operation can invalidate its vacant slot.
+type Reservation is Type:
+  Reservation{table: M.Table, key: U64, index: U32, id: U32}
+
+type Preparation is Type:
+  Prepared{reservation: Reservation}
+  Settled{registry: Registry, outcome: Outcome}
+
+def reserve_limit(t: M.Table, key: U64, index: U32, id: U32, full: Bool) -> Preparation:
+  match full:
+    case True{}: Settled{Registry{t, Some{id}}, TableFull{}}
+    case False{}: Prepared{Reservation{t, key, index, id}}
+
+def reserve_vacant(t: M.Table, key: U64, index: U32, id: U32) -> Preparation:
+  M.Table{slots, +mask, +size} = t
+  reserve_limit(M.Table{slots, mask, size}, key, index, id,
+    U32.is_ge(size, U32.shr(U32.inc(mask))))
+
+def reserve_found(id: U32, key: U64, result: M.Table & M.Place) -> Preparation:
+  (t, place) = result
+  match place:
+    case M.Present{index, previous}: Settled{Registry{t, Some{id}}, Known{previous}}
+    case M.Seeking{index}: Settled{Registry{t, Some{id}}, TableFull{}}
+    case M.Vacant{index}: reserve_vacant(t, key, index, id)
+
+def settled(result: Registry & Outcome) -> Preparation:
+  (r, outcome) = result
+  Settled{r, outcome}
+
+# Prepared has not inserted the key or consumed the ID. Settled never assigns.
+def reserve(r: Registry, +key: U64) -> Preparation:
+  Registry{t, next_id} = r
+  match next_id:
+    case Some{id}: reserve_found(id, key, M.locate(t, key))
+    case None{}: settled(exhausted(M.get(t, key)))
+
+# This ID is provisional until commit. Abort permits it to be proposed again.
+def candidate(r: Reservation) -> Reservation & U32:
+  Reservation{t, key, index, +id} = r
+  (Reservation{t, key, index, id}, id)
+
+def abort(r: Reservation) -> Registry:
+  Reservation{t, key, index, +id} = r
+  Registry{t, Some{id}}
+
+# No new lookup. The owned vacant slot cannot go stale through the public API.
+# With a valid reservation this returns Assigned, exactly once.
+def commit(r: Reservation) -> Registry & Outcome:
+  Reservation{t, key, index, +id} = r
+  admitted(id, I.stored(id, M.put_at(key, id, (t, M.Vacant{index}))))

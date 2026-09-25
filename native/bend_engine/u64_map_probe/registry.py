@@ -29,7 +29,7 @@ def encode(case: Case) -> str:
         raise ValueError('invalid registry configuration')
     lines = [f'{case.bits} {case.first}']
     for action, key in case.ops:
-        if action not in ('r', 'g') or type(key) is not int or not 0 <= key < 1 << 64:
+        if action not in ('r', 'g', 'c', 'a') or type(key) is not int or not 0 <= key < 1 << 64:
             raise ValueError('invalid registry operation')
         lines.append(f'{action} {key >> 32} {key & MASK}')
     text = ';'.join(lines)
@@ -54,16 +54,20 @@ def expected(case: Case) -> str:
 
     for action, key in case.ops:
         if key in table:
-            result = f'{"known" if action == "r" else "value"} {table[key]}'
+            result = f'{"value" if action == "g" else "known"} {table[key]}'
         elif action == 'g':
             result = 'missing'
         elif next_id > MASK:
             result = 'exhausted'
         elif len(table) == limit:
             result = 'full'
+        elif action == 'a':
+            # Simulate caller preparation failure: neither binding nor ID exists yet.
+            result = f'reserved {next_id} aborted'
         else:
             table[key] = next_id
-            result = f'assigned {next_id}'
+            prefix = f'reserved {next_id} ' if action == 'c' else ''
+            result = prefix + f'assigned {next_id}'
             next_id += 1
         lines.append(f'{action} {key >> 32} {key & MASK} {result} {state()}')
     return '\n'.join([*lines, f'end {state()}']) + '\n'
@@ -117,6 +121,45 @@ def fixtures() -> list[Case]:
     return cases
 
 
+def reservation_case(name: str, keys: list[int]) -> Case:
+    # Abort before each encounter, inspect membership, then retry and commit.
+    # Existing keys settle immediately and never create a reservation.
+    base = encounter_case(name, keys)
+    ops = [op for key in keys for op in (('a', key), ('g', key), ('c', key), ('g', key))]
+    ops.extend(('g', key) for key in dict.fromkeys(keys))
+    case = Case('reservation-' + name, base.bits, base.first, ops)
+    encode(case)
+    return case
+
+
+def reservation_fixtures() -> list[Case]:
+    cases = [
+        Case('reserve-retry', 2, 7, [('a', 1 << 63), ('g', 1 << 63), ('a', 0),
+                                   ('c', 1 << 63), ('g', 1 << 63), ('a', 1 << 63),
+                                   ('c', 1 << 63), ('r', 0), ('a', MASK), ('c', MASK), ('g', MASK)]),
+        Case('reserve-full', 1, 0, [('a', 1), ('g', 1), ('c', 2), ('a', 1), ('c', 1),
+                                  ('a', 2), ('c', 2), ('g', 2)]),
+    ]
+    for bits, first in ((1, MASK), (3, MASK), (3, MASK - 1)):
+        keys = [0, 1 << 63, (1 << 64) - 1]
+        ops = [op for k in keys for op in (('a', k), ('g', k), ('c', k), ('c', k), ('g', k))]
+        ops += [('c', k) for k in keys]
+        cases.append(Case(f'reserve-last-{bits}-{first}', bits, first, ops))
+    for bits in (4, 16):
+        keys = colliders(bits, (1 << bits) - 1, 3, high_only=True)
+        ops = [op for k in keys for op in (('a', k), ('g', k), ('c', k), ('c', k))]
+        ops += [('g', k) for k in reversed(keys)]
+        cases.append(Case(f'reserve-wrapped-{bits}', bits, 0, ops))
+    for seed in range(4):
+        rng = random.Random(20260924 + seed)
+        keys = [0, MASK, 1 << 32, 1 << 63, (1 << 64) - 1]
+        keys += [rng.getrandbits(64) for _ in range(43)]
+        ops = [(rng.choice(('a', 'a', 'c', 'r', 'g')), rng.choice(keys)) for _ in range(512)]
+        ops += [('g', k) for k in keys]
+        cases.append(Case(f'reserve-mixed-{seed}', 6, 0 if seed < 2 else MASK - 15, ops))
+    return cases
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--compiler-root', type=Path, required=True)
@@ -154,11 +197,13 @@ def main() -> None:
                                       str(args.compiler_root.resolve())], 'compiler')
         report['cc'] = command([args.cc, '--version'], 'cc')
         report['cpu_target'] = cpu_target.qualify(args.cc, output, command)
-        cases = fixtures()
+        cases = fixtures() + reservation_fixtures()
         if args.chess:
             from .chess_workloads import collect
             _, _, corpus = collect()
-            cases += [encounter_case(g['name'], [r['key'] for r in g['records']]) for g in corpus['corpora']]
+            for group in corpus['corpora']:
+                keys = [row['key'] for row in group['records']]
+                cases += [encounter_case(group['name'], keys), reservation_case(group['name'], keys)]
             report['chess_corpus'] = {**corpus, 'corpora': [
                 {k: v for k, v in group.items() if k != 'records'} for group in corpus['corpora']]}
         report['sources'] = {n: hashlib.sha256((HERE / n).read_bytes()).hexdigest() for n in
@@ -187,6 +232,12 @@ def main() -> None:
             'wrap-ids': ('case True{}: None{}', 'case True{}: Some{0}', 'last-1-ids'),
             'reject-known-exhausted': ('case Some{id}: (Registry{t, None{}}, Known{id})',
                                        'case Some{id}: (Registry{t, None{}}, IdsExhausted{})', 'last-1-ids'),
+            'consume-aborted-id': ('Registry{t, Some{id}}\n\n# No new lookup.',
+                                   'Registry{t, after_id(id, U32.is_eq(id, 4294967295))}\n\n# No new lookup.', 'reserve-retry'),
+            'publish-on-abort': ('def abort(r: Reservation) -> Registry:\n  Reservation{t, key, index, +id} = r\n  Registry{t, Some{id}}',
+                                 'def abort_publish(result: Registry & Outcome) -> Registry:\n  (registry, outcome) = result\n  registry\n\ndef abort(r: Reservation) -> Registry:\n  Reservation{t, key, index, +id} = r\n  abort_publish(intern(Registry{t, Some{id}}, key))', 'reserve-retry'),
+            'commit-wrong-key': ('M.put_at(key, id, (t, M.Vacant{index}))',
+                                 'M.put_at(U64.zero(), id, (t, M.Vacant{index}))', 'reserve-retry'),
         }
         for name, (old, new, fixture) in mutants.items():
             if source.count(old) != 1:

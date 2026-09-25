@@ -1,4 +1,4 @@
-# Probe-only text protocol: r interns, g only looks up. Never manipulates storage.
+# Probe-only text protocol: r interns, g looks up, c reserves/commits, a aborts.
 import Base
 import ./IdRegistry.bend as R
 
@@ -31,6 +31,27 @@ def found(prefix: String, r: R.Registry & Maybe<&2, U32>) -> IO(R.Registry):
     case None{}: reported(prefix ++ " missing", R.inspect(registry))
     case Some{id}: reported(prefix ++ " value " ++ U32.show(id), R.inspect(registry))
 
+def resolve_reservation(prefix: String, reservation: R.Reservation, accept: Bool) -> IO(R.Registry):
+  match accept:
+    case True{}: interned(prefix, R.commit(reservation))
+    case False{}: reported(prefix ++ " aborted", R.inspect(R.abort(reservation)))
+
+def reserved(prefix: String, accept: Bool, r: R.Reservation & U32) -> IO(R.Registry):
+  (reservation, id) = r
+  resolve_reservation(prefix ++ " reserved " ++ U32.show(id), reservation, accept)
+
+def prepared(prefix: String, accept: Bool, result: R.Preparation) -> IO(R.Registry):
+  match result:
+    case R.Settled{registry, outcome}: interned(prefix, (registry, outcome))
+    case R.Prepared{reservation}: reserved(prefix, accept, R.candidate(reservation))
+
+def reservation_words(registry: R.Registry, h: Maybe<&2, U32>, l: Maybe<&2, U32>, +accept: Bool) -> IO(R.Registry):
+  match h l:
+    case Some{+hi} Some{+lo}:
+      prepared(Bool.pick(String, accept, "c ", "a ") ++ U32.show(hi) ++ " " ++ U32.show(lo),
+        accept, R.reserve(registry, U64{lo, hi}))
+    case _ _: IO.die(R.Registry, 2, "invalid registry operands")
+
 def words(registry: R.Registry, h: Maybe<&2, U32>, l: Maybe<&2, U32>, add: Bool) -> IO(R.Registry):
   match h l:
     case Some{+hi} Some{+lo}:
@@ -45,6 +66,10 @@ def op(registry: R.Registry, line: List<&2, String>) -> IO(R.Registry):
       words(registry, U32.read(hi), U32.read(lo), True{})
     case Con{SCon{'g', SNil{}}, Con{hi, Con{lo, Nil{}}}}:
       words(registry, U32.read(hi), U32.read(lo), False{})
+    case Con{SCon{'c', SNil{}}, Con{hi, Con{lo, Nil{}}}}:
+      reservation_words(registry, U32.read(hi), U32.read(lo), True{})
+    case Con{SCon{'a', SNil{}}, Con{hi, Con{lo, Nil{}}}}:
+      reservation_words(registry, U32.read(hi), U32.read(lo), False{})
     case _: IO.die(R.Registry, 2, "invalid registry operation")
 
 def finish(r: R.Registry & R.Info) -> IO(Unit):
