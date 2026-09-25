@@ -1,16 +1,13 @@
-# Persistent live-root lifecycle — PR5d candidate
+# Persistent live-root lifecycle — PR5d
 
-**Draft only: not full-build or full-runtime qualified. No PR has been opened.**
-The registry component and Python transcript validator have passing checks, and
-`live.bend` passes full type checking. Full C generation exceeded the authoring
-container's memory limit. The held-callback, serial-parity and lifecycle tests in
-`verify_live.py` are provided as intended gates, **not completed evidence**.
+This opt-in headless entrypoint keeps one process alive while adding, replacing
+and removing roots. It is based on #874 at `42d4c78ebfca102e146720c818f5dba9db61fd57`,
+including the owning FIFO, completion notifications and configurable arenas.
+Existing fixed-cohort/UCI behavior and synchronous defaults remain unchanged.
 
-This candidate is based exactly on #863 (`bb1847d2d7f3c4e8b94e5dfb9f64bfc87e0c3390`).
-It does not incorporate the separate FIFO/wakeup/arena stack (#866/#870/#874).
-Those changes must be reconciled before adopting the live entrypoint on that
-stack. Do not restore older queue, pending-marker or arena semantics over them.
-Existing fixed-cohort, UCI, worker, model, compiler and production files are intact.
+[The September 25 record](../../../docs/experiments/2026-09-25-live-cohort-recovery.md)
+contains completed native callback qualification and limitations. The September 24
+candidate record is retained historically, not as this implementation's status.
 
 ## Ownership and protocol
 
@@ -62,6 +59,16 @@ the same and closes intake, joining outstanding work. EOF closes intake but lets
 current roots and an already queued replacement finish normally. A finished root
 continues to occupy its slot until explicitly replaced or removed.
 
+## Arena storage and execution scope
+
+`DEEPFIN_COHORT_ARENA_NODES` preserves the validated 1..65,536 logical-node contract,
+with 4,096 the default and a power-of-two backing array of at least 4,096 slots.
+Every replacement retains the configured capacity. Root reports identify logical
+and physical capacity. There is one physical batch slot and one pending leaf per
+root. Control handling overlaps inference, not multiple model forwards. FIFO sweeps
+and the completion-notification wait are inherited; removal filters the queue only
+at the physical drain barrier. Every installed generation gets a fresh tree.
+
 ## Reporting
 
 Each settled generation emits `live_result_begin SLOT GENERATION`, optional
@@ -83,7 +90,7 @@ and physical = real + padding. It is emitted only after drain. Idle time, setup,
 first inference and drain are in the lifetime clock; useful EPS is deliberately
 null. Do not treat this as an equal-wall-time or warmed-throughput benchmark.
 
-## Actual completed component checks
+## Component checks
 
 From an isolated checkout at the declared base with this patch applied:
 
@@ -100,21 +107,24 @@ generation exhaustion and deadline/expiry reset. Two isolated source mutations
 with the intended invariant error in each mode. Mutants never alter actual source.
 The Python cases are synthetic transcript checks, not model or search execution.
 
-## Full-runner gates still required
+## Full-runner qualification
 
 The following source-only gate generates both the unchanged reference and the
 new live entrypoint, compiles normal/UBSan test executables at both input widths,
 and exercises held-callback replacement/removal/stop/quit/EOF, capacity, stale
 controls, timer reset, startup errors, failed callbacks and serial tree parity.
-**It has not completed for this candidate.** Its status file starts unqualified
-and cannot report success after failed generation or a failed behavior check.
+Its status file starts unqualified and cannot report success after failed
+generation or a failed behavior check. Source-only CI invokes these gates with
+freshly generated code; the dedicated qualification record distinguishes the
+verified generated-C reuse in that run.
 
 ```sh
 bash native/bend_engine/multi_root/qualify_live.sh \
   /path/to/verified/bend /tmp/new-live-owner-check
 ```
 
-A separate prospective real-model build is provided; it is not a qualification:
+A separate CPU-F32 model build is provided; a build alone is not numerical
+or lifecycle qualification of that model:
 
 ```sh
 bash native/bend_engine/multi_root/build_live.sh /tmp/new-live-model \
@@ -123,9 +133,10 @@ DEEPFIN_BEND_MODEL_PACKAGE=/path/to/trusted.pt2 DEEPFIN_COHORT_ASYNC=1 \
   /tmp/new-live-model/build/deepfin-bend-live --threads 1 -- 4 2 0 0
 ```
 
-No neural model was executed for this candidate. Trained-network fidelity, CUDA,
+No neural model was executed in this PR5d recovery. The native gates use
+deterministic or explicitly held test callbacks. Trained-network fidelity, CUDA,
 multiple batch slots, persistent self-play/data generation, adaptive dispatch and
 playing strength remain separate work. Encoding, validation, backup and output
 are cooperative operations; a wedged callback is not preempted. Self-review only.
 EOF, stop and graceful quit must not be described as guarantees for all fatal
-process exits. See the dated experiment record for exact evidence and failures.
+process exits. See the September 25 qualification record for exact evidence and failures.

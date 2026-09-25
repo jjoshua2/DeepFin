@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Source-only intended full-runner gate. The current candidate has NOT passed it.
+# Source-only full-runner gate; see the dated qualification record for evidence.
 # No model export, training, old generated-C artifact or ordinary-pytest invocation.
 set -euo pipefail
 if [[ $# != 2 ]]; then
