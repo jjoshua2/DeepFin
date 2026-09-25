@@ -133,8 +133,13 @@ DEEPFIN_BEND_MODEL_PACKAGE=/path/to/trusted.pt2 DEEPFIN_COHORT_ASYNC=1 \
   /tmp/new-live-model/build/deepfin-bend-live --threads 1 -- 4 2 0 0
 ```
 
-No neural model was executed in this PR5d recovery. The native gates use
-deterministic or explicitly held test callbacks. Trained-network fidelity, CUDA,
+The initial PR5d recovery used deterministic or explicitly held test callbacks.
+[The subsequent CPU-model composition record](../../../docs/experiments/2026-09-25-live-model-composition.md)
+qualifies the actual live entrypoint with the saved untrained CPU-F32 checkpoint
+at batches one/four across completed-root replacement, removal/re-add and shared
+forwards. `verify_live_model.py` checks original native trace bytes against the
+existing independent oracle and checks diagnostic/quiet outcomes and bridge reuse.
+It does not inject cancellation/deadlines during real model execution. Trained-network fidelity, CUDA,
 multiple batch slots, persistent self-play/data generation, adaptive dispatch and
 playing strength remain separate work. Encoding, validation, backup and output
 are cooperative operations; a wedged callback is not preempted. Self-review only.

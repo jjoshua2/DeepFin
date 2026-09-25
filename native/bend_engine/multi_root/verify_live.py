@@ -109,10 +109,12 @@ def validate(lines: list[str]) -> dict[str, Any]:
 
 
 class Client:
-    def __init__(self, binary: Path, *, gate: bool = False, simulations: int = 1, fault: str = "", arena: int = 4096, depth: int = 2):
+    def __init__(self, binary: Path, *, gate: bool = False, simulations: int = 1, fault: str = "", arena: int = 4096, depth: int = 2,
+                 environment: dict[str, str] | None = None, diagnostics: bool = True):
         self.events = self.release_fd = -1
         pass_fds: tuple[int, ...] = ()
-        env = {**os.environ, "DEEPFIN_COHORT_ASYNC": "1", "DEEPFIN_COHORT_ARENA_NODES": str(arena)}
+        env = {**(os.environ if environment is None else environment),
+               "DEEPFIN_COHORT_ASYNC": "1", "DEEPFIN_COHORT_ARENA_NODES": str(arena)}
         if fault:
             env["DEEPFIN_MULTI_TEST_FAULT"] = fault
         if gate:
@@ -120,7 +122,7 @@ class Client:
             release_reader, self.release_fd = os.pipe()
             pass_fds = (event_writer, release_reader)
             env.update(DEEPFIN_TEST_EVENT_FD=str(event_writer), DEEPFIN_TEST_RELEASE_FD=str(release_reader))
-        self.proc = subprocess.Popen([str(binary), "--threads", "1", "--", str(simulations), str(depth), "0", "1"],
+        self.proc = subprocess.Popen([str(binary), "--threads", "1", "--", str(simulations), str(depth), "0", str(int(diagnostics))],
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True, bufsize=1, pass_fds=pass_fds, env=env)
         for fd in pass_fds:

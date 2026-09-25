@@ -1,0 +1,13 @@
+{
+  "base_commit": "52175f1bf2cb53732e774ed1e5ad32f8c3703748",
+  "qualification_run": 36170337509,
+  "qualification_job": 108188042803,
+  "artifact_id": 10879714453,
+  "artifact_zip_sha256": "6109b78bafa187af65b04fe58c417740e7d0dcbfe5e2c8e2e02b6a0cdb8c2479",
+  "qualified_patch_sha256": "cfbbd644f7cc71b873b190ec77e6181a16f30c00fb714010655f5da2d7aad028",
+  "tests": 477,
+  "new_tests": 45,
+  "staging_commit": "b15626b14843b727836c67a2152c46a25635d378",
+  "runtime_changed": false,
+  "self_review_only": true
+}

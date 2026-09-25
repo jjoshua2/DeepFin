@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Persistent live CPU-model composition](2026-09-25-live-model-composition.md) | Actual AOTI checkpoint across generation reuse and shared forwards; strict independent oracle, no GPU or strength claim |
 | [Persistent live-cohort recovery](2026-09-25-live-cohort-recovery.md) | PR5d: generation-safe lifecycle reconciled with FIFO, completion waits and configurable arenas; qualification recorded separately |
 | [Async cohort root deadlines](2026-09-23-cohort-deadlines.md) | PR5c: per-root expiry, preadmission row compaction and charged physical retirement; opt-in CPU cohorts |
 | [Asynchronous bounded cohorts](2026-09-23-async-cohort.md) | PR5b: CPU batch worker, per-root cancellation and physical accounting; actual model parity, no dynamic root admission or speed claim |
