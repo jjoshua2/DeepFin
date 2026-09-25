@@ -23,10 +23,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: deepfin-pr5d-live-qualification
-          run-id: 36160911561
+          run-id: 36161591924
           github-token: ${{ github.token }}
           path: /tmp/pr5d-prior
-      - name: Recover preserved source and apply only test corrections
+      - name: Recover exact source and split two test assertions without changing conditions
         run: |
           set -euo pipefail
           mkdir /tmp/pr5d-evidence
@@ -41,37 +41,16 @@ jobs:
           assert len(original)==15
           for path,digest in original.items():
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
-          p=Path('tests/test_bend_live_cohort.py');s=p.read_text()
-          assert s.count('"capacity,physical",')==1 and s.count('"capacity,physical,used",')==1
-          p.write_text(s.replace('"capacity,physical",','("capacity", "physical"),').replace('"capacity,physical,used",','("capacity", "physical", "used"),'))
           p=Path('native/bend_engine/multi_root/verify_live.py');s=p.read_text()
-          needle='def replacement(gate: Path) -> dict[str, Any]:\n'
-          assert s.count(needle)==1
-          addition='''def invalid_replacement_preserves_root(gate: Path) -> dict[str, Any]:
-              """A rejected position must not cancel the existing admitted evaluation."""
-              c = Client(gate, gate=True)
-              try:
-                  c.send("add startpos")
-                  c.until(CONTROL + "admitted 1 1")
-                  c.started()
-                  c.send("replace 1 1 startpos moves e2e5")
-                  c.until(CONTROL + "error invalid-position", 0.75)
-                  c.release()
-                  old = c.result(1, 1)
-                  assert (old["accepted_neural_rows"], old["cancelled_rows"]) == (1, 0)
-                  assert not any(x.startswith(CONTROL + "pending-install") for x in c.lines)
-                  c.send("quit")
-                  result = c.finish()
-                  assert set(result["roots"]) == {"1:1"}
-                  return result
-              finally:
-                  c.close()
-          '''
-          s=s.replace(needle,addition+'\n\n'+needle)
-          s=s.replace('"replacement": replacement(gate),','"invalid_replacement_preserves_root": invalid_replacement_preserves_root(gate),\n            "replacement": replacement(gate),')
-          p.write_text(s)
+          old='assert r["arena_capacity"] == arena and r["arena_physical_slots"] == arena'
+          assert s.count(old)==1
+          s=s.replace(old,'assert r["arena_capacity"] == arena\n                assert r["arena_physical_slots"] == arena')
+          old='assert r["completed_simulations"] == 256 and r["used_nodes"] > 4096'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,'assert r["completed_simulations"] == 256\n                    assert r["used_nodes"] > 4096'))
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=='81f504cbf4c6d7523eac5a20206db9a7fefad9025e652d0dfd7744342d49f505'
           for path,digest in original.items():
-              if path not in ('tests/test_bend_live_cohort.py','native/bend_engine/multi_root/verify_live.py'):
+              if path!=str(p):
                   assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
           subprocess.run(['git','add','-N','.'],check=True)
           subprocess.run(['git','diff','--check'],check=True)
