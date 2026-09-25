@@ -1,0 +1,196 @@
+name: Bend occupied decoder qualification
+'on':
+  push:
+    branches: [feat/bend-occupied-decoder-dev-20260924]
+    paths: [.github/workflows/bend-occupied-decoder-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 1337d5a30e42a1b2999819a36e3b538ace3e7071
+      TARGET: feat/bend-occupied-decoder-20260924
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 1337d5a30e42a1b2999819a36e3b538ace3e7071
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact source and verify retained parent evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/decoder-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/source.b64"
+          for blob in 9f4afd6db03435ba10438cd357f9b41db6c0de27 2d991846f1e2c8d4440bacffdcbfa30001d23623; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/source.b64"
+          done
+          gh api repos/jjoshua2/DeepFin/actions/jobs/107901963017 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP']);e=Path(os.environ['EVIDENCE'])
+          encoded=(t/'source.b64').read_bytes();assert len(encoded)==23400
+          patch=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(patch)==103763 and hashlib.sha256(patch).hexdigest()=='a2e0de3c815aac55090ccf6a137d82dfab7e5c9d4ed94667a5f46fd53147ac5d'
+          (e/'source.patch').write_bytes(patch)
+          def git(*a):return subprocess.check_output(['git',*a],text=True).strip()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='f4bf89c8bb0cfd266d3438a3707795c5fa5d5281'
+          old=Path('docs/experiments/evidence/bend-board-representation')
+          q=json.loads((old/'qualification.json').read_text());assert q['qualification']=='PASS' and q['modular_laws']==123 and q['modular_controls']==332
+          p=json.loads((old/'hosted-focused.json').read_text());assert p['focused_gate']=='PASS' and p['controls_gate']=='PASS' and p['consumer']=='PASS'
+          assert p['new_law_count']==6 and len(p['negative_controls'])==17 and all(x['rejected'] for x in p['negative_controls'])
+          manifest=json.loads((old/'hosted-source-identity.json').read_text())['candidate_source_sha256s'];assert len(manifest)==391
+          for f,h in manifest.items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          j=json.loads((e/'parent-job.json').read_text());assert j['id']==107901963017 and j['run_id']==36080761492 and j['status']=='completed' and j['conclusion']=='success'
+          subprocess.run(['git','apply','--check',str(e/'source.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'source.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='c6d133f9122ac3438d9b9a7e4560ac03e67dd4e4'
+          files=git('diff','--cached','--name-only').splitlines();assert len(files)==14
+          assert all(f.startswith('native/bend_engine/standalone/proofs/decoder/') or f=='docs/experiments/2026-09-24-bend-occupied-decoder.md' for f in files)
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in git('ls-files','native/bend_engine').splitlines() if Path(f).is_file()};assert len(hashes)==404
+          record={'base':os.environ['BASE'],'source_tree':'c6d133f9122ac3438d9b9a7e4560ac03e67dd4e4','patch_sha256':hashlib.sha256(patch).hexdigest(),'changed_files':files,'candidate_source_sha256s':hashes,'retained_parent_laws':123,'retained_parent_controls':332,'parent_manifest_matches':391,'parent_qualification_sha256':hashlib.sha256((old/'qualification.json').read_bytes()).hexdigest(),'parent_focused_sha256':hashlib.sha256((old/'hosted-focused.json').read_bytes()).hexdigest(),'combined_wrapper_executed':False,'independent_review':False}
+          (e/'source-identity.json').write_text(json.dumps(record,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove occupied decoding and abstract-square correspondence'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - name: Check four universal laws, importing consumer and eighteen controls
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/decoder/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Compare actual occupied decoding and reject corruptions in four native modes
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/decoder/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Recheck original compiler laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools with normal build compiler
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify completed evidence and publish only a fresh feature branch
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-board-representation-20260924 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(n):return json.loads((e/n).read_text())
+          ident=read('source-identity.json');p=read('focused.json');n=read('native.json')
+          for f,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          assert p['focused_gate']=='PASS' and p['controls_gate']=='PASS' and p['consumer']=='PASS'
+          assert p['new_law_count']==4 and p['universal_laws']==4 and p['closed_laws']==0
+          assert len(p['negative_controls'])==18 and all(x['rejected'] for x in p['negative_controls'])
+          kinds=collections.Counter(x['kind'] for x in p['negative_controls']);assert kinds['source semantic/refinement']==9 and kinds['manifest/import policy']==8
+          assert n['native_gate']=='PASS' and n['rows_per_mode']==1920 and n['square_observation_fields_per_mode']==21120
+          assert n['occupied_rows']==1751 and n['empty_rows']==169 and n['all_square_state_combinations']==832 and n['all_fresh_insert_combinations']==768
+          assert n['cases_by_category']=={'all_square_states':832,'insert_then_decode':768,'initial':64,'random_valid':256}
+          assert len(n['modes'])==4 and all(m['invalid_rejections']==9 and m['output_sha256']=='f1eb0aec05aac221ccc564cbaccab282abe0e75bb83cf2a4deef9cf33844e91d' for m in n['modes'])
+          assert len(n['mutations'])==3 and all(m['rejected'] and m['compiled_and_executed'] and m['occupied_inputs_only'] for m in n['mutations'])
+          for f,h in p['source_sha256s'].items():assert hashlib.sha256((Path('native/bend_engine')/f).read_bytes()).hexdigest()==h,f
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-occupied-decoder');d.mkdir(exist_ok=False)
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          result={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':'c6d133f9122ac3438d9b9a7e4560ac03e67dd4e4','new_laws':4,'universal_new_laws':4,'new_controls':18,'control_categories':dict(kinds),'retained_parent_laws':123,'retained_parent_controls':332,'modular_laws':127,'modular_controls':350,'combined_wrapper_executed':False,'native_source_entries':404,'independent_review':False,'claim':'Actual occupied kind/color decoding and pointwise abstract-square reconstruction under partition and square bounds; not whole-board bijection or move legality.'}
+          (d/'qualification.json').write_text(json.dumps(result,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes all four universal laws, importing consumer, eighteen classified controls, four native modes and three actual corruption witnesses, original compiler checks and unchanged whole-repository lint on source `{os.environ['SOURCE']}`."
+          paragraphs=['## Completed hosted qualification',headline,
+            'The focused command executed all four public laws, importing consumer and eighteen controls. Nine are ordinary semantic/refinement rejections: seven implementation/specification corruptions and two concrete false-premise consumers. Eight enforce manifests/import policies; one synthetic unsafe-warning output unit is not another compiler execution. Missing files, malformed terms, affine-use errors, crashes and timeouts are not counted as semantic rejection.',
+            'The unchanged exact-source123-law/332-control parent is retained, giving modular127-law/350-control evidence. The combined127-law wrapper was not executed. All391 parent manifest entries and its successful qualification job/report were checked. All404 candidate native-source hashes still match after execution.',
+            'Every native mode passes1,920 observations and21,120 fields:832 square/local-state combinations,768 fresh insertions,64 initial-board queries and256 random consistent-board queries. The1,751 occupied cases also reconstruct all eight plane bits from actual decoded kind/color. The169 empty cases record raw fallback5 outside the occupied contract. Nine malformed requests are rejected by the bounded probe. Three actual decoder/occupancy mutations compile/run before failing occupied inputs; no empty-only witness is used to claim occupied-law sensitivity. Modes repeat fixtures, not disjoint or exhaustive boards.',
+            'The reference uses an independent64-square optional kind/color model. Candidate code uses actual Chess reads and Position.put/start, never proof classifiers or expected output labels. This is selected-square observation, not full-Board mutation checks, metadata validity, parser acceptance or legal moves. The guarded total observation lives only in proof code; no production empty-square behavior changed.',
+            'Hosted Bun1.4.2/Clang18.1.3; Clang is scoped to native checks only. Locked Python3.13/uv0.12.10 CPU tools use the normal build compiler. Ruff/Basedpyright/Vulture passes unchanged, resolving the retained local missing-tools gap. Original compiler16-laws/seven-controls and12 pin tests pass. The final local focused command passed in49.437seconds; prior enclosing tool-command timeouts are incomplete runs, not proof rejections. No public law changed during that harness recovery.',
+            'Only documentation, index and evidence are added after qualification. Four universal statements cover arbitrary globally consistent Boards and all bounded squares, with actual occupancy required only for the raw-decoder claim. Independent classification and encode/decode reconstruction are pointwise, not a global abstract-board bijection. Metadata and legality remain unconstrained.',
+            'Self-review only, not independent review. Pinned checker/Base, native lowering/storage,ABI,toolchain,libraries,OS and hardware remain trust boundaries. No production runtime, earlier proof, compiler input, permanent workflow or routine perft budget changes. No model/GPU, search, training or benchmark added. No Python application responsibility moved; export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. Nothing merged,force-pushed,deployed or changed in a live process.',
+            'Next P3 acceptance is parser-derived freshness and whole-board abstraction, followed by invariant-preserving removal/move/special-move operations. King safety, legal generation soundness/completeness/no duplicates, reachability and perft remain separate. Previous P2 results and the direct closed-builder equality limitation remain unchanged.'
+          ]
+          record=Path('docs/experiments/2026-09-24-bend-occupied-decoder.md');record.write_text(record.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Occupied decoder and abstract squares](2026-09-24-bend-occupied-decoder.md) | Four universal source laws connect actual occupied decoding to independent local square states; modular127/350; parser and move semantics remain open |\n',1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          update='## Latest P3 occupied-decoder correspondence\n\n'+headline+'\n\nThe decoder suite projects the existing global partition to every bounded square, proves independent classify/encode reconstruction of all eight kind/color bits, and connects actual Chess.piece/occupied/white observations to that abstract cell. Raw decoding requires actual occupancy; the explicit guarded observation is proof-only, not a production API change. Initial-board consistency and fresh-insertion producers are consumed without assumed answer tags.\n\nAll four new contracts are universal. Exact-source parent123/332 plus freshly executed4/18 gives modular127/350 coverage, not an executed full chain. Nine semantic, eight policy and one synthetic controls remain classified. This advances pointwise abstract-square correspondence only: whole-board bijection, parser freshness, valid metadata, removal/moves and legality remain separate. See [the readout](experiments/2026-09-24-bend-occupied-decoder.md) and committed receipts. Existing P2 boundary limitations are unchanged; no Python application responsibility newly moved.\n'
+          m.write_text(title+'\n\n'+update+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments
+          git commit -m 'docs: qualify occupied decoder correspondence and preserve modular evidence'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' > "$EVIDENCE/published-commits.txt"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-occupied-decoder-qualification
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/decoder-evidence/
+          retention-days: 14
