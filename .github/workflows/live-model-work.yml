@@ -22,13 +22,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Enable isolated environments in the existing test client
+          fetch-depth: 0
+      - name: Apply exact test-client and removal-protocol corrections
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/live-model
           python3 - <<'PY'
           from pathlib import Path
-          import hashlib,json
+          import base64,hashlib,json,subprocess
           p=Path('native/bend_engine/multi_root/verify_live.py')
           s=p.read_text()
           changes=[
@@ -39,10 +42,14 @@ jobs:
               assert s.count(old)==1,old
               s=s.replace(old,new)
           p.write_text(s)
+          rec=json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/git/blobs/07055622db08fcdc47a421b4b61a980cfe038ed7']))
+          correction=base64.b64decode(rec['content'])
+          assert hashlib.sha256(correction).hexdigest()=='3f621296a8052658ecad5cebd33578e8ea29ef5ff34416e7859edc98660ed248'
+          exec(compile(correction,'authored-removal-parser-correction','exec'))
           expected={
-            str(p):'26a219e76472a3798b959ce15ad90d85ab5a3ffe5a24d05f75ca0d25f9729b31',
-            'native/bend_engine/multi_root/verify_live_model.py':'53d9b0de3223134ba6f7452293e5d7c216d356f6ba86d3514e11c01e59676f72',
-            'tests/test_bend_live_model.py':'1760dd7e12ed3664a5af2a9a5b37a60255843913fe1bdada0dbbe59d01f7892e'}
+            'native/bend_engine/multi_root/verify_live.py':'26a219e76472a3798b959ce15ad90d85ab5a3ffe5a24d05f75ca0d25f9729b31',
+            'native/bend_engine/multi_root/verify_live_model.py':'6038c467f4e4f2daba85abf0cfaeb8f89d31abda03de9d57f1a187ab339803be',
+            'tests/test_bend_live_model.py':'4f8c34b3c73b9b53224fbe3ed5c9e2b4123e020a5ff0cc4c6228b9426e0ffb4b'}
           for path,digest in expected.items():
               assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
           Path('artifacts/live-model/source.json').write_text(json.dumps(expected,indent=2)+'\n')
@@ -97,7 +104,7 @@ jobs:
           Path('/tmp/live-model.c').write_bytes(data)
           Path('artifacts/live-model/generated.json').write_text(json.dumps({'sha256':digest,'source_run':36162016314,'reused_not_regenerated':True,'runtime_manifest_verified':True},indent=2))
           PY
-      - name: Export one CPU batch-four package from the same checkpoint
+      - name: Export one CPU batch-four package for this corrected attempt
         run: |
           python - <<'PY'
           from pathlib import Path
