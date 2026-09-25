@@ -19,7 +19,7 @@ INVALID = ('16 32768', '17 1', '2 0', '10 2', '2 x', '2 1 extra')
 
 class Op(NamedTuple):
     action: str
-    index: int
+    record: int
     changed: int
     group: int
 

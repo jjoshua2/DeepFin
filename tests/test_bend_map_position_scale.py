@@ -36,7 +36,7 @@ def test_full_population_operation_counts_and_permutation(bits: int, width: int)
     assert ops[1:n + 1] == [p.Op('r', i, 11, i // width) for i in range(n)]
     assert len(ops) == 4 * n + 49
     assert len(list(p.expected_lines(bits, width))) == 4 * n + 51
-    assert sorted(op.index for op in ops[-n:]) == list(range(n))
+    assert sorted(op.record for op in ops[-n:]) == list(range(n))
     assert len({p.identity(i, 11) for i in range(n)}) == n
     assert len({p.key(i // width) for i in range(n)}) == (n + width - 1) // width
 
