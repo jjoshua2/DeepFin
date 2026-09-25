@@ -100,14 +100,14 @@ def fixtures() -> list[Case]:
     for bits in (1, 2, 5, 7):
         count = 1 << (bits - 1)
         # Collision records, not distinct hash keys, must consume the entry budget.
-        identities = [zero[:7] + (i,) + zero[8:] for i in range(count + 1)]
+        identities = [(*zero[:7], i, *zero[8:]) for i in range(count + 1)]
         ops = [Op('r', MASK, p) for p in identities]
         ops += [Op('r', MASK, p) for p in reversed(identities)]
         ops += [Op('g', MASK, p) for p in identities]
         cases.append(Case(f'collision-full-{bits}', bits, ops))
     rng = random.Random(20260924)
     domain = [(rng.choice((0, MASK, (1 << 64) - 1, 1 << 63)),
-               tuple(rng.getrandbits(64) for _ in range(8)) + (1, 15, 64)) for _ in range(70)]
+               (*(rng.getrandbits(64) for _ in range(8)), 1, 15, 64)) for _ in range(70)]
     cases.append(replay('mixed-hash-chains', [rng.choice(domain) for _ in range(60)], 7))
     cases.append(replay('maximum-allocation-smoke', domain[:3], 16))
     return cases
@@ -123,7 +123,7 @@ def chess_cases(corpus: dict[str, Any]) -> list[Case]:
         for row in group['records']:
             identity = structural(chess.Board(row['fen']))
             # The native Identity uses 64 for absent EP, rather than signed -1.
-            records.append((row['key'], identity[:-1] + (64 if identity[-1] == -1 else identity[-1],)))
+            records.append((row['key'], (*identity[:-1], 64 if identity[-1] == -1 else identity[-1])))
         for start in range(0, len(records), 32):
             part = records[start:start + 32]
             name = f"chess-{group['name']}-{start // 32}"
@@ -133,7 +133,7 @@ def chess_cases(corpus: dict[str, Any]) -> list[Case]:
         records = []
         for side in ('left', 'right'):
             identity = structural(chess.Board(row[side + '_fen']))
-            records.append((0, identity[:-1] + (64 if identity[-1] == -1 else identity[-1],)))
+            records.append((0, (*identity[:-1], 64 if identity[-1] == -1 else identity[-1])))
         cases.append(replay('boundary-' + row['name'], records))
     return cases
 
