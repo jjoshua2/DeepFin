@@ -100,3 +100,24 @@ No production code, earlier accepted law, compiler input, permanent workflow or
 routine test/perft budget changes. No Python application responsibility moved;
 export/references/data/control/training and transitional C++/LibTorch/AOTI remain.
 No merge, force push, deployment or live-process action.
+
+
+## Completed hosted qualification
+
+Hosted run **36083420058** passes all four universal laws, importing consumer, eighteen classified controls, four native modes and three actual corruption witnesses, original compiler checks and unchanged whole-repository lint on source `4c5232cc1e6fceb8adc66dcc2dd5479b373ead3f`.
+
+The focused command executed all four public laws, importing consumer and eighteen controls. Nine are ordinary semantic/refinement rejections: seven implementation/specification corruptions and two concrete false-premise consumers. Eight enforce manifests/import policies; one synthetic unsafe-warning output unit is not another compiler execution. Missing files, malformed terms, affine-use errors, crashes and timeouts are not counted as semantic rejection.
+
+The unchanged exact-source123-law/332-control parent is retained, giving modular127-law/350-control evidence. The combined127-law wrapper was not executed. All391 parent manifest entries and its successful qualification job/report were checked. All404 candidate native-source hashes still match after execution.
+
+Every native mode passes1,920 observations and21,120 fields:832 square/local-state combinations,768 fresh insertions,64 initial-board queries and256 random consistent-board queries. The1,751 occupied cases also reconstruct all eight plane bits from actual decoded kind/color. The169 empty cases record raw fallback5 outside the occupied contract. Nine malformed requests are rejected by the bounded probe. Three actual decoder/occupancy mutations compile/run before failing occupied inputs; no empty-only witness is used to claim occupied-law sensitivity. Modes repeat fixtures, not disjoint or exhaustive boards.
+
+The reference uses an independent64-square optional kind/color model. Candidate code uses actual Chess reads and Position.put/start, never proof classifiers or expected output labels. This is selected-square observation, not full-Board mutation checks, metadata validity, parser acceptance or legal moves. The guarded total observation lives only in proof code; no production empty-square behavior changed.
+
+Hosted Bun1.4.2/Clang18.1.3; Clang is scoped to native checks only. Locked Python3.13/uv0.12.10 CPU tools use the normal build compiler. Ruff/Basedpyright/Vulture passes unchanged, resolving the retained local missing-tools gap. Original compiler16-laws/seven-controls and12 pin tests pass. The final local focused command passed in49.437seconds; prior enclosing tool-command timeouts are incomplete runs, not proof rejections. No public law changed during that harness recovery.
+
+Only documentation, index and evidence are added after qualification. Four universal statements cover arbitrary globally consistent Boards and all bounded squares, with actual occupancy required only for the raw-decoder claim. Independent classification and encode/decode reconstruction are pointwise, not a global abstract-board bijection. Metadata and legality remain unconstrained.
+
+Self-review only, not independent review. Pinned checker/Base, native lowering/storage,ABI,toolchain,libraries,OS and hardware remain trust boundaries. No production runtime, earlier proof, compiler input, permanent workflow or routine perft budget changes. No model/GPU, search, training or benchmark added. No Python application responsibility moved; export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. Nothing merged,force-pushed,deployed or changed in a live process.
+
+Next P3 acceptance is parser-derived freshness and whole-board abstraction, followed by invariant-preserving removal/move/special-move operations. King safety, legal generation soundness/completeness/no duplicates, reachability and perft remain separate. Previous P2 results and the direct closed-builder equality limitation remain unchanged.

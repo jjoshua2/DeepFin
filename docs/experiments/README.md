@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Occupied decoder and abstract squares](2026-09-24-bend-occupied-decoder.md) | Four universal source laws connect actual occupied decoding to independent local square states; modular127/350; parser and move semantics remain open |
 | [Board partition and fresh insertion](2026-09-24-bend-board-representation.md) | Six source contracts for actual board consistency, exact insertion and metadata framing; modular123/332; move legality and reachability remain open |
 | [Full-table boundary](2026-09-24-bend-full-table-boundary.md) | Two uniform full-table lookup laws, separate public-builder recipe guard and late-block omission regression; modular117/315; no closed-builder equality claim |
 | [Independent blocker rays and initialized lookup](2026-09-24-bend-independent-rays.md) | Five source laws connect arbitrary-occupancy production rays, mask irrelevance and actual initialized lookup to independent coordinates; modular115/295 and bounded native qualification |

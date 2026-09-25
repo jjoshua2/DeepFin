@@ -1,0 +1,179 @@
+{
+  "focused_gate": "PASS",
+  "controls_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "new_law_count": 4,
+  "universal_laws": 4,
+  "closed_laws": 0,
+  "new_laws": [
+    "square_projection_valid",
+    "abstract_square_roundtrip",
+    "guarded_decoder_matches_square",
+    "occupied_decoder_matches_square"
+  ],
+  "inherited_gate_run": false,
+  "consumer": "PASS",
+  "consumer_seconds": 7.557725304000001,
+  "negative_controls": [
+    {
+      "name": "actual-pawn-tag",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "f4aeab32b9112efe458ab45c275359c96e76b78cdb057b1adb2778285732b67c",
+      "diagnostic_bytes": 5522,
+      "excerpt": "n.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_black(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0})))), Spec.Occupant{Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_pawns(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 1, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_knights(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 1, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_bishops(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 2, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_rooks(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 3, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_queens(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 4, 5))))), Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_white(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0})))}, Spec.Empty{}) : Spec.Cell}\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- sq    : U32\n- bound : {Cmp.is_lt(Nat.cmp(U32.to_nat(sq), 64n)) == True{} : Bool}\nLocation: bridge\n10 |   {S.decoded(b,sq) == S.local_decode(S.row(b,sq)) : S.Cell}:\n11>|   Equal.cong(Bool,S.Cell,flag => Bool.pick(S.Cell,flag,\n12 |     S.Occupant{Chess.piece(b,sq),U64.test_bit(Chess.get_white(b),U32.to_nat(sq))},S.Empty{}),"
+    },
+    {
+      "name": "actual-king-fallback",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "a6f080275eee523aa73bed666bd84f187c9d7143db598beb7ab16ad0447a29b4",
+      "diagnostic_bytes": 5522,
+      "excerpt": "n.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_black(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0})))), Spec.Occupant{Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_pawns(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 0, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_knights(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 1, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_bishops(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 2, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_rooks(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 3, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_queens(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 4, 4))))), Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_white(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0})))}, Spec.Empty{}) : Spec.Cell}\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- sq    : U32\n- bound : {Cmp.is_lt(Nat.cmp(U32.to_nat(sq), 64n)) == True{} : Bool}\nLocation: bridge\n10 |   {S.decoded(b,sq) == S.local_decode(S.row(b,sq)) : S.Cell}:\n11>|   Equal.cong(Bool,S.Cell,flag => Bool.pick(S.Cell,flag,\n12 |     S.Occupant{Chess.piece(b,sq),U64.test_bit(Chess.get_white(b),U32.to_nat(sq))},S.Empty{}),"
+    },
+    {
+      "name": "actual-bishop-skipped",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "25814833b90567f63093440aa4880eb6a363d9e64c0a20081a1ba7710e3cfd79",
+      "diagnostic_bytes": 5024,
+      "excerpt": "), 64n), U64{1, 0})), U64{0, 0})))}, Spec.Empty{}) == Bool.pick(Spec.Cell, Bool.or(Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_white(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_black(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0})))), Spec.Occupant{Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_pawns(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 0, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_knights(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 1, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_rooks(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 3, Bool.pick(U32, Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_queens(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), 4, 5)))), Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_white(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0})))}, Spec.Empty{}) : Spec.Cell}\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- sq    : U32\n- bound : {Cmp.is_lt(Nat.cmp(U32.to_nat(sq), 64n)) == True{} : Bool}\nLocation: bridge\n10 |   {S.decoded(b,sq) == S.local_decode(S.row(b,sq)) : S.Cell}:\n11>|   Equal.cong(Bool,S.Cell,flag => Bool.pick(S.Cell,flag,\n12 |     S.Occupant{Chess.piece(b,sq),U64.test_bit(Chess.get_white(b),U32.to_nat(sq))},S.Empty{}),"
+    },
+    {
+      "name": "actual-occupied-intersection",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Actual.bend",
+      "diagnostic_sha256": "1bdd7d58d6452c69506ab110ae73306ad26ec1c6845c7cae63cc7b37ae73fcee",
+      "diagnostic_bytes": 1443,
+      "excerpt": "Error:\n- expected : {Bool.not(Cmp.is_eq(U64.cmp(U64.and(U64.and(../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))) == Bool.or(Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_white(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_black(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0})))) : Bool}\n- observed : {Bool.not(Cmp.is_eq(U64.cmp(U64.and(U64.or(../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))) == Bool.or(Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_white(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0}))), Bool.not(Cmp.is_eq(U64.cmp(U64.and(../../../legal_probe/Chess.get_black(b), U64.shln.go(Nat.min(U32.to_nat(sq), 64n), U64{1, 0})), U64{0, 0})))) : Bool}\nContext:\n- b     : ../../../legal_probe/Chess.Board\n- sq    : U32\n- bound : {Cmp.is_lt(Nat.cmp(U32.to_nat(sq), 64n)) == True{} : Bool}\nLocation: bridge\n13 |     U64.test_bit(Chess.occupied(b),U32.to_nat(sq)),Bool.or(U64.test_bit(Chess.get_white(b),U32.to_nat(sq)),U64.test_bit(Chess.get_black(b),U32.to_nat(sq))),\n14>|     Bits.test64_or(Chess.get_white(b),Chess.get_black(b),U32.to_nat(sq),bound))\n15 |"
+    },
+    {
+      "name": "actual-white-plane-swap",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Projection.bend",
+      "diagnostic_sha256": "6f6ebd89aac9ef916b75d2b0a05da40f9420dba56e46e5af775b94161f2e7a59",
+      "diagnostic_bytes": 3643,
+      "excerpt": ", Bits.get(32n, kl, U32.to_nat(sq)), Bits.get(32n, kh, Nat.sub(U32.to_nat(sq), 32n))), Bool.pick(Bool, Cmp.is_lt(Nat.cmp(U32.to_nat(sq), 32n)), Bits.get(32n, wl, U32.to_nat(sq)), Bits.get(32n, wh, Nat.sub(U32.to_nat(sq), 32n))), Bool.pick(Bool, Cmp.is_lt(Nat.cmp(U32.to_nat(sq), 32n)), Bits.get(32n, bll, U32.to_nat(sq)), Bits.get(32n, blh, Nat.sub(U32.to_nat(sq), 32n)))}) == True{} : Bool}\nContext:\n- pl     : Word.Con<31n>\n- ph     : Word.Con<31n>\n- nl     : Word.Con<31n>\n- nh     : Word.Con<31n>\n- bl     : Word.Con<31n>\n- bh     : Word.Con<31n>\n- rl     : Word.Con<31n>\n- rh     : Word.Con<31n>\n- ql     : Word.Con<31n>\n- qh     : Word.Con<31n>\n- kl     : Word.Con<31n>\n- kh     : Word.Con<31n>\n- wl     : Word.Con<31n>\n- wh     : Word.Con<31n>\n- bll    : Word.Con<31n>\n- blh    : Word.Con<31n>\n- turn   : U32\n- rights : U32\n- ep     : U32\n- sq     : U32\n- good   : {Bool.and(../board/Spec.words(32n, pl, nl, bl, rl, ql, kl, wl, bll), ../board/Spec.words(32n, ph, nh, bh, rh, qh, kh, wh, blh)) == True{} : Bool}\nLocation: structural\n30 |     case Chess.Board{U64{U32{+pl},U32{+ph}},U64{U32{+nl},U32{+nh}},U64{U32{+bl},U32{+bh}},U64{U32{+rl},U32{+rh}},U64{U32{+ql},U32{+qh}},U64{U32{+kl},U32{+kh}},U64{U32{+wl},U32{+wh}},U64{U32{+bll},U32{+blh}},turn,rights,ep}:\n31>|       valid_mix(Nat.is_lt(U32.to_nat(sq),32n),S.word_row(32n,pl,nl,bl,rl,ql,kl,wl,bll,U32.to_nat(sq)),S.word_row(32n,ph,nh,bh,rh,qh,kh,wh,blh,Nat.sub(U32.to_nat(sq),32n)),\n32 |         project(32n,pl,nl,bl,rl,ql,kl,wl,bll,U32.to_nat(sq),F.left(B.words(32n,pl,nl,bl,rl,ql,kl,wl,bll),B.words(32n,ph,nh,bh,rh,qh,kh,wh,blh),good)),"
+    },
+    {
+      "name": "incorrect-independent-classification",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Rows.bend",
+      "diagnostic_sha256": "a3033094a2961f452943e69c501bc8ce17afa54ceaa0600da97792fb558184c9",
+      "diagnostic_bytes": 584,
+      "excerpt": "Error:\n- expected : ../board/Spec.Row{False{}, True{}, False{}, False{}, False{}, False{}, True{}, False{}}\n- observed : ../board/Spec.Row{True{}, False{}, False{}, False{}, False{}, False{}, True{}, False{}}\nContext:\n- good : {True{} == True{} : Bool}\nLocation: checked\n141 |     case B.Row{True{},False{},False{},False{},False{},False{},False{},True{}}: ({==},{==})\n142>|     case B.Row{True{},False{},False{},False{},False{},False{},True{},False{}}: ({==},{==})\n143 |     case B.Row{True{},False{},False{},False{},False{},False{},True{},True{}}: Old.false_true(statement(row),good)"
+    },
+    {
+      "name": "lost-king-plane",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Rows.bend",
+      "diagnostic_sha256": "dc068fffacb7556639695b59e54b44ab246d9b79224fa1233434b7859b949c2d",
+      "diagnostic_bytes": 584,
+      "excerpt": "Error:\n- expected : ../board/Spec.Row{False{}, False{}, False{}, False{}, False{}, False{}, False{}, True{}}\n- observed : ../board/Spec.Row{False{}, False{}, False{}, False{}, False{}, True{}, False{}, True{}}\nContext:\n- good : {True{} == True{} : Bool}\nLocation: checked\n16 |     case B.Row{False{},False{},False{},False{},False{},True{},False{},False{}}: Old.false_true(statement(row),good)\n17>|     case B.Row{False{},False{},False{},False{},False{},True{},False{},True{}}: ({==},{==})\n18 |     case B.Row{False{},False{},False{},False{},False{},True{},True{},False{}}: ({==},{==})"
+    },
+    {
+      "name": "empty-square-raw-decoding-rejected",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "consumer.bend",
+      "diagnostic_sha256": "33ba0026e8c349b08c074be65e8364acb3dc500eeff608582eb2238405c74383",
+      "diagnostic_bytes": 266,
+      "excerpt": "Error:\n- expected : False{}\n- observed : True{}\nLocation: negative_empty_decode\n52 |   {S.square(Position.empty(),0) == S.Occupant{Chess.piece(Position.empty(),0),False{}} : S.Cell}:\n53>|   Laws.occupied_decoder_matches_square(Position.empty(),0,{==},{==},{==})\n54 |"
+    },
+    {
+      "name": "inconsistent-board-excluded",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "consumer.bend",
+      "diagnostic_sha256": "a7de315691606e850642bb3d0daa32f68143b13cd9b1f3a243218ffe00b9d950",
+      "diagnostic_bytes": 315,
+      "excerpt": "Error:\n- expected : False{}\n- observed : True{}\nLocation: negative_collision\n52 |   {B.row_valid(S.row(Position.put(0,True{},0,Position.put(1,False{},0,Position.empty())),0)) == True{} : Bool}:\n53>|   Laws.square_projection_valid(Position.put(0,True{},0,Position.put(1,False{},0,Position.empty())),0,{==},{==})\n54 |"
+    },
+    {
+      "name": "missing-law",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-laws-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-consumer-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "hole",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "foreign-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "symlink",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe-warning-zero-exit",
+      "rejected": true,
+      "kind": "synthetic exact-output unit, not compiler execution"
+    }
+  ],
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/board/Actual.bend": "c27ac87812368df1f565cfd2f0406a28ceaf212f4f1cd93d9e3c0f4f28ac4b5b",
+    "standalone/proofs/board/LAWS.bend": "d4e846830b6b2cb244ad3b2f3a6bc33e50132f71cd79b083824efc1c2fd42f21",
+    "standalone/proofs/board/PROOF.bend": "e1072ffc1f8eab14a9d3fa40fe37e65daf3e7c193512a433465b0e402cd2a5d8",
+    "standalone/proofs/board/Rows.bend": "5a03bfbd266f4ef984127a86a9007a5e73a79e135a43acc6e90ce47bb831a342",
+    "standalone/proofs/board/Spec.bend": "d0e60648dc7a0b803fa715c05c53ad92274657995a994996470afb7fc45f581a",
+    "standalone/proofs/board/Words.bend": "614c05950398a65d56d5c4953882ec3c7952236b71029624ccabc5db2bd94fff",
+    "standalone/proofs/decoder/Actual.bend": "56595c88c5b7221180bb14566e8c1967bca2ae58cb79c32ecefa50eabf630ed1",
+    "standalone/proofs/decoder/Bits.bend": "62b0794004f4fcc5f4bf5d02e927fc5737d6644c436313ed6ee381a8821272be",
+    "standalone/proofs/decoder/LAWS.bend": "4ddf158a55e2cd2877c1e656c94efdafc2533ae1ff7e1474bf7e1ad0bffd0195",
+    "standalone/proofs/decoder/PROOF.bend": "8d76163564e4a3a6bfd55917bb9be633f5501a74028713a6cdd21e990f486439",
+    "standalone/proofs/decoder/Projection.bend": "623e1f3f485daf95246fb6b52874e6cdffa47177ee186ebee33124ce8f5d2969",
+    "standalone/proofs/decoder/Rows.bend": "f28ecf1a0ca33b1d71bfa7be49dffd1b44cd4219552cdbd7d0faa99c3446f7bc",
+    "standalone/proofs/decoder/Spec.bend": "8e7344575af88a4dcdfcbf4f0a5eda7ab34ec79bd870c27a1c96ed4688e7bcf9",
+    "standalone/proofs/decoder/consumer.bend": "e42585f7fa93d89547891a208814fa2777522379f62076a1d2f8bc5d5946daf1",
+    "standalone/proofs/decoder/focused.js": "4d93629efafb9ddf45a4dd6f7cd10988de8aa7204918a4dfbab1708925132d71",
+    "standalone/proofs/decoder/probe.bend": "338f724c4a1ab691bf58724043d6fa0bea5d5bdddca6a5ab4b7cc6ecca28ba20",
+    "standalone/proofs/decoder/verify.js": "bade8feaa104c221e8979205c3698089c6fcb9486310fabf61baedee1786a1f5",
+    "standalone/proofs/decoder/verify_native.js": "91c12ff9e048ecf60d8988f8ae202d014291af385a1a54b5114e92eaea851eb9",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Frame.bend": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/ray/Masking.bend": "c129c86d11aeda8ccc417f57906ebddbf8607550e8fe6bc881df89254d235149",
+    "standalone/proofs/ray/Path.bend": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+    "standalone/proofs/ray/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba"
+  },
+  "scope": "Actual occupied decoding and pointwise abstract-square correspondence under global partition and sq<64. No abstract-board bijection, parser freshness, metadata legality or move correctness."
+}
