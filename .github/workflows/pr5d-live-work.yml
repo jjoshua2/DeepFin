@@ -26,7 +26,12 @@ jobs:
           blob=json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/git/blobs/331aa8721bedcc80657abf36435cddce151f77f2']))
           raw=base64.b64decode(blob['content'])
           Path('/tmp/pr5d-build/transferred.bin').write_bytes(raw)
-          assert hashlib.sha256(raw).hexdigest()=='372368a9ee353af04e85a1b1b0ccc290b05299ca78a01609f08fb3f2e266d2b0',hashlib.sha256(raw).hexdigest()
+          assert hashlib.sha256(raw).hexdigest()=='6d52562cc1993163fb150805669328515ae59c3d58ba9ea824a603b9faef15ff'
+          text=base64.b64encode(raw).decode()
+          assert len(text)==10444 and text[9559:9561]=='sb'
+          text=text[:9559]+'j'+text[9561:]+'='
+          raw=base64.b64decode(text,validate=True)
+          assert hashlib.sha256(raw).hexdigest()=='372368a9ee353af04e85a1b1b0ccc290b05299ca78a01609f08fb3f2e266d2b0'
           patch=gzip.decompress(raw)
           assert hashlib.sha256(patch).hexdigest()=='e6bfc1015e3dcacc2ee8e6076155a88a975d546f4a4a1924f5ccb2f5e15f228e'
           subprocess.run(['git','apply','--check','-'],input=patch,check=True)
