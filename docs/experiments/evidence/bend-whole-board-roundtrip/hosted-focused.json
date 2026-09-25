@@ -1,0 +1,177 @@
+{
+  "focused_gate": "PASS",
+  "controls_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "new_law_count": 5,
+  "universal_laws": 5,
+  "closed_laws": 0,
+  "new_laws": [
+    "whole_board_roundtrip",
+    "snapshot_has_64_squares",
+    "equal_snapshots_identify_board",
+    "empty_square_has_empty_observation",
+    "snapshot_square_correspondence"
+  ],
+  "inherited_gate_run": false,
+  "consumer": "PASS",
+  "consumer_seconds": 6.627036694,
+  "negative_controls": [
+    {
+      "name": "restore-loses-ep",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Roundtrip.bend",
+      "diagnostic_sha256": "197717ea89ca842a92610278df26e8f58e062795b152baa1cfb1480dcc3687b8",
+      "diagnostic_bytes": 1941,
+      "excerpt": "U64{U32{ql}, U32{qh}}, U64{U32{kl}, U32{kh}}, U64{U32{wl}, U32{wh}}, U64{U32{bll}, U32{blh}}, turn, rights, ep} : ../../../legal_probe/Chess.Board}\n- observed : {Spec.join(Spec.columns(32n, Spec.cells(32n, Spec.Planes{pl, nl, bl, rl, ql, kl, wl, bll})), Spec.columns(32n, Spec.cells(32n, Spec.Planes{ph, nh, bh, rh, qh, kh, wh, blh})), turn, rights, ep) == ../../../legal_probe/Chess.Board{U64{U32{pl}, U32{ph}}, U64{U32{nl}, U32{nh}}, U64{U32{bl}, U32{bh}}, U64{U32{rl}, U32{rh}}, U64{U32{ql}, U32{qh}}, U64{U32{kl}, U32{kh}}, U64{U32{wl}, U32{wh}}, U64{U32{bll}, U32{blh}}, turn, rights, ep} : ../../../legal_probe/Chess.Board}\nContext:\n- pl     : Word.Con<31n>\n- ph     : Word.Con<31n>\n- nl     : Word.Con<31n>\n- nh     : Word.Con<31n>\n- bl     : Word.Con<31n>\n- bh     : Word.Con<31n>\n- rl     : Word.Con<31n>\n- rh     : Word.Con<31n>\n- ql     : Word.Con<31n>\n- qh     : Word.Con<31n>\n- kl     : Word.Con<31n>\n- kh     : Word.Con<31n>\n- wl     : Word.Con<31n>\n- wh     : Word.Con<31n>\n- bll    : Word.Con<31n>\n- blh    : Word.Con<31n>\n- turn   : U32\n- rights : U32\n- ep     : U32\n- good   : {Bool.and(../board/Spec.words(32n, pl, nl, bl, rl, ql, kl, wl, bll), ../board/Spec.words(32n, ph, nh, bh, rh, qh, kh, wh, blh)) == True{} : Bool}\n- lo     : Spec.Planes<32n>\n- hi     : Spec.Planes<32n>\nLocation: board\n32 |       +hi: S.Planes<32n> = S.Planes{ph,nh,bh,rh,qh,kh,wh,blh}\n33>|       Equal.trans(Chess.Board,S.join(S.columns(32n,S.cells(32n,lo)),S.columns(32n,S.cells(32n,hi)),turn,rights,ep),\n34 |         S.join(lo,S.columns(32n,S.cells(32n,hi)),turn,rights,ep),S.join(lo,hi,turn,rights,ep),"
+    },
+    {
+      "name": "restore-swaps-limbs",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Roundtrip.bend",
+      "diagnostic_sha256": "2a51e9fdb77feeafcd584744a455b10967743599cb737168ac1ec5a2a5ed2b61",
+      "diagnostic_bytes": 1941,
+      "excerpt": "U64{U32{ql}, U32{qh}}, U64{U32{kl}, U32{kh}}, U64{U32{wl}, U32{wh}}, U64{U32{bll}, U32{blh}}, turn, rights, ep} : ../../../legal_probe/Chess.Board}\n- observed : {Spec.join(Spec.columns(32n, Spec.cells(32n, Spec.Planes{pl, nl, bl, rl, ql, kl, wl, bll})), Spec.columns(32n, Spec.cells(32n, Spec.Planes{ph, nh, bh, rh, qh, kh, wh, blh})), turn, rights, ep) == ../../../legal_probe/Chess.Board{U64{U32{pl}, U32{ph}}, U64{U32{nl}, U32{nh}}, U64{U32{bl}, U32{bh}}, U64{U32{rl}, U32{rh}}, U64{U32{ql}, U32{qh}}, U64{U32{kl}, U32{kh}}, U64{U32{wl}, U32{wh}}, U64{U32{bll}, U32{blh}}, turn, rights, ep} : ../../../legal_probe/Chess.Board}\nContext:\n- pl     : Word.Con<31n>\n- ph     : Word.Con<31n>\n- nl     : Word.Con<31n>\n- nh     : Word.Con<31n>\n- bl     : Word.Con<31n>\n- bh     : Word.Con<31n>\n- rl     : Word.Con<31n>\n- rh     : Word.Con<31n>\n- ql     : Word.Con<31n>\n- qh     : Word.Con<31n>\n- kl     : Word.Con<31n>\n- kh     : Word.Con<31n>\n- wl     : Word.Con<31n>\n- wh     : Word.Con<31n>\n- bll    : Word.Con<31n>\n- blh    : Word.Con<31n>\n- turn   : U32\n- rights : U32\n- ep     : U32\n- good   : {Bool.and(../board/Spec.words(32n, pl, nl, bl, rl, ql, kl, wl, bll), ../board/Spec.words(32n, ph, nh, bh, rh, qh, kh, wh, blh)) == True{} : Bool}\n- lo     : Spec.Planes<32n>\n- hi     : Spec.Planes<32n>\nLocation: board\n32 |       +hi: S.Planes<32n> = S.Planes{ph,nh,bh,rh,qh,kh,wh,blh}\n33>|       Equal.trans(Chess.Board,S.join(S.columns(32n,S.cells(32n,lo)),S.columns(32n,S.cells(32n,hi)),turn,rights,ep),\n34 |         S.join(lo,S.columns(32n,S.cells(32n,hi)),turn,rights,ep),S.join(lo,hi,turn,rights,ep),"
+    },
+    {
+      "name": "observation-erases-occupants",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Roundtrip.bend",
+      "diagnostic_sha256": "98181a171463baffd7a9f18009ee42c6ea2c71f6b58a747c13b88fba7fa114ab",
+      "diagnostic_bytes": 1445,
+      "excerpt": "Error:\n- expected : {Spec.cons(t, ../board/Spec.Row{False{}, False{}, False{}, False{}, False{}, False{}, False{}, False{}}, Spec.columns(t, Spec.cells(t, Spec.Planes{pt, nt, bt, rt, qt, kt, wt, blt}))) == Spec.Planes{WCon{p, pt}, WCon{n, nt}, WCon{b, bt}, WCon{r, rt}, WCon{q, qt}, WCon{k, kt}, WCon{w, wt}, WCon{bl, blt}} : Spec.Planes<1n+t>}\n- observed : {Spec.cons(t, ../decoder/Spec.encode(../decoder/Spec.classify(../board/Spec.Row{p, n, b, r, q, k, w, bl})), Spec.columns(t, Spec.cells(t, Spec.Planes{pt, nt, bt, rt, qt, kt, wt, blt}))) == Spec.Planes{WCon{p, pt}, WCon{n, nt}, WCon{b, bt}, WCon{r, rt}, WCon{q, qt}, WCon{k, kt}, WCon{w, wt}, WCon{bl, blt}} : Spec.Planes<1n+t>}\nContext:\n- t    : Nat\n- p    : Bool\n- pt   : Word(t)\n- n    : Bool\n- nt   : Word(t)\n- b    : Bool\n- bt   : Word(t)\n- r    : Bool\n- rt   : Word(t)\n- q    : Bool\n- qt   : Word(t)\n- k    : Bool\n- kt   : Word(t)\n- w    : Bool\n- wt   : Word(t)\n- bl   : Bool\n- blt  : Word(t)\n- good : {Bool.and(../board/Spec.row_valid(../board/Spec.Row{p, n, b, r, q, k, w, bl}), ../board/Spec.words(t, pt, nt, bt, rt, qt, kt, wt, blt)) == True{} : Bool}\n- row  : ../board/Spec.Row\n- tail : Spec.Planes<t>\nLocation: planes\n19 |           +tail: S.Planes<t> = S.Planes{pt,nt,bt,rt,qt,kt,wt,blt}\n20>|           Equal.trans(S.Planes<1n+t>,S.cons(t,D.encode(D.classify(row)),S.columns(t,S.cells(t,tail))),\n21 |             S.cons(t,row,S.columns(t,S.cells(t,tail))),S.cons(t,row,tail),"
+    },
+    {
+      "name": "restore-erases-black-plane",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Roundtrip.bend",
+      "diagnostic_sha256": "7152ac218c3ac4d6758e78ab24d68c5d4498fb2ff826b12210f6dda5b9f0208d",
+      "diagnostic_bytes": 1453,
+      "excerpt": "Error:\n- expected : {Spec.cons(t, ../decoder/Spec.encode(../decoder/Spec.classify(../board/Spec.Row{p, n, b, r, q, k, w, bl})), Spec.columns(t, Spec.cells(t, Spec.Planes{pt, nt, bt, rt, qt, kt, wt, blt}))) == Spec.Planes{WCon{p, pt}, WCon{n, nt}, WCon{b, bt}, WCon{r, rt}, WCon{q, qt}, WCon{k, kt}, WCon{w, wt}, WCon{bl, blt}} : Spec.Planes<1n+t>}\n- observed : {Spec.cons(t, ../decoder/Spec.encode(../decoder/Spec.classify(../board/Spec.Row{p, n, b, r, q, k, w, bl})), Spec.columns(t, Spec.cells(t, Spec.Planes{pt, nt, bt, rt, qt, kt, wt, blt}))) == Spec.Planes{WCon{p, pt}, WCon{n, nt}, WCon{b, bt}, WCon{r, rt}, WCon{q, qt}, WCon{k, kt}, WCon{w, wt}, WCon{False{}, blt}} : Spec.Planes<1n+t>}\nContext:\n- t    : Nat\n- p    : Bool\n- pt   : Word(t)\n- n    : Bool\n- nt   : Word(t)\n- b    : Bool\n- bt   : Word(t)\n- r    : Bool\n- rt   : Word(t)\n- q    : Bool\n- qt   : Word(t)\n- k    : Bool\n- kt   : Word(t)\n- w    : Bool\n- wt   : Word(t)\n- bl   : Bool\n- blt  : Word(t)\n- good : {Bool.and(../board/Spec.row_valid(../board/Spec.Row{p, n, b, r, q, k, w, bl}), ../board/Spec.words(t, pt, nt, bt, rt, qt, kt, wt, blt)) == True{} : Bool}\n- row  : ../board/Spec.Row\n- tail : Spec.Planes<t>\nLocation: planes\n19 |           +tail: S.Planes<t> = S.Planes{pt,nt,bt,rt,qt,kt,wt,blt}\n20>|           Equal.trans(S.Planes<1n+t>,S.cons(t,D.encode(D.classify(row)),S.columns(t,S.cells(t,tail))),\n21 |             S.cons(t,row,S.columns(t,S.cells(t,tail))),S.cons(t,row,tail),"
+    },
+    {
+      "name": "high-limb-query-loses-index",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Projection.bend",
+      "diagnostic_sha256": "78fa80006c4ce156fdc7fb36b38c3050baa080f81524ddda3cd99903b1f0d1c3",
+      "diagnostic_bytes": 4105,
+      "excerpt": "), 32n)), ../decoder/Bits.get(32n, rl, U32.to_nat(sq)), ../decoder/Bits.get(32n, rh, Nat.sub(U32.to_nat(sq), 32n))), Bool.pick(Bool, Cmp.is_lt(Nat.cmp(U32.to_nat(sq), 32n)), ../decoder/Bits.get(32n, ql, U32.to_nat(sq)), ../decoder/Bits.get(32n, qh, Nat.sub(U32.to_nat(sq), 32n))), Bool.pick(Bool, Cmp.is_lt(Nat.cmp(U32.to_nat(sq), 32n)), ../decoder/Bits.get(32n, kl, U32.to_nat(sq)), ../decoder/Bits.get(32n, kh, Nat.sub(U32.to_nat(sq), 32n))), Bool.pick(Bool, Cmp.is_lt(Nat.cmp(U32.to_nat(sq), 32n)), ../decoder/Bits.get(32n, wl, U32.to_nat(sq)), ../decoder/Bits.get(32n, wh, Nat.sub(U32.to_nat(sq), 32n))), Bool.pick(Bool, Cmp.is_lt(Nat.cmp(U32.to_nat(sq), 32n)), ../decoder/Bits.get(32n, bll, U32.to_nat(sq)), ../decoder/Bits.get(32n, blh, Nat.sub(U32.to_nat(sq), 32n)))}) : ../decoder/Spec.Cell}\nContext:\n- pl     : Word.Con<31n>\n- ph     : Word.Con<31n>\n- nl     : Word.Con<31n>\n- nh     : Word.Con<31n>\n- bl     : Word.Con<31n>\n- bh     : Word.Con<31n>\n- rl     : Word.Con<31n>\n- rh     : Word.Con<31n>\n- ql     : Word.Con<31n>\n- qh     : Word.Con<31n>\n- kl     : Word.Con<31n>\n- kh     : Word.Con<31n>\n- wl     : Word.Con<31n>\n- wh     : Word.Con<31n>\n- bll    : Word.Con<31n>\n- blh    : Word.Con<31n>\n- turn   : U32\n- rights : U32\n- ep     : U32\n- sq     : U32\nLocation: structural\n48 |     case Chess.Board{U64{U32{pl},U32{ph}},U64{U32{nl},U32{nh}},U64{U32{bl},U32{bh}},U64{U32{rl},U32{rh}},U64{U32{ql},U32{qh}},U64{U32{kl},U32{kh}},U64{U32{wl},U32{wh}},U64{U32{bll},U32{blh}},turn,rights,ep}:\n49>|       combine(S.Planes{pl,nl,bl,rl,ql,kl,wl,bll},S.Planes{ph,nh,bh,rh,qh,kh,wh,blh},sq)\n50 |"
+    },
+    {
+      "name": "wrong-snapshot-length",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "PROOF.bend",
+      "diagnostic_sha256": "0bdb1774ab758509731c494063bc7cc6f94c89e037310f302cd2d4fba5176eec",
+      "diagnostic_bytes": 476,
+      "excerpt": "Error:\n- expected : {Spec.lengths(Spec.observe(b)) == (31n, 32n) : Sigma<&1, &1, Nat, _ => Nat>}\n- observed : {Spec.lengths(Spec.observe(b)) == (32n, 32n) : Sigma<&1, &1, Nat, _ => Nat>}\nContext:\n- b : ../../../legal_probe/Chess.Board\nLocation: LAWS.snapshot_has_64_squares\n7 | def Laws.whole_board_roundtrip(b,good): R.board(b,good)\n8>| def Laws.snapshot_has_64_squares(b): P.lengths(b)\n9 | def Laws.equal_snapshots_identify_board(a,b,ga,gb,same): P.injective(a,b,ga,gb,same)"
+    },
+    {
+      "name": "inconsistent-board-excluded",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "consumer.bend",
+      "diagnostic_sha256": "6b4040a9fc865365170b7100d2f6424aa100a7b84fec6263ae31343c71c99cc3",
+      "diagnostic_bytes": 282,
+      "excerpt": "Error:\n- expected : False{}\n- observed : True{}\nLocation: negative_collision\n47 |     Position.put(0,True{},0,Position.put(1,False{},0,Position.empty())) : Chess.Board}:\n48>|   Laws.whole_board_roundtrip(Position.put(0,True{},0,Position.put(1,False{},0,Position.empty())),{==})\n49 |"
+    },
+    {
+      "name": "occupied-square-not-empty",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "consumer.bend",
+      "diagnostic_sha256": "499f29b5b95176222b2b2dc5a3a62b2f0442a01353cea09693c1f8c138937b10",
+      "diagnostic_bytes": 278,
+      "excerpt": "Error:\n- expected : True{}\n- observed : False{}\nLocation: negative_present\n46 |   {D.row(Position.put(0,True{},0,Position.empty()),0) == D.encode(D.Empty{}) : B.Row}:\n47>|   Laws.empty_square_has_empty_observation(Position.put(0,True{},0,Position.empty()),0,{==},{==},{==})\n48 |"
+    },
+    {
+      "name": "missing-law",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-laws-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-consumer-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "hole",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "foreign-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "symlink",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe-warning-zero-exit",
+      "rejected": true,
+      "kind": "synthetic exact-output unit, not compiler execution"
+    }
+  ],
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/abstraction/LAWS.bend": "b307ce8d235d71bcf152f9b81cf048c167043e70b3014a4db184b7dce2280769",
+    "standalone/proofs/abstraction/PROOF.bend": "f6f332e6f9979609044e1106a542b4fd05c6300a4da8326a634289bf29e8c99c",
+    "standalone/proofs/abstraction/Projection.bend": "202b6973d47aa937743f3615c6282dbfd591a2eec0b67d9df8242979c06585e9",
+    "standalone/proofs/abstraction/Properties.bend": "72f9dbc3e94a82bf0cc889d26c5b066ca36fe638228e324b4f0acb03bd7d622c",
+    "standalone/proofs/abstraction/Roundtrip.bend": "ae3a5563fd68c6315603f32869e61167ba3e421c187741907ad6f2fa2ebf0e11",
+    "standalone/proofs/abstraction/Spec.bend": "418bc772a8d8d650b6a266f9d1bcee7ac19571f9efb2c3d7422fb731b9a26880",
+    "standalone/proofs/abstraction/consumer.bend": "4c6ff01a7961dfa21b0dbf233e9628cd5eeb23abd4b626aa11c57fbce029aa35",
+    "standalone/proofs/abstraction/focused.js": "fb1211322d5732b259a29f8d2098ab5583ec124893621886b5965302398b14e0",
+    "standalone/proofs/abstraction/probe.bend": "45aa9549466c051c82bb4f26099ed6aa5a5ebabda66a0a5b5a69c14a7299571c",
+    "standalone/proofs/abstraction/verify.js": "762243484a5ff05e0ea65079584bc6367d15b527563965a828016b220330b0a0",
+    "standalone/proofs/abstraction/verify_native.js": "e760a8f0cf3a3133b9dac776c07afb1e53a90401d0ca3e7f097c3fc13787e834",
+    "standalone/proofs/board/Actual.bend": "c27ac87812368df1f565cfd2f0406a28ceaf212f4f1cd93d9e3c0f4f28ac4b5b",
+    "standalone/proofs/board/LAWS.bend": "d4e846830b6b2cb244ad3b2f3a6bc33e50132f71cd79b083824efc1c2fd42f21",
+    "standalone/proofs/board/PROOF.bend": "e1072ffc1f8eab14a9d3fa40fe37e65daf3e7c193512a433465b0e402cd2a5d8",
+    "standalone/proofs/board/Rows.bend": "5a03bfbd266f4ef984127a86a9007a5e73a79e135a43acc6e90ce47bb831a342",
+    "standalone/proofs/board/Spec.bend": "d0e60648dc7a0b803fa715c05c53ad92274657995a994996470afb7fc45f581a",
+    "standalone/proofs/board/Words.bend": "614c05950398a65d56d5c4953882ec3c7952236b71029624ccabc5db2bd94fff",
+    "standalone/proofs/decoder/Actual.bend": "56595c88c5b7221180bb14566e8c1967bca2ae58cb79c32ecefa50eabf630ed1",
+    "standalone/proofs/decoder/Bits.bend": "62b0794004f4fcc5f4bf5d02e927fc5737d6644c436313ed6ee381a8821272be",
+    "standalone/proofs/decoder/LAWS.bend": "4ddf158a55e2cd2877c1e656c94efdafc2533ae1ff7e1474bf7e1ad0bffd0195",
+    "standalone/proofs/decoder/PROOF.bend": "8d76163564e4a3a6bfd55917bb9be633f5501a74028713a6cdd21e990f486439",
+    "standalone/proofs/decoder/Projection.bend": "623e1f3f485daf95246fb6b52874e6cdffa47177ee186ebee33124ce8f5d2969",
+    "standalone/proofs/decoder/Rows.bend": "f28ecf1a0ca33b1d71bfa7be49dffd1b44cd4219552cdbd7d0faa99c3446f7bc",
+    "standalone/proofs/decoder/Spec.bend": "8e7344575af88a4dcdfcbf4f0a5eda7ab34ec79bd870c27a1c96ed4688e7bcf9",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Frame.bend": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/ray/Masking.bend": "c129c86d11aeda8ccc417f57906ebddbf8607550e8fe6bc881df89254d235149",
+    "standalone/proofs/ray/Path.bend": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+    "standalone/proofs/ray/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba"
+  },
+  "scope": "Lossless whole-board snapshot under partition consistency, actual-square order, injectivity and the reconciled empty-square observation. Not unrestricted Snapshot bijection, parser, legal positions or native lowering of structural snapshot functions."
+}

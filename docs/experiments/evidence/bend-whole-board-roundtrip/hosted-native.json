@@ -1,0 +1,76 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "boards_per_mode": 1026,
+  "squares_per_mode": 65664,
+  "output_fields_per_mode": 150822,
+  "cases": {
+    "fresh_insert": 768,
+    "random_board": 192,
+    "metadata": 64,
+    "empty": 1,
+    "initial": 1
+  },
+  "modes": [
+    {
+      "mode": "generic",
+      "boards": 1026,
+      "square_observations": 65664,
+      "output_fields": 150822,
+      "invalid_rejections": 9,
+      "output_sha256": "a526c6665281eb36cd6ed1d07bccf22b96c6f8db726ee6c1789b4361b8e28a40"
+    },
+    {
+      "mode": "portable",
+      "boards": 1026,
+      "square_observations": 65664,
+      "output_fields": 150822,
+      "invalid_rejections": 9,
+      "output_sha256": "a526c6665281eb36cd6ed1d07bccf22b96c6f8db726ee6c1789b4361b8e28a40"
+    },
+    {
+      "mode": "native",
+      "boards": 1026,
+      "square_observations": 65664,
+      "output_fields": 150822,
+      "invalid_rejections": 9,
+      "output_sha256": "a526c6665281eb36cd6ed1d07bccf22b96c6f8db726ee6c1789b4361b8e28a40"
+    },
+    {
+      "mode": "ubsan",
+      "boards": 1026,
+      "square_observations": 65664,
+      "output_fields": 150822,
+      "invalid_rejections": 9,
+      "output_sha256": "a526c6665281eb36cd6ed1d07bccf22b96c6f8db726ee6c1789b4361b8e28a40"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "actual-wrong-pawn-tag",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "diagnostic": "row 0, field 19: fresh_insert\n\n1 !== 0\n"
+    },
+    {
+      "name": "skipped-observation-square",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "diagnostic": "row 0, field 21: fresh_insert\n\n5 !== 1\n"
+    }
+  ],
+  "source_sha256s": {
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/proofs/abstraction/probe.bend": "45aa9549466c051c82bb4f26099ed6aa5a5ebabda66a0a5b5a69c14a7299571c",
+    "standalone/proofs/abstraction/verify_native.js": "e760a8f0cf3a3133b9dac776c07afb1e53a90401d0ca3e7f097c3fc13787e834"
+  },
+  "fixture_sha256": "f1aa3223b7dbd26bf0e197349029ebc30cf85ca9a26b7dd729b396687c843cfd",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "bun": "1.4.2",
+  "scope": "Actual Board operations and all64 guarded decoder observations, externally reconstructed against independent square arrays. Structural Spec.observe/restore are source-proved but not lowered/executed here; their direct probe hits the pinned compiler arity limit. No unrestricted snapshot bijection, parser freshness, move legality or perft claim."
+}
