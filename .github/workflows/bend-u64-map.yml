@@ -76,6 +76,10 @@ jobs:
         run: |
           . .venv/bin/activate
           python -m native.bend_engine.u64_map_probe.position_index --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --bun bun --cc clang-18 --output artifacts/u64-map-position-index --chess
+      - name: Full structural-record capacity and bounded collision chains
+        run: |
+          . .venv/bin/activate
+          python -m native.bend_engine.u64_map_probe.position_scale --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --bun bun --cc clang-18 --output artifacts/u64-map-position-scale
       - name: Full 32768-entry map and registry regression
         run: |
           . .venv/bin/activate
@@ -143,4 +147,7 @@ jobs:
             artifacts/u64-map-board-index/*.json
             artifacts/u64-map-board-index/*.stdout
             artifacts/u64-map-board-index/*.stderr
+            artifacts/u64-map-position-scale/*.json
+            artifacts/u64-map-position-scale/*.stdout
+            artifacts/u64-map-position-scale/*.stderr
           retention-days: 30
