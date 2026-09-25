@@ -26,7 +26,7 @@ def test_collision_records_consume_capacity_and_known_still_works() -> None:
 
 @pytest.mark.parametrize('field', range(11))
 def test_each_canonical_field_is_part_of_identity(field: int) -> None:
-    other = list(ZERO)
+    other: list[int] = list(ZERO)
     other[field] ^= (1 << 63) if field < 8 else 1
     case = p.replay('field', [(7, ZERO), (7, tuple(other))])
     assert p.expected(case).endswith('g 8 value 1 size 2\ng 9 value 0 size 2\nend 2\n')

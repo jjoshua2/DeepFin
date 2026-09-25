@@ -91,9 +91,9 @@ def fixtures() -> list[Case]:
     cases = [Case(f'constructor-{n}', n, []) for n in (*range(18), MASK)]
     zero: Identity = (0,) * 8 + (1, 0, 64)
     # These are field-sensitivity vectors, not claims that each is a legal board.
-    changed = [zero]
+    changed: list[Identity] = [zero]
     for field in range(11):
-        item = list(zero)
+        item: list[int] = list(zero)
         item[field] ^= (1 << 63) if field < 8 else 1
         changed.append(tuple(item))
     cases.append(replay('every-field-same-hash', [(0, p) for p in changed]))
