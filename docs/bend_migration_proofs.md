@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest public FEN result composition
+
+Hosted run **36156151454** passes all three public FEN laws, importing consumer and closed output witnesses, all17 classified controls, four native modes and three actual-code mutations, original compiler source/pin checks and unchanged repository lint on source `03400daf45e56591f0f4e34a26024515c318514a`.
+
+The three fen contracts reuse published frontier consistency and actual validators. The universal optional-result theorem covers the real six-field Position.fen entry point; a second rejects failed placements; a third constructs the exact full Game from successful actual field values and bounds. The third is conditional on those validator-result certificates, not a claim to independent lexical correctness. None remains permitted by the consistency theorem, with accepted-output witnesses and differential tests separately ruling out trivial behavior.
+
+The saved five-law freshness implementation remains preserved; no duplicate frontier is added. Exact-source parent141/401 plus newly executed3/17 gives modular144/418, not a fresh complete aggregate. The current source/control and native reports agree with the final local candidate, and hosted repository lint passes. See [the readout](experiments/2026-09-25-bend-fen-results.md). Exact parsed contents, removal/move invariants, metadata legality and reachability remain separate. No application responsibility moved from Python.
+
 ## Latest P3 initialized parser frontier
 
 Qualification combines the passed four-law/17-control source gate from run36150116903 with fresh native/compiler/lint success in recovery run36150660570, both on exact source tree efa431703a1d47208655595f816a3008d0c4a27a. Published source commit: `be5afc6308d159d52f42b2fcccb59a9c20109b4c`.

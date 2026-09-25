@@ -1,0 +1,23 @@
+{
+  "qualification": "PASS",
+  "run": "36156151454",
+  "source": "03400daf45e56591f0f4e34a26024515c318514a",
+  "source_tree": "cfad9dba716074a8afd1fcdacc3131bdc6ab0be2",
+  "new_laws": 3,
+  "new_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 4,
+    "actual implementation closed-output witness": 4,
+    "manifest/import policy": 8,
+    "synthetic exact-output unit, not compiler execution": 1
+  },
+  "retained_parent_laws": 141,
+  "retained_parent_controls": 401,
+  "modular_laws": 144,
+  "modular_controls": 418,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 456,
+  "focused_matches_local_except_consumer_seconds": true,
+  "native_matches_local_except_cc": true,
+  "independent_review": false
+}

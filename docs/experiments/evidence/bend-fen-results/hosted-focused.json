@@ -1,0 +1,186 @@
+{
+  "focused_gate": "PASS",
+  "controls_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "new_law_count": 3,
+  "universal_laws": 3,
+  "closed_laws": 0,
+  "new_laws": [
+    "fen_result_is_consistent",
+    "rejected_placement_rejects_fen",
+    "validated_fields_construct_exact_game"
+  ],
+  "inherited_gate_run": false,
+  "consumer": "PASS",
+  "consumer_seconds": 16.59026394,
+  "negative_controls": [
+    {
+      "name": "actual-fabricated-color-only-board",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Consistency.bend",
+      "diagnostic_sha256": "1bc92d70f74572933c5789cd09e828075f5acdf392f8610f79ee559ac5db66c1",
+      "diagnostic_bytes": 3297,
+      "excerpt": "hess.Board{U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, 1, 0, 64}, 0, 7, True{}})), b => Maybe.bind(&2, U32, ../../Position.Game, ../../Text.only(Bool.or(String.eq.fin(String.cmp(turn, \"w\")), String.eq.fin(String.cmp(turn, \"b\"))), Bool.to_u32(String.eq.fin(String.cmp(turn, \"w\")))), t => Maybe.bind(&2, U32, ../../Position.Game, ../../Position.rights_dash(String.eq.fin(String.cmp(castle, \"-\")), castle), r => Maybe.bind(&2, U32, ../../Position.Game, ../../Position.ep_dash(String.eq.fin(String.cmp(target, \"-\")), target), e => Maybe.bind(&2, U32, ../../Position.Game, ../../Text.number_go(half, 0, Bool.not(String.is_empty(half))), h0 => Maybe.bind(&2, U32, ../../Position.Game, ../../Text.only(Cmp.is_le(U32.cmp(h0, 1000000)), h0), h => Maybe.bind(&2, U32, ../../Position.Game, ../../Text.number_go(full, 0, Bool.not(String.is_empty(full))), f0 => Maybe.bind(&2, U32, ../../Position.Game, ../../Text.only(Cmp.is_gt(U32.cmp(f0, 0)), f0), f1 => Maybe.bind(&2, U32, ../../Position.Game, ../../Text.only(Cmp.is_le(U32.cmp(f1, 1000000)), f1), f => Some{../../Position.Game{../../Position.metadata(b, t, r, e), h, f, []}})))))))))) == True{} : Bool}\nContext:\n- pieces : String\n- turn   : String\n- castle : String\n- target : String\n- half   : String\n- full   : String\nLocation: actual\n43 |   {S.game_consistent(Position.fen(pieces,turn,castle,target,half,full)) == True{} : Bool}:\n44>|   from_layout(Position.layout_result(Position.layout(pieces,Frontier.initial())),turn,castle,target,half,full,FrontierLaws.accepted_placement_has_consistent_board(pieces))\n45 |"
+    },
+    {
+      "name": "actual-swapped-clocks",
+      "rejected": true,
+      "kind": "actual implementation closed-output witness",
+      "entry": "Witness.bend",
+      "diagnostic_sha256": "d1b5ff98fbd2737b7c6d4e60816b8019955017a31b82745dc1b09d2ffb27e201",
+      "diagnostic_bytes": 570,
+      "excerpt": "Error:\n- expected : Some{../../Position.Game{../../../legal_probe/Chess.Board{U64{0, 16777216}, U64{128, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 16777216}, U64{128, 0}, 0, 9, 63}, 42, 17, []}}\n- observed : Some{../../Position.Game{../../../legal_probe/Chess.Board{U64{0, 16777216}, U64{128, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 16777216}, U64{128, 0}, 0, 9, 63}, 17, 42, []}}\nLocation: nonempty_exact\n7 |     Some{P.Game{P.metadata(P.put(1,False{},7,P.put(0,True{},56,P.empty())),0,9,63),17,42,Nil{}}} : Maybe<&2,P.Game>}:\n8>|   {==}\n9 |"
+    },
+    {
+      "name": "actual-shifted-ep-field",
+      "rejected": true,
+      "kind": "actual implementation closed-output witness",
+      "entry": "Witness.bend",
+      "diagnostic_sha256": "203abee3272eb88c655185f7ee7a856f63b9eb3a5a3ab1c2f4faa2a50f562972",
+      "diagnostic_bytes": 570,
+      "excerpt": "Error:\n- expected : Some{../../Position.Game{../../../legal_probe/Chess.Board{U64{0, 16777216}, U64{128, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 16777216}, U64{128, 0}, 0, 9, 64}, 17, 42, []}}\n- observed : Some{../../Position.Game{../../../legal_probe/Chess.Board{U64{0, 16777216}, U64{128, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 16777216}, U64{128, 0}, 0, 9, 63}, 17, 42, []}}\nLocation: nonempty_exact\n7 |     Some{P.Game{P.metadata(P.put(1,False{},7,P.put(0,True{},56,P.empty())),0,9,63),17,42,Nil{}}} : Maybe<&2,P.Game>}:\n8>|   {==}\n9 |"
+    },
+    {
+      "name": "actual-always-rejects",
+      "rejected": true,
+      "kind": "actual implementation closed-output witness",
+      "entry": "Witness.bend",
+      "diagnostic_sha256": "2f11520de1e7b9ed0d2b992a0229d220bbee10e00b4329110f928893aacadf4f",
+      "diagnostic_bytes": 389,
+      "excerpt": "Error:\n- expected : None{}\n- observed : Some{../../Position.Game{../../../legal_probe/Chess.Board{U64{0, 16777216}, U64{128, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 16777216}, U64{128, 0}, 0, 9, 63}, 17, 42, []}}\nLocation: nonempty_exact\n7 |     Some{P.Game{P.metadata(P.put(1,False{},7,P.put(0,True{},56,P.empty())),0,9,63),17,42,Nil{}}} : Maybe<&2,P.Game>}:\n8>|   {==}\n9 |"
+    },
+    {
+      "name": "actual-ignores-placement-rejection",
+      "rejected": true,
+      "kind": "actual implementation closed-output witness",
+      "entry": "Witness.bend",
+      "diagnostic_sha256": "0dc828eebd92498ef9a66b6a37d8c35ac5ae51fde7a382e091af74630b79f05b",
+      "diagnostic_bytes": 552,
+      "excerpt": "Error:\n- expected : Some{../../Position.Game{../../../legal_probe/Chess.Board{U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, 0, 9, 63}, 17, 42, []}}\n- observed : Some{../../Position.Game{../../../legal_probe/Chess.Board{U64{0, 16777216}, U64{128, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 16777216}, U64{128, 0}, 0, 9, 63}, 17, 42, []}}\nLocation: nonempty_exact\n7 |     Some{P.Game{P.metadata(P.put(1,False{},7,P.put(0,True{},56,P.empty())),0,9,63),17,42,Nil{}}} : Maybe<&2,P.Game>}:\n8>|   {==}\n9 |"
+    },
+    {
+      "name": "admit-clock-over-limit",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Assembly.bend",
+      "diagnostic_sha256": "9cc7fee2bd03a65fc656187963079abee626fa1f12536326b41e3e937fde132f",
+      "diagnostic_bytes": 374,
+      "excerpt": "Error:\n- expected : {Cmp.is_le(U32.cmp(n, 1000000)) == True{} : Bool}\n- observed : {Cmp.is_le(U32.cmp(n, 1000001)) == True{} : Bool}\nContext:\n- n  : U32\n- ok : {Cmp.is_le(U32.cmp(n, 1000001)) == True{} : Bool}\nLocation: bounded\n25 |   {Text.bounded(n) == Some{n} : Maybe<&2,U32>}:\n26>|   Equal.cong(Bool,Maybe<&2,U32>,b => Text.only(b,n),U32.is_le(n,1000000),True{},ok)\n27 |"
+    },
+    {
+      "name": "admit-zero-fullmove",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Assembly.bend",
+      "diagnostic_sha256": "03ca44272f973aeddfb92b3d94fde043461799bc1caccbd6d9f6529128905fa3",
+      "diagnostic_bytes": 316,
+      "excerpt": "Error:\n- expected : {Cmp.is_gt(U32.cmp(n, 0)) == True{} : Bool}\n- observed : {True{} == True{} : Bool}\nContext:\n- n  : U32\n- ok : {True{} == True{} : Bool}\nLocation: positive\n29 |   {Text.positive(n) == Some{n} : Maybe<&2,U32>}:\n30>|   Equal.cong(Bool,Maybe<&2,U32>,b => Text.only(b,n),U32.is_gt(n,0),True{},ok)\n31 |"
+    },
+    {
+      "name": "omit-placement-rejection-premise",
+      "rejected": true,
+      "kind": "source semantic/refinement",
+      "entry": "Assembly.bend",
+      "diagnostic_sha256": "a8f8631812529c556eb9c30eb4911bd8437e6a056b88e03f041169afe8822ace",
+      "diagnostic_bytes": 722,
+      "excerpt": "Error:\n- expected : {../../Position.layout_result(../../Position.layout(pieces, ../../Position.Layout{../../../legal_probe/Chess.Board{U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, U64{0, 0}, 1, 0, 64}, 0, 7, True{}})) == None{} : Maybe<&2, ../../../legal_probe/Chess.Board>}\n- observed : {True{} == True{} : Bool}\nContext:\n- pieces : String\n- turn   : String\n- castle : String\n- target : String\n- half   : String\n- full   : String\n- no     : {True{} == True{} : Bool}\nLocation: rejected\n21 |     Equal.cong(Maybe<&2,Chess.Board>,Maybe<&2,P.Game>,m => assemble(m,P.side(turn),P.rights(castle),P.ep(target),Text.number(half),Text.number(full)),\n22>|       S.placement(pieces),None{},no))\n23 |"
+    },
+    {
+      "name": "missing-law",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-laws-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "missing-consumer-proof",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "hole",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "foreign-import",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "symlink",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe",
+      "rejected": true,
+      "kind": "manifest/import policy"
+    },
+    {
+      "name": "unsafe-warning-zero-exit",
+      "rejected": true,
+      "kind": "synthetic exact-output unit, not compiler execution"
+    }
+  ],
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/board/Actual.bend": "c27ac87812368df1f565cfd2f0406a28ceaf212f4f1cd93d9e3c0f4f28ac4b5b",
+    "standalone/proofs/board/Rows.bend": "5a03bfbd266f4ef984127a86a9007a5e73a79e135a43acc6e90ce47bb831a342",
+    "standalone/proofs/board/Spec.bend": "d0e60648dc7a0b803fa715c05c53ad92274657995a994996470afb7fc45f581a",
+    "standalone/proofs/board/Words.bend": "614c05950398a65d56d5c4953882ec3c7952236b71029624ccabc5db2bd94fff",
+    "standalone/proofs/fen/Assembly.bend": "2e1ae05e8a4b2ddfeabb354f1b6e731b7d173c71f490ff4dca8cb943ff27dcf6",
+    "standalone/proofs/fen/Consistency.bend": "9817c100effd6146fb57c59c23d0991b4d4f96fc7c8d344793daf97013558390",
+    "standalone/proofs/fen/LAWS.bend": "3ae0eb8d277e63c7c8b6f4fef7154e50b55b82f6dc4cdc6cf679b74b941ae792",
+    "standalone/proofs/fen/PROOF.bend": "9668c657bc39e92dece98b3563b5b8a6765bdd4af94b4bea7556c31d5fac91e8",
+    "standalone/proofs/fen/Spec.bend": "4674498a4d0534cfc5fd4d7e6205e0fc8907d0d2822fe78fe963ea220850db46",
+    "standalone/proofs/fen/Witness.bend": "0c510a7d771e2027be1740385522b474736f3654cceee180b02815b071fbd126",
+    "standalone/proofs/fen/consumer.bend": "089813ade8c91426ec52638912aeb8236aaab048dc324d9c6929c25c9d0c494a",
+    "standalone/proofs/fen/focused.js": "37ae2bd4a00f94582e7c0d9ea3e65b9b0cbeca4baeb48b81485036e52c95f0c5",
+    "standalone/proofs/fen/probe.bend": "a2108d5afaf5b3232069be3435e75dce6a08b2cc7c5004b4ed1535ba5dca2492",
+    "standalone/proofs/fen/verify.js": "3ffddd38000df34d1ce991a46d21b44b129ab2dc57cc6527f7be1400c0c8bd47",
+    "standalone/proofs/fen/verify_native.js": "56f2ebcdcfc30375c9f3de3ef9d3148e08eab71f112e4b90a62cd00e86123079",
+    "standalone/proofs/frontier/Facts.bend": "879bcde609fea05dc2a7c5f9cb2234f10b771575f763c901ebf4483861f221f3",
+    "standalone/proofs/frontier/Finite.bend": "26a7aefbab457d3867891d981c803793d69a83dc4fb5be63633168ffd16cb741",
+    "standalone/proofs/frontier/Fresh.bend": "07f05151e45773bce16d2e0166dc890c07bae420354b8bbb7ededcb238d88b84",
+    "standalone/proofs/frontier/LAWS.bend": "e9848138f5bb6838fce303eb95a12b71066503337526655ab4090afffe8f5654",
+    "standalone/proofs/frontier/Logic.bend": "ef30fdd870560f6763e7311e7255461182594f38c6ac5dd768905db3f22fb5af",
+    "standalone/proofs/frontier/PROOF.bend": "d76350ef932861a9bb9406c58ab989daf9dc3f37c3f7bd6bd1222ff1cc8b5ac0",
+    "standalone/proofs/frontier/Spec.bend": "f42a7ccb9f8c590a763a2e22e784d1c69463adb477cd4776a2d7e5fa188553a7",
+    "standalone/proofs/frontier/Step.bend": "ed1183427707b7e802e77c36b5a435e1c13f06cee97ded9f2a18a6682f9c8cec",
+    "standalone/proofs/frontier/Traversal.bend": "85028147f90661acd5954eba47a96b380ee542a77286c91881dbf1d06da326d4",
+    "standalone/proofs/index/Bits.bend": "1fe9e204243efe2e651e14ec3db15f2ea2141ee7febf639fb0a7a8e4b5bc8afb",
+    "standalone/proofs/layout/Domain.bend": "5acad280e9df6975f63fa0fe51c18c08cb4f5ae9296c89a7e10673d5fa2e87b6",
+    "standalone/proofs/normalization/Compare.bend": "620a62659f35af28a0490d45dfd0dd65f1b4b0ee9209b3c9d0469936c9790ea3",
+    "standalone/proofs/parser/Actual.bend": "6ecd682ed5251bd8460b525468ae1cd5ce197a7045bd6fd989fae15ba6d0ed5f",
+    "standalone/proofs/parser/Dispatch.bend": "c816149eca41922abeaaa362035662d3f338d373b4e7e2d7cb8c7c21a72d999a",
+    "standalone/proofs/parser/Spec.bend": "751ddbe447eb3efe23b4cbe97705ce18d64676b41a355c9b56adb39ac0afea03",
+    "standalone/proofs/parser/Typed.bend": "88130545081b254ef582c798f77e22e9daafb8aaeb5970687775b3967dd95726",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Frame.bend": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/ray/Masking.bend": "c129c86d11aeda8ccc417f57906ebddbf8607550e8fe6bc881df89254d235149",
+    "standalone/proofs/ray/Path.bend": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+    "standalone/proofs/ray/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/relative/Add.bend": "b5e7f37a125544e771e85f54f224c26d878db3fce74dcac9065ec0a971717ee8",
+    "standalone/proofs/relative/Order.bend": "23e25537703c789312c334acbeb7f8096be575b4d517e67ffc39735f2b175646",
+    "standalone/proofs/successor/Borrow.bend": "55527289635c5191bb7857d123c67e6ccc4438d75bc16337e5318b2513302180",
+    "standalone/proofs/successor/Value.bend": "8e97a14a3659bda32dc061ae458338827d66b60dbb5749c71e2f3300140ceccf",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba"
+  },
+  "scope": "Actual optional FEN results have consistent Boards; failed placements are rejected; validated actual field values construct the exact complete Game. Not independent lexical completeness, exact placement contents or legal reachability."
+}

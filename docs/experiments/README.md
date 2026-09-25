@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Public FEN result contracts](2026-09-25-bend-fen-results.md) | Actual returned-board consistency, failed-placement rejection and exact validated Game construction; modular144/418; independent grammar and legality remain separate |
 | [Accepted parser frontiers](2026-09-25-bend-parser-frontier.md) | Four actual-source laws derive fresh bounded insertion and accepted-placement consistency; modular141/401 with separate exact-source compiler recovery |
 | [Parser prefix safety](2026-09-25-bend-parser-prefix-safety.md) | Five actual placement-parser laws for prefix composition, sticky invalidity, metadata and typed transitions; modular137/384; parser-wide freshness and full FEN validity remain open |
 | [Whole-board reconstruction](2026-09-24-bend-whole-board-roundtrip.md) | Five source contracts for lossless Board snapshots, coordinate order and injectivity; actual decoder native checks; structural snapshot lowering remains unqualified; modular132/367 |

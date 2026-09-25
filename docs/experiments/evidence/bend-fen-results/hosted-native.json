@@ -1,0 +1,91 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "fen_cases": 1257,
+  "fen_accepted": 1071,
+  "fen_rejected": 186,
+  "numeric_output_fields": 24819,
+  "single_piece_cases": 768,
+  "rights_permutations": 64,
+  "ep_coordinates": 64,
+  "categories": {
+    "exact_fields": 1,
+    "initials": 3,
+    "single_piece": 768,
+    "mixed": 128,
+    "rights_permutations": 64,
+    "ep_coordinates": 64,
+    "clock_bounds": 30,
+    "bad_placement": 16,
+    "character_boundary": 131,
+    "bad_field_1": 8,
+    "bad_field_2": 11,
+    "bad_field_3": 9,
+    "bad_field_4": 12,
+    "bad_field_5": 12
+  },
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 1257,
+      "invalid_rejections": 8,
+      "output_sha256": "15204a8413a136d4b5ed86dcaf0b444611b9e1e3c603582cddc5126e88b63878"
+    },
+    {
+      "mode": "portable",
+      "rows": 1257,
+      "invalid_rejections": 8,
+      "output_sha256": "15204a8413a136d4b5ed86dcaf0b444611b9e1e3c603582cddc5126e88b63878"
+    },
+    {
+      "mode": "native",
+      "rows": 1257,
+      "invalid_rejections": 8,
+      "output_sha256": "15204a8413a136d4b5ed86dcaf0b444611b9e1e3c603582cddc5126e88b63878"
+    },
+    {
+      "mode": "ubsan",
+      "rows": 1257,
+      "invalid_rejections": 8,
+      "output_sha256": "15204a8413a136d4b5ed86dcaf0b444611b9e1e3c603582cddc5126e88b63878"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "lost-halfmove-clock",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "diagnostic": "FEN row 0\n+ actual - expected\n\n+ 'F 1 16777216 0 0 128 0 0 0 0 0 0 0 0 16777216 0 0 128 0 9 63 0 42 0'\n- 'F 1 16777216 0 0 128 0 0 0 0 0 0 0 0 16777216 0 0 128 0 9 63 17 42 0'\n",
+      "scope": "First generic-mode full-Game disagreement; later corrupted modes not run"
+    },
+    {
+      "name": "ignored-placement-failure",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "diagnostic": "FEN row 1062\n+ actual - expected\n\n+ 'F 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 64 0 1 0'\n- 'F 0'\n     ^\n",
+      "scope": "First generic-mode full-Game disagreement; later corrupted modes not run"
+    },
+    {
+      "name": "fabricated-inconsistent-board",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "diagnostic": "FEN row 0\n+ actual - expected\n\n+ 'F 1 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 9 63 17 42 0'\n- 'F 1 16777216 0 0 128 0 0 0 0 0 0 0 0 16777216 0 0 128 0 9 63 17 42 0'\n",
+      "scope": "First generic-mode full-Game disagreement; later corrupted modes not run"
+    }
+  ],
+  "fixture_sha256": "9fd5b6892d4be3c9f263e178dd0474442edd712255a6be1a86b5f42799eac339",
+  "source_sha256s": {
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/proofs/fen/probe.bend": "a2108d5afaf5b3232069be3435e75dce6a08b2cc7c5004b4ed1535ba5dca2492",
+    "standalone/proofs/fen/verify_native.js": "56f2ebcdcfc30375c9f3de3ef9d3148e08eab71f112e4b90a62cd00e86123079"
+  },
+  "native_domain": "Six raw Unicode strings, no embedded NUL, total length<=1024, at most64 rows per invocation.",
+  "oracle": "Independent rank-token grammar, 64-square typed-array board, castling-set and coordinate grammar, BigInt decimal bounds; complete Board/clock/history-length outputs.",
+  "scope": "Actual public FEN sampled acceptance and complete returned fields; not universal grammar completeness, exact placement theorem, semantic metadata legality or reachability. No proof code in candidate. Modes repeat fixtures.",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)"
+}

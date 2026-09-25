@@ -1,0 +1,12 @@
+{
+  "selected": "/usr/bin/clang",
+  "attempts": [
+    {
+      "compiler": "/usr/bin/clang",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "suppressed_warnings": false
+}
