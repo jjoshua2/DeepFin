@@ -1,0 +1,214 @@
+name: Parser frontier host-compiler recovery
+'on':
+  push:
+    branches: [feat/bend-parser-frontier-dev-20260925]
+    paths: [.github/workflows/bend-parser-frontier-recovery.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: c3f9dd30cf58c90f91dbac6a7f74ec0d8ee18241
+      TARGET: feat/bend-parser-frontier-20260925
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c3f9dd30cf58c90f91dbac6a7f74ec0d8ee18241
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover the exact source and passed proof receipts from the failed native run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/frontier-recovery"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          gh api repos/jjoshua2/DeepFin/actions/artifacts/10870783483/zip > "$RUNNER_TEMP/first.zip"
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108120960214 > "$EVIDENCE/first-job.json"
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess,zipfile
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);t=Path(os.environ['RUNNER_TEMP'])
+          raw=(t/'first.zip').read_bytes()
+          assert hashlib.sha256(raw).hexdigest()=='f91ff0c2ab7fa7bdba0dbd7b04124821dc7373e480c1e68fc6b46bad5847a664'
+          with zipfile.ZipFile(t/'first.zip') as z:
+              for item in z.infolist():
+                  p=Path(item.filename)
+                  assert not p.is_absolute() and '..' not in p.parts
+              z.extractall(t/'first')
+          originals=list((t/'first').rglob('source-identity.json'));assert len(originals)==1
+          old=originals[0].parent
+          def load(p):return json.loads(p.read_text())
+          def git(*a):return subprocess.check_output(['git',*a],text=True).strip()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='2bacec89fa8f1eefbe6b743529a9dffd4f20ff56'
+          patch=(old/'source.patch').read_bytes()
+          assert len(patch)==120461 and hashlib.sha256(patch).hexdigest()=='d7c124b631758bf5ee68ba39a3be2ff9bb193d1cb27478dd93e7f60af004272f'
+          subprocess.run(['git','apply','--index',str(old/'source.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='efa431703a1d47208655595f816a3008d0c4a27a'
+          ident=load(old/'source-identity.json');f=load(old/'focused.json')
+          assert len(ident['candidate_source_sha256s'])==444
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert f['focused_gate']=='PASS' and f['consumer']=='PASS' and f['controls_gate']=='PASS' and f['new_law_count']==4
+          assert len(f['negative_controls'])==17 and all(x['rejected'] for x in f['negative_controls'])
+          def canon(x):return hashlib.sha256(json.dumps(x,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          assert canon(f['source_sha256s'])=='3d4b31c8be4154a6fe3154d63185d50baf020a34c7f8cf0f40e5dbe130920964'
+          assert canon(f['negative_controls'])=='d8b95b60cbf5238eecd62ac3f215698073eef0007d6a417585cc1db6b8f71eac'
+          j=load(e/'first-job.json');assert j['id']==108120960214 and j['run_id']==36150116903 and j['conclusion']=='failure'
+          steps={s['name']:s for s in j['steps']}
+          assert steps['Check four public laws and seventeen controls on actual parser dependencies']['conclusion']=='success'
+          assert steps['Verify every character boundary in four native modes and reject cursor corruptions']['conclusion']=='failure'
+          assert steps['Run unchanged whole-repository lint']['conclusion']=='skipped'
+          first_native=(old/'native.log').read_text()
+          assert 'invalid feature combination' in first_native and 'avx10.1-256' in first_native
+          (e/'first-native-failure.log').write_text(first_native)
+          import shutil
+          for name in ['source-identity.json','focused.json','focused.log','parent-job.json','source.patch','source-commit.txt']:
+              shutil.copyfile(old/name,e/name)
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove accepted parser frontiers and fresh piece insertion'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/recovered-source-commit.txt"
+      - name: Choose an installed compiler accepting the actual host target without warnings
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,os,shutil,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);probe=e/'compiler-probe.c';probe.write_text('int main(void) { return 0; }\n')
+          choices=[];selected=None
+          for name in ['clang-19','clang-20','clang-21','clang','clang-18','clang-17']:
+              cc=shutil.which(name)
+              if not cc:continue
+              version=subprocess.run([cc,'--version'],capture_output=True,text=True,timeout=10)
+              p=subprocess.run([cc,'-std=c11','-O1','-march=native','-ffp-contract=off','-Werror=shift-count-overflow',str(probe),'-o',str(e/'compiler-probe')],capture_output=True,text=True,timeout=30)
+              choices.append({'compiler':cc,'version':version.stdout.splitlines()[0],'status':p.returncode,'stdout':p.stdout,'stderr':p.stderr})
+              if p.returncode==0 and not p.stdout and not p.stderr:
+                  selected=cc;break
+          (e/'host-compiler-selection.json').write_text(json.dumps({'checks':choices,'selected':selected,'warning_suppression_flags_added':False,'candidate_compile_flags_changed':False},indent=2)+'\n')
+          assert selected,'No installed compiler accepted the unchanged native-target flags without warnings'
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('NATIVE_CC='+selected+'\n')
+          PY
+      - name: Rerun the complete unchanged four-mode native gate
+        run: |
+          set -euo pipefail
+          CC="$NATIVE_CC" bun native/bend_engine/standalone/proofs/frontier/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Execute original compiler source suite and all pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU tools with the normal build compiler
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Record exact-source qualification across the two executions and publish
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD^{tree})" = efa431703a1d47208655595f816a3008d0c4a27a
+          test "$(git ls-remote origin refs/heads/feat/bend-parser-prefix-safety-20260925 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(n):return json.loads((e/n).read_text())
+          def canon(x):return hashlib.sha256(json.dumps(x,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          ident=read('source-identity.json');f=read('focused.json');n=read('native.json')
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert n['native_gate']=='PASS' and n['placement_strings']==1614 and n['prefix_states']==29526 and n['fields_per_mode']==679098
+          assert len(n['modes'])==4 and all(x['invalid_rejections']==2 and x['output_sha256']=='cc12b044ec805bec1984979a11c9cbcda52cad76d91d457f096b918d9bb6349f' for x in n['modes'])
+          assert len(n['mutations'])==2 and all(x['rejected'] and x['compiled_and_executed'] for x in n['mutations'])
+          assert canon({k:v for k,v in n.items() if k!='cc'})=='dcd6e414dc01f68ac5f144ba8f8baf18dcf2ee7439596f881d5a7093be9c5d11'
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-parser-frontier');d.mkdir(exist_ok=False)
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job.json','first-job.json','host-compiler-selection.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt','first-native-failure.log']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          result={'qualification':'PASS_ACROSS_EXACT_SOURCE_RUNS','source_run':36150116903,'source_job':108120960214,'runtime_lint_recovery_run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':'efa431703a1d47208655595f816a3008d0c4a27a','first_run_commit':'0b5041a600d7dbbaec2e4d4ffa068945595a3a3d','new_laws':4,'new_controls':17,'control_categories':dict(collections.Counter(c['kind'] for c in f['negative_controls'])),'retained_parent_laws':137,'retained_parent_controls':384,'modular_laws':141,'modular_controls':401,'combined_wrapper_executed':False,'source_gate_rerun_in_recovery':False,'native_source_entries':444,'independent_review':False}
+          (d/'qualification.json').write_text(json.dumps(result,indent=2)+'\n')
+          headline=f"Qualification combines the passed four-law/17-control source gate from run36150116903 with fresh native/compiler/lint success in recovery run{os.environ['GITHUB_RUN_ID']}, both on exact source tree efa431703a1d47208655595f816a3008d0c4a27a. Published source commit: `{os.environ['SOURCE']}`."
+          record=Path('docs/experiments/2026-09-25-bend-parser-frontier.md')
+          paragraphs=['## Completed hosted qualification across exact-source runs',headline,
+            'The first workflow passed the four-law consumer and all17 controls, then failed native-target compilation because Clang18 emitted invalid-feature-combination warnings for the host AVX10 feature set. Generic and portable fixtures had passed, but no complete native result or lint pass is attributed to that run. Its original failure log is committed.',
+            'Recovery retained the exact passed source result, checked the complete444-entry manifest, and selected an installed host compiler accepting the unchanged native flags without warnings. The full actual four-mode native gate was rerun successfully; no warning-suppression flag, expected result, proof statement or candidate source was changed. The selected compiler and every compatibility attempt are recorded. It is scoped to native tests only; Python tools use the normal compiler.',
+            'All four public laws and17 controls ran together in the first focused command. Eight controls are ordinary semantic/refinement failures, eight enforce manifests/import policy, and one synthetic warning-output test is not a compiler execution. Two actual cursor mutations fail existing implementation bridges and are explicitly not credited as isolated new lemma failures. Missing files, crashes, affine errors and timeouts are not semantic rejection.',
+            'The invariant derives bounds, partition consistency and empty unvisited squares along the actual initialized parser trajectory. Every live typed insertion has a target below64 that was fresh in its input Board. Every Some result of actual placement finalization is consistent. Rejected temporary Boards may be inconsistent; no raw rollback or full six-field FEN correctness is claimed.',
+            'The new native verifier passes1614 distinct strings,29526 full character-boundary Layout states and679098 fields per mode:26879 live,2647 invalid,899 accepted final strings and7197 live typed insertions. All768 single-piece combinations are included. Two malformed probe-budget requests and two compiled/executed cursor-corruption controls are rejected. Modes repeat fixtures, not exhaustive strings or legal-game coverage. The probe exercises actual layout_char/layout_result; source induction connects those to actual layout.',
+            'Exact-source parent137/384 is retained, producing modular141-law/401-control coverage. The full141-law wrapper was not executed. The first passed source gate is not falsely described as rerun in recovery. Fresh original compiler16-law/seven-control and12 pin tests pass. Locked Python3.13/uv0.12.10 CPU tools pass unchanged Ruff/Basedpyright/Vulture, resolving only the local missing-tools lint gap.',
+            'All444 candidate sources and native outputs agree with the cleaned local candidate; the full native report differs only in cc. Earlier proof construction, native parsing and discarded transport identity errors remain recorded. The saved parser-rejection variant remains unchanged and is not substituted for the qualified #881 parent.',
+            'Only evidence, index and inventory are appended after checking. Self-review only. No production function, earlier law, compiler input, permanent workflow, routine perft, search, model/GPU, training or benchmark change. No additional Python responsibility moves into Bend; export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No merge,force push,deployment or live-process action.',
+            'Next: invariant-preserving removal and moves, plus separately scoped exact placement and full FEN/metadata semantics. Legal reachability, king safety and generation completeness remain distinct. Pinned checker/Base, native lowering/storage, ABI, toolchain, OS and hardware are trust boundaries; prior snapshot-lowering and closed-builder limitations remain unresolved.'
+          ]
+          record.write_text(record.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          index=Path('docs/experiments/README.md');s=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert s.count(anchor)==1
+          index.write_text(s.replace(anchor,anchor+'| [Accepted parser frontiers](2026-09-25-bend-parser-frontier.md) | Four actual-source laws derive fresh bounded insertion and accepted-placement consistency; modular141/401 with separate exact-source compiler recovery |\n',1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          note='## Latest P3 initialized parser frontier\n\n'+headline+'\n\nThe frontier suite derives bounded cursors, empty unvisited squares and board-partition consistency from actual initialized placement traversal. Live typed piece targets are fresh and below64; every Some placement result is consistent. Raw true flags on arbitrary initial states are insufficient, and rejected temporary Boards need not remain consistent. Modular141/401 retains exact parent137/384 rather than executing the whole wrapper.\n\nSee [the dated readout](experiments/2026-09-25-bend-parser-frontier.md) for the retained Clang18 warning failure, unchanged-source recovery and counts. Full FEN semantics, exact intended contents, metadata legality, reachability and move operations remain separate. No Python application responsibility moved into Bend.\n'
+          m.write_text(title+'\n\n'+note+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git switch -c "$TARGET"
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify parser frontier with exact-source native compiler recovery'
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git log -2 --format='%H %s' > "$RUNNER_TEMP/final/published-commits.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-parser-frontier-recovery
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/frontier-recovery/
+          retention-days: 14
