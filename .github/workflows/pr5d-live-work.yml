@@ -6,145 +6,50 @@ permissions:
   contents: write
   actions: read
 jobs:
-  qualify:
+  readout:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      PYTHONPATH: .
-      CAE_TEST_THREADS: '2'
-      OMP_NUM_THREADS: '2'
-      MAX_JOBS: '1'
-      TORCHINDUCTOR_COMPILE_THREADS: '1'
-      BEND_NO_TELEMETRY: '1'
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 42d4c78ebfca102e146720c818f5dba9db61fd57
+          ref: 5eed9cc30f0352d5c984f53ce96a9369b2a941cf
       - uses: actions/download-artifact@v4
         with:
           name: deepfin-pr5d-live-qualification
-          run-id: 36162016314
+          run-id: 36163025335
           github-token: ${{ github.token }}
-          path: /tmp/pr5d-prior
-      - name: Recover exact source and correct rollback-test event scope
-        run: |
-          set -euo pipefail
-          mkdir /tmp/pr5d-evidence /tmp/pr5d-live
-          python - <<'PY'
-          import gzip,hashlib,json,subprocess
-          from pathlib import Path
-          prior=Path('/tmp/pr5d-prior'); patch=(prior/'qualified.patch').read_bytes()
-          subprocess.run(['git','apply','--check','-'],input=patch,check=True)
-          subprocess.run(['git','apply','-'],input=patch,check=True)
-          original=json.loads((prior/'source-manifest.json').read_text()); assert len(original)==15
-          for path,digest in original.items():
-              assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
-          p=Path('native/bend_engine/multi_root/verify_live.py');s=p.read_text()
-          old='        c.started()\n        c.send("replace 1 1 startpos moves e2e5")'
-          s=s.replace(old,'        c.started()\n        before = len(c.lines)\n        c.send("replace 1 1 startpos moves e2e5")',1)
-          old='assert not any(x.startswith(CONTROL + "pending-install") for x in c.lines)'
-          assert s.count(old)==1
-          p.write_text(s.replace(old,'assert not any(x.startswith(CONTROL + "pending-install") for x in c.lines[before:])',1))
-          for path,digest in original.items():
-              if path!=str(p): assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
-          expected={'live':'0febc12b7a6a8a27ddf894cf7bfdc01115413f2792a3be5c93fa814ba610e471','main':'c01e88e969d5eb09c81b48173f33e63023b25ee7914f0384bf7db67f86390b87'}
-          for name,digest in expected.items():
-              raw=gzip.decompress((prior/f'{name}.c.gz').read_bytes())
-              assert hashlib.sha256(raw).hexdigest()==digest,name
-              Path(f'/tmp/pr5d-live/{name}.c').write_bytes(raw)
-          subprocess.run(['git','add','-N','.'],check=True); subprocess.run(['git','diff','--check'],check=True)
-          paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines(); assert len(paths)==15
-          Path('/tmp/pr5d-evidence/source-manifest.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths},indent=2))
-          Path('/tmp/pr5d-evidence/qualified.patch').write_bytes(subprocess.check_output(['git','diff','--binary']))
-          Path('/tmp/pr5d-evidence/generated-provenance.json').write_text(json.dumps({'run':36162016314,'runtime_source_unchanged':True,'sha256':expected},indent=2))
-          PY
-      - uses: actions/setup-python@v5
-        with:
-          python-version-file: .python-version
-      - uses: astral-sh/setup-uv@v7
-        with:
-          version: 0.12.10
-      - name: Locked CPU dependencies
-        run: |
-          uv sync --locked --extra dev --extra cpu
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - name: Static and inexpensive live/cohort/accounting gates
-        run: |
-          set -euo pipefail
-          bash scripts/lint.sh 2>&1 | tee /tmp/pr5d-evidence/lint.txt
-          bash scripts/lint.sh native/bend_engine/multi_root/verify_live.py 2>&1 | tee /tmp/pr5d-evidence/native-lint.txt
-          python -m pytest tests/test_bend_live_cohort.py tests/test_bend_cohort_deadlines.py tests/test_bend_async_cohort.py tests/test_bend_multi_root.py tests/test_bend_async_search.py tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py -q --junitxml=/tmp/pr5d-evidence/tests.xml | tee /tmp/pr5d-evidence/tests.txt
-          bash -n native/bend_engine/multi_root/{build_live,qualify_live,qualify_live_registry}.sh
-      - name: Registry and complete native live lifecycle matrix from exact generated source
-        run: |
-          set -euo pipefail
-          single=native/bend_engine/standalone
-          revision="$(bun "$single/verify_compiler.js" --revision)"
-          repository="$(bun "$single/verify_compiler.js" --repository)"
-          git init -q /tmp/pr5d-compiler
-          git -C /tmp/pr5d-compiler fetch -q --depth=1 "$repository" "$revision"
-          git -C /tmp/pr5d-compiler checkout -q --detach FETCH_HEAD
-          bash native/bend_engine/multi_root/qualify_live_registry.sh /tmp/pr5d-compiler /tmp/pr5d-registry 2>&1 | tee /tmp/pr5d-evidence/registry.txt
-          out=/tmp/pr5d-live; here="$PWD/native/bend_engine/multi_root"
-          printf '{"status":"running","live_runner_qualified":false}\n' > "$out/status.json"
-          for mode in normal ubsan; do
-            flags=(); if test "$mode" = ubsan; then flags=(-fsanitize=undefined -fno-sanitize-recover=all); fi
-            for channels in 146 175; do
-              dir="$out/$mode-c$channels-b4"; mkdir "$dir"
-              profile=2; if test "$channels" = 175; then profile=4; fi
-              printf '#define DEEPFIN_MODEL_BATCH 4\n#define DEEPFIN_MODEL_CHANNELS %d\n#define DEEPFIN_MODEL_PROFILE %d\n' "$channels" "$profile" > "$dir/model_contract.h"
-              for entry in main live; do
-                clang -std=c11 -O1 -ffp-contract=off "${flags[@]}" -DDEEPFIN_BEND_NATIVE_MODEL -DDEEPFIN_ASYNC_BATCH -I "$dir" -c "$out/$entry.c" -o "$dir/$entry.o"
-              done
-              for backend in test control; do
-                clang -std=c11 -O1 -ffp-contract=off "${flags[@]}" -I "$dir" -c "$here/${backend}_backend.c" -o "$dir/$backend.o"
-                clang++ -std=c++20 -O1 -ffp-contract=off "${flags[@]}" -I "$dir" "$dir/live.o" "$dir/$backend.o" "$here/../batch_backend/async_batch.cpp" -pthread -lm -o "$dir/live-$backend"
-              done
-              clang++ -std=c++20 -O1 -ffp-contract=off "${flags[@]}" -I "$dir" "$dir/main.o" "$dir/test.o" "$here/../batch_backend/async_batch.cpp" -pthread -lm -o "$dir/reference"
-              python -m native.bend_engine.multi_root.verify_live --binary "$dir/live-test" --gate "$dir/live-control" --reference "$dir/reference" --report "$dir/qualification.json" 2>&1 | tee "$dir/verify.txt"
-            done
-          done
-          sha256sum "$out"/*.c > "$out/generated-sha256.txt"
-          printf '{"status":"passed","live_runner_qualified":true,"scope":"deterministic callback only","neural_model_qualified":false,"gpu_qualified":false}\n' > "$out/status.json"
-      - name: Existing fixed-cohort oracles and cancellation/deadline regressions
-        run: |
-          set -euo pipefail
-          clang -std=c11 -O3 -DLEGAL_ORACLE -I "$PWD" native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/pr5d-oracle
-          bash native/bend_engine/multi_root/qualify_async.sh /tmp/pr5d-live/main.c /tmp/pr5d-oracle /tmp/pr5d-fixed 2>&1 | tee /tmp/pr5d-evidence/fixed.txt
-          bash native/bend_engine/multi_root/qualify_deadlines.sh /tmp/pr5d-compiler /tmp/pr5d-fixed /tmp/pr5d-deadlines 2>&1 | tee /tmp/pr5d-evidence/deadlines.txt
-      - name: Publish only source that passed every qualification
-        id: publish
-        run: |
-          set -euo pipefail
-          git diff --check
-          test -z "$(git ls-remote --heads origin refs/heads/feat/native-live-cohort-20260925)"
-          git switch -c feat/native-live-cohort-20260925
-          git add docs/experiments/2026-09-24-live-cohort-lifecycle.md docs/experiments/2026-09-25-live-cohort-recovery.md docs/experiments/README.md native/bend_engine/batch_backend/batch_call.c native/bend_engine/multi_root/{LIVE.md,LiveRegistry.bend,LiveReport.bend,LiveRun.bend,live.bend,live_registry_probe.bend,build_live.sh,qualify_live.sh,qualify_live_registry.sh,verify_live.py} tests/test_bend_live_cohort.py
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'native: add persistent generation-safe root lifecycle on current cohort stack'
-          git push origin HEAD:refs/heads/feat/native-live-cohort-20260925
-          git rev-parse HEAD | tee /tmp/pr5d-evidence/published-head.txt
-      - name: Preserve reports, logs and generated source
-        if: always()
-        run: |
-          for suite in registry live fixed deadlines; do
-            if test -d "/tmp/pr5d-$suite"; then
-              mkdir -p "/tmp/pr5d-evidence/$suite"
-              find "/tmp/pr5d-$suite" -type f \( -name '*.json' -o -name '*.txt' -o -name '*.err' \) | while read -r f; do rel="${f#/tmp/pr5d-$suite/}"; mkdir -p "/tmp/pr5d-evidence/$suite/$(dirname "$rel")"; cp "$f" "/tmp/pr5d-evidence/$suite/$rel"; done
-            fi
-          done
-          for entry in live main; do gzip -c "/tmp/pr5d-live/$entry.c" > "/tmp/pr5d-evidence/$entry.c.gz"; done
-          tar -czf /tmp/pr5d-evidence/native-builds.tar.gz -C /tmp pr5d-live
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: deepfin-pr5d-live-qualification
-          path: /tmp/pr5d-evidence
-          retention-days: 30
-      - name: Require completed qualification and publication
-        if: always()
+          path: /tmp/pr5d-qualified
+      - name: Verify all evidence and write authored readout
         env:
-          PUBLISHED: ${{ steps.publish.outcome }}
-        run: test "$PUBLISHED" = success
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64,hashlib,json,subprocess
+          from pathlib import Path
+          sha='88f3ea6a13ea557aae86b11cebc42b2582bce250'
+          record=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
+          script=base64.b64decode(record['content'])
+          assert hashlib.sha1(b'blob '+str(len(script)).encode()+b'\0'+script).hexdigest()==sha
+          exec(compile(script,'authored-readout','exec'))
+          original=json.loads(Path('/tmp/pr5d-qualified/source-manifest.json').read_text())
+          for path,digest in original.items():
+              if not path.endswith('.md') and not path.endswith('/qualify_live.sh'):
+                  assert hashlib.sha256(Path(path).read_bytes()).hexdigest()==digest,path
+          subprocess.run(['git','add','-N','.'],check=True)
+          paths=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
+          expected=['docs/experiments/2026-09-25-live-cohort-recovery.md','docs/experiments/evidence/live-cohort-recovery/summary.json','docs/experiments/evidence/live-cohort-recovery/qualified-source.json','native/bend_engine/multi_root/LIVE.md','native/bend_engine/multi_root/README.md','native/bend_engine/multi_root/qualify_live.sh']
+          assert sorted(paths)==sorted(expected),paths
+          old=subprocess.check_output(['git','show','HEAD:native/bend_engine/multi_root/qualify_live.sh']).decode()
+          new=Path('native/bend_engine/multi_root/qualify_live.sh').read_text()
+          assert [s for s in old.splitlines() if not s.startswith('#')]==[s for s in new.splitlines() if not s.startswith('#')]
+          PY
+          git diff --check
+          git diff --stat
+      - name: Fast-forward documentation and evidence only
+        run: |
+          set -euo pipefail
+          git add docs/experiments/2026-09-25-live-cohort-recovery.md docs/experiments/evidence/live-cohort-recovery native/bend_engine/multi_root/LIVE.md native/bend_engine/multi_root/README.md native/bend_engine/multi_root/qualify_live.sh
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'docs: record completed current-stack live lifecycle qualification'
+          git push origin HEAD:refs/heads/feat/native-live-cohort-20260925
+          git rev-parse HEAD
