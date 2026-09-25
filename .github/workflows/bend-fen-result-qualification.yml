@@ -1,0 +1,228 @@
+name: Bend public FEN result qualification
+'on':
+  push:
+    branches: [feat/bend-fen-result-contracts-dev-20260925]
+    paths: [.github/workflows/bend-fen-result-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: 3ddb2be9d49d46d3848a35e15732adf1ec370c14
+      TARGET: feat/bend-fen-result-contracts-20260925
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 3ddb2be9d49d46d3848a35e15732adf1ec370c14
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact candidate and retain parent proof evidence without concealing its failed run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/fen-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/source.xz"
+          for blob in 5ef62138172c98eba41694bfc8c3190251274df8 217248055c261ff9a1bdb01906707925259cd4d9 195c3f778b0e69ebb07a8a1e1e0a58f27d95efa5; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/source.xz"
+          done
+          test "$(git hash-object "$RUNNER_TEMP/source.xz")" = a833f2b1f4a5c70a11dac9e8a1d02dfe3d4bdf37
+          for job in 108120960214 108122790012; do
+            gh api "repos/jjoshua2/DeepFin/actions/jobs/$job" > "$EVIDENCE/parent-job-$job.json"
+          done
+          python3 - <<'PY'
+          import hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);t=Path(os.environ['RUNNER_TEMP'])
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          def load(p):return json.loads(p.read_text())
+          def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='dad729630fe773c081e1276cbcb4311ffdb8450e'
+          old=Path('docs/experiments/evidence/bend-parser-frontier')
+          q=load(old/'qualification.json')
+          assert q['qualification']=='PASS_ACROSS_EXACT_SOURCE_RUNS' and q['modular_laws']==141 and q['modular_controls']==401
+          f=load(old/'hosted-focused.json')
+          assert f['focused_gate']=='PASS' and f['consumer']=='PASS' and f['new_law_count']==4
+          assert len(f['negative_controls'])==17 and all(x['rejected'] for x in f['negative_controls'])
+          manifest=load(old/'hosted-source-identity.json')['candidate_source_sha256s']
+          assert len(manifest)==444
+          for p,h in manifest.items():assert digest(Path(p))==h,p
+          first=load(e/'parent-job-108120960214.json')
+          assert first['id']==108120960214 and first['run_id']==36150116903 and first['conclusion']=='failure'
+          proof_steps=[s for s in first['steps'] if 'source' in s['name'].lower() and ('law' in s['name'].lower() or 'control' in s['name'].lower())]
+          assert proof_steps and all(s['conclusion']=='success' for s in proof_steps),first['steps']
+          recovery=load(e/'parent-job-108122790012.json')
+          assert recovery['id']==108122790012 and recovery['run_id']==36150660570 and recovery['conclusion']=='success'
+          patch=lzma.decompress((t/'source.xz').read_bytes(),memlimit=256*1024*1024)
+          assert len(patch)==53055 and hashlib.sha256(patch).hexdigest()=='0d17575e4166e035424202f9280e04528d3909fe97763e17d81f2b34237b310f'
+          (e/'source.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(e/'source.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'source.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          files=git('diff','--cached','--name-only').splitlines()
+          assert len(files)==13 and all(p.startswith('native/bend_engine/standalone/proofs/fen/') or p=='docs/experiments/2026-09-25-bend-fen-results.md' for p in files)
+          assert all(line.startswith('A\t') for line in git('diff','--cached','--name-status').splitlines())
+          hashes={p:digest(Path(p)) for p in git('ls-files','native/bend_engine').splitlines() if Path(p).is_file()}
+          assert len(hashes)==456
+          record={'base':os.environ['BASE'],'base_tree':'dad729630fe773c081e1276cbcb4311ffdb8450e','source_tree':git('write-tree'),'patch_sha256':hashlib.sha256(patch).hexdigest(),'changed_files':files,'candidate_source_sha256s':hashes,'retained_parent_laws':141,'retained_parent_controls':401,'parent_manifest_matches':444,'parent_qualification_sha256':digest(old/'qualification.json'),'parent_focused_sha256':digest(old/'hosted-focused.json'),'parent_source_run_remains_failed':True,'source_step_pass_and_recovery_distinguished':True,'combined_wrapper_executed':False,'saved_five_law_variant_preserved':True}
+          (e/'source-identity.json').write_text(json.dumps(record,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove public FEN consistency, rejection and exact validated construction'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - name: Check all three laws, consumer, output witnesses and seventeen controls
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/fen/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Choose an installed compiler accepting the unchanged native-target flags
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,os,shutil,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);p=e/'host-probe.c';p.write_text('int main(void){return 0;}\n')
+          attempts=[];selected=None
+          for candidate in ['/usr/bin/clang','clang-18','clang']:
+              compiler=shutil.which(candidate)
+              if not compiler or compiler in [r['compiler'] for r in attempts]:continue
+              r=subprocess.run([compiler,'-std=c11','-O1','-ffp-contract=off','-Werror=shift-count-overflow','-march=native',str(p),'-o',str(e/'host-probe')],capture_output=True,text=True,timeout=30)
+              attempts.append({'compiler':compiler,'exit_code':r.returncode,'stdout':r.stdout,'stderr':r.stderr})
+              if r.returncode==0 and not r.stdout and not r.stderr:selected=compiler;break
+          (e/'compiler-selection.json').write_text(json.dumps({'selected':selected,'attempts':attempts,'suppressed_warnings':False},indent=2)+'\n')
+          assert selected,'No installed compiler accepted unchanged target flags without diagnostics'
+          with open(os.environ['GITHUB_ENV'],'a') as out:out.write('NATIVE_CC='+selected+'\n')
+          PY
+      - name: Compare actual public FEN results and three real-code corruptions in four modes
+        run: |
+          set -euo pipefail
+          CC="$NATIVE_CC" bun native/bend_engine/standalone/proofs/fen/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Recheck original compiler laws and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU tools using the normal extension-build compiler
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify exact outcomes and publish a fresh feature branch with scoped evidence
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-parser-frontier-20260925 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(name):return json.loads((e/name).read_text())
+          def canon(x):return hashlib.sha256(json.dumps(x,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          ident=read('source-identity.json');f=read('focused.json');n=read('native.json')
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert f['focused_gate']=='PASS' and f['controls_gate']=='PASS' and f['consumer']=='PASS' and f['new_law_count']==3 and f['universal_laws']==3
+          assert len(f['negative_controls'])==17 and all(x['rejected'] for x in f['negative_controls'])
+          kinds=collections.Counter(x['kind'] for x in f['negative_controls'])
+          assert kinds['source semantic/refinement']==4 and kinds['actual implementation closed-output witness']==4 and kinds['manifest/import policy']==8
+          assert canon({k:v for k,v in f.items() if k not in ['consumer_seconds','cc']})=='81a1d6762c72070ebf60dbe4ccefc86768e17eda5a85ea9d6060679f64827470'
+          assert n['native_gate']=='PASS' and n['fen_cases']==1257 and n['fen_accepted']==1071 and n['fen_rejected']==186 and n['numeric_output_fields']==24819
+          assert n['single_piece_cases']==768 and n['rights_permutations']==64 and n['ep_coordinates']==64
+          assert len(n['modes'])==4 and all(x['invalid_rejections']==8 and x['output_sha256']=='15204a8413a136d4b5ed86dcaf0b444611b9e1e3c603582cddc5126e88b63878' for x in n['modes'])
+          assert len(n['mutations'])==3 and all(x['rejected'] and x['compiled_and_executed'] for x in n['mutations'])
+          assert canon({k:v for k,v in n.items() if k not in ['consumer_seconds','cc']})=='1865a72ccf88a115763ccd83b5f80e137d8070da4c9d4d2dc257ec3fb791a902'
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-fen-results');d.mkdir(exist_ok=False)
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','compiler-selection.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          for p in e.glob('parent-job-*.json'):shutil.copyfile(p,d/p.name)
+          result={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'new_laws':3,'new_controls':17,'control_categories':dict(kinds),'retained_parent_laws':141,'retained_parent_controls':401,'modular_laws':144,'modular_controls':418,'combined_wrapper_executed':False,'native_source_entries':456,'focused_matches_local_except_consumer_seconds':True,'native_matches_local_except_cc':True,'independent_review':False}
+          (d/'qualification.json').write_text(json.dumps(result,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes all three public FEN laws, importing consumer and closed output witnesses, all17 classified controls, four native modes and three actual-code mutations, original compiler source/pin checks and unchanged repository lint on source `{os.environ['SOURCE']}`."
+          paragraphs=['## Completed hosted qualification',headline,
+            'The focused command executes all three laws and seventeen controls together. The public result theorem recovers the missing six-field FEN consistency guarantee from the saved five-law freshness variant by reusing published frontier producers, not by importing a duplicate frontier implementation. The saved f6047bffa22804fc7086a76dbaa4072659221a20 variant remains untouched; this is not qualification of every source or statement in that different implementation.',
+            'fen_result_is_consistent permits None or a Game whose Board satisfies the existing partition invariant. rejected_placement_rejects_fen follows actual optional placement rejection. validated_fields_construct_exact_game uses explicit equalities for the six actual field-validator outputs and clock bounds to establish the complete Some Game, including the exact metadata-updated Board, both clocks and empty history. It is not an independent exact lexical-grammar or arbitrary placement-content theorem. An always-rejecting parser could satisfy consistency alone; the exact-construction contract and accepted output witnesses supply separate nonvacuity/behavioral evidence.',
+            'The17 controls contain4 ordinary semantic/refinement failures,4 actual implementation closed-output witness failures,8 manifest/import safety checks and1 synthetic warning-output unit. Closed witnesses are not falsely described as universal theorem rejections, and the synthetic unit is not another compiler execution. Missing names, affine errors, crashes and timeouts never count as semantic rejection. Safe proof success requires exit0 and exactly All terms check.',
+            'The complete native corpus contains1,257 distinct six-field inputs:1,071 accepted and186 rejected. Each of four modes compares24,819 numeric output fields, covers all768 one-piece square/kind/color combinations,64 rights permutations,64 EP coordinate spellings,clock boundaries,malformed fields and Unicode, and rejects8 malformed probe requests. Candidate inputs are only raw strings. The reference uses independent rank-token/square-array,castling-set,coordinate and decimal grammars. Neither proof predicates nor reference-produced parser decisions execute in the candidate. Modes repeat cases, not disjoint or exhaustive strings or legal games.',
+            'Three actual public-FEN corruptions compile and run before wrong-result rejection: dropping the halfmove clock, ignoring failed placement and fabricating an inconsistent Board. The placement mutation is tested at an actually invalid character input and changes rejection into an accepted empty Game; it is not merely rejected for discarding a valid nonempty Board. These are deliberate regressions, not production bugs. The complete hosted native report agrees with the final local report except C compiler identity; all focused fields agree except measured consumer seconds.',
+            'Exact-source141/401 parent evidence is retained on444 manifest entries, its successful source step within the preserved failed first run, and its completed recovery. New3/17 yields modular144-law/418-control coverage; the complete wrapper was not executed. All456 candidate native-source entries match before publication. Primary proofs and production sources are unchanged after checking.',
+            'An installed C compiler is chosen only after it accepts the unchanged native-target flags without any diagnostics; candidate flags and strict stderr checks are not weakened. Compiler selection is scoped to native probes, not Python extensions. Locked Python3.13/uv0.12.10 CPU tools pass unchanged Ruff/Basedpyright/Vulture, resolving the historical local missing-tools gap. Original compiler16-laws/seven-controls, including cyclic-template rejection, and all12 pin tests pass.',
+            'Earlier local focused attempts hit outer command limits or a duplicate report variable; a native probe initially lacked explicit String duplication markers. These failures are retained and not counted as complete gates. The final source command passed in47.804seconds and the targeted native command in40.756seconds. Four expensive implementation-output controls were made explicitly closed witnesses without changing any public law or compiler. Previous intermediate native receipts are distinguished from the final strengthened invalid-placement test.',
+            'Self-review only, not independently reviewed. Returned-Board consistency does not imply meaningful castling/EP,king counts,pawn ranks,legal reachability or move correctness. Source checker/Base,native lowering/storage/lifetime,ABI,toolchain,OS and hardware remain trust boundaries. Prior snapshot-lowering and literal closed-builder limitations remain unchanged. No production code, old law, compiler input, permanent workflow, routine perft, search, model/GPU, training or benchmark change. No additional Python application responsibility moved into Bend; export/references/data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No merge,force push,deployment or live-process action.',
+            'Next substantive work is exact parsed-square correspondence and invariant-preserving removal/move operations. Public returned-FEN partition consistency is now registered on the published frontier stack; exact independent grammar acceptance and chess-legality obligations remain separate.'
+          ]
+          record=Path('docs/experiments/2026-09-25-bend-fen-results.md');record.write_text(record.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Public FEN result contracts](2026-09-25-bend-fen-results.md) | Actual returned-board consistency, failed-placement rejection and exact validated Game construction; modular144/418; independent grammar and legality remain separate |\n',1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          update='## Latest public FEN result composition\n\n'+headline+'\n\nThe three fen contracts reuse published frontier consistency and actual validators. The universal optional-result theorem covers the real six-field Position.fen entry point; a second rejects failed placements; a third constructs the exact full Game from successful actual field values and bounds. The third is conditional on those validator-result certificates, not a claim to independent lexical correctness. None remains permitted by the consistency theorem, with accepted-output witnesses and differential tests separately ruling out trivial behavior.\n\nThe saved five-law freshness implementation remains preserved; no duplicate frontier is added. Exact-source parent141/401 plus newly executed3/17 gives modular144/418, not a fresh complete aggregate. The current source/control and native reports agree with the final local candidate, and hosted repository lint passes. See [the readout](experiments/2026-09-25-bend-fen-results.md). Exact parsed contents, removal/move invariants, metadata legality and reachability remain separate. No application responsibility moved from Python.\n'
+          m.write_text(title+'\n\n'+update+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git switch -c "$TARGET"
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify public FEN results and classify exact-construction evidence'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' > "$EVIDENCE/published-commits.txt"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-fen-result-qualification
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/fen-evidence/
+          retention-days: 14
