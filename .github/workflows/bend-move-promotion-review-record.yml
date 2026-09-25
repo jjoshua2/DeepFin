@@ -1,0 +1,85 @@
+name: Record move promotion supplementary review
+'on':
+  push:
+    branches: [feat/bend-move-promotion-qualification-dev-20260925]
+    paths: [.github/workflows/bend-move-promotion-review-record.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      SOURCE: 76589e042dfc9ebd7cbe434170c43de7cb30017f
+      TARGET: feat/bend-move-promotion-qualified-20260925
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 76589e042dfc9ebd7cbe434170c43de7cb30017f
+      - name: Verify and archive exact local review sources without executing them
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = cfcafd2fc461f2b0f0fdea00d6f1be1865f3f361
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          gh api repos/jjoshua2/DeepFin/git/blobs/de3562230c7889b9166335386fa652e0ff5ba7d9 --jq .content | base64 --decode > "$RUNNER_TEMP/review.xz"
+          test "$(git hash-object "$RUNNER_TEMP/review.xz")" = de3562230c7889b9166335386fa652e0ff5ba7d9
+          python3 - <<'PY'
+          import hashlib,json,lzma,os
+          from pathlib import Path
+          raw=lzma.decompress((Path(os.environ['RUNNER_TEMP'])/'review.xz').read_bytes(),memlimit=256*1024*1024)
+          assert len(raw)==42885 and hashlib.sha256(raw).hexdigest()=='701b587306d58746e004dbfc5f4a3b84654a2ae3e551949fe37c9a0499bd11a9'
+          files=json.loads(raw);assert len(files)==9
+          prefix='docs/experiments/evidence/bend-move-promotion-publication/'
+          old=Path(prefix)
+          manifest=json.loads((old/'hosted-source-identity.json').read_text())['candidate_source_sha256s'];assert len(manifest)==472
+          for f,h in manifest.items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          for name,text in files.items():
+              p=Path(name);assert name.startswith(prefix) and '..' not in p.parts and not p.exists(),name
+              p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
+          ep=old/'en-passant-review';report=json.loads((ep/'report.json').read_text())
+          assert report['supplementary_en_passant']=='PASS' and report['new_registered_laws']==0
+          assert report['source_receipt']['exit_code']==0 and report['source_receipt']['raw_text'].strip()=='All terms check.'
+          assert report['cases']==4316 and len(report['modes'])==2
+          assert len(report['mutations'])==2 and all(x['source_status']==1 and x['compiled_and_executed'] and x['native_rejected'] for x in report['mutations'])
+          for f,h in report['source_sha256s'].items():
+              if f.startswith('standalone/proofs/en_passant_review/'):
+                  p=ep/(Path(f).name+'.txt')
+              else:p=Path('native/bend_engine')/f
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==h,f
+          assert hashlib.sha256((ep/'verify_review.py.txt').read_bytes()).hexdigest()==report['driver_sha256']
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          note='## Supplementary en-passant update refinement\n\nTwo newly source-checked derived statements now cover actual flag1/promotion0 make_move: exact complete-Board update and partition preservation. A structural mask identity connects removal of source,destination and destination XOR8 to existing deletion/fresh-insertion producers. Caller input consistency is required only for preservation; legal EP,pawn/source/rank/history conditions and king safety remain unproved here. Exact archived sources and the portable driver are in [the supplementary record](experiments/evidence/bend-move-promotion-publication/en-passant-review/README.md).\n\nThe local generic/UBSan reference checks4,316 complete Boards per mode and two actual capture-selection corruptions. Both corruptions pass the old flag0 consumers but fail the new source bridge and native values. This is supplementary local evidence,not two added registered laws or a newly hosted EP suite. Primary totals remain150/436 modular. Deliberate public-suite promotion and castling refinement remain next; no runtime implementation changed.\n'
+          matrix.write_text(title+'\n\n'+note+rest)
+          record=Path('docs/experiments/2026-09-25-bend-move-promotion-publication.md')
+          record.write_text(record.read_text()+f"\n\n## New supplementary flag-one update review\n\nThe [archived en-passant review](evidence/bend-move-promotion-publication/en-passant-review/README.md) records new actual complete-update and consistency refinements for arbitrary raw U32 source/destination inputs. These are local derived statements,not registered public laws and not legal-move validation. Generic/UBSan each pass4,316 complete Board cases and nine malformed requests. Two capture-square mutations fail new source/native checks while the previous ordinary/promotion consumers pass. Original compiler and primary source identities stay unchanged.\n\nDocumentation-only record run **{os.environ['GITHUB_RUN_ID']}** verifies every472-entry primary source hash,all archived supplementary source/probe dependencies and the driver identity. It does not execute proofs,native tests or lint. The prior complete hosted qualification remains tied to its exact primary sources; the new archived review sources have separately labeled local evidence. Final archive transport SHA-256 is701b587306d58746e004dbfc5f4a3b84654a2ae3e551949fe37c9a0499bd11a9. Self-review only,no merge/deployment.\n")
+          for f,h in manifest.items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          Path(os.environ['RUNNER_TEMP'],'changed.txt').write_text('\n'.join(sorted([*files,str(matrix),str(record)]))+'\n')
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git switch -c "$TARGET"
+          git add docs/bend_migration_proofs.md docs/experiments
+          test "$(git diff --cached --name-only | wc -l)" = 11
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: archive checked en-passant update and verify promotion publication'
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/record"
+          git cat-file commit HEAD > "$RUNNER_TEMP/record/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/record/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/record/tree.txt"
+          tar -czf "$RUNNER_TEMP/record/changed-docs.tar.gz" -T "$RUNNER_TEMP/changed.txt"
+          cp "$RUNNER_TEMP/changed.txt" "$RUNNER_TEMP/record/"
+          (cd "$RUNNER_TEMP/record" && sha256sum changed-docs.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-move-promotion-review-record
+          path: ${{ runner.temp }}/record/
+          retention-days: 14
