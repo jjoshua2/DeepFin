@@ -4,6 +4,9 @@ on:
     paths:
       - '.github/workflows/bend-u64-map.yml'
       - 'native/bend_engine/u64_map_probe/**'
+      - 'native/bend_engine/legal_probe/**'
+      - 'native/bend_engine/standalone/**'
+      - 'native/bend_engine/bitboard_probe/**'
       - 'native/bend_engine/install_ci_bend.sh'
       - 'native/bend_engine/standalone/verify_compiler.js'
       - 'native/bend_engine/standalone/toolchain.json'
@@ -17,6 +20,9 @@ on:
     paths:
       - '.github/workflows/bend-u64-map.yml'
       - 'native/bend_engine/u64_map_probe/**'
+      - 'native/bend_engine/legal_probe/**'
+      - 'native/bend_engine/standalone/**'
+      - 'native/bend_engine/bitboard_probe/**'
       - 'native/bend_engine/install_ci_bend.sh'
       - 'native/bend_engine/standalone/verify_compiler.js'
       - 'native/bend_engine/standalone/toolchain.json'
@@ -62,6 +68,10 @@ jobs:
           ruff check native/bend_engine/u64_map_probe/*.py tests/test_bend_u64_map.py tests/test_bend_map*.py
           basedpyright native/bend_engine/u64_map_probe/*.py tests/test_bend_u64_map.py tests/test_bend_map*.py
           python -m pytest -q tests/test_bend_u64_map.py tests/test_bend_map*.py --junitxml=artifacts/u64-map-python.xml
+      - name: Native Board identity, legal transitions and structural indexing
+        run: |
+          . .venv/bin/activate
+          python -m native.bend_engine.u64_map_probe.board_index --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --bun bun --cc clang-18 --output artifacts/u64-map-board-index --chess
       - name: Canonical position identities and forced hash collisions
         run: |
           . .venv/bin/activate
@@ -130,4 +140,7 @@ jobs:
             artifacts/u64-map-position-index/summary.json
             artifacts/u64-map-position-index/*.stdout
             artifacts/u64-map-position-index/*.stderr
+            artifacts/u64-map-board-index/*.json
+            artifacts/u64-map-board-index/*.stdout
+            artifacts/u64-map-board-index/*.stderr
           retention-days: 30
