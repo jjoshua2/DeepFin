@@ -1,0 +1,18 @@
+{
+  "qualification": "PASS",
+  "run": "36160654909",
+  "source": "1c45eae81922a6364cc98b01163e279036d799b9",
+  "source_tree": "e403edc54009abf5ff0165ebb835e47fa3aea967",
+  "new_special_laws": 4,
+  "new_special_controls": 17,
+  "saved_ordinary_laws_reexecuted": 5,
+  "saved_ordinary_controls_reexecuted": 18,
+  "retained_parent_laws": 141,
+  "retained_parent_controls": 401,
+  "modular_laws": 150,
+  "modular_controls": 436,
+  "combined_wrapper_executed": false,
+  "candidate_source_entries": 472,
+  "independent_review": false,
+  "scope": "Complete actual ordinary/promotion/en-passant updates and partition preservation; not castling or legal moves."
+}

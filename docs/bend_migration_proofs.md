@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Latest P3 ordinary, promotion and en-passant updates
+
+Hosted run **36160654909** passed both focused source gates, all35 controls across them, both four-mode native suites and four behavioral mutations, original compiler checks and unchanged repository lint on source `1c45eae81922a6364cc98b01163e279036d799b9`.
+
+The saved five ordinary-update contracts are now hosted-qualified with four new typed-promotion and en-passant contracts. Exact complete Board updates and partition preservation use real Chess.make_move, clearing and insertion producers. Typed promotion means tags1..4/flag0; en-passant means flag1/promotion0 with the actual destination XOR8 capture mask. Legal sources, pawn ranks, victim conditions, king safety, metadata correctness and castling remain separate. Modular150/436 combines newly executed9/35 with exact retained141/401, not a full aggregate run. No application code migrated from Python. See [the dated record](experiments/2026-09-25-bend-special-move-updates.md).
+
 ## Latest P3 initialized parser frontier
 
 Qualification combines the passed four-law/17-control source gate from run36150116903 with fresh native/compiler/lint success in recovery run36150660570, both on exact source tree efa431703a1d47208655595f816a3008d0c4a27a. Published source commit: `be5afc6308d159d52f42b2fcccb59a9c20109b4c`.

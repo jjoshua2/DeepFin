@@ -47,3 +47,28 @@ remain dependencies; no new application responsibility moves into Bend.
 Next separate work: castling representation under explicit target/rook
 conditions, then legal-move producer and king-safety connections. Ordinary,
 promotion and EP representation consistency alone never establishes legality.
+
+
+## Completed hosted qualification
+
+Hosted run **36160654909** passed both focused source gates, all35 controls across them, both four-mode native suites and four behavioral mutations, original compiler checks and unchanged repository lint on source `1c45eae81922a6364cc98b01163e279036d799b9`.
+
+The five ordinary laws and eighteen controls are preserved from saved commit06879a1dfc004eee143e623eafce3d2edddd1928 and freshly reexecuted, not five new mathematical results. Four new universal laws and seventeen controls cover typed promotion tags1..4 with flag0 and en-passant flag1/promotion0. Every result concerns the actual complete Board, including metadata. The saved ordinary README status paragraph is historical local-only status, superseded by this dated hosted record; its primary bytes were deliberately retained unchanged.
+
+The new exact-update and partition-preservation theorems derive clearing and target freshness from the actual source/destination/victim masks and reuse the earlier insertion theorem. En-passant removes the actual destination XOR8 victim. Typed promotion rejects the invalid rawtag6 domain; the consumer pins all four type labels independently. No caller assumption supplies desired output, fresh target or correct captured piece.
+
+These are representation results, not move legality. Source occupancy, pawn identity, promotion ranks, legal victim, turn ownership, king safety and independent castling/EP-right semantics remain separate. Metadata expressions retain the existing implementation-linked helpers. Castling is not covered, and arbitrary rawU32 source endpoints do not become legal squares. The native domain restricts endpoints to0..63.
+
+Exact-source parent141/401 is retained after444 manifest checks and the separately failed-source/successful-recovery job receipts. New execution of saved5/18 plus new4/17 gives modular150 laws/436 controls; the complete150-law wrapper was not executed. The two focused commands each executed their own importing consumer and controls. Semantic failures, manifest/import policies and synthetic warning units remain separately classified; crashes and timeouts are not semantic rejection.
+
+The ordinary native suite passes6,656 complete Board cases/126,464 U32 fields per mode and nine invalid requests. The new suite passes1,612 complete Board cases/30,628 fields per mode and eleven invalid requests, including176 promotion-shaped,28 en-passant-shaped,512 raw promotion,512 raw en-passant,256 metadata and128 inconsistent-input cases. Modes repeat fixtures; these are not disjoint or exhaustive legal-game datasets. Candidates execute production code, not proof models or supplied reference decisions.
+
+Actual ignored promotion and wrong en-passant capture-square mutations compile and run before incorrect Board values are rejected. The saved no-op and retained-bit regressions pass again. These are deliberate corruption controls, not production bugs. The independent external set-based reference checks every bitboard and metadata field but does not constitute a universal FIDE metadata proof.
+
+The pinned compiler and84-input fingerprint are unchanged. Hosted Bun1.4.2 uses the installed system Clang only for native tests. Locked Python3.13/uv0.12.10 CPU tools use the normal build compiler. Original16-laws/seven-controls and12 pin tests pass. Fresh unchanged Ruff/Basedpyright/Vulture resolves the saved ordinary local missing-tools gap without rewriting the old failed receipt.
+
+All472 candidate hashes are checked before publication. Only evidence, index and inventory are added afterward. The saved complete local package, its supplementary FEN consistency adaptation and historical logs remain separately preserved; that adaptation is not newly counted or requalified by these move suites. New local Fresh.bit first failed Boolean reduction and was corrected with a complete finite Boolean proof without changing its claim or compiler.
+
+Self-review only. No production runtime, earlier accepted law, protected checker, permanent workflow, routine perft, search, model/GPU, training or benchmark change. No additional Python application responsibility moves into Bend; export,references,data/control/training and transitional C++/LibTorch/AOTI remain dependencies. Native lowering/storage,ABI,toolchain,libraries,OS and hardware remain trust boundaries. Existing compiler/snapshot/closed-builder limitations remain unchanged. No merge,force push,deployment or live-process action.
+
+Next substantive P3 acceptance is castling under explicit source/destination/rook-storage conditions, then connection to legal-move producers, correct chess metadata and king safety. The present promotion and en-passant partition results do not establish legal special moves.

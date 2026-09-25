@@ -1,0 +1,81 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "rows_per_mode": 1612,
+  "complete_board_fields_per_mode": 30628,
+  "cases_by_operation": {
+    "promotion_shaped": 176,
+    "promotion_raw_square_type_color": 512,
+    "en_passant_shaped": 28,
+    "en_passant_raw_positions": 512,
+    "promotion_raw_metadata": 128,
+    "en_passant_raw_metadata": 128,
+    "inconsistent_input": 128
+  },
+  "representation_consistent_move_inputs": 1484,
+  "inconsistent_move_diagnostics": 128,
+  "malformed_requests_per_mode": 11,
+  "fixture_sha256": "3928583647e06e0f3c5349e0d6f5f3c1d2939832ee7ff822e38d42515a031532",
+  "modes": [
+    {
+      "mode": "generic",
+      "rows": 1612,
+      "complete_board_fields": 30628,
+      "invalid_rejections": 11,
+      "output_sha256": "bbcd55a3ff6af34c56f16cd07232086c8923c654f5ae58706ca376f298a5e87b"
+    },
+    {
+      "mode": "portable",
+      "rows": 1612,
+      "complete_board_fields": 30628,
+      "invalid_rejections": 11,
+      "output_sha256": "bbcd55a3ff6af34c56f16cd07232086c8923c654f5ae58706ca376f298a5e87b"
+    },
+    {
+      "mode": "native",
+      "rows": 1612,
+      "complete_board_fields": 30628,
+      "invalid_rejections": 11,
+      "output_sha256": "bbcd55a3ff6af34c56f16cd07232086c8923c654f5ae58706ca376f298a5e87b"
+    },
+    {
+      "mode": "ubsan",
+      "rows": 1612,
+      "complete_board_fields": 30628,
+      "invalid_rejections": 11,
+      "output_sha256": "bbcd55a3ff6af34c56f16cd07232086c8923c654f5ae58706ca376f298a5e87b"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "actual-promotion-ignored",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "category": "promotion_shaped",
+      "message": "actual-promotion-ignored row 0 (promotion_shaped), field 1\n+ actual - expected\n\n+ 2255873\n- 2255872\n        ^\n",
+      "actual": 2255873,
+      "expected": 2255872
+    },
+    {
+      "name": "actual-en-passant-victim-at-destination",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "category": "en_passant_shaped",
+      "message": "actual-en-passant-victim-at-destination row 0 (en_passant_shaped), field 1\n+ actual - expected\n\n+ 1108000768\n- 1074446336\n",
+      "actual": 1108000768,
+      "expected": 1074446336
+    }
+  ],
+  "source_sha256s": {
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/special_update/probe.bend": "0de7d844fc4c5a6b9a47d49f1a98f9c0806712cf3cafe6ee7a41787eaff58a8e",
+    "standalone/proofs/special_update/verify_native.js": "0783969fe9d27a516e3c619879d5e35fa4de910adc5aedebc2ef1825f922b8e7"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "scope": "Actual typed promotions (flag0) and en-passant updates (flag1/promotion0), including nonlegal raw calls; complete field agreement and partition, not legal-move generation, castling or independent metadata correctness. No proof model executes in the native candidate."
+}
