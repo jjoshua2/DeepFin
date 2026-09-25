@@ -13,3 +13,26 @@ The compiler remains aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae,84 source inputs,f
 ## Execution status
 
 Sources recovered; hosted qualification is not yet complete. Saved local lint failures remain nonzero receipts. Only completed fresh checks will be added below. En-passant,castling,legal-move producer preconditions and king safety remain subsequent obligations.
+
+
+## Completed fresh hosted qualification
+
+Hosted run **36169939079** passes both unchanged focused source suites (five ordinary laws/eighteen controls and four promotion laws/seventeen controls), both four-mode native verifiers, all five compiled/executed corruption checks, original compiler source/pin checks and unchanged repository lint on source `36c2ac370a00ea91f8f7e136d0167e0abcc24fd1`.
+
+All28 primary files are byte-identical to the saved ordinary-move and promotion commits. Both focused gates actually reran their importing consumers and all controls. This publishes nine previously source-checked contracts, not nine additional mathematical results. Source report JSON matches the saved reports except measured consumer seconds; complete native JSON matches except recorded C compiler identity.
+
+Exact-source parent141/401 is retained, giving modular150 laws/436 controls. The expensive full150-law wrapper was not executed. Across the two fresh gates,17 controls are ordinary semantic/refinement failures,16 preserve manifests/import safety and two test synthetic warning output. Those synthetic units are not compiler executions. Crashes,missing imports,affine errors and timeouts do not count as semantic rejection; exact All terms check. output is required.
+
+Ordinary native checks pass6,656 complete Board records/126,464 U32 field comparisons per mode, including all4,096 source/destination pairs and9 rejected malformed requests. Promotion native checks pass16,944 distinct Board updates/321,936 fields per mode,all16,384 source/destination/choice combinations,256 ordered choice-list requests with nonempty tails,10 malformed Board requests and6 malformed list requests. Modes repeat fixtures; these are raw operations,not exhaustive legal moves or boards.
+
+The independent external reference uses64-square piece/color sets and compares all eight bitboards and metadata. Candidate probes use actual Chess/Position operations and receive no expected answers. Actual no-op,uncleared-bit,ignored-promotion,forced-queen and duplicate-knight corruptions compile and execute before wrong-value rejection. The generated four-promotion prefix preserves its supplied tail; no unrestricted whole-list duplicate-freedom claim follows.
+
+Exact update specifications retain current metadata helpers and source-kind behavior. The contracts establish representation and complete update correspondence,not own-side source occupancy,pawn-rank constraints,king safety,legal reachability,castling/en-passant correctness or independent chess metadata. A raw empty-source update can still manufacture the decoder king fallback while preserving partition.
+
+Hosted Bun1.4.2 uses /usr/bin/clang only for native tests. Locked Python3.13/uv0.12.10 CPU tools use the normal build compiler. Unchanged Ruff/Basedpyright/Vulture passes, resolving the saved local missing-tools gaps for these exact sources. The original failed lint logs remain stored separately. Compiler16-laws/seven-controls including cyclic-template rejection and12 pin tests pass. No compiler source or accepted old statement changed.
+
+All472 native-source manifest entries match before evidence publication. Subsequent changes are documentation,evidence,index and inventory only. Original full saved commits and supplementary FEN adaptation remain in their existing review bundles; no new FEN theorem or native FEN run is claimed here.
+
+Self-review only,not independent review. Pinned checker/Base,native lowering/storage,ABI,toolchain,libraries,OS and hardware remain trust boundaries. Structural snapshot lowering,closed literal builder equality and strict-TypeScript limitations remain unchanged. No production function,permanent workflow,routine perft,model/GPU,training,search or benchmark change. No Python application responsibility moved into Bend; export/references,data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No merge,force push,deployment or live-process operation.
+
+Next substantive acceptance is en-passant and castling update refinement under explicit conditions,then connection to legal move producers and king safety. Saved ordinary and promotion proofs should be reused rather than reproved.
