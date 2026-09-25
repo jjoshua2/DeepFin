@@ -1,0 +1,202 @@
+name: Bend board representation qualification
+'on':
+  push:
+    branches: [feat/bend-board-representation-dev-20260924]
+    paths: [.github/workflows/bend-board-representation-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: e486cf04bd04f6fd33204bca8d7ebcebfb45b3a2
+      TARGET: feat/bend-board-representation-20260924
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e486cf04bd04f6fd33204bca8d7ebcebfb45b3a2
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact source tree and verify retained parent evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/board-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/source.b64"
+          for blob in a81f353c252ba1edfb13dee5ac55d1fc554f2ffe 88a2c38ba00b1b5905b5c63efd9daf7fc49e8168 f2e38c08cabf9c33af8095269b93f92be6e187c2; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/source.b64"
+          done
+          for job in 107667936016 107667936093 107667936118; do
+            gh api "repos/jjoshua2/DeepFin/actions/jobs/$job" > "$EVIDENCE/parent-job-$job.json"
+          done
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP']);e=Path(os.environ['EVIDENCE'])
+          encoded=(t/'source.b64').read_bytes();assert len(encoded)==24920
+          patch=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(patch)==177760 and hashlib.sha256(patch).hexdigest()=='d9ead50873ed2792135b7af29baa14a8fd8eade7b37dd88e286078edb6c9dc20'
+          (e/'source.patch').write_bytes(patch)
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='022afa4ae9e1236435c741c671c46fd6430d453a'
+          old=Path('docs/experiments/evidence/bend-full-table-boundary')
+          q=json.loads((old/'qualification.json').read_text());assert q['qualification']=='PASS' and q['modular_laws']==117 and q['modular_controls']==315
+          c=json.loads((old/'hosted-controls.json').read_text());assert c['controls_gate']=='PASS' and len(c['negative_controls'])==20 and all(x['rejected'] for x in c['negative_controls'])
+          assert json.loads((old/'consumer.log.json').read_text())['raw_text'].strip()=='All terms check.'
+          manifest=json.loads((old/'hosted-source-identity.json').read_text())['candidate_source_sha256s'];assert len(manifest)==379
+          for f,h in manifest.items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          for job in [107667936016,107667936093,107667936118]:
+              r=json.loads((e/f'parent-job-{job}.json').read_text());assert r['id']==job and r['run_id']==36009970976 and r['status']=='completed' and r['conclusion']=='success'
+          subprocess.run(['git','apply','--check',str(e/'source.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'source.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='5210ff4c5300a710f4b679b3619bba2ccfb33a1d'
+          files=git('diff','--cached','--name-only').splitlines();assert len(files)==13
+          assert all(f.startswith('native/bend_engine/standalone/proofs/board/') or f=='docs/experiments/2026-09-24-bend-board-representation.md' for f in files)
+          hashes={f:hashlib.sha256(Path(f).read_bytes()).hexdigest() for f in git('ls-files','native/bend_engine').splitlines() if Path(f).is_file()}
+          assert len(hashes)==391
+          record={'base':os.environ['BASE'],'source_tree':'5210ff4c5300a710f4b679b3619bba2ccfb33a1d','patch_sha256':hashlib.sha256(patch).hexdigest(),'changed_files':files,'candidate_source_sha256s':hashes,'retained_parent_laws':117,'retained_parent_controls':315,'parent_manifest_matches':379,'parent_qualification_sha256':hashlib.sha256((old/'qualification.json').read_bytes()).hexdigest(),'combined_123_law_wrapper_executed':False,'independent_review':False}
+          (e/'source-identity.json').write_text(json.dumps(record,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove board partition consistency and fresh insertion'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - name: Check six public laws and all seventeen controls
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/board/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Compare complete boards in four native modes and reject wrong behavior
+        env:
+          CC: clang-18
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/board/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Recheck original compiler source suite and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools with normal host compiler
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify final receipts and publish a fresh feature branch
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-full-table-boundary-20260924 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(name):return json.loads((e/name).read_text())
+          ident=read('source-identity.json');c=read('focused.json');n=read('native.json')
+          for f,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          assert c['focused_gate']=='PASS' and c['controls_gate']=='PASS' and c['consumer']=='PASS'
+          assert c['new_law_count']==6 and c['universal_laws']==4 and c['closed_laws']==2
+          assert len(c['negative_controls'])==17 and all(x['rejected'] for x in c['negative_controls'])
+          kinds=collections.Counter(x['kind'] for x in c['negative_controls'])
+          assert kinds['source semantic/refinement']==8 and kinds['manifest/import policy']==8
+          assert n['native_gate']=='PASS' and n['rows_per_mode']==1026 and n['fresh_square_kind_color_cases']==768
+          assert n['complete_board_fields_per_mode']==19494 and n['malformed_requests_per_mode']==9
+          assert n['cases_by_operation']=={'fresh_insert':768,'repeated_insert':64,'conflicting_insert':64,'metadata_valid':64,'metadata_invalid':64,'empty':1,'initial':1}
+          assert len(n['modes'])==4 and all(x['output_sha256']=='514e7686bce93cfeaa4a65d4a8ae0c11927a9826e536246d2225f37c6b27b59d' and x['invalid_rejections']==9 for x in n['modes'])
+          assert len(n['mutations'])==2 and all(x['rejected'] and x['compiled_and_executed'] for x in n['mutations'])
+          for f,h in c['source_sha256s'].items():assert hashlib.sha256((Path('native/bend_engine')/f).read_bytes()).hexdigest()==h,f
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-board-representation');d.mkdir(exist_ok=False)
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          for f in e.glob('parent-job-*.json'):shutil.copyfile(f,d/f.name)
+          result={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':'5210ff4c5300a710f4b679b3619bba2ccfb33a1d','new_laws':6,'universal_new_laws':4,'closed_new_laws':2,'new_controls':17,'control_categories':dict(kinds),'retained_parent_laws':117,'retained_parent_controls':315,'modular_laws':123,'modular_controls':332,'combined_wrapper_executed':False,'native_source_entries':391,'independent_review':False,'claim':'Per-square bitboard partition consistency and actual fresh insertion, not legality or complete P3.'}
+          (d/'qualification.json').write_text(json.dumps(result,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes all six public laws, importing consumer, seventeen controls, four native modes with full-Board comparisons, two compiled/executed corruption controls, original compiler checks and unchanged whole-repository lint on source `{os.environ['SOURCE']}`."
+          paragraphs=['## Completed hosted qualification',headline,
+            'This is the first P3 partition-invariant suite, not another P2 table proof. Four statements are universal and two are closed empty/initial consistency facts. Metadata values, king counts, pawn ranks, occupied decoding, reachability and move legality remain separate. Every earlier accepted law and compiler input is unchanged.',
+            'The focused source gate executes its six-law consumer and all17 controls in one successful command. Eight controls are ordinary implementation/refinement failures; eight enforce proof manifests and imports; one synthetic zero-exit warning checks the wrapper and is not another compiler execution. No crash, malformed import, affine-use error or timeout is counted as semantic rejection.',
+            'Exact-source117-law/315-control parent evidence is retained, yielding modular123-law/332-control coverage. The complete123-law wrapper did not run. All379 parent manifest entries and successful source/control/runtime job identities were checked before application; all391 candidate native-source entries match before publication.',
+            'Each native mode passes1,026 complete Board rows and19,494 U32 field comparisons:768 fresh square/kind/color insertions,64 repeated insertions,64 deliberate conflicts,64 valid and64 invalid metadata inputs,empty andstart. Nine malformed probe requests are rejected. The real no-op and wrong-color insertions compile and execute before failing the independent per-square-set reference. Modes repeat fixtures; this is not exhaustive arbitrary-board or legal-game coverage. Collision cases describe behavior outside freshness, not rejection by Position.put.',
+            'The source insertion law intentionally covers raw U32 square inputs via the actual bit-mask semantics; native insertion is restricted to0..63. Metadata framing permits arbitrary U32 field values and does not certify them as valid chess metadata. Freshness is sufficient, not necessary: identical repeated insertion can remain consistent. A no-op preserves consistency, so the separate exact-update equality is essential.',
+            'Hosted Bun1.4.2/Clang18.1.3; Clang is scoped to native probes. Locked Python3.13/uv0.12.10 CPU tools use the normal build compiler. Ruff/Basedpyright/Vulture passes unchanged, resolving the preserved local missing-tools gap for this candidate. Original compiler16-laws/seven-controls, including cyclic-template rejection, and12 pin tests pass. A trailing blank line in new Spec.bend was removed before final local and hosted rechecks without changing any term.',
+            'Only documentation,index and evidence are added after checking. The full source tree matches the recovered local candidate. No permanent workflow, production function, earlier proof, compiler input or routine perft budget changed. No search/table build, model/GPU, training or performance run is added. Nothing merged, force-pushed,deployed or changed in a live process.',
+            'FIDE English rules applied1January2023 are the explicitly pinned future P3 semantic reference, not a claim of current-edition or full-rule compliance. The current independent Boolean-row partition supplies only square/color/kind consistency. Next: occupied decoding and abstract-board correspondence, parser freshness, and invariant-preserving removal/move/special-move semantics.',
+            'Self-review only. Checker/Base,native lowering/storage,ABI,toolchain,OS and hardware remain trust boundaries. Existing compiler limitations are unchanged. No Python application responsibility moved into Bend; export,references,data/control/training and transitional C++/LibTorch/AOTI remain dependencies.'
+          ]
+          record=Path('docs/experiments/2026-09-24-bend-board-representation.md');record.write_text(record.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          index=Path('docs/experiments/README.md');text=index.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          index.write_text(text.replace(anchor,anchor+'| [Board partition and fresh insertion](2026-09-24-bend-board-representation.md) | Six source contracts for actual board consistency, exact insertion and metadata framing; modular123/332; move legality and reachability remain open |\n',1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          update='## Latest P3 board-representation foundation\n\n'+headline+'\n\nThe new board suite defines an independent per-square partition across six kind and two color bitboards: empty or exactly one kind of one color. Actual empty/start boards satisfy it; actual fresh typed insertion preserves it and has an exact complete-Board update theorem. Actual insertion preserves metadata, and metadata writes preserve the partition predicate. Four universal and two closed laws use the real Position/Chess code.\n\nThis is deliberately weaker than legal position: no king count, pawn-rank, valid metadata, occupied decoder, FEN freshness/reachability, move application or generation theorem follows. Symbolic raw-square mask semantics are distinguished from the native0..63 insertion domain. Exact-source parent117/315 plus the newly executed6/17 yields modular123/332, not a full combined aggregate run. The FIDE2023 English rules are the pinned future semantic anchor; this invariant is not compliance. See [the readout](experiments/2026-09-24-bend-board-representation.md). Prior P2 results and their closed-builder limitation remain unchanged.\n'
+          m.write_text(title+'\n\n'+update+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git switch -c "$TARGET"
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify P3 partition and fresh-insertion contracts'
+          git push origin "HEAD:refs/heads/$TARGET"
+          git log -2 --format='%H %s' > "$EVIDENCE/published-commits.txt"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-board-representation-qualification
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/board-evidence/
+          retention-days: 14
