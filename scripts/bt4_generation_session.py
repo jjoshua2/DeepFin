@@ -90,7 +90,7 @@ def _reject_external_data(path: Path) -> None:
         for field, value in message.ListFields():
             if field.type != field.TYPE_MESSAGE:
                 continue
-            if field.is_repeated:
+            if field.label == field.LABEL_REPEATED:
                 for child in value:
                     yield from tensors(child)
             else:
@@ -188,6 +188,10 @@ def open_verified_bt4_session(
     sess, opened_name, opened_dtype, providers = open_session(
         str(path), gpu_mem_gb=gpu_mem_gb, threads=threads,
     )
+    try:
+        sess.disable_fallback()
+    except (AttributeError, RuntimeError) as exc:
+        raise ValueError("BT4 session cannot disable execution-provider fallback") from exc
     after_sha = file_sha256(path)
     if after_sha != before_sha:
         raise ValueError("BT4 ONNX artifact changed while session opened")
