@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+import hashlib
 from typing import Any
 
 import chess
@@ -31,6 +32,18 @@ from scripts.bt4_policy_dump import compact_legal_policy, resolve_policy_output
 from scripts.bt4_raw_corpus_sidecar import resolve_wdl_output, validate_wdl_values
 
 _ZERO_LOGIT = np.float32(-1e9)
+
+
+def _feed_row_sha256(input_name: str, row: np.ndarray) -> str:
+    """Hash exactly one submitted ONNX row plus its input schema."""
+    digest = hashlib.sha256()
+    digest.update(input_name.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(row.dtype.str.encode("ascii"))
+    digest.update(b"\0")
+    digest.update(np.asarray(row.shape, dtype="<i8").tobytes())
+    digest.update(np.ascontiguousarray(row).tobytes())
+    return digest.hexdigest()
 
 
 def _search_policy_logits(dense_policy: np.ndarray) -> np.ndarray:
@@ -78,6 +91,8 @@ class BT4RootOutput:
     input_history_encoding: str
     input_extra_features: str
     history_rep_fix: bool
+    onnx_feed_sha256: str = ""
+    verified_session_sha256: str | None = None
 
     def search_inputs(self) -> tuple[np.ndarray, np.ndarray]:
         """Fresh batched logits for search; root-only actors retain no derived copy."""
@@ -99,6 +114,8 @@ class BT4OnnxEvaluator:
         policy_output: str | None, wdl_output: str, wdl_kind: str,
         input_history_encoding: str, input_extra_features: str,
         model_sha256: str, history_rep_fix: bool,
+        verified_session_sha256: str | None = None,
+        fixed_batch_size: int | None = None,
     ) -> None:
         if type(history_rep_fix) is not bool:
             raise ValueError("BT4 history_rep_fix must be an explicit boolean")  # pyright: ignore[reportUnreachable]
@@ -125,6 +142,10 @@ class BT4OnnxEvaluator:
             raise ValueError("BT4 requires an explicit native WDL output")
         self.wdl_contract = contract
         self.model_sha256 = model_sha256
+        self.verified_session_sha256 = verified_session_sha256
+        if fixed_batch_size is not None and fixed_batch_size < 1:
+            raise ValueError("BT4 fixed batch size must be positive")
+        self.fixed_batch_size = fixed_batch_size
         self._tree: Any | None = None
         self.root_calls = 0
         self.root_rows = 0
@@ -157,10 +178,15 @@ class BT4OnnxEvaluator:
             )
         return arr
 
-    def _infer(self, x: np.ndarray, *, root: bool = False) -> tuple[np.ndarray, np.ndarray]:
+    def _infer(self, x: np.ndarray, *, root: bool = False) -> tuple[np.ndarray, np.ndarray, list[str]]:
+        if self.fixed_batch_size is not None and len(x) != self.fixed_batch_size:
+            raise ValueError("BT4 row count differs from fixed ONNX batch size")
         feed = x_to_lc0_planes(
             x, input_history_encoding=self.input_history_encoding,
         ).astype(self.input_dtype, copy=False)
+        feed_hashes: list[str] = []
+        if root:
+            feed_hashes = [_feed_row_sha256(self.input_name, row) for row in feed]
         if root:
             # Count submitted ONNX calls/rows, including a session failure.
             self.root_calls += 1
@@ -175,7 +201,7 @@ class BT4OnnxEvaluator:
         if policy.shape != (len(x), COMPACT_POLICY_SIZE):
             raise ValueError(f"BT4 policy shape {policy.shape} is not (N,{COMPACT_POLICY_SIZE})")
         validate_wdl_values(values, len(x), self.wdl_contract)
-        return policy, values
+        return policy, values, feed_hashes
 
     def evaluate_root(self, board: chess.Board, x: np.ndarray) -> BT4RootOutput:
         """Singleton convenience path with the same validation as batched roots."""
@@ -213,7 +239,7 @@ class BT4OnnxEvaluator:
             raise ValueError("BT4 root source fingerprint is unavailable")
         fens = [board.fen() for board in boards]
         input_keys = [corpus.input_tensor_key(row) for row in arr]
-        policy_rows, native_values = self._infer(arr, root=True)
+        policy_rows, native_values, feed_hashes = self._infer(arr, root=True)
         outputs = []
         for idx, board in enumerate(boards):
             _, _, dense = compact_legal_policy(board, policy_rows[idx])
@@ -229,6 +255,8 @@ class BT4OnnxEvaluator:
                 input_history_encoding=self.input_history_encoding,
                 input_extra_features=self.input_extra_features,
                 history_rep_fix=self.history_rep_fix,
+                onnx_feed_sha256=feed_hashes[idx],
+                verified_session_sha256=self.verified_session_sha256,
             ))
         return outputs
 
@@ -271,7 +299,7 @@ class BT4OnnxEvaluator:
                 raise ValueError(f"BT4 leaf {idx} C/Python legal indices disagree")
             offset += int(legal_counts[idx])
             mapped.append(board)
-        policy_rows, native_values = self._infer(arr[:n_real])
+        policy_rows, native_values, _ = self._infer(arr[:n_real])
         self.leaf_calls += 1
         self.leaf_rows += n_real
         policy_logits = np.full((len(arr), COMPACT_POLICY_SIZE), _ZERO_LOGIT, dtype=np.float32)
