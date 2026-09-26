@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest P3 actual castling output provenance
+
+Hosted run **36249795989** passes all six public laws, importing consumer, seventeen classified controls, four native producer modes, three compiled/executed actual-code corruptions, original compiler source/pin checks and unchanged repository lint on source `f3e5db1fb2e7b671fcfefaf7ea03d52b0f88a536`.
+
+The actual castle_side output-list theorem now replaces the previously missing producer-output connection: unchanged caller tail or one exact guarded move prepended, with new-member guard/coordinate derivation. The guard supplies independent rook-landing freshness; composing the existing public castling-update law proves consistency after applying a new member to a consistent Board. Arbitrary old tail moves are excluded by the membership corollaries, not silently assumed valid.
+
+Source arrays remain actual affine inputs; positive list observation is not table preservation, while false-guard rejection preserves the entire pair. Modular166/487 retains exact160/470 parent evidence; no full aggregate run. Current native tables/producer pass852 requests across four modes without changing historical probe pins. Full legal_moves provenance, semantic king safety, rights history, metadata legality and generation completeness remain separate. See [the dated readout](experiments/2026-09-26-bend-castle-emission.md).
+
 ## Latest P3 castling producer geometry
 
 Hosted run **36219695972** passes six universal route/mask geometry laws, exact source-link checks against the actual `Chess.castle_side` expressions, the current compiler source/pin gates and unchanged repository lint on source `4f3f40c9a98ddac838bd851ddf7fe821e8cfbfe2`.

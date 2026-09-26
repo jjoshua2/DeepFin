@@ -67,3 +67,26 @@ Six public laws and their importing consumer passed locally with exact safe outp
 The first native report passes 852 distinct producer requests, all four build modes,
 and three compiled/executed actual producer corruptions. Complete final qualification
 and any failed intermediate attempts will be recorded below with their exact sources.
+
+
+## Completed hosted qualification
+
+Hosted run **36249795989** passes all six public laws, importing consumer, seventeen classified controls, four native producer modes, three compiled/executed actual-code corruptions, original compiler source/pin checks and unchanged repository lint on source `f3e5db1fb2e7b671fcfefaf7ea03d52b0f88a536`.
+
+The producer-output gap is now checked against imported Chess.castle_side, not only source anchors. The actual list is its exact input tail or one exact guarded castling Ply prepended. New-member guard and coordinate proofs require absence from that tail. A structural occupancy/freshness proof derives the input rook-landing condition, then the existing public castling-update theorem yields actual child-Board consistency. The caller supplies input consistency, not output consistency or desired target emptiness.
+
+Arbitrary actual affine arrays remain inputs to the source statements and real calls. Positive list observations do not prove returned-array identity or native lifetime; false-guard rejection separately preserves the complete pair. Arbitrary input tails may contain old flag-two moves and duplicates. The explicit old-tail/false-guard counterexample remains, as does a satisfiable nonempty source example using an arbitrary zero table rather than a claimed correct attack table.
+
+All852 distinct native requests execute actual Tables.build and Chess.castle_side, checking complete ordered move lists and1,469 complete raw child Boards per mode (27,911 U32 Board fields). There are432 true guards and269 emissions. Four destination-attacked examples intentionally remain in the castle_side result; later legal_moves destination filtering is outside this theorem. Seven malformed batches are rejected per mode. Modes repeat the same fixtures, not disjoint or exhaustive legal games. Inherited tail children are compared exactly but are not certified legal or consistent.
+
+The external native reference uses coordinate/set ownership, path clearance and independent geometric attacks. Candidate input contains raw Boards, side choices and fixed tail-selector modes, not expected decisions. Guard bypass, omission of transit from the path mask and wrong destination compile/run before incorrect output is rejected. No old legal_probe compiler pin is bypassed; no full perft, benchmark, search, model or GPU work is added.
+
+Eight source controls fail for intended semantic/refinement reasons; eight enforce manifests/import safety; one synthetic zero-exit warning tests the wrapper and is not a compiler execution. Crashes, missing imports, affine/parser errors and timeouts are not semantic success. One local model-mutation draft reached the implementation-link proof before the expected guard-extraction location; the corrected harness targets that actual source connection without changing any theorem. Earlier affine/erased-argument construction errors remain historical.
+
+All499 inherited native source entries remain byte-identical; all511 candidate entries match before publication. Exact-source160/470 parent evidence plus newly executed6/17 yields modular166 laws/487 controls, not a complete aggregate run. Original compiler16-laws/seven-controls and12 pin tests pass. Hosted locked Python3.13/uv0.12.10 CPU tools pass unchanged lint; the original local missing-tools failure is not relabeled successful. C compiler selection is scoped to native checks.
+
+Only documentation,index and evidence follow source qualification. A one-byte base64 transport transcription was explicitly corrected and exact chunk,patch and complete Git-tree identities verified before source application. It is a transport correction, not a code/checker change.
+
+Self-review only. No production function, prior accepted law, compiler input, permanent workflow, routine perft or live process changed. No additional Python application responsibility moved into Bend. Export,external references,data/control/training and transitional C++/LibTorch/AOTI remain dependencies; pinned checker/Base,native lowering/storage,ABI,toolchain,OS and hardware remain trust boundaries. Existing compiler/snapshot-lowering/closed-builder limitations are unchanged.
+
+Next acceptance is compositional provenance through both castling sides and the final actual legal-move filter, plus semantic start/transit/destination attack correctness and independent metadata rules. Source king/rook bit membership and rights/path guard provenance do not establish historical rights legality, king counts, FIDE reachability or generator completeness.
