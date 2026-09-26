@@ -6,7 +6,7 @@ The question is whether the completed 58M continuation improves playing strength
 
 One fixed 256-game match (128 opening pairs), 400 simulations, seed 2026092001, matched search settings and prior temperature 1.0. The unchanged validated runner checks checkpoint lineage, completed training receipts, runtime/source/book pins, paired game-bank completeness and resource bounds. Report the Elo estimate and nominal 95% opening-paired interval, including an interval crossing zero. There is no automatic extension or promotion decision.
 
-Expected active duration is about 20 minutes; hard outer cap is 2,490 seconds. Models and match output stay outside GitHub. Output: `/home/josh/chess-artifacts/runs/expanded58m_vs50m_20260920`.
+Expected active duration is about 20 minutes; hard outer cap is 2,490 seconds. Models and match output stay outside GitHub. Output: `/home/<user>/chess-artifacts/runs/expanded58m_vs50m_20260920`.
 
 The [original preregistration](artifacts/2026-09-20-expanded58m-readout/PREREGISTRATION.md), [plan](artifacts/2026-09-20-expanded58m-readout/plan.json), [binding qualification](artifacts/2026-09-20-expanded58m-readout/qualification.json), [registered descriptor](artifacts/2026-09-20-expanded58m-readout/registered_command.json), and [atomic adoption receipt](artifacts/2026-09-20-expanded58m-readout/queued.json) preserve exact settings and identities. The preregistration retains its original pre-adoption status; the later receipt records queue adoption.
 
