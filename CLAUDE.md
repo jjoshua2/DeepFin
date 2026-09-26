@@ -46,6 +46,19 @@ switch or reset that checkout underneath it: the live YAML is re-read during tra
 A merged PR does not update Python already loaded by a process or its native extension
 image. Plan adoption and any restart separately from merging.
 
+Group new manual worktrees under `~/projects/chess-worktrees/<task>` on
+this host, or use the agent tool's dedicated worktree directory outside checkouts.
+Keep temporary and frozen runtime worktrees distinct; do not move running runtimes.
+
+Give independent code-writing agents separate worktrees; read-only reviewers can
+share a checkout. Shared artifact inputs are read-only, and each run gets a distinct
+output directory so code isolation does not hide collisions in shared storage.
+
+Keep development and agent workspaces code-only so they can be copied freely.
+Datasets, labels, weights, checkpoints, caches and run output use explicit shared
+paths outside every checkout, including the source workspace. Preserve existing live artifact paths until their readers and queued
+jobs have migrated; see [workspace storage](docs/workspace_storage.md).
+
 A live YAML edit is a production change. Trace schema → validation → consumer →
 reload behavior for the affected key; acceptance does not prove it takes effect.
 Validate a copy first and verify the realized value after adoption. Some keys are

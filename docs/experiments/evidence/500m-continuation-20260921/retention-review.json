@@ -1,0 +1,40 @@
+{
+  "status": "PASS_INDEPENDENT_FINITE_FIXTURE_REVIEW",
+  "reviewer": "/root/factorial_receipt_review",
+  "checked_utc": "2026-09-21T15:17:05.859230+00:00",
+  "artifacts": {
+    "manifest.json": "e0b609c8bc0bfb5ea23416c2ec6baeee6d06fd0df29b904e8d157841fd7e144f",
+    "summary.json": "1e07a0ce4f92d166b335af5ea5a895a678b8e568765356169ea72c897e10c063",
+    "results.jsonl": "ab38bda79b50b0a6c4386361d6675a3bfdbe88da37c3bd637dfc84b019d24d65",
+    "uci_raw.jsonl": "4384138db80b75f521a04a99ea2734b30d80430201beecb58fc9a264f4627130",
+    "lifecycle.jsonl": "71065898e69c8c8ef5331d10c9d33e98c1429b74dae9b5ada971fc557d116060"
+  },
+  "checks": {
+    "exact_unique_comparison_rows": 696,
+    "normal_rows": 648,
+    "option_variant_rows": 48,
+    "complete_three_arm_groups": 232,
+    "raw_uci_searches_reparsed": 700,
+    "raw_saved_results_match": true,
+    "score_rank_move_depth_bestmove_mismatches": 0,
+    "wdl_mismatches": 0,
+    "incomplete_depths": 0,
+    "bound_scores": 0,
+    "normal_tbhits_total": 20406,
+    "probe_limit_zero_tbhits": 0,
+    "mapping_lifecycle_verified": true,
+    "manifest_hashes_current": true,
+    "wall_seconds": 51.99762348103104,
+    "child_cpu_seconds": 36.755762,
+    "affinity": [
+      8,
+      9
+    ],
+    "nice": 19
+  },
+  "limitations": [
+    "Harness exit code alone does not gate coverage/depth/probe/lifecycle; reviewer independently gated full bank.",
+    "Finite fixture equivalence does not authorize adoption or prove arbitrary-input equivalence.",
+    "Timing is one fixed original-disabled-enabled order, warm-cache short screen with UCI banking overhead; compare same candidate off/on only."
+  ]
+}
