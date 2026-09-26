@@ -1,0 +1,48 @@
+{
+  "status": "PASS_BOUNDED_CONSTRUCTOR_SCREEN",
+  "base_commit": "2de1027470d32c8c970fbb38aaa3ef9b8aafd5c3",
+  "frozen_control_commit": "502cd02e072471c901255f3fdb580d6ea7b826d0",
+  "shards": 8,
+  "rows": 65536,
+  "batch_size_for_subset": 128,
+  "constructor_seconds": {
+    "baseline": 15.010766082094051,
+    "candidate": 2.771751891996246,
+    "ratio": 5.415624004962123
+  },
+  "dense_validations": {
+    "baseline": 72,
+    "candidate": 8
+  },
+  "checks": {
+    "same_full_plan": true,
+    "same_ordered_target_game_id_hashes": true,
+    "same_shard_roster": true,
+    "focused_tests": 54,
+    "independent_review": "APPROVE",
+    "focused_lint": "PASS",
+    "whole_repo_ruff": "PASS",
+    "whole_repo_basedpyright": "23 pre-existing errors in7unchanged tests; exact normalized baseline diagnostic match",
+    "baseline_type_diagnostics_identical": true
+  },
+  "scope": "8shard constructor-stage microbenchmark; full-corpus qualification/global root checks and training throughput are not measured; active runtime unchanged.",
+  "artifact_root": "/home/josh/chess-artifacts/operations/overlay-validation-reuse-20260921",
+  "artifact_sha256": {
+    "baseline.log": "26db1ded802a60b0e1bfdb3b6fbdd9ad9474b914c9d6fe1e290951de11625987",
+    "baseline-typecheck.log": "e42594878a040971b4a8a9a29ea0ec6ae9b7d18c8d66dded631740386720b082",
+    "baseline.json": "ba77f3a6eb22801e05a5316df6b766ead21dff791043b955b82633a1b69b15b5",
+    "baseline_batch512_refused.json": "2b9f3fe35a2d50ee8a11947aa2d19995dee3950ce51e1f37ba28de3a3e25a160",
+    "tests.log": "7085a3a57436bd276e8f91bd2950d604d6d8501e5d961c26b1162bfd26191508",
+    "protocol.json": "d45c3439b3b65afce782a66441aea3fa9c94e483c8d1ac478a7bbf9075a8c380",
+    "benchmark_overlay_reuse.py": "d68cc4d7cfbfd7ddb63e693241bc6249aa36986a49e3d5bf63c9f794f82f6c2b",
+    "candidate.log": "24b16a3484782336eb3ff011674a8883f1b54524a47d65229c95fc2154081de8",
+    "baseline_batch512_refused.log": "204966764f6db8ef943bf94b646f8ef69755e2b7efa2d2ba0fdd4c561cace5da",
+    "baseline_contended_warmup.log": "88e44c43eb9b8f4d178439545abf9efe5aadffd014f406fc31ed5b1460a3ecd4",
+    "candidate.patch": "7c031adbef3a9b1cdc8ef7eb7cf4f742384826cefed4d118588c3b2fbdcc70f1",
+    "full-lint.log": "d70a0c0d195ae564f901533228ebc75e46459348a357cf723cfa8697e04ff8cb",
+    "independent-review.json": "b50553fa83b067ee3f780cb8389abfacb16eef8ce7920e10c80bdc77e316219b",
+    "candidate.json": "607fca673d320356d6599c572a4ba5da07bc7943f3e0e704f81aa8e6580c17aa",
+    "baseline_contended_warmup.json": "9519d5cef3c63c545fed9475db0f78fd8bef42c1ef821575f5be7854fad88f83",
+    "focused-lint.log": "8e42125f287c866ddb4c9bf6e50abcaad38b4d8974c073a60867be30b1a4a8fc"
+  }
+}

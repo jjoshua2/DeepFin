@@ -6,6 +6,8 @@ Both inherit ordinary sealed bases without chains.
 """
 from __future__ import annotations
 
+import copy
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -99,10 +101,27 @@ def _receipt_stamp(path: Path) -> tuple[int, int, int, int, int]:
     return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
 
 
+@dataclass(frozen=True)
+class _ValidatedOverlay:
+    stamp: str
+    manifest: dict[str, Any]
+    attrs: dict[str, Any]
+    content_sha256: str
+
+
+def _directory_identity(path: Path) -> tuple[int, int, int, int, int]:
+    require(path.is_dir() and not path.is_symlink(), 'invalid corpus root')
+    st = path.stat()
+    return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
+
+
 class BaseSeal:
     """One operation's validated seal/index; never a global unchecked cache."""
 
     def __init__(self, ref: dict[str, str]) -> None:
+        self._validated_overlays: dict[Path, _ValidatedOverlay] = {}
+        self._operation_roots: dict[Path, tuple[int, int, int, int, int]] = {}
+        self._operation_files: dict[Path, tuple[int, int, int, int, int]] = {}
         self._ref = dict(ref)
         self._path = Path(ref['path'])
         self._stamp = _receipt_stamp(self._path)
@@ -113,6 +132,30 @@ class BaseSeal:
         self._entries = {entry['name']: entry for entry in self.value['shards']}
         require(len(self._entries) == len(self.value['shards']), 'duplicate base seal shard names')
         self.check(ref)
+
+    def bind_roots(self, roots: list[Path]) -> None:
+        """Anchor root membership/metadata before corpus qualification starts."""
+        self.check_operation()
+        for root in roots:
+            if root in self._operation_roots:
+                continue
+            before = _directory_identity(root)
+            for path in root.iterdir():
+                require(not path.is_symlink(), 'linked corpus metadata/shard')
+                if path.is_file():
+                    self._operation_files[path] = _receipt_stamp(path)
+            require(_directory_identity(root) == before, 'corpus membership changed during binding')
+            self._operation_roots[root] = before
+
+    def bind_receipt(self, path: Path, stamp: tuple[int, int, int, int, int]) -> None:
+        require(_receipt_stamp(path) == stamp, 'qualification receipt identity changed')
+        self._operation_files[path] = stamp
+
+    def check_operation(self) -> None:
+        for root, stamp in self._operation_roots.items():
+            require(_directory_identity(root) == stamp, 'corpus membership changed during operation')
+        for path, stamp in self._operation_files.items():
+            require(_receipt_stamp(path) == stamp, 'operation receipt/metadata identity changed')
 
     def check(self, ref: dict[str, str]) -> None:
         require(ref == self._ref, 'different base seal context')
@@ -169,7 +212,7 @@ def finish_policy_shard(base: Path, output: Path, seal_ref: dict[str, str], *, s
     overlay_content_sha256(output, seal=seal)
 
 
-def _open_manifest(path: Path, *, seal: BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+def _validate_manifest(path: Path, *, seal: BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     require(has_overlay(path), 'missing overlay manifest')
     require(not (path / MANIFEST).is_symlink(), 'linked overlay manifest')
     manifest = json.loads((path / MANIFEST).read_bytes())
@@ -197,19 +240,48 @@ def _open_manifest(path: Path, *, seal: BaseSeal | None = None) -> tuple[dict[st
     return manifest, attrs
 
 
-def overlay_content_sha256(path: Path, *, seal: BaseSeal | None = None) -> str:
+def _validated_overlay(path: Path, seal: BaseSeal) -> _ValidatedOverlay:
+    """Reuse dense checks only while all anchored dependencies still match.
+
+    The context belongs to one caller/epoch, never a process-global cache. Every
+    access rechecks local membership/file identities, inherited base identities,
+    receipt identities and qualified corpus membership. Changed inputs fail
+    closed rather than refreshing the cached identity.
+    """
     path = path.resolve(strict=True)
+    seal.check_operation()
     before = tree_stamp(path)
-    seal = seal if seal is not None else seal_for_overlay(path)
-    manifest, _ = _open_manifest(path, seal=seal)
-    # The sealed inherited content digest is usable only while every anchored
-    # file stamp still matches. Fresh, unanchored stats never substitute for it.
+    cached = seal._validated_overlays.get(path)
+    if cached is not None:
+        require(before == cached.stamp, 'validated overlay changed during operation')
+        base_entry(cached.manifest['base_seal'], Path(cached.manifest['base']), seal=seal)
+        require(tree_stamp(path) == before, 'overlay changed during identity read')
+        seal.check_operation()
+        return cached
+    manifest, attrs = _validate_manifest(path, seal=seal)
     local = plain_content_sha256(path)
     require(tree_stamp(path) == before, 'overlay changed during identity read')
     base_entry(manifest['base_seal'], Path(manifest['base']), seal=seal)
-    return hashlib.sha256(json.dumps({'kind': 'immutable-policy-overlay-v1',
+    seal.check_operation()
+    content = hashlib.sha256(json.dumps({'kind': 'immutable-policy-overlay-v1',
         'base': manifest['base_content_sha256'], 'base_seal': manifest['base_seal'],
         'local': local}, sort_keys=True).encode()).hexdigest()
+    validated = _ValidatedOverlay(before, copy.deepcopy(manifest), copy.deepcopy(attrs), content)
+    seal._validated_overlays[path] = validated
+    return validated
+
+
+def _open_manifest(path: Path, *, seal: BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    context = seal if seal is not None else seal_for_overlay(path)
+    validated = _validated_overlay(path, context)
+    # Consumers may attach metadata; never expose mutable cached dictionaries.
+    return copy.deepcopy(validated.manifest), copy.deepcopy(validated.attrs)
+
+
+def overlay_content_sha256(path: Path, *, seal: BaseSeal | None = None) -> str:
+    path = path.resolve(strict=True)
+    context = seal if seal is not None else seal_for_overlay(path)
+    return _validated_overlay(path, context).content_sha256
 
 
 def overlay_proxies(path: Path, fields: tuple[str, ...], *, seal: BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -252,6 +324,7 @@ def verify_qualification(ref: dict[str, str], root: Path, *, context: BaseSeal |
             and receipt.get('root') == str(root), 'wrong overlay storage qualification')
     require(_root_files(root) == receipt['root_files'], 'qualified overlay metadata changed')
     context = context if context is not None else BaseSeal(receipt['base_seal'])
+    context.bind_roots([root, context.root])
     require_base_corpus(receipt['base_seal'], context.root, context=context)
     paths = shard_paths(root)
     require(bool(paths) and [p.name for p in paths] == [e['name'] for e in receipt['shards']],
@@ -259,6 +332,7 @@ def verify_qualification(ref: dict[str, str], root: Path, *, context: BaseSeal |
     for path, expected in zip(paths, receipt['shards'], strict=True):
         require(overlay_content_sha256(path, seal=context) == expected['content_sha256'],
                 'qualified overlay dependency/content changed')
+    context.check_operation()
     return receipt
 
 
@@ -308,11 +382,14 @@ def plain_content_sha256(path: Path) -> str:
 
 def qualified_paths(ref: dict[str, str], paths: list[Path]) -> tuple[dict[Path, str], BaseSeal]:
     """Bind staging and every new epoch to the actual qualified corpus."""
+    receipt_path = Path(ref['path'])
+    receipt_stamp = _receipt_stamp(receipt_path)
     receipt = _read_pin(ref)
     if receipt.get('schema') == 2:
         expected, contexts = verify_receipt(receipt)
         require([path.resolve(strict=True) for path in paths] == list(expected),
                 'staged overlay paths/order differ from qualified corpus')
+        contexts.bind_receipt(receipt_path, receipt_stamp)
         return expected, contexts
     root = Path(receipt['root'])
     context = BaseSeal(receipt['base_seal'])
@@ -320,6 +397,8 @@ def qualified_paths(ref: dict[str, str], paths: list[Path]) -> tuple[dict[Path, 
     expected = {root / entry['name']: entry['content_sha256'] for entry in receipt['shards']}
     require([path.resolve(strict=True) for path in paths] == list(expected),
             'staged overlay paths/order differ from qualified corpus')
+    context.bind_receipt(receipt_path, receipt_stamp)
+    context.check_operation()
     return expected, context
 
 
@@ -459,6 +538,7 @@ def verify_receipt(receipt: dict[str, Any]) -> tuple[dict[Path, str], BaseSeals]
     require(all(root.is_absolute() and root == root.resolve(strict=True) for root in roots),
                 'noncanonical target roots')
     context = BaseSeals(receipt['base_seals'])
+    context.bind_roots([*roots, *(single.root for single in context.contexts.values())])
     for ref in receipt['base_seals']:
         single = context.contexts[ref['path']]
         require_base_corpus(ref, single.root, context=single)
@@ -479,4 +559,5 @@ def verify_receipt(receipt: dict[str, Any]) -> tuple[dict[Path, str], BaseSeals]
     require(len(set(bases)) == len(bases), 'duplicate base rows in target corpus')
     require(receipt['rows'] == sum(entry['rows'] for entry in receipt['shards']),
             'qualified total row count differs')
+    context.check_operation()
     return expected, context
