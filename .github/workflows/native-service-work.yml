@@ -1,0 +1,124 @@
+name: Native CPU service profile qualification
+on:
+  push:
+    branches: [work/native-service-profile-20260925]
+permissions:
+  contents: read
+  actions: read
+env:
+  PYTHONPATH: .
+  CAE_TEST_THREADS: '2'
+  OMP_NUM_THREADS: '2'
+  MKL_NUM_THREADS: '2'
+  MAX_JOBS: '1'
+  TORCHINDUCTOR_COMPILE_THREADS: '1'
+  CUDA_VISIBLE_DEVICES: ''
+  BEND_NO_TELEMETRY: '1'
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Record exact authored source before executing checks
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/service
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          expected={
+            'native/bend_engine/service_profile/qualify.py':'c45a6588c9fbdce53f2b2a9c072da1b37752a9f9a7fc1b53499749a0accdbfc8',
+            'native/bend_engine/service_profile/build.sh':'41f5fed006e27b0b678d01fa874eccedb16869d40edbaa2f2ec0f36ace390492',
+            'native/bend_engine/service_profile/profile.py':'fb8b862c668797f8ad1f7501cd8a4f44a977c2ac6b7f319eba7587415548458c',
+            'native/bend_engine/service_profile/probe.cpp':'60eed40b62f2e51e7f119016a02b0d0953a38268dc910a7e2f811d55061a522e',
+            'native/bend_engine/service_profile/README.md':'c75387eff927d6610f1f5fa07d4f2ca97b521839b09e7775efb8d5a718b68722',
+            'native/bend_engine/service_profile/fake_backend.cpp':'ca462bc1df540cc223a55c11f396e30e288f2109bb356c232c4f98af09ef3ca0',
+            'tests/test_bend_service_profile.py':'a6f322baef62e37a21423279ffc5558235adb1ee92aeb58c6b1987b2ddbcc4c4',
+            'docs/experiments/2026-09-25-native-service-profile.md':'3921ec104b94b45d0effa99a372b9e089a57fddecd60562e6dc21e71835d85bf'}
+          for p,h in expected.items():
+              assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          Path('artifacts/service/source.json').write_text(json.dumps(expected,indent=2)+'\n')
+          PY
+          git diff --check
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.12.10
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Locked CPU dependencies and focused controls
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          . .venv/bin/activate
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          python -c 'import torch; assert str(torch.__version__) == "2.14.0+cpu"; print(torch.__version__)'
+          bash scripts/lint.sh native/bend_engine/service_profile/profile.py native/bend_engine/service_profile/qualify.py tests/test_bend_service_profile.py 2>&1 | tee artifacts/service/scoped-lint.txt
+          python -m pytest tests/test_bend_service_profile.py tests/test_bend_live_cohort.py tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py -q --junitxml=artifacts/service/tests.xml 2>&1 | tee artifacts/service/tests.txt
+          bash -n native/bend_engine/service_profile/build.sh
+      - name: Native source-only normal and UBSan checks
+        run: |
+          set -euo pipefail
+          python -m native.bend_engine.service_profile.qualify --out /tmp/service-native --cxx clang++-18 2>&1 | tee artifacts/service/native.txt
+          cp /tmp/service-native/report.json artifacts/service/native-report.json
+      - name: Whole-repository static gate before model work
+        run: |
+          set -euo pipefail
+          bash scripts/lint.sh 2>&1 | tee artifacts/service/lint.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: deepfin-pr1-validation
+          run-id: 35759888019
+          github-token: ${{ github.token }}
+          path: /tmp/service-fixture
+      - name: Recover exact checkpoint and export only batch four
+        run: |
+          set -euo pipefail
+          tar -xzf /tmp/service-fixture/native-build.tar.gz -C /tmp
+          echo '9654a1e334fb5f875d164b82068846bfeab3df2ef2a994737e44789c2623ee6e  /tmp/pr1-model/fixture.pt2' | sha256sum -c -
+          echo 'bb9934134c0d9a39c515c10fa870122c3dfd28259bece392be026e32a9ca60d7  /tmp/pr1-model/fixture.pt' | sha256sum -c -
+          python - <<'PY'
+          from pathlib import Path
+          import torch
+          from native.bend_engine.neural_probe.checkpoint import load_checkpoint,export_checkpoint
+          torch.set_num_threads(2)
+          Path('/tmp/service-model').mkdir()
+          export_checkpoint(load_checkpoint(Path('/tmp/pr1-model/fixture.pt')),Path('/tmp/service-model/b4.pt2'),batch=4,device='cpu',device_index=0)
+          PY
+      - name: Build unchanged bridge and measure equal-work occupancy curves
+        env:
+          CC: clang-18
+          CXX: clang++-18
+        run: |
+          set -euo pipefail
+          prefix="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+          bash native/bend_engine/service_profile/build.sh /tmp/service-b1 /tmp/pr1-model/fixture.pt2 "$prefix" 2>&1 | tee artifacts/service/build-1.txt
+          bash native/bend_engine/service_profile/build.sh /tmp/service-b4 /tmp/service-model/b4.pt2 "$prefix" 2>&1 | tee artifacts/service/build-4.txt
+          python -m native.bend_engine.service_profile.profile --target /tmp/service-b1/build/deepfin-service-probe /tmp/pr1-model/fixture.pt2 --target /tmp/service-b4/build/deepfin-service-probe /tmp/service-model/b4.pt2 --checkpoint /tmp/pr1-model/fixture.pt --out /tmp/service-results --warmups 4 --samples 24 --repeats 3 2>&1 | tee artifacts/service/measurement.txt
+          cp /tmp/service-results/report.json artifacts/service/report.json
+          for b in 1 4; do
+            cp "/tmp/service-b$b/binding.json" "artifacts/service/binding-$b.json"
+            cp "/tmp/service-b$b/build-identities.txt" "artifacts/service/build-identities-$b.txt"
+            cp "/tmp/service-b$b/libraries.txt" "artifacts/service/libraries-$b.txt"
+          done
+      - name: Preserve exact code and all observed timing data on success or failure
+        if: always()
+        run: |
+          git diff --check
+          git diff --binary f53c908a0af23267f61cee303944d11b878620de -- native/bend_engine/service_profile tests/test_bend_service_profile.py docs/experiments/2026-09-25-native-service-profile.md > artifacts/service/qualified.patch
+          git rev-parse HEAD > artifacts/service/staging-commit.txt
+          if test -d /tmp/service-results; then cp -R /tmp/service-results artifacts/service/measurement; fi
+          if test -d /tmp/service-native; then cp -R /tmp/service-native artifacts/service/native-controls; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deepfin-native-service-profile
+          path: artifacts/service
+          retention-days: 30
