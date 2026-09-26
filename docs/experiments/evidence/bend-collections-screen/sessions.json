@@ -1,0 +1,681 @@
+{
+  "compiler_notice": "All terms check, but 18 defs rely on unsafe or foreign code:\n- Job.load\n- Command.read\n- Reply.read\n- step_path_checked\n- step_traced\n- step_read\n- step_prepared\n- step\n- run\n- begin_valid\n- begin\n- command\n- dispatch\n- command_dispatch\n- serve\n- validated\n- start\n- main\n",
+  "original_sessions": {
+    "results": [
+      {
+        "mode": "generic",
+        "sessions": 38,
+        "control_or_bad_replies": 12,
+        "non_increasing_epoch_rejected": true,
+        "invalid_transport_requests_rejected": 10,
+        "observations": [
+          {
+            "fixture": "startpos",
+            "completed": 24,
+            "nodes": 517,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "kiwipete",
+            "completed": 24,
+            "nodes": 1135,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 2851,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "castle_white",
+            "completed": 24,
+            "nodes": 490,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 327,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "promote_black",
+            "completed": 24,
+            "nodes": 223,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 3324,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "promotion_capture",
+            "completed": 24,
+            "nodes": 205,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 7792,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "ep_white",
+            "completed": 24,
+            "nodes": 101,
+            "exchanges": 23,
+            "max_depth": 4,
+            "best": 35556,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "ep_file_pin",
+            "completed": 24,
+            "nodes": 267,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 196,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "double_check",
+            "completed": 24,
+            "nodes": 479,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 196,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "checkmate",
+            "completed": 24,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "stalemate",
+            "completed": 24,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "recovery",
+            "completed": 8,
+            "nodes": 174,
+            "exchanges": 8,
+            "max_depth": 3,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "capacity",
+            "completed": 1,
+            "nodes": 21,
+            "exchanges": 1,
+            "max_depth": 1,
+            "best": 1025,
+            "stop": 1,
+            "fault": ""
+          },
+          {
+            "fixture": "cutoff",
+            "completed": 64,
+            "nodes": 21,
+            "exchanges": 17,
+            "max_depth": 1,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "policy_change",
+            "completed": 24,
+            "nodes": 507,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 1162,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "capacity_before_eval",
+            "completed": 0,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 1,
+            "fault": ""
+          }
+        ]
+      },
+      {
+        "mode": "portable",
+        "sessions": 38,
+        "control_or_bad_replies": 12,
+        "non_increasing_epoch_rejected": true,
+        "invalid_transport_requests_rejected": 10,
+        "observations": [
+          {
+            "fixture": "startpos",
+            "completed": 24,
+            "nodes": 517,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "kiwipete",
+            "completed": 24,
+            "nodes": 1135,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 2851,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "castle_white",
+            "completed": 24,
+            "nodes": 490,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 327,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "promote_black",
+            "completed": 24,
+            "nodes": 223,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 3324,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "promotion_capture",
+            "completed": 24,
+            "nodes": 205,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 7792,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "ep_white",
+            "completed": 24,
+            "nodes": 101,
+            "exchanges": 23,
+            "max_depth": 4,
+            "best": 35556,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "ep_file_pin",
+            "completed": 24,
+            "nodes": 267,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 196,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "double_check",
+            "completed": 24,
+            "nodes": 479,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 196,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "checkmate",
+            "completed": 24,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "stalemate",
+            "completed": 24,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "recovery",
+            "completed": 8,
+            "nodes": 174,
+            "exchanges": 8,
+            "max_depth": 3,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "capacity",
+            "completed": 1,
+            "nodes": 21,
+            "exchanges": 1,
+            "max_depth": 1,
+            "best": 1025,
+            "stop": 1,
+            "fault": ""
+          },
+          {
+            "fixture": "cutoff",
+            "completed": 64,
+            "nodes": 21,
+            "exchanges": 17,
+            "max_depth": 1,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "policy_change",
+            "completed": 24,
+            "nodes": 507,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 1162,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "capacity_before_eval",
+            "completed": 0,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 1,
+            "fault": ""
+          }
+        ]
+      },
+      {
+        "mode": "native",
+        "sessions": 38,
+        "control_or_bad_replies": 12,
+        "non_increasing_epoch_rejected": true,
+        "invalid_transport_requests_rejected": 10,
+        "observations": [
+          {
+            "fixture": "startpos",
+            "completed": 24,
+            "nodes": 517,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "kiwipete",
+            "completed": 24,
+            "nodes": 1135,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 2851,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "castle_white",
+            "completed": 24,
+            "nodes": 490,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 327,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "promote_black",
+            "completed": 24,
+            "nodes": 223,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 3324,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "promotion_capture",
+            "completed": 24,
+            "nodes": 205,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 7792,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "ep_white",
+            "completed": 24,
+            "nodes": 101,
+            "exchanges": 23,
+            "max_depth": 4,
+            "best": 35556,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "ep_file_pin",
+            "completed": 24,
+            "nodes": 267,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 196,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "double_check",
+            "completed": 24,
+            "nodes": 479,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 196,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "checkmate",
+            "completed": 24,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "stalemate",
+            "completed": 24,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "recovery",
+            "completed": 8,
+            "nodes": 174,
+            "exchanges": 8,
+            "max_depth": 3,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "capacity",
+            "completed": 1,
+            "nodes": 21,
+            "exchanges": 1,
+            "max_depth": 1,
+            "best": 1025,
+            "stop": 1,
+            "fault": ""
+          },
+          {
+            "fixture": "cutoff",
+            "completed": 64,
+            "nodes": 21,
+            "exchanges": 17,
+            "max_depth": 1,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "policy_change",
+            "completed": 24,
+            "nodes": 507,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 1162,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "capacity_before_eval",
+            "completed": 0,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 1,
+            "fault": ""
+          }
+        ]
+      },
+      {
+        "mode": "ubsan",
+        "sessions": 38,
+        "control_or_bad_replies": 12,
+        "non_increasing_epoch_rejected": true,
+        "invalid_transport_requests_rejected": 10,
+        "observations": [
+          {
+            "fixture": "startpos",
+            "completed": 24,
+            "nodes": 517,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "kiwipete",
+            "completed": 24,
+            "nodes": 1135,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 2851,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "castle_white",
+            "completed": 24,
+            "nodes": 490,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 327,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "promote_black",
+            "completed": 24,
+            "nodes": 223,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 3324,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "promotion_capture",
+            "completed": 24,
+            "nodes": 205,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 7792,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "ep_white",
+            "completed": 24,
+            "nodes": 101,
+            "exchanges": 23,
+            "max_depth": 4,
+            "best": 35556,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "ep_file_pin",
+            "completed": 24,
+            "nodes": 267,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 196,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "double_check",
+            "completed": 24,
+            "nodes": 479,
+            "exchanges": 24,
+            "max_depth": 4,
+            "best": 196,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "checkmate",
+            "completed": 24,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "stalemate",
+            "completed": 24,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "recovery",
+            "completed": 8,
+            "nodes": 174,
+            "exchanges": 8,
+            "max_depth": 3,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "capacity",
+            "completed": 1,
+            "nodes": 21,
+            "exchanges": 1,
+            "max_depth": 1,
+            "best": 1025,
+            "stop": 1,
+            "fault": ""
+          },
+          {
+            "fixture": "cutoff",
+            "completed": 64,
+            "nodes": 21,
+            "exchanges": 17,
+            "max_depth": 1,
+            "best": 1227,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "policy_change",
+            "completed": 24,
+            "nodes": 507,
+            "exchanges": 24,
+            "max_depth": 3,
+            "best": 1162,
+            "stop": 0,
+            "fault": ""
+          },
+          {
+            "fixture": "capacity_before_eval",
+            "completed": 0,
+            "nodes": 1,
+            "exchanges": 0,
+            "max_depth": 0,
+            "best": 4294967295,
+            "stop": 1,
+            "fault": ""
+          }
+        ]
+      }
+    ],
+    "oracle_positions": 207,
+    "python_chess": true,
+    "scope": "persistent bounded PUCT + external test evaluator; not DeepFin NN/Gumbel/batching/UCI parity"
+  },
+  "root_advancement": {
+    "scope": "same-process play/search, exact legal root updates; fresh tree, no subtree reuse or full draw rules",
+    "results": [
+      {
+        "mode": "generic",
+        "search_epochs": 66,
+        "accepted_advances": 52,
+        "semantic_rejections": 29,
+        "invalid_wire_cases": 9
+      },
+      {
+        "mode": "portable",
+        "search_epochs": 66,
+        "accepted_advances": 52,
+        "semantic_rejections": 29,
+        "invalid_wire_cases": 9
+      },
+      {
+        "mode": "native",
+        "search_epochs": 66,
+        "accepted_advances": 52,
+        "semantic_rejections": 29,
+        "invalid_wire_cases": 9
+      },
+      {
+        "mode": "ubsan",
+        "search_epochs": 66,
+        "accepted_advances": 52,
+        "semantic_rejections": 29,
+        "invalid_wire_cases": 9
+      }
+    ],
+    "oracle_positions": 166,
+    "encoding_checks": 0
+  }
+}
