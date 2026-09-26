@@ -14,13 +14,19 @@ import zarr
 from scripts import bt4_policy_mix as policy
 from scripts import corpus_row_provenance as provenance
 from scripts import sf_policy_rewrite as tool
-from tests.test_derive_corpus_targets import CONFIG_SHA, narrowed_phase, write_corpus
+from tests.test_derive_corpus_targets import CONFIG_REQUESTED, CONFIG_SHA, narrowed_phase, write_corpus
 from tests.test_derive_parallel import run
 from tests.test_sf_policy_rewrite import args, raw_row
 
 
-def fixture(tmp_path: Path) -> tuple[Any, list[dict[str, Any]]]:
+def fixture(tmp_path: Path, *, strict: bool = False) -> tuple[Any, list[dict[str, Any]]]:
     rows = [raw_row(game_id=i) for i in range(7)]
+    requested = {**CONFIG_REQUESTED, 'outcome_mode': 'rule50_match_v1'} if strict else None
+    config_sha = tool.derive.corpus.stamp_sha256(requested) if requested else CONFIG_SHA
+    if strict:
+        for row in rows:
+            row['run']['outcome_mode'] = 'rule50_match_v1'
+            row['run']['config_sha256'] = config_sha
     for i, row in enumerate(rows):
         lines = row['phases'][0]['per_depth'][0]['lines']
         for j, line in enumerate(lines):
@@ -31,6 +37,7 @@ def fixture(tmp_path: Path) -> tuple[Any, list[dict[str, Any]]]:
     bad_lines = rows[3]['phases'][0]['per_depth'][0]['lines']
     bad_lines[-1][1] = bad_lines[0][1]
     raw = write_corpus(tmp_path, rows, row_schema=3, complete=False,
+                       config_sha=config_sha, config_requested=requested,
                        staircase=[{'depth': 9, 'width': 'all'}, {'depth': 10, 'width': '8'},
                                   {'depth': 12, 'width': '4'}])
     sf = tmp_path / 'sf'
@@ -42,11 +49,11 @@ def fixture(tmp_path: Path) -> tuple[Any, list[dict[str, Any]]]:
     # describe G10. No payload target or provenance is fabricated.
     summary['corpus']['staircase_gate'] = {'policy': 'g10'}
     summary_path.write_text(json.dumps(summary))
-    selection = {'schema': 1, 'source_dir': str(raw), 'source_config_sha256': CONFIG_SHA,
+    selection = {'schema': 1, 'source_dir': str(raw), 'source_config_sha256': config_sha,
                  'source_manifest_sha256': tool.file_sha256(raw / 'manifest.json'),
                  'shards': [{'source_shard': p.name, 'rows': len(rows),
                              'source_sha256': tool.file_sha256(p)}
-                            for p in sorted(raw.glob('*.jsonl.zst'))]}
+                            for p in sorted(raw.glob('w*.jsonl.*'))]}
     roster = tmp_path / 'selection.json'
     roster.write_text(json.dumps(selection))
     b100 = tmp_path / 'B100'
@@ -72,6 +79,15 @@ def fixture(tmp_path: Path) -> tuple[Any, list[dict[str, Any]]]:
         tool.file_sha256(b100 / 'bt4_policy_mix_summary.json'), '--selected-g10-roster', str(roster),
         '--expected-selected-g10-roster-sha256', tool.file_sha256(roster))
     return invocation, rows
+
+
+def test_selected_strict_outcome_rewrite_preserves_mode(tmp_path: Path) -> None:
+    invocation, _ = fixture(tmp_path, strict=True)
+    result = tool.rewrite(invocation)
+    assert result['rows'] == 5
+    for shard in Path(invocation.out).glob('shard_*.zarr'):
+        group: Any = zarr.open_group(str(shard), mode='r')
+        assert group.attrs['derive_outcome_mode'] == 'rule50_match_v1'
 
 
 def test_real_selected_partial_source_shuffled_join_and_all16_bytes(tmp_path: Path) -> None:
@@ -160,10 +176,12 @@ def test_selected_join_refuses_wrong_binding_before_publication(tmp_path: Path, 
         summary['scheme']['policy_observation'] = 'latest-phase'
         with pytest.raises(ValueError, match='requires phase0'):
             SelectedG10(invocation, summary, Path(invocation.raw), source,
-                        lambda row, config: tool.observation(row, config, selected_phase0=True))
+                        lambda row, config, mode: tool.observation(
+                            row, config, selected_phase0=True, expected_outcome_mode=mode))
         return
     joiner = SelectedG10(invocation, summary, Path(invocation.raw), source,
-                        lambda row, config: tool.observation(row, config, selected_phase0=True))
+                        lambda row, config, mode: tool.observation(
+                            row, config, selected_phase0=True, expected_outcome_mode=mode))
     spec = summary['shards'][0]
     if defect == 'excluded':
         refs = provenance.read(source / spec['path'] / provenance.FILENAME, rows=spec['rows'])

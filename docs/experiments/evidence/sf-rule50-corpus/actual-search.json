@@ -1,0 +1,52 @@
+{
+  "binary": "/home/josh/projects/chess/e2e_server/publish/stockfish",
+  "binary_sha256": "2764e7ef36bee844347586c8025ba81464315352128ef250f8c609f76044a68e",
+  "source_sha256": "c6274f9ba2a7bee04ab92bfc605560f8577f1f05ac1cc5ac354aab98f515896a",
+  "fen": "7k/8/8/8/8/p1b5/PP6/KQ6 w - - 70 1",
+  "node_budget": 1024,
+  "nodes": 1024,
+  "bestmove": "b2c3",
+  "depth": 9,
+  "cp": 19999,
+  "wdl": [
+    1.0,
+    0.0,
+    0.0
+  ],
+  "advertised": {
+    "SyzygyPath": "option name SyzygyPath type string default <empty>",
+    "Syzygy50MoveRule": "option name Syzygy50MoveRule type check default true",
+    "SyzygyProbeLimit": "option name SyzygyProbeLimit type spin default 7 min 0 max 7"
+  },
+  "ready_after_requests": true,
+  "commands": [
+    "uci",
+    "setoption name UCI_ShowWDL value true",
+    "setoption name Threads value 1",
+    "setoption name Hash value 16",
+    "setoption name SyzygyPath value /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+    "setoption name Syzygy50MoveRule value true",
+    "setoption name SyzygyProbeLimit value 6",
+    "isready",
+    "ucinewgame",
+    "isready",
+    "position fen 7k/8/8/8/8/p1b5/PP6/KQ6 w - - 70 1",
+    "go nodes 1024 searchmoves b2c3 b1c1",
+    "quit"
+  ],
+  "tbhits_seen": [
+    0,
+    2,
+    4,
+    12,
+    16,
+    20,
+    29,
+    37,
+    57,
+    73
+  ],
+  "scope": "Single strict UCI search fixture; not a generation throughput or corpus qualification",
+  "elapsed_s": 0.5931031620129943,
+  "engine_returncode": -9
+}

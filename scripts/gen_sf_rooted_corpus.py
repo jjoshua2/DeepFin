@@ -217,8 +217,12 @@ attribute at call time so the gate's arms and this generator are ONE function
 object.  ``tests/test_gen_sf_rooted_corpus.py`` proves that by replacing the one
 object and watching this file's selection move.  Openings are
 ``chess_anti_engine.selfplay.opening``'s -- the production sampler, through the
-same ``OpeningConfig`` the live selfplay path builds.  Adjudication is
-``chess_anti_engine.tablebase``'s ``tb_adjudicate_result``.  ``searchmoves``
+same ``OpeningConfig`` the live selfplay path builds. Historical
+``theoretical_v1`` adjudication uses ``chess_anti_engine.tablebase``'s
+``tb_adjudicate_result``. Opt-in ``rule50_match_v1`` uses its strict,
+worker-owned six-man handle and conservative rule-aware status; eligible
+missing tables fail the worker, and a positive-clock unresolved position
+continues without an invented result. ``searchmoves``
 validation is ``StockfishUCI``'s own ``_validated_searchmoves``, which matters
 more here than anywhere: Stockfish SILENTLY IGNORES a root move that is not
 legal, so an unvalidated narrowing list widens the search back to full width and
@@ -227,7 +231,8 @@ the phase reports a narrowing that never happened.
 Usage::
 
     PYTHONPATH=. nice -n 15 python3 scripts/gen_sf_rooted_corpus.py \\
-        --out-dir data/nnue_bootstrap/run01 --games 3 --workers 1
+        --out-dir data/nnue_bootstrap/run01 --games 3 --workers 1 \\
+        --outcome-mode rule50_match_v1
 """
 
 from __future__ import annotations
@@ -257,6 +262,7 @@ from typing import Any
 
 import chess
 import chess.polyglot
+import chess.syzygy
 import numpy as np
 
 from chess_anti_engine.encoding import rep_fix
@@ -269,7 +275,13 @@ from chess_anti_engine.stockfish.uci import (
     _parse_info_fields,
     _validated_searchmoves,
 )
-from chess_anti_engine.tablebase import get_tablebase, probe_wdl, tb_adjudicate_result
+from chess_anti_engine.tablebase import (
+    get_tablebase,
+    open_strict_match_tablebase,
+    probe_wdl,
+    rule50_match_status,
+    tb_adjudicate_result,
+)
 from chess_anti_engine.utils.engine_discovery import (
     REPO_ROOT,
     announce_engine,
@@ -465,6 +477,15 @@ MIN_BANKED_PIECES = 7
 #: exact, and ``MIN_BANKED_PIECES`` is one above so a banked row is never a
 #: position whose value the tablebase would have overruled.
 ADJUDICATION_MAX_PIECES = 6
+OUTCOME_MODE_THEORETICAL = "theoretical_v1"
+OUTCOME_MODE_RULE50 = "rule50_match_v1"
+OUTCOME_MODES = (OUTCOME_MODE_THEORETICAL, OUTCOME_MODE_RULE50)
+
+
+def outcome_mode_of(value: object) -> str:
+    if value not in OUTCOME_MODES:
+        raise ValueError(f"outcome mode must be one of {OUTCOME_MODES}, got {value!r}")
+    return str(value)
 
 #: Phase-of-game buckets for the dedup disclosure.  PRECEDENCE IS ENDGAME
 #: FIRST: a <=9-man position at ply <= 20 is an endgame that arrived early, not
@@ -2819,6 +2840,7 @@ class WorkerSpec:
     #: spawn; every fact the resume needs is on the DISK the worker owns
     #: (``w<id>.progress.jsonl`` and the shards it lists), not in this object.
     resume: bool = False
+    outcome_mode: str = OUTCOME_MODE_THEORETICAL
 
 
 @dataclass
@@ -2906,6 +2928,7 @@ class GameOutcome:
     #: game keeps playing; the count is disclosed rather than absorbed, because
     #: it is the one path on which a small-material game reaches the ply cap.
     adjudication_unavailable: int
+    rule50_unknown_plies: int = 0
     #: Searches that banked no row but left cache state (``cache_event``).
     cache_events: list[dict[str, Any]] = field(default_factory=list)
 
@@ -2934,6 +2957,28 @@ def _adjudicate(board: chess.Board, syzygy_path: str) -> dict[str, Any] | None:
     }
 
 
+def _adjudicate_rule50(
+    board: chess.Board, tablebase: chess.syzygy.Tablebase,
+) -> dict[str, Any] | None:
+    """Use the match outcome convention, with no cached theoretical fallback."""
+    status = rule50_match_status(board, tablebase, max_pieces=ADJUDICATION_MAX_PIECES)
+    if status is None:
+        return None
+    result = (
+        "1/2-1/2" if status == 2
+        else ("1-0" if (status == 1) == board.turn else "0-1")
+    )
+    return {
+        "kind": "syzygy_rule50",
+        "outcome_mode": OUTCOME_MODE_RULE50,
+        "result": result,
+        "status_stm": status,
+        "pov": "terminal_position_side_to_move",
+        "fen": board.fen(),
+        "piece_count": int(chess.popcount(board.occupied)),
+    }
+
+
 def play_game(
     *,
     spec: WorkerSpec,
@@ -2944,6 +2989,7 @@ def play_game(
     dedup: DedupStats,
     progress: WorkerProgress,
     seq: WorkerSeq,
+    match_tablebase: chess.syzygy.Tablebase | None = None,
 ) -> GameOutcome:
     """One game: sample an opening, then search-select-push until it ends."""
     searcher.new_game()
@@ -2960,6 +3006,10 @@ def play_game(
     result_pgn: str | None = None
     termination = "unfinished"
     unavailable = 0
+    rule50_unknown = 0
+    outcome_mode = outcome_mode_of(spec.outcome_mode)
+    if outcome_mode == OUTCOME_MODE_RULE50 and match_tablebase is None:
+        raise ValueError("rule50_match_v1 requires a worker-owned tablebase")
     ply = 0
     while True:
         progress.ply = ply
@@ -2969,19 +3019,27 @@ def play_game(
             break
         piece_count = int(chess.popcount(board.occupied))
         if piece_count <= ADJUDICATION_MAX_PIECES:
-            adjudication = _adjudicate(board, spec.syzygy_path)
+            adjudication = (
+                _adjudicate_rule50(board, match_tablebase)
+                if match_tablebase is not None and outcome_mode == OUTCOME_MODE_RULE50
+                else _adjudicate(board, spec.syzygy_path)
+            )
             if adjudication is not None:
                 termination = "syzygy"
                 result_pgn = str(adjudication["result"])
                 break
-            unavailable += 1
+            if outcome_mode == OUTCOME_MODE_RULE50:
+                rule50_unknown += 1
+            else:
+                unavailable += 1
         if ply >= int(spec.max_plies):
             termination = "max_plies"
             # ⚑ NEVER a fabricated result.  A capped game outside tablebase
             # range has no outcome, and `None` is what every row of it carries.
             adjudication = (
                 _adjudicate(board, spec.syzygy_path)
-                if piece_count <= ADJUDICATION_MAX_PIECES else None
+                if outcome_mode == OUTCOME_MODE_THEORETICAL
+                and piece_count <= ADJUDICATION_MAX_PIECES else None
             )
             result_pgn = None if adjudication is None else str(adjudication["result"])
             break
@@ -3085,6 +3143,7 @@ def play_game(
                 "run": {
                     "run_id": spec.run_id,
                     "config_sha256": spec.config_sha256,
+                    "outcome_mode": outcome_mode,
                     # Observed at write time, same counter as the worker stamp.
                     KEY_TT_CARRIED: searcher.tt_cleared_mid_position == 0,
                     # The REALIZED regime, read off the flag `row_key` just
@@ -3154,6 +3213,7 @@ def play_game(
         adjudication=adjudication,
         opening_source=start.source,
         adjudication_unavailable=unavailable,
+        rule50_unknown_plies=rule50_unknown,
         cache_events=cache_events,
     )
 
@@ -3229,6 +3289,7 @@ def failed_worker_slot(spec: WorkerSpec, failure: dict[str, Any]) -> dict[str, A
         "plies_max": 0,
         "terminations": {},
         "adjudications": {},
+        "outcome_mode": spec.outcome_mode,
         "opening_sources": {},
         "history_plies_histogram": {},
         "history_root_reasons": {},
@@ -3236,6 +3297,7 @@ def failed_worker_slot(spec: WorkerSpec, failure: dict[str, Any]) -> dict[str, A
         "history_root_reasons_prior": {},
         "history_tallies_unknown_rows_prior": 0,
         "adjudication_unavailable_plies": 0,
+        "rule50_unknown_plies": 0,
         "dedup": {
             **DedupStats().summary(),
             **DedupCache(max_entries=int(spec.dedup_cache_max)).summary(),
@@ -3289,6 +3351,13 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
                 multipv=1,
                 hash_mb=int(spec.sf_hash_mb),
                 syzygy_path=spec.syzygy_path,
+                syzygy_50_move_rule=(
+                    True if spec.outcome_mode == OUTCOME_MODE_RULE50 else None
+                ),
+                syzygy_probe_limit=(
+                    ADJUDICATION_MAX_PIECES
+                    if spec.outcome_mode == OUTCOME_MODE_RULE50 else None
+                ),
                 nice=int(spec.nice),
                 threads=1,
                 read_timeout_s=float(spec.sf_read_timeout_s),
@@ -3342,15 +3411,22 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
     games = 0
     games_started = 0
     unavailable = 0
+    rule50_unknown = 0
     failure: dict[str, Any] | None = None
+    match_tablebase: chess.syzygy.Tablebase | None = None
     started = time.perf_counter()
     try:
+        if spec.outcome_mode == OUTCOME_MODE_RULE50:
+            match_tablebase = open_strict_match_tablebase(
+                spec.syzygy_path, max_pieces=ADJUDICATION_MAX_PIECES,
+            )
         for game_id in game_ids:
             games_started += 1
             outcome = play_game(
                 spec=spec, searcher=searcher, opening_cfg=opening_cfg,
                 game_id=game_id, cache=cache, dedup=dedup, progress=progress,
                 seq=seq,
+                match_tablebase=match_tablebase,
             )
             for row in outcome.rows:
                 writer.write(row)
@@ -3362,11 +3438,16 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             writer.end_game(game_id)
             games += 1
             unavailable += outcome.adjudication_unavailable
+            rule50_unknown += outcome.rule50_unknown_plies
             plies.append(outcome.plies)
             terminations[outcome.termination] += 1
             adjudications[
                 "none" if outcome.adjudication is None
-                else f"syzygy_wdl_{outcome.adjudication['wdl']}"
+                else (
+                    f"rule50_status_{outcome.adjudication['status_stm']}"
+                    if spec.outcome_mode == OUTCOME_MODE_RULE50
+                    else f"syzygy_wdl_{outcome.adjudication['wdl']}"
+                )
             ] += 1
             opening_sources[outcome.opening_source] += 1
     except Exception as exc:
@@ -3376,6 +3457,9 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
             "the run finish", spec.worker_id, progress.game_id, progress.ply,
         )
     finally:
+        if match_tablebase is not None:
+            with contextlib.suppress(Exception):
+                match_tablebase.close()
         writer.close()
         # ⚑ The engine is the thing that most plausibly just died, and the
         # lease's close() suppresses for exactly that reason: a close() that
@@ -3418,6 +3502,8 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         "history_root_reasons_prior": prior.history_root_reasons,
         "history_tallies_unknown_rows_prior": prior.unknown_rows,
         "adjudication_unavailable_plies": unavailable,
+        "rule50_unknown_plies": rule50_unknown,
+        "outcome_mode": spec.outcome_mode,
         "dedup": {**dedup.summary(), **cache.summary()},
         "search": searcher.stats.summary(),
         "shards": writer.shards,
@@ -3447,6 +3533,11 @@ def run_worker(spec: WorkerSpec) -> dict[str, Any]:
         "codec": writer.codec,
         "realized": {
             **searcher.realized(),
+            "outcome_mode": spec.outcome_mode,
+            "sf_syzygy_50_move_rule_request": searcher.searcher.engine.syzygy_50_move_rule,
+            "sf_syzygy_probe_limit_request": searcher.searcher.engine.syzygy_probe_limit,
+            "sf_syzygy_option_capabilities": searcher.searcher.engine.syzygy_option_capabilities,
+            "sf_syzygy_ready_after_requests": searcher.searcher.engine.syzygy_ready_after_requests,
             # `play_game` clears the table as its first act, so every STARTED
             # game must have delivered exactly one `ucinewgame` -- compared
             # against games started, not completed, or a worker that died
@@ -3574,6 +3665,7 @@ def config_stamp(args: argparse.Namespace, *, sf_binary: str) -> dict[str, Any]:
         "sf_search_timeout_s": float(args.sf_search_timeout),
         "dedup_cache_max": int(args.dedup_cache_max),
         "syzygy_path": str(args.syzygy_path),
+        "outcome_mode": outcome_mode_of(args.outcome_mode),
         "nice": int(args.nice),
         "cp_slope": float(args.cp_slope),
         "cp_draw_width": float(args.cp_draw_width),
@@ -3903,6 +3995,12 @@ def build_summary(
         "adjudication_unavailable_plies": sum(
             int(r["adjudication_unavailable_plies"]) for r in results
         ),
+        "rule50_unknown_plies": sum(
+            int(r.get("rule50_unknown_plies", 0)) for r in results
+        ),
+        "outcome_mode": outcome_mode_of(requested.get(
+            "outcome_mode", OUTCOME_MODE_THEORETICAL,
+        )),
         "opening_sources": merge_counters(results, "opening_sources"),
         # ⚑ The window every banked row of the CORPUS carries -- prior shards'
         # tallies plus this session's, so `sum(histogram) + unknown == rows`
@@ -4061,6 +4159,9 @@ def write_launch_manifest(
         "complete": False,
         "config_requested": requested,
         "config_sha256": config_sha,
+        "outcome_mode": outcome_mode_of(requested.get(
+            "outcome_mode", OUTCOME_MODE_THEORETICAL,
+        )),
         "staircase_parsed": [
             {"width": p.width_label, "depth": p.depth} for p in staircase
         ],
@@ -4358,6 +4459,16 @@ def refuse_resume_config_drift(
                 f"staircase_policy: manifest {STAIRCASE_POLICY_FIXED!r} "
                 f"(the pre-policy default) -> {current_policy!r}",
             )
+    # An old manifest did not name the outcome convention: it always used the
+    # theoretical helper. A strict rule50 run cannot adopt those rows.
+    banked_outcome = outcome_mode_of(stamped.get(
+        "outcome_mode", OUTCOME_MODE_THEORETICAL,
+    ))
+    current_outcome = outcome_mode_of(requested.get(
+        "outcome_mode", OUTCOME_MODE_THEORETICAL,
+    ))
+    if banked_outcome != current_outcome:
+        drifted.append(f"outcome_mode: {banked_outcome!r} -> {current_outcome!r}")
     for key, banked in sorted(stamped.items()):
         if key not in requested:
             drifted.append(f"{key}: manifest {banked!r}, this run does not stamp it")
@@ -4382,6 +4493,7 @@ def refuse_resume_config_drift(
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     """Validate, fan out, merge and write ``summary.json``."""
+    outcome_mode = outcome_mode_of(getattr(args, "outcome_mode", None))
     apply_history_rep_fix()
     staircase = parse_staircase(str(args.staircase))
     staircase_policy = validate_staircase_policy(
@@ -4443,7 +4555,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         refuse_populated_dir(out_dir)
 
     syzygy_path = str(args.syzygy_path)
-    refuse_unopenable_syzygy(syzygy_path)
+    if outcome_mode == OUTCOME_MODE_RULE50:
+        preflight_tablebase = open_strict_match_tablebase(
+            syzygy_path, max_pieces=ADJUDICATION_MAX_PIECES,
+        )
+        preflight_tablebase.close()
+    else:
+        refuse_unopenable_syzygy(syzygy_path)
     sf_binary = str(args.stockfish)
     engine_record = announce_engine("gen_sf_rooted_corpus", sf_binary)
     try:
@@ -4512,6 +4630,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             run_id=str(args.run_id),
             config_sha256=config_sha,
             resume=resume,
+            outcome_mode=outcome_mode,
         )
         for index, ids in enumerate(buckets)
     ]
@@ -4524,6 +4643,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "worker_concurrency_effective": effective_concurrency,
         "logical_workers": len(specs),
         "config_sha256": config_sha,
+        "outcome_mode": outcome_mode,
     }
     # Append per invocation: a resume keeps the scientific manifest untouched.
     with open(out_dir / "execution_invocations.jsonl", "a", encoding="utf-8") as fh:
@@ -4534,7 +4654,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         # In process for a single worker: a pool adds a spawn, a second torch
         # import and a pickling hop to buy nothing, and the smoke run is the
         # case that most needs a legible traceback.
-        results = [run_worker(specs[0])]
+        try:
+            results = [run_worker(specs[0])]
+        except Exception as exc:
+            # An engine handshake can fail before run_worker reaches its own
+            # failure recorder. Keep the one-worker summary/exit contract the
+            # multiworker failed_worker_slot path already has.
+            _LOG.exception("worker %d process failed before its slot", specs[0].worker_id)
+            results = [failed_worker_slot(
+                specs[0],
+                worker_failure(exc, progress=WorkerProgress(), games_completed=0),
+            )]
     else:
         ctx = multiprocessing.get_context("spawn")
         results = []
@@ -4681,6 +4811,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--syzygy-path", default=default_syzygy_path(),
         help="OS-separated tablebase directories, handed to BOTH the engine "
              "and the adjudicator. Default is the production pair.",
+    )
+    p.add_argument(
+        "--outcome-mode", choices=OUTCOME_MODES, required=True,
+        help="Required game-result convention: historical theoretical_v1 or "
+             "strict 50-move-aware rule50_match_v1. The choice is bound to "
+             "the corpus config, rows and derived provenance.",
     )
     p.add_argument("--nice", type=int, default=DEFAULT_NICE)
     p.add_argument("--cp-slope", type=float, default=gen.NNUE_CP_SLOPE)

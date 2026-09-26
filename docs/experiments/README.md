@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [SF-rooted rule-aware corpus outcome mode](2026-09-23-sf-rule50-corpus-mode.md) | Explicit theoretical versus strict six-man rule-aware labels, UCI request guard and derived provenance; synthetic tests plus one bounded real-Stockfish search fixture |
 | [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
 | [Bend subset successor and full ordinal proof](2026-09-21-bend-subset-successor.md) | Actual U64 borrow, compact successor, full Nat-indexed order/coverage/nonduplication and period; affine tables remain separate |
 | [Bend compact-index bijection](2026-09-21-bend-compact-index-bijection.md) | Nine new universal PEXT/PDEP range/inverse/bijection laws; carry-rippler ordering remains separate |

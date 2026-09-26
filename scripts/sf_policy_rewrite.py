@@ -75,10 +75,11 @@ class Observation:
 
 
 def observation(
-    row: dict[str, Any], config_sha: str, *, selected_phase0: bool = False
+    row: dict[str, Any], config_sha: str, *, selected_phase0: bool = False,
+    expected_outcome_mode: str = derive.corpus.OUTCOME_MODE_THEORETICAL,
 ) -> Observation:
     """Full legal phase-zero roster, preserving original score/order precision."""
-    derive._check_row_identity(row, config_sha)
+    derive._check_row_identity(row, config_sha, expected_outcome_mode)
     require(derive.row_schema_of(row) == 3, "raw row is not history schema3")
     derive.require_row_regime(row)
     key = row.get("input_key")
@@ -358,6 +359,13 @@ def tactical_source(
 
 
 def source_contract(summary: dict[str, Any], record: derive.CorpusRecord) -> None:
+    require(
+        derive.corpus.outcome_mode_of(summary["corpus"].get(
+            "outcome_mode", derive.corpus.OUTCOME_MODE_THEORETICAL,
+        ))
+        == derive.corpus_outcome_mode(record.facts),
+        "source/raw outcome modes differ",
+    )
     rows = summary["realized"]["rows_written"]
     require(
         record.corpus_complete and record.facts["row_schema"] == 3,
@@ -445,6 +453,13 @@ def source_contract(summary: dict[str, Any], record: derive.CorpusRecord) -> Non
 
 
 def shard_contract(attrs: dict[str, Any], summary: dict[str, Any], rows: int) -> None:
+    require(
+        attrs.get("derive_outcome_mode", derive.corpus.OUTCOME_MODE_THEORETICAL)
+        == derive.corpus.outcome_mode_of(summary["corpus"].get(
+            "outcome_mode", derive.corpus.OUTCOME_MODE_THEORETICAL,
+        )),
+        "source shard outcome mode differs",
+    )
     expected = {
         "derive_state": "committed",
         "derive_run_finalized": True,
@@ -561,7 +576,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
 
         selected = SelectedG10(
             args, summary, raw_dir, source,
-            lambda row, config: observation(row, config, selected_phase0=True),
+            lambda row, config, mode: observation(
+                row, config, selected_phase0=True, expected_outcome_mode=mode,
+            ),
         )
         metadata.update(selected.metadata)
     else:
@@ -877,7 +894,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                 raw_rows += 1
                 read += 1
                 assert record is not None
-                derive._check_row_identity(raw, str(record.facts["config_sha256"]))
+                record_mode = derive.corpus_outcome_mode(record.facts)
+                derive._check_row_identity(raw, str(record.facts["config_sha256"]), record_mode)
                 require(
                     all(
                         type(raw[k]) is int and raw[k] >= 0
@@ -910,7 +928,9 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
                         ),
                         "invalid d9 nodes field",
                     )
-                pending.append(observation(raw, str(record.facts["config_sha256"])))
+                pending.append(observation(
+                    raw, str(record.facts["config_sha256"]), expected_outcome_mode=record_mode,
+                ))
                 if len(pending) == summary["rows_per_shard"]:
                     flush()
             raw_proofs[str(path)] = {

@@ -284,6 +284,7 @@ def write_corpus(
     *,
     staircase: list[dict[str, Any]] | None = None,
     config_sha: str = CONFIG_SHA,
+    config_requested: dict[str, Any] | None = None,
     name: str = "corpus",
     drop_shard_from_summary: bool = False,
     complete: bool = True,
@@ -326,6 +327,7 @@ def write_corpus(
     writer.close()
     write_manifest(
         out, staircase=staircase, config_sha=config_sha, row_schema=row_schema,
+        config_requested=config_requested,
     )
     if not complete:
         return out
@@ -335,7 +337,9 @@ def write_corpus(
         **({corpus.KEY_HISTORY_REP_FIX: True} if int(row_schema) >= 3 else {}),
         "run_id": "test_corpus",
         "config_sha256": config_sha,
-        "config_requested": dict(CONFIG_REQUESTED),
+        "config_requested": (
+            dict(CONFIG_REQUESTED) if config_requested is None else dict(config_requested)
+        ),
         "staircase_parsed": staircase if staircase is not None else STAIRCASE,
         "shards": [] if drop_shard_from_summary else list(writer.shards),
         "banked_rows_min_piece_count": corpus.MIN_BANKED_PIECES,
@@ -912,6 +916,47 @@ def history_row(**overrides: Any) -> dict[str, Any]:
     }
     fields.update(overrides)
     return corpus_row(**fields)
+
+
+def test_outcome_mode_is_bound_to_record_and_each_banked_row() -> None:
+    row = history_row()
+    row["run"]["outcome_mode"] = corpus.OUTCOME_MODE_RULE50
+    assert derive._check_row_identity(
+        row, CONFIG_SHA, corpus.OUTCOME_MODE_RULE50,
+    ) is True
+    with pytest.raises(derive.CorpusIntegrityError, match="outcome_mode"):
+        derive._check_row_identity(row, CONFIG_SHA, corpus.OUTCOME_MODE_THEORETICAL)
+    assert derive.corpus_outcome_mode({"config_requested": {}}) == (
+        corpus.OUTCOME_MODE_THEORETICAL
+    )
+    with pytest.raises(derive.CorpusIntegrityError, match="disagrees"):
+        derive.corpus_outcome_mode({
+            "config_requested": {"outcome_mode": corpus.OUTCOME_MODE_RULE50},
+            "outcome_mode": corpus.OUTCOME_MODE_THEORETICAL,
+        })
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_rule50_mode_survives_into_committed_shard_and_derived_summary(
+    tmp_path: Path, workers: int,
+) -> None:
+    requested = {**CONFIG_REQUESTED, "outcome_mode": corpus.OUTCOME_MODE_RULE50}
+    config_sha = corpus.stamp_sha256(requested)
+    row = corpus_row(
+        fen=FEN_W,
+        phases=[full_width_phase(FEN_W, {9: ramp(FEN_W, "f1e3")})],
+        result=1.0, result_pgn="1-0", config_sha=config_sha,
+    )
+    row["run"]["outcome_mode"] = corpus.OUTCOME_MODE_RULE50
+    corpus_dir = write_corpus(
+        tmp_path, [row], config_sha=config_sha, config_requested=requested,
+    )
+    out_dir = tmp_path / "derived"
+    summary = run_derive(corpus_dir, out_dir, "uniform-d9", "--workers", str(workers))
+    assert summary["corpus"]["outcome_mode"] == corpus.OUTCOME_MODE_RULE50
+    assert [attrs["derive_outcome_mode"] for attrs in shard_attrs(out_dir)] == [
+        corpus.OUTCOME_MODE_RULE50,
+    ]
 
 
 def test_a_schema_1_row_has_zero_history_and_the_summary_measures_it(
