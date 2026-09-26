@@ -1,0 +1,26 @@
+name: Measured dispatch qualification workspace
+on:
+  push:
+    branches: [work/measured-dispatch-20260926]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 19c9cc017be334e3330b8bf4a6c2e488db5845b6
+          persist-credentials: false
+      - name: Preserve exact tracked source
+        run: |
+          mkdir /tmp/dispatch-source
+          git archive HEAD | gzip > /tmp/dispatch-source/source.tar.gz
+          git rev-parse HEAD > /tmp/dispatch-source/revision.txt
+          sha256sum /tmp/dispatch-source/source.tar.gz > /tmp/dispatch-source/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deepfin-dispatch-source
+          path: /tmp/dispatch-source
+          retention-days: 7
