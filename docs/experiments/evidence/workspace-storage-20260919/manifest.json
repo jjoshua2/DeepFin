@@ -1,0 +1,331 @@
+{
+  "status": "STAGED_STORAGE_ONLY_NOT_ADOPTED",
+  "unix": 1789842954.32083,
+  "changes": [
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/plan.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/A/plan.json",
+      "before_sha256": "83963b5bc499a8bbcb1fdaef14dfeffb3128caf8b3e64f1d47b52d25d716cdde",
+      "after_sha256": "a6c3cac7075c78d04416a40ad53457005eeb2c173ed4cd61772f3c3100d4f98e"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/plan.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/B/plan.json",
+      "before_sha256": "7b65af5ce9797c91fa5b9b2e35d266ad7a44d602e435c71bbdc750a987607919",
+      "after_sha256": "004a41af56316e3b51c3f5ac3f0553b524d8b3ad5b763f0a795b1dfa481956e3"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/plan.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/C/plan.json",
+      "before_sha256": "00270d8422eff0d6f1cf230de0f74a6db828f22cfe22518a7113d20ddb46f942",
+      "after_sha256": "b3b81a70f48f5eb4ba45ef419bf2e3b83d1b960e8433dfcfe52d420acc6240b4"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/plan.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/D/plan.json",
+      "before_sha256": "9430c3382be6e71ddb3abcd018666cdf531bf7de59be726f922d69e190932a90",
+      "after_sha256": "5bfaaa0f0f0ffd3aced5818fea805d80175a9ee4f0b4942b1122aa09d2bb6324"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/plan.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/B_A/plan.json",
+      "before_sha256": "ae71ea4cc2cb36ddd9333f436ff0c281e968708f5ccd7b9fde062ed5b7036721",
+      "after_sha256": "7ff41d8d5b51aa42786eb5d1a926a2a2600bd3280d0f36a914728c9b4f05cd44"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/plan.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/C_A/plan.json",
+      "before_sha256": "9341e10169cd49e9d7e8333302563fedb4fe58546493f6f078647972f1e53ba0",
+      "after_sha256": "324a64e1d5d3c1cb086460623f5b58810486a7eba57f7eae0f3e789de9e6c07f"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/plan.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/D_C/plan.json",
+      "before_sha256": "e5286ef6c0bcd8e73c7dd829d67c8d365c343aa80909d7a440df1800ab724605",
+      "after_sha256": "84104dc59aa39310d70a25e4544ae9af7180c1eeae7dc3c9faf58351fbd3b891"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/plan.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/D_B/plan.json",
+      "before_sha256": "4a63ec36b5de2cde6395c83df2bc6b3079ea4cee4ef4710bd75246650c9e799a",
+      "after_sha256": "172ae0e5fd59de3ea48b4ef34aced15dce289ab3104472987f46bb699910a5dc"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/registered_command.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/A/registered_command.json",
+      "before_sha256": "b0344facf6a1a4d4c97356629b5ad2ed9053f892d415ad7466dda70f2db2f708",
+      "after_sha256": "a4a5b3b8dc1f84f9f4da4dd12ef887a1fb0bed615423e83ddba6584af9706206"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/queue_item.frozen.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/A/queue_item.frozen.json",
+      "before_sha256": "56a7886c2efa9c5cf0c95141bde61d157907aacfe07fd488a65dca802b5f09d3",
+      "after_sha256": "ab7015676e1276939c141dcad32daa84bb75884078a72fd200624655e93cfc79"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/registered_command.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/B/registered_command.json",
+      "before_sha256": "d7c1004a036d8934832ee481e63eeea0698c0c45e52a2b3e5d57768b3de94dbc",
+      "after_sha256": "02a4194bbb3161267166a7d82801c508ecf17de1ecf7831dc8829b70ba5d44c7"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/queue_item.frozen.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/B/queue_item.frozen.json",
+      "before_sha256": "42e5318d70a787f1e8498d35a19e200e3385645f6b143829292acc9ccc6879cf",
+      "after_sha256": "46e2968ecb9fe61df514f0a76ac68e7a501482e1efa2c463c2bde5f42d558153"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/registered_command.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/C/registered_command.json",
+      "before_sha256": "cb24dec72207414ebcd1a89638637350aee2843f2139be2599d6762cf3d4a666",
+      "after_sha256": "e87785198d4d77eac30dbdff3946a94b80ac1f73acaae936c8c2ef47d01fd5b1"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/queue_item.frozen.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/C/queue_item.frozen.json",
+      "before_sha256": "3881e5d268381971ff326fb4df36110f9355a5a71977df059f621fc5b2c5fc3b",
+      "after_sha256": "343fdc637fa613df2b138158a1a7d3fa57efd2c59695d0b1a04852c88618544d"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/registered_command.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/D/registered_command.json",
+      "before_sha256": "def804a1a17a26c28322928361ca942f8982f38d9a8ebed9c9fec2746a958fd5",
+      "after_sha256": "04cc52756f3a9967eba5a5dc4fb8adc3dc388217cbd7b07fc74f173580927aff"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/queue_item.frozen.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/D/queue_item.frozen.json",
+      "before_sha256": "7553bb444493689921e2d8bfb1aae0777442cafb4ae866bf54f30a6789186645",
+      "after_sha256": "c06561115f1ce8f254e90e44ec52bf1e12317cae97631d6ab57937d345b2b33b"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/jobs.frozen.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/jobs.frozen.json",
+      "before_sha256": "0d0a4ab96f9bf6bb42c3ccfedc5592edac4dec2822b862864d6f1eeae1292c64",
+      "after_sha256": "a6d308698e6a79f5cf4ead4c62feab5f827107d0b9e028dddfaf64c18520c549"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/registered_command.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/B_A/registered_command.json",
+      "before_sha256": "9008ca46b006f67e1428f9dd400194d09543f140817ae2f4ac6ae6c9f45850ca",
+      "after_sha256": "f7eb8a7c50065a5bd82ea8effd4f806a7da6f4941608b44678e4b39518eda54f"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/queue_item.frozen.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/B_A/queue_item.frozen.json",
+      "before_sha256": "dba313c161c31bdf2422f1ec573cf510937ec140167b1d403888e06cfac03861",
+      "after_sha256": "1210cdeaaf22c11a033d29d8d2f0f2f2522e700466620f16d1ee9138b7348162"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/registered_command.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/C_A/registered_command.json",
+      "before_sha256": "346d3edd8badc6d71cc4b8d587ac6b5251159d788e74fdd5e38724472d9f250f",
+      "after_sha256": "bdb268ea9f0472e8930eda1598a4e51378276aa069a458a3c6442e240e2bc623"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/queue_item.frozen.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/C_A/queue_item.frozen.json",
+      "before_sha256": "a0b2b2a48bd488891190b17b2336d81ea34069cf611b1d645ca40c0efbb4e700",
+      "after_sha256": "46e9fde1bed7a2f3a534b80eac57314494c338acc323e44f2c95f32b00cd5dd6"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/registered_command.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/D_C/registered_command.json",
+      "before_sha256": "647c59e3417b47ee322cdb2e927def5b13bb8eaa577038faf4b6fc0d009044be",
+      "after_sha256": "682dc2bdeae5d1a45f1a4cb3b822a26e0adc5e33c8948566a54cafdf62e9d985"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/queue_item.frozen.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/D_C/queue_item.frozen.json",
+      "before_sha256": "82f830e5fae9c4b7d3514e332786b616800e323bdefe28568db4a8b9ffcecb8e",
+      "after_sha256": "9548a6dbfeac1b2ae7071d06abfafb0dbe959d5237cf6ca735ae11a467a66c5f"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/registered_command.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/D_B/registered_command.json",
+      "before_sha256": "3cbce635f547ec1d07c5457607e55a2d39dcb4b7eff297c80c0721a087e5d110",
+      "after_sha256": "dd55402134b26c47ee3a0e22a3945cf5b9610d5e29f98875f25cac47a2536674"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/queue_item.frozen.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/D_B/queue_item.frozen.json",
+      "before_sha256": "d58591c56a846567ef471b55b7739723f5a8b905e213a5870c06e4000be99cfb",
+      "after_sha256": "05ea476b1e2a78af08d98d22434eff237025c00f31c1dbef9f63859fdf8d51fb"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/jobs.frozen.json",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/jobs.frozen.json",
+      "before_sha256": "e7fca3826196edd2f607c2d78e6ecd826e99f10ad88557e884cfac616269dfe7",
+      "after_sha256": "00c1eab1864f9c34012e64507884f314834f760537fad412975c4f4437d6bdba"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/prepare.py",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/prepare.py",
+      "before_sha256": "eed3178e01d8d26436fd7aad159fdacf1ae6fcf5575a2ea38d3e0508df6162f7",
+      "after_sha256": "efcd20566a1ada764bd9f79dd72bd3ffd05647aaa02543c8d5f868681411a616"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/README.md",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/training/README.md",
+      "before_sha256": "a0d20c9115ad95670a9d05f473496bc2dadd92926717ecb5e032c9ed31fa0727",
+      "after_sha256": "154bccac9918aa992d07ca7152b937c8f8a9206e1459f27daf37fb4677d91a2d"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/prepare.py",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/prepare.py",
+      "before_sha256": "276dccbd1112b973d1c7d891fa118535fdd185fc192b5d6f000f70ddb30d33b8",
+      "after_sha256": "d94f7c37e42463d9874abcd278bb3a5c61e18a86dbe3c055ee0f29b733965beb"
+    },
+    {
+      "destination": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/README.md",
+      "staged": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/files/arenas/README.md",
+      "before_sha256": "b3e44ec464993af2ae04a638144b21bc33c8cd1f8d0282e489d6b83bd8934de8",
+      "after_sha256": "73ff03b1afdd2912bfe308784e7a32ee86bee106bdff32c05944d7edae9ac5a1"
+    }
+  ],
+  "jobs": [
+    {
+      "id": "factorial58_fresh_A",
+      "kind": "registered_command",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/scheduler_run",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/registered_command.json",
+      "command_sha256": "a4a5b3b8dc1f84f9f4da4dd12ef887a1fb0bed615423e83ddba6584af9706206",
+      "max_seconds": 79860,
+      "status": "queued",
+      "arm": "A",
+      "expected_rows": 58090688,
+      "seed": 121,
+      "estimated_active_seconds": 36000
+    },
+    {
+      "id": "factorial58_fresh_B",
+      "kind": "registered_command",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/scheduler_run",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/registered_command.json",
+      "command_sha256": "02a4194bbb3161267166a7d82801c508ecf17de1ecf7831dc8829b70ba5d44c7",
+      "max_seconds": 79860,
+      "status": "queued",
+      "arm": "B",
+      "expected_rows": 58090688,
+      "seed": 121,
+      "estimated_active_seconds": 36000
+    },
+    {
+      "id": "factorial58_fresh_C",
+      "kind": "registered_command",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/scheduler_run",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/registered_command.json",
+      "command_sha256": "e87785198d4d77eac30dbdff3946a94b80ac1f73acaae936c8c2ef47d01fd5b1",
+      "max_seconds": 79860,
+      "status": "queued",
+      "arm": "C",
+      "expected_rows": 58090688,
+      "seed": 121,
+      "estimated_active_seconds": 36000
+    },
+    {
+      "id": "factorial58_fresh_D",
+      "kind": "registered_command",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/scheduler_run",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/registered_command.json",
+      "command_sha256": "04cc52756f3a9967eba5a5dc4fb8adc3dc388217cbd7b07fc74f173580927aff",
+      "max_seconds": 79860,
+      "status": "queued",
+      "arm": "D",
+      "expected_rows": 58090688,
+      "seed": 121,
+      "estimated_active_seconds": 36000
+    },
+    {
+      "id": "factorial58_B_A_400sims",
+      "kind": "registered_command",
+      "status": "queued",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/scheduler_run",
+      "max_seconds": 3660,
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/registered_command.json",
+      "command_sha256": "f7eb8a7c50065a5bd82ea8effd4f806a7da6f4941608b44678e4b39518eda54f"
+    },
+    {
+      "id": "factorial58_C_A_400sims",
+      "kind": "registered_command",
+      "status": "queued",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/scheduler_run",
+      "max_seconds": 3660,
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/registered_command.json",
+      "command_sha256": "bdb268ea9f0472e8930eda1598a4e51378276aa069a458a3c6442e240e2bc623"
+    },
+    {
+      "id": "factorial58_D_C_400sims",
+      "kind": "registered_command",
+      "status": "queued",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/scheduler_run",
+      "max_seconds": 3660,
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/registered_command.json",
+      "command_sha256": "682dc2bdeae5d1a45f1a4cb3b822a26e0adc5e33c8948566a54cafdf62e9d985"
+    },
+    {
+      "id": "factorial58_D_B_400sims",
+      "kind": "registered_command",
+      "status": "queued",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/scheduler_run",
+      "max_seconds": 3660,
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/registered_command.json",
+      "command_sha256": "dd55402134b26c47ee3a0e22a3945cf5b9610d5e29f98875f25cac47a2536674"
+    }
+  ],
+  "operator": {
+    "path": "/tmp/deepfin-bootstrap-operator/scripts/bootstrap_experiment_operator.py",
+    "sha256": "11654fde13ff37b68c9d3a2dbcd971f4d81add98bb84132dc7f0c4fdf16e2341"
+  },
+  "validation": [
+    {
+      "id": "factorial58_fresh_A",
+      "status": "PASS_UNMODIFIED_OPERATOR_REGISTERED_SPEC",
+      "validation_command": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/validation/factorial58_fresh_A.json",
+      "production_command_sha256": "a4a5b3b8dc1f84f9f4da4dd12ef887a1fb0bed615423e83ddba6584af9706206"
+    },
+    {
+      "id": "factorial58_fresh_B",
+      "status": "PASS_UNMODIFIED_OPERATOR_REGISTERED_SPEC",
+      "validation_command": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/validation/factorial58_fresh_B.json",
+      "production_command_sha256": "02a4194bbb3161267166a7d82801c508ecf17de1ecf7831dc8829b70ba5d44c7"
+    },
+    {
+      "id": "factorial58_fresh_C",
+      "status": "PASS_UNMODIFIED_OPERATOR_REGISTERED_SPEC",
+      "validation_command": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/validation/factorial58_fresh_C.json",
+      "production_command_sha256": "e87785198d4d77eac30dbdff3946a94b80ac1f73acaae936c8c2ef47d01fd5b1"
+    },
+    {
+      "id": "factorial58_fresh_D",
+      "status": "PASS_UNMODIFIED_OPERATOR_REGISTERED_SPEC",
+      "validation_command": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/validation/factorial58_fresh_D.json",
+      "production_command_sha256": "04cc52756f3a9967eba5a5dc4fb8adc3dc388217cbd7b07fc74f173580927aff"
+    },
+    {
+      "id": "factorial58_B_A_400sims",
+      "status": "PASS_UNMODIFIED_OPERATOR_REGISTERED_SPEC",
+      "validation_command": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/validation/factorial58_B_A_400sims.json",
+      "production_command_sha256": "f7eb8a7c50065a5bd82ea8effd4f806a7da6f4941608b44678e4b39518eda54f"
+    },
+    {
+      "id": "factorial58_C_A_400sims",
+      "status": "PASS_UNMODIFIED_OPERATOR_REGISTERED_SPEC",
+      "validation_command": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/validation/factorial58_C_A_400sims.json",
+      "production_command_sha256": "bdb268ea9f0472e8930eda1598a4e51378276aa069a458a3c6442e240e2bc623"
+    },
+    {
+      "id": "factorial58_D_C_400sims",
+      "status": "PASS_UNMODIFIED_OPERATOR_REGISTERED_SPEC",
+      "validation_command": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/validation/factorial58_D_C_400sims.json",
+      "production_command_sha256": "682dc2bdeae5d1a45f1a4cb3b822a26e0adc5e33c8948566a54cafdf62e9d985"
+    },
+    {
+      "id": "factorial58_D_B_400sims",
+      "status": "PASS_UNMODIFIED_OPERATOR_REGISTERED_SPEC",
+      "validation_command": "/home/josh/chess-artifacts/operations/factorial58_output_migration_20260919/validation/factorial58_D_B_400sims.json",
+      "production_command_sha256": "dd55402134b26c47ee3a0e22a3945cf5b9610d5e29f98875f25cac47a2536674"
+    }
+  ],
+  "scope": "Only explicit future model outputs and dependent pins; seed/data/runtime/code/scientific settings unchanged. Validation descriptors remap canonical plan-file location to staged bytes only. Active queue untouched. Adoption must verify before hashes and queued statuses under lock."
+}
