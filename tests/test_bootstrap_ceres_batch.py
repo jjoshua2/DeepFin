@@ -33,7 +33,7 @@ def plan_for(tmp_path, first_rc=0):
     return {'prerequisite': {'path': str(prerequisite), 'status_key': 'status', 'expected': 'PASS'},
         'completion_path': str(tmp_path/'complete.json'), 'blocks': blocks,
         'internal_seconds': 300, 'success_status': 'PASS_ALL',
-        'output_roots': [], 'output_cap_bytes': 10, 'disk_path': str(tmp_path),
+        'output_roots': [str(tmp_path)], 'output_cap_bytes': 1 << 30, 'disk_path': str(tmp_path),
         'startup_disk_gib': 0, 'disk_floor_gib': 0, 'startup_ram_gib': 0, 'running_ram_gib': 0}
 
 
@@ -70,7 +70,7 @@ def test_failed_prerequisite_prevents_all_work(tmp_path):
 
 def test_aggregate_output_guard_stops_before_launch(tmp_path):
     plan = plan_for(tmp_path)
-    plan['output_roots'] = [str(tmp_path)]
+    plan['output_cap_bytes'] = 1
     assert batch.run(plan) == 1
     result = json.loads((tmp_path/'complete.json').read_text())
     assert 'aggregate cap' in result['reason']
@@ -95,13 +95,12 @@ def test_output_scan_tolerates_atomic_chunk_rename(tmp_path, monkeypatch):
     assert second > first
 
 
-def test_output_scan_missing_directory_is_transient(tmp_path, monkeypatch):
-    def disappearing_walk(root, *, followlinks, onerror):
-        assert not followlinks
-        onerror(FileNotFoundError(root))
-        return iter([])
-    monkeypatch.setattr(batch.os, 'walk', disappearing_walk)
-    assert batch.allocated_bytes([str(tmp_path)]) == 0
+def test_output_scan_requires_configured_roots(tmp_path):
+    import pytest
+    with pytest.raises(ValueError, match='output_roots'):
+        batch.allocated_bytes([])
+    with pytest.raises(FileNotFoundError, match='output root missing'):
+        batch.allocated_bytes([str(tmp_path/'missing')])
 
 
 def test_output_scan_propagates_permission_and_io_failures(tmp_path, monkeypatch):

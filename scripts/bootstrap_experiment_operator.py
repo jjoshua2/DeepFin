@@ -60,8 +60,14 @@ def mem_avail_gib() -> float:
     return 0.0
 
 
-def disk_free_gib() -> float:
-    return shutil.disk_usage(PROJECT_ROOT).free / 2**30
+def disk_free_gib(path: str | Path) -> float:
+    target = Path(path).expanduser()
+    if not target.exists():
+        parent = target.parent
+        if not parent.is_dir():
+            raise FileNotFoundError(f"disk check parent missing: {parent}")
+        target = parent
+    return shutil.disk_usage(target).free / 2**30
 
 
 def gpu_apps() -> str:
@@ -287,7 +293,7 @@ exit "$rc"
         "seed": item["seed"],
         "games": item["games"],
         "sims": item["sims"],
-        "free_disk_gib": disk_free_gib(),
+        "free_disk_gib": disk_free_gib(out),
         "mem_avail_gib": mem_avail_gib(),
         "gpu_apps_before": gpu_apps().splitlines(),
     }
@@ -577,7 +583,7 @@ exit "$rc"
         "command": cmd,
         "cwd": str(RUNTIME),
         "games": item["games"],
-        "free_disk_gib": disk_free_gib(),
+        "free_disk_gib": disk_free_gib(out),
         "mem_avail_gib": mem_avail_gib(),
         "gpu_apps_before": gpu_apps().splitlines(),
     }
@@ -615,6 +621,16 @@ def main() -> int:
         elif item.get("kind") == "registered_command":
             harvest_registered(item, state)
 
+    failed = [item.get("id", "<unknown>") for item in queue["items"]
+              if item.get("status") == "failed"]
+    if failed:
+        log("queue_failed", ids=failed)
+        state["current_gpu"] = "stopped_failed"
+        dump(LOOP / "STATE.json", state)
+        dump(LOOP / "queue.json", queue)
+        print("QUEUE_FAILED " + ",".join(map(str, failed)))
+        return 2
+
     now = time.time()
     if now >= float(state["deadline_unix"]):
         log("deadline_reached")
@@ -640,8 +656,16 @@ def main() -> int:
             print("WAIT_CERES")
             return 0
         if item["kind"] in {"arena", "match_uci", "registered_command"} and item["status"] == "queued":
-            if disk_free_gib() < 150:
-                log("disk_below_floor", free_gib=disk_free_gib())
+            try:
+                free_disk = disk_free_gib(item["out"])
+            except OSError as exc:
+                log("disk_probe_failed", id=item["id"], path=item["out"], reason=str(exc))
+                dump(LOOP / "STATE.json", state)
+                dump(LOOP / "queue.json", queue)
+                print("DISK_PROBE_FAILED")
+                return 2
+            if free_disk < 150:
+                log("disk_below_floor", id=item["id"], path=item["out"], free_gib=free_disk)
                 dump(LOOP / "STATE.json", state)
                 dump(LOOP / "queue.json", queue)
                 print("DISK_FLOOR")
@@ -658,7 +682,7 @@ def main() -> int:
                 log("budget_refusal", id=item["id"], reason=str(exc))
                 dump(LOOP / "queue.json", queue)
                 print("DEADLINE_INSUFFICIENT")
-                return 0
+                return 2
             if item["kind"] == "match_uci":
                 launch_match(item)
             elif item["kind"] == "registered_command":

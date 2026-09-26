@@ -39,6 +39,9 @@ def available_ram_gib() -> float:
 
 
 def allocated_bytes(roots: list[str]) -> int:
+    if not roots:
+        raise ValueError('output_roots must contain at least one directory')
+
     def allocation(path: Path) -> int:
         try:
             return path.lstat().st_blocks * 512
@@ -47,12 +50,22 @@ def allocated_bytes(roots: list[str]) -> int:
             # This is a sampled bound; the replacement appears on the next scan.
             return 0
 
-    def walk_error(error: OSError) -> None:
-        if not isinstance(error, FileNotFoundError):
+    total = 0
+    for root_value in roots:
+        root = Path(root_value)
+        if not root.is_dir():
+            if not root.exists():
+                raise FileNotFoundError(f'output root missing: {root}')
+            raise NotADirectoryError(f'output root is not a directory: {root}')
+
+        def walk_error(error: OSError) -> None:
+            # A child directory may disappear during an atomic shard replacement,
+            # but the configured root itself is a required resource boundary.
+            if (isinstance(error, FileNotFoundError) and error.filename is not None
+                    and Path(error.filename) != root):
+                return
             raise error
 
-    total = 0
-    for root in roots:
         for directory, _, files in os.walk(root, followlinks=False, onerror=walk_error):
             total += allocation(Path(directory))
             for name in files:

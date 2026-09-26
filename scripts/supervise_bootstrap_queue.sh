@@ -7,10 +7,17 @@ OPERATOR=$(dirname "$(readlink -f "$0")")/bootstrap_experiment_operator.py
 exec 9>"$LOOP/supervisor.lock"
 flock -n 9 || exit 0
 while true; do
-  say=$(python3 "$OPERATOR" --loop-dir "$LOOP" --runtime "$RUNTIME")
+  if say=$(python3 "$OPERATOR" --loop-dir "$LOOP" --runtime "$RUNTIME"); then
+    rc=0
+  else
+    rc=$?
+  fi
   printf '%s %s\n' "$(date -u +%FT%TZ)" "$say" >> "$LOOP/supervisor.log"
+  if (( rc != 0 )); then
+    exit "$rc"
+  fi
   case "$say" in
-    DEADLINE*|QUEUE_IDLE*) exit 0 ;;
+    DEADLINE|QUEUE_IDLE) exit 0 ;;
   esac
   # Terminal receipts alone allow harvest. A lost wrapper is an explicit recovery
   # condition; never relaunch its work or signal a possibly reused process group.

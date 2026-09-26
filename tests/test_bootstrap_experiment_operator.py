@@ -102,7 +102,7 @@ def test_arena_launch_caps_threads_and_persists_intent(tmp_path, monkeypatch):
     monkeypatch.setattr(op, 'RUNTIME', tmp_path)
     monkeypatch.setattr(op, 'gpu_apps', lambda: '')
     monkeypatch.setattr(op, 'mem_avail_gib', lambda: 64)
-    monkeypatch.setattr(op, 'disk_free_gib', lambda: 200)
+    monkeypatch.setattr(op, 'disk_free_gib', lambda _path: 200)
     op.dump(loop/'STATE.json', {'deadline_unix': op.time.time()+1000})
     op.dump(loop/'queue.json', {'items': [item]})
     class Child:
@@ -166,3 +166,69 @@ def test_group_killed_even_when_leader_exits(monkeypatch):
     op.terminate_owned_group(ExitedLeader(), grace=.2)
     assert signals[0] == (123, signal.SIGTERM)
     assert signals[-1] == (123, signal.SIGKILL)
+
+
+def test_disk_free_uses_target_filesystem(tmp_path, monkeypatch):
+    seen = []
+    class Usage:
+        free = 5 * 2**30
+    def disk_usage(path):
+        seen.append(Path(path))
+        return Usage()
+    monkeypatch.setattr(op.shutil, 'disk_usage', disk_usage)
+    assert op.disk_free_gib(tmp_path/'new-output') == 5
+    assert seen == [tmp_path]
+
+
+def test_failed_queue_item_blocks_later_launch(tmp_path, monkeypatch):
+    loop = tmp_path/'loop'
+    loop.mkdir()
+    monkeypatch.setattr(op, 'LOOP', loop)
+    monkeypatch.setattr(op, 'RUNTIME', tmp_path)
+    op.dump(loop/'STATE.json', {'deadline_unix': op.time.time()+1000})
+    op.dump(loop/'queue.json', {'items': [
+        {'id': 'bad-harvest', 'kind': 'harvest_ceres', 'status': 'failed'},
+        {'id': 'next', 'kind': 'arena', 'status': 'queued', 'out': str(tmp_path/'next')},
+    ]})
+    monkeypatch.setattr(op, 'launch_arena',
+        lambda _item: pytest.fail('failed queue launched later work'))
+    assert op.main() == 2
+    queue = op.load(loop/'queue.json')
+    assert queue['items'][1]['status'] == 'queued'
+
+
+def test_disk_floor_checks_queued_output_path(tmp_path, monkeypatch):
+    loop = tmp_path/'loop'
+    loop.mkdir()
+    out = tmp_path/'output-disk'/'run'
+    out.parent.mkdir()
+    monkeypatch.setattr(op, 'LOOP', loop)
+    monkeypatch.setattr(op, 'RUNTIME', tmp_path)
+    monkeypatch.setattr(op, 'gpu_apps', lambda: '')
+    seen = []
+    def disk_free(path):
+        seen.append(Path(path))
+        return 100
+    monkeypatch.setattr(op, 'disk_free_gib', disk_free)
+    op.dump(loop/'STATE.json', {'deadline_unix': op.time.time()+1000})
+    op.dump(loop/'queue.json', {'items': [
+        {'id': 'next', 'kind': 'arena', 'status': 'queued', 'out': str(out)},
+    ]})
+    assert op.main() == 2
+    assert seen == [out]
+
+
+def test_supervisor_propagates_failed_queue(tmp_path):
+    loop = tmp_path/'loop'
+    loop.mkdir()
+    op.dump(loop/'STATE.json', {'deadline_unix': op.time.time()+1000})
+    op.dump(loop/'queue.json', {'items': [
+        {'id': 'bad-harvest', 'kind': 'harvest_ceres', 'status': 'failed'},
+    ]})
+    supervisor = Path(__file__).parents[1] / 'scripts' / 'supervise_bootstrap_queue.sh'
+    result = subprocess.run(
+        ['/bin/bash', str(supervisor), str(loop), str(tmp_path)],
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 2
+    assert 'QUEUE_FAILED bad-harvest' in (loop/'supervisor.log').read_text()
