@@ -1,0 +1,180 @@
+name: Publish and qualify castle chain + safety
+'on':
+  push:
+    branches: [feat/bend-castle-chain-safety-publish-dev-20260926]
+    paths: [.github/workflows/bend-castle-chain-safety-publish.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      BASE: b3bbfd5c38f8647cece0ce1d4d541e26fbb6e29f
+      TARGET: feat/bend-castle-chain-safety-20260926
+      EXPECTED_TREE: abae23517afaef0efa93fbaf6b7b47e20389aacf
+      PATCH_SHA256: e326bca56adfc45b35ea98f8a33edca42b2ea62f42abc3f20260a91ee9e48a90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b3bbfd5c38f8647cece0ce1d4d541e26fbb6e29f
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact combined local patch and reproduce final tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/castle-publish-evidence"
+          echo "EVIDENCE=$RUNNER_TEMP/castle-publish-evidence" >> "$GITHUB_ENV"
+          gh api repos/jjoshua2/DeepFin/git/blobs/de90e6e3d247fe1efc202fed71cc4d5a5e89ee31 --jq .content | base64 --decode > "$RUNNER_TEMP/combined.patch.xz.b64"
+          test "$(git hash-object "$RUNNER_TEMP/combined.patch.xz.b64")" = de90e6e3d247fe1efc202fed71cc4d5a5e89ee31
+          base64 --decode "$RUNNER_TEMP/combined.patch.xz.b64" > "$RUNNER_TEMP/combined.patch.xz"
+          xz -dc "$RUNNER_TEMP/combined.patch.xz" > "$RUNNER_TEMP/combined.patch"
+          test "$(sha256sum "$RUNNER_TEMP/combined.patch" | cut -d' ' -f1)" = "$PATCH_SHA256"
+          test "$(git rev-parse HEAD)" = "$BASE"
+          git apply --check "$RUNNER_TEMP/combined.patch"
+          git apply --index "$RUNNER_TEMP/combined.patch"
+          git diff --cached --check
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+          git diff --cached --name-only > "$EVIDENCE/changed-files.txt"
+          test -f native/bend_engine/standalone/proofs/castle_chain/LAWS.bend
+          test -f native/bend_engine/standalone/proofs/castle_safety/LAWS.bend
+          test -f docs/experiments/evidence/bend-castle-chain/qualification.json
+          test -f docs/experiments/evidence/bend-castle-safety/qualification.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          c=json.loads(Path('docs/experiments/evidence/bend-castle-chain/qualification.json').read_text())
+          s=json.loads(Path('docs/experiments/evidence/bend-castle-safety/qualification.json').read_text())
+          assert c['modular_laws']==171 and c['modular_controls']==505
+          assert s['modular_laws']==177 and s['modular_controls']==524
+          assert c['qualification'].startswith('PASS')
+          assert s['qualification'].startswith('PASS')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: publish full castling provenance and mandatory-check safety proofs'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - name: Re-run full-generator castling provenance gate
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/castle_chain/focused.js "$PWD/.compiler" --report "$EVIDENCE/chain-focused-hosted.json" 2>&1 | tee "$EVIDENCE/chain-focused-hosted.log"
+      - name: Re-run castling mandatory-check safety gate
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/castle_safety/focused.js "$PWD/.compiler" --report "$EVIDENCE/safety-focused-hosted.json" 2>&1 | tee "$EVIDENCE/safety-focused-hosted.log"
+      - name: Re-run chain native verifier in four modes
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/castle_chain/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/chain-native-hosted.json" 2>&1 | tee "$EVIDENCE/chain-native-hosted.log"
+      - name: Re-run safety direct native verifier in four modes
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/castle_safety/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/safety-native-hosted.json" 2>&1 | tee "$EVIDENCE/safety-native-hosted.log"
+      - name: Re-run original-vs-forced full generator verifier
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/castle_safety/verify_forced.js "$PWD/.compiler" --report "$EVIDENCE/safety-forced-hosted.json" 2>&1 | tee "$EVIDENCE/safety-forced-hosted.log"
+      - name: Recheck original compiler source suite and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Run unchanged whole-repository lint on exact published source
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify hosted receipts and publish final branch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          git diff --exit-code
+          test "$(git ls-remote origin refs/heads/feat/bend-castle-emission-20260926 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" >/dev/null
+          found=$?
+          set -e
+          test "$found" = 2
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(n): return json.loads((e/n).read_text())
+          cf=read('chain-focused-hosted.json'); sf=read('safety-focused-hosted.json')
+          cn=read('chain-native-hosted.json'); sn=read('safety-native-hosted.json'); ff=read('safety-forced-hosted.json')
+          assert cf['focused_gate']=='PASS' and cf['consumer']=='PASS' and len(cf['negative_controls'])==18
+          assert sf['focused_gate']=='PASS' and sf['consumer']=='PASS' and len(sf['negative_controls'])==19
+          assert cn['native_gate']=='PASS' and len(cn['modes'])==4
+          assert sn['native_gate']=='PASS' and len(sn['modes'])==4
+          assert ff['native_gate']=='PASS' and len(ff['modes'])==4
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          q={
+            'qualification':'PASS',
+            'run':os.environ['GITHUB_RUN_ID'],
+            'source':os.environ['SOURCE'],
+            'recovered_local_chain_commit':'fc86363cfc4363ea2d5dc93548f7c8231b923638',
+            'recovered_local_safety_commit':'0d9c426fb560ec9fc35761adac68075a551df3da',
+            'recovered_tree':os.environ['EXPECTED_TREE'],
+            'combined_patch_sha256':os.environ['PATCH_SHA256'],
+            'chain_new_laws':5,'chain_new_controls':18,
+            'safety_new_laws':6,'safety_new_controls':19,
+            'modular_laws':177,'modular_controls':524,
+            'full_aggregate_wrapper_executed':False,
+            'whole_repository_lint':'PASS',
+            'independent_review':False
+          }
+          Path('docs/experiments/evidence/bend-castle-safety/hosted-publication-qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          PY
+          git add docs/experiments/evidence/bend-castle-safety/hosted-publication-qualification.json
+          git commit -m 'docs: record hosted publication qualification for saved castling proofs'
+          git switch -c "$TARGET"
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git log -2 --format='%H %s' > "$RUNNER_TEMP/final/published-commits.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-castle-chain-safety-publication
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/castle-publish-evidence/
+          retention-days: 14
