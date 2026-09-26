@@ -20,7 +20,7 @@ import math
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -682,7 +682,7 @@ def _play_rolling_staggered(
         max_plies=200,
         temperature=0.1, gumbel_add_noise=False,
         search_candidate=_search(), search_reference=_search(),
-        syzygy_tablebase=object(), tb_max_pieces=6,
+        syzygy_tablebase=cast(Any, object()), tb_max_pieces=6,
         pool_size=4, report_every=10_000, sprt=sprt, pgn_sink=_sink,
     )
 
@@ -1289,7 +1289,7 @@ def test_lookahead_waits_for_delayed_pair_then_releases_every_look(
         None, None, openings, device="cpu", rng=np.random.default_rng(7),
         sims_candidate=1, sims_reference=1, max_plies=8, temperature=0.1,
         gumbel_add_noise=False, search_candidate=_search(), search_reference=_search(),
-        pool_size=pool, report_every=10000, syzygy_tablebase=object(),
+        pool_size=pool, report_every=10000, syzygy_tablebase=cast(Any, object()),
         sprt=monitor, sprt_lookahead_pairs=allowance,
     )
     assert result == [1.0] * 7
