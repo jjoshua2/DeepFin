@@ -1,0 +1,154 @@
+name: Session legal-cache integration qualification
+on:
+  push:
+    branches: [work/bend-session-cache-20260926]
+    paths: [.github/workflows/session-cache-work.yml, .session-cache-patch.bin, .session-cache-fixes.py]
+permissions:
+  contents: write
+concurrency:
+  group: session-cache-qualification
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BASE: e58c821db1be6e2d1afe288201c2e8e3c8a442f7
+      FEATURE: feat/bend-session-cache-qualified-20260926
+      BEND_NO_TELEMETRY: '1'
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct exact authored patch and isolate candidate and parent
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin "$BASE"
+          git worktree add --detach "$RUNNER_TEMP/session-cache" "$BASE"
+          mkdir "$RUNNER_TEMP/session-cache-baseline"
+          git archive "$BASE" | tar -x -C "$RUNNER_TEMP/session-cache-baseline"
+          python3 - <<'PY'
+          import base64,hashlib,json,os,pathlib,subprocess,zlib
+          # Restore two duplicated transport spans and the truncated encoding tail.
+          # The original uncompressed patch digest is authoritative before git apply.
+          text=base64.b64encode(pathlib.Path('.session-cache-patch.bin').read_bytes()).decode()
+          for old,new in [('ja+CRaYXUaYXUaY/','ja+CRaYXUaY/'),('DrJfJfJTI','DrJfJTI')]:
+              assert text.count(old)==1; text=text.replace(old,new)
+          assert text.endswith('ANSfWO'); text+='M='
+          raw=zlib.decompress(base64.b64decode(text,validate=True))
+          assert hashlib.sha256(raw).hexdigest()=='75f8e9ff808282a8daf4fc88f64dd103937fcffdcb3f3b9563d07cfd9ffbf3cd'
+          work=pathlib.Path(os.environ['RUNNER_TEMP'])/'session-cache';patch=work.parent/'session-cache.patch';patch.write_bytes(raw)
+          subprocess.run(['git','-C',str(work),'apply','--check',str(patch)],check=True)
+          subprocess.run(['git','-C',str(work),'apply','--index',str(patch)],check=True)
+          paths=subprocess.check_output(['git','-C',str(work),'diff','--cached','--name-only'],text=True).splitlines()
+          assert paths==['native/bend_engine/session_probe/CACHE.md','native/bend_engine/session_probe/CachedSearch.bend','native/bend_engine/session_probe/README.md','native/bend_engine/session_probe/cache_probe.py','native/bend_engine/session_probe/main.bend','native/bend_engine/session_probe/run_probe.py','native/bend_engine/session_probe/transport.c','tests/test_bend_session_move_cache.py']
+          fixes=pathlib.Path('.session-cache-fixes.py')
+          if fixes.exists():subprocess.run(['python3',str(fixes.resolve()),str(work)],check=True)
+          subprocess.run(['git','-C',str(work),'add','--',*paths],check=True)
+          subprocess.run(['git','-C',str(work),'diff','--cached','--check'],check=True)
+          (work/'artifacts').mkdir(exist_ok=True)
+          (work/'artifacts/candidate-source.json').write_text(json.dumps({p:hashlib.sha256((work/p).read_bytes()).hexdigest() for p in paths},indent=2)+'\n')
+          PY
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked environment and unchanged pinned compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/session-cache"
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Focused static checks and existing session contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/session-cache"
+          . .venv/bin/activate
+          ruff check native/bend_engine/session_probe/cache_probe.py native/bend_engine/session_probe/run_probe.py tests/test_bend_session_move_cache.py
+          basedpyright native/bend_engine/session_probe/cache_probe.py native/bend_engine/session_probe/run_probe.py tests/test_bend_session_move_cache.py
+          python -m pytest -q tests/test_bend_session_move_cache.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py tests/test_bend_search_draws.py tests/test_bend_claim_options.py --junitxml=artifacts/session-cache-python.xml
+      - name: Actual sessions, unchanged parent control, draws and optional claims
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/session-cache"
+          . .venv/bin/activate
+          python -m native.bend_engine.session_probe.cache_probe --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --baseline-root "$RUNNER_TEMP/session-cache-baseline" --bun bun --cc clang-18 --output artifacts/session-cache --python-chess
+      - name: Whole-repository static checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/session-cache"
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          git diff --exit-code
+      - name: Reconcile tested source and publish clean continuation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/session-cache"
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess,xml.etree.ElementTree as ET
+          out=pathlib.Path('artifacts/session-cache');report=json.loads((out/'summary.json').read_text())
+          assert report['status']=='passed' and report['full_history_suites'] is True and report['reset_each_epoch_rejected'] is True
+          assert [m['mode'] for m in report['modes']]==['generic','ubsan']
+          for mode in report['modes']:
+              cases=mode['scenarios'];baseline=cases['None']['observations']
+              assert len(baseline)==21
+              assert all(cases[v]['observations']==baseline for v in ('0','6','1'))
+              assert cases['6']['stats'][1:3]==[[6,0,16,0],[6,16,16,0]]
+              assert cases['6']['stats'][4:]==[[6,0,16,0],[6,16,16,0]]
+              assert mode['history']['draw'] and mode['history']['claims']
+          xml=ET.parse('artifacts/session-cache-python.xml').getroot();tests=list(xml.iter('testcase'))
+          assert not any(list(xml.iter(k)) for k in ('failure','error','skipped'))
+          assert len([t for t in tests if t.attrib['classname'].endswith('test_bend_session_move_cache')])==30
+          manifest=json.loads(pathlib.Path('artifacts/candidate-source.json').read_text())
+          for path,digest in manifest.items():assert hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()==digest,path
+          assert sorted(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())==sorted(manifest)
+          evidence=pathlib.Path('native/bend_engine/session_probe/cache-validation.json');assert not evidence.exists()
+          evidence.write_text(json.dumps({'status':'passed','workflow_run':int(os.environ['GITHUB_RUN_ID']),'tested_workflow_commit':os.environ['GITHUB_SHA'],'base_commit':os.environ['BASE'],'tested_source_sha256':manifest,'focused_python_cases':len(tests),'new_python_cases':30,'modes':[m['mode'] for m in report['modes']],'search_cases_per_mode_and_setting':21,'cache_settings':[None,'0','6','1'],'full_history_suites':True,'reset_each_epoch_rejected':True,'report_sha256':hashlib.sha256((out/'summary.json').read_bytes()).hexdigest(),'scope':'Diagnostic persistent PUCT session frontend; disabled by default; no timing, model or production selfplay adoption.'},indent=2)+'\n')
+          doc=pathlib.Path('native/bend_engine/session_probe/CACHE.md')
+          doc.write_text(doc.read_text()+'\n## Completed hosted qualification\n\nRun https://github.com/jjoshua2/DeepFin/actions/runs/'+os.environ['GITHUB_RUN_ID']+' completed all preceding validation stages: '+str(len(tests))+' focused Python tests without skips, explicit static checks, actual generic/UBSan sessions with independent CBoard and Python-chess checking, existing automatic-draw and optional-claim suites with caching enabled, the reset-each-epoch negative control, and whole-repository Ruff/Basedpyright/Vulture. Exact source identities and counts are in cache-validation.json; raw transcripts/reports are in the session-cache-qualification artifact. This is not a speed result or a production enablement. The source manifest identifies this document before its appended readout. Self-review only.\n')
+          paths=[*manifest,str(evidence)];subprocess.run(['git','add','--',*paths],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert sorted(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())==sorted(paths)
+          for path,digest in manifest.items():
+              if not path.endswith('.md'):assert hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()==digest
+          subprocess.run(['git','config','user.name','github-actions[bot]'],check=True)
+          subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
+          tree=subprocess.check_output(['git','write-tree'],text=True).strip()
+          commit=subprocess.check_output(['git','commit-tree',tree,'-p',os.environ['BASE'],'-m','native: opt in to connection-owned legal-move reuse in PUCT sessions'],text=True).strip()
+          (out/'feature.txt').write_text(commit+'\n')
+          subprocess.run(['git','push','--force-with-lease=refs/heads/'+os.environ['FEATURE']+':','origin',commit+':refs/heads/'+os.environ['FEATURE']],check=True)
+          print('QUALIFIED_SESSION_CACHE',commit)
+          PY
+      - name: Retain exact tested patch and reports
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/session-cache"
+          mkdir -p artifacts/session-cache
+          git diff --cached --binary > artifacts/session-cache/candidate.patch
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: session-cache-qualification
+          path: |
+            ${{ runner.temp }}/session-cache/artifacts/candidate-source.json
+            ${{ runner.temp }}/session-cache/artifacts/session-cache-python.xml
+            ${{ runner.temp }}/session-cache/artifacts/session-cache/*.json
+            ${{ runner.temp }}/session-cache/artifacts/session-cache/*.stdout
+            ${{ runner.temp }}/session-cache/artifacts/session-cache/*.stderr
+            ${{ runner.temp }}/session-cache/artifacts/session-cache/*.patch
+            ${{ runner.temp }}/session-cache/artifacts/session-cache/feature.txt
+          retention-days: 30
