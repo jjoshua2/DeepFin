@@ -138,3 +138,5 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
 
 - [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
+
+| [Exact batch gather CPU screen](2026-09-22-exact-gather-cpu-screen.md) | Local copy reduction, small absolute saving; prototype banked without runtime adoption |
