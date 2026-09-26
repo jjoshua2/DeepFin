@@ -10,6 +10,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [NumPy huge-page advice loader screen](2026-09-23-numpy-thp-hotload.md) | Exact parity, negative warm-loader benefit screen; default advice retained |
+| [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
 | [Bend subset successor and full ordinal proof](2026-09-21-bend-subset-successor.md) | Actual U64 borrow, compact successor, full Nat-indexed order/coverage/nonduplication and period; affine tables remain separate |
 | [Bend compact-index bijection](2026-09-21-bend-compact-index-bijection.md) | Nine new universal PEXT/PDEP range/inverse/bijection laws; carry-rippler ordering remains separate |
 | [Bend subset source laws](2026-09-21-bend-subset-source-laws.md) | Eight initial production-step laws with negative controls and independent native table checks; full P1 ordering/refinement still open |
@@ -80,6 +81,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Varying-horizon online controller](varying_horizon_online_controller.md) | Preregistration and staged evaluation of online search continuation |
 | [Value head architecture](value_head_arch.md) | Historical April 2026 experiments |
 | [Historical ledger](../experiment_ledger.md) | Frozen July–September 2026 record, including yardsticks, gotchas and recovery snapshots |
+| [BT4 complete pipeline screen](2026-09-21-bt4-pipeline-benchmark.md) | Fixed ABCCBA batch128 projected-decoder/prefetch comparison; exact inputs and outputs, complete labeling plus verification, reviewed and queued after factorial matches |
 
 These descriptions identify the records, not the state of a running experiment.
 Check subsequent readouts and the actual process/artifacts before resuming work.
@@ -121,3 +123,7 @@ For durable knowledge, use [model heads](../model_heads.md),
 [the loop audit](../rl_loop_audit.md) and [operations](../operations.md), following their
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
+
+- [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
+
+- [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
