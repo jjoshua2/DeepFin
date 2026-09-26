@@ -9,7 +9,7 @@ integrity only; cohort mixing, training targets, and playing strength remain
 separate decisions.
 
 The input was the completed `run04_ordinary_retry01/ordinary_opening` bank at
-`/home/josh/chess-artifacts/operations/bt4-root-gpu-qualification-20260923`.
+`~/chess-artifacts/operations/bt4-root-gpu-qualification-20260923`.
 The frozen stage had 8 completed games, 0 discarded, 752 accepted rows, 6
 natural and 2 rule50 Syzygy endings. The audit reused its plan SHA
 `4bce3ad1ba52ae3c34410f58bb1adc017b4f209448716f48327857766c93bbda`
