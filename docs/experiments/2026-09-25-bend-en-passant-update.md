@@ -80,3 +80,10 @@ Fresh unchanged Ruff/Basedpyright/Vulture passes in the locked Python3.13 CPU en
 Only documentation,index and evidence follow source qualification. No production function,earlier accepted law,permanent workflow,routine perft,model/GPU,search,training or benchmark changes. Self-review only; checker/Base,native lowering/storage,ABI,toolchain,OS and hardware remain trust boundaries. Existing compiler,snapshot-lowering and closed-builder limitations remain. No application responsibility moved from Python; export/references,data/control/training and transitional C++/LibTorch/AOTI remain dependencies. No merge,force push,deployment or live-process action.
 
 Next substantive acceptance is castling update refinement under explicit representation conditions,then connection of raw updates to legal-move producers and king safety.
+
+
+## Supplementary castling refinement after hosted qualification
+
+The [castling review](evidence/bend-en-passant-update/castling-review/README.md) preserves a new raw complete-update proof and a conditional partition result for four coordinate routes. Initial rook-target emptiness is preserved through clearing and the disjoint first insertion. It remains a caller input condition, not a legal-move certificate. Local generic/UBSan each pass4,360 complete-board inputs and both actual rook-branch corruptions; the omitted input condition is rejected by source checking. The earlier interrupted driver call is retained separately from the final successful bounded rerun. These results remain supplementary, outside the public2/17 increment and hosted152/453 coverage.
+
+Documentation-only record run **36216862874** verifies all482 primary hashes, all28 supplementary proof dependencies, the native probe and driver identities, then updates only archived text and documentation links. It does not execute source proofs, native tests or lint. Source archive transport SHA-256:a4cda94cb22186ddf988a6be009064602572463e016ce968e0a313c4dd4ee70e. Self-review only; no merge or deployment.

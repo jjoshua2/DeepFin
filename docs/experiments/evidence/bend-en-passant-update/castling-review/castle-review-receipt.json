@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/mnt/data/ep-continuation/bun",
+    "/mnt/data/ep-continuation/repo/native/bend_engine/standalone/proofs/castling_review/verify_review.js",
+    "/mnt/data/ep-continuation/compiler/bend",
+    "--report",
+    "/mnt/data/ep-continuation/receipts/castle-review.json"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 50.901919114000066,
+  "log_sha256": "7a26328d229f0aef039a6568ba2e87e02f0cae285b8a3b200408bda57eb122f8"
+}

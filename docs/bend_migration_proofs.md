@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Supplementary castling update and conditional preservation
+
+New locally checked derived statements establish the complete actual flag2/promotion0 update for arbitrary raw Boards and coordinates, plus partition preservation on the four orthodox coordinate routes when the initial rook destination is empty. A checked counterexample shows why that premise cannot simply be dropped. All four exact king/rook examples and generic/UBSan full-Board reference checks pass; actual rook-placement/source corruptions fail both new source and native checks while prior flag0/flag1 consumers pass.
+
+These are archived supplementary results, not additional registered laws or part of the hosted152/453 en-passant gate. They do not establish king/rook existence, castling rights, remaining path clearance, check or king safety. See [the exact sources and receipts](experiments/evidence/bend-en-passant-update/castling-review/README.md). Deliberate public-suite promotion and legal-producer connections remain next; no production logic changed.
+
 ## Latest P3 en-passant update qualification
 
 Hosted run **36216251656** passes both public en-passant laws and importing consumer, all17 controls, four native modes and both actual capture corruptions, original compiler source/pin checks and unchanged whole-repository lint on source `59acb49cb4395884741803b448842d2100054b1d`.
