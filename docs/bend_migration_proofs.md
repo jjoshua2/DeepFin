@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Latest P3 attack witnesses and singleton king selection
+
+Three new public contracts connect the actual attack-query callbacks to a per-square owned-piece witness scan and connect actual in_check to the specified square under an explicit singleton-owned-king premise. Complete result pairs are retained. The masks still come from actual Chess.attack; universal coordinate correctness of those masks is not silently assumed or claimed. See [the readout](experiments/2026-09-26-bend-attack-witness.md).
+
+Local3-law/19-control and four-mode native checks passed. Modular180/543 retains the exact177/524 parent; the full wrapper did not run. Hosted qualification is pending and local repository lint lacks tools. No production behavior or Python application ownership changed.
+
 ## Latest P3 generated castling mandatory-check proof
 
 Six source contracts now establish that generated castling cannot use the optimized
