@@ -2,7 +2,8 @@
 
 This module does not start games or write labels. A caller evaluates a verified
 root once, retains its native teacher observation, and hands its mapped search
-logits to ``run_gumbel_root_many_c``. Bound leaf batches use the same session.
+logits to ``run_gumbel_root_many_c`` only when requested. Bound leaf batches
+use the same session.
 
 The caller supplies the session and asserted model SHA-256. This adapter checks
 the declared head/input shapes and actual tensors, but does not hash an ONNX
@@ -75,12 +76,11 @@ class BT4RootOutput:
     input_dtype: str
     input_history_encoding: str
     input_extra_features: str
-    _search_policy_logits: np.ndarray
-    _search_wdl_logits: np.ndarray
 
     def search_inputs(self) -> tuple[np.ndarray, np.ndarray]:
-        """Independent batched logits for the search's precomputed-root hook."""
-        return self._search_policy_logits[None].copy(), self._search_wdl_logits[None].copy()
+        """Fresh batched logits for search; root-only actors retain no derived copy."""
+        return (_search_policy_logits(self.policy_t1)[None],
+                _search_wdl_logits(self.wdl_raw, self.wdl_kind)[None])
 
 
 class BT4OnnxEvaluator:
@@ -100,6 +100,8 @@ class BT4OnnxEvaluator:
     ) -> None:
         if not input_name or np.dtype(input_dtype) not in (np.dtype("float16"), np.dtype("float32")):
             raise ValueError("BT4 input needs a named float16/float32 tensor")
+        if wdl_kind not in ("logits", "probabilities"):
+            raise ValueError("BT4 WDL output kind must be logits or probabilities")
         if len(model_sha256) != 64 or any(c not in "0123456789abcdef" for c in model_sha256):
             raise ValueError("BT4 model_sha256 must be lowercase SHA-256")
         self.sess = sess
@@ -199,9 +201,7 @@ class BT4OnnxEvaluator:
         for idx, board in enumerate(boards):
             _, _, dense = compact_legal_policy(board, policy_rows[idx])
             raw = native_values[idx].copy()
-            search_policy = _search_policy_logits(dense)
-            search_wdl = _search_wdl_logits(raw, self.wdl_contract["kind"])
-            for value in (dense, raw, search_policy, search_wdl):
+            for value in (dense, raw):
                 value.flags.writeable = False
             outputs.append(BT4RootOutput(
                 fen=fens[idx], input_key=input_keys[idx], source_key=source_keys[idx],
@@ -211,7 +211,6 @@ class BT4OnnxEvaluator:
                 input_name=self.input_name, input_dtype=self.input_dtype.name,
                 input_history_encoding=self.input_history_encoding,
                 input_extra_features=self.input_extra_features,
-                _search_policy_logits=search_policy, _search_wdl_logits=search_wdl,
             ))
         return outputs
 

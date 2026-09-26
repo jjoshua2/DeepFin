@@ -8,6 +8,7 @@ import chess
 import numpy as np
 import pytest
 
+from scripts import bt4_generation_evaluator as adapter
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.encoding.lc0 import x_to_lc0_planes
@@ -137,8 +138,16 @@ def test_root_retains_native_output_and_legal_mapping(fen: str) -> None:
     assert np.isfinite(search_wdl).all()
     assert search_wdl[0, 2] == -1e9
     assert np.all(search_policy[0, dense == 0] == -1e9)
+    expected_search_policy = np.full((1858,), -1e9, dtype=np.float32)
+    expected_search_policy[dense > 0] = np.log(dense[dense > 0]).astype(np.float32)
+    assert search_policy.tobytes() == expected_search_policy[None].tobytes()
+    expected_search_wdl = np.array([np.log(0.625), np.log(0.375), -1e9], dtype=np.float32)
+    assert search_wdl.tobytes() == expected_search_wdl[None].tobytes()
     search_policy[0, :] = 5
+    search_wdl[0, :] = 5
     np.testing.assert_array_equal(root.policy_t1, dense)
+    assert root.search_inputs()[0].tobytes() == expected_search_policy[None].tobytes()
+    assert root.search_inputs()[1].tobytes() == expected_search_wdl[None].tobytes()
 
 
 def test_root_only_sampling_consumer_never_evaluates_leaves() -> None:
@@ -196,6 +205,41 @@ def test_batched_roots_are_aligned_and_byte_equal_to_singletons() -> None:
         for batched_search, single_search in zip(root.search_inputs(), singleton.search_inputs(),
                                                  strict=True):
             np.testing.assert_array_equal(batched_search, single_search)
+
+
+def test_root_only_retains_two_arrays_and_skips_search_conversion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    boards = [chess.Board(), chess.Board("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1"),
+              chess.Board("4k3/P7/8/8/8/8/8/4K3 w - - 0 1")]
+    sess = FakeSession()
+    evaluator = make_evaluator(sess)
+    search_policy = adapter._search_policy_logits
+    search_wdl = adapter._search_wdl_logits
+
+    def unexpected_conversion(*_args: Any) -> np.ndarray:
+        raise AssertionError("root-only evaluation converted search logits")
+
+    monkeypatch.setattr(adapter, "_search_policy_logits", unexpected_conversion)
+    monkeypatch.setattr(adapter, "_search_wdl_logits", unexpected_conversion)
+    roots = evaluator.evaluate_roots(boards, np.stack([encoded(board) for board in boards]))
+    assert len(sess.calls) == 1
+    assert evaluator.root_rows == len(boards)
+    assert all(not root.policy_t1.flags.writeable for root in roots)
+    assert all(not root.wdl_raw.flags.writeable for root in roots)
+    retained_arrays = [[value for value in vars(root).values() if isinstance(value, np.ndarray)]
+                       for root in roots]
+    assert all(len(arrays) == 2 for arrays in retained_arrays)
+    new_payload_bytes = sum(array.nbytes for arrays in retained_arrays for array in arrays)
+    monkeypatch.setattr(adapter, "_search_policy_logits", search_policy)
+    monkeypatch.setattr(adapter, "_search_wdl_logits", search_wdl)
+    old_payload_bytes = new_payload_bytes + sum(
+        policy[0].nbytes + wdl[0].nbytes for policy, wdl in
+        (root.search_inputs() for root in roots)
+    )
+    assert new_payload_bytes == 22_368  # Three float32 policies + float64 native WDL rows.
+    assert old_payload_bytes == 44_700  # Previous four-array root record layout.
+    assert old_payload_bytes - new_payload_bytes == 22_332
 
 
 def test_batched_roots_reject_second_history_before_any_inference() -> None:
@@ -282,6 +326,7 @@ def test_extreme_native_logits_remain_float64_and_search_logits_finite() -> None
     assert np.isfinite(search_wdl).all()
     assert search_wdl[0, 0] == 0
     assert np.all(search_wdl[0, 1:] == -1e9)
+    assert search_wdl.tobytes() == np.array([[0, -1e9, -1e9]], dtype=np.float32).tobytes()
 
 
 def test_float16_native_probabilities_are_retained_without_promotion() -> None:
@@ -291,6 +336,18 @@ def test_float16_native_probabilities_are_retained_without_promotion() -> None:
     assert root.wdl_raw.dtype == np.dtype("float16")
     assert root.wdl_raw.tobytes() == np.array([0.625, 0.375, 0.0], dtype=np.float16).tobytes()
     assert root.search_inputs()[1].dtype == np.dtype("float32")
+
+
+def test_invalid_wdl_kind_is_rejected_before_inference() -> None:
+    sess = FakeSession()
+    with pytest.raises(ValueError, match="WDL output kind"):
+        BT4OnnxEvaluator(
+            sess, input_name="planes", input_dtype=np.dtype("float32"),
+            policy_output=None, wdl_output="native_wdl", wdl_kind="unsupported",
+            input_history_encoding=HISTORY, input_extra_features=FEATURES,
+            model_sha256=MODEL_SHA,
+        )
+    assert sess.calls == []
 
 
 def test_leaf_refuses_unbound_tree_and_relations() -> None:
