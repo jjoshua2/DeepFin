@@ -58,7 +58,7 @@ def allocated_bytes(roots: list[str]) -> int:
                 raise FileNotFoundError(f'output root missing: {root}')
             raise NotADirectoryError(f'output root is not a directory: {root}')
 
-        def walk_error(error: OSError) -> None:
+        def walk_error(error: OSError, root: Path = root) -> None:
             # A child directory may disappear during an atomic shard replacement,
             # but the configured root itself is a required resource boundary.
             if (isinstance(error, FileNotFoundError) and error.filename is not None
