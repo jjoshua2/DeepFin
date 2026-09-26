@@ -1,4 +1,5 @@
 name: Qualify final castling forced-check audit
+# rerun after current-step env fix
 'on':
   push:
     branches: [feat/bend-castle-forced-audit-dev-20260926]
