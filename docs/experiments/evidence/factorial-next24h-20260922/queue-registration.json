@@ -1,0 +1,23 @@
+{
+  "status": "PASS_REVIEWED_NEXT24H_QUEUE_REGISTRATION",
+  "registered_unix": 1790081893.469144,
+  "before_items": 242,
+  "after_items": 245,
+  "activated_held_ids": [
+    "factorial58_sffree_20260922_E",
+    "factorial58_sffree_20260922_E_D"
+  ],
+  "appended_ids": [
+    "factorial58_sffree_20260922_D122",
+    "factorial58_sffree_20260922_E122",
+    "factorial58_sffree_20260922_E122_D122"
+  ],
+  "unrelated_items_unchanged": true,
+  "active_state_unchanged": true,
+  "training_and_arenas_estimated_hours": 40.166666666666664,
+  "review_sha256": "e5fa5c73e578aae826f5bb8346e4786ec1e39d5fc75bb126acfce0c09b40a351",
+  "queue_before_sha256": "0f7e2171964cdf44236a95bf020c8f7161c87818e16a6220ca87b0a570be7089",
+  "queue_after_sha256": "80cc6e46e7c9e8dc73aac2a6e8eefa5c61b2479c5b91fb334c3bd347590e6235",
+  "current_gpu": "packed_trainer256_pair_retry_20260922",
+  "training_caps_plus_existing_retry_fit_deadline": true
+}
