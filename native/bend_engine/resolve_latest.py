@@ -42,6 +42,10 @@ class BendLatestError(ValueError):
     """Fail-closed latest.json / GitHub release resolution."""
 
 
+class BendReleaseFetchError(BendLatestError):
+    """Release API unavailable; never used for malformed integrity metadata."""
+
+
 @dataclass(frozen=True)
 class BendRelease:
     version: str
@@ -130,7 +134,56 @@ def fetch_github_bytes(url: str) -> bytes:
         with urllib.request.urlopen(request, timeout=30) as response:
             return response.read()
     except (urllib.error.URLError, TimeoutError) as exc:
-        raise BendLatestError(f"GitHub release fetch failed: {exc}") from exc
+        raise BendReleaseFetchError(f"GitHub release fetch failed at {url}: {exc}") from exc
+
+
+def fetch_installer_bytes() -> bytes:
+    """Read official metadata as data only; never execute a downloaded script."""
+    request = urllib.request.Request(
+        "https://bend-lang.com/install.sh",
+        headers={"User-Agent": "deepfin-bend-probe"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = response.read(1024 * 1024 + 1)
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise BendLatestError(f"official installer metadata fetch failed: {exc}") from exc
+    if len(data) > 1024 * 1024:
+        raise BendLatestError("official installer metadata is oversized")
+    return data
+
+
+def release_from_installer(version: str, platform: str, raw: bytes) -> BendRelease:
+    """Extract unique literal version/platform checksums from the official script.
+
+    The published installer pins all platform archive digests independently of the
+    GitHub API. Match the feed version exactly; a mismatched publication is an error.
+    No shell interpolation, URL from script code, or checksum-free fallback.
+    """
+    if platform not in PLATFORMS:
+        raise BendLatestError(f"unsupported Bend platform: {platform}")
+    version = _require_version(version)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BendLatestError("official installer metadata is not UTF-8") from exc
+
+    def literal(key: str) -> str:
+        assignments = re.findall(rf"(?m)^\s*{key}=([^\r\n]*)$", text)
+        if len(assignments) != 1:
+            raise BendLatestError(f"expected one official installer {key} assignment")
+        match = re.fullmatch(r'"([^"\r\n]*)"', assignments[0])
+        if match is None:
+            raise BendLatestError(f"official installer {key} must be a quoted literal")
+        return match[1]
+
+    if literal("REPO") != "bendlang/bend":
+        raise BendLatestError("unexpected official installer repository")
+    if literal("VER") != version:
+        raise BendLatestError("official installer version does not match latest.json")
+    key = "SHA_" + platform.replace("-", "_").upper()
+    sha = _require_sha(literal(key), source="official installer")
+    return BendRelease(version, sha, GITHUB_TARBALL.format(ver=version, platform=platform))
 
 
 def load_github_release(version: str, fetch: Fetch) -> Mapping[str, Any]:
@@ -182,6 +235,7 @@ def resolve_latest(
     platform: str,
     github_release: object | None = None,
     fetch: Fetch | None = None,
+    installer_fetch: Callable[[], bytes] | None = None,
 ) -> BendRelease:
     """Return version/sha256/url. Never succeeds without a 64-hex digest."""
     if platform not in PLATFORMS:
@@ -206,7 +260,13 @@ def resolve_latest(
             github_release, what="GitHub release metadata"
         )
     elif fetch is not None:
-        github_payload = load_github_release(version, fetch)
+        try:
+            github_payload = load_github_release(version, fetch)
+        except BendReleaseFetchError as exc:
+            if installer_fetch is None:
+                raise
+            print(f"bend probe: {exc}; checking official installer metadata", file=sys.stderr)
+            return release_from_installer(version, platform, installer_fetch())
     else:
         raise BendLatestError(
             "latest.json has no sha256/url; GitHub release metadata required"
@@ -249,6 +309,7 @@ def main(argv: list[str] | None = None) -> int:
         platform=platform,
         github_release=github_release,
         fetch=fetch,
+        installer_fetch=fetch_installer_bytes if fetch is not None else None,
     )
     print(release.version, release.sha256, release.url)
     return 0
