@@ -1,5 +1,11 @@
 # Bend migration and proof inventory
 
+## Latest P3 en-passant update qualification
+
+Hosted run **36216251656** passes both public en-passant laws and importing consumer, all17 controls, four native modes and both actual capture corruptions, original compiler source/pin checks and unchanged whole-repository lint on source `59acb49cb4395884741803b448842d2100054b1d`.
+
+Both public contracts retain the complete actual flag1/promotion0 Board update and partition preservation under input consistency. Removal includes source,destination and destination XOR8. These promote the earlier supplementary proofs unchanged; they do not certify source-pawn/rank/history,EP metadata or king safety. Qualification is modular152/453 with the exact150/436 parent retained,not a full aggregate run. See [the dated readout](experiments/2026-09-25-bend-en-passant-update.md). Castling and legal-producer connections remain next; no Python application responsibility moved into Bend.
+
 ## Supplementary en-passant update refinement
 
 Two newly source-checked derived statements now cover actual flag1/promotion0 make_move: exact complete-Board update and partition preservation. A structural mask identity connects removal of source,destination and destination XOR8 to existing deletion/fresh-insertion producers. Caller input consistency is required only for preservation; legal EP,pawn/source/rank/history conditions and king safety remain unproved here. Exact archived sources and the portable driver are in [the supplementary record](experiments/evidence/bend-move-promotion-publication/en-passant-review/README.md).
