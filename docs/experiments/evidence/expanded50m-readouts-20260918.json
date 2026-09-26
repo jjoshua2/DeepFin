@@ -1,0 +1,57 @@
+{
+  "status": "ADOPTED_QUEUED_BEHIND_RUNNING_TRAINING",
+  "queue_items": [
+    {
+      "id": "expanded50m_epoch1_vs35m_epoch4_400_256",
+      "kind": "registered_command",
+      "status": "queued",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/epoch1/registered_command.json",
+      "command_sha256": "065fd88e48842f0d435e1d7e50fff6074ec004e381a43af93eaae8ffe4d35631",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/epoch1/scheduler_run",
+      "max_seconds": 2500
+    },
+    {
+      "id": "expanded50m_epoch2_vs35m_epoch4_400_256",
+      "kind": "registered_command",
+      "status": "queued",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/epoch2/registered_command.json",
+      "command_sha256": "6c52dd18ea1d91f331bbff3e604644515ea8bb506bbc29dfa941db58def04226",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/epoch2/scheduler_run",
+      "max_seconds": 2500
+    },
+    {
+      "id": "expanded50m_epoch3_vs35m_epoch4_400_256",
+      "kind": "registered_command",
+      "status": "queued",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/epoch3/registered_command.json",
+      "command_sha256": "d092db284800060601d50e8d0441fbab279b950ca622195f686ed7388f875195",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/epoch3/scheduler_run",
+      "max_seconds": 2500
+    },
+    {
+      "id": "expanded50m_epoch4_vs35m_epoch4_400_256",
+      "kind": "registered_command",
+      "status": "queued",
+      "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/epoch4/registered_command.json",
+      "command_sha256": "6ca92002deeaaf8e083eba9c1add348ad96fd77e1fde4c585e060916e15a7b16",
+      "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/epoch4/scheduler_run",
+      "max_seconds": 2500
+    }
+  ],
+  "wrapper_sha256": "527bae15f1b572b8201b67e4c0a3fb3170d3b4cc652d5f972cc263010fc3ceaf",
+  "decision_rule": "Report fixed256 games each, positive point estimates guide continuation without mandatory significance. Compare same-opening scores; no automatic extension, training-replication or unique-data causal claim.",
+  "resource_budget": "4 sequential jobs; each2450s internal,2500s outer+30s cleanup;32GiB availableRAM/150GiB disk throughout; GPUlease exclusive.",
+  "validation": "Actual registered_spec passes all4, valid donor plus3 malformed/failed binding checks; independent author review found and fixed exited-leader cleanup.",
+  "adoption": {
+    "adopted_unix": 1789735328.7107232,
+    "ids": [
+      "expanded50m_epoch1_vs35m_epoch4_400_256",
+      "expanded50m_epoch2_vs35m_epoch4_400_256",
+      "expanded50m_epoch3_vs35m_epoch4_400_256",
+      "expanded50m_epoch4_vs35m_epoch4_400_256"
+    ],
+    "reviewer": "prepare_ceres_next",
+    "status": "QUEUED_BEHIND_RUNNING_TRAINING",
+    "placement": "epoch1 before3epochcontinuation; epochs2-4 after"
+  }
+}

@@ -1,0 +1,44 @@
+/home/josh/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:61: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+scheme=uniform-d9 temp=0.0005 floor=0.0 value_source=deepest_phase_covering
+corpus_record=summary (run_finished=True) shards adopted=1 rows claimed by inventory=32 unlisted on disk=0
+rows read=32 written=32 dropped(no result)=0 dropped(envelope)=0
+nodes_floor_hits=0 base depths={'9': 32} values by phase={'0': 288}
+value depths={'9': 32} moved rows=0 (--value-depth None)
+temp recovered from the emitted policy: n=32 min=0.000500 max=0.000500 skipped(saturated)=0 estimator=closed_form_two_move
+floor recovered from the emitted policy: n=0 min=nan max=nan skipped(few values)=0 skipped(ill-conditioned)=0
+min stored mass on a legal move: min=0 max=0 mean=0 n=32
+value_scheme=search games=0 rows differing from V0=0 L1 vs V0 mean=0 max=0 | stop terminal/self/ahead=0/0/0 w mean=nan u mean=nan regret mean=0.09156 | missing played_move=0 depths=32 nonunit ply gaps=0 dropped tails=0
+x planes=175 policy width=1858 support 1..1 history slots filled<=8 {'8': 32} row schemas={'3': 32}
+shards=1
+PASS_TARGET_PARENT_BUILD_RESUME_QUALIFY_CONSUME
+scheme=uniform-d9 temp=0.0005 floor=0.0 value_source=deepest_phase_covering
+corpus_record=summary (run_finished=True) shards adopted=1 rows claimed by inventory=32 unlisted on disk=0
+rows read=32 written=32 dropped(no result)=0 dropped(envelope)=0
+nodes_floor_hits=0 base depths={'9': 32} values by phase={'0': 288}
+value depths={'9': 32} moved rows=0 (--value-depth None)
+temp recovered from the emitted policy: n=32 min=0.000500 max=0.000500 skipped(saturated)=0 estimator=closed_form_two_move
+floor recovered from the emitted policy: n=0 min=nan max=nan skipped(few values)=0 skipped(ill-conditioned)=0
+min stored mass on a legal move: min=0 max=0 mean=0 n=32
+value_scheme=search games=0 rows differing from V0=0 L1 vs V0 mean=0 max=0 | stop terminal/self/ahead=0/0/0 w mean=nan u mean=nan regret mean=0.09156 | missing played_move=0 depths=32 nonunit ply gaps=0 dropped tails=0
+x planes=175 policy width=1858 support 1..1 history slots filled<=8 {'8': 32} row schemas={'3': 32}
+shards=1
+PASS_CERES_REAL_PRODUCER_PARENT_SYMLINK_VERIFY_AND_CACHE
+{
+  "schema": 1,
+  "status": "COMPLETE",
+  "plan_sha256": "538c799260ad881d078e103a0b6c138859d803a31e4c9fa7c8f99179a0e0c741",
+  "ended_unix": 1789842976.9508176,
+  "elapsed_seconds": 0.03485371795250103,
+  "completed_chunks": [
+    {
+      "id": "c16",
+      "completion_sha256": "ef2308b3652c3af316f848965afb86e1c83a0e4f43a04bd1a2d9605696c99cdc",
+      "completion_path": "/tmp/ceres-driver-link-ndsif8me/outs/c16/invocations/1789842976940671853/completed.json",
+      "elapsed_seconds": 0.033181014994625,
+      "exit_code": 0,
+      "stdout_log": "/tmp/ceres-driver-link-ndsif8me/state/chunks/c16/stdout.log"
+    }
+  ]
+}
+PASS_DRIVER_PARENT_SYMLINK_VALIDATE_LAUNCH_DISCOVER_COMPLETE
