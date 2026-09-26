@@ -7,6 +7,8 @@ import sys
 SCRIPT_DIR = Path(__file__).parents[1] / 'scripts'
 sys.path.insert(0, str(SCRIPT_DIR))
 SPEC = importlib.util.spec_from_file_location('ceres_batch', SCRIPT_DIR/'bootstrap_ceres_batch.py')
+assert SPEC is not None
+assert SPEC.loader is not None
 batch = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(batch)
 sys.path.pop(0)
