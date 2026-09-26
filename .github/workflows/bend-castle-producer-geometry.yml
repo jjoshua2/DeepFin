@@ -1,0 +1,84 @@
+name: Qualify castling producer geometry
+'on':
+  push:
+    branches: [feat/bend-castle-producer-geometry-dev-20260926]
+    paths: [.github/workflows/bend-castle-producer-geometry.yml]
+permissions:
+  contents: read
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      SOURCE: 340938471163b132beef8324da5800d3d474aefe
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 340938471163b132beef8324da5800d3d474aefe
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Check six geometry laws and actual-source anchors
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/castle-producer
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          out="$(bun .compiler/bend2/main.ts native/bend_engine/standalone/proofs/castle_producer/consumer.bend)"
+          test "$out" = "All terms check."
+          printf '%s
+' "$out" > /tmp/castle-producer/consumer.log
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('native/bend_engine/legal_probe/Chess.bend').read_text()
+          anchors=[
+            '+home = Bool.pick(U32, U32.is_eq(get_turn(b), 1), 0, 56)',
+            '+src = U32.add(home, 4)',
+            'rook = U32.add(home, Bool.pick(U32, king_side, 7, 0))',
+            'dst = U32.add(home, Bool.pick(U32, king_side, 6, 2))',
+            'transit = U32.add(home, Bool.pick(U32, king_side, 5, 3))',
+            'right = U32.mul(Bool.pick(U32, U32.is_eq(get_turn(b), 1), 1, 4), Bool.pick(U32, king_side, 1, 2))',
+            'between = U64.shln(U64.from_u32(Bool.pick(U32, king_side, 96, 14)), U32.to_nat(home))',
+            'U64.is_zero(U64.and(occupied(b), between))'
+          ]
+          for a in anchors: assert p.count(a)==1,a
+          Path('/tmp/castle-producer/source-link.txt').write_text('\n'.join(anchors)+'\n')
+          PY
+      - name: Recheck actual legal move castling fixtures in generic and UBSan
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          python -m native.bend_engine.legal_probe.run_probe --compiler-root "$PWD/.compiler" --modes generic ubsan --report /tmp/castle-producer/legal-probe.json
+      - name: Recheck compiler source suite and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee /tmp/castle-producer/pin.log
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee /tmp/castle-producer/compiler-proofs.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Run unchanged repository lint
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee /tmp/castle-producer/lint.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-castle-producer-geometry
+          path: /tmp/castle-producer/
+          retention-days: 14
