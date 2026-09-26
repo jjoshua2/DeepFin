@@ -10,6 +10,9 @@ Run scripts from the repository root with an installed package or `PYTHONPATH=.`
 Use each command's `--help` for its current arguments; examples below inspect interfaces
 and do not launch experiments.
 
+See [workspace storage](workspace_storage.md) before creating agent workspaces or
+choosing bulk input/output locations.
+
 ## Corpus to offline training
 
 | Stage | Entry point | Contract to preserve |
@@ -849,3 +852,32 @@ record the exclusion evidence pins, and completed coverage must equal the audit'
 physical, eligible, no-result and exclusion counts. Use a fresh output directory.
 A filtered corpus needs its own later schedule qualification; this command does
 not reuse a previous corpus's training schedule or allocate training.
+
+### Hourly bootstrap recovery
+
+`lc0_control_train.py` saves full trainer state after its first completed optimizer
+window, then after each `--recovery-checkpoint-seconds` interval (default 3600).
+`--recovery-checkpoint-keep` defaults to two committed snapshots; an in-flight save
+can temporarily require a third checkpoint's disk space. Set the interval to zero
+to disable recovery snapshots. Both single- and multiple-epoch paths use this hook.
+
+Read `OUT/recovery/latest.json` to find committed bundles, newest first. Each holds
+`checkpoint.pt` (model, optimizer, scheduler, global step, peak LR and ZClip),
+`rng.pt`, and a hash-bearing `manifest.json` recording epoch, window, completed rows
+and steps. The bundle and index are durably published before older snapshots are
+removed. Failed saves retain the previous committed recovery point. An interrupted
+save can leave an unindexed bundle; it is not automatically selected.
+
+These are recovery artifacts, not completed-experiment qualifications. Restore all
+trainer state with a compatible continuation driver/`Trainer.load`, then declare a
+fresh sampling seed and budget. Rows from the interrupted epoch may be presented
+again. Saved RNG states are diagnostic/recovery material, but sampler cursors and
+prefetched batches are not restored: **exact interrupted-epoch replay is not
+supported**. This change does not add a resume CLI to the main training driver.
+Normal final loss and corpus guards still decide successful experiment completion.
+Recovery snapshots are retained on failure and prevent accidental output reuse.
+
+Saving waits for a completed training window. The interval can therefore be exceeded
+by one window; forced termination does not guarantee a last-second save. The first
+window snapshot protects early progress without relying on a signal handler racing
+an optimizer update.
