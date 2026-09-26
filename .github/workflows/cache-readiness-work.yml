@@ -1,0 +1,153 @@
+name: Cache PR readiness reconciliation
+on:
+  push:
+    branches: [work/bend-cache-readiness-20260926]
+    paths: [.github/workflows/cache-readiness-work.yml]
+permissions:
+  contents: write
+concurrency:
+  group: cache-readiness-20260926
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      FEATURE_PARENT: 6758a410bb05147d7bafc64aef0d64c321d883bf
+      MAIN_PARENT: cf983e942ed6f173fd3d53f8d7768c1824cb7288
+      COMMON_BASE: 9a625bd2d5eae59179ab241015800f922d577978
+      PUBLISH_BRANCH: feat/bend-cache-readiness-20260926
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      BEND_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare exact merge and prove native sources and dependency lock unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=80 origin "$FEATURE_PARENT" "$MAIN_PARENT" "$COMMON_BASE"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git worktree add --detach "$RUNNER_TEMP/cache-readiness" "$FEATURE_PARENT"
+          mkdir "$RUNNER_TEMP/cache-readiness-evidence"
+          cd "$RUNNER_TEMP/cache-readiness"
+          python3 - <<'PY'
+          from collections import Counter
+          import difflib, hashlib, json, os, pathlib, re, subprocess
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'cache-readiness-evidence'
+          feature, main, base = (os.environ[n] for n in ('FEATURE_PARENT', 'MAIN_PARENT', 'COMMON_BASE'))
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          assert git('merge-base', feature, main) == base
+          fp = set(git('diff', '--name-only', base, feature).splitlines())
+          mp = set(git('diff', '--name-only', base, main).splitlines())
+          index = 'docs/experiments/README.md'
+          assert fp & mp == {index}, sorted(fp & mp)
+          result = subprocess.run(['git', 'merge', '--no-commit', '--no-ff', main], capture_output=True, text=True, check=False)
+          (out / 'merge.stdout').write_text(result.stdout)
+          (out / 'merge.stderr').write_text(result.stderr)
+          conflicts = git('diff', '--name-only', '--diff-filter=U').splitlines()
+          assert result.returncode in (0, 1) and set(conflicts) <= {index}, (result.returncode, conflicts)
+          versions = {name: subprocess.check_output(['git', 'show', ref + ':' + index]) for name, ref in (('base', base), ('feature', feature), ('main', main))}
+          for name, raw in versions.items():
+              (out / ('index-' + name + '.md')).write_bytes(raw)
+          for name in ('feature', 'main'):
+              edits = difflib.SequenceMatcher(a=versions['base'].splitlines(), b=versions[name].splitlines()).get_opcodes()
+              assert all(tag in ('equal', 'insert') for tag, *_ in edits), (name, edits)
+          resolved = subprocess.run(['git', 'merge-file', '-p', '--union', str(out / 'index-feature.md'), str(out / 'index-base.md'), str(out / 'index-main.md')], capture_output=True, check=False)
+          assert resolved.returncode == 0 and not resolved.stderr
+          def lines(raw):
+              return Counter(line for line in raw.splitlines() if line.strip())
+          assert lines(resolved.stdout) == (lines(versions['feature']) | lines(versions['main']))
+          assert not any(marker in resolved.stdout for marker in (b'<<<<<<<', b'=======', b'>>>>>>>'))
+          for link in re.findall(rb'\]\(([^)]+)\)', resolved.stdout):
+              target = link.decode().split('#', 1)[0]
+              if target and '://' not in target:
+                  assert (pathlib.Path(index).parent / target).exists(), target
+          pathlib.Path(index).write_bytes(resolved.stdout)
+          (out / 'index-resolved.md').write_bytes(resolved.stdout)
+          subprocess.run(['git', 'add', '--', index], check=True)
+          assert not git('diff', '--name-only', '--diff-filter=U')
+          subprocess.run(['git', 'diff', '--cached', '--check'], check=True)
+          tree = git('write-tree')
+          def entries(ref):
+              result = {}
+              for item in subprocess.check_output(['git', 'ls-tree', '-rz', ref]).split(b'\0'):
+                  if item:
+                      value, path = item.split(b'\t', 1)
+                      result[path.decode()] = value.decode()
+              return result
+          ft, mt, actual = entries(feature), entries(main), entries(tree)
+          expected = entries(base)
+          for paths, source in ((mp, mt), (fp, ft)):
+              for path in paths:
+                  if path in source:
+                      expected[path] = source[path]
+                  else:
+                      expected.pop(path, None)
+          expected[index] = actual[index]
+          assert actual == expected, 'Unexpected merge content'
+          native = {p: value for p, value in ft.items() if p.startswith(('native/bend_engine/', 'chess_anti_engine/encoding/')) or p in ('.python-version', 'pyproject.toml', 'uv.lock')}
+          assert native and all(actual.get(p) == value for p, value in native.items())
+          assert not set(actual).difference(ft).intersection(p for p in actual if p.startswith(('native/bend_engine/', 'chess_anti_engine/encoding/')))
+          record = {'status': 'prepared', 'feature_parent': feature, 'main_parent': main, 'common_base': base, 'tested_tree': tree, 'conflicted_paths': conflicts, 'feature_paths_preserved': sorted(fp - {index}), 'main_paths_preserved': sorted(mp - {index}), 'unchanged_native_and_dependency_entries': native, 'resolved_index_sha256': hashlib.sha256(resolved.stdout).hexdigest(), 'scope': 'Additive main reconciliation; no authored native changes, no new performance panel, no production enablement.'}
+          (out / 'reconciliation.json').write_text(json.dumps(record, indent=2) + '\n')
+          (out / 'merged.patch').write_bytes(subprocess.check_output(['git', 'diff', '--cached', '--binary']))
+          print('EXACT_CANDIDATE_TREE', tree)
+          PY
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-readiness"
+          uv sync --locked --extra dev --extra cpu
+      - name: Cache and session contracts plus newly inherited Python changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-readiness"
+          . .venv/bin/activate
+          python -m pytest -q tests/test_bend_u64_map.py tests/test_bend_map*.py tests/test_bend_session_move_cache.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py tests/test_bend_search_draws.py tests/test_bend_claim_options.py tests/test_bend_collections.py tests/test_bend_owning_collections.py tests/test_bootstrap_recovery.py tests/test_bt4_outcome.py tests/test_lc0_control_drivers.py --junitxml="$RUNNER_TEMP/cache-readiness-evidence/python.xml"
+      - name: Whole-repository static validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-readiness"
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          git diff --exit-code
+      - name: Publish only a qualified sibling merge, without adding evidence commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-readiness"
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, xml.etree.ElementTree as ET
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'cache-readiness-evidence'
+          record = json.loads((out / 'reconciliation.json').read_text())
+          tree = subprocess.check_output(['git', 'write-tree'], text=True).strip()
+          assert tree == record['tested_tree']
+          subprocess.run(['git', 'diff', '--exit-code'], check=True)
+          xml = ET.parse(out / 'python.xml').getroot()
+          cases = list(xml.iter('testcase'))
+          assert cases and not any(list(xml.iter(tag)) for tag in ('failure', 'error', 'skipped'))
+          sha = subprocess.check_output(['git', 'commit-tree', tree, '-p', os.environ['FEATURE_PARENT'], '-p', os.environ['MAIN_PARENT'], '-m', 'Merge current main into cache PR; retain both experiment indexes without extending feature scope'], text=True).strip()
+          record.update(status='passed', workflow_run=int(os.environ['GITHUB_RUN_ID']), workflow_commit=os.environ['GITHUB_SHA'], merge_commit=sha, python_tests=len(cases), whole_repository_static='passed', native_executions_this_run=0, performance_panels_this_run=0, native_validation_basis='Native/encoding source entries and lock are unchanged from feature parent; separate PR native workflows remain authoritative.')
+          (out / 'reconciliation.json').write_text(json.dumps(record, indent=2) + '\n')
+          (out / 'candidate.txt').write_text(sha + '\n')
+          subprocess.run(['git', 'push', '--force-with-lease=refs/heads/' + os.environ['PUBLISH_BRANCH'] + ':', 'origin', sha + ':refs/heads/' + os.environ['PUBLISH_BRANCH']], check=True)
+          print('QUALIFIED_SIBLING_COMMIT', sha)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cache-readiness
+          path: ${{ runner.temp }}/cache-readiness-evidence/
+          retention-days: 30
