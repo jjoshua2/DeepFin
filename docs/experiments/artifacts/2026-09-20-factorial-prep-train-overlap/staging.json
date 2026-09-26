@@ -1,0 +1,53 @@
+{
+  "status": "STAGED_NOT_ADOPTED",
+  "config": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/config.json",
+    "sha256": "084f678dfa663b4ccd38747fd1a86a9a128e82b22052e53c9aec5b4be5e39edc"
+  },
+  "changed_arenas": [
+    {
+      "old_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/plan.json",
+        "sha256": "7ff41d8d5b51aa42786eb5d1a926a2a2600bd3280d0f36a914728c9b4f05cd44"
+      },
+      "new_plan": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/arenas/B_A/plan.json",
+        "sha256": "b53a162f844a758be9562005973ee778dd8ab92ca87630069ad4b7c6dc8313de"
+      },
+      "queue_id": "factorial58_B_A_400sims"
+    },
+    {
+      "old_plan": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/plan.json",
+        "sha256": "324a64e1d5d3c1cb086460623f5b58810486a7eba57f7eae0f3e789de9e6c07f"
+      },
+      "new_plan": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/arenas/C_A/plan.json",
+        "sha256": "e373a778b8d2a5add5b1911a546a8bd496439344863b53778bbd2d0e58dc7885"
+      },
+      "queue_id": "factorial58_C_A_400sims"
+    }
+  ],
+  "old_A_plan": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/plan.json",
+    "sha256": "a6c3cac7075c78d04416a40ad53457005eeb2c173ed4cd61772f3c3100d4f98e"
+  },
+  "new_A_plan": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/plan.json",
+    "sha256": "3cd309890b9c9bbfeab46b2249ca59956bc98788f4512dad9b59d73594a8aed1"
+  },
+  "trainer_argv_identical": true,
+  "initial_anchor_identical": true,
+  "output_identical": true,
+  "preparation_wrapper_unchanged": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/registered_command.json",
+    "sha256": "ff0b1215a9a57b85bcf6b74f129f56717bb18d4fc9583c83e1ec64bc6a831721"
+  },
+  "handoff_required_before_adoption": true,
+  "resource_evidence": {
+    "sampler_peak_working_set_bytes": 6544755954,
+    "sampler_peak_decoded_bytes": 5627054818,
+    "observed_prep_rss_mib": 655,
+    "available_gib_at_observation": 70.8
+  }
+}

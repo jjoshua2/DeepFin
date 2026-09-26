@@ -132,3 +132,5 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
 
 - [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
+
+- [2026-09-20: overlap target preparation with fresh factorial A](2026-09-20-factorial-prep-train-overlap.md) — independent base admission preserves scientific settings.

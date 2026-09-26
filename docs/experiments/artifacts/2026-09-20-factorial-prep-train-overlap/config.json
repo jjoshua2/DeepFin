@@ -1,0 +1,44 @@
+{
+  "control": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920",
+  "preparation_control": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation",
+  "preparation_plan": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/plan.json",
+    "sha256": "b3da27e09c704b7c6b5330f5ec17423f4dd5cf0f8f83d31152a7eed456beab65"
+  },
+  "preparation_descriptor": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/registered_command.json",
+    "sha256": "ff0b1215a9a57b85bcf6b74f129f56717bb18d4fc9583c83e1ec64bc6a831721"
+  },
+  "preparation_complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/complete.json",
+  "a_plan": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/plan.json",
+    "sha256": "3cd309890b9c9bbfeab46b2249ca59956bc98788f4512dad9b59d73594a8aed1"
+  },
+  "a_descriptor": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/registered_command.json",
+    "sha256": "631950ba19c676c2997d9c6a9c284e5bfdcb3c47560549e870297e3fc72494fb"
+  },
+  "a_complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/complete.json",
+  "a_terminal": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/A/terminal.json",
+  "base_ready": "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/base-A.complete.json",
+  "max_seconds": 140100,
+  "combined_rss_gib": 24,
+  "disk_root": "/home/josh/chess-artifacts",
+  "stop_paths": [
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/STOP",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/STOP",
+    "/home/josh/chess-artifacts/operations/factorial58-prep-train-overlap-20260920/STOP"
+  ],
+  "pins": [
+    {
+      "path": "/tmp/deepfin-prep-train-overlap/scripts/factorial_prepare_and_train.py",
+      "sha256": "26c76b1b32c3fdf86c06db204b6661de4f3cbc7d3ba6d8f75dd793ec6356be01"
+    },
+    {
+      "path": "/tmp/deepfin-prep-train-overlap/scripts/factorial_base_a_runner.py",
+      "sha256": "9f5ec3d6dc43aa32d52cf7436dbb8ac79c5be2d5c64bd926e53935649f373247"
+    }
+  ]
+}

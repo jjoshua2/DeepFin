@@ -1,0 +1,352 @@
+"""One fresh, bounded factorial arm; target preparation must already be complete."""
+
+import argparse
+import fcntl
+import importlib.util
+import hashlib
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+HERE = Path(os.environ["FACTORIAL_A_CONTROL"])
+
+
+def require(ok, message):
+    if not ok:
+        raise RuntimeError(message)
+
+
+def sha(path):
+    h = hashlib.sha256()
+    with Path(path).open("rb") as f:
+        for block in iter(lambda: f.read(2**20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def dump(path, value):
+    with Path(path).open("x") as stream:
+        json.dump(value, stream, indent=2)
+        stream.write("\n")
+
+
+def ref(path):
+    return {"path": str(path), "sha256": sha(path)}
+
+
+def read(path):
+    return json.loads(Path(path).read_text())
+
+
+
+
+def load_runtime_module(runtime: str, name: str) -> ModuleType:
+    """Load one helper from the frozen runtime, with explicit test injection support."""
+    existing = sys.modules.get(name)
+    if existing is not None:
+        return existing
+    path = Path(runtime) / f"{name}.py"
+    require(path.is_file(), f"runtime helper missing: {name}")
+    spec = importlib.util.spec_from_file_location(f"_factorial_{name}", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load runtime helper: {name}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def initial(path):
+    value = read(path)
+    require(value["seed"] == 121, "initial seed differs")
+    require(
+        isinstance(value["tensor_sha256"], str) and len(value["tensor_sha256"]) == 64,
+        "invalid initial tensor digest",
+    )
+    return value
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--plan", type=Path, required=True)
+    ap.add_argument("--sha256", required=True)
+    ap.add_argument("--execute", action="store_true")
+    args = ap.parse_args()
+    require(not sys.flags.optimize, "optimized interpreter disables inherited guards")
+    require(sha(args.plan) == args.sha256, "plan digest differs")
+    p = read(args.plan)
+    require(
+        p["status"] == "FROZEN_READY", "runtime and code pins must be frozen before use"
+    )
+    require(p["arm"] == "A", "base-only admission is restricted to A")
+    for item in p["pins"]:
+        require(sha(item["path"]) == item["sha256"], "pin changed: " + item["path"])
+    require(
+        subprocess.check_output(
+            ["git", "-C", p["runtime"], "rev-parse", "HEAD"], text=True
+        ).strip()
+        == p["runtime_head"],
+        "runtime HEAD changed",
+    )
+    subprocess.run(
+        ["git", "-C", p["runtime"], "diff", "--exit-code", "HEAD", "--"], check=True
+    )
+    require(not Path(p["out"]).exists(), "fresh arm output required")
+    # No long dependency wait: a missing/failed preparation is a scheduling error.
+    require(Path(p["dataset_complete"]).is_file(), "target preparation is not complete")
+    targets = read(p["dataset_complete"])
+    require(
+        targets["status"] == "COMPLETE_FACTORIAL58_BASE_A"
+        and targets["rows"] == 58090688
+        and targets["shards"] == 7108,
+        "target completion contract differs",
+    )
+    require(
+        targets["arms"]["A"]["roots"] == p["base_roots"],
+        "base35 partition/order differs",
+    )
+    require(
+        targets["preparation_plan"] == p["preparation_plan"],
+        "base readiness preparation lineage differs",
+    )
+    for item in targets["seals"] + [targets["preparation_plan"]]:
+        require(sha(item["path"]) == item["sha256"], "base readiness pin changed")
+    arm = targets["arms"][p["arm"]]
+    roots = arm["roots"]
+    require(
+        len(roots) == 35
+        and len(set(roots)) == 35
+        and all(Path(x).is_dir() for x in roots),
+        "requires35 distinct existing roots",
+    )
+    qualification = arm["qualification"]
+    require(
+        (qualification is None) == (p["arm"] == "A"),
+        "overlay qualification is required only for changed arms",
+    )
+    pins = [ref(p["dataset_complete"])]
+    if qualification is not None:
+        require(
+            sha(qualification["path"]) == qualification["sha256"],
+            "overlay qualification changed",
+        )
+        pins.append(qualification)
+    anchor = Path(p["initial_anchor"])
+    anchor_value = None
+    if p["arm"] != "A":
+        anchor_value = initial(anchor)
+        pins.append(ref(anchor))
+    command = p["command_prefix"] + ["--shards", *roots]
+    if qualification is not None:
+        command += [
+            "--overlay-storage-qualification",
+            qualification["path"],
+            "--expected-overlay-storage-qualification-sha256",
+            qualification["sha256"],
+        ]
+    require("--resume-checkpoint" not in command, "factorial arms must start fresh")
+    if not args.execute:
+        print("PASS_BOUND_CPU_PREFLIGHT_NOT_EXECUTED")
+        return 0
+    disk_pause_module = load_runtime_module(p["operator_runtime"], "disk_pause")
+    disk_pause_guard: Any = getattr(disk_pause_module, "DiskPauseGuard")
+    operator_module = load_runtime_module(
+        p["operator_runtime"], "bootstrap_experiment_operator"
+    )
+    terminate_owned_group: Any = getattr(operator_module, "terminate_owned_group")
+
+    def stop(sig, _frame):
+        raise InterruptedError(f"signal {sig}")
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    wall = time.monotonic()
+    start = wall
+    train_start = None
+    child = None
+    lease = None
+    initial_ref = None
+    receipt = {
+        "status": "INCOMPLETE",
+        "arm": p["arm"],
+        "started_unix": time.time(),
+        "plan_sha256": args.sha256,
+        "bound_inputs": pins,
+    }
+
+    def interruption():
+        require(
+            time.monotonic() - wall < p["internal_seconds"] + p["pause_seconds"],
+            "whole wall-time budget",
+        )
+        require(
+            not (HERE / "STOP").exists()
+            and not (HERE.parent / "STOP").exists()
+            and not (HERE.parent.parent / "STOP").exists(),
+            "STOP",
+        )
+        available = (
+            int(
+                next(
+                    x.split()[1]
+                    for x in Path("/proc/meminfo").read_text().splitlines()
+                    if x.startswith("MemAvailable:")
+                )
+            )
+            * 1024
+        )
+        require(available >= 32 * 2**30, "RAM reserve")
+
+    disk_pause = disk_pause_guard(
+        HERE, budget=p["pause_seconds"], check_interrupt=interruption
+    )
+
+    def check_initial(required=False):
+        nonlocal initial_ref
+        path = Path(p["out"]) / "initial_state.json"
+        if initial_ref is not None:
+            return
+        if not path.exists():
+            require(not required, "initial model receipt missing")
+            return
+        try:
+            value = initial(path)
+        except json.JSONDecodeError:
+            require(not required, "initial model receipt incomplete")
+            return
+        if anchor_value is not None:
+            require(
+                value["tensor_sha256"] == anchor_value["tensor_sha256"],
+                "initial model tensors differ from A",
+            )
+        initial_ref = ref(path)
+        dump(
+            HERE / "initial_state_verified.json",
+            {
+                "arm": p["arm"],
+                "initial": initial_ref,
+                "tensor_sha256": value["tensor_sha256"],
+                "anchor": str(anchor),
+                "verified_unix": time.time(),
+            },
+        )
+
+    def guard():
+        nonlocal start, train_start
+        interruption()
+        require(
+            time.monotonic() - start < p["internal_seconds"], "active whole-job budget"
+        )
+        if train_start is not None:
+            require(
+                time.monotonic() - train_start < p["training_seconds"],
+                "active training budget",
+            )
+        paused = disk_pause.check(child)
+        start += paused
+        if train_start is not None:
+            train_start += paused
+        check_initial()
+
+    try:
+        guard()
+        require(shutil.disk_usage(HERE).free >= 20 * 2**30, "startup disk reserve")
+        dump(
+            HERE / "actual_command.json",
+            {"command": command, "bound_inputs": pins, "fresh_seed": 121},
+        )
+        lease = open(p["gpu_lock"], "a")  # noqa: SIM115 - released after descendant cleanup
+        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        train_start = time.monotonic()
+        dump(HERE / "started.json", receipt)
+        with open(HERE / "training.log", "xb") as log:
+            child = subprocess.Popen(
+                command,
+                cwd=p["runtime"],
+                env={**os.environ, **p["env"]},
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                pass_fds=(lease.fileno(), int(os.environ["FACTORIAL_OWNER_FD"])),
+            )
+            receipt["pid"] = child.pid
+            while child.poll() is None:
+                guard()
+                try:
+                    child.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    pass
+            require(child.returncode == 0, f"training exited {child.returncode}")
+        check_initial(required=True)
+        if initial_ref is None:
+            raise RuntimeError("verified initial model receipt missing")
+        summary = read(Path(p["out"]) / "summary.json")
+        sampling = summary["sampling"]
+        require(
+            summary["seed"] == 121
+            and summary["batch_size"] == 512
+            and summary["steps_realized"] > 0,
+            "realized training settings differ",
+        )
+        require(
+            summary.get("continuation") is None, "unexpected checkpoint continuation"
+        )
+        require(
+            sampling["complete"]
+            and sampling["rows_planned"] == 58090688
+            and sampling["rows_realized"] == 58090688,
+            "incomplete exact58M epoch",
+        )
+        require(
+            sampling["batches_realized"] == summary["steps_realized"],
+            "realized optimizer/batch count differs",
+        )
+        if qualification is not None:
+            require(
+                summary["overlay_storage_qualification"] == qualification,
+                "realized overlay qualification differs",
+            )
+        for item in [*pins, initial_ref]:
+            require(sha(item["path"]) == item["sha256"], "bound input changed")
+        checkpoint = Path(p["out"]) / "checkpoint.pt"
+        require(checkpoint.is_file(), "final checkpoint missing")
+        guard()
+        receipt.update(
+            status="PASS_FACTORIAL58_ARM",
+            initial_state=initial_ref,
+            tensor_sha256=initial(Path(initial_ref["path"]))["tensor_sha256"],
+            summary=ref(Path(p["out"]) / "summary.json"),
+            checkpoint=ref(checkpoint),
+            rows=58090688,
+            steps_realized=summary["steps_realized"],
+            sampling=sampling,
+        )
+        return 0
+    except BaseException as exc:
+        receipt["error"] = repr(exc)
+        raise
+    finally:
+        try:
+            if child is not None:
+                disk_pause_guard.resume_owned_group(child)
+                terminate_owned_group(child, grace=20)
+        finally:
+            if lease is not None:
+                lease.close()
+        receipt.update(
+            ended_unix=time.time(),
+            active_elapsed_seconds=time.monotonic() - start,
+            wall_elapsed_seconds=time.monotonic() - wall,
+            disk_pause_seconds=disk_pause.used,
+        )
+        dump(HERE / "complete.json", receipt)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
