@@ -11,9 +11,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
-| [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | First 262,079-row matched adaptive-SF derivation passed; 1.575M existing BT4 WDL rows, no strength result |
 | [AVI-style one-ply value backup](2026-09-11-avi-value-backup.md) | One-ply evaluator, provenance-gated sidecar and value-only rewrite implemented; no executed AVI corpus, training or strength result |
-| [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | 9.31M/18.91M Ceres labels qualified at September 11 13:40 UTC; collection continues, policy/value screens prepared, no Ceres playing result |
+| [BT4 source read-ahead](2026-09-21-bt4-source-read.md) | Exact CPU input parity; chunk-aligned reads3.9–4.1x faster, measured CPU preparation1.31x; no end-to-end inference claim |
 | [Downside policy/value combination](2026-09-14-downside-value-combination.md) | Prospective draft: prefer a single-copy matched 35M policy correction; value choice awaits active arena, integration and launch not yet qualified |
 | [BT4 root-output reuse foundation](2026-09-23-bt4-root-output-reuse-foundation.md) | CPU-tested batched roots, explicit repetition-mode guard and optional C-search leaves; no game generator or throughput claim |
 | [BT4 output-adapter foundation](2026-09-23-bt4-output-adapter-foundation.md) | Shared legal BT4-to-compact float32 conversion with caller-owned buffer parity; CPU contract only, no generator or speedup claim |
