@@ -1,5 +1,16 @@
 # Bend migration and proof inventory
 
+## Latest P3 castling producer geometry
+
+Hosted run **36219695972** passes six universal route/mask geometry laws, exact source-link checks against the actual `Chess.castle_side` expressions, the current compiler source/pin gates and unchanged repository lint on source `4f3f40c9a98ddac838bd851ddf7fe821e8cfbfe2`.
+
+The new laws prove that all four orthodox producer routes use the expected king source/destination and rook source, that the king transit square is exactly the rook landing square, and that both transit/rook-landing and king destination lie inside the producer's `between` mask. These are the formal geometry needed to derive the castling-update freshness premise from the actual producer guard.
+
+This is **not yet** a theorem that every flag-two member of `legal_moves` satisfies the guard, nor a king-safety soundness/completeness theorem. The actual source linkage is enforced by exact source anchors, not by replacing `castle_side` with a shadow implementation. Coverage is modular **160 laws/470 controls**; no new negative controls were added in this increment and the full aggregate did not run.
+
+The historical `legal_probe` was deliberately not rerun on the newer standalone compiler: its own compiler fingerprint rejected that attempt before execution, and that boundary is preserved rather than bypassed. Prior castling parity remains historical evidence on its original pin. See [the dated readout](experiments/2026-09-26-bend-castle-producer-geometry.md).
+
+
 ## Latest P3 castling update qualification
 
 Hosted run **36218760990** passes the durable public castling gate on source `105b361a4e4a7cc5b1a1a14308c74c310d5a5b9a`: two registered laws, importing consumer, all17 controls, generic/portable/native-target/UBSan native checks, original compiler source/pin checks and unchanged repository lint.
