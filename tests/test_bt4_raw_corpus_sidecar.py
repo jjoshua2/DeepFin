@@ -193,6 +193,7 @@ def make_source(tmp_path: Path, *, bad_input_key: bool = False) -> tool.SourceSp
         "history_root_fen": board.fen(en_passant="fen"),
         "history_uci": [],
         "game_id": 17,
+        "worker_id": 7,
         "ply": 3,
         "stm": "w",
         "piece_count": 32,
@@ -295,6 +296,14 @@ def test_label_raw_shard_verifies_history_and_publishes_joinable_policy(
         lambda: {"commit": "c", "dirty": False, "blobs": {"x": "y"}},
     )
 
+    calls: list[Path] = []
+    reader = tool.iter_bt4_input_rows
+
+    def tracked_reader(path: Path):
+        calls.append(path)
+        yield from reader(path)
+
+    monkeypatch.setattr(tool, "iter_bt4_input_rows", tracked_reader)
     attrs = tool.label_shard(
         pending,
         sess=FakeSession(),
@@ -330,6 +339,8 @@ def test_label_raw_shard_verifies_history_and_publishes_joinable_policy(
         policy_output="policy",
         providers=["fake"],
     )
+    identities = np.empty(1, dtype=tool.provenance.RECORD_DTYPE)
+    feeds = np.empty((1, 32), dtype=np.uint8)
     tool.verify_shard(
         pending,
         onnx_sha256="onnx-sha",
@@ -337,7 +348,13 @@ def test_label_raw_shard_verifies_history_and_publishes_joinable_policy(
         expected_providers=["fake"],
         expected_remap={"commit": "c", "dirty": False, "blobs": {"x": "y"}},
         batch_size=1,
+        identity_records=identities,
+        canonical_feed_records=feeds,
     )
+    assert calls == [pending.path, pending.path]
+    assert identities["worker_id"].tolist() == [7]
+    assert identities["game_id"].tolist() == [17]
+    assert bool(feeds.any())
 
 
 def test_label_raw_shard_refuses_wrong_banked_input_key(tmp_path: Path) -> None:
@@ -420,3 +437,90 @@ def test_verify_marks_live_snapshot_and_overwrites_stale_pass_on_failure(
     receipt = json.loads((out_root / tool.VERIFY_NAME).read_text(encoding="utf-8"))
     assert receipt["verdict"] == "FAIL"
     assert receipt["error_type"] == "ValueError"
+
+
+@pytest.mark.parametrize("suffix", [".jsonl.gz", ".jsonl.zst"])
+def test_projected_reader_preserves_consumed_values_and_codec(
+    tmp_path: Path, suffix: str,
+) -> None:
+    import zstandard
+
+    fields = (
+        "schema", "run", "fen", "history_root_fen", "history_uci", "stm",
+        "piece_count", "input_key", "game_id", "ply", "worker_id",
+    )
+    rows = [
+        dict.fromkeys(fields, value) | {"phases": [{"unused": [1, 2, 3]}]}
+        for value in (None, True, False, 1, 1.0, -0.0, "text", [], {"nested": 2})
+    ] + [{"game_id": 10**100}, {}]
+    text = "\n  \n" + "\n".join(json.dumps(row) for row in rows) + "\n"
+    path = tmp_path / ("rows" + suffix)
+    data = text.encode()
+    path.write_bytes(
+        gzip.compress(data) if suffix == ".jsonl.gz"
+        else zstandard.ZstdCompressor().compress(data)
+    )
+    reference = list(derive.iter_corpus_rows(path))
+    projected = list(tool.iter_bt4_input_rows(path))
+    for original, selected in zip(reference, projected, strict=True):
+        assert selected == {key: original[key] for key in fields if key in original}
+        assert json.dumps(selected, sort_keys=True) == json.dumps(
+            {key: original[key] for key in fields if key in original}, sort_keys=True,
+        )
+
+
+@pytest.mark.parametrize("line", [
+    '{"game_id": 1, "game_id": 2, "phases": [], "phases": {}}',
+    '{"run": {"x": 1, "x": null}, "ply": true}',
+    '{"game_id": NaN, "ply": Infinity, "worker_id": -Infinity}',
+    '{"game_id": 1e999, "phases": 1e999}',
+    r'{"fen": "\ud800", "phases": "\udfff"}',
+    'null', '[]', 'true', '4', '"text"',
+])
+def test_projected_reader_stdlib_corner_cases(line: str) -> None:
+    original = json.loads(line)
+    selected = tool._decode_bt4_row(line)
+    if selected is None:
+        selected = json.loads(line)
+    if isinstance(original, dict):
+        original.pop("phases", None)
+        selected.pop("phases", None)
+    assert json.dumps(selected, sort_keys=True) == json.dumps(original, sort_keys=True)
+
+
+@pytest.mark.parametrize("tail", [
+    '[1,]', '{"x":}', '01', 'true garbage', '"bad\ncontrol"',
+    r'"\x"', r'"\u12xy"', '[1 2]', '{"x" 1}',
+    '9' * 5000,
+])
+def test_projected_reader_preserves_errors_in_skipped_fields(tail: str) -> None:
+    line = '{"game_id": 3, "phases": ' + tail + '}'
+    # Deep arrays are not in this list. This interpreter's json.loads accepts
+    # 1,200 nested arrays, so that shape is not an error to preserve. The
+    # nesting test covers the preflight that still selects stdlib for them.
+    with pytest.raises((ValueError, RecursionError)) as reference:
+        json.loads(line)
+    assert tool._decode_bt4_row(line) is None
+    with pytest.raises(type(reference.value)) as projected:
+        json.loads(line)
+    # JSONDecodeError retains its exact document offset and diagnostic.
+    if isinstance(reference.value, json.JSONDecodeError):
+        assert str(projected.value) == str(reference.value)
+
+
+@pytest.mark.parametrize("depth", [95, 96, 995, 996])
+def test_projected_reader_skipped_nesting_uses_reference(
+    depth: int, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Count-based preflight must choose stdlib even when msgspec would accept.
+    line = '{"phases":' + '[' * depth + '0' + ']' * depth + '}'
+    monkeypatch.setattr(tool.sys, "getrecursionlimit", lambda: 100 if depth < 100 else 1000)
+    assert tool._decode_bt4_row(line) is None
+
+
+def test_projected_reader_without_optional_accelerator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tool, "msgspec", None)
+    line = '{"game_id": 17, "phases": [{"x": 4}]}'
+    assert tool._decode_bt4_row(line) is None
