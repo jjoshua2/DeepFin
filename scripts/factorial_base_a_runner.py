@@ -41,6 +41,20 @@ def ref(path):
     return {"path": str(path), "sha256": sha(path)}
 
 
+def available_memory_bytes():
+    """Return Linux MemAvailable in bytes for the unchanged runtime RAM guard."""
+    return (
+        int(
+            next(
+                x.split()[1]
+                for x in Path("/proc/meminfo").read_text().splitlines()
+                if x.startswith("MemAvailable:")
+            )
+        )
+        * 1024
+    )
+
+
 def read(path):
     return json.loads(Path(path).read_text())
 
@@ -191,17 +205,7 @@ def main():
             and not (HERE.parent.parent / "STOP").exists(),
             "STOP",
         )
-        available = (
-            int(
-                next(
-                    x.split()[1]
-                    for x in Path("/proc/meminfo").read_text().splitlines()
-                    if x.startswith("MemAvailable:")
-                )
-            )
-            * 1024
-        )
-        require(available >= 32 * 2**30, "RAM reserve")
+        require(available_memory_bytes() >= 32 * 2**30, "RAM reserve")
 
     disk_pause = disk_pause_guard(
         HERE, budget=p["pause_seconds"], check_interrupt=interruption
