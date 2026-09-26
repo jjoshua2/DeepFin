@@ -126,3 +126,5 @@ analysis workflow.
 - [CBoard-key map replay](2026-09-24-chess-key-map-replay.md): actual source-derived position keys, exact dictionary replay and explicit history/EP cache-identity limits; no performance or cache-adoption claim.
 
 - [Matched CBoard-key map timing](2026-09-24-chess-map-timing.md): unchanged chess-derived key fixtures and explicit CPU target; paired hash-versus-scan operation timings, not production search/cache throughput.
+
+- [Legal-move cache cost screen](2026-09-26-move-cache-cost-screen.md): matched cached/direct work at controlled reuse, cold lifetimes and oversized allocation; local measurements, not engine speedups.
