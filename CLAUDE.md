@@ -46,7 +46,7 @@ switch or reset that checkout underneath it: the live YAML is re-read during tra
 A merged PR does not update Python already loaded by a process or its native extension
 image. Plan adoption and any restart separately from merging.
 
-Group new manual worktrees under `/home/josh/projects/chess-worktrees/<task>` on
+Group new manual worktrees under `~/projects/chess-worktrees/<task>` on
 this host, or use the agent tool's dedicated worktree directory outside checkouts.
 Keep temporary and frozen runtime worktrees distinct; do not move running runtimes.
 
