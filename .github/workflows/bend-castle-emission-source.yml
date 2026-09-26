@@ -1,0 +1,30 @@
+name: Castle emission source snapshot
+'on':
+  push:
+    branches: [feat/bend-castle-emission-dev-20260926]
+    paths: [.github/workflows/bend-castle-emission-source.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 8608169d517a3eefeffed459bb7d7c0631f7c4c4
+          persist-credentials: false
+      - name: Archive exact tree and original commit
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/castle-source
+          git archive --format=tar HEAD | gzip > /tmp/castle-source/source.tar.gz
+          git cat-file commit HEAD > /tmp/castle-source/commit.raw
+          git rev-parse HEAD^{tree} > /tmp/castle-source/tree.txt
+          cd /tmp/castle-source
+          sha256sum source.tar.gz commit.raw > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: castle-emission-source
+          path: /tmp/castle-source/
+          retention-days: 14
