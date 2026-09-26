@@ -34,7 +34,7 @@ measurement steps from
 (current SHA-256
 `a7d406a794e366729c2c1d4f1ca2be330fc361472153a8cabebb05127f406d56`).
 The prior qualified run's four-arm summary is at
-`/home/josh/chess-artifacts/operations/overlay-hotload-diagnostic-20260923/summary.json`;
+`~/chess-artifacts/operations/overlay-hotload-diagnostic-20260923/summary.json`;
 it established exact decoded-array parity for the PR810 source contrast and
 reported 10.9253 s versus 4.1104 s median summed `_load_one` time. Those
 timings are **not** a huge-page A/B result.
