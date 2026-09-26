@@ -1,0 +1,103 @@
+name: Banked move-cache cost qualification
+on:
+  push:
+    branches: [work/bend-cache-cost-publish-20260926]
+permissions:
+  contents: write
+concurrency:
+  group: banked-cache-cost-qualification
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BASE: ead1abf29f6bbe6245d7ea8428f5fa0b45d6054f
+      FEATURE: feat/bend-cache-cost-qualified-20260926
+      BEND_NO_TELEMETRY: '1'
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify transport and isolate exact source parent
+        run: python3 .cache-cost-prepare.py
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked CPU environment and unchanged source compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-cost"
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Focused static checks and all map Python contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-cost"
+          . .venv/bin/activate
+          ruff check native/bend_engine/u64_map_probe/move_cache_benchmark.py tests/test_bend_map_cache_benchmark.py
+          basedpyright native/bend_engine/u64_map_probe/move_cache_benchmark.py tests/test_bend_map_cache_benchmark.py
+          python -m pytest -q tests/test_bend_u64_map.py tests/test_bend_map*.py --junitxml=artifacts/cache-cost-python.xml
+      - name: Fresh native correctness and negative controls, no timing panel
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-cost"
+          . .venv/bin/activate
+          python -m native.bend_engine.u64_map_probe.move_cache_benchmark --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --bun bun --cc clang-18 --output artifacts/cache-cost-contracts
+      - name: Whole-repository static gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-cost"
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          git diff --exit-code
+      - name: Reconcile banked observations and publish clean continuation
+        shell: bash
+        run: |
+          set -euo pipefail
+          script="$PWD/.cache-cost-finalize.py"
+          cd "$RUNNER_TEMP/cache-cost"
+          . .venv/bin/activate
+          PYTHONPATH=. python "$script"
+      - name: Preserve source and generated diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -d "$RUNNER_TEMP/cache-cost"; then
+            cd "$RUNNER_TEMP/cache-cost"
+            mkdir -p artifacts/candidate
+            git diff --cached --binary > artifacts/candidate/qualified.patch
+            if test -f artifacts/cache-cost-contracts/driver.c; then
+              gzip -c artifacts/cache-cost-contracts/driver.c > artifacts/cache-cost-contracts/driver.c.gz
+            fi
+            if test -f docs/experiments/evidence/move-cache-cost-screen/hosted-validation.json; then
+              cp docs/experiments/evidence/move-cache-cost-screen/hosted-validation.json artifacts/candidate/
+            fi
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cache-cost-qualification
+          path: |
+            ${{ runner.temp }}/cache-cost/artifacts/cache-cost-python.xml
+            ${{ runner.temp }}/cache-cost/artifacts/candidate-source.json
+            ${{ runner.temp }}/cache-cost/artifacts/candidate/**
+            ${{ runner.temp }}/cache-cost/artifacts/cache-cost-contracts/*.json
+            ${{ runner.temp }}/cache-cost/artifacts/cache-cost-contracts/*.stdout
+            ${{ runner.temp }}/cache-cost/artifacts/cache-cost-contracts/*.stderr
+            ${{ runner.temp }}/cache-cost/artifacts/cache-cost-contracts/*.rss
+            ${{ runner.temp }}/cache-cost/artifacts/cache-cost-contracts/*.gz
+            ${{ runner.temp }}/cache-cost/artifacts/cache-cost-contracts/feature.txt
+          retention-days: 30
