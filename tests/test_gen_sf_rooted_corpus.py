@@ -2046,23 +2046,26 @@ def test_rule50_positive_clock_cap_is_unresolved_and_missing_probe_fails(
 ) -> None:
     fen = "7k/8/8/8/8/8/8/KQ6 w - - 7 1"
     spec = worker_spec(tmp_path, outcome_mode=corpus.OUTCOME_MODE_RULE50, max_plies=0)
-    kwargs = {
-        "spec": spec, "searcher": searcher_for(ScriptedEngine()),
-        "opening_cfg": fen_opening(fen, tmp_path), "game_id": 0,
-        "cache": corpus.DedupCache(max_entries=spec.dedup_cache_max),
-        "dedup": corpus.DedupStats(), "progress": corpus.WorkerProgress(),
-        "seq": corpus.WorkerSeq(),
-    }
-    outcome = corpus.play_game(
-        **kwargs, match_tablebase=cast(Any, FakeRule50Tablebase(2, 5)),
-    )
+
+    def play(tablebase: Any) -> Any:
+        return corpus.play_game(
+            spec=spec,
+            searcher=searcher_for(ScriptedEngine()),
+            opening_cfg=fen_opening(fen, tmp_path),
+            game_id=0,
+            cache=corpus.DedupCache(max_entries=spec.dedup_cache_max),
+            dedup=corpus.DedupStats(),
+            progress=corpus.WorkerProgress(),
+            seq=corpus.WorkerSeq(),
+            match_tablebase=tablebase,
+        )
+
+    outcome = play(cast(Any, FakeRule50Tablebase(2, 5)))
     assert outcome.termination == "max_plies"
     assert outcome.result_pgn is None
     assert outcome.rule50_unknown_plies == 1
     with pytest.raises(RuntimeError, match="missing eligible match Syzygy probe"):
-        corpus.play_game(
-            **kwargs, match_tablebase=cast(Any, FakeRule50Tablebase(2, 5, missing=True)),
-        )
+        play(cast(Any, FakeRule50Tablebase(2, 5, missing=True)))
 
 
 def test_rule50_resume_refuses_old_theoretical_manifest() -> None:
