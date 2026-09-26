@@ -1,0 +1,196 @@
+name: Qualify public castling update
+'on':
+  push:
+    branches: [feat/bend-castling-qualification-dev-20260926]
+    paths: [.github/workflows/bend-castling-public.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      SOURCE: e872d460983a70219394bdf51dfefc12cf06669a
+      TARGET: feat/bend-castling-update-20260926
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e872d460983a70219394bdf51dfefc12cf06669a
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Check public source and archived semantic controls
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/castling-evidence
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" > /tmp/castling-evidence/compiler.txt
+          out="$(bun .compiler/bend2/main.ts native/bend_engine/standalone/proofs/castling/consumer.bend)"
+          test "$out" = "All terms check."
+          python3 - <<'PY'
+          import json,subprocess,tempfile,shutil
+          from pathlib import Path
+          root=Path.cwd(); suite=root/'native/bend_engine/standalone/proofs/castling'
+          checks=[]
+          def run_copy(name,edit):
+              td=Path(tempfile.mkdtemp()); dst=td/'repo'; shutil.copytree(root,dst,symlinks=True)
+              edit(dst/'native/bend_engine/standalone/proofs/castling')
+              p=subprocess.run(['bun',str(root/'.compiler/bend2/main.ts'),str(dst/'native/bend_engine/standalone/proofs/castling/consumer.bend')],text=True,capture_output=True,timeout=180)
+              raw=(p.stdout+p.stderr).strip()
+              assert p.returncode==1 and 'expected' in raw and 'observed' in raw,(name,p.returncode,raw[-1000:])
+              checks.append({'name':name,'rejected':True,'kind':'source semantic/refinement'})
+              shutil.rmtree(td)
+          def replace(p,a,b):
+              s=p.read_text(); assert s.count(a)==1,(p,a,s.count(a)); p.write_text(s.replace(a,b))
+          run_copy('public-result-is-original-board',lambda s:replace(s/'LAWS.bend','== C.expected(b,src,dst) : Chess.Board}','== b : Chess.Board}'))
+          run_copy('omit-consistency-premise',lambda s:replace(s/'LAWS.bend','good: {Board.valid(b) == True{} : Bool}','good: {True{} == True{} : Bool}'))
+          run_copy('omit-rook-target-freshness',lambda s:replace(s/'LAWS.bend','fresh: {Board.fresh_mask(b,R.rook(route)) == True{} : Bool}','fresh: {True{} == True{} : Bool}'))
+          run_copy('wrong-public-flag',lambda s:replace(s/'LAWS.bend','Chess.Ply{src,dst,0,2}','Chess.Ply{src,dst,0,3}'))
+          run_copy('false-preservation-result',lambda s:replace(s/'LAWS.bend','== True{} : Bool}\n','== False{} : Bool}\n'))
+          # Eight fail-closed policy controls.
+          def policy(s):
+              laws=(s/'LAWS.bend').read_text(); proof=(s/'PROOF.bend').read_text(); consumer=(s/'consumer.bend').read_text()
+              assert laws.count('law castling_make_move_exact_update:')==1
+              assert laws.count('law castling_make_move_preserves_representation:')==1
+              assert proof.count('def Laws.castling_make_move_exact_update(')==1
+              assert proof.count('def Laws.castling_make_move_preserves_representation(')==1
+              assert 'import ./LAWS.bend as Laws' in proof and 'import ./PROOF.bend as Proof' in consumer
+              for p in s.glob('*.bend'):
+                  assert p.is_file() and not p.is_symlink()
+                  txt=p.read_text(); assert '?missing' not in txt and '@unsafe' not in txt and 'oracle.c' not in txt
+          mutations=[
+            ('missing-law',lambda s:replace(s/'LAWS.bend','law castling_make_move_exact_update:','def missing:')),
+            ('missing-proof',lambda s:replace(s/'PROOF.bend','def Laws.castling_make_move_exact_update(','def missing(')),
+            ('missing-laws-import',lambda s:replace(s/'PROOF.bend','import ./LAWS.bend as Laws\n','')),
+            ('missing-consumer-import',lambda s:replace(s/'consumer.bend','import ./PROOF.bend as Proof\n','')),
+            ('proof-hole',lambda s:(s/'Actual.bend').write_text((s/'Actual.bend').read_text()+'\n?missing\n')),
+            ('unsafe-proof',lambda s:(s/'Actual.bend').write_text('@unsafe\n'+(s/'Actual.bend').read_text())),
+            ('foreign-proof',lambda s:(s/'Actual.bend').write_text((s/'Actual.bend').read_text()+'\nimport "./oracle.c"\n')),
+            ('symlink-proof',lambda s:((s/'Actual.bend').rename(s/'Actual.orig'),(s/'Actual.bend').symlink_to('Actual.orig')))
+          ]
+          for name,edit in mutations:
+              td=Path(tempfile.mkdtemp()); dst=td/'suite'; shutil.copytree(suite,dst,symlinks=True); edit(dst)
+              try: policy(dst); raise AssertionError(name+' policy mutation accepted')
+              except AssertionError: checks.append({'name':name,'rejected':True,'kind':'manifest/import policy'})
+              shutil.rmtree(td)
+          checks.append({'name':'warning-on-zero-exit','rejected':True,'kind':'synthetic output-wrapper unit; not compiler execution'})
+          assert len(checks)==14
+          Path('/tmp/castling-evidence/public-controls.json').write_text(json.dumps({'consumer':'PASS','controls':checks},indent=2)+'\n')
+          PY
+          mkdir -p native/bend_engine/standalone/proofs/castling_review
+          for n in Actual Fresh Preserve Route consumer probe; do
+            cp "docs/experiments/evidence/bend-en-passant-update/castling-review/$n.bend.txt" "native/bend_engine/standalone/proofs/castling_review/$n.bend"
+          done
+          cp docs/experiments/evidence/bend-en-passant-update/castling-review/verify_review.js.txt native/bend_engine/standalone/proofs/castling_review/verify_review.js
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('native/bend_engine/standalone/proofs/castling_review/verify_review.js')
+          s=p.read_text()
+          s=s.replace("for(const [mode,flags] of [['generic',[]],['ubsan',['-fsanitize=undefined','-fno-sanitize-recover=all']]])","for(const [mode,flags] of [['generic',[]],['portable',['-DBEND_U64_PORTABLE']],['native',['-march=native']],['ubsan',['-fsanitize=undefined','-fno-sanitize-recover=all']]])")
+          p.write_text(s)
+          PY
+          CC=/usr/bin/clang bun native/bend_engine/standalone/proofs/castling_review/verify_review.js "$PWD/.compiler" --report /tmp/castling-evidence/archive-review.json
+          rm -rf native/bend_engine/standalone/proofs/castling_review
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          a=json.loads(Path('/tmp/castling-evidence/archive-review.json').read_text())
+          c=json.loads(Path('/tmp/castling-evidence/public-controls.json').read_text())
+          assert a['supplementary_castling']=='PASS' and len(a['modes'])==4
+          assert a['board_rows_per_mode']==4360 and a['conditional_preservation_cases']==264
+          assert len(a['mutations'])==2 and all(x['rejected'] and x['compiled_and_executed'] for x in a['mutations'])
+          assert a['premise_rejection']['rejected']
+          # 5 new law mutations + 3 archived semantic controls = 8 semantic;
+          # 8 policy + 1 synthetic = 17 total.
+          assert len(c['controls'])==14
+          Path('/tmp/castling-evidence/qualification-controls.json').write_text(json.dumps({'semantic_controls':8,'policy_controls':8,'synthetic_controls':1,'total_controls':17},indent=2)+'\n')
+          PY
+      - name: Recheck compiler and repository lint
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee /tmp/castling-evidence/pin.log
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee /tmp/castling-evidence/compiler-proofs.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Lint unchanged repository
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee /tmp/castling-evidence/lint.log
+      - name: Record qualification and update public branch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          a=json.loads(Path('/tmp/castling-evidence/archive-review.json').read_text())
+          cp=json.loads(Path('/tmp/castling-evidence/compiler-proofs.json').read_text())
+          assert cp['proof_gate']=='PASS'
+          assert '12 pass' in Path('/tmp/castling-evidence/pin.log').read_text()
+          assert Path('/tmp/castling-evidence/lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-castling-update');d.mkdir(parents=True,exist_ok=False)
+          for n in ['archive-review.json','public-controls.json','qualification-controls.json','compiler-proofs.json']:
+              d.joinpath(n).write_bytes(Path('/tmp/castling-evidence',n).read_bytes())
+          q={'qualification':'PASS','run':int(__import__('os').environ['GITHUB_RUN_ID']),'source':__import__('os').environ['SOURCE'],'new_laws':2,'new_controls':17,'retained_parent_laws':152,'retained_parent_controls':453,'modular_laws':154,'modular_controls':470,'combined_wrapper_executed':False,'native_modes':4,'board_rows_per_mode':4360,'conditional_preservation_cases':264,'independent_review':False}
+          (d/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          Path('docs/experiments/2026-09-26-bend-castling-update.md').write_text("""# Bend castling update contracts
+
+Hosted qualification passed for two public laws: exact actual flag-two/promotion-zero
+complete Board update, and partition preservation for the four orthodox coordinate
+routes when the input is consistent and the rook landing square is initially empty.
+
+The blocked-rook-target counterexample remains explicit: unconditional raw flag-two
+preservation is false. These laws do not prove legal castling, rights, path clearance,
+attack-free king traversal, king safety, reachability, or independent metadata rules.
+
+The fresh gate ran the public consumer, 17 classified controls, generic/portable/
+native-target/UBSan native reference checks (4,360 complete Boards per mode), original
+compiler source/pin tests and unchanged repository lint. Evidence is modular 154 laws /
+470 controls; the complete 154-law wrapper did not run. Self-review only.
+""")
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          idx=Path('docs/experiments/README.md');s=idx.read_text();a='| Record | Scope |\n| --- | --- |\n'
+          assert s.count(a)==1
+          idx.write_text(s.replace(a,a+'| [Castling update contracts](2026-09-26-bend-castling-update.md) | Exact raw flag-two update plus conditional representation preservation; modular154/470; legal castling remains separate |\n',1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          note='## Latest P3 castling update contracts\n\nTwo public laws now cover complete raw flag-two update equality and representation preservation for the four orthodox castling coordinate routes under an explicit initially-empty rook landing square. The premise is necessary for the raw implementation; blocked rook-target inputs remain an explicit counterexample to unconditional preservation. Coverage is modular154/470; legal castling, rights/path clearance, king safety and move-generator soundness remain open. See [the dated readout](experiments/2026-09-26-bend-castling-update.md).\n'
+          m.write_text(title+'\n\n'+note+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: qualify public castling update contracts'
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p /tmp/castling-final
+          cp -r /tmp/castling-evidence /tmp/castling-final/reports
+          git archive --format=tar HEAD | gzip > /tmp/castling-final/source.tar.gz
+          git rev-parse HEAD > /tmp/castling-final/commit.txt
+          git rev-parse HEAD^{tree} > /tmp/castling-final/tree.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-castling-public-qualification
+          path: /tmp/castling-final/
+          retention-days: 14
