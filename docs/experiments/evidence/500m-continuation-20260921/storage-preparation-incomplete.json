@@ -1,0 +1,49 @@
+{
+  "status": "INCOMPLETE",
+  "plan_sha256": "8d70bbb0495ec04ebe81bf8b1cc1ce69da45e82f72cf54e07fee6606b43ca193",
+  "stages": [
+    {
+      "name": "pack",
+      "command": [
+        "/usr/bin/python3.10",
+        "/home/josh/projects/chess-worktrees/packed-trainer-20260921/scripts/prepare_packed_trainer.py",
+        "--cohort-plan",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/plan.json",
+        "--cohort-plan-sha256",
+        "b3da27e09c704b7c6b5330f5ec17423f4dd5cf0f8f83d31152a7eed456beab65",
+        "--selection-plan",
+        "/tmp/packed-trainer256-preparation-plan-20260921.json",
+        "--selection-plan-sha256",
+        "be5d0fb0ec0cf0f1c407bdbb057721ba9e8198b479ffe6e9525ec8d6b9afb778",
+        "--reuse",
+        "/mnt/e/chess_packed_exact32_20260920",
+        "--out",
+        "/home/josh/chess-artifacts/operations/packed-trainer256-20260921",
+        "--external",
+        "/mnt/e/chess_packed_trainer256_20260921",
+        "--prepare"
+      ],
+      "status": "PASS",
+      "seconds": 229.83018196199555
+    },
+    {
+      "name": "qualify",
+      "command": [
+        "/usr/bin/python3.10",
+        "/home/josh/projects/chess-worktrees/packed-trainer-20260921/scripts/qualify_packed_trainer_preparation.py",
+        "--runtime",
+        "/tmp/deepfin-packed-trainer-runtime-7f2c0ca",
+        "--directory",
+        "/home/josh/chess-artifacts/operations/packed-trainer256-20260921/directory",
+        "--packed",
+        "/home/josh/chess-artifacts/operations/packed-trainer256-20260921/packed",
+        "--result",
+        "/home/josh/chess-artifacts/operations/packed-trainer256-cpu-control-20260921/qualification.json"
+      ],
+      "status": "STARTED"
+    }
+  ],
+  "new_disk_bytes": 1360228830,
+  "error": "RuntimeError('owned child 1853160 exit 1')",
+  "seconds": 626.2892012279481
+}
