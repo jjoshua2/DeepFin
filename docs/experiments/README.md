@@ -12,6 +12,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | Record | Scope |
 | --- | --- |
 | [Native policy-map and buffer reuse](2026-09-22-native-buffer-reuse.md) | Linear Bend-owned reusable storage, packed transport and opt-in diagnostics; bounded CPU qualification |
+| [BT4 raw JSON projection](2026-09-21-bt4-raw-json-projection.md) | Guarded projected decoding preserves consumed values and hashes; 1.67x CPU preparation on one banked shard, no GPU/live adoption claim |
 | [BT4 source read-ahead](2026-09-21-bt4-source-read.md) | Exact CPU input parity; chunk-aligned reads3.9–4.1x faster, measured CPU preparation1.31x; no end-to-end inference claim |
 | [Downside policy/value combination](2026-09-14-downside-value-combination.md) | Prospective draft: prefer a single-copy matched 35M policy correction; value choice awaits active arena, integration and launch not yet qualified |
 | [BT4 root-output reuse foundation](2026-09-23-bt4-root-output-reuse-foundation.md) | CPU-tested batched roots, explicit repetition-mode guard and optional C-search leaves; no game generator or throughput claim |
