@@ -20,8 +20,7 @@ def references() -> list[m.Reference]:
 def trace(refs: list[m.Reference], bits: int = 3) -> str:
     lines = []
     for number, (ref, route) in enumerate(zip(refs, m.accesses(refs, bits), strict=True)):
-        for move in ref.moves:
-            lines.append(f'reference {number} ' + ' '.join(map(str, move)))
+        lines.extend(f'reference {number} ' + ' '.join(map(str, move)) for move in ref.moves)
         lines += [f'reference-end {number}', f'request {number} {route} {len(ref.moves)}',
                   f'context {number} {ref.halfmove} {ref.fullmove} {ref.history}']
         for move, board in ref.moves.items():
@@ -101,7 +100,7 @@ def test_bad_results_cannot_pass(fault: str) -> None:
             words[3 if fault == 'move' else 6] = '2'
             lines[a] = ' '.join(words)
     changed = '\n'.join(lines) + ('' if fault == 'newline' else '\n')
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r'cache|context|request|reference'):
         m.verify(changed, refs, 3)
 
 
