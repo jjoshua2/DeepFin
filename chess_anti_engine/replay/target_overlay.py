@@ -1,7 +1,8 @@
 """Explicit, immutable policy overlays for qualified exact-epoch consumers.
 
 The storage seal is a byte/row/history proof, not a recipe or strength verdict.
-Only ordinary bases and policy_target replacements are supported in v1.
+Schema 1 replaces policy only; schema 2 replaces policy and/or search WDL.
+Both inherit ordinary sealed bases without chains.
 """
 from __future__ import annotations
 
@@ -21,6 +22,8 @@ MANIFEST = 'target_overlay.json'
 BASE_STATUS = 'PASS_IMMUTABLE_BASE_STORAGE_SEAL'
 OVERLAY_STATUS = 'PASS_IMMUTABLE_POLICY_OVERLAY_STORAGE_QUALIFICATION'
 POLICY = 'policy_target'
+TARGET_OVERLAY_STATUS = 'PASS_IMMUTABLE_TARGET_OVERLAY_STORAGE_QUALIFICATION'
+TARGET_FIELDS = frozenset({'policy_target', 'search_wdl'})
 
 
 def require(condition: bool, message: str) -> None:
@@ -170,6 +173,8 @@ def _open_manifest(path: Path, *, seal: BaseSeal | None = None) -> tuple[dict[st
     require(has_overlay(path), 'missing overlay manifest')
     require(not (path / MANIFEST).is_symlink(), 'linked overlay manifest')
     manifest = json.loads((path / MANIFEST).read_bytes())
+    if manifest.get('schema') == 2:
+        return _open_target_manifest(path, manifest, seal=seal)
     require(manifest.get('schema') == 1 and manifest.get('kind') == 'immutable-policy-overlay'
             and manifest.get('replacement') == POLICY, 'unsupported overlay type/replacement')
     base = Path(manifest['base'])
@@ -211,7 +216,8 @@ def overlay_proxies(path: Path, fields: tuple[str, ...], *, seal: BaseSeal | Non
     manifest, meta = _open_manifest(path, seal=seal)
     base: Any = zarr.open_group(manifest['base'], mode='r')
     local: Any = zarr.open_group(str(path), mode='r')
-    arrays = {name: (local[POLICY] if name == POLICY else base[name])
+    replacements = manifest['replacements'] if manifest['schema'] == 2 else [POLICY]
+    arrays = {name: (local[name] if name in replacements else base[name])
               for name in fields if name in base}
     return arrays, meta
 
@@ -303,10 +309,174 @@ def plain_content_sha256(path: Path) -> str:
 def qualified_paths(ref: dict[str, str], paths: list[Path]) -> tuple[dict[Path, str], BaseSeal]:
     """Bind staging and every new epoch to the actual qualified corpus."""
     receipt = _read_pin(ref)
+    if receipt.get('schema') == 2:
+        expected, contexts = verify_receipt(receipt)
+        require([path.resolve(strict=True) for path in paths] == list(expected),
+                'staged overlay paths/order differ from qualified corpus')
+        return expected, contexts
     root = Path(receipt['root'])
     context = BaseSeal(receipt['base_seal'])
     receipt = verify_qualification(ref, root, context=context)
     expected = {root / entry['name']: entry['content_sha256'] for entry in receipt['shards']}
     require([path.resolve(strict=True) for path in paths] == list(expected),
             'staged overlay paths/order differ from qualified corpus')
+    return expected, context
+
+
+class BaseSeals(BaseSeal):
+    """Operation-local seal routing; compatible with exact-epoch storage consumers."""
+
+    def __init__(self, refs: list[dict[str, str]]) -> None:
+        require(bool(refs), 'empty base seals')
+        self.contexts = {ref['path']: BaseSeal(ref) for ref in refs}
+        super().__init__(refs[0])
+        require(bool(refs) and len(self.contexts) == len(refs), 'duplicate/empty base seals')
+
+    def check(self, ref: dict[str, str]) -> None:
+        require(ref['path'] in self.contexts, 'unqualified base seal')
+        self.contexts[ref['path']].check(ref)
+
+    def entry(self, ref: dict[str, str], base: Path) -> dict[str, Any]:
+        self.check(ref)
+        return self.contexts[ref['path']].entry(ref, base)
+
+
+def _names(names: list[str] | tuple[str, ...]) -> list[str]:
+    require(bool(names) and len(names) == len(set(names)) and set(names) <= TARGET_FIELDS,
+                'unsupported target replacements')
+    return sorted(names)
+
+
+def begin_target_shard(base: Path, output: Path, seal_ref: dict[str, str], *,
+                       replacements: tuple[str, ...], seal: BaseSeal | None = None) -> None:
+    base_entry(seal_ref, base, seal=seal)
+    names = _names(replacements)
+    require(base.is_absolute() and base == base.resolve(strict=True), 'base must be canonical')
+    require(not output.exists(), 'overlay output already exists')
+    original: Any = zarr.open_group(str(base), mode='r')
+    require(all(name in original for name in names), 'base target missing')
+    output.mkdir()
+    for name in ('.zgroup', '.zattrs'):
+        shutil.copyfile(base / name, output / name)
+    for field in names:
+        (output / field).mkdir()
+        for name in ('.zarray', '.zattrs'):
+            if (base / field / name).is_file():
+                shutil.copyfile(base / field / name, output / field / name)
+
+
+def _validate_local(path: Path, base: Path, names: list[str]) -> dict[str, Any]:
+    local: Any = zarr.open_group(str(path), mode='r')
+    original: Any = zarr.open_group(str(base), mode='r')
+    require(set(local.array_keys()) == set(names), 'unexpected overlay arrays')
+    require(dict(local.attrs) == dict(original.attrs), 'overlay changed inherited metadata/history')
+    for name in names:
+        a, b = local[name], original[name]
+        require(a.shape == b.shape and np.dtype(a.dtype) == np.dtype(b.dtype),
+                    'replacement layout differs')
+        require(len(a.shape) == 2 and (name != 'search_wdl' or a.shape[1] == 3),
+                    'invalid target shape')
+        require(a.nchunks_initialized == a.nchunks, "missing replacement target chunk")
+        # Validate values as well as chunk presence; a nonzero fill can look normalized.
+        for start in range(0, a.shape[0], 8192):
+            values = np.asarray(a[start:start + 8192], dtype=np.float64)
+            require(bool(np.isfinite(values).all() and (values >= 0).all()
+                             and np.allclose(values.sum(axis=1), 1, atol=.002, rtol=0)),
+                        'invalid target probabilities')
+            if name == 'policy_target':
+                legal = np.asarray(original['legal_mask'][start:start + 8192])
+                require(bool((values[legal == 0] == 0).all()), 'illegal target mass')
+    return dict(local.attrs)
+
+
+def finish_target_shard(base: Path, output: Path, seal_ref: dict[str, str], *,
+                        recipe: dict[str, Any], seal: BaseSeal | None = None) -> None:
+    entry = base_entry(seal_ref, base, seal=seal)
+    local: Any = zarr.open_group(str(output), mode='r')
+    names = _names(list(local.array_keys()))
+    _validate_local(output, base, names)
+    require(bool(recipe), 'missing target recipe')
+    manifest = {'schema': 2, 'kind': 'immutable-target-overlay', 'base': str(base),
+                'base_seal': seal_ref, 'base_content_sha256': entry['content_sha256'],
+                'identity': entry['identity'], 'replacements': names, 'recipe': recipe,
+                'target_content_sha256': {name: _plain_content(output / name) for name in names},
+                'base_lifetime': 'Retain base and seal while any overlay depends on them.'}
+    _atomic_new_json(output / MANIFEST, manifest)
+    overlay_content_sha256(output, seal=seal)
+
+
+def _open_target_manifest(path: Path, manifest: dict[str, Any], *,
+                  seal: BaseSeal | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    require(manifest.get('schema') == 2 and manifest.get('kind') == 'immutable-target-overlay',
+                'unsupported overlay type/replacement')
+    names = _names(manifest['replacements'])
+    require(names == manifest['replacements'], 'noncanonical replacements')
+    base = Path(manifest['base'])
+    require(base.is_absolute() and base == base.resolve(strict=True), 'base must be canonical')
+    entry = base_entry(manifest['base_seal'], base, seal=seal)
+    require(manifest['identity'] == entry['identity']
+                and manifest['base_content_sha256'] == entry['content_sha256'], 'overlay base identity differs')
+    require(set(manifest['target_content_sha256']) == set(names), 'replacement hashes differ')
+    for name in names:
+        require(_plain_content(path / name) == manifest['target_content_sha256'][name],
+                    'overlay target changed')
+    require(isinstance(manifest.get('recipe'), dict) and bool(manifest['recipe']), 'missing target recipe')
+    return manifest, _validate_local(path, base, names)
+
+
+def qualify_target_roots(roots: list[Path], output: Path) -> dict[str, Any]:
+    roots = [root.resolve(strict=True) for root in roots]
+    require(bool(roots) and len(set(roots)) == len(roots), 'duplicate/empty target roots')
+    require(all(root not in output.resolve().parents and not root.name.endswith('.writing') for root in roots),
+                'qualification must be outside completed roots')
+    refs: dict[str, dict[str, str]] = {}
+    entries = []
+    root_files = {str(root): _root_files(root) for root in roots}
+    for root in roots:
+        paths = shard_paths(root)
+        require(bool(paths), 'empty overlay root')
+        for path in paths:
+            manifest = json.loads((path / MANIFEST).read_bytes())
+            require(manifest.get('schema') == 2, 'schema2 qualification requires schema2 shards')
+            ref = manifest['base_seal']
+            require(ref['path'] not in refs or refs[ref['path']] == ref, 'conflicting base seal')
+            refs[ref['path']] = ref
+            entries.append({'path': str(path), 'content_sha256': overlay_content_sha256(path),
+                            'rows': manifest['identity']['rows']})
+    result = {'schema': 2, 'status': TARGET_OVERLAY_STATUS, 'roots': [str(root) for root in roots],
+              'root_files': root_files, 'base_seals': list(refs.values()), 'shards': entries,
+              'rows': sum(entry['rows'] for entry in entries),
+              'scope': 'Storage only; experiment must separately admit the target recipe.'}
+    verify_receipt(result)
+    _atomic_new_json(output, result)
+    return result
+
+
+def verify_receipt(receipt: dict[str, Any]) -> tuple[dict[Path, str], BaseSeals]:
+    require(receipt.get('schema') == 2 and receipt.get('status') == TARGET_OVERLAY_STATUS, 'wrong target qualification')
+    roots = [Path(root) for root in receipt['roots']]
+    require(bool(roots) and len(set(roots)) == len(roots), 'duplicate/empty target roots')
+    require(all(root.is_absolute() and root == root.resolve(strict=True) for root in roots),
+                'noncanonical target roots')
+    context = BaseSeals(receipt['base_seals'])
+    for ref in receipt['base_seals']:
+        single = context.contexts[ref['path']]
+        require_base_corpus(ref, single.root, context=single)
+    require({str(root): _root_files(root) for root in roots} == receipt['root_files'],
+                'qualified overlay metadata changed')
+    paths = [path for root in roots for path in shard_paths(root)]
+    require([str(path) for path in paths] == [entry['path'] for entry in receipt['shards']],
+                'qualified overlay membership changed')
+    expected = {}
+    bases = []
+    for path, entry in zip(paths, receipt['shards'], strict=True):
+        require(overlay_content_sha256(path, seal=context) == entry['content_sha256'],
+                    'qualified overlay dependency/content changed')
+        manifest = json.loads((path / MANIFEST).read_bytes())
+        require(entry['rows'] == manifest['identity']['rows'], 'qualified row count differs')
+        bases.append(manifest['base'])
+        expected[path] = entry['content_sha256']
+    require(len(set(bases)) == len(bases), 'duplicate base rows in target corpus')
+    require(receipt['rows'] == sum(entry['rows'] for entry in receipt['shards']),
+            'qualified total row count differs')
     return expected, context

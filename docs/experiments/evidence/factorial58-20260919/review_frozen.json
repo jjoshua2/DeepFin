@@ -1,0 +1,87 @@
+{
+  "status": "PASS_FINAL_NINE_REGISTERED_DESCRIPTORS",
+  "checked_unix": 1789839951.920827,
+  "jobs": [
+    {
+      "id": "factorial58_target_preparation",
+      "command_sha256": "926997ca53b9ce1dc487fa11a29793a33704c4ed8c3f0001d16265b76540d953",
+      "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/preparation/plan.json",
+      "plan_sha256": "b3da27e09c704b7c6b5330f5ec17423f4dd5cf0f8f83d31152a7eed456beab65"
+    },
+    {
+      "id": "factorial58_fresh_A",
+      "command_sha256": "b0344facf6a1a4d4c97356629b5ad2ed9053f892d415ad7466dda70f2db2f708",
+      "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/plan.json",
+      "plan_sha256": "83963b5bc499a8bbcb1fdaef14dfeffb3128caf8b3e64f1d47b52d25d716cdde"
+    },
+    {
+      "id": "factorial58_fresh_B",
+      "command_sha256": "d7c1004a036d8934832ee481e63eeea0698c0c45e52a2b3e5d57768b3de94dbc",
+      "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/plan.json",
+      "plan_sha256": "7b65af5ce9797c91fa5b9b2e35d266ad7a44d602e435c71bbdc750a987607919"
+    },
+    {
+      "id": "factorial58_fresh_C",
+      "command_sha256": "cb24dec72207414ebcd1a89638637350aee2843f2139be2599d6762cf3d4a666",
+      "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/plan.json",
+      "plan_sha256": "00270d8422eff0d6f1cf230de0f74a6db828f22cfe22518a7113d20ddb46f942"
+    },
+    {
+      "id": "factorial58_fresh_D",
+      "command_sha256": "def804a1a17a26c28322928361ca942f8982f38d9a8ebed9c9fec2746a958fd5",
+      "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/plan.json",
+      "plan_sha256": "9430c3382be6e71ddb3abcd018666cdf531bf7de59be726f922d69e190932a90"
+    },
+    {
+      "id": "factorial58_B_A_400sims",
+      "command_sha256": "9008ca46b006f67e1428f9dd400194d09543f140817ae2f4ac6ae6c9f45850ca",
+      "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/plan.json",
+      "plan_sha256": "ae71ea4cc2cb36ddd9333f436ff0c281e968708f5ccd7b9fde062ed5b7036721"
+    },
+    {
+      "id": "factorial58_C_A_400sims",
+      "command_sha256": "346d3edd8badc6d71cc4b8d587ac6b5251159d788e74fdd5e38724472d9f250f",
+      "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/plan.json",
+      "plan_sha256": "9341e10169cd49e9d7e8333302563fedb4fe58546493f6f078647972f1e53ba0"
+    },
+    {
+      "id": "factorial58_D_C_400sims",
+      "command_sha256": "647c59e3417b47ee322cdb2e927def5b13bb8eaa577038faf4b6fc0d009044be",
+      "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/plan.json",
+      "plan_sha256": "e5286ef6c0bcd8e73c7dd829d67c8d365c343aa80909d7a440df1800ab724605"
+    },
+    {
+      "id": "factorial58_D_B_400sims",
+      "command_sha256": "3cbce635f547ec1d07c5457607e55a2d39dcb4b7eff297c80c0721a087e5d110",
+      "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/plan.json",
+      "plan_sha256": "4a63ec36b5de2cde6395c83df2bc6b3079ea4cee4ef4710bd75246650c9e799a"
+    }
+  ],
+  "runtime_heads": {
+    "/tmp/deepfin-factorial58-runtime": "502cd02e072471c901255f3fdb580d6ea7b826d0",
+    "/tmp/deepfin-ordered-arena-lookahead-runtime": "82298a5d4010e7097f473712e3720de229522427"
+  },
+  "unique_plan_pins": 1195,
+  "native_symlinks": [
+    {
+      "path": "/tmp/deepfin-factorial58-runtime/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+      "target": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so"
+    },
+    {
+      "path": "/tmp/deepfin-factorial58-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+      "target": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so"
+    },
+    {
+      "path": "/tmp/deepfin-factorial58-runtime/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so",
+      "target": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so"
+    },
+    {
+      "path": "/tmp/deepfin-factorial58-runtime/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+      "target": "/home/josh/projects/chess/.dev/worktree/wise-cloud/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so"
+    }
+  ],
+  "closed_findings": [
+    "Opening archive larger than8MiB remains pinned and checked inside arena plan; omitted only from size-limited outer registered pins."
+  ],
+  "scope": "Actual registered_spec plus source pins and dependency identities; no jobs executed. Queue order must place preparation beforeA, thenB/C/D, and each arena after both donors."
+}
