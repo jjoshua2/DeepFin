@@ -1,0 +1,25 @@
+/tmp/deepfin-labeling-baseline-7939/tests/test_bt4_policy_mix.py
+  /tmp/deepfin-labeling-baseline-7939/tests/test_bt4_policy_mix.py:1189:71 - error: Argument of type "floating[_16Bit]" cannot be assigned to parameter "atol" of type "float" in function "allclose"
+    "floating[_16Bit]" is not assignable to "float" (reportArgumentType)
+/tmp/deepfin-labeling-baseline-7939/tests/test_ceres_onnx_byte_input.py
+  /tmp/deepfin-labeling-baseline-7939/tests/test_ceres_onnx_byte_input.py:131:35 - error: Argument of type "ndarray[Unknown, Unknown] | SparseTensor | list[Unknown] | dict[Unknown, Unknown]" cannot be assigned to parameter "x" of type "ArrayLike" in function "assert_array_equal"
+    Type "ndarray[Unknown, Unknown] | SparseTensor | list[Unknown] | dict[Unknown, Unknown]" is not assignable to type "ArrayLike"
+      Type "SparseTensor" is not assignable to type "ArrayLike"
+        "SparseTensor" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "SparseTensor" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__len__" is not present
+          "__getitem__" is not present
+          "__contains__" is not present
+    ... (reportArgumentType)
+  /tmp/deepfin-labeling-baseline-7939/tests/test_ceres_onnx_byte_input.py:132:43 - error: Argument of type "ndarray[Unknown, Unknown] | SparseTensor | list[Unknown] | dict[Unknown, Unknown]" cannot be assigned to parameter "y" of type "ArrayLike" in function "assert_array_equal"
+    Type "ndarray[Unknown, Unknown] | SparseTensor | list[Unknown] | dict[Unknown, Unknown]" is not assignable to type "ArrayLike"
+      Type "SparseTensor" is not assignable to type "ArrayLike"
+        "SparseTensor" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "SparseTensor" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__len__" is not present
+          "__getitem__" is not present
+          "__contains__" is not present
+    ... (reportArgumentType)
+3 errors, 0 warnings, 0 notes

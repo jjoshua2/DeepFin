@@ -1,0 +1,115 @@
+/tmp/deepfin-labeling-baseline-7939/tests/test_adaptive_sf_value.py
+  /tmp/deepfin-labeling-baseline-7939/tests/test_adaptive_sf_value.py:168:43 - error: Argument of type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" cannot be assigned to parameter "x" of type "ArrayLike" in function "assert_array_equal"
+    Type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" is not assignable to type "ArrayLike"
+      Type "Group" is not assignable to type "ArrayLike"
+        "Group" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "Group" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__reversed__" is not present
+          "count" is not present
+          "index" is not present
+    ... (reportArgumentType)
+  /tmp/deepfin-labeling-baseline-7939/tests/test_adaptive_sf_value.py:168:55 - error: Argument of type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" cannot be assigned to parameter "y" of type "ArrayLike" in function "assert_array_equal"
+    Type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" is not assignable to type "ArrayLike"
+      Type "Group" is not assignable to type "ArrayLike"
+        "Group" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "Group" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__reversed__" is not present
+          "count" is not present
+          "index" is not present
+    ... (reportArgumentType)
+  /tmp/deepfin-labeling-baseline-7939/tests/test_adaptive_sf_value.py:189:35 - error: Argument of type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" cannot be assigned to parameter "x" of type "ArrayLike" in function "assert_array_equal"
+    Type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" is not assignable to type "ArrayLike"
+      Type "Group" is not assignable to type "ArrayLike"
+        "Group" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "Group" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__reversed__" is not present
+          "count" is not present
+          "index" is not present
+    ... (reportArgumentType)
+  /tmp/deepfin-labeling-baseline-7939/tests/test_adaptive_sf_value.py:189:55 - error: Argument of type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" cannot be assigned to parameter "y" of type "ArrayLike" in function "assert_array_equal"
+    Type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" is not assignable to type "ArrayLike"
+      Type "Group" is not assignable to type "ArrayLike"
+        "Group" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "Group" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__reversed__" is not present
+          "count" is not present
+          "index" is not present
+    ... (reportArgumentType)
+/tmp/deepfin-labeling-baseline-7939/tests/test_ceres_derived_sidecar.py
+  /tmp/deepfin-labeling-baseline-7939/tests/test_ceres_derived_sidecar.py:344:54 - error: Argument of type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" cannot be assigned to parameter "y" of type "ArrayLike" in function "assert_array_equal"
+    Type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" is not assignable to type "ArrayLike"
+      Type "Group" is not assignable to type "ArrayLike"
+        "Group" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "Group" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__reversed__" is not present
+          "count" is not present
+          "index" is not present
+    ... (reportArgumentType)
+  /tmp/deepfin-labeling-baseline-7939/tests/test_ceres_derived_sidecar.py:415:39 - error: Argument of type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" cannot be assigned to parameter "x" of type "ArrayLike" in function "assert_array_equal"
+    Type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" is not assignable to type "ArrayLike"
+      Type "Group" is not assignable to type "ArrayLike"
+        "Group" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "Group" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__reversed__" is not present
+          "count" is not present
+          "index" is not present
+    ... (reportArgumentType)
+  /tmp/deepfin-labeling-baseline-7939/tests/test_ceres_derived_sidecar.py:415:55 - error: Argument of type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" cannot be assigned to parameter "y" of type "ArrayLike" in function "assert_array_equal"
+    Type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" is not assignable to type "ArrayLike"
+      Type "Group" is not assignable to type "ArrayLike"
+        "Group" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "Group" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__reversed__" is not present
+          "count" is not present
+          "index" is not present
+    ... (reportArgumentType)
+/tmp/deepfin-labeling-baseline-7939/tests/test_derive_observation_provenance.py
+  /tmp/deepfin-labeling-baseline-7939/tests/test_derive_observation_provenance.py:114:43 - error: Argument of type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" cannot be assigned to parameter "x" of type "ArrayLike" in function "assert_array_equal"
+    Type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" is not assignable to type "ArrayLike"
+      Type "Group" is not assignable to type "ArrayLike"
+        "Group" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "Group" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__reversed__" is not present
+          "count" is not present
+          "index" is not present
+    ... (reportArgumentType)
+  /tmp/deepfin-labeling-baseline-7939/tests/test_derive_observation_provenance.py:114:59 - error: Argument of type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" cannot be assigned to parameter "y" of type "ArrayLike" in function "assert_array_equal"
+    Type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" is not assignable to type "ArrayLike"
+      Type "Group" is not assignable to type "ArrayLike"
+        "Group" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "Group" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__reversed__" is not present
+          "count" is not present
+          "index" is not present
+    ... (reportArgumentType)
+/tmp/deepfin-labeling-baseline-7939/tests/test_sf_allmove_downside.py
+  /tmp/deepfin-labeling-baseline-7939/tests/test_sf_allmove_downside.py:81:39 - error: Argument of type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" cannot be assigned to parameter "x" of type "ArrayLike" in function "assert_array_equal"
+    Type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" is not assignable to type "ArrayLike"
+      Type "Group" is not assignable to type "ArrayLike"
+        "Group" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "Group" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__reversed__" is not present
+          "count" is not present
+          "index" is not present
+    ... (reportArgumentType)
+  /tmp/deepfin-labeling-baseline-7939/tests/test_sf_allmove_downside.py:81:59 - error: Argument of type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" cannot be assigned to parameter "y" of type "ArrayLike" in function "assert_array_equal"
+    Type "Unknown | NDArray[void] | Any | ndarray[Any, dtype[float64]] | Array | Group" is not assignable to type "ArrayLike"
+      Type "Group" is not assignable to type "ArrayLike"
+        "Group" is incompatible with protocol "_SupportsArray[dtype[Any]]"
+          "__array__" is not present
+        "Group" is incompatible with protocol "_NestedSequence[_SupportsArray[dtype[Any]]]"
+          "__reversed__" is not present
+          "count" is not present
+          "index" is not present
+    ... (reportArgumentType)
+11 errors, 0 warnings, 0 notes
