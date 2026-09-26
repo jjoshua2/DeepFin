@@ -1,0 +1,221 @@
+{
+  "scope": "hash versus dense scan, shared slots and entry budget",
+  "status": "passed",
+  "measured": false,
+  "workload_source": "chess",
+  "cpu_target": {
+    "name": "bmi2-popcnt",
+    "flags": [
+      "-march=x86-64",
+      "-mpopcnt",
+      "-mbmi2"
+    ],
+    "host": "bmi2=1 popcnt=1",
+    "instruction_check": "passed",
+    "check_source_sha256": "bb3348015ba4c8959bab7a33e59b9b13667faf4dcd4eedeb31e22af8a0a29c75"
+  },
+  "source_sha256": {
+    "U64Map.bend": "d65af76fd97beb4dcadba3971cc99149cd1f85b869cdeca4d24fe2a9d7708517",
+    "ScanMap.bend": "3f259997e31bcd3f3ef83957d95f950f5f801534e625c525d0ee341c58e62ce9",
+    "benchmark.bend": "ffb56dc7c0263ed93919efbc8de9a1991fc24726bbd5ac82fc8247baf7546c58",
+    "benchmark.py": "ff3bbe0a5762da9f7a8bc4e15129d26b75a0cef2a556b58cc72ea3b866e2d4ae",
+    "cpu_target.py": "80db6b3851e2be9d5679465c9554ea547f6a1752e18b20fc0603bd15511007b7"
+  },
+  "reference_checks": [
+    {
+      "arm": "hash",
+      "mode": "bmi2-popcnt",
+      "cases": 36,
+      "operations": 12061
+    },
+    {
+      "arm": "hash",
+      "mode": "ubsan",
+      "cases": 36,
+      "operations": 12061
+    },
+    {
+      "arm": "scan",
+      "mode": "bmi2-popcnt",
+      "cases": 36,
+      "operations": 12061
+    },
+    {
+      "arm": "scan",
+      "mode": "ubsan",
+      "cases": 36,
+      "operations": 12061
+    }
+  ],
+  "contract_executions": 144,
+  "chess_corpus": {
+    "scope": "CBoard keys from deterministic legal walks; not selfplay/search traffic or NN cache identities",
+    "python_chess_version": "1.11.2",
+    "cboard_extension_sha256": "fe10a5809d3fddc72da7d2800719dabe4b91770c1955908c9e5e2f05428b62df",
+    "producer_source_sha256": {
+      "chess_anti_engine/encoding/_cboard_impl.h": "13560b4908282aca68c3f6c5747dc3848f036f3a494f24500e76fc44a3646572",
+      "chess_anti_engine/encoding/_lc0_ext.c": "dad4106e18c6da4757aec828a1aefa6991ac99964317b0716d03b1daf659c86f",
+      "chess_anti_engine/mcts/_position_dag.h": "3c7da5adccdc056632483bbe8d384dd44c687b66c6c6ea13549408e3970a02d3",
+      "native/bend_engine/u64_map_probe/chess_workloads.py": "2b707b1093a524b6fa24245399a95f6de84b2672330ab8d27eeeb393dc4ed161"
+    },
+    "identity_checks": [
+      {
+        "name": "knight-cycle-history",
+        "same_key": true,
+        "left_key": 13988166417980563255,
+        "right_key": 13988166417980563255,
+        "same_raw_hash": true,
+        "left_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "right_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 4 3",
+        "left_history_plies": 0,
+        "right_history_plies": 4
+      },
+      {
+        "name": "halfmove-clock",
+        "same_key": true,
+        "left_key": 13988166417980563255,
+        "right_key": 13988166417980563255,
+        "same_raw_hash": true,
+        "left_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "right_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 99 1",
+        "left_history_plies": 0,
+        "right_history_plies": 0
+      },
+      {
+        "name": "capturable-ep",
+        "same_key": false,
+        "left_key": 11876177510179606069,
+        "right_key": 12507960304961716200,
+        "same_raw_hash": true,
+        "left_fen": "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+        "right_fen": "4k3/8/8/3pP3/8/8/8/4K3 w - - 0 1",
+        "left_history_plies": 0,
+        "right_history_plies": 0
+      },
+      {
+        "name": "noncapturable-ep",
+        "same_key": true,
+        "left_key": 8883413546012912086,
+        "right_key": 8883413546012912086,
+        "same_raw_hash": true,
+        "left_fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+        "right_fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+        "left_history_plies": 1,
+        "right_history_plies": 1
+      },
+      {
+        "name": "pinned-ep-conservative-split",
+        "same_key": false,
+        "left_key": 1592479206207216646,
+        "right_key": 2259685802474581467,
+        "same_raw_hash": true,
+        "left_fen": "4r1k1/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+        "right_fen": "4r1k1/8/8/3pP3/8/8/8/4K3 w - - 0 1",
+        "left_history_plies": 0,
+        "right_history_plies": 0
+      },
+      {
+        "name": "castling-rights",
+        "same_key": false,
+        "left_key": 4389989848412292357,
+        "right_key": 12124957533433471099,
+        "same_raw_hash": false,
+        "left_fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "right_fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w - - 0 1",
+        "left_history_plies": 0,
+        "right_history_plies": 0
+      }
+    ],
+    "corpora": [
+      {
+        "name": "opening",
+        "root_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "walks": 8,
+        "max_plies": 64,
+        "observations": 520,
+        "distinct_keys": 513,
+        "revisits": 7,
+        "high_bit_keys": 237,
+        "records_sha256": "c06c86b47922b8f59c17f64376c15c35742f7ba7c2b0d6d6169f59b9f0bd3328"
+      },
+      {
+        "name": "castling",
+        "root_fen": "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "walks": 8,
+        "max_plies": 64,
+        "observations": 483,
+        "distinct_keys": 476,
+        "revisits": 7,
+        "high_bit_keys": 235,
+        "records_sha256": "e2608ffdd283eedc6755b870223b79f071ed330d0a2fa0aa529e7ca2c25cf874"
+      },
+      {
+        "name": "ep",
+        "root_fen": "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+        "walks": 8,
+        "max_plies": 64,
+        "observations": 341,
+        "distinct_keys": 328,
+        "revisits": 13,
+        "high_bit_keys": 160,
+        "records_sha256": "68510127f1e0152430ccd888636b3472901a06053b9dda3aac379f49ca0af3f0"
+      },
+      {
+        "name": "promotion",
+        "root_fen": "7k/P7/8/8/8/8/1p6/7K w - - 0 1",
+        "walks": 8,
+        "max_plies": 64,
+        "observations": 329,
+        "distinct_keys": 317,
+        "revisits": 12,
+        "high_bit_keys": 142,
+        "records_sha256": "e49a591d1aeff02d33a11c3955ec70711eb86004bcf7ec052e1997839f4e847f"
+      }
+    ]
+  },
+  "chess_replay_cases": [
+    {
+      "name": "chess-opening-encounters",
+      "bits": 11,
+      "operations": 1560,
+      "input_sha256": "7176e338805f15e52a39be1e060fac27ef23325b2fa0fd10da3d43f769ff90a3",
+      "expected_sha256": "561a26ed251dc4c120ad35eff025a0b03df702fb0953d011932f7c3e2c09507c"
+    },
+    {
+      "name": "chess-castling-encounters",
+      "bits": 11,
+      "operations": 1449,
+      "input_sha256": "ef9722d991032cd427ef8ad4754aeef2f29906fee3e05c97dec440c9fa5fb268",
+      "expected_sha256": "b49d7b13a92760f888c4feef370493f88b41b8d7bdd02a8092470febf7533a40"
+    },
+    {
+      "name": "chess-ep-encounters",
+      "bits": 11,
+      "operations": 1023,
+      "input_sha256": "8eb9d88eb0194e06f1c4e75d6377a915ee3f4690ec75a6d96b59aca244fc5a32",
+      "expected_sha256": "fa89092730395f68bb42ef743599d93769c30f031a16b2a57cb9766e11c41421"
+    },
+    {
+      "name": "chess-promotion-encounters",
+      "bits": 11,
+      "operations": 987,
+      "input_sha256": "35465ab55bf429907309e68dfd3d185d3fda3f63bafd2e54d11f50366f51c2d6",
+      "expected_sha256": "ae7b2cfdf47421d5b221e9130d1fc3ec8460c3c306b402c4acb37a7b86c48faa"
+    }
+  ],
+  "workflow_run": 36033116416,
+  "tested_staging_commit": "b6cb9d568d58dbe70505b4f2ad0e0dea6ad3d7ad",
+  "base_commit": "4364c213561e417386c6f2dab229e0b63d42075b",
+  "focused_python_tests": 102,
+  "new_tests": 17,
+  "raw_report_sha256": "7340bad93bf5f64da7f3f724aa6c02c61fc51f2288c23f71a6c63f6e413106ce",
+  "tested_source_sha256": {
+    "native/bend_engine/u64_map_probe/chess_workloads.py": "2b707b1093a524b6fa24245399a95f6de84b2672330ab8d27eeeb393dc4ed161",
+    "tests/test_bend_map_chess.py": "83d79871486089880a150ca3e0025a7f506108832bcc0348ad22003d0e4bb61f",
+    "docs/experiments/2026-09-24-chess-key-map-replay.md": "3bd41f1919939ea7f6cbf530a7d7fac1288b699a4fee94f5aa99a45e3e40002e",
+    "native/bend_engine/u64_map_probe/benchmark.py": "ff3bbe0a5762da9f7a8bc4e15129d26b75a0cef2a556b58cc72ea3b866e2d4ae",
+    "native/bend_engine/u64_map_probe/workload.py": "710ba181e2298a02e71e1f80377b4d7694c8a706419afca03dc5234657c5d558",
+    "docs/experiments/README.md": "773064d3ae91ead2e324d446de5caeb001dd5e2f19fb9b6d5c8dec1cede2a24f",
+    "native/bend_engine/u64_map_probe/README.md": "07efedb04e40c5f0dcf8f3b021af10dd5c5a221704a4d18b1823ade2e5494b69"
+  }
+}
