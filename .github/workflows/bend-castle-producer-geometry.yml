@@ -34,8 +34,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE"
           out="$(bun .compiler/bend2/main.ts native/bend_engine/standalone/proofs/castle_producer/consumer.bend)"
           test "$out" = "All terms check."
-          printf '%s
-' "$out" > /tmp/castle-producer/consumer.log
+          printf '%s\\n' "$out" > /tmp/castle-producer/consumer.log
           python3 - <<'PY'
           from pathlib import Path
           p=Path('native/bend_engine/legal_probe/Chess.bend').read_text()
