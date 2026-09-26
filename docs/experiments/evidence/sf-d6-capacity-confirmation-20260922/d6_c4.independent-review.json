@@ -1,0 +1,1115 @@
+{
+  "status": "PASS_INDEPENDENT_BANK_COUNT_IDENTITY_AND_INTERVAL_AUDIT",
+  "arm": "d6_c4",
+  "scope": "Independent stdlib JSON decode of all cutoff-listed zstd shards; verify row counts, result presence, identity uniqueness/hash, per-shard nonmissing counts, exact closure memberships/interval arithmetic. Existing full encoder/support eligibility not redundantly rerun; no partial scaling/quality conclusion.",
+  "receipt_sha256": "b10e26c21c2f8161a6f5b95bae2ba85ce5294367b3e1bc98cf1352e22703408a",
+  "cutoff_sha256": "c6f24c54b2eba389e38bd44b2696bd72b3854d6e66c954f9c50686ce5f9d55b5",
+  "banked_rows": 68073,
+  "eligible_rows": 67673,
+  "missing_rows": {
+    "(3, 51)": 400
+  },
+  "games_with_rows": 350,
+  "closed_shards": 182,
+  "source_identity_sha256": "bf18b1cc5dc4b8a8f7597b98ec07eae4e61168d913bc33747083c05f00a209e5",
+  "eligible_rows_per_wall_second": 112.78725389896788,
+  "last300_closed_row_rate": 120.89309035803412,
+  "last300_measured_seconds": 299.00799039006233,
+  "startup_first_manifest_seconds": 1.8432875380385667,
+  "startup_first_progress_file_seconds": 69.3946348830359,
+  "elapsed_audit_seconds": 5.206255084951408,
+  "shards": [
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00000.jsonl.zst",
+      "sha256": "bae18a40b593a7598d5d47094e6231a424214028ad60dfd60481ef8ef4605ece",
+      "rows": 440,
+      "nonmissing_rows": 440
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00001.jsonl.zst",
+      "sha256": "85db2c1c49d145390f5dcdeffe4dcb51a8b00b361230091949631278f45510a4",
+      "rows": 447,
+      "nonmissing_rows": 447
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00002.jsonl.zst",
+      "sha256": "fd8f285ce02e71fe1c47377eeb48b5b835b7af3c301723365c31d782836a6de2",
+      "rows": 256,
+      "nonmissing_rows": 256
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00003.jsonl.zst",
+      "sha256": "fa988b7947838676fbca5d18eec04b5240b88ca5e14c1f6d107c8d4ae3cb5943",
+      "rows": 377,
+      "nonmissing_rows": 377
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00004.jsonl.zst",
+      "sha256": "3ce45eac978454e52958a5f24506913038cd2c38183c2a3c297454c2be0cd2c0",
+      "rows": 327,
+      "nonmissing_rows": 327
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00005.jsonl.zst",
+      "sha256": "493dab0dee83ceff340025d7b6997829fb043df52f6ef997d3d83bcce8b3e3c4",
+      "rows": 415,
+      "nonmissing_rows": 415
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00006.jsonl.zst",
+      "sha256": "d3b14a073d28c60670186078933ac8ae4b48e98dc74fba8add6e55c37240a2f5",
+      "rows": 308,
+      "nonmissing_rows": 308
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00007.jsonl.zst",
+      "sha256": "424f909423d14dff0e94b287ddc8b634681e8c6b4bf8192c1fb0bbdf2b85c69f",
+      "rows": 349,
+      "nonmissing_rows": 349
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00008.jsonl.zst",
+      "sha256": "d9eb7e8a9c125c88844d5aa2e1a66f461069cab153099fda1837e3902357058e",
+      "rows": 266,
+      "nonmissing_rows": 266
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00009.jsonl.zst",
+      "sha256": "fd429e4d9371fbb6230613495f4f2c3ec8f54b7491c0e42814778efdb0d23008",
+      "rows": 369,
+      "nonmissing_rows": 369
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00010.jsonl.zst",
+      "sha256": "2a7397fd7775139f226e8d2bba37f7b31242601309bf2cc2fc7e53d8782c7de5",
+      "rows": 350,
+      "nonmissing_rows": 350
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00011.jsonl.zst",
+      "sha256": "011e26b12befd0279e05965dfd0ee9cc3984fd5edb2009580ecaf4253651bae7",
+      "rows": 483,
+      "nonmissing_rows": 483
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00012.jsonl.zst",
+      "sha256": "dd45fda2cc83ee3126effbb42016d83eeb9a7fbc015fdc2e8ab922ee3406bf2a",
+      "rows": 438,
+      "nonmissing_rows": 438
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00013.jsonl.zst",
+      "sha256": "af47337af26d3b85bdc6033a728473801d673a8531d3dd6dbed7aef6230bff62",
+      "rows": 423,
+      "nonmissing_rows": 423
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00014.jsonl.zst",
+      "sha256": "32282d9b297b7df301a6cad7b196313b20d4a0b12d21ba26a67f26d4504d50eb",
+      "rows": 400,
+      "nonmissing_rows": 400
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00015.jsonl.zst",
+      "sha256": "80a7c9227cca7b93ef520a49e743e273afa1ed5fe693940cd228752c75838b97",
+      "rows": 406,
+      "nonmissing_rows": 406
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00016.jsonl.zst",
+      "sha256": "e7bf8c85992d2f1ef83cf3111cd09e7b4d8b677aeef5e1e6a1efb6575935f13c",
+      "rows": 506,
+      "nonmissing_rows": 506
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00017.jsonl.zst",
+      "sha256": "c649d930c8288483284caadff705e7c28807e20d3d29b93dd8339669e6d621f9",
+      "rows": 316,
+      "nonmissing_rows": 316
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00018.jsonl.zst",
+      "sha256": "ec492b160af17e83344ff023c92d60bee06f40c34721e0c5162109213cc0a214",
+      "rows": 281,
+      "nonmissing_rows": 281
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00019.jsonl.zst",
+      "sha256": "5d01d14d8a723444aa7adf351cb7cbd78d2b971a1c7bceef30cef0693d869722",
+      "rows": 489,
+      "nonmissing_rows": 489
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00020.jsonl.zst",
+      "sha256": "da7ac3e774abb2ab872c1c8a1e44032b300190eccf1f2f86157ef3adf3879c6d",
+      "rows": 287,
+      "nonmissing_rows": 287
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00021.jsonl.zst",
+      "sha256": "6f5538c93504b7f791c7f29742ca45496d2562eda1c0f2c52608732ba48de923",
+      "rows": 409,
+      "nonmissing_rows": 409
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00022.jsonl.zst",
+      "sha256": "0052a8b3c70488d50f1ba60a3942a76e307dc44aa67667b64c1ef8fcad6c3f50",
+      "rows": 321,
+      "nonmissing_rows": 321
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00023.jsonl.zst",
+      "sha256": "8a5030acafe610ec782cae9a1e714f0d2b22651e6ca6eee2283e45a3de6f139a",
+      "rows": 390,
+      "nonmissing_rows": 390
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00024.jsonl.zst",
+      "sha256": "3f1d14b6d40f5a951ec5f17b85a6e27e4d3635120090fa96c950482ec7cb3683",
+      "rows": 266,
+      "nonmissing_rows": 266
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00025.jsonl.zst",
+      "sha256": "eaef500de5bc9a107021a02aa298ae103cc8ffa06f3f1d17596dddb6ec86003f",
+      "rows": 334,
+      "nonmissing_rows": 334
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00026.jsonl.zst",
+      "sha256": "d94114e1b1ad22052560e3336ded2a0af56b4d8d525f72a62e045ce64641e4a3",
+      "rows": 421,
+      "nonmissing_rows": 421
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00027.jsonl.zst",
+      "sha256": "74be53c55967e72f3f09f1b83f1b5517af649c367dd6ba662f389adf038dfac2",
+      "rows": 325,
+      "nonmissing_rows": 325
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00028.jsonl.zst",
+      "sha256": "fc4431970de18272e07e238753c922c6660556fd7bc920bb47c9542f552f18f9",
+      "rows": 343,
+      "nonmissing_rows": 343
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00029.jsonl.zst",
+      "sha256": "0c8bc224adff43600e12710662dd29221f3e8b80805ea7bec312fdfc3161f97e",
+      "rows": 343,
+      "nonmissing_rows": 343
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00030.jsonl.zst",
+      "sha256": "6e97f020b76d2e9449e0015d9c8ad84e7174474eccfe09c8d75ea1dd6a41c73f",
+      "rows": 257,
+      "nonmissing_rows": 257
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00031.jsonl.zst",
+      "sha256": "ed337acbcb6b240023d84c0885e66edd4b298f66e9bad12f14645fc8a7453ac5",
+      "rows": 431,
+      "nonmissing_rows": 431
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00032.jsonl.zst",
+      "sha256": "7c1c72e76c0a99d8fba39c90a7b3340c06f4f562f9e146138e9563472831ad04",
+      "rows": 387,
+      "nonmissing_rows": 387
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00033.jsonl.zst",
+      "sha256": "b3b154d620a8393b2d0306a572e096591fc41e5de19da5353f056291509de471",
+      "rows": 389,
+      "nonmissing_rows": 389
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00034.jsonl.zst",
+      "sha256": "48930079efa6de3b64fc771280f28aea45d2df759fe9eafd579052f1ec699bf9",
+      "rows": 485,
+      "nonmissing_rows": 485
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00035.jsonl.zst",
+      "sha256": "435cafbdc2d38c48b59bda89cefd127373585d3620e9733c7e0d94479328931a",
+      "rows": 285,
+      "nonmissing_rows": 285
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00036.jsonl.zst",
+      "sha256": "dabcee80383b82d2073bc7f696f4d262310fab54e8dd11f94017b9edb353279d",
+      "rows": 426,
+      "nonmissing_rows": 426
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00037.jsonl.zst",
+      "sha256": "cad5d3e97e4c5f03b979b5e4743a759142403b521839f73ae10aa624fb89884c",
+      "rows": 383,
+      "nonmissing_rows": 383
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00038.jsonl.zst",
+      "sha256": "f31c474fd465d8227f256ca17529d3b08a5b1b2ff5afbe69f6e826735e9ee296",
+      "rows": 413,
+      "nonmissing_rows": 413
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00039.jsonl.zst",
+      "sha256": "d057629013ee80f48fca4026144d6978126ac3f10460740307d7fea435f5783c",
+      "rows": 390,
+      "nonmissing_rows": 390
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00040.jsonl.zst",
+      "sha256": "0428777dc52f10ba0a217fc380bc48157dcf203d4fc119b91e407c8e8aabb9eb",
+      "rows": 310,
+      "nonmissing_rows": 310
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00041.jsonl.zst",
+      "sha256": "2d07f91bb739e2e9eaaec40d1fd918812a66d70eea3402d915af5f9e00bf70c2",
+      "rows": 319,
+      "nonmissing_rows": 319
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00042.jsonl.zst",
+      "sha256": "8a8d64369a7fa5c1a84cd170047822060d61e66aa18711d36488272cbb54e152",
+      "rows": 260,
+      "nonmissing_rows": 260
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w00-00043.jsonl.zst",
+      "sha256": "e6d43219df53326dbb631ecf4450969e3e8af560ec3110457660b1d70561eace",
+      "rows": 498,
+      "nonmissing_rows": 498
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00000.jsonl.zst",
+      "sha256": "de5f442db15bf3e3b49c9508b5af15b01d5c8157963eda6af9d87c211e3b974c",
+      "rows": 478,
+      "nonmissing_rows": 478
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00001.jsonl.zst",
+      "sha256": "4631e8854db2225ebdb5ba249154925cdac156997bc8287a0b8e882a61c86bd2",
+      "rows": 296,
+      "nonmissing_rows": 296
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00002.jsonl.zst",
+      "sha256": "e10b573cc158a352aac82dba9332d4bc7e86f5cb395b2c825cdf00bc323d1494",
+      "rows": 281,
+      "nonmissing_rows": 281
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00003.jsonl.zst",
+      "sha256": "8611d75a944618b5b0c932909cd4f5810295287c974f2ef7437e3d14e7e79191",
+      "rows": 379,
+      "nonmissing_rows": 379
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00004.jsonl.zst",
+      "sha256": "92c707a855af617f16e0eed22ecaf95fc3103c05b79be74a60d9ed49f99301c2",
+      "rows": 390,
+      "nonmissing_rows": 390
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00005.jsonl.zst",
+      "sha256": "cd17c38728087937f973bc0e4060d927e6ce5af1079488bc188bb9127111575e",
+      "rows": 415,
+      "nonmissing_rows": 415
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00006.jsonl.zst",
+      "sha256": "1ba052db05cb287ce15d9a7813e1383b5ccc766ec5bbaf36ac54f4a3277f1475",
+      "rows": 261,
+      "nonmissing_rows": 261
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00007.jsonl.zst",
+      "sha256": "3384f76deb5a3243f8d4fd408ad57767556a3235add9609b1bf84580e65c77ea",
+      "rows": 384,
+      "nonmissing_rows": 384
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00008.jsonl.zst",
+      "sha256": "15e9bf5c81ce5390df5a72d8596a22e73b65fc3e5862ef27dc4cf6f6fc730910",
+      "rows": 414,
+      "nonmissing_rows": 414
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00009.jsonl.zst",
+      "sha256": "d841e59e68a9319c372f4a3fef7f9694370bd2a0e2ad57e4b7069f753547484d",
+      "rows": 387,
+      "nonmissing_rows": 387
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00010.jsonl.zst",
+      "sha256": "cffb049e8f3acba1eca19bc31bde7a2e5cdda0902ec3c099564b68be0714502a",
+      "rows": 494,
+      "nonmissing_rows": 494
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00011.jsonl.zst",
+      "sha256": "f63205af2f4069387597b3c9e53a3c70b98b3ff344e7dc74bb7a4a624ab98e5b",
+      "rows": 317,
+      "nonmissing_rows": 317
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00012.jsonl.zst",
+      "sha256": "9fbfd919abef632b1a6980b05d4e3b91cc3059c2c01452937f744aaa79f4ee35",
+      "rows": 399,
+      "nonmissing_rows": 399
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00013.jsonl.zst",
+      "sha256": "ac747543aba2bd49a2c5aa6fb33610c6c3f1b8c2843bea03707fc2e67316b364",
+      "rows": 289,
+      "nonmissing_rows": 289
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00014.jsonl.zst",
+      "sha256": "eb3c506bb2bdb3905fe2530e3ceff3510024ae88962059d0f67ce7d12a61216a",
+      "rows": 439,
+      "nonmissing_rows": 439
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00015.jsonl.zst",
+      "sha256": "957cea7ff3dcef08b47f9b1fb4edfe141e98b0d84d42fb8d7c8944bd5d3bb83e",
+      "rows": 393,
+      "nonmissing_rows": 393
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00016.jsonl.zst",
+      "sha256": "84aab968965bcf54ff7a5cf8eb2a8b4a872cb1de4eaa3e9b4729e6bf49131001",
+      "rows": 353,
+      "nonmissing_rows": 353
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00017.jsonl.zst",
+      "sha256": "8648fa0a754fb5d5b77c627a0a495118b7d8df535c3e1af745656866448fb660",
+      "rows": 352,
+      "nonmissing_rows": 352
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00018.jsonl.zst",
+      "sha256": "e6f98d2e86ba13bd5df5b0224363a8a395a9fb083c6e3733d41a1c49392b91c2",
+      "rows": 365,
+      "nonmissing_rows": 365
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00019.jsonl.zst",
+      "sha256": "aebe7793b01484a266563dac1b221601c3a129614baf2c90e4be1e3f47f0b8f1",
+      "rows": 459,
+      "nonmissing_rows": 459
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00020.jsonl.zst",
+      "sha256": "299a0c778ea7ace62286b3c1a202dad616466c3b87c3f242807d76de44695b8f",
+      "rows": 315,
+      "nonmissing_rows": 315
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00021.jsonl.zst",
+      "sha256": "57a68335a6b97a5749d3d8da3eb522e309a189b91e9fd65feeda260f6b9357e4",
+      "rows": 470,
+      "nonmissing_rows": 470
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00022.jsonl.zst",
+      "sha256": "21464d4323506fc6fbee35f475f979d8e8de8dd3bc7e5fb479c2ecaaaec4398a",
+      "rows": 426,
+      "nonmissing_rows": 426
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00023.jsonl.zst",
+      "sha256": "e59de8edb0ed09fd5b5daaaf17bc95a29353f032bc69dad25b50647e8311eb1e",
+      "rows": 387,
+      "nonmissing_rows": 387
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00024.jsonl.zst",
+      "sha256": "c05e81b8972e847f45b1c8dacc959b3af00d31b5cffe3236b662f6f5176e451d",
+      "rows": 291,
+      "nonmissing_rows": 291
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00025.jsonl.zst",
+      "sha256": "8aeebf059a0ff2bcd06dc0353c5b8e83270546fdd9b402a6e2b587166fcc711e",
+      "rows": 454,
+      "nonmissing_rows": 454
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00026.jsonl.zst",
+      "sha256": "4b5869d334b312620dae361c80a0abbc2dc7ee965d2df2e3ea1479aec656ecf4",
+      "rows": 279,
+      "nonmissing_rows": 279
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00027.jsonl.zst",
+      "sha256": "cdd54b721c05686e2a6f432fd2d590ef22b4559889118ffa623e0bf1af1e7698",
+      "rows": 279,
+      "nonmissing_rows": 279
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00028.jsonl.zst",
+      "sha256": "6fb3f15b5f61517327971c2bd74379c5ebe20af54c51e71743a2cbe8c40909e0",
+      "rows": 455,
+      "nonmissing_rows": 455
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00029.jsonl.zst",
+      "sha256": "8cde2778e2b3e8116429d03a9a6d7170eb8c8fa6d752a1905b3ef7e04a29b221",
+      "rows": 363,
+      "nonmissing_rows": 363
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00030.jsonl.zst",
+      "sha256": "72774900b7c3ef6c6c38e767dc8e91074ca42bd36c8a1e0dd2f5496e1336cabe",
+      "rows": 363,
+      "nonmissing_rows": 363
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00031.jsonl.zst",
+      "sha256": "e40ef2dd3e790755e5e787665297df433813cbda6e640b96291cdaa3cc3b90de",
+      "rows": 409,
+      "nonmissing_rows": 409
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00032.jsonl.zst",
+      "sha256": "4ea4666231246c4fc906b74e5790a7f931b3533d3d473faeb01f29b0f31ebbe5",
+      "rows": 348,
+      "nonmissing_rows": 348
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00033.jsonl.zst",
+      "sha256": "3be7cb386e83a459701e7250573f0fa55c2f8efe18e81753453ffda6d37b777a",
+      "rows": 430,
+      "nonmissing_rows": 430
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00034.jsonl.zst",
+      "sha256": "8de5b101c6e0099e2e37dc85f5ac6b34b861e60cfe60daa36111a44ac3eb3d3f",
+      "rows": 448,
+      "nonmissing_rows": 448
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00035.jsonl.zst",
+      "sha256": "d6dea2ea4776dd4aeecf7490a2b51acc13df9c2b3c7f3bcaf9d70babfb7feb5a",
+      "rows": 396,
+      "nonmissing_rows": 396
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00036.jsonl.zst",
+      "sha256": "24f8f3cf32121c733770e8d3d09700a9a7c31feda751798f9630c78d34136484",
+      "rows": 327,
+      "nonmissing_rows": 327
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00037.jsonl.zst",
+      "sha256": "836902b18e78760c1587439c25e68d0b456dbacbca87c3dc1eb04ed164ddfa74",
+      "rows": 463,
+      "nonmissing_rows": 463
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00038.jsonl.zst",
+      "sha256": "f5dd5c56e0fc3392f95b76b46fca3b8a731190247f88074436467c11ac956574",
+      "rows": 261,
+      "nonmissing_rows": 261
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00039.jsonl.zst",
+      "sha256": "b5487295dbf33816fdd2b358e9785e94a55cac67f126ca4215ca2e0cd5adf630",
+      "rows": 463,
+      "nonmissing_rows": 463
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00040.jsonl.zst",
+      "sha256": "732734010dae09ed2c1791396e86f8aba73c9822b1169f1755fbbf3817f33ee4",
+      "rows": 314,
+      "nonmissing_rows": 314
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00041.jsonl.zst",
+      "sha256": "644f00ee7462c2c73afacd4d7e606587c49144cf5dbb42239af33dd2f0de9d7b",
+      "rows": 447,
+      "nonmissing_rows": 447
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00042.jsonl.zst",
+      "sha256": "f830be83e225222479f4b98c9000c770e259ca296c2fd7ef6a709b2650e8dbbe",
+      "rows": 426,
+      "nonmissing_rows": 426
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00043.jsonl.zst",
+      "sha256": "70ff4cec8dc6933e048285062a66e56a8776617bc5a671a5ed0de9cf0dd3d625",
+      "rows": 450,
+      "nonmissing_rows": 450
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00044.jsonl.zst",
+      "sha256": "2464a77e0359d1269f67ea1a1389ea61546fd605863de2cde85db97b983204d3",
+      "rows": 359,
+      "nonmissing_rows": 359
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00045.jsonl.zst",
+      "sha256": "5dc9f146a9708176d8dda83e746071d4982c4257404a7799fc189133975e032e",
+      "rows": 392,
+      "nonmissing_rows": 392
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00046.jsonl.zst",
+      "sha256": "839eac1283ba327f618076b92e369a6945df63dfd0ac34837c095769cf6ab72e",
+      "rows": 373,
+      "nonmissing_rows": 373
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w01-00047.jsonl.zst",
+      "sha256": "356aa09760199b868fda0baee7001947166048c318eda8a3e762334c57318d68",
+      "rows": 410,
+      "nonmissing_rows": 410
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00000.jsonl.zst",
+      "sha256": "ef59f088d2664a150f576509c56c16727cd5cbabd3c8867e8ec9b2bfff99f6d7",
+      "rows": 435,
+      "nonmissing_rows": 435
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00001.jsonl.zst",
+      "sha256": "273112d72fe52ee006fd124310e4ab82430e5ea1681ec8d7c26b519fad1807bd",
+      "rows": 444,
+      "nonmissing_rows": 444
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00002.jsonl.zst",
+      "sha256": "d9542105abd4ee4f9907460dfaa6ec59f645b8822b3ce497fe1f2c620d52c28c",
+      "rows": 423,
+      "nonmissing_rows": 423
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00003.jsonl.zst",
+      "sha256": "386b3617d8f972fdfa1c0857a987f9693cca6b739b51a14d581dfc88ee23450f",
+      "rows": 505,
+      "nonmissing_rows": 505
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00004.jsonl.zst",
+      "sha256": "732fd2647552dcb449fa967a2fe186e255f72cf40f74852e37178266f68e3912",
+      "rows": 260,
+      "nonmissing_rows": 260
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00005.jsonl.zst",
+      "sha256": "082e6ca26bbd405d423b8212f8d863c12e45c98fb009526ddab9408da518d779",
+      "rows": 360,
+      "nonmissing_rows": 360
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00006.jsonl.zst",
+      "sha256": "30601fadb0426ec813dd41bcf5c81a490f5f9435cf52c6ff9901d3122de73189",
+      "rows": 285,
+      "nonmissing_rows": 285
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00007.jsonl.zst",
+      "sha256": "1303c943a0ff5a04e9670981012978fe01523a00b513cb72d5ac9739a53fab71",
+      "rows": 382,
+      "nonmissing_rows": 382
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00008.jsonl.zst",
+      "sha256": "48ef4feda485e349a9f6f52bea82b0e9dd07575d51acd393764fbc76d07fa0c0",
+      "rows": 289,
+      "nonmissing_rows": 289
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00009.jsonl.zst",
+      "sha256": "1646bbc1e6a8af6d6a6bb787c927cd81728e61131e427db6e87e0960344b885b",
+      "rows": 273,
+      "nonmissing_rows": 273
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00010.jsonl.zst",
+      "sha256": "618607f999611f02d457b35b9c487dbcff4bb613ac77678ab38f45d05da56568",
+      "rows": 426,
+      "nonmissing_rows": 426
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00011.jsonl.zst",
+      "sha256": "f5032e0e3b6309b4343666cfa00e65c0788f8b15a4177db45aa165fc386b898f",
+      "rows": 374,
+      "nonmissing_rows": 374
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00012.jsonl.zst",
+      "sha256": "e8e0079a3f09ff9d33b43feb01024837095168e8f442f4fe22fc60107004f4c2",
+      "rows": 277,
+      "nonmissing_rows": 277
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00013.jsonl.zst",
+      "sha256": "10105db3f1c6b21f9f348c2b2216be6b852bf083a384d8a254609dbca99d0d08",
+      "rows": 296,
+      "nonmissing_rows": 296
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00014.jsonl.zst",
+      "sha256": "100fae7f96e842920347d7f0adac442a9969b534321b78224fcbecfa83a8eabc",
+      "rows": 462,
+      "nonmissing_rows": 462
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00015.jsonl.zst",
+      "sha256": "5883715cbbd77cdbaa4c33ada3d0b25b711dad69c2f221a468f791e216aee378",
+      "rows": 407,
+      "nonmissing_rows": 407
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00016.jsonl.zst",
+      "sha256": "11d5005469068a23c1d8a9dfafc3ab6b94fcec7b8d3d2cdd55e14b53874314fa",
+      "rows": 484,
+      "nonmissing_rows": 484
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00017.jsonl.zst",
+      "sha256": "b8489370bc50cebd6fdecea006a4a245c1047d01fc94bdf297251e9152be51b7",
+      "rows": 391,
+      "nonmissing_rows": 391
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00018.jsonl.zst",
+      "sha256": "9600f70e7a02071f9f764e16419a073f7f5313ef33246d97b0566c9ad4efcaf7",
+      "rows": 296,
+      "nonmissing_rows": 296
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00019.jsonl.zst",
+      "sha256": "8288cf05fcde95232dd663a582371f27e67d5fa553b1d7ea1858afc38f2e174a",
+      "rows": 408,
+      "nonmissing_rows": 408
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00020.jsonl.zst",
+      "sha256": "f79a9a287cb778a403afd037092974a15c183be4554f58ed6699d9fc645efb26",
+      "rows": 427,
+      "nonmissing_rows": 427
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00021.jsonl.zst",
+      "sha256": "56310de635f132496ed873ffc69b176861f203619c1694e1d0e948e55762df0f",
+      "rows": 423,
+      "nonmissing_rows": 423
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00022.jsonl.zst",
+      "sha256": "5a9c8e0c98f0fa372f4aee289a9578d4888f2ab28bc369eca7b83d39af860dfd",
+      "rows": 484,
+      "nonmissing_rows": 484
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00023.jsonl.zst",
+      "sha256": "bcde0de73ec6c6d62efd260b82e49fa2cf3dafbc693b174f1fe1e77606813113",
+      "rows": 281,
+      "nonmissing_rows": 281
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00024.jsonl.zst",
+      "sha256": "a5374451b6d0bce776fe9abaecda7fa7e4669d1d9e77f09d4fe8a1fa5260f581",
+      "rows": 509,
+      "nonmissing_rows": 509
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00025.jsonl.zst",
+      "sha256": "f4a00e688fee5851cdeb08d5e942016056f24d3e1b1185e79bd5156e9dcc2c7d",
+      "rows": 292,
+      "nonmissing_rows": 292
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00026.jsonl.zst",
+      "sha256": "f55428d6d811961fcc1789cbf2963a4a598dc0769a71db42e3e6dd68e52ef894",
+      "rows": 331,
+      "nonmissing_rows": 331
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00027.jsonl.zst",
+      "sha256": "4b1972ec38e0a819e60a3453e1baae44b03f16ac8fb73a7b64fdbfd47f6ff935",
+      "rows": 412,
+      "nonmissing_rows": 412
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00028.jsonl.zst",
+      "sha256": "24c18083ab6f12b1057ef8662425471f50a7e3cf6b07a9ea65a348f3dfe375c2",
+      "rows": 400,
+      "nonmissing_rows": 400
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00029.jsonl.zst",
+      "sha256": "8136ac5899971c9376da6adb0c7f1171df50bf74d7d01bf20eda9d368e024824",
+      "rows": 375,
+      "nonmissing_rows": 375
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00030.jsonl.zst",
+      "sha256": "f89ac65129fa7f4dc0f42af5140f7a2a3bc49f7f2588ad1ca1fec61c73646346",
+      "rows": 277,
+      "nonmissing_rows": 277
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00031.jsonl.zst",
+      "sha256": "204fa622ac307868aed068d7ccb80039c991fa1aeb751c2624fc569d63bb83fb",
+      "rows": 268,
+      "nonmissing_rows": 268
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00032.jsonl.zst",
+      "sha256": "0df2f9b5065568531e5661b1fb98333d5c98f52b513c204ddb9609edf06b7e16",
+      "rows": 277,
+      "nonmissing_rows": 277
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00033.jsonl.zst",
+      "sha256": "3ce98bbcc3c80b0f3c37f61922d8050b6b88bbc851d904bf27646c1fc01a4b9e",
+      "rows": 337,
+      "nonmissing_rows": 337
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00034.jsonl.zst",
+      "sha256": "9e741f9a324a1de1d84acca3ceca7b414bfe2c2ce78e43c5b3102a01376d469e",
+      "rows": 350,
+      "nonmissing_rows": 350
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00035.jsonl.zst",
+      "sha256": "467e99ecc3bd785680407aea8192363b5cb6f81193a7a9369ca9992f77566a82",
+      "rows": 512,
+      "nonmissing_rows": 512
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00036.jsonl.zst",
+      "sha256": "49abeb58b2e97c2835e58bb798ec3fb121db3e83a417f1e7327ed1a8d9a626fa",
+      "rows": 314,
+      "nonmissing_rows": 314
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00037.jsonl.zst",
+      "sha256": "aa96c08a7713c33dc947b518ff21012a9b96e945742b5cca4a6fab0734f865bf",
+      "rows": 391,
+      "nonmissing_rows": 391
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00038.jsonl.zst",
+      "sha256": "a7fc373233b0ccd815c85f8a754a16910685c39c1200b4de7a6e04840d48bc29",
+      "rows": 375,
+      "nonmissing_rows": 375
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00039.jsonl.zst",
+      "sha256": "66c4136727d82826068c570eab5c00e052fb0b936f39aa506912ee2713eb4c68",
+      "rows": 455,
+      "nonmissing_rows": 455
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00040.jsonl.zst",
+      "sha256": "ce1c43ee061f70cedaa729cff4b10a3c526ed01e3dcbd7562380364f1de571eb",
+      "rows": 361,
+      "nonmissing_rows": 361
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00041.jsonl.zst",
+      "sha256": "47dc803e821f563050690deae7baafaea37337c73be0cb779914e3080ec140a9",
+      "rows": 350,
+      "nonmissing_rows": 350
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00042.jsonl.zst",
+      "sha256": "f745775b3409ae0238b76d4a19060def48a94ae36b356047b4c6ab6aa3d7f26a",
+      "rows": 362,
+      "nonmissing_rows": 362
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00043.jsonl.zst",
+      "sha256": "9e5c695ce33a6e52b461d7517197f4c5a2ed08f1a070b1e8e0269064defeffb9",
+      "rows": 373,
+      "nonmissing_rows": 373
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00044.jsonl.zst",
+      "sha256": "53500d7d2cc2940234196a7a35490693e18c826d309c254a0d1399387be16843",
+      "rows": 393,
+      "nonmissing_rows": 393
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w02-00045.jsonl.zst",
+      "sha256": "2d609a69dfabcd865c8bc448d35e299c56ca6f378d2db5ec6ea3236c966bc28f",
+      "rows": 381,
+      "nonmissing_rows": 381
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00000.jsonl.zst",
+      "sha256": "1325428535f8ce100ee30751a5565ae6aee1c0f279cfd9a57ea7974f6a6083d1",
+      "rows": 311,
+      "nonmissing_rows": 311
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00001.jsonl.zst",
+      "sha256": "f9ee00a6c58af080d48586c6e36948a2d41764e0a4c79b9914c690db270483e1",
+      "rows": 277,
+      "nonmissing_rows": 277
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00002.jsonl.zst",
+      "sha256": "6265ab7278738897b57a982d427acb70712901f5f4c01ee11f6eee7dc163484c",
+      "rows": 288,
+      "nonmissing_rows": 288
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00003.jsonl.zst",
+      "sha256": "66b4831f37e8d53a9b6995284a9088fefe00ecc0ac9f3da358229f1ab4d63e8a",
+      "rows": 402,
+      "nonmissing_rows": 402
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00004.jsonl.zst",
+      "sha256": "f7efdfb2e34b99ebd0ad92ef66667e8f230722b79fb2d356ab64e7e3d944c4f1",
+      "rows": 404,
+      "nonmissing_rows": 404
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00005.jsonl.zst",
+      "sha256": "22d66e2c139c0c2761eb80904c58a73f8800d1ab872db3d9f8e91e69b80dd7de",
+      "rows": 419,
+      "nonmissing_rows": 419
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00006.jsonl.zst",
+      "sha256": "fae18e415a37f6d725ad6e038e2aac7fdf2c2d0c9e3401860987cbaecff71f7f",
+      "rows": 321,
+      "nonmissing_rows": 321
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00007.jsonl.zst",
+      "sha256": "679708b41728b3807141f9c75bbee11e7ba352fd913cb9e986f9b36fb8ff9d61",
+      "rows": 400,
+      "nonmissing_rows": 0
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00008.jsonl.zst",
+      "sha256": "069af72ab3ef6c49c52b47a258514f62a6b677826db9d85f863163c551dd67a5",
+      "rows": 386,
+      "nonmissing_rows": 386
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00009.jsonl.zst",
+      "sha256": "b0a4ed7a15d57438284c67ea9a04389eb13dd9c4a70422dc0fe15b5e5a8bece1",
+      "rows": 482,
+      "nonmissing_rows": 482
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00010.jsonl.zst",
+      "sha256": "311ec624b28db1e9dae490d499cf16e93c5e70aa5ea38115ba430db5239a5592",
+      "rows": 458,
+      "nonmissing_rows": 458
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00011.jsonl.zst",
+      "sha256": "783ec14935b4e3873bce37235d6a5813f42c2b7ad2d0356629be80ca4f08477d",
+      "rows": 454,
+      "nonmissing_rows": 454
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00012.jsonl.zst",
+      "sha256": "0933c8f6854bb13dddd728175016f83970c3bdd5691660a28be7b48d297d8771",
+      "rows": 415,
+      "nonmissing_rows": 415
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00013.jsonl.zst",
+      "sha256": "0c8587a9172b41eab08696970cc7bf79c29d4fcf055b939675c58f632d4e1dd8",
+      "rows": 311,
+      "nonmissing_rows": 311
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00014.jsonl.zst",
+      "sha256": "2a9fc2c684f50ffa8104d5a51b81a818c5c7911eadd4050d65474cfbdb0c1b64",
+      "rows": 432,
+      "nonmissing_rows": 432
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00015.jsonl.zst",
+      "sha256": "b06b0e2f470b00f3cce7ff5e10d64edcda9db8f489d1ef122aa6cd78dad6d431",
+      "rows": 282,
+      "nonmissing_rows": 282
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00016.jsonl.zst",
+      "sha256": "447c6dd3cc4d16e33e66de05157e9ccc730546763626596d254e8bbd0771641f",
+      "rows": 285,
+      "nonmissing_rows": 285
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00017.jsonl.zst",
+      "sha256": "b974c5676b56ce80df142d921bfe38619865ab85dd9a778eb816f17a5956cf0f",
+      "rows": 375,
+      "nonmissing_rows": 375
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00018.jsonl.zst",
+      "sha256": "dcb7cfe852a59406a31036b30e6d45cd4a3253e876f5cb7ede414e517cb6983e",
+      "rows": 481,
+      "nonmissing_rows": 481
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00019.jsonl.zst",
+      "sha256": "762cad33c15cdf52ea6c888f1f814cfd1eab2d4ab8d87eb08d08656af99046bc",
+      "rows": 439,
+      "nonmissing_rows": 439
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00020.jsonl.zst",
+      "sha256": "5971f54dd1b0dcc8f45f12b61003e94aec13b4fbd753adda7a844282d6d972c2",
+      "rows": 376,
+      "nonmissing_rows": 376
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00021.jsonl.zst",
+      "sha256": "a969128901ce99cc59c454b901f843461e10e7eeff762c93f843029b5f3ef466",
+      "rows": 510,
+      "nonmissing_rows": 510
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00022.jsonl.zst",
+      "sha256": "84fef8f773d67f978ff76583220e4fc1e259acfdcd406fd4de9701c9d4cc0cba",
+      "rows": 259,
+      "nonmissing_rows": 259
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00023.jsonl.zst",
+      "sha256": "13635740e62dac9f61700c76681123728814e9b7816f95f1035d3cda5789d405",
+      "rows": 371,
+      "nonmissing_rows": 371
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00024.jsonl.zst",
+      "sha256": "564780cc6757201dc6f729e9d33b4ba90ef544440f831c168a93138c1131e300",
+      "rows": 338,
+      "nonmissing_rows": 338
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00025.jsonl.zst",
+      "sha256": "e78d07bb62f2b35b0b2d6e4b6bf729a82f1ca81802831efec3fcca32d675936a",
+      "rows": 274,
+      "nonmissing_rows": 274
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00026.jsonl.zst",
+      "sha256": "2814c29846c1ac70f7f4832bee0048a8554ef33c4dc90d151fa198e73ba9a913",
+      "rows": 355,
+      "nonmissing_rows": 355
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00027.jsonl.zst",
+      "sha256": "bad67194ee1be5fda3ba13f2267a85a36e196728e6ef86da66bfe26a217d9526",
+      "rows": 464,
+      "nonmissing_rows": 464
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00028.jsonl.zst",
+      "sha256": "8d587e1ca230d4248a84cf318fdf77ec516f7b2c0a96fdfc9d99893c37a68f1c",
+      "rows": 416,
+      "nonmissing_rows": 416
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00029.jsonl.zst",
+      "sha256": "ccbe7e240b52b24efb058ee38160110f67d4ca1b96d2a8a4e0458f14b328c103",
+      "rows": 273,
+      "nonmissing_rows": 273
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00030.jsonl.zst",
+      "sha256": "471b9d625a4c99902e57fb6adcdb33b99323e1ef5a15aaeae22fb08eb9633ef4",
+      "rows": 437,
+      "nonmissing_rows": 437
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00031.jsonl.zst",
+      "sha256": "ae2e6c05f81ca2d920aace5ea8a20255f8fe232f99cd3051598f527bd3d93ebb",
+      "rows": 271,
+      "nonmissing_rows": 271
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00032.jsonl.zst",
+      "sha256": "a6aa8f06759689b8c4eded370e2640d4d43e542570109aaf482b5d4b500b8e7b",
+      "rows": 383,
+      "nonmissing_rows": 383
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00033.jsonl.zst",
+      "sha256": "d01a69bb49713bcc26f3d1064bc00084f1d5e7e623591470132d0112c63be1e3",
+      "rows": 471,
+      "nonmissing_rows": 471
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00034.jsonl.zst",
+      "sha256": "ed565c2e1fa7ac799cd433d07553376a74b96513fd25f1e076e7a98c51952fd1",
+      "rows": 415,
+      "nonmissing_rows": 415
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00035.jsonl.zst",
+      "sha256": "6c9f23311f66cb822427de18db4fdb01adeab2a9c54666946c6abb42abf4b65d",
+      "rows": 347,
+      "nonmissing_rows": 347
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00036.jsonl.zst",
+      "sha256": "a66e6c05459c7504cba3a593473b35ed838a4555070c6748fd1203adcbe9d66b",
+      "rows": 385,
+      "nonmissing_rows": 385
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00037.jsonl.zst",
+      "sha256": "0f1123f7a37f623e107bbed3574ff3482da2200c3ae48904653009e923b3a365",
+      "rows": 258,
+      "nonmissing_rows": 258
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00038.jsonl.zst",
+      "sha256": "b7a83abea248194113f7e327474f758b5089b48fdfef544711d7da395dd2b8ec",
+      "rows": 394,
+      "nonmissing_rows": 394
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00039.jsonl.zst",
+      "sha256": "a86a1b873372e0807fb60c29a82543cf3b5612ff5b4730ce0f014ba3786e5498",
+      "rows": 408,
+      "nonmissing_rows": 408
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00040.jsonl.zst",
+      "sha256": "5bdf44444a8d4d0b9ef7d6c68327bf0c688a73346038e8a98eff99f125359c6c",
+      "rows": 317,
+      "nonmissing_rows": 317
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00041.jsonl.zst",
+      "sha256": "c735efca6255e2fd86112427a11f7d4a167e6cdeed73ff87d9ef275cb2bcba76",
+      "rows": 333,
+      "nonmissing_rows": 333
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00042.jsonl.zst",
+      "sha256": "f4ecca6e86daf045429ec35a600e1d0e14bc4238214adfbb62583dfa3faceea5",
+      "rows": 292,
+      "nonmissing_rows": 292
+    },
+    {
+      "path": "/home/josh/chess-artifacts/operations/sf-d6-capacity-confirmation-20260922/d6_c4/w03-00043.jsonl.zst",
+      "sha256": "dab12aaa39a52f3a5272d6ec2cd5ee6f4a6c22d1ff92ec017baf0e68a11e999b",
+      "rows": 256,
+      "nonmissing_rows": 256
+    }
+  ]
+}
