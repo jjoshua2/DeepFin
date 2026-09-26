@@ -72,7 +72,11 @@ jobs:
           (out / 'index-resolved.md').write_bytes(resolved.stdout)
           subprocess.run(['git', 'add', '--', index], check=True)
           assert not git('diff', '--name-only', '--diff-filter=U')
-          subprocess.run(['git', 'diff', '--cached', '--check'], check=True)
+          # Check the actual PR delta; do not rewrite an archived diff inherited from main.
+          inherited = subprocess.run(['git', 'diff', '--check', base, main], capture_output=True, text=True, check=False)
+          (out / 'inherited-whitespace.stdout').write_text(inherited.stdout)
+          (out / 'inherited-whitespace.stderr').write_text(inherited.stderr)
+          subprocess.run(['git', 'diff', '--cached', '--check', main], check=True)
           tree = git('write-tree')
           def entries(ref):
               result = {}
