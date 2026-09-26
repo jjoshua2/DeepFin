@@ -11,6 +11,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Saved G10 value pilot and coverage](2026-09-11-g10-value-pilot-and-coverage.md) | First 262,079-row matched adaptive-SF derivation passed; 1.575M existing BT4 WDL rows, no strength result |
+| [AVI-style one-ply value backup](2026-09-11-avi-value-backup.md) | One-ply evaluator, provenance-gated sidecar and value-only rewrite implemented; no executed AVI corpus, training or strength result |
+| [Weighted Ceres bootstrap preparation](2026-09-11-ceres-weighted-bootstrap.md) | 9.31M/18.91M Ceres labels qualified at September 11 13:40 UTC; collection continues, policy/value screens prepared, no Ceres playing result |
 | [PFS-inspired frontier advancement](2026-09-14-pfs-frontier-advancement.md) | Proposed frozen-checkpoint search tests: diagnose admission, halving and interior bottlenecks; no runs or default changes |
 | [BT4 generation outcome policy](2026-09-22-bt4-outcome-policy.md) | Standalone six-man theoretical adjudication and unresolved-game discard contract; fake-tablebase CPU tests only, no generator wiring or real games |
 | [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
