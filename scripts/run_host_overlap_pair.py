@@ -24,7 +24,7 @@ else:
 GIB = 1024**3
 RUNTIME_COMMIT = '502cd02e072471c901255f3fdb580d6ea7b826d0'
 RUNTIME_ROOT = '/tmp/deepfin-factorial58-runtime'
-INPUT_ROOT = '/home/josh/chess-artifacts/operations/packed-trainer256-20260921/directory'
+INPUT_ROOT = str(Path.home() / 'chess-artifacts/operations/packed-trainer256-20260921/directory')
 CONFIG_SHA256 = '413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2'
 PREPARATION_SHA256 = 'e42f319ccd2c10176979bb6dd6b5217b1c29510814df1ec42f263adb71b832f6'
 
