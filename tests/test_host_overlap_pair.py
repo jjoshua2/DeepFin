@@ -307,6 +307,10 @@ def test_cpu_producer_real_small_epoch_raw_and_augmented_parity(tmp_path):
     assert runs[0]['prepared_sequence_sha256'] != runs[0]['raw_sequence_sha256']
 
 
+@pytest.mark.skipif(
+    not Path(tool.RUNTIME_ROOT).is_dir(),
+    reason="separately prepared frozen factorial runtime is host-only",
+)
 def test_cpu_producer_uses_frozen_runtime_overlap_path(tmp_path):
     from tests.test_game_aware_epoch_replay import _write
     root = _write(tmp_path / 'source', [[(1, 10), (2, 20)], [(1, 11), (2, 21)]])
