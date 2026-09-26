@@ -1,9 +1,9 @@
 {
   "argv": [
     "/usr/bin/python3",
-    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/run.py",
+    "/home/<user>/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/run.py",
     "--plan",
-    "/home/josh/chess-artifacts/operations/expanded58m-vs50m-20260920/plan.json",
+    "/home/<user>/chess-artifacts/operations/expanded58m-vs50m-20260920/plan.json",
     "--sha256",
     "c6329c1bffd0c7d9ffe263ed7e05b6af47cf415a008a85b501e91cb119c92035"
   ],
@@ -27,7 +27,7 @@
       "sha256": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082"
     },
     {
-      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/run.py",
+      "path": "/home/<user>/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_readouts_v1/run.py",
       "sha256": "527bae15f1b572b8201b67e4c0a3fb3170d3b4cc652d5f972cc263010fc3ceaf"
     },
     {
@@ -39,36 +39,36 @@
       "sha256": "c7df9061d119f0f53de90b529a38a641b4fabce88f3eab9afb37a80f11cd6a96"
     },
     {
-      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/plan.json",
+      "path": "/home/<user>/projects/chess/scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/plan.json",
       "sha256": "f27bb872305e9eb101e880804d2baa5f0cf6c65ef80f3316ffa5e032de994bd2"
     },
     {
-      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/complete.json",
+      "path": "/home/<user>/projects/chess/scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/complete.json",
       "sha256": "9901370a47749934390b5a795dae2d014e0ac7641f3da9930bda7080e138eb41"
     },
     {
-      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/scheduler_run/parent_outer_terminal.json",
+      "path": "/home/<user>/projects/chess/scratchpad/bt4_joint20/takeover_20260919/expanded58m_pressure_v1/scheduler_run/parent_outer_terminal.json",
       "sha256": "2b42de66814590274c6dcdf3c250e561917457282915ed0a34f463d990643ed0"
     },
     {
-      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_continue_v3/complete.json",
+      "path": "/home/<user>/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_continue_v3/complete.json",
       "sha256": "6376b86e73dd069528320bead6d24e86d8b1cf8cb6501be36bbc4cea3043b748"
     },
     {
-      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_continue_v3/scheduler_run/parent_outer_terminal.json",
+      "path": "/home/<user>/projects/chess/scratchpad/bt4_joint20/takeover_20260918/expanded50m_continue_v3/scheduler_run/parent_outer_terminal.json",
       "sha256": "7c4ccc5e3618d1a3a5449e5c2b3288af95e28071558cdf7a0fd193504ab5747f"
     },
     {
-      "path": "/home/josh/projects/chess/runs/expanded50548069_v50_from35m_epoch4_seed105_recovery_v3/summary.json",
+      "path": "/home/<user>/projects/chess/runs/expanded50548069_v50_from35m_epoch4_seed105_recovery_v3/summary.json",
       "sha256": "7adf8f499183aaf90ef99c0a4f13ae03752fd05bda8db87e439add7149e36407"
     },
     {
-      "path": "/home/josh/chess-artifacts/operations/expanded58m-vs50m-20260920/plan.json",
+      "path": "/home/<user>/chess-artifacts/operations/expanded58m-vs50m-20260920/plan.json",
       "sha256": "c6329c1bffd0c7d9ffe263ed7e05b6af47cf415a008a85b501e91cb119c92035"
     }
   ],
   "completion": {
-    "path": "/home/josh/chess-artifacts/operations/expanded58m-vs50m-20260920/complete.json",
+    "path": "/home/<user>/chess-artifacts/operations/expanded58m-vs50m-20260920/complete.json",
     "status_key": "status",
     "expected": "PASS_BOUND_256_GAME_ARENA"
   }
