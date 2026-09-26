@@ -23,7 +23,7 @@ jobs:
           run-id: 36219555685
           github-token: ${{ github.token }}
           path: /tmp/dispatch-qualified
-      - name: Verify completed gates, source hashes and exact authored readout
+      - name: Verify completed gates and source-identical publication
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -45,8 +45,18 @@ jobs:
           script=base64.b64decode(api('git/blobs/bedcd90ee2292c6efcfa999aca5b50d5332f0d1c')['content'])
           assert hashlib.sha256(script).hexdigest()=='2f79519859346ee888703026ff7ee5864b5286e9f81acd63f3a9bf4cc7b5732f'
           exec(compile(script,'authored-checked-dispatch-publication','exec'))
+          # The Actions app cannot write workflows. Preserve the checked workflow
+          # for a separate authorized connector write, without altering runtime.
+          workflow='.github/workflows/bend-live.yml'
+          Path('/tmp/dispatch-publication/bend-live.yml').write_bytes(Path(workflow).read_bytes())
+          subprocess.run(['git','restore','--source=HEAD','--staged','--worktree',workflow],check=True)
+          remaining=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          assert len(remaining)==37 and not any(p.startswith('.github/') for p in remaining)
+          p=Path('docs/experiments/2026-09-26-measured-live-dispatch.md')
+          p.write_text(p.read_text()+'\n### Publication transport follow-up\n\nInitial publication-only run 36220648002 verified all source/report gates but\nGitHub rejected its push because the Actions app lacks workflow-write permission.\nNo branch or runtime source was published by that failed push. The corrected\npublication separates the source/evidence commit from the authorized connector\nupdate of `bend-live.yml`; neither step reruns inference or changes the qualified\nruntime. The preserved workflow bytes must match the qualification manifest.\n')
+          subprocess.run(['git','add',str(p)],check=True)
           PY
-      - name: Publish isolated feature branch without touching its parents
+      - name: Publish isolated source branch without workflow or parent changes
         run: |
           set -euo pipefail
           branch=feat/native-measured-dispatch-20260926
