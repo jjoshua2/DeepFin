@@ -1,0 +1,632 @@
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/plan.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/plan.json
+@@ -3,7 +3,7 @@
+   "arm": "A",
+   "runtime": "/tmp/deepfin-factorial58-runtime",
+   "runtime_head": "502cd02e072471c901255f3fdb580d6ea7b826d0",
+-  "out": "/home/josh/projects/chess/runs/factorial58_20260919_A",
++  "out": "/home/josh/chess-artifacts/runs/factorial58_20260919_A",
+   "command_prefix": [
+     "/usr/bin/python3",
+     "-m",
+@@ -11,7 +11,7 @@
+     "--config",
+     "/tmp/deepfin-factorial58-runtime/configs/lc0_positive_control.yaml",
+     "--out-dir",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_A",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_A",
+     "--steps",
+     "0",
+     "--batch-size",
+@@ -87,7 +87,7 @@
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run06_g10/V50",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50"
+   ],
+-  "initial_anchor": "/home/josh/projects/chess/runs/factorial58_20260919_A/initial_state.json",
++  "initial_anchor": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/initial_state.json",
+   "training_seconds": 72000,
+   "internal_seconds": 72600,
+   "pause_seconds": 7200,
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/plan.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/plan.json
+@@ -3,7 +3,7 @@
+   "arm": "B",
+   "runtime": "/tmp/deepfin-factorial58-runtime",
+   "runtime_head": "502cd02e072471c901255f3fdb580d6ea7b826d0",
+-  "out": "/home/josh/projects/chess/runs/factorial58_20260919_B",
++  "out": "/home/josh/chess-artifacts/runs/factorial58_20260919_B",
+   "command_prefix": [
+     "/usr/bin/python3",
+     "-m",
+@@ -11,7 +11,7 @@
+     "--config",
+     "/tmp/deepfin-factorial58-runtime/configs/lc0_positive_control.yaml",
+     "--out-dir",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_B",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_B",
+     "--steps",
+     "0",
+     "--batch-size",
+@@ -87,7 +87,7 @@
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run06_g10/V50",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50"
+   ],
+-  "initial_anchor": "/home/josh/projects/chess/runs/factorial58_20260919_A/initial_state.json",
++  "initial_anchor": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/initial_state.json",
+   "training_seconds": 72000,
+   "internal_seconds": 72600,
+   "pause_seconds": 7200,
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/plan.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/plan.json
+@@ -3,7 +3,7 @@
+   "arm": "C",
+   "runtime": "/tmp/deepfin-factorial58-runtime",
+   "runtime_head": "502cd02e072471c901255f3fdb580d6ea7b826d0",
+-  "out": "/home/josh/projects/chess/runs/factorial58_20260919_C",
++  "out": "/home/josh/chess-artifacts/runs/factorial58_20260919_C",
+   "command_prefix": [
+     "/usr/bin/python3",
+     "-m",
+@@ -11,7 +11,7 @@
+     "--config",
+     "/tmp/deepfin-factorial58-runtime/configs/lc0_positive_control.yaml",
+     "--out-dir",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_C",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_C",
+     "--steps",
+     "0",
+     "--batch-size",
+@@ -87,7 +87,7 @@
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run06_g10/V50",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50"
+   ],
+-  "initial_anchor": "/home/josh/projects/chess/runs/factorial58_20260919_A/initial_state.json",
++  "initial_anchor": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/initial_state.json",
+   "training_seconds": 72000,
+   "internal_seconds": 72600,
+   "pause_seconds": 7200,
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/plan.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/plan.json
+@@ -3,7 +3,7 @@
+   "arm": "D",
+   "runtime": "/tmp/deepfin-factorial58-runtime",
+   "runtime_head": "502cd02e072471c901255f3fdb580d6ea7b826d0",
+-  "out": "/home/josh/projects/chess/runs/factorial58_20260919_D",
++  "out": "/home/josh/chess-artifacts/runs/factorial58_20260919_D",
+   "command_prefix": [
+     "/usr/bin/python3",
+     "-m",
+@@ -11,7 +11,7 @@
+     "--config",
+     "/tmp/deepfin-factorial58-runtime/configs/lc0_positive_control.yaml",
+     "--out-dir",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_D",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_D",
+     "--steps",
+     "0",
+     "--batch-size",
+@@ -87,7 +87,7 @@
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run06_g10/V50",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/scale50_readiness_20260917/downstream58_retry_v1/execution/remainder_block01_run07_g10_companion4/V50"
+   ],
+-  "initial_anchor": "/home/josh/projects/chess/runs/factorial58_20260919_A/initial_state.json",
++  "initial_anchor": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/initial_state.json",
+   "training_seconds": 72000,
+   "internal_seconds": 72600,
+   "pause_seconds": 7200,
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/plan.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/plan.json
+@@ -19,9 +19,9 @@
+     "-m",
+     "scripts.arena_standard",
+     "--candidate",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_B/checkpoint.pt",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_B/checkpoint.pt",
+     "--reference",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_A/checkpoint.pt",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_A/checkpoint.pt",
+     "--games",
+     "256",
+     "--mode",
+@@ -65,18 +65,18 @@
+     "candidate": {
+       "arm": "B",
+       "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/plan.json",
+-      "plan_sha256": "7b65af5ce9797c91fa5b9b2e35d266ad7a44d602e435c71bbdc750a987607919",
++      "plan_sha256": "004a41af56316e3b51c3f5ac3f0553b524d8b3ad5b763f0a795b1dfa481956e3",
+       "complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/complete.json",
+       "terminal": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/scheduler_run/parent_outer_terminal.json",
+-      "checkpoint": "/home/josh/projects/chess/runs/factorial58_20260919_B/checkpoint.pt"
++      "checkpoint": "/home/josh/chess-artifacts/runs/factorial58_20260919_B/checkpoint.pt"
+     },
+     "reference": {
+       "arm": "A",
+       "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/plan.json",
+-      "plan_sha256": "83963b5bc499a8bbcb1fdaef14dfeffb3128caf8b3e64f1d47b52d25d716cdde",
++      "plan_sha256": "a6c3cac7075c78d04416a40ad53457005eeb2c173ed4cd61772f3c3100d4f98e",
+       "complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/complete.json",
+       "terminal": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/scheduler_run/parent_outer_terminal.json",
+-      "checkpoint": "/home/josh/projects/chess/runs/factorial58_20260919_A/checkpoint.pt"
++      "checkpoint": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/checkpoint.pt"
+     }
+   },
+   "pins": [
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/plan.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/plan.json
+@@ -19,9 +19,9 @@
+     "-m",
+     "scripts.arena_standard",
+     "--candidate",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_C/checkpoint.pt",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_C/checkpoint.pt",
+     "--reference",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_A/checkpoint.pt",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_A/checkpoint.pt",
+     "--games",
+     "256",
+     "--mode",
+@@ -65,18 +65,18 @@
+     "candidate": {
+       "arm": "C",
+       "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/plan.json",
+-      "plan_sha256": "00270d8422eff0d6f1cf230de0f74a6db828f22cfe22518a7113d20ddb46f942",
++      "plan_sha256": "b3b81a70f48f5eb4ba45ef419bf2e3b83d1b960e8433dfcfe52d420acc6240b4",
+       "complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/complete.json",
+       "terminal": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/scheduler_run/parent_outer_terminal.json",
+-      "checkpoint": "/home/josh/projects/chess/runs/factorial58_20260919_C/checkpoint.pt"
++      "checkpoint": "/home/josh/chess-artifacts/runs/factorial58_20260919_C/checkpoint.pt"
+     },
+     "reference": {
+       "arm": "A",
+       "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/plan.json",
+-      "plan_sha256": "83963b5bc499a8bbcb1fdaef14dfeffb3128caf8b3e64f1d47b52d25d716cdde",
++      "plan_sha256": "a6c3cac7075c78d04416a40ad53457005eeb2c173ed4cd61772f3c3100d4f98e",
+       "complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/complete.json",
+       "terminal": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/scheduler_run/parent_outer_terminal.json",
+-      "checkpoint": "/home/josh/projects/chess/runs/factorial58_20260919_A/checkpoint.pt"
++      "checkpoint": "/home/josh/chess-artifacts/runs/factorial58_20260919_A/checkpoint.pt"
+     }
+   },
+   "pins": [
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/plan.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/plan.json
+@@ -19,9 +19,9 @@
+     "-m",
+     "scripts.arena_standard",
+     "--candidate",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_D/checkpoint.pt",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_D/checkpoint.pt",
+     "--reference",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_C/checkpoint.pt",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_C/checkpoint.pt",
+     "--games",
+     "256",
+     "--mode",
+@@ -65,18 +65,18 @@
+     "candidate": {
+       "arm": "D",
+       "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/plan.json",
+-      "plan_sha256": "9430c3382be6e71ddb3abcd018666cdf531bf7de59be726f922d69e190932a90",
++      "plan_sha256": "5bfaaa0f0f0ffd3aced5818fea805d80175a9ee4f0b4942b1122aa09d2bb6324",
+       "complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/complete.json",
+       "terminal": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/scheduler_run/parent_outer_terminal.json",
+-      "checkpoint": "/home/josh/projects/chess/runs/factorial58_20260919_D/checkpoint.pt"
++      "checkpoint": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/checkpoint.pt"
+     },
+     "reference": {
+       "arm": "C",
+       "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/plan.json",
+-      "plan_sha256": "00270d8422eff0d6f1cf230de0f74a6db828f22cfe22518a7113d20ddb46f942",
++      "plan_sha256": "b3b81a70f48f5eb4ba45ef419bf2e3b83d1b960e8433dfcfe52d420acc6240b4",
+       "complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/complete.json",
+       "terminal": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/scheduler_run/parent_outer_terminal.json",
+-      "checkpoint": "/home/josh/projects/chess/runs/factorial58_20260919_C/checkpoint.pt"
++      "checkpoint": "/home/josh/chess-artifacts/runs/factorial58_20260919_C/checkpoint.pt"
+     }
+   },
+   "pins": [
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/plan.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/plan.json
+@@ -19,9 +19,9 @@
+     "-m",
+     "scripts.arena_standard",
+     "--candidate",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_D/checkpoint.pt",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_D/checkpoint.pt",
+     "--reference",
+-    "/home/josh/projects/chess/runs/factorial58_20260919_B/checkpoint.pt",
++    "/home/josh/chess-artifacts/runs/factorial58_20260919_B/checkpoint.pt",
+     "--games",
+     "256",
+     "--mode",
+@@ -65,18 +65,18 @@
+     "candidate": {
+       "arm": "D",
+       "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/plan.json",
+-      "plan_sha256": "9430c3382be6e71ddb3abcd018666cdf531bf7de59be726f922d69e190932a90",
++      "plan_sha256": "5bfaaa0f0f0ffd3aced5818fea805d80175a9ee4f0b4942b1122aa09d2bb6324",
+       "complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/complete.json",
+       "terminal": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/scheduler_run/parent_outer_terminal.json",
+-      "checkpoint": "/home/josh/projects/chess/runs/factorial58_20260919_D/checkpoint.pt"
++      "checkpoint": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/checkpoint.pt"
+     },
+     "reference": {
+       "arm": "B",
+       "plan": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/plan.json",
+-      "plan_sha256": "7b65af5ce9797c91fa5b9b2e35d266ad7a44d602e435c71bbdc750a987607919",
++      "plan_sha256": "004a41af56316e3b51c3f5ac3f0553b524d8b3ad5b763f0a795b1dfa481956e3",
+       "complete": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/complete.json",
+       "terminal": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/scheduler_run/parent_outer_terminal.json",
+-      "checkpoint": "/home/josh/projects/chess/runs/factorial58_20260919_B/checkpoint.pt"
++      "checkpoint": "/home/josh/chess-artifacts/runs/factorial58_20260919_B/checkpoint.pt"
+     }
+   },
+   "pins": [
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/registered_command.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/registered_command.json
+@@ -5,7 +5,7 @@
+     "--plan",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/plan.json",
+     "--sha256",
+-    "83963b5bc499a8bbcb1fdaef14dfeffb3128caf8b3e64f1d47b52d25d716cdde",
++    "a6c3cac7075c78d04416a40ad53457005eeb2c173ed4cd61772f3c3100d4f98e",
+     "--execute"
+   ],
+   "cwd": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A",
+@@ -17,7 +17,7 @@
+   "pins": [
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/plan.json",
+-      "sha256": "83963b5bc499a8bbcb1fdaef14dfeffb3128caf8b3e64f1d47b52d25d716cdde"
++      "sha256": "a6c3cac7075c78d04416a40ad53457005eeb2c173ed4cd61772f3c3100d4f98e"
+     },
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/run.py",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/queue_item.frozen.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/queue_item.frozen.json
+@@ -3,7 +3,7 @@
+   "kind": "registered_command",
+   "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/scheduler_run",
+   "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/registered_command.json",
+-  "command_sha256": "b0344facf6a1a4d4c97356629b5ad2ed9053f892d415ad7466dda70f2db2f708",
++  "command_sha256": "a4a5b3b8dc1f84f9f4da4dd12ef887a1fb0bed615423e83ddba6584af9706206",
+   "max_seconds": 79860,
+   "status": "queued",
+   "arm": "A",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/registered_command.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/registered_command.json
+@@ -5,7 +5,7 @@
+     "--plan",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/plan.json",
+     "--sha256",
+-    "7b65af5ce9797c91fa5b9b2e35d266ad7a44d602e435c71bbdc750a987607919",
++    "004a41af56316e3b51c3f5ac3f0553b524d8b3ad5b763f0a795b1dfa481956e3",
+     "--execute"
+   ],
+   "cwd": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B",
+@@ -17,7 +17,7 @@
+   "pins": [
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/plan.json",
+-      "sha256": "7b65af5ce9797c91fa5b9b2e35d266ad7a44d602e435c71bbdc750a987607919"
++      "sha256": "004a41af56316e3b51c3f5ac3f0553b524d8b3ad5b763f0a795b1dfa481956e3"
+     },
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/run.py",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/queue_item.frozen.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/queue_item.frozen.json
+@@ -3,7 +3,7 @@
+   "kind": "registered_command",
+   "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/scheduler_run",
+   "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/registered_command.json",
+-  "command_sha256": "d7c1004a036d8934832ee481e63eeea0698c0c45e52a2b3e5d57768b3de94dbc",
++  "command_sha256": "02a4194bbb3161267166a7d82801c508ecf17de1ecf7831dc8829b70ba5d44c7",
+   "max_seconds": 79860,
+   "status": "queued",
+   "arm": "B",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/registered_command.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/registered_command.json
+@@ -5,7 +5,7 @@
+     "--plan",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/plan.json",
+     "--sha256",
+-    "00270d8422eff0d6f1cf230de0f74a6db828f22cfe22518a7113d20ddb46f942",
++    "b3b81a70f48f5eb4ba45ef419bf2e3b83d1b960e8433dfcfe52d420acc6240b4",
+     "--execute"
+   ],
+   "cwd": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C",
+@@ -17,7 +17,7 @@
+   "pins": [
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/plan.json",
+-      "sha256": "00270d8422eff0d6f1cf230de0f74a6db828f22cfe22518a7113d20ddb46f942"
++      "sha256": "b3b81a70f48f5eb4ba45ef419bf2e3b83d1b960e8433dfcfe52d420acc6240b4"
+     },
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/run.py",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/queue_item.frozen.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/queue_item.frozen.json
+@@ -3,7 +3,7 @@
+   "kind": "registered_command",
+   "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/scheduler_run",
+   "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/registered_command.json",
+-  "command_sha256": "cb24dec72207414ebcd1a89638637350aee2843f2139be2599d6762cf3d4a666",
++  "command_sha256": "e87785198d4d77eac30dbdff3946a94b80ac1f73acaae936c8c2ef47d01fd5b1",
+   "max_seconds": 79860,
+   "status": "queued",
+   "arm": "C",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/registered_command.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/registered_command.json
+@@ -5,7 +5,7 @@
+     "--plan",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/plan.json",
+     "--sha256",
+-    "9430c3382be6e71ddb3abcd018666cdf531bf7de59be726f922d69e190932a90",
++    "5bfaaa0f0f0ffd3aced5818fea805d80175a9ee4f0b4942b1122aa09d2bb6324",
+     "--execute"
+   ],
+   "cwd": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D",
+@@ -17,7 +17,7 @@
+   "pins": [
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/plan.json",
+-      "sha256": "9430c3382be6e71ddb3abcd018666cdf531bf7de59be726f922d69e190932a90"
++      "sha256": "5bfaaa0f0f0ffd3aced5818fea805d80175a9ee4f0b4942b1122aa09d2bb6324"
+     },
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/run.py",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/queue_item.frozen.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/queue_item.frozen.json
+@@ -3,7 +3,7 @@
+   "kind": "registered_command",
+   "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/scheduler_run",
+   "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/registered_command.json",
+-  "command_sha256": "def804a1a17a26c28322928361ca942f8982f38d9a8ebed9c9fec2746a958fd5",
++  "command_sha256": "04cc52756f3a9967eba5a5dc4fb8adc3dc388217cbd7b07fc74f173580927aff",
+   "max_seconds": 79860,
+   "status": "queued",
+   "arm": "D",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/jobs.frozen.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/jobs.frozen.json
+@@ -8,7 +8,7 @@
+       "kind": "registered_command",
+       "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/scheduler_run",
+       "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/A/registered_command.json",
+-      "command_sha256": "b0344facf6a1a4d4c97356629b5ad2ed9053f892d415ad7466dda70f2db2f708",
++      "command_sha256": "a4a5b3b8dc1f84f9f4da4dd12ef887a1fb0bed615423e83ddba6584af9706206",
+       "max_seconds": 79860,
+       "status": "queued",
+       "arm": "A",
+@@ -21,7 +21,7 @@
+       "kind": "registered_command",
+       "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/scheduler_run",
+       "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/B/registered_command.json",
+-      "command_sha256": "d7c1004a036d8934832ee481e63eeea0698c0c45e52a2b3e5d57768b3de94dbc",
++      "command_sha256": "02a4194bbb3161267166a7d82801c508ecf17de1ecf7831dc8829b70ba5d44c7",
+       "max_seconds": 79860,
+       "status": "queued",
+       "arm": "B",
+@@ -34,7 +34,7 @@
+       "kind": "registered_command",
+       "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/scheduler_run",
+       "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/C/registered_command.json",
+-      "command_sha256": "cb24dec72207414ebcd1a89638637350aee2843f2139be2599d6762cf3d4a666",
++      "command_sha256": "e87785198d4d77eac30dbdff3946a94b80ac1f73acaae936c8c2ef47d01fd5b1",
+       "max_seconds": 79860,
+       "status": "queued",
+       "arm": "C",
+@@ -47,7 +47,7 @@
+       "kind": "registered_command",
+       "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/scheduler_run",
+       "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/registered_command.json",
+-      "command_sha256": "def804a1a17a26c28322928361ca942f8982f38d9a8ebed9c9fec2746a958fd5",
++      "command_sha256": "04cc52756f3a9967eba5a5dc4fb8adc3dc388217cbd7b07fc74f173580927aff",
+       "max_seconds": 79860,
+       "status": "queued",
+       "arm": "D",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/registered_command.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/registered_command.json
+@@ -5,7 +5,7 @@
+     "--plan",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/plan.json",
+     "--sha256",
+-    "ae71ea4cc2cb36ddd9333f436ff0c281e968708f5ccd7b9fde062ed5b7036721",
++    "7ff41d8d5b51aa42786eb5d1a926a2a2600bd3280d0f36a914728c9b4f05cd44",
+     "--execute"
+   ],
+   "cwd": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A",
+@@ -13,7 +13,7 @@
+   "pins": [
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/plan.json",
+-      "sha256": "ae71ea4cc2cb36ddd9333f436ff0c281e968708f5ccd7b9fde062ed5b7036721"
++      "sha256": "7ff41d8d5b51aa42786eb5d1a926a2a2600bd3280d0f36a914728c9b4f05cd44"
+     },
+     {
+       "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/queue_item.frozen.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/queue_item.frozen.json
+@@ -5,5 +5,5 @@
+   "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/scheduler_run",
+   "max_seconds": 3660,
+   "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/registered_command.json",
+-  "command_sha256": "9008ca46b006f67e1428f9dd400194d09543f140817ae2f4ac6ae6c9f45850ca"
++  "command_sha256": "f7eb8a7c50065a5bd82ea8effd4f806a7da6f4941608b44678e4b39518eda54f"
+ }
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/registered_command.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/registered_command.json
+@@ -5,7 +5,7 @@
+     "--plan",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/plan.json",
+     "--sha256",
+-    "9341e10169cd49e9d7e8333302563fedb4fe58546493f6f078647972f1e53ba0",
++    "324a64e1d5d3c1cb086460623f5b58810486a7eba57f7eae0f3e789de9e6c07f",
+     "--execute"
+   ],
+   "cwd": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A",
+@@ -13,7 +13,7 @@
+   "pins": [
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/plan.json",
+-      "sha256": "9341e10169cd49e9d7e8333302563fedb4fe58546493f6f078647972f1e53ba0"
++      "sha256": "324a64e1d5d3c1cb086460623f5b58810486a7eba57f7eae0f3e789de9e6c07f"
+     },
+     {
+       "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/queue_item.frozen.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/queue_item.frozen.json
+@@ -5,5 +5,5 @@
+   "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/scheduler_run",
+   "max_seconds": 3660,
+   "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/registered_command.json",
+-  "command_sha256": "346d3edd8badc6d71cc4b8d587ac6b5251159d788e74fdd5e38724472d9f250f"
++  "command_sha256": "bdb268ea9f0472e8930eda1598a4e51378276aa069a458a3c6442e240e2bc623"
+ }
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/registered_command.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/registered_command.json
+@@ -5,7 +5,7 @@
+     "--plan",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/plan.json",
+     "--sha256",
+-    "e5286ef6c0bcd8e73c7dd829d67c8d365c343aa80909d7a440df1800ab724605",
++    "84104dc59aa39310d70a25e4544ae9af7180c1eeae7dc3c9faf58351fbd3b891",
+     "--execute"
+   ],
+   "cwd": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C",
+@@ -13,7 +13,7 @@
+   "pins": [
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/plan.json",
+-      "sha256": "e5286ef6c0bcd8e73c7dd829d67c8d365c343aa80909d7a440df1800ab724605"
++      "sha256": "84104dc59aa39310d70a25e4544ae9af7180c1eeae7dc3c9faf58351fbd3b891"
+     },
+     {
+       "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/queue_item.frozen.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/queue_item.frozen.json
+@@ -5,5 +5,5 @@
+   "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/scheduler_run",
+   "max_seconds": 3660,
+   "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/registered_command.json",
+-  "command_sha256": "647c59e3417b47ee322cdb2e927def5b13bb8eaa577038faf4b6fc0d009044be"
++  "command_sha256": "682dc2bdeae5d1a45f1a4cb3b822a26e0adc5e33c8948566a54cafdf62e9d985"
+ }
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/registered_command.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/registered_command.json
+@@ -5,7 +5,7 @@
+     "--plan",
+     "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/plan.json",
+     "--sha256",
+-    "4a63ec36b5de2cde6395c83df2bc6b3079ea4cee4ef4710bd75246650c9e799a",
++    "172ae0e5fd59de3ea48b4ef34aced15dce289ab3104472987f46bb699910a5dc",
+     "--execute"
+   ],
+   "cwd": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B",
+@@ -13,7 +13,7 @@
+   "pins": [
+     {
+       "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/plan.json",
+-      "sha256": "4a63ec36b5de2cde6395c83df2bc6b3079ea4cee4ef4710bd75246650c9e799a"
++      "sha256": "172ae0e5fd59de3ea48b4ef34aced15dce289ab3104472987f46bb699910a5dc"
+     },
+     {
+       "path": "/tmp/deepfin-ordered-arena-lookahead-runtime/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/queue_item.frozen.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/queue_item.frozen.json
+@@ -5,5 +5,5 @@
+   "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/scheduler_run",
+   "max_seconds": 3660,
+   "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/registered_command.json",
+-  "command_sha256": "3cbce635f547ec1d07c5457607e55a2d39dcb4b7eff297c80c0721a087e5d110"
++  "command_sha256": "dd55402134b26c47ee3a0e22a3945cf5b9610d5e29f98875f25cac47a2536674"
+ }
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/jobs.frozen.json
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/jobs.frozen.json
+@@ -8,7 +8,7 @@
+       "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/scheduler_run",
+       "max_seconds": 3660,
+       "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/B_A/registered_command.json",
+-      "command_sha256": "9008ca46b006f67e1428f9dd400194d09543f140817ae2f4ac6ae6c9f45850ca"
++      "command_sha256": "f7eb8a7c50065a5bd82ea8effd4f806a7da6f4941608b44678e4b39518eda54f"
+     },
+     {
+       "id": "factorial58_C_A_400sims",
+@@ -17,7 +17,7 @@
+       "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/scheduler_run",
+       "max_seconds": 3660,
+       "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/C_A/registered_command.json",
+-      "command_sha256": "346d3edd8badc6d71cc4b8d587ac6b5251159d788e74fdd5e38724472d9f250f"
++      "command_sha256": "bdb268ea9f0472e8930eda1598a4e51378276aa069a458a3c6442e240e2bc623"
+     },
+     {
+       "id": "factorial58_D_C_400sims",
+@@ -26,7 +26,7 @@
+       "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/scheduler_run",
+       "max_seconds": 3660,
+       "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/registered_command.json",
+-      "command_sha256": "647c59e3417b47ee322cdb2e927def5b13bb8eaa577038faf4b6fc0d009044be"
++      "command_sha256": "682dc2bdeae5d1a45f1a4cb3b822a26e0adc5e33c8948566a54cafdf62e9d985"
+     },
+     {
+       "id": "factorial58_D_B_400sims",
+@@ -35,7 +35,7 @@
+       "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/scheduler_run",
+       "max_seconds": 3660,
+       "command_file": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_B/registered_command.json",
+-      "command_sha256": "3cbce635f547ec1d07c5457607e55a2d39dcb4b7eff297c80c0721a087e5d110"
++      "command_sha256": "dd55402134b26c47ee3a0e22a3945cf5b9610d5e29f98875f25cac47a2536674"
+     }
+   ]
+ }
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/prepare.py
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/prepare.py
+@@ -7,10 +7,10 @@
+ items=[]
+ for arm in 'ABCD':
+  d=T/arm;d.mkdir(exist_ok=True);shutil.copy2(T/'run_arm.py',d/'run.py');shutil.copy2(P/'disk_pause.py',d/'disk_pause.py')
+- out='/home/josh/projects/chess/runs/factorial58_20260919_'+arm
++ out='/home/josh/chess-artifacts/runs/factorial58_20260919_'+arm
+  command=old['command_prefix'].copy();command[command.index('--config')+1]=runtime+'/configs/lc0_positive_control.yaml';command[command.index('--out-dir')+1]=out;command[command.index('--seed')+1]='121'
+  env={**old['env'],'PYTHONPATH':runtime}
+- plan={'status':'PREPARED_RUNTIME_BIND_REQUIRED','arm':arm,'runtime':runtime,'runtime_head':None,'out':out,'command_prefix':command,'env':env,'gpu_lock':old['gpu_lock'],'dataset_complete':str(T.parent/'preparation/complete.json'),'base_roots':old['expected_roots'],'initial_anchor':'/home/josh/projects/chess/runs/factorial58_20260919_A/initial_state.json','training_seconds':72000,'internal_seconds':72600,'pause_seconds':7200,'operator_runtime':'/tmp/deepfin-ceres-output-scan/scripts','pins':[{'path':str(x),'sha256':sha(x)} for x in [d/'run.py',d/'disk_pause.py',Path('/tmp/deepfin-ceres-output-scan/scripts/bootstrap_experiment_operator.py')]],'binding_requirements':['freeze runtime HEAD and clean tree','pin runtime train/recovery/initialization/overlay/sampler sources and config','set status FROZEN_READY then regenerate plan/descriptor hashes','prerequisite target preparation completed before queue dispatch; no dependency wait']}
++ plan={'status':'PREPARED_RUNTIME_BIND_REQUIRED','arm':arm,'runtime':runtime,'runtime_head':None,'out':out,'command_prefix':command,'env':env,'gpu_lock':old['gpu_lock'],'dataset_complete':str(T.parent/'preparation/complete.json'),'base_roots':old['expected_roots'],'initial_anchor':'/home/josh/chess-artifacts/runs/factorial58_20260919_A/initial_state.json','training_seconds':72000,'internal_seconds':72600,'pause_seconds':7200,'operator_runtime':'/tmp/deepfin-ceres-output-scan/scripts','pins':[{'path':str(x),'sha256':sha(x)} for x in [d/'run.py',d/'disk_pause.py',Path('/tmp/deepfin-ceres-output-scan/scripts/bootstrap_experiment_operator.py')]],'binding_requirements':['freeze runtime HEAD and clean tree','pin runtime train/recovery/initialization/overlay/sampler sources and config','set status FROZEN_READY then regenerate plan/descriptor hashes','prerequisite target preparation completed before queue dispatch; no dependency wait']}
+  put(d/'plan.json',plan)
+  reg={'argv':['/usr/bin/python3',str(d/'run.py'),'--plan',str(d/'plan.json'),'--sha256',sha(d/'plan.json'),'--execute'],'cwd':str(d),'env':{'OMP_NUM_THREADS':'2','OPENBLAS_NUM_THREADS':'2','MKL_NUM_THREADS':'2'},'pins':[{'path':str(x),'sha256':sha(x)} for x in [d/'run.py',d/'disk_pause.py',d/'plan.json']],'completion':{'path':str(d/'complete.json'),'status_key':'status','expected':'PASS_FACTORIAL58_ARM'}};put(d/'registered_command.prepared.json',reg)
+  item={'id':'factorial58_fresh_'+arm,'kind':'registered_command','out':str(d/'scheduler_run'),'command_file':str(d/'registered_command.prepared.json'),'command_sha256':sha(d/'registered_command.prepared.json'),'max_seconds':79860,'status':'PREPARED_NOT_QUEUED_RUNTIME_BIND_REQUIRED','arm':arm,'expected_rows':58090688,'seed':121,'estimated_active_seconds':36000};put(d/'queue_item.prepared.json',item);items.append(item)
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/README.md
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/README.md
+@@ -30,3 +30,10 @@
+ Validation: syntax checks and3 actual small CPU-child wrapper fixtures passed:
+ complete receipt acceptance, initial-state mismatch rejection, and incomplete-epoch
+ rejection. These validate runner control flow, not real58M training behavior.
++
++Storage: fresh factorial model/checkpoint outputs use the explicit external root
++`/home/josh/chess-artifacts/runs/factorial58_20260919_{A,B,C,D}`. Do not
++pre-create output directories or leaf symlinks: the fresh-run guard requires absent
++outputs. Plans, receipts and scheduler metadata stay at their frozen locations.
++After a storage-only path change, re-pin training plans, arena donor plans, arena
++plans, registered commands and queue hashes together under the supervisor lock.
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/prepare.py
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/prepare.py
+@@ -8,7 +8,7 @@
+  name=candidate+'_'+reference;d=T/name;d.mkdir(exist_ok=True);shutil.copy2(T/'run_arena.py',d/'run.py');out=str(d/'arena')
+  p={'status':'PREPARED_TRAINING_BIND_REQUIRED','runtime':'/tmp/deepfin-ordered-arena-lookahead-runtime','runtime_head':old['runtime_head'],'out':out,'internal_seconds':3600,'gpu_lock':'/home/josh/projects/chess/scratchpad/gpu0_experiment.lock','env':old['env'],'command':old['command'].copy(),'donors':{},'pins':copy.deepcopy(old['pins'])}
+  for role,arm in [('candidate',candidate),('reference',reference)]:
+-  train=F/'training'/arm;checkpoint='/home/josh/projects/chess/runs/factorial58_20260919_'+arm+'/checkpoint.pt';p['donors'][role]={'arm':arm,'plan':str(train/'plan.json'),'plan_sha256':None,'complete':str(train/'complete.json'),'terminal':str(train/'scheduler_run/parent_outer_terminal.json'),'checkpoint':checkpoint};p['command'][p['command'].index('--'+role)+1]=checkpoint
++  train=F/'training'/arm;checkpoint='/home/josh/chess-artifacts/runs/factorial58_20260919_'+arm+'/checkpoint.pt';p['donors'][role]={'arm':arm,'plan':str(train/'plan.json'),'plan_sha256':None,'complete':str(train/'complete.json'),'terminal':str(train/'scheduler_run/parent_outer_terminal.json'),'checkpoint':checkpoint};p['command'][p['command'].index('--'+role)+1]=checkpoint
+  for flag,value in [('--seed','20260920'),('--games-out',out+'/arena.games.jsonl'),('--out',out+'/arena.results.jsonl')]:p['command'][p['command'].index(flag)+1]=value
+  # Keep native, opening and operator pins; replace only old arena script pin.
+  p['pins']=[x for x in p['pins'] if '/takeover_20260918/' not in x['path']];p['pins'].append({'path':str(d/'run.py'),'sha256':sha(d/'run.py')})
+--- /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/README.md
++++ /home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/README.md
+@@ -21,3 +21,10 @@
+ 
+ Validation:7 small-file receipt-binding tests passed, including altered weights,
+ failed outer terminals and wrong plan pins on either candidate or reference.
++
++Storage: fresh factorial model/checkpoint outputs use the explicit external root
++`/home/josh/chess-artifacts/runs/factorial58_20260919_{A,B,C,D}`. Do not
++pre-create output directories or leaf symlinks: the fresh-run guard requires absent
++outputs. Plans, receipts and scheduler metadata stay at their frozen locations.
++After a storage-only path change, re-pin training plans, arena donor plans, arena
++plans, registered commands and queue hashes together under the supervisor lock.
