@@ -102,7 +102,7 @@ def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypa
             return 0
 
         @staticmethod
-        def resume_owned_group(child):
+        def resume_owned_group(_child):
             pass
 
     setattr(disk, "DiskPauseGuard", DiskGuard)
