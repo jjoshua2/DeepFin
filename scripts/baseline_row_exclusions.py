@@ -74,10 +74,12 @@ def load(path: Path) -> Exclusions:
     indexed = {(s['source_namespace'], s['source_shard']): s for s in shards}
     require(len(indexed) == len(shards), 'duplicate audited shard')
     if saved:
-        # Local import avoids the deriver -> exclusions -> auditor import cycle.
+        # importlib: a `from scripts import` still counts in basedpyright's
+        # import-cycle graph with derive_corpus_targets.
         # Reuse the audit's complete metadata admission, including typed WDL and
         # exact snapshot membership; never synthesize a collector receipt.
-        from scripts import audit_raw_baseline as auditor
+        import importlib
+        auditor = importlib.import_module("scripts.audit_raw_baseline")
 
         admitted = auditor.selection(admission, lambda: None, max_shards=512)
         require(len(admitted) == len(shards) and all(
