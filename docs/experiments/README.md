@@ -11,6 +11,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Overlay hot-load diagnostic](2026-09-23-overlay-hotload-diagnostic.md) | Exact-parity ABBA on 65,536 B rows: 62.38% less measured loading time; trainer benefit remains unmeasured |
 | [PFS-inspired frontier advancement](2026-09-14-pfs-frontier-advancement.md) | Proposed frozen-checkpoint search tests: diagnose admission, halving and interior bottlenecks; no runs or default changes |
 | [BT4 generation outcome policy](2026-09-22-bt4-outcome-policy.md) | Standalone six-man theoretical adjudication and unresolved-game discard contract; fake-tablebase CPU tests only, no generator wiring or real games |
 | [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
@@ -132,3 +133,9 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
 
 - [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
+
+- [2026-09-22: 500M shared CPU/GPU capacity requirements](2026-09-22-scale-compute-budget.md)
+- [2026-09-23: live E loader profile and prepared CPU comparison](2026-09-23-loader-profile.md)
+- [2026-09-23: three-worker CPU optimization plan](2026-09-23-optimization-work-plan.md)
+- [2026-09-23: BT4 buffering capacity and loader huge-page audit](2026-09-23-generation-memory-loader-thp-audit.md) — source-based memory floor and proposed child-process loader comparison; unmeasured.
+- [2026-09-23: Process-local NumPy huge-page loader comparison](2026-09-23-numpy-thp-loader-proposal.md) — held ABBA proposal; runner revision and quiet-slot admission remain.

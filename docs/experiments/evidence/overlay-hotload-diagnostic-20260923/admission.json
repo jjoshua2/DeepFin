@@ -1,0 +1,7 @@
+{
+  "status": "ADMITTED",
+  "plan_sha256": "b6f50aa77aacafd4a8e26592d061a6079bdeca332c06cb35d2bd4bbb44b3d2c9",
+  "admitted_by": "root independent reviewer",
+  "admitted_unix_seconds": 1790124168.0074291,
+  "quiet_workload_evidence": "Host ps verified sole heavy job E PID2156939; no SF generation, 87GiB available RAM and 843GiB disk. E window936 train24.128s wait8.301s. Admit small eight B shard ABBA only, cores16-17 nice19 threads2 GPU hidden; 180wall/120CPU seconds per arm. Independent 10 synthetic tests passed. No full trainer or GPU admission."
+}

@@ -1,0 +1,30 @@
+{
+  "target_positions": 500000000,
+  "calendar_days": 30,
+  "sf_fraction": 0.3333333333333333,
+  "bt4_fraction": 0.3333333333333333,
+  "ceres_fraction": 0.3333333333333333,
+  "bt4_full_corpus_label_gpu_days": 8.76,
+  "ceres_full_corpus_label_gpu_days": 4.23,
+  "one_epoch_training_gpu_days": 4.7,
+  "cpu_availability": [
+    1.0,
+    0.5
+  ],
+  "gpu_availability": [
+    1.0,
+    0.8
+  ],
+  "label_reuse": [
+    false,
+    true
+  ],
+  "status": "ILLUSTRATIVE_CAPACITY_REQUIREMENTS_NOT_MEASURED_SCHEDULE",
+  "assumptions": [
+    "All 500M positions are freshly generated and labeled; no credit for existing banks.",
+    "Labeling and training inputs are provisional planning estimates from prior discussion, not newly verified throughput.",
+    "One shared GPU; generation, remaining labeling and one training epoch consume a common budget.",
+    "Reuse case assumes exact generating-teacher policy and value outputs meet final label contract; implementation and throughput unqualified.",
+    "CPU and GPU budgets may overlap, but dependency, disk, validation, startup and evaluation overhead are not scheduled."
+  ]
+}
