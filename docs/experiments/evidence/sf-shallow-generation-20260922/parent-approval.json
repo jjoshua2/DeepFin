@@ -1,0 +1,9 @@
+{
+  "status": "APPROVED",
+  "plan_sha256": "8eea58cde112942ef1ed6c94d0778e3d33e31c66204331d4766c6fb97a99f7f6",
+  "runner_sha256": "25c3ac0be09f3473f3d9e86af1fbe85bf1b88c71776bca405359263f035d02fd",
+  "reviewer": "/root",
+  "approval_source": "collaboration message prior launch: personally rehashed and CPU preflight PASS; runtime diff docs and separate scalar harness only",
+  "recorded_at": "2026-09-22T23:37:58.603059+00:00",
+  "scope": "Two 175-second full-width d8/d6 CPU generation arms; no GPU, no root-only/quality claim"
+}
