@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Host-overlap runner preparation](2026-09-22-host-overlap-runner.md) | Frozen-runtime CPU qualification and bounded OFF/ON GPU pair tooling; no full-stream or GPU launch yet |
 | [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
 | [Bend subset successor and full ordinal proof](2026-09-21-bend-subset-successor.md) | Actual U64 borrow, compact successor, full Nat-indexed order/coverage/nonduplication and period; affine tables remain separate |
 | [Bend compact-index bijection](2026-09-21-bend-compact-index-bijection.md) | Nine new universal PEXT/PDEP range/inverse/bijection laws; carry-rippler ordering remains separate |
@@ -80,6 +81,9 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 | [Varying-horizon online controller](varying_horizon_online_controller.md) | Preregistration and staged evaluation of online search continuation |
 | [Value head architecture](value_head_arch.md) | Historical April 2026 experiments |
 | [Historical ledger](../experiment_ledger.md) | Frozen July–September 2026 record, including yardsticks, gotchas and recovery snapshots |
+| [256-shard actual-trainer storage preregistration](2026-09-21-packed-trainer256.md) | 35-cohort NVMe/ZIP full tensor parity passed; guarded actual-trainer pair prepared, GPU unlaunched |
+| [Storage observer retry and BT4 results](2026-09-22-packed-observer-retry.md) | First-batch observer schema failure preserved; corrected real-sampler regression and fresh retry; BT4 exact pipeline screen passed |
+| [Bound packed output accounting](2026-09-22-packed-output-accounting.md) | Removes repeated output walks during input verification; existing caps retained, no new GPU launch |
 | [BT4 complete pipeline screen](2026-09-21-bt4-pipeline-benchmark.md) | Fixed ABCCBA batch128 projected-decoder/prefetch comparison; exact inputs and outputs, complete labeling plus verification, reviewed and queued after factorial matches |
 
 These descriptions identify the records, not the state of a running experiment.

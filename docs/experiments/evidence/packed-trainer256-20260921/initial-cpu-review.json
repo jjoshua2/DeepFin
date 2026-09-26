@@ -1,0 +1,45 @@
+{
+  "status": "APPROVED",
+  "plan_sha256": "8d70bbb0495ec04ebe81bf8b1cc1ce69da45e82f72cf54e07fee6606b43ca193",
+  "scope": "Single bounded CPU packing and full ordered tensor qualification only; no GPU training admission.",
+  "runtime_entries_verified": 2862,
+  "runtime_commit_verified": "7f2c0ca55cbe0a12b08cc80ab107422f290880da",
+  "helper_interpreter_selection_pins_verified": [
+    {
+      "path": "/tmp/packed-trainer256-preparation-plan-20260921.json",
+      "sha256": "be5d0fb0ec0cf0f1c407bdbb057721ba9e8198b479ffe6e9525ec8d6b9afb778"
+    },
+    {
+      "path": "/usr/bin/python3.10",
+      "sha256": "d6bca2b84e73c7775a0dd5e6a76899cfe4ee62863d7c8f88513811d1fda23f49"
+    },
+    {
+      "path": "/home/josh/projects/chess-worktrees/packed-trainer-20260921/scripts/run_packed_trainer_preparation.py",
+      "sha256": "f3662d9a6293187bf9c7a0ed3da68a9322a76041611a2fda1b5cdc43986cf0b0"
+    },
+    {
+      "path": "/home/josh/projects/chess-worktrees/packed-trainer-20260921/scripts/prepare_packed_trainer.py",
+      "sha256": "0670d372dc8f2f610ab73157b6eedf8dc5c737479877aabcc34226df586f399c"
+    },
+    {
+      "path": "/home/josh/projects/chess-worktrees/packed-trainer-20260921/scripts/qualify_packed_trainer_preparation.py",
+      "sha256": "20e77a1d69b18a104a6c67de4026d07a4bf7f651661a2bb38b0c32751d7a3273"
+    }
+  ],
+  "independent_tests_passed": 9,
+  "review": [
+    "Exact runtime roster, allfilebytes/confinedsymlinks/HEAD and helper/interpreter/selection pins independently checked.",
+    "Allcontrol/output/external roots fresh at review.",
+    "Reviewhash and exactapprovedplan gate required before any preparation.",
+    "1192second SIGALRM starts beforepreflight,8second cleanupreserve; twoCPUcores12,13,nice19,threads2,GPUhidden.",
+    "Owned group receivesTERM/KILL even afterleaderexit; independent exitedleader/descendant regressionPASS alongsideSTOP/RAM/exit7 cleanup.",
+    "40GiBRAM/150GiBdiskfloors and10GiBaggregateallocationincludingreservedruntime enforced; finalruntime/helperrepins andguardbeforePASS.",
+    "FalsePASSafterqualificationdigestfailure fixed: digest+guard beforePASS andexceptsetsINCOMPLETE.",
+    "Preparation verifiesZIPmemberbytes againstsources; fullqualification requires2runs all1963948rows and matchingorderedtensors."
+  ],
+  "limits": [
+    "Parent maylaunch onlythissingleCPU preparation usingthisreceipt pin.",
+    "Actual preparation notexecuted byreviewer; successfulCPUreceipt requiredbeforeseparateGPUbenchmark review.",
+    "Installeddependencyversions recorded; complete frozenroster coversproject/nativefiles,notentiresitepackages."
+  ]
+}

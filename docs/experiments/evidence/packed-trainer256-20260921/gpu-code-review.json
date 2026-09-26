@@ -1,0 +1,32 @@
+{
+  "status": "APPROVED_CODE_PENDING_FINAL_GPU_PLAN",
+  "independent_tests_passed": 17,
+  "file_sha256": {
+    "scripts/run_packed_trainer_pair.py": "14bf22b191904eee64bc0baa006bfe1d178a7668f069b59157af5527d786433a",
+    "scripts/packed_trainer_probe.py": "a8e7ddfedb906b5873d0801ac3298551e9178f8758e9d61216ff51369b49a0a8",
+    "scripts/run_packed_trainer_preparation.py": "91e04bc58117d187d6028f77fea73672e85f451c170de5f14f737835e5781a09",
+    "tests/test_packed_trainer_pair.py": "1acbb314add5ee7df7edadeb75f8ba27cdfc97e4b33ff6f13d59b98ec67eb1b4",
+    "tests/test_packed_trainer_probe.py": "af220683d20ef4c7906c2cb8aadb976b160600f4d24a50e34466a91c1e9c1661"
+  },
+  "resolved_findings": [
+    "Pair owns shared GPU flock; child inheritsFD and probe authenticatesinode/flock.",
+    "BT4 prerequisite requiresqueue logged/descriptorbinding/completionPASS/outer0.",
+    "Sourcebytes/ZIPs/stagedrosters authenticatedbefore andaftereacharm.",
+    "HardSIGALRM uses min(45minarm,90minpair)with8secondcleanupreserve."
+  ],
+  "measurement": "Actualtrainersummary optimizer/samplecoverage andfinite loss; matchinginitialweights andorderedremapped gameid/ply; excludeexactfirsttwo88stepwindows, compareactualsamples/train_time ratio>=0.90.",
+  "limits": [
+    "NoGPUqueue orlaunchapproval untilamendedfullstreamqualification PASS andfinalimmutableplan reviewed.",
+    "Oneexternalfirstcacheaffectedpair only; no500Mcoldstorage inference."
+  ],
+  "additional_reproduced_blocker": "RESOLVED: original real SIGALRM-after-TERM reproducer now defers exception until TERM-ignoring child is killed and reaped; three real SIGINT/TERM/ALRM regression tests independently pass.",
+  "qualification_closure": {
+    "status": "PASS",
+    "qualification_sha256": "cf3cb25f01812861fe8076dc61b0decfa92dece56b97379a9e62be8300c9da3f",
+    "rows_per_arm": 1963948,
+    "sequence_sha256": "c39d8f17230b3ab22cbe4203cca15d3e314085a94df795cd12b58fbbf0300707",
+    "corrected_seconds": 748.0450980379828,
+    "total_including_preserved_failure_seconds": 1374.334299265931,
+    "separately_banked_streams_equal_final_runs": true
+  }
+}
