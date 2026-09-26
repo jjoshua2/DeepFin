@@ -5,6 +5,7 @@ on:
     paths:
       - "native/bend_engine/tree_probe/**"
       - "native/bend_engine/install_bend.sh"
+      - "native/bend_engine/install_ci_bend.sh"
       - "native/bend_engine/resolve_latest.py"
       - "native/bend_engine/probe/chess_bridge.c"
       - "native/bend_engine/probe/chess_call.c"
@@ -17,6 +18,12 @@ on:
       - "chess_anti_engine/mcts/_mcts_tree.c"
       - "chess_anti_engine/mcts/_mcts_tree.pyi"
   workflow_dispatch:
+    inputs:
+      compiler:
+        description: "PR checks use the pinned U64 fork; upstream latest is opt-in compatibility testing"
+        type: choice
+        default: pinned-fork
+        options: [pinned-fork, upstream-latest]
 
 jobs:
   probe:
@@ -34,17 +41,21 @@ jobs:
       - name: Install DeepFin CPU test environment
         run: uv sync --locked --extra dev --extra cpu
 
-      - name: Install bun
-        run: |
-          if ! command -v bun >/dev/null 2>&1; then
-            curl -fsSL https://bun.sh/install | bash
-          fi
-          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
 
-      - name: Install latest Bend
+      - name: Install explicitly selected Bend compiler
         env:
           BEND_NO_TELEMETRY: "1"
-        run: native/bend_engine/install_bend.sh
+          GITHUB_TOKEN: ${{ github.token }}
+          BEND_COMPILER: ${{ inputs.compiler || 'pinned-fork' }}
+        run: |
+          case "$BEND_COMPILER" in
+            pinned-fork) native/bend_engine/install_ci_bend.sh ;;
+            upstream-latest) native/bend_engine/install_bend.sh ;;
+            *) echo "error: unsupported compiler selection" >&2; exit 2 ;;
+          esac
 
       - name: Build and verify Bend two-ply MCTS parity
         env:
