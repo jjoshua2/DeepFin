@@ -1,0 +1,51 @@
+{
+  "status": "PASS_INDEPENDENT_READ_ONLY_REVIEW",
+  "checked_utc": "2026-09-21T15:11:49.081005+00:00",
+  "reviewer": "/root/factorial_receipt_review",
+  "validation": {
+    "completed_arenas": [
+      "B_A",
+      "C_A"
+    ],
+    "checks": [
+      "operator.registered_spec validates descriptor hash and all pinned files",
+      "arena runtime HEAD and clean tracked diff verified",
+      "runner.bind revalidated donor lineage and live checkpoint, summary, initial-state bytes",
+      "complete receipt plan_sha256 and bound donor objects match",
+      "bank SHA256 matches receipt",
+      "operator.harvest_results_jsonl matches receipt result exactly",
+      "operator.validate_arena_bank validates 256 games, 128 opening/color-swapped pairs and score",
+      "outer supervisor returncode 0"
+    ],
+    "receipts": {
+      "B_A": "d6248daad78f7c2a6950f74c9dcd8b8e24b21761f6abb11ae430aeb7c9259490",
+      "C_A": "c1275f7c34aaf737e7ed56d6ae4cb8f675da9193fd51ec9f489027527981c34c"
+    },
+    "queued_arenas": {
+      "D_C": "PASS descriptor/code/runtime/plan pins, destination equals plan parent, reference donor binding; D pending",
+      "D_B": "PASS descriptor/code/runtime/plan pins, destination equals plan parent, reference donor binding; D pending"
+    }
+  },
+  "canonical_inputs": {
+    "arms": [
+      "A",
+      "B",
+      "C"
+    ],
+    "staged_shards_each": 7108,
+    "same_ordered_base_paths": true,
+    "same_source_partition": true,
+    "B_C_same_identity_and_base_content_pins": true,
+    "ordered_base_and_row_identity_sha256": "7681568dc77a71dd65ef33cca504457914bc13b28c659b06e61ab885f88edcdf",
+    "limitation": "Verified canonical staged inputs and scheduler determinism by code inspection, not replayed complete 58M-row loader. Realized physical hashes each equal own plan and differ across arms because paths/content are hashed. Canonical batch stream hash not present."
+  },
+  "repair_review": {
+    "path": "/tmp/reconcile_factorial_receipts_20260921.py",
+    "sha256": "8dc1be73365666f0a23683f233180a033714455f7bec8f3473c61aef80c45a3e",
+    "verdict": "APPROVE",
+    "reason": "Under existing operator lock reads current queue/state, checks exact known immutable receipt hashes and successful terminals, preserves descriptors, snapshots originals and intended update, changes only two completed statuses/results/provenance and appends completed IDs; readback verifies writes. Active D and queued jobs untouched.",
+    "limitation": "Queue and STATE are separately atomic files; a crash between replacements requires recovery from stored intended.json. Snapshots/intended precede mutation; no GPU restart or rerun."
+  },
+  "queue_mutated": false,
+  "gpu_jobs_launched": 0
+}

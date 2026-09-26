@@ -1,0 +1,52 @@
+{
+  "status": "FINITE_FIXTURE_PASS",
+  "checks": {
+    "no_error": true,
+    "exact_696_case_arm_coverage": true,
+    "all_requested_depths_complete": true,
+    "score_rank_bestmove_exact": true,
+    "wall_bound": true,
+    "cpu_bound": true,
+    "all_232_groups_complete": true,
+    "nodes_and_tbhits_exact": true,
+    "empty_reload_off_unmaps": true,
+    "actual_probe_maps": true,
+    "on_resets_retain_exact_maps": true,
+    "full_discovery_510_each": true,
+    "root6_actual_tbhits": true,
+    "seven_to_six_actual_tbhits": true,
+    "probe_limit0_zero_tbhits": true
+  },
+  "option_variant_groups_changed_vs_normal": {
+    "probe_limit_0": 8,
+    "rule50_false": 0
+  },
+  "timing_same_binary_disabled_over_enabled": {
+    "rootd8": 2.7291378984960786,
+    "rootd10": 2.508132454850326,
+    "all_d8": 1.2622141399483544
+  },
+  "qualification_wall_seconds": 51.99762348103104,
+  "qualification_child_cpu_seconds": 36.755762,
+  "build_wall_seconds": 48.11448020202806,
+  "limitations": [
+    "Finite 72-case fixture agreement is not universal semantic proof.",
+    "Fixed original-disabled-enabled order, shared OS file cache; single-pass timing screen, not production throughput measurement.",
+    "500M target throughput requires full generator confirmation before adoption.",
+    "No deployed binary replacement; candidate requires GCC15 libstdc++ runtime at /home/josh/.local/gcc-15.3/lib64.",
+    "50MoveRule toggled on eight transition fixtures; changed-vs-normal count below states whether this bank exercises an observable effect."
+  ],
+  "evidence_sha256": {
+    "sf_build_guard.py": "0c8e43aefd471a92b7f796cba24fc3fdbd8504d20c587202258be40ed7eda5f6",
+    "qualify_sf_retention.py": "afa755afb60a19732a29b9cb96fbe63be09bb5f15726df8ddbaa5ced9129edfd",
+    "uci_raw.jsonl": "4384138db80b75f521a04a99ea2734b30d80430201beecb58fc9a264f4627130",
+    "lifecycle.jsonl": "71065898e69c8c8ef5331d10c9d33e98c1429b74dae9b5ada971fc557d116060",
+    "results.jsonl": "ab38bda79b50b0a6c4386361d6675a3bfdbe88da37c3bd637dfc84b019d24d65",
+    "qualification.log": "c052d50e413694e0f2f3bfaf1830c66264a973e5f57705d4e233d1a49a65d335",
+    "build_result.json": "7fc1ae2aac266af9a442eec02fd109adee52cc1d9018caac025c47db7a66a270",
+    "manifest.json": "e0b609c8bc0bfb5ea23416c2ec6baeee6d06fd0df29b904e8d157841fd7e144f",
+    "build.log": "5aed321717115bdf9e6806e4b54a627ab99aff986d770277ed67a050feeef63d",
+    "validate_sf_retention.py": "cc16c0b23764914e05f501e9385826be75f7300d389d8e061fef71628db3784e",
+    "summary.json": "1e07a0ce4f92d166b335af5ea5a895a678b8e568765356169ea72c897e10c063"
+  }
+}
