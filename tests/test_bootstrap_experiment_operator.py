@@ -6,6 +6,8 @@ import subprocess
 import pytest
 
 SPEC = importlib.util.spec_from_file_location('bootstrap_operator', Path(__file__).parents[1] / 'scripts/bootstrap_experiment_operator.py')
+assert SPEC is not None
+assert SPEC.loader is not None
 op = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(op)
 
@@ -110,7 +112,7 @@ def test_arena_launch_caps_threads_and_persists_intent(tmp_path, monkeypatch):
         return Child()
     monkeypatch.setattr(op.subprocess, 'Popen', start)
     op.launch_arena(item)
-    wrapper = (Path(item['out'])/'launch_parent.sh').read_text()
+    wrapper = (Path(str(item['out']))/'launch_parent.sh').read_text()
     assert 'TORCHINDUCTOR_COMPILE_THREADS=2' in wrapper
     assert 'OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2' in wrapper
     assert '--kill-after=30s 100s' in wrapper
