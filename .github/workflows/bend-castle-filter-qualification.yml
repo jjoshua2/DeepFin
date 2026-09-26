@@ -1,0 +1,208 @@
+name: Castle final-filter qualification
+'on':
+  push:
+    branches: [feat/bend-castle-filter-dev-20260926]
+    paths: [.github/workflows/bend-castle-filter-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: b3bbfd5c38f8647cece0ce1d4d541e26fbb6e29f
+      TARGET: feat/bend-castle-filter-20260926
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b3bbfd5c38f8647cece0ce1d4d541e26fbb6e29f
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact candidate and verify unchanged parent evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/castle-filter-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/source.b64"
+          for blob in 0a93c65aab2f9e585e733b9fefd2b75f3d5c57ea b79009a8a62fe0926487992ba2cd84357c43de81 7d06619ab78f94970abf9553bec744fe8f24fc7c a46f457fa3dee2057b7a0e8a83b0159736898da3; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/source.b64"
+          done
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108425561820 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP']);e=Path(os.environ['EVIDENCE'])
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='50dafd3dc9015e4f42cc6f68d10d66deb70f0d88'
+          old=Path('docs/experiments/evidence/bend-castle-emission')
+          q=json.loads((old/'qualification.json').read_text())
+          assert q['qualification']=='PASS' and q['modular_laws']==166 and q['modular_controls']==487
+          f=json.loads((old/'hosted-focused.json').read_text())
+          assert f['focused_gate']=='PASS' and f['consumer']=='PASS' and f['controls_gate']=='PASS'
+          assert f['new_law_count']==6 and len(f['negative_controls'])==17 and all(x['rejected'] for x in f['negative_controls'])
+          inherited=json.loads((old/'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(inherited)==511
+          for p,h in inherited.items():assert digest(Path(p))==h,p
+          job=json.loads((e/'parent-job.json').read_text())
+          assert job['id']==108425561820 and job['run_id']==36249795989 and job['status']=='completed' and job['conclusion']=='success'
+          encoded=(t/'source.b64').read_bytes();assert len(encoded)==21472
+          patch=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(patch)==63752 and hashlib.sha256(patch).hexdigest()=='8ddfa5d3ac3a1af82b9cae92b969a2bdcb4af6513bc2a617e1a477ddbd7eeac0'
+          (e/'source.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(e/'source.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'source.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='af7e8858e9c6a0e41e609b00f37de32b417081af'
+          files=git('diff','--cached','--name-only').splitlines();assert len(files)==14
+          assert all(p.startswith('native/bend_engine/standalone/proofs/castle_filter/') or p=='docs/experiments/2026-09-26-bend-castle-filter.md' for p in files)
+          for p,h in inherited.items():assert digest(Path(p))==h,p
+          hashes={p:digest(Path(p)) for p in git('ls-files','native/bend_engine').splitlines() if Path(p).is_file()};assert len(hashes)==524
+          record={'base':os.environ['BASE'],'source_tree':git('write-tree'),'source_patch_sha256':hashlib.sha256(patch).hexdigest(),'changed_files':files,'parent_manifest_matches':511,'candidate_source_sha256s':hashes,'retained_parent_laws':166,'retained_parent_controls':487,'parent_qualification_sha256':digest(old/'qualification.json'),'combined_wrapper_executed':False,'independent_review':False}
+          (e/'source-identity.json').write_text(json.dumps(record,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove castling provenance through full legal generation and filtering'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - name: Check six public source laws and all seventeen controls
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/castle_filter/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Check paired producer, filter and complete legal moves in four native modes
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/castle_filter/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Check original compiler source suite and pin contracts
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools using normal extension compiler
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify all completed outcomes and publish fresh feature branch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          git diff --exit-code
+          test "$(git ls-remote origin refs/heads/feat/bend-castle-emission-20260926 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(n):return json.loads((e/n).read_text())
+          def canon(x):return hashlib.sha256(json.dumps(x,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          ident=read('source-identity.json');f=read('focused.json');n=read('native.json')
+          assert len(ident['candidate_source_sha256s'])==524
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert f['focused_gate']=='PASS' and f['controls_gate']=='PASS' and f['consumer']=='PASS' and f['new_law_count']==6
+          assert f['consumer_raw'].strip()=='All terms check.' and len(f['negative_controls'])==17 and all(x['rejected'] for x in f['negative_controls'])
+          kinds=collections.Counter(x['kind'] for x in f['negative_controls']);assert kinds['source semantic/refinement']==8 and kinds['manifest/import policy']==8
+          assert canon(f['source_sha256s'])=='a94bb565f7ccadd6fea75ed20b6fa95226dd3ec5e387eaa17c66a3432ab651ab'
+          for p,h in f['source_sha256s'].items():assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+          assert n['native_gate']=='PASS' and n['fixture_count']==402 and n['distinct_inputs']==402 and n['deduplicated_candidates']==0
+          assert n['fixture_sha256']=='810f4bec0c206ea10a6fa1de1cda20fd5d52b2209aea3a3bb6d66ddaff0e1d91'
+          assert n['stages_per_request']==3 and n['complete_child_boards_per_mode']==11699 and n['complete_board_fields_per_mode']==222281
+          assert n['full_list_castles_per_mode']==292 and n['destination_attacked_removed_cases']==4 and len(n['modes'])==4
+          assert all(x['records']==11699 and x['castles']==292 and x['invalid_rejections']==7 and x['output_sha256']=='2f53201171c96d8aad12cda680054bfd4c4e90d57b0d97f534f07102d9d8310e' for x in n['modes'])
+          assert len(n['mutations'])==3 and all(x['rejected'] and x['compiled_and_executed'] for x in n['mutations'])
+          assert n['mutations'][2]['source_rejection']['rejected'] and n['mutations'][2]['source_rejection']['location']=='Filter.after_then'
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-castle-filter');d.mkdir(parents=True,exist_ok=False)
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          q={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'new_laws':6,'new_controls':17,'control_categories':dict(kinds),'retained_parent_laws':166,'retained_parent_controls':487,'modular_laws':172,'modular_controls':504,'combined_wrapper_executed':False,'native_source_entries':524,'independent_review':False,'claim':'Every flag-two member of actual complete legal_moves has either exact guarded castling route and preserves a consistent input Board. No assumed absence from scan; not semantic attack or general move-generation soundness/completeness.'}
+          (d/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes all six public laws, importing consumer, seventeen controls, all four native modes and three actual-code corruptions, original compiler source/pin checks and unchanged whole-repository lint on source `{os.environ['SOURCE']}`."
+          paragraphs=['## Completed hosted qualification',headline,
+            'The actual full legal_moves result now has a flag-two provenance theorem: actual ordinary scanning produces no castling tags, both actual castle_side calls attach their guards/routes, and both final-filter paths preserve that classification. A flag-two result member therefore has a certified route without a caller-supplied absence-from-tail premise. Input Board consistency plus the prior guarded-update theorem yields complete actual child-Board representation consistency.',
+            'Continuation-based dependent proofs thread real affine tables once through scan, producer and filter operations. They do not clone tables or assume equality between separate executions. All actual output branches are connected to their imported implementation. The generic filter theorem preserves arbitrary per-Ply predicates; it does not prove that an ordinary fast-path safety bypass is semantically justified.',
+            'The focused command executes all six laws and seventeen controls together. Eight controls require ordinary expected/observed semantic/refinement failures at specified locations; eight enforce manifests/import safety; one synthetic warning-output unit is not another compiler execution. Crashes, missing imports, affine/parser errors and timeouts are not counted as semantic rejection.',
+            'The native probe constructs actual current Tables.build and checks three stages per request: both castling sides with selected old tails, those sides plus the final filter, and actual complete legal_moves. Each mode passes402 distinct requests,11,699 complete child Boards and222,281 U32 Board-field comparisons, including292 full-list castling occurrences and seven malformed requests. Full move ordering, raw metadata and all eight child bitboards are compared against independent square sets and geometric movement/attacks.',
+            'Four destination-only attack examples retain the castle before filtering but remove it in both final-filter and complete-legal stages. An independent slow king-check oracle agrees with the external optimized reference on all finite full-list fixtures. These are actual executable checks, not universal semantic attack proofs. Fixtures have representation consistency and one king per color, but are not asserted reachable; modes repeat fixtures rather than disjoint games. Arbitrary inherited tail children are compared, not certified legal or consistent.',
+            'Actual-code mutations make scan manufacture flag two, make the fast filter invent a move, or bypass the final checked filter. All compile and execute before independent wrong-value rejection. The third also fails the exact continuation refinement at Filter.after_then. The earlier local expectation that this consumer would still pass was a harness mistake: exact branching refinement is stronger than the abstract predicate-preservation consequence. That failure is retained; no proof was changed to force the expectation.',
+            'All511 inherited source-manifest entries remain unchanged; all524 candidate entries match before evidence publication. Retaining exact166-law/487-control parent receipts yields modular172 laws/504 controls with this newly executed6/17 gate. The complete172-law wrapper was not run. The two-castle source example uses a small arbitrary zero table only as a nonvacuity witness, not a correct attack table.',
+            'Original compiler16-laws/seven-controls and all12 pin tests pass. Hosted Bun1.4.2 uses system Clang only for native probes; locked Python3.13/uv0.12.10 CPU dependencies use the normal extension compiler. Unchanged Ruff/Basedpyright/Vulture passes, resolving the local missing-tools gap without relabeling its failed receipt. Earlier affine/dependent-binding/template failures remain historical and were resolved without editing production or compiler sources.',
+            'Only documentation,index and evidence follow source checking. Self-review only. No earlier contract, production runtime, compiler input, permanent workflow, routine perft, search, model/GPU, training or benchmark changed. No additional Python application responsibility moved into Bend. Checker/Base,native lowering/storage,ABI,toolchain,libraries,OS and hardware remain trust boundaries; existing strict-TypeScript,snapshot-lowering and closed-builder limitations remain.',
+            'Next decisive P3 work is independent semantic start/transit/destination attack correctness and justification of the ordinary fast-filter bypass, followed by legal metadata and general move-generation soundness/completeness. The castling full-list provenance and guard-derived representation-preservation connection is now established, not still wholly open.'
+          ]
+          rec=Path('docs/experiments/2026-09-26-bend-castle-filter.md');rec.write_text(rec.read_text()+'\n\n'+'\n\n'.join(paragraphs)+'\n')
+          idx=Path('docs/experiments/README.md');text=idx.read_text();anchor='| Record | Scope |\n| --- | --- |\n';assert text.count(anchor)==1
+          idx.write_text(text.replace(anchor,anchor+'| [Castling through the final legal filter](2026-09-26-bend-castle-filter.md) | Six source contracts compose scan, both castling sides and final filters into actual legal_moves provenance and guarded update preservation; modular172/504; independent king-safety semantics remain separate |\n',1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          note='## Latest P3 full legal-list castling provenance\n\n'+headline+'\n\nEvery flag-two member of actual Chess.legal_moves now has a true king-side or queen-side producer guard and the exact complete route Ply. The ordinary scan is proved not to manufacture flag two; both producer calls and full/fast final filters preserve the classification. Therefore the theorem needs no assumed absence from an intermediate caller list. On a consistent input Board, applying that member preserves representation by the existing guard-derived castling update result.\n\nThe source proof retains arbitrary actual affine tables and raw metadata. It is not independent attack correctness or universal justification of fast-path king-safety bypass. Native actual current tables and complete legal lists pass402 requests across four modes, including four destination-attacked castles correctly removed after filtering. Modular172/504 retains exact166/487 parent evidence; no full aggregate was executed. See [the dated readout](experiments/2026-09-26-bend-castle-filter.md). No additional application responsibility moved into Bend.\n'
+          m.write_text(title+'\n\n'+note+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify full legal-list castling provenance and final-filter evidence'
+          git switch -c "$TARGET"
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git log -2 --format='%H %s' > "$RUNNER_TEMP/final/published-commits.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git cat-file commit "$SOURCE" > "$RUNNER_TEMP/final/source-commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw source-commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: castle-filter-qualification
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/castle-filter-evidence/
+          retention-days: 14
