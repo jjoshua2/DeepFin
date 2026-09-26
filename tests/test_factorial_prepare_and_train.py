@@ -191,6 +191,9 @@ def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypa
     runner = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = runner
     spec.loader.exec_module(runner)
+    # This test exercises receipt/command binding, not host-capacity admission.
+    # Production still enforces the unchanged 32 GiB MemAvailable reserve.
+    monkeypatch.setattr(runner, "available_memory_bytes", lambda: 64 * 2**30)
     monkeypatch.setattr(
         sys,
         "argv",
