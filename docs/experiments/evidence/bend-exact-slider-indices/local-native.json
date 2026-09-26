@@ -1,0 +1,65 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "source_sha256s": {
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/LAWS.bend": "cea2bd21b74162d11647a70fb5ca103a7dc93063a366c5f76a361c1a0f9f4608",
+    "standalone/proofs/PROOF.bend": "dde73c6b6cc8371a0ff8628483b5fb72e74194414cd31f2e49125b0f3a14a249",
+    "standalone/proofs/Mask.bend": "515bf96ec739bdfcbefb26bfd5b9d8f4049f5f85862093760e9ee2bff1b3e4ee",
+    "standalone/proofs/u64/LAWS.bend": "e4b1f1b3bf993574e5daca56b3d729e7980232786ba4cf4438e61e95951adbaf",
+    "standalone/proofs/u64/PROOF.bend": "d4cd7e9934cd8f42bcea72da8f5d3035508ea47b5ec9ba34139808b5dffd3c71",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/proofs/layout/Spec.bend": "a08495ab3c27218154f6fd79091cd98b48e44d04d8f8b032e4f68f76531dcc89",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/proofs/address/probe.bend": "c4aaa53511996d51e4ad200b2dbb7745f41ea23a0dae31ba4fbbfdbadee599a8",
+    "standalone/proofs/address/verify_native.js": "cfc946552359e0ce4e49b4ce6f47e7e8e38ee77ebb09ce53cede9b56c430c880"
+  },
+  "distinct_operand_rows": 2070,
+  "chess_keys": 128,
+  "population_range": [
+    0,
+    64
+  ],
+  "chess_rows": 1536,
+  "raw_rows": 534,
+  "width_32_rows": 28,
+  "wider_than_32_rows": 253,
+  "truncation_counterexamples": 218,
+  "first_cycle_rows": 1906,
+  "cycle_or_later_rows": 164,
+  "modes": [
+    {
+      "mode": "generic",
+      "operand_rows": 2070,
+      "malformed_or_budget_rejections": 5,
+      "output_sha256": "51fb92afe49cb0895f6c8125e05a9a0a8e50c877c43f2ee3577df88d131d8caa"
+    },
+    {
+      "mode": "portable",
+      "operand_rows": 2070,
+      "malformed_or_budget_rejections": 5,
+      "output_sha256": "51fb92afe49cb0895f6c8125e05a9a0a8e50c877c43f2ee3577df88d131d8caa"
+    },
+    {
+      "mode": "native",
+      "operand_rows": 2070,
+      "malformed_or_budget_rejections": 5,
+      "output_sha256": "51fb92afe49cb0895f6c8125e05a9a0a8e50c877c43f2ee3577df88d131d8caa"
+    },
+    {
+      "mode": "ubsan",
+      "operand_rows": 2070,
+      "malformed_or_budget_rejections": 5,
+      "output_sha256": "51fb92afe49cb0895f6c8125e05a9a0a8e50c877c43f2ee3577df88d131d8caa"
+    }
+  ],
+  "cc": "clang version 17.0.0 (https://github.com/swiftlang/llvm-project.git 10999b6d034fe318f3d56c83bddb6572593a8bb0)",
+  "bun": "1.4.2",
+  "oracle": "Independent signed-coordinate chess masks, direct BigInt gather/scatter, and mathematical ordinal modulo capacity",
+  "candidate_recurrence": "The imported proofs/LAWS.at calls actual Subsets.next",
+  "scope": "Exact scalar index, actual recurrence states and reconstruction on bounded fixtures; wide-mask truncation controls are outside the <=32-bit theorem; NOT affine arrays, full engine or performance"
+}

@@ -1,0 +1,10 @@
+{
+  "returncode": 0,
+  "timeout": false,
+  "command": [
+    "/mnt/data/compact-work/bun",
+    "test",
+    "native/bend_engine/standalone/verify_compiler.test.js"
+  ],
+  "elapsed_seconds": 0.031982414999902176
+}

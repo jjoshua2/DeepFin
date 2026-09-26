@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Exact U32 slider indices](2026-09-21-bend-exact-slider-indices.md) | Eight source laws connect actual low32 lookup to full PEXT and recurrence order/recovery; prefix and affine storage remain separate |
 | [Bend slider-mask populations and sizes](2026-09-21-bend-slider-mask-bounds.md) | Eight scalar laws: all 128 actual masks, safe U32 block sizes, arbitrary-occupancy lookup-index bounds; offsets/affine table refinement remain separate |
 | [Full-width SF d8/d6 generation](2026-09-22-sf-shallow-generation.md) | Two equal-wall CPU generation arms; eligible rows, closed games, startup costs and limits; no strength or root-only generation claim |
 | [Bend subset successor and full ordinal proof](2026-09-21-bend-subset-successor.md) | Actual U64 borrow, compact successor, full Nat-indexed order/coverage/nonduplication and period; affine tables remain separate |

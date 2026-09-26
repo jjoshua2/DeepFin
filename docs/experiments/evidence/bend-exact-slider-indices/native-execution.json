@@ -1,0 +1,12 @@
+{
+  "returncode": 0,
+  "timeout": false,
+  "command": [
+    "/mnt/data/compact-work/bun",
+    "native/bend_engine/standalone/proofs/address/verify_native.js",
+    "/mnt/data/compact-work/bend",
+    "--report",
+    "/mnt/data/compact-work/checks/native.json"
+  ],
+  "elapsed_seconds": 5.591380881999953
+}

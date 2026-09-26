@@ -1,0 +1,5 @@
+{
+  "original_filename": "pin.stderr",
+  "original_sha256": "683e2a40234d09f29a08cb3ccbbb8db83416f3eda916253852636dfef6c8b7f6",
+  "raw_text": "\nnative/bend_engine/standalone/verify_compiler.test.js:\n(pass) fetch and source verifier share the exact documented U64 pin [0.06ms]\n(pass) fingerprint is independent of checkout location [1.36ms]\n(pass) nested effects and core inputs all count [0.32ms]\n(pass) core mutation changes fingerprint [0.95ms]\n(pass) effect mutation changes fingerprint [0.44ms]\n(pass) extra effects are not silently ignored [0.50ms]\n(pass) renaming unchanged effect bytes changes the fingerprint [0.52ms]\n(pass) missing core input is rejected [0.32ms]\n(pass) core symlinks are rejected [0.38ms]\n(pass) effect directory symlinks are rejected [0.40ms]\n(pass) mismatched source fails without mutating the checkout [0.50ms]\n(pass) build derives revision and revision-keyed cache from the pin reader [0.06ms]\n\n 12 pass\n 0 fail\n 19 expect() calls\nRan 12 tests across 1 file. [20.00ms]\n"
+}
