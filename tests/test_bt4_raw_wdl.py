@@ -174,6 +174,28 @@ def test_named_raw_value_reaches_same_rows_and_keeps_policy_bytes(
     )
 
 
+def test_value_first_graph_selects_policy_by_width_and_keeps_native_value(tmp_path):
+    class ValueFirstSession(Session):
+        def get_outputs(self):
+            return list(reversed(super().get_outputs()))
+
+    _source, pending = source3(tmp_path)
+    session = ValueFirstSession(dtype="float64", kind="probabilities")
+    outputs = session.get_outputs()
+    policy_name = outputs[tool.resolve_policy_output(session, None)].name
+    assert policy_name == "policy"
+    contract = tool.resolve_wdl_output(
+        session, {"output": "value_head", "kind": "probabilities"}, policy_name
+    )
+    attrs = produce(pending, session, contract)
+    assert session.requests == [["policy", "value_head"], ["policy", "value_head"]]
+    group: Any = zarr.open_group(str(pending.target), mode="r")
+    np.testing.assert_array_equal(group[tool.WDL_FIELD][:], np.concatenate(session.saved))
+    assert group[tool.WDL_FIELD].dtype == np.dtype("float64")
+    assert attrs["wdl"]["dtype"] == "float64"
+    assert verify(pending, {"output": "value_head", "kind": "probabilities"})["wdl"] == attrs["wdl"]
+
+
 @pytest.mark.parametrize(
     "bad", ["nonfinite", "mass", "negative", "dtype", "rows", "width"]
 )
