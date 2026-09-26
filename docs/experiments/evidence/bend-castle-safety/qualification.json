@@ -1,0 +1,31 @@
+{
+  "qualification": "PASS",
+  "run": "36255843579",
+  "source": "22518a81880d8746e6ca238e62c65f883474c2f3",
+  "source_tree": "4e23f5697058ea3a2ff1540f59a61d172af4c8dd",
+  "saved_chain_laws": 5,
+  "saved_chain_controls": 18,
+  "new_safety_laws": 4,
+  "new_safety_controls": 15,
+  "control_categories": {
+    "chain": {
+      "source semantic/refinement": 9,
+      "manifest/import policy": 8,
+      "synthetic output-wrapper unit; not compiler execution": 1
+    },
+    "safety": {
+      "source semantic/refinement": 6,
+      "manifest/import policy": 8,
+      "synthetic output-wrapper unit; not compiler execution": 1
+    }
+  },
+  "retained_parent_laws": 166,
+  "retained_parent_controls": 487,
+  "modular_laws": 175,
+  "modular_controls": 520,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 537,
+  "saved_chain_primary_files_unchanged": 13,
+  "independent_review": false,
+  "claim": "Full-generator castling provenance and mandatory full checked-step selection for arbitrary rays. Complete pair equivalence on guarded-castle-only lists. Not independent semantic attack correctness."
+}

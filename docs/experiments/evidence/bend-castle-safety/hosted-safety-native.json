@@ -1,0 +1,91 @@
+{
+  "native_gate": "PASS",
+  "compiler_identity": {
+    "source_files": 84,
+    "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "fixture_count": 1080,
+  "distinct_inputs": 1080,
+  "deduplicated_candidates": 0,
+  "fixture_sha256": "5629b8cff82a00c4bd7a3b52f3153439309cb18bf81ac0fb78259cb16c970549",
+  "zero_ray_requests": 270,
+  "destination_attacked_zero_ray_rejections": 4,
+  "duplicate_requests": 360,
+  "candidate_check_observations_per_mode": 1304,
+  "complete_child_boards_per_mode": 2272,
+  "board_fields_per_mode": 43168,
+  "modes": [
+    {
+      "mode": "generic",
+      "candidates": 1304,
+      "records": 2272,
+      "output_sha256": "52418f2b0ed36c3479f66e84aa1eccdd63ba88b993b9d14fb1fe4c2446bf6753",
+      "invalid_rejections": 7
+    },
+    {
+      "mode": "portable",
+      "candidates": 1304,
+      "records": 2272,
+      "output_sha256": "52418f2b0ed36c3479f66e84aa1eccdd63ba88b993b9d14fb1fe4c2446bf6753",
+      "invalid_rejections": 7
+    },
+    {
+      "mode": "native",
+      "candidates": 1304,
+      "records": 2272,
+      "output_sha256": "52418f2b0ed36c3479f66e84aa1eccdd63ba88b993b9d14fb1fe4c2446bf6753",
+      "invalid_rejections": 7
+    },
+    {
+      "mode": "ubsan",
+      "candidates": 1304,
+      "records": 2272,
+      "output_sha256": "52418f2b0ed36c3479f66e84aa1eccdd63ba88b993b9d14fb1fe4c2446bf6753",
+      "invalid_rejections": 7
+    }
+  ],
+  "mutations": [
+    {
+      "name": "drop-kings-from-sensitive",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "first_batch_index": 384,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: blockers output count: attacked-2\n+ actual - expected\n\n+ 'begin 2'\n- 'begin 1'\n         ^\n",
+      "output_sha256": "89e66b85bc8430d086fc8dfa98d2b2cf958d09004f4d03356d2ee34080844c9d"
+    },
+    {
+      "name": "exempt-castling-from-source-test",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "first_batch_index": 0,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: every guarded castle requires full check: rights\n+ actual - expected\n\n+ 'candidate 4 6 0 2 0'\n- 'candidate 4 6 0 2 1'\n                     ^\n",
+      "output_sha256": "31344f111539734da3a3d3f6644495869568bb8bebc2d26b87639a18d49fa9af"
+    },
+    {
+      "name": "bypass-required-fast-step",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "first_batch_index": 384,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: blockers output count: attacked-2\n+ actual - expected\n\n+ 'begin 2'\n- 'begin 1'\n         ^\n",
+      "output_sha256": "2202495c88fe2a0847402d8fe27d0021534666004c87781a44349cfdd643c804"
+    }
+  ],
+  "source_sha256s": {
+    "Boundaries.bend": "fe21cf18bd7cdfd4662a0d6cab39f3807e22b9fbd395730451136c44d4c4ad65",
+    "Connect.bend": "b7b819ecd8f154fcf25d7f25e80f16d030b13156ce95393a6fb9de5e0695d1f1",
+    "Cover.bend": "910cb49517766e62c191e4579880ace1a2ce52e0c50882a2a42c61fcf5a0b5fe",
+    "Filter.bend": "c622390188217b96171c2fe3f31fede778af5c8e7ebe52a6532d8c922bfb95b0",
+    "LAWS.bend": "7349534006e1a415ca763e2535273faccb6d4a951b02f9e93b2b16f225848701",
+    "PROOF.bend": "ba0b0e6921b42413ac04e0fbdf6c10311bcd52596c0a2f9ce07dad9e70811064",
+    "Required.bend": "92ba0bb48a8b1dcfed839619b40d82767c0431eb5ccdb8a7b5f82b86b523e517",
+    "Spec.bend": "53f4acbf368e1c1597f015530473ab51cd8c8d946bc8d598824a5a32881fdc60",
+    "consumer.bend": "1c2bf0628c5f9779a39ecfaf32fbe13a2a4bd16766d914d8715435dbdd846644",
+    "focused.js": "9a4940f5ff713796bbcaea73e796b8f939bd8e23b67f50fc125944ae8a2dbcbd",
+    "probe.bend": "edf2fd7d8f63394c5a390137e00a749cfdf39368ea1bc9234174fdb6ea976081",
+    "verify_native.js": "a61f995971b6254295420ae684830209bce2aa78d1a3cf635588588f32f5ee11"
+  },
+  "chess_sha256": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+  "generated_c_sha256": "ede6fe66f9d3797b10a31fea87f06876fee9fb040e6b2f376b93fef710b0cc7d",
+  "scope": "Actual current tables; castling-only lists from both castle_side calls or full legal_moves, including doubled lists. Required-check observations and complete actual blocker/full-filter ordered lists and child Boards match an independent coordinate reference for arbitrary selected ray masks. No complete noncastling legal-set oracle or general semantic attack proof."
+}
