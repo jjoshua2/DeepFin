@@ -6,6 +6,7 @@ Start here for experiment planning and readouts. [Project guidance](../../CLAUDE
 holds durable constraints; [evaluation](../eval_protocol.md) explains which
 measurements support which claims.
 For future bootstrap choices, see the [adaptive decision policy](2026-09-08-bootstrap-next-value-and-policy-contrasts.md#september-13-adaptive-decisions-for-the-remaining-bootstrap-research): registered result classification and the next research decision are separate.
+Gaps that remain after a pull request merges are listed in [pull-request follow-ups](../pr_followups.md).
 
 ## Records
 
