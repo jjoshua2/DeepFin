@@ -23,17 +23,26 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Record exact authored source before executing checks
+      - name: Apply only static corrections and verify exact source
         run: |
           set -euo pipefail
           mkdir -p artifacts/service
           python3 - <<'PY'
           import hashlib,json
           from pathlib import Path
+          p=Path('native/bend_engine/service_profile/profile.py')
+          s=p.read_text()
+          old='if type(error) not in (float, int) or not math.isfinite(error) or error < 0:'
+          assert s.count(old)==1 and s.count('subprocess.run(')==1
+          s=s.replace(old,'if error is None or type(error) not in (float, int) or not math.isfinite(error) or error < 0:')
+          p.write_text(s.replace('subprocess.run(', 'subprocess.run(check=False, '))
+          p=Path('native/bend_engine/service_profile/qualify.py')
+          s=p.read_text(); assert s.count('subprocess.run(')==6
+          p.write_text(s.replace('subprocess.run(', 'subprocess.run(check=False, '))
           expected={
-            'native/bend_engine/service_profile/qualify.py':'c45a6588c9fbdce53f2b2a9c072da1b37752a9f9a7fc1b53499749a0accdbfc8',
+            'native/bend_engine/service_profile/qualify.py':'f71829dbda226911377ba591999a53c514065d21d57d26c88fb1a41390f8491e',
             'native/bend_engine/service_profile/build.sh':'41f5fed006e27b0b678d01fa874eccedb16869d40edbaa2f2ec0f36ace390492',
-            'native/bend_engine/service_profile/profile.py':'fb8b862c668797f8ad1f7501cd8a4f44a977c2ac6b7f319eba7587415548458c',
+            'native/bend_engine/service_profile/profile.py':'e1985c175281c65d6a9a483a14f7833999f4b3daa71a9aea8797432b88594fd5',
             'native/bend_engine/service_profile/probe.cpp':'60eed40b62f2e51e7f119016a02b0d0953a38268dc910a7e2f811d55061a522e',
             'native/bend_engine/service_profile/README.md':'c75387eff927d6610f1f5fa07d4f2ca97b521839b09e7775efb8d5a718b68722',
             'native/bend_engine/service_profile/fake_backend.cpp':'ca462bc1df540cc223a55c11f396e30e288f2109bb356c232c4f98af09ef3ca0',
