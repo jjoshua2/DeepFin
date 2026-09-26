@@ -138,3 +138,5 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
 
 - [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
+
+| [NumPy THP hot-load screen](2026-09-23-numpy-thp-hotload.md) | Bounded ABBA loader screen found no benefit from disabling current madvise huge-page advice; no production default change |
