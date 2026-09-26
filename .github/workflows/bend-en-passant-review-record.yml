@@ -1,0 +1,94 @@
+name: Record en-passant and castling review
+'on':
+  push:
+    branches: [feat/bend-en-passant-qualification-dev-20260925]
+    paths: [.github/workflows/bend-en-passant-review-record.yml]
+permissions:
+  contents: write
+defaults:
+  run:
+    shell: bash
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      SOURCE: fd9543d5cc1d5d07db495bfd325f5d10bd3c7cc8
+      TARGET: feat/bend-en-passant-update-20260925
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fd9543d5cc1d5d07db495bfd325f5d10bd3c7cc8
+      - name: Verify exact archived source bytes and link separately checked results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git rev-parse HEAD^{tree})" = 1538ea1a6dbec57483ba9158d9ff9cf6d1445c82
+          test "$(git ls-remote origin refs/heads/$TARGET | cut -f1)" = "$SOURCE"
+          : > "$RUNNER_TEMP/review.b64"
+          for blob in 5a7d8fd2644852c88c8ffce185fa26f902240ee0 ff87d53f30a35629d97e5ddb162078f9a5f04346 0ef9b654a6024daabfa19d888859035bd8adc4fc; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/review.b64"
+          done
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,os
+          from pathlib import Path
+          t=Path(os.environ['RUNNER_TEMP'])
+          encoded=(t/'review.b64').read_bytes();assert len(encoded)==20128
+          raw=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(raw)==88289 and hashlib.sha256(raw).hexdigest()=='a4cda94cb22186ddf988a6be009064602572463e016ce968e0a313c4dd4ee70e'
+          files=json.loads(raw);assert len(files)==13
+          prefix='docs/experiments/evidence/bend-en-passant-update/'
+          manifest=json.loads(Path(prefix+'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(manifest)==482
+          def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          for f,h in manifest.items():assert digest(Path(f))==h,f
+          for name,text in files.items():
+              p=Path(name);assert name.startswith(prefix) and '..' not in p.parts and not p.exists(),name
+              p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
+          archive=Path(prefix+'castling-review')
+          report=json.loads((archive/'castle-review.json').read_text())
+          assert report['supplementary_castling']=='PASS' and report['new_registered_laws']==0 and report['source_consumer']=='PASS'
+          assert report['board_rows_per_mode']==4360 and report['distinct_input_pairs']==4360 and report['conditional_preservation_cases']==264
+          assert len(report['modes'])==2 and all(m['board_fields']==82840 and m['invalid_rejections']==9 for m in report['modes'])
+          assert len(report['mutations'])==2 and all(m['source_status']==1 and m['compiled_and_executed'] and m['rejected'] for m in report['mutations'])
+          assert report['premise_rejection']['rejected']
+          assert json.loads((archive/'castle-consumer-receipt.json').read_text())['raw_text'].strip()=='All terms check.'
+          assert json.loads((archive/'castle-review-receipt.json').read_text())['exit_code']==0
+          closure=json.loads((archive/'source-manifest.json').read_text());assert len(closure)==28
+          for f,h in {**closure,**report['source_sha256s']}.items():
+              p=archive/(Path(f).name+'.txt') if f.startswith('standalone/proofs/castling_review/') else Path('native/bend_engine')/f
+              assert digest(p)==h,f
+          matrix=Path('docs/bend_migration_proofs.md');title,rest=matrix.read_text().split('\n',1)
+          note='## Supplementary castling update and conditional preservation\n\nNew locally checked derived statements establish the complete actual flag2/promotion0 update for arbitrary raw Boards and coordinates, plus partition preservation on the four orthodox coordinate routes when the initial rook destination is empty. A checked counterexample shows why that premise cannot simply be dropped. All four exact king/rook examples and generic/UBSan full-Board reference checks pass; actual rook-placement/source corruptions fail both new source and native checks while prior flag0/flag1 consumers pass.\n\nThese are archived supplementary results, not additional registered laws or part of the hosted152/453 en-passant gate. They do not establish king/rook existence, castling rights, remaining path clearance, check or king safety. See [the exact sources and receipts](experiments/evidence/bend-en-passant-update/castling-review/README.md). Deliberate public-suite promotion and legal-producer connections remain next; no production logic changed.\n'
+          matrix.write_text(title+'\n\n'+note+rest)
+          record=Path('docs/experiments/2026-09-25-bend-en-passant-update.md')
+          record.write_text(record.read_text()+f"\n\n## Supplementary castling refinement after hosted qualification\n\nThe [castling review](evidence/bend-en-passant-update/castling-review/README.md) preserves a new raw complete-update proof and a conditional partition result for four coordinate routes. Initial rook-target emptiness is preserved through clearing and the disjoint first insertion. It remains a caller input condition, not a legal-move certificate. Local generic/UBSan each pass4,360 complete-board inputs and both actual rook-branch corruptions; the omitted input condition is rejected by source checking. The earlier interrupted driver call is retained separately from the final successful bounded rerun. These results remain supplementary, outside the public2/17 increment and hosted152/453 coverage.\n\nDocumentation-only record run **{os.environ['GITHUB_RUN_ID']}** verifies all482 primary hashes, all28 supplementary proof dependencies, the native probe and driver identities, then updates only archived text and documentation links. It does not execute source proofs, native tests or lint. Source archive transport SHA-256:a4cda94cb22186ddf988a6be009064602572463e016ce968e0a313c4dd4ee70e. Self-review only; no merge or deployment.\n")
+          for f,h in manifest.items():assert digest(Path(f))==h,f
+          (t/'changed.txt').write_text('\n'.join(sorted([*files,str(matrix),str(record)]))+'\n')
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git switch -c "$TARGET"
+          git add docs/experiments docs/bend_migration_proofs.md
+          test "$(git diff --cached --name-only | wc -l)" = 15
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs: archive checked castling update and verify en-passant qualification'
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/record"
+          git cat-file commit HEAD > "$RUNNER_TEMP/record/commit.raw"
+          git rev-parse HEAD > "$RUNNER_TEMP/record/commit.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/record/tree.txt"
+          tar -czf "$RUNNER_TEMP/record/changed-docs.tar.gz" -T "$RUNNER_TEMP/changed.txt"
+          cp "$RUNNER_TEMP/changed.txt" "$RUNNER_TEMP/record/"
+          (cd "$RUNNER_TEMP/record" && sha256sum changed-docs.tar.gz commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-en-passant-review-record
+          path: ${{ runner.temp }}/record/
+          retention-days: 14
