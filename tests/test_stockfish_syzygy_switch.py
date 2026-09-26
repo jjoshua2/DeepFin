@@ -124,12 +124,6 @@ def test_explicit_rule50_options_require_uci_capability_and_ready_barrier(
     engine_sh = tmp_path / "engine.sh"
     engine_sh.write_text(f"#!/usr/bin/env bash\nexec {sys.executable} {engine_py}\n", encoding="utf-8")
     engine_sh.chmod(engine_sh.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    kwargs = {
-        "syzygy_path": "/ssd/tb:/mnt/e/dtz",
-        "syzygy_50_move_rule": True,
-        "syzygy_probe_limit": 6,
-        "read_timeout_s": 1.0,
-    }
     if advertise != "all":
         problem = (
             "duplicate UCI SyzygyPath" if advertise == "duplicate_path"
@@ -137,7 +131,13 @@ def test_explicit_rule50_options_require_uci_capability_and_ready_barrier(
             else "Syzygy50MoveRule"
         )
         with pytest.raises(RuntimeError, match=problem):
-            StockfishUCI(str(engine_sh), **kwargs)
+            StockfishUCI(
+                str(engine_sh),
+                syzygy_path="/ssd/tb:/mnt/e/dtz",
+                syzygy_50_move_rule=True,
+                syzygy_probe_limit=6,
+                read_timeout_s=1.0,
+            )
         assert not any(
             line.startswith("setoption name Syzygy50MoveRule")
             for line in log_path.read_text(encoding="utf-8").splitlines()
@@ -149,7 +149,13 @@ def test_explicit_rule50_options_require_uci_capability_and_ready_barrier(
             )
             historical.close()
         return
-    sf = StockfishUCI(str(engine_sh), **kwargs)
+    sf = StockfishUCI(
+        str(engine_sh),
+        syzygy_path="/ssd/tb:/mnt/e/dtz",
+        syzygy_50_move_rule=True,
+        syzygy_probe_limit=6,
+        read_timeout_s=1.0,
+    )
     try:
         assert sf.syzygy_ready_after_requests is True
         assert set(sf.syzygy_option_capabilities) == {
