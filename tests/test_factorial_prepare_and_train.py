@@ -43,10 +43,8 @@ def test_either_failure_cleans_new_session_worker(tmp_path, failed_role):
             ("training" if failed_role == "preparation" else "preparation"): running,
         }
         module.cleanup(list(roles.values()), grace=0.1)
-        p = module.psutil.Process(int(pid_file.read_text()))
-        assert not p.is_running() or p.status() == module.psutil.STATUS_ZOMBIE
-    except module.psutil.NoSuchProcess:
-        pass
+        ref = module.proc_ref(int(pid_file.read_text()))
+        assert ref is None or not module.process_running(ref)
     finally:
         module.cleanup([running, failed], grace=0.1)
 
@@ -107,11 +105,13 @@ def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypa
         def resume_owned_group(child):
             pass
 
-    disk.DiskPauseGuard = DiskGuard
+    setattr(disk, "DiskPauseGuard", DiskGuard)
     monkeypatch.setitem(sys.modules, "disk_pause", disk)
     operator = types.ModuleType("bootstrap_experiment_operator")
-    operator.terminate_owned_group = lambda child, grace: module.cleanup(
-        [child], grace=0.1
+    setattr(
+        operator,
+        "terminate_owned_group",
+        lambda child, grace: module.cleanup([child], grace=0.1),
     )
     monkeypatch.setitem(sys.modules, "bootstrap_experiment_operator", operator)
     roots = []
@@ -185,6 +185,8 @@ def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypa
     monkeypatch.setenv("FACTORIAL_A_CONTROL", str(tmp_path))
     path = Path(__file__).parents[1] / "scripts/factorial_base_a_runner.py"
     spec = importlib.util.spec_from_file_location("base_a", path)
+    if spec is None or spec.loader is None:
+        raise AssertionError("base-A runner import spec unavailable")
     runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runner)
     monkeypatch.setattr(
@@ -223,10 +225,8 @@ while not pidfile.exists():time.sleep(.01)
 p.kill();p.wait()
 time.sleep(.05)
 m.cleanup([p],grace=.1,adopted=True)
-try:
- worker=m.psutil.Process(int(pidfile.read_text()))
- assert worker.status()==m.psutil.STATUS_ZOMBIE
-except m.psutil.NoSuchProcess:pass
+worker=m.proc_ref(int(pidfile.read_text()))
+assert worker is None or not m.process_running(worker)
 """)
     result = subprocess.run(
         [sys.executable, str(script), str(source), str(tmp_path / "pid")],
