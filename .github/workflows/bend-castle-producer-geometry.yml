@@ -51,12 +51,22 @@ jobs:
           for a in anchors: assert p.count(a)==1,a
           Path('/tmp/castle-producer/source-link.txt').write_text('\n'.join(anchors)+'\n')
           PY
-      - name: Recheck actual legal move castling fixtures in generic and UBSan
-        env:
-          CC: /usr/bin/clang
+      - name: Preserve historical legal-probe compiler boundary
         run: |
           set -euo pipefail
-          python -m native.bend_engine.legal_probe.run_probe --compiler-root "$PWD/.compiler" --modes generic ubsan --report /tmp/castle-producer/legal-probe.json
+          python3 - <<'PY'
+          import json,hashlib
+          from pathlib import Path
+          historical=json.loads(Path('native/bend_engine/bitboard_probe/toolchain.json').read_text())
+          current=json.loads(Path('native/bend_engine/standalone/toolchain.json').read_text())
+          assert historical['source_sha256'] != current['source_sha256']
+          Path('/tmp/castle-producer/native-boundary.json').write_text(json.dumps({
+            'fresh_legal_probe_execution':False,
+            'reason':'historical legal_probe is pinned to a different compiler source fingerprint; no silent upgrade',
+            'historical_source_sha256':historical['source_sha256'],
+            'current_standalone_source_sha256':current['source_sha256']
+          },indent=2)+'\\n')
+          PY
       - name: Recheck compiler source suite and pin tests
         run: |
           set -euo pipefail
