@@ -1,0 +1,46 @@
+{
+  "status": "passed",
+  "base_commit": "ead1abf29f6bbe6245d7ea8428f5fa0b45d6054f",
+  "workflow_run": 36220257392,
+  "tested_workflow_commit": "d2ae95268a2bd399094ea2d27b7c6db194ba4ab7",
+  "scope": "Hosted correctness/static completion; banked Clang 17 timing is unchanged, no new timing panel.",
+  "tested_source_sha256": {
+    "tests/test_bend_map_cache_benchmark.py": "54fa821627e6b19d2f05d43d7e65e2124464ef02bacf3f73d5ce737889db4aa7",
+    "docs/experiments/2026-09-26-move-cache-cost-screen.md": "9ef836ea6323e99534104041a6d6542ea8ee539a61bb2c9927009b7cd7552bdb",
+    "docs/experiments/README.md": "0c35ece5100d6589c1d75ec632e777220b0f6ba07cd5637b4e187d862ce4c744",
+    "docs/experiments/evidence/move-cache-cost-screen/samples.csv": "c3acc2e46367bba20b86f17854cf545aa81024d2e46a92c2125d0d99028b83f9",
+    "docs/experiments/evidence/move-cache-cost-screen/summary.json": "71a8dec5cd98e1dde9be108380ac2d5c56c20e14c8a53d9a9cebb7975f7ea7a5",
+    "native/bend_engine/u64_map_probe/move_cache_benchmark.bend": "f798521ff0f5394f1df27a7f9c7b7f98630554f80d5c1f6d8a4b0333eb9e9bf9",
+    "native/bend_engine/u64_map_probe/move_cache_benchmark.py": "c64138b065e71a2c55a21cfdd555ce308c403549861a4074c73c630799cbf1a1"
+  },
+  "focused_python_tests": 457,
+  "new_python_module_tests": 51,
+  "historical_module_tests": 43,
+  "additional_admission_tests": 8,
+  "diagnostic_executions": 32,
+  "contract_executions": 64,
+  "verified_native_outputs": 96,
+  "invalid_native_inputs": 7,
+  "shortened_work_rejected": "benchmark requested work, checksum, routes or timer differs",
+  "independent_oracle_boards": 17,
+  "native_generated_c_sha256": "d22bc32c26cf7e2973f3d0bacefffbab9f77eb621ab3992918846ec2d246a039",
+  "hosted_report_sha256": "f08f011486fb6eb217391cb5a156204adf82594a53bfea4cb75aed478a441909",
+  "hosted_commands_sha256": "b07333542a7efd6cee32a2359a9160bc0f8bf7274b5e60b7627002ff308a9c36",
+  "verified_commands": 117,
+  "hosted_compiler": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n",
+  "target": {
+    "name": "bmi2-popcnt",
+    "flags": [
+      "-march=x86-64",
+      "-mpopcnt",
+      "-mbmi2"
+    ],
+    "host": "bmi2=1 popcnt=1",
+    "instruction_check": "passed",
+    "check_source_sha256": "bb3348015ba4c8959bab7a33e59b9b13667faf4dcd4eedeb31e22af8a0a29c75"
+  },
+  "banked_sample_count": 362,
+  "banked_summary_recomputed": true,
+  "banked_raw_report_sha256": "b459721b9c01a245ae0edf9d336c3bc0d6b66b2519dffffe09765dbdd7c47a00",
+  "performance_panels_this_continuation": 0
+}

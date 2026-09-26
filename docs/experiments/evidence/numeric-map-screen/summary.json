@@ -1,0 +1,452 @@
+{
+  "status": "passed",
+  "scope": "hash versus dense scan, shared slots and entry budget",
+  "measured": true,
+  "compiler": "verified compiler aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae (Bend 2.0.21 + U64), 84 files, source d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4\n",
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin\n",
+  "source_sha256": {
+    "U64Map.bend": "d65af76fd97beb4dcadba3971cc99149cd1f85b869cdeca4d24fe2a9d7708517",
+    "ScanMap.bend": "3f259997e31bcd3f3ef83957d95f950f5f801534e625c525d0ee341c58e62ce9",
+    "benchmark.bend": "ffb56dc7c0263ed93919efbc8de9a1991fc24726bbd5ac82fc8247baf7546c58",
+    "benchmark.py": "cceddf8c7b14e4b2c4697e2a735c4c53a6c30bd3e707bc6198db0877535a9d66"
+  },
+  "reference_checks": [
+    {
+      "arm": "hash",
+      "mode": "native",
+      "cases": 32,
+      "operations": 7042
+    },
+    {
+      "arm": "hash",
+      "mode": "ubsan",
+      "cases": 32,
+      "operations": 7042
+    },
+    {
+      "arm": "scan",
+      "mode": "native",
+      "cases": 32,
+      "operations": 7042
+    },
+    {
+      "arm": "scan",
+      "mode": "ubsan",
+      "cases": 32,
+      "operations": 7042
+    }
+  ],
+  "contract_executions": 180,
+  "summary": {
+    "random-8-hits": {
+      "rounds": 16384,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 120.5,
+        "scan": 175.0
+      },
+      "median_scan_over_hash": 1.4481404958677686,
+      "paired_ratios": [
+        1.45,
+        1.4112903225806452,
+        1.5213675213675213,
+        1.43801652892562,
+        1.4462809917355373,
+        1.5172413793103448
+      ]
+    },
+    "random-8-misses": {
+      "rounds": 8192,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 88.5,
+        "scan": 130.0
+      },
+      "median_scan_over_hash": 1.468973442288049,
+      "paired_ratios": [
+        1.4772727272727273,
+        1.3265306122448979,
+        1.4606741573033708,
+        1.5517241379310345,
+        1.4772727272727273,
+        1.4606741573033708
+      ]
+    },
+    "random-8-churn": {
+      "rounds": 16384,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 134.0,
+        "scan": 220.0
+      },
+      "median_scan_over_hash": 1.6417910447761195,
+      "paired_ratios": [
+        1.6417910447761195,
+        1.6541353383458646,
+        1.6940298507462686,
+        1.626865671641791,
+        1.6417910447761195,
+        1.6029411764705883
+      ]
+    },
+    "random-64-hits": {
+      "rounds": 8192,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 79.0,
+        "scan": 366.5
+      },
+      "median_scan_over_hash": 4.646314102564103,
+      "paired_ratios": [
+        4.717948717948718,
+        4.705128205128205,
+        4.055555555555555,
+        4.575,
+        4.802631578947368,
+        4.5875
+      ]
+    },
+    "random-64-misses": {
+      "rounds": 8192,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 116.0,
+        "scan": 645.5
+      },
+      "median_scan_over_hash": 5.586206896551724,
+      "paired_ratios": [
+        5.504273504273504,
+        5.603448275862069,
+        5.568965517241379,
+        5.6173913043478265,
+        5.551724137931035,
+        5.608695652173913
+      ]
+    },
+    "random-64-churn": {
+      "rounds": 8192,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 116.0,
+        "scan": 506.0
+      },
+      "median_scan_over_hash": 4.353448275862069,
+      "paired_ratios": [
+        4.3247863247863245,
+        4.330508474576271,
+        4.362068965517241,
+        4.422413793103448,
+        4.353448275862069,
+        4.353448275862069
+      ]
+    },
+    "random-256-hits": {
+      "rounds": 8192,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 82.5,
+        "scan": 1232.5
+      },
+      "median_scan_over_hash": 14.95797825448134,
+      "paired_ratios": [
+        13.538461538461538,
+        15.024390243902438,
+        14.654761904761905,
+        15.60759493670886,
+        14.891566265060241,
+        15.109756097560975
+      ]
+    },
+    "random-256-misses": {
+      "rounds": 4096,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 60.0,
+        "scan": 1200.0
+      },
+      "median_scan_over_hash": 20.008333333333333,
+      "paired_ratios": [
+        20.0,
+        20.016666666666666,
+        17.391304347826086,
+        20.338983050847457,
+        19.672131147540984,
+        20.35593220338983
+      ]
+    },
+    "random-256-churn": {
+      "rounds": 8192,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 116.5,
+        "scan": 1769.0
+      },
+      "median_scan_over_hash": 15.18482905982906,
+      "paired_ratios": [
+        15.25,
+        15.11965811965812,
+        15.258620689655173,
+        15.11111111111111,
+        15.25,
+        14.62809917355372
+      ]
+    },
+    "high-half-64-hits": {
+      "rounds": 16384,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 150.0,
+        "scan": 729.0
+      },
+      "median_scan_over_hash": 4.8602160096004265,
+      "paired_ratios": [
+        4.89261744966443,
+        4.965986394557823,
+        4.9523809523809526,
+        4.442424242424242,
+        4.572327044025157,
+        4.827814569536423
+      ]
+    },
+    "high-half-64-misses": {
+      "rounds": 8192,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 134.5,
+        "scan": 645.0
+      },
+      "median_scan_over_hash": 4.799281370923162,
+      "paired_ratios": [
+        4.813432835820896,
+        4.813432835820896,
+        4.770370370370371,
+        4.8059701492537314,
+        4.792592592592593,
+        4.777777777777778
+      ]
+    },
+    "high-half-64-churn": {
+      "rounds": 8192,
+      "reliable": true,
+      "decision": "hash_over_5pct_faster",
+      "median_ms": {
+        "hash": 115.0,
+        "scan": 507.0
+      },
+      "median_scan_over_hash": 4.404347826086957,
+      "paired_ratios": [
+        4.447368421052632,
+        4.426086956521739,
+        4.370689655172414,
+        4.408695652173913,
+        4.4,
+        4.353448275862069
+      ]
+    },
+    "cluster-64-hits": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "scan_over_5pct_faster",
+      "median_ms": {
+        "hash": 243.0,
+        "scan": 92.5
+      },
+      "median_scan_over_hash": 0.38017178081723957,
+      "paired_ratios": [
+        0.3817427385892116,
+        0.3786008230452675,
+        0.372,
+        0.384297520661157,
+        0.38271604938271603,
+        0.35826771653543305
+      ]
+    },
+    "cluster-64-misses": {
+      "rounds": 1024,
+      "reliable": true,
+      "decision": "scan_over_5pct_faster",
+      "median_ms": {
+        "hash": 235.0,
+        "scan": 81.0
+      },
+      "median_scan_over_hash": 0.3446808510638298,
+      "paired_ratios": [
+        0.3446808510638298,
+        0.3504273504273504,
+        0.3446808510638298,
+        0.34177215189873417,
+        0.3432203389830508,
+        0.3446808510638298
+      ]
+    },
+    "cluster-64-churn": {
+      "rounds": 2048,
+      "reliable": true,
+      "decision": "scan_over_5pct_faster",
+      "median_ms": {
+        "hash": 413.5,
+        "scan": 126.0
+      },
+      "median_scan_over_hash": 0.3054549942405792,
+      "paired_ratios": [
+        0.2964705882352941,
+        0.30676328502415456,
+        0.30434782608695654,
+        0.3073170731707317,
+        0.3058252427184466,
+        0.3050847457627119
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "random-8-hits",
+      "bits": 4,
+      "entries": 8,
+      "operations_per_cycle": 256,
+      "workload_sha256": "9ce17d6eb60ac686ca06fa26312e18a52200d86b8b49092d7bc6144710444507"
+    },
+    {
+      "name": "random-8-misses",
+      "bits": 4,
+      "entries": 8,
+      "operations_per_cycle": 256,
+      "workload_sha256": "845a7ba983f5d20284efbe455a13c482ab95ebde55d36532d17b3d014e53a201"
+    },
+    {
+      "name": "random-8-churn",
+      "bits": 4,
+      "entries": 8,
+      "operations_per_cycle": 256,
+      "workload_sha256": "350caf0599e11cb64708bd079097835d7b86d3d4fe7657868e987a4e3b4c96c7"
+    },
+    {
+      "name": "random-64-hits",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "26e830923dd386cdb91720af29396a696c095cf8a98406b5ef5aeb04236751b7"
+    },
+    {
+      "name": "random-64-misses",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "0513783b42d43e71da35362825f00bc8369feb3cfd04fb09fc6688a5d2c28889"
+    },
+    {
+      "name": "random-64-churn",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "56f35cc1747c732e93831c2a96d5d735d8bc13a6c25958605e27f423ddfd0fbc"
+    },
+    {
+      "name": "random-256-hits",
+      "bits": 9,
+      "entries": 256,
+      "operations_per_cycle": 256,
+      "workload_sha256": "10ef4007d196ab639b1732d094b61e9050cfabbd73071c543f0c354fe0ebcc03"
+    },
+    {
+      "name": "random-256-misses",
+      "bits": 9,
+      "entries": 256,
+      "operations_per_cycle": 256,
+      "workload_sha256": "0278b54b3eb7ca53a144e60c27ee60e790c8cb3c4ff24310c0864ecda1ad559e"
+    },
+    {
+      "name": "random-256-churn",
+      "bits": 9,
+      "entries": 256,
+      "operations_per_cycle": 256,
+      "workload_sha256": "1a9347e622dfaba5fcb5c30867c23f5ba9029998a45eda72cba8cb56603698cf"
+    },
+    {
+      "name": "high-half-64-hits",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "c7387e0e3a7eacecff90b25792c331710c7c8afb9ad6b56439b56f6354549ede"
+    },
+    {
+      "name": "high-half-64-misses",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "f452d360e17611d999f16331d1c9a577f1f986023422da45d185d21c3da94076"
+    },
+    {
+      "name": "high-half-64-churn",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "22bfb7e7343b3fb936416f760abe380e25cf1548669be0fc383a8b6e4a0d739b"
+    },
+    {
+      "name": "cluster-64-hits",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "7d633100d97fc47612754e6ee0b354295c940cf5d49a1ab731c2d8854863b648"
+    },
+    {
+      "name": "cluster-64-misses",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "5b3e049137e15847cc6549fe01a26c84a6a49cbedac6e85847c5a3c5852a2f8b"
+    },
+    {
+      "name": "cluster-64-churn",
+      "bits": 7,
+      "entries": 64,
+      "operations_per_cycle": 256,
+      "workload_sha256": "f64791a7d4daeac9f071e8a526d5526b0e670a8e6a9d81bdc8050eefe396dbe1"
+    }
+  ],
+  "workflow_run": 36012260177,
+  "tested_commit": "09871bd4dcab7bf5127d8258de565434d50a71b2",
+  "base_commit": "59079d479e22b9cf6fe583c815a8e091775b1b2b",
+  "published_source_sha256": {
+    "native/bend_engine/u64_map_probe/ScanMap.bend": "3f259997e31bcd3f3ef83957d95f950f5f801534e625c525d0ee341c58e62ce9",
+    "native/bend_engine/u64_map_probe/benchmark.bend": "ffb56dc7c0263ed93919efbc8de9a1991fc24726bbd5ac82fc8247baf7546c58",
+    "native/bend_engine/u64_map_probe/benchmark.py": "cceddf8c7b14e4b2c4697e2a735c4c53a6c30bd3e707bc6198db0877535a9d66",
+    "tests/test_bend_map_benchmark.py": "cc8d2349a0bbb617dfb19a65246e5a3955c0001dfcd455d84cf0aff32abc3a4b",
+    "docs/experiments/2026-09-24-numeric-map-screen.md": "e0f47221829c6fdbcf93f1f921b2ab5b6396e7c3a7d232c459fc082cf439f292"
+  },
+  "raw_report_sha256": "d941b4410762d53f62b9107ed9fee5d3d5dfafab062946f5fe266d471772a964",
+  "focused_python_tests": 67,
+  "new_python_tests": 33,
+  "samples_file": "samples.csv",
+  "build_flags": "Clang 18 -O3 -ffp-contract=off; measured binaries also -march=native",
+  "binary_and_generated_c_sha256": {
+    "hash/trace-native": "a283ba6f8f445a0794e194fbfd1c53492f703fd34cdd5d6321c7a13e28b04d64",
+    "hash/bench.c": "dc78fdffd63a94aa8e5ed3a9c020b8cc876c51dbe9f38ee69a382f647a377ee9",
+    "hash/trace.c": "5523248adf9aabfce394370861fd51ebdeb4bb252ad963deb268daca554b6ad1",
+    "hash/native": "4d188b4d6b9075a59046325f5d0d1c2a498b004fd0fe59fb6d1f52d38faa066c",
+    "hash/ubsan": "1df33001ba3f86164545223533fc2a0fffc1c93db046f4d522b947f419a4a847",
+    "hash/trace-ubsan": "e910baca97725910317ae80f2f25bdf8ad5c05b2c4553cdc643f12543ab3c290",
+    "scan/trace-native": "a93b49faea08ca9f1783f7051de863e431ecb34967e1101762738bb2ba655c80",
+    "scan/bench.c": "8d7770ee9f1b40a5a1803f10839785a9d2c7391d9d3697dd434c26d0b1ef2315",
+    "scan/trace.c": "b223606d4f65a4369ef81d82d76a06138e0c105d798311ac8b17ec10700dfecc",
+    "scan/native": "d50a955029d09bee84ceba8d29b0b62cdd49512e0804504ad4ce0faa02f85343",
+    "scan/ubsan": "e9fa45df168675bde5b4e6b1c4e7f95de419b7ee4f2e29e8fd635d495655916b",
+    "scan/trace-ubsan": "3d944421e28cbdfefe38a9cea1d6e4d719fc27bbd7a1f932295de28d60a9d6a0"
+  },
+  "reference_sha256": {
+    "main.bend": "31cb5294ad1819247a47cb78eb26fcfc6f9a34e2dbf2bbb2f19706c958118a4e",
+    "run_probe.py": "174e8ab7b511080fc3eeab7eb278c45303ec8db0069a13b465fc44f8bf4ed3d4"
+  }
+}

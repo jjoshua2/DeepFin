@@ -138,3 +138,8 @@ Current evidence correction and scale plan: [September 16 bootstrap audit](2026-
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
 
 - [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
+
+- [Numeric-map shared-slot performance screen](2026-09-24-numeric-map-screen.md): hash versus dense scan, exact dictionary controls and matched hit/miss/churn loops; no engine/cache adoption.
+- [CBoard-key map replay](2026-09-24-chess-key-map-replay.md): actual source-derived position keys, exact dictionary replay and explicit history/EP cache-identity limits; no performance or cache-adoption claim.
+- [Matched CBoard-key map timing](2026-09-24-chess-map-timing.md): unchanged chess-derived key fixtures and explicit CPU target; paired hash-versus-scan operation timings, not production search/cache throughput.
+- [Legal-move cache cost screen](2026-09-26-move-cache-cost-screen.md): matched cached/direct work at controlled reuse, cold lifetimes and oversized allocation; local measurements, not engine speedups.
