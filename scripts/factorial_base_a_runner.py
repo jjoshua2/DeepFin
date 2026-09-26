@@ -2,6 +2,7 @@
 
 import argparse
 import fcntl
+import importlib.util
 import hashlib
 import json
 import os
@@ -11,7 +12,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from disk_pause import DiskPauseGuard
+from types import ModuleType
+from typing import Any
 
 HERE = Path(os.environ["FACTORIAL_A_CONTROL"])
 
@@ -41,6 +43,23 @@ def ref(path):
 
 def read(path):
     return json.loads(Path(path).read_text())
+
+
+
+
+def load_runtime_module(runtime: str, name: str) -> ModuleType:
+    """Load one helper from the frozen runtime, with explicit test injection support."""
+    existing = sys.modules.get(name)
+    if existing is not None:
+        return existing
+    path = Path(runtime) / f"{name}.py"
+    require(path.is_file(), f"runtime helper missing: {name}")
+    spec = importlib.util.spec_from_file_location(f"_factorial_{name}", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load runtime helper: {name}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def initial(path):
@@ -135,8 +154,12 @@ def main():
     if not args.execute:
         print("PASS_BOUND_CPU_PREFLIGHT_NOT_EXECUTED")
         return 0
-    sys.path.insert(0, p["operator_runtime"])
-    from bootstrap_experiment_operator import terminate_owned_group
+    disk_pause_module = load_runtime_module(p["operator_runtime"], "disk_pause")
+    disk_pause_guard: Any = getattr(disk_pause_module, "DiskPauseGuard")
+    operator_module = load_runtime_module(
+        p["operator_runtime"], "bootstrap_experiment_operator"
+    )
+    terminate_owned_group: Any = getattr(operator_module, "terminate_owned_group")
 
     def stop(sig, _frame):
         raise InterruptedError(f"signal {sig}")
@@ -180,7 +203,7 @@ def main():
         )
         require(available >= 32 * 2**30, "RAM reserve")
 
-    disk_pause = DiskPauseGuard(
+    disk_pause = disk_pause_guard(
         HERE, budget=p["pause_seconds"], check_interrupt=interruption
     )
 
@@ -261,6 +284,8 @@ def main():
                     pass
             require(child.returncode == 0, f"training exited {child.returncode}")
         check_initial(required=True)
+        if initial_ref is None:
+            raise RuntimeError("verified initial model receipt missing")
         summary = read(Path(p["out"]) / "summary.json")
         sampling = summary["sampling"]
         require(
@@ -309,7 +334,7 @@ def main():
     finally:
         try:
             if child is not None:
-                DiskPauseGuard.resume_owned_group(child)
+                disk_pause_guard.resume_owned_group(child)
                 terminate_owned_group(child, grace=20)
         finally:
             if lease is not None:
