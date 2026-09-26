@@ -3,146 +3,63 @@ on:
   push:
     branches: [work/measured-dispatch-20260926]
 permissions:
-  contents: read
+  contents: write
   actions: read
-env:
-  PYTHONPATH: .
-  PYTHONUNBUFFERED: '1'
-  CAE_TEST_THREADS: '2'
-  OMP_NUM_THREADS: '2'
-  MKL_NUM_THREADS: '2'
-  MAX_JOBS: '1'
-  TORCHINDUCTOR_COMPILE_THREADS: '1'
-  CUDA_VISIBLE_DEVICES: ''
-  BEND_NO_TELEMETRY: '1'
 jobs:
-  qualify:
+  publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 5
+    env:
+      QUALIFIED_RUN: '36219555685'
+      QUALIFIED_ARTIFACT: '10898666782'
+      QUALIFIED_ZIP_SHA: 3bef768eefcf79124319abb4c1c9d95e67e64160d9537f5686516f0e3c82dc10
     steps:
       - uses: actions/checkout@v4
         with:
           ref: 19c9cc017be334e3330b8bf4a6c2e488db5845b6
-          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: deepfin-measured-dispatch-qualification
-          run-id: 36219287290
+          run-id: 36219555685
           github-token: ${{ github.token }}
-          path: /tmp/dispatch-authored
-      - name: Recover exact candidate and preserve shape-validation behavior
+          path: /tmp/dispatch-qualified
+      - name: Verify completed gates, source hashes and exact authored readout
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p artifacts/dispatch
+          mkdir -p /tmp/dispatch-publication
           python3 - <<'PY'
-          import hashlib,json,subprocess
+          import base64,hashlib,json,subprocess
           from pathlib import Path
-          source=Path('/tmp/dispatch-authored'); patch=(source/'candidate.patch').read_bytes()
-          assert hashlib.sha256(patch).hexdigest()=='72924feebbcdf5dfcd5295b02e00503696f39859ecb8e0300d7aeeb0da0494b0'
-          subprocess.run(['git','apply','--check','-'],input=patch,check=True)
-          subprocess.run(['git','apply','-'],input=patch,check=True)
-          original=json.loads((source/'source.json').read_text()); assert len(original)==19
-          for p,h in original.items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
-          p=Path('native/bend_engine/service_profile/dispatch.py');s=p.read_text()
-          old='    if (\n        batch not in BATCHES\n        or type(batch) is not int\n        or type(channels) is not int\n        or channels not in (146, 175)\n    ):\n        raise ValueError("unsupported package shape")\n'
-          new='    try:\n        integer(batch, 1, 16)\n        integer(channels, 146, 175)\n    except ValueError as error:\n        raise ValueError("unsupported package shape") from error\n    if batch not in BATCHES or channels not in (146, 175):\n        raise ValueError("unsupported package shape")\n'
-          assert s.count(old)==1;p.write_text(s.replace(old,new))
-          assert hashlib.sha256(p.read_bytes()).hexdigest()=='8fdba5bbe9282e9358d6bed7ec63bb85f20e7e325ac717de807f60d1bfe16720'
-          subprocess.run(['git','add','-N','.'],check=True)
-          patch=subprocess.check_output(['git','diff','--binary'])
-          assert hashlib.sha256(patch).hexdigest()=='8a724da71c993929f90baa24b86bf7dbd7f1dc670b27e1fb690becf5815fd14f'
-          Path('artifacts/dispatch/candidate.patch').write_bytes(patch)
-          Path('artifacts/dispatch/source.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in original},indent=2)+'\n')
+          def api(path):
+              return json.loads(subprocess.check_output(['gh','api','repos/jjoshua2/DeepFin/'+path]))
+          run=api('actions/runs/36219555685')
+          assert run['status']=='completed' and run['conclusion']=='success'
+          assert run['head_sha']=='aa6d541732dfaff61c6adc4df015e5e721360d29'
+          artifact=api('actions/artifacts/10898666782')
+          assert artifact['digest']=='sha256:3bef768eefcf79124319abb4c1c9d95e67e64160d9537f5686516f0e3c82dc10'
+          readout=base64.b64decode(api('git/blobs/cadcf2bf933b19760a7ca943f92344432b38588b')['content'])
+          assert hashlib.sha256(readout).hexdigest()=='e39db373b0ea09e25655c85c9e3cd10a08734b3581c67013cdfc87f8971cda90'
+          Path('/tmp/dispatch-readout.md').write_bytes(readout)
+          script=base64.b64decode(api('git/blobs/bedcd90ee2292c6efcfa999aca5b50d5332f0d1c')['content'])
+          assert hashlib.sha256(script).hexdigest()=='2f79519859346ee888703026ff7ee5864b5286e9f81acd63f3a9bf4cc7b5732f'
+          exec(compile(script,'authored-checked-dispatch-publication','exec'))
           PY
-          git diff --check
-      - uses: actions/setup-python@v5
-        with:
-          python-version-file: .python-version
-      - uses: astral-sh/setup-uv@v7
-        with:
-          version: 0.12.10
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - name: Locked CPU dependencies and focused static tests
+      - name: Publish isolated feature branch without touching its parents
         run: |
           set -euo pipefail
-          uv sync --locked --extra dev --extra cpu 2>&1 | tee artifacts/dispatch/dependencies.txt
-          . .venv/bin/activate
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-          python -c 'import torch; assert str(torch.__version__) == "2.14.0+cpu"'
-          bash scripts/lint.sh 2>&1 | tee artifacts/dispatch/lint.txt
-          bash scripts/lint.sh native/bend_engine/service_profile/dispatch.py native/bend_engine/multi_root/verify_dispatch.py native/bend_engine/multi_root/verify_dispatch_model.py native/bend_engine/multi_root/verify_live_model.py tests/test_bend_dispatch.py 2>&1 | tee artifacts/dispatch/verifier-lint.txt
-          python -m pytest tests/test_bend_dispatch.py tests/test_bend_service_profile.py tests/test_bend_live_model.py tests/test_bend_live_cohort.py tests/test_bend_cohort_deadlines.py tests/test_bend_async_cohort.py tests/test_bend_multi_root.py tests/test_bend_async_search.py tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py -q --junitxml=artifacts/dispatch/tests.xml 2>&1 | tee artifacts/dispatch/tests.txt
-          bash -n native/bend_engine/multi_root/qualify_dispatch.sh
-      - name: Fresh pinned compiler and original full live qualification
-        env:
-          CC: clang-18
-          CXX: clang++-18
-        run: |
-          set -euo pipefail
-          bash native/bend_engine/install_ci_bend.sh 2>&1 | tee artifacts/dispatch/compiler-install.txt
-          pin="$(python -c 'import json;print(json.load(open("native/bend_engine/standalone/toolchain.json"))["revision"])')"
-          compiler="$PWD/build/bend_toolchain/sources/$pin"
-          bash native/bend_engine/multi_root/qualify_live.sh "$compiler" /tmp/dispatch-live 2>&1 | tee artifacts/dispatch/live.txt
-      - name: Compiled binding, table and actual policy controls
-        env:
-          CC: clang-18
-          CXX: clang++-18
-        run: |
-          set -euo pipefail
-          pin="$(python -c 'import json;print(json.load(open("native/bend_engine/standalone/toolchain.json"))["revision"])')"
-          compiler="$PWD/build/bend_toolchain/sources/$pin"
-          bash native/bend_engine/multi_root/qualify_dispatch.sh "$compiler" /tmp/dispatch-live /tmp/dispatch-gates 2>&1 | tee artifacts/dispatch/dispatch.txt
-      - uses: actions/download-artifact@v4
-        with:
-          name: deepfin-pr1-validation
-          run-id: 35759888019
-          github-token: ${{ github.token }}
-          path: /tmp/dispatch-fixture
-      - name: Recover exact checkpoint and export batch four once
-        run: |
-          set -euo pipefail
-          tar -xzf /tmp/dispatch-fixture/native-build.tar.gz -C /tmp
-          echo '9654a1e334fb5f875d164b82068846bfeab3df2ef2a994737e44789c2623ee6e  /tmp/pr1-model/fixture.pt2' | sha256sum -c -
-          echo 'bb9934134c0d9a39c515c10fa870122c3dfd28259bece392be026e32a9ca60d7  /tmp/pr1-model/fixture.pt' | sha256sum -c -
-          python - <<'PY'
-          from pathlib import Path
-          import torch
-          from native.bend_engine.neural_probe.checkpoint import load_checkpoint,export_checkpoint
-          torch.set_num_threads(2)
-          Path('/tmp/dispatch-model').mkdir()
-          export_checkpoint(load_checkpoint(Path('/tmp/pr1-model/fixture.pt')),Path('/tmp/dispatch-model/b4.pt2'),batch=4,device='cpu',device_index=0)
-          PY
-      - name: Actual CPU model with synthetic gather controls
-        run: |
-          set -euo pipefail
-          out=/tmp/dispatch-model; single=native/bend_engine/standalone
-          prefix="$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')"
-          bun "$single/bind_model.js" --batch-header "$out/b4.pt2" "$out/model_contract.h" > artifacts/dispatch/binding.json
-          cmake -S "$single" -B "$out/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DCMAKE_PREFIX_PATH="$prefix" -DBEND_GENERATED_C=/tmp/dispatch-live/live.c -DBEND_CONTRACT_DIR="$out" -DBEND_CUDA_MODEL=OFF -DBEND_ASYNC_BATCH=ON -DBEND_TARGET_NAME=deepfin-bend-live 2>&1 | tee artifacts/dispatch/model-configure.txt
-          cmake --build "$out/build" --parallel 1 2>&1 | tee artifacts/dispatch/model-build.txt
-          clang-18 -std=c11 -O3 -DLEGAL_ORACLE -I "$PWD" native/bend_engine/legal_probe/support.c -pthread -lm -o /tmp/dispatch-oracle
-          python -m native.bend_engine.multi_root.verify_dispatch_model --binary "$out/build/deepfin-bend-live" --package "$out/b4.pt2" --checkpoint /tmp/pr1-model/fixture.pt --oracle /tmp/dispatch-oracle --report artifacts/dispatch/model.json
-          sha256sum "$out/build/deepfin-bend-live" > artifacts/dispatch/model-executable.txt
-          ldd "$out/build/deepfin-bend-live" > artifacts/dispatch/model-libraries.txt
-      - name: Retain exact tested source and compact native evidence
-        if: always()
-        run: |
-          mkdir -p artifacts/dispatch/native
-          for d in /tmp/dispatch-live /tmp/dispatch-gates; do
-            if test -d "$d"; then
-              find "$d" -type f \( -name '*.json' -o -name '*.txt' -o -name '*.err' \) | while read -r f; do dest="artifacts/dispatch/native/${f#/tmp/}"; mkdir -p "$(dirname "$dest")"; cp "$f" "$dest"; done
-            fi
-          done
-          for entry in main live; do
-            f="/tmp/dispatch-live/$entry.c"
-            if test -f "$f"; then sha256sum "$f" >> artifacts/dispatch/generated.txt; gzip -c "$f" > "artifacts/dispatch/$entry.c.gz"; fi
-          done
-          git rev-parse HEAD > artifacts/dispatch/base-commit.txt
+          branch=feat/native-measured-dispatch-20260926
+          test -z "$(git ls-remote --heads origin "refs/heads/$branch")"
+          git diff --cached --check
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'native: add opt-in package-bound gather policies to live cohorts'
+          git push origin "HEAD:refs/heads/$branch"
+          git rev-parse HEAD > /tmp/dispatch-publication/commit.txt
+          git diff --stat HEAD^ HEAD > /tmp/dispatch-publication/diff-stat.txt
+          git show --format=fuller --no-patch HEAD
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: deepfin-measured-dispatch-qualification
-          path: artifacts/dispatch
+          name: deepfin-measured-dispatch-publication
+          path: /tmp/dispatch-publication
           retention-days: 30
