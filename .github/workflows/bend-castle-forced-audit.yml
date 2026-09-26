@@ -40,8 +40,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/forced-audit"
-          echo "EVIDENCE=$RUNNER_TEMP/forced-audit" >> "$GITHUB_ENV"
+          EVIDENCE="$RUNNER_TEMP/forced-audit"
+          export EVIDENCE
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
           test "$(git rev-parse HEAD)" = "$BASE"
           test "$(git rev-parse HEAD^{tree})" = "$BASE_TREE"
           gh api "repos/jjoshua2/DeepFin/git/blobs/$PATCH_BLOB" --jq .content | base64 --decode > "$RUNNER_TEMP/payload.b64"
