@@ -8,6 +8,8 @@ One fixed 256-game match (128 opening pairs), 400 simulations, seed 2026092001, 
 
 Expected active duration is about 20 minutes; hard outer cap is 2,490 seconds. Models and match output stay outside GitHub. Output: `/home/<user>/chess-artifacts/runs/expanded58m_vs50m_20260920`.
 
+Publication note: maintainer-specific absolute home paths in the committed Markdown/JSON copies are redacted as `/home/<user>/...` for public-repository hygiene. Recorded SHA-256 values continue to identify the original frozen external artifacts and receipts; the redacted publication copies are not claimed byte-identical to those external originals.
+
 The [original preregistration](artifacts/2026-09-20-expanded58m-readout/PREREGISTRATION.md), [plan](artifacts/2026-09-20-expanded58m-readout/plan.json), [binding qualification](artifacts/2026-09-20-expanded58m-readout/qualification.json), [registered descriptor](artifacts/2026-09-20-expanded58m-readout/registered_command.json), and [atomic adoption receipt](artifacts/2026-09-20-expanded58m-readout/queued.json) preserve exact settings and identities. The preregistration retains its original pre-adoption status; the later receipt records queue adoption.
 
 Validation: parent reviewer independently inspected runner, descriptor, checkpoint binding and matched settings and approved this bounded run. All plan pins and both checkpoint bindings were checked again immediately before insertion; actual operator registration and launch-budget validation passed. Queue insertion held `gpu.lock`, required preparation still queued, and preserved every other queue item.
