@@ -1,0 +1,197 @@
+name: Attack witness qualification
+'on':
+  push:
+    branches: [feat/bend-attack-witness-dev-20260926]
+    paths: [.github/workflows/bend-attack-witness-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      BASE: 991e4937bbeeedbf9e9a3ddb40a15417c86a4cd6
+      TARGET: feat/bend-attack-witness-20260926
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 991e4937bbeeedbf9e9a3ddb40a15417c86a4cd6
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact checked sources and verify retained parent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/attack-witness"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/source.b64"
+          for blob in 34e138a9234995384644408d80e7ec5c1ea3643d 845c62e5f0b232de38379abbd5ca5bd262e5484c 40e84c70708e2b32755475ac61b665ac5cd21c41 1f1a2b200db8f6f344134ffdb0c676e9dcf3d509; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/source.b64"
+          done
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108504842095 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);t=Path(os.environ['RUNNER_TEMP'])
+          def git(*a):return subprocess.check_output(['git',*a],text=True).strip()
+          def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='abae23517afaef0efa93fbaf6b7b47e20389aacf'
+          parent=json.loads((e/'parent-job.json').read_text())
+          assert parent['id']==108504842095 and parent['run_id']==36278181309 and parent['status']=='completed' and parent['conclusion']=='success'
+          inherited={f:digest(Path(f)) for f in git('ls-files','native/bend_engine').splitlines() if Path(f).is_file()}
+          assert len(inherited)==540
+          encoded=(t/'source.b64').read_bytes();assert len(encoded)==21080
+          patch=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(patch)==60061 and hashlib.sha256(patch).hexdigest()=='b5c566765f28605ec7ea12abedfae98c4da60b8ded028f2411aec5b07cb557bd'
+          (e/'source.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check',str(e/'source.patch')],check=True)
+          subprocess.run(['git','apply','--index',str(e/'source.patch')],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='23d9532ad9a933febbd9ec892f5d63d879d85049'
+          changed=git('diff','--cached','--name-only').splitlines();assert len(changed)==16
+          docs={'docs/experiments/2026-09-26-bend-attack-witness.md','docs/experiments/README.md','docs/bend_migration_proofs.md'}
+          assert all(f.startswith('native/bend_engine/standalone/proofs/attack_witness/') or f in docs for f in changed)
+          for f,h in inherited.items():assert digest(Path(f))==h,f
+          hashes={f:digest(Path(f)) for f in git('ls-files','native/bend_engine').splitlines() if Path(f).is_file()};assert len(hashes)==553
+          ident={'base':os.environ['BASE'],'source_tree':git('write-tree'),'patch_sha256':hashlib.sha256(patch).hexdigest(),'changed_files':changed,'parent_source_sha256s':inherited,'candidate_source_sha256s':hashes,'parent_manifest_matches':540,'retained_parent_laws':177,'retained_parent_controls':524,'combined_wrapper_executed':False,'publication_scope':'Thirteen exact local primary files and three readouts; original local execution reports remain in the review package. Fresh hosted reports are committed separately.'}
+          (e/'source-identity.json').write_text(json.dumps(ident,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: prove actual attack aggregation and singleton king selection'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - name: Execute three public source laws and nineteen controls
+        run: |
+          set -euo pipefail
+          bun native/bend_engine/standalone/proofs/attack_witness/focused.js "$PWD/.compiler" --report "$EVIDENCE/focused.json" 2>&1 | tee "$EVIDENCE/focused.log"
+      - name: Compare real attack masks and checks against independent coordinates
+        env:
+          BUN: bun
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          python3 native/bend_engine/standalone/proofs/attack_witness/verify_native.py "$PWD/.compiler" --report "$EVIDENCE/native.json" 2>&1 | tee "$EVIDENCE/native.log"
+      - name: Execute original compiler source suite and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
+          (cd .compiler && bun tests/run/u64_proofs.js) | tee "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
+      - name: Verify exact receipts and publish isolated feature branch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          git diff --exit-code
+          test "$(git ls-remote origin refs/heads/feat/bend-castle-chain-safety-20260926 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(n):return json.loads((e/n).read_text())
+          ident=read('source-identity.json');f=read('focused.json');n=read('native.json')
+          for p,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
+          assert len(ident['candidate_source_sha256s'])==553
+          assert f['focused_gate']=='PASS' and f['consumer']=='PASS' and f['controls_gate']=='PASS' and f['new_law_count']==3
+          assert f['consumer_raw'].strip()=='All terms check.'
+          assert len(f['negative_controls'])==19 and all(x['rejected'] for x in f['negative_controls'])
+          kinds=collections.Counter(x['kind'] for x in f['negative_controls']);assert kinds['source semantic/refinement']==10 and kinds['manifest/import policy']==8
+          for p,h in f['source_sha256s'].items():assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+          assert n['native_gate']=='PASS' and n['rows_per_mode']==14090 and n['distinct_inputs']==14090 and n['fields_per_mode']==183170
+          assert n['singleton_at_target']==13697 and n['missing_king_diagnostics']==80 and n['multiple_king_diagnostics']==232
+          assert n['fixture_sha256']=='5f036d55949fdc44851b2fe70a875a71b2dbce7e13551e1285146b50007c4cc9'
+          assert len(n['modes'])==4 and all(x['rows']==14090 and x['invalid_rejections']==7 and x['output_sha256']=='23a0a9c3c1dd9fddc82f2832150c1bd0e01e40f20b519033ce4ff7d16955a4ec' for x in n['modes'])
+          assert len(n['mutations'])==3 and all(x['compiled_and_executed'] and x['rejected'] for x in n['mutations'])
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-attack-witness');d.mkdir(parents=True,exist_ok=False)
+          for name in ['source-identity.json','focused.json','native.json','compiler-proofs.json','parent-job.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          q={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'new_laws':3,'new_controls':19,'control_categories':dict(kinds),'retained_parent_laws':177,'retained_parent_controls':524,'modular_laws':180,'modular_controls':543,'combined_wrapper_executed':False,'native_source_entries':553,'independent_review':False,'universal_table_geometry_proved':False,'claim':'Actual attack-mask aggregation equals an independent per-square witness scan, and in_check uses that scan under an explicit singleton owned-king premise. Mask geometry and legal king safety remain separate.'}
+          (d/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes all three public laws and the importing consumer, nineteen classified controls, four native coordinate-reference modes, three actual-code corruption checks, original compiler source/pin tests and unchanged repository lint on source `{os.environ['SOURCE']}`."
+          paras=['## Completed hosted qualification',headline,
+            'The formal result separates reduction from mask geometry. The independent structural scan witnesses an owned piece whose supplied reverse-mask bit matches its kind. Universal bit algebra relates this to the actual nonzero reduction. The actual attacked callbacks collect the same five real attack queries and are refined to that scan, including the complete returned array. No assumed correct-table premise is hidden, but universal coordinate correctness of those retrieved masks is not proved here.',
+            'The singleton-king theorem explicitly assumes the selected owned-king plane equals one bounded singleton bit. This identifies the actual trailing-zero query with the chosen square. Representation consistency alone does not imply that premise. No-king and multiple-king boundaries remain explicit; full start/transit/destination king safety is not inferred.',
+            'Each native generic/portable/native-target/UBSan mode executes14,090 distinct actual query inputs and183,170 output fields. Actual Tables.build supplies masks; independent forward-coordinate attacks check all five masks, attacked and bounded in_check. Of the fixtures13,697 have a singleton defending king at the query,80 have no defending king,232 have multiple defending kings and81 have a singleton elsewhere. Missing-king probe cases skip out-of-range in_check and print diagnostic2; this is not production in_check behavior.',
+            'Seven malformed batches are rejected per mode. Actual wrong-attacker-color,omitted-knight and unreversed-pawn mutations compile and execute before incorrect output rejection. Pinned attackers,first blockers,wrong-color pieces and queens in both ray classes are represented. Modes repeat fixtures,not disjoint or exhaustive chess positions. The native probe executes production operations rather than the proof-only Word scan.',
+            'Ten source controls fail at intended semantic/refinement locations,eight enforce manifests/import safety,and one synthetic output-wrapper check is not a compiler execution. Crashes,missing imports,syntax/ownership failures and timeouts are not successful semantic rejections. Exact safe output is required.',
+            'All540 inherited native-source paths are unchanged and all553 candidate paths match before evidence publication. Exact parent177/524 plus newly executed3/19 yields modular180/543,not a complete aggregate run. Local historical reports remain in the review package; fresh hosted receipts are committed here. Thirteen primary source/test files match the local candidate exactly; publication metadata and report files differ intentionally.',
+            'The original local missing-tools lint failure remains historical. Hosted locked Python3.13/uv0.12.10 CPU tools pass the unchanged repository lint gate. Its configured coverage is not relabeled as an additional independently executed per-file linter. All12 compiler-pin tests and original16-law/seven-control source checks pass. Earlier local construction errors and the distinction between completed inner reports and uncaptured enclosing-shell statuses remain documented; hosted commands completed normally.',
+            'Self-review only. No production runtime,prior proof,compiler input,permanent workflow,model/GPU,search,training,benchmark or perft change. No Python application responsibility moved into Bend. Pinned checker/Base,native lowering/storage,ABI,toolchain,libraries,OS and hardware remain trust boundaries. Existing compiler,snapshot-lowering and literal closed-builder limitations remain.',
+            'Next decisive acceptance is universal initialized pawn/knight/king and slider-mask geometry plus reverse-attack correspondence,then singleton-king preservation through castling start/transit/child states and composition with the mandatory-check result. Attack aggregation is now source-refined; complete semantic king safety and generator soundness/completeness are not.'
+          ]
+          rec=Path('docs/experiments/2026-09-26-bend-attack-witness.md');rec.write_text(rec.read_text()+'\n\n'+'\n\n'.join(paras)+'\n')
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          note='## Hosted attack-witness qualification\n\n'+headline+'\n\nModular180/543 retains exact177/524 parent evidence; no complete aggregate run. The actual reduction and singleton-king selection are now connected to independent per-square witnesses over actual retrieved masks. Universal initialized-mask coordinate geometry and legal king safety remain separate obligations. See [the current readout](experiments/2026-09-26-bend-attack-witness.md). Historical local status below is superseded only by these exact-source hosted receipts.\n'
+          m.write_text(title+'\n\n'+note+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify attack witnesses and distinguish remaining mask geometry'
+          git switch -c "$TARGET"
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git log -2 --format='%H %s' > "$RUNNER_TEMP/final/published-commits.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git cat-file commit "$SOURCE" > "$RUNNER_TEMP/final/source-commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw source-commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: attack-witness-qualification
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/attack-witness/
+          retention-days: 14
