@@ -1,0 +1,19 @@
+{
+  "independent_tests": {
+    "passed": 81,
+    "failed_baseline_environment": 1
+  },
+  "author_focused_tests": 14,
+  "whole_lint": {
+    "ruff": "PASS",
+    "vulture": "PASS",
+    "type_errors": 14,
+    "exact_baseline_match": true,
+    "warning": "One runtime bool-validation unreachable warning existed when whole check sampled source; resolved by object-typed validator and final scoped check."
+  },
+  "final_scoped_lint": "PASS_0_ERRORS_0_WARNINGS",
+  "baseline_files": [
+    "/home/josh/chess-artifacts/operations/bt4-source-read-20260921/baseline-typecheck.log",
+    "/home/josh/chess-artifacts/operations/bt4-source-read-20260921/baseline-typecheck-other.log"
+  ]
+}

@@ -159,12 +159,27 @@ def select_step(r: Array<Node> & U32) -> Array<Node> & U32:
   (pool, +id) = r
   select_seen(id, Array.get(Node, pool, id))
 
-def select(fuel: Nat, r: Array<Node> & U32) -> Array<Node> & U32:
-  match fuel:
-    case 0n: r
-    case 1n+p: select(p, select_step(r))
+# A step that returns the same ID is a fixed point: stop without rereading
+# the leaf for every remaining unit of fuel. Keep select_step's scoring and
+# tie-breaking unchanged, and retain the fuel bound for actual descent.
+type Selecting is Type:
+  Selecting{pool: Array<Node>, id: U32, active: Bool}
 
-# After reaching a leaf, bounded selection only rereads it; no further descent.
+def selection_step(previous: U32, r: Array<Node> & U32) -> Selecting:
+  (pool, +id) = r
+  Selecting{pool, id, Bool.not(U32.is_eq(previous, id))}
+
+def selection_loop(fuel: Nat, state: Selecting) -> Array<Node> & U32:
+  match fuel state:
+    case 0n Selecting{pool, id, active}: (pool, id)
+    case 1n+p Selecting{pool, id, False{}}: (pool, id)
+    case 1n+p Selecting{pool, +id, True{}}:
+      selection_loop(p, selection_step(id, select_step((pool, id))))
+
+def select(fuel: Nat, r: Array<Node> & U32) -> Array<Node> & U32:
+  (pool, id) = r
+  selection_loop(fuel, Selecting{pool, id, True{}})
+
 def bump(a: Node, value: F32) -> Node:
   Node{b, m, parent, first, count, n, w, prior, cached, status, depth} = a
   Node{b, m, parent, first, count, U32.inc(n), F32.add(w, value), prior, cached, status, depth}
@@ -183,11 +198,11 @@ def backup_step(b: Backing) -> Backing:
     case True{}: backup_seen(id, value, Array.get(Node, pool, id))
 
 def backup(fuel: Nat, b: Backing) -> Array<Node>:
-  match fuel:
-    case 0n:
-      Backing{pool, active, id, value} = b
-      pool
-    case 1n+p: backup(p, backup_step(b))
+  match fuel b:
+    case 0n Backing{pool, active, id, value}: pool
+    case 1n+p Backing{pool, False{}, id, value}: pool
+    case 1n+p Backing{pool, True{}, id, value}:
+      backup(p, backup_step(Backing{pool, True{}, id, value}))
 
 def complete(id: U32, value: F32, tree: Tree) -> Tree:
   Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
