@@ -1,0 +1,75 @@
+{
+  "native_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "board_rows_per_mode": 4316,
+  "distinct_input_pairs": 4252,
+  "board_fields_per_mode": 82004,
+  "consistent_input_cases": 4188,
+  "cases_by_operation": {
+    "all_raw_pairs": 4096,
+    "pawn_coordinate_geometries": 28,
+    "raw_metadata": 64,
+    "inconsistent_diagnostic": 128
+  },
+  "fixture_sha256": "e9079be38f0fd124f231225f84da9b385ef7aee91ae200e6c69c42fab6522b9e",
+  "modes": [
+    {
+      "mode": "generic",
+      "board_rows": 4316,
+      "board_fields": 82004,
+      "invalid_rejections": 9,
+      "output_sha256": "3240f45616a9844ef16889cb211afea9bbbcbdea716d1185a364d7d8b5159131"
+    },
+    {
+      "mode": "portable",
+      "board_rows": 4316,
+      "board_fields": 82004,
+      "invalid_rejections": 9,
+      "output_sha256": "3240f45616a9844ef16889cb211afea9bbbcbdea716d1185a364d7d8b5159131"
+    },
+    {
+      "mode": "native",
+      "board_rows": 4316,
+      "board_fields": 82004,
+      "invalid_rejections": 9,
+      "output_sha256": "3240f45616a9844ef16889cb211afea9bbbcbdea716d1185a364d7d8b5159131"
+    },
+    {
+      "mode": "ubsan",
+      "board_rows": 4316,
+      "board_fields": 82004,
+      "invalid_rejections": 9,
+      "output_sha256": "3240f45616a9844ef16889cb211afea9bbbcbdea716d1185a364d7d8b5159131"
+    }
+  ],
+  "mutations": [
+    {
+      "name": "actual-omits-remote-capture",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "message": "actual-omits-remote-capture row 0 (all_raw_pairs) field 1\n\n257 !== 1\n",
+      "actual": 257,
+      "expected": 1
+    },
+    {
+      "name": "actual-captures-wrong-rank",
+      "rejected": true,
+      "compiled_and_executed": true,
+      "message": "actual-captures-wrong-rank row 0 (all_raw_pairs) field 1\n\n257 !== 1\n",
+      "actual": 257,
+      "expected": 1
+    }
+  ],
+  "source_sha256s": {
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/en_passant/probe.bend": "687a5079edfd7c84ee8ba62dfa0f0ec5e8f3bf52958f0ab4f5ae8a59e06a73f5",
+    "standalone/proofs/en_passant/verify_native.js": "f45991c5e47a02201b6aa4f770ad6c34c6b0c92a3424c498d69d086635c3ca86"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "scope": "Actual flag1/promotion0 Board updates; all raw source/destination pairs and selected metadata/inconsistent diagnostics. Not legal EP, board reachability, or a metadata-rule theorem. Native squares are 0..63; modes repeat fixtures."
+}
