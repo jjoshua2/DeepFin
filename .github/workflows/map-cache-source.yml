@@ -1,0 +1,29 @@
+name: Exact map-cache source snapshot
+on:
+  push:
+    branches: [work/bend-map-cache-source-20260925]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 1a1129ecb85f27bb31aefd85e0c6d85e390f5ca0
+          persist-credentials: false
+      - shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 1a1129ecb85f27bb31aefd85e0c6d85e390f5ca0
+          mkdir -p artifacts
+          git archive HEAD | gzip > artifacts/source.tar.gz
+          test "$(tar -tzf artifacts/source.tar.gz | wc -l)" -gt 100
+          git rev-parse HEAD > artifacts/commit.txt
+          sha256sum artifacts/source.tar.gz > artifacts/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: map-cache-exact-source
+          path: artifacts
+          retention-days: 7
