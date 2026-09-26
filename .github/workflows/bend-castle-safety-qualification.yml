@@ -1,0 +1,222 @@
+name: Castle mandatory-check qualification
+'on':
+  push:
+    branches: [feat/bend-castle-safety-dev-20260926]
+    paths: [.github/workflows/bend-castle-safety-qualification.yml]
+permissions:
+  contents: write
+  actions: read
+defaults:
+  run:
+    shell: bash
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BEND_NO_TELEMETRY: '1'
+      TERM: dumb
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      BASE: b3bbfd5c38f8647cece0ce1d4d541e26fbb6e29f
+      TARGET: feat/bend-castle-safety-qualified-20260926
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b3bbfd5c38f8647cece0ce1d4d541e26fbb6e29f
+      - uses: actions/checkout@v4
+        with:
+          repository: jjoshua2/bend
+          ref: aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae
+          path: .compiler
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Recover exact saved chain and new safety sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/castle-safety-evidence"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          : > "$RUNNER_TEMP/sources.b64"
+          for blob in d46c3b86e5405f3e696b572b4913aca55ec15136 0eb23079da1267377bd6cee071acd7f9b1e8a424 d8e72369f9c743681b4612ac97a8776d24af9a46 9bf249bc2c7ea2ce0fc335aabcb4e9de76491fa0; do
+            gh api "repos/jjoshua2/DeepFin/git/blobs/$blob" --jq .content | base64 --decode > "$RUNNER_TEMP/$blob"
+            test "$(git hash-object "$RUNNER_TEMP/$blob")" = "$blob"
+            cat "$RUNNER_TEMP/$blob" >> "$RUNNER_TEMP/sources.b64"
+          done
+          gh api repos/jjoshua2/DeepFin/actions/jobs/108425561820 > "$EVIDENCE/parent-job.json"
+          python3 - <<'PY'
+          import base64,hashlib,json,lzma,os,subprocess
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']);t=Path(os.environ['RUNNER_TEMP'])
+          def git(*a):return subprocess.check_output(['git',*a],text=True).strip()
+          def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+          assert git('rev-parse','HEAD')==os.environ['BASE']
+          assert git('rev-parse','HEAD^{tree}')=='50dafd3dc9015e4f42cc6f68d10d66deb70f0d88'
+          parent=Path('docs/experiments/evidence/bend-castle-emission')
+          q=json.loads((parent/'qualification.json').read_text())
+          assert q['qualification']=='PASS' and q['modular_laws']==166 and q['modular_controls']==487
+          inherited=json.loads((parent/'hosted-source-identity.json').read_text())['candidate_source_sha256s']
+          assert len(inherited)==511
+          for f,h in inherited.items():assert digest(Path(f))==h,f
+          job=json.loads((e/'parent-job.json').read_text())
+          assert job['id']==108425561820 and job['run_id']==36249795989 and job['status']=='completed' and job['conclusion']=='success'
+          encoded=(t/'sources.b64').read_bytes();assert len(encoded)==30160
+          raw=lzma.decompress(base64.b64decode(encoded,validate=True),memlimit=256*1024*1024)
+          assert len(raw)==111449 and hashlib.sha256(raw).hexdigest()=='cdde9fb7239007f615a05eaabe914a0bb309821d7e1a376ff54bd3f108b976f5'
+          files=json.loads(raw);assert len(files)==27
+          for name,text in files.items():
+              p=Path(name);assert not p.is_absolute() and '..' not in p.parts and not p.exists(),name
+              assert name.startswith('native/bend_engine/standalone/proofs/castle_chain/') or name.startswith('native/bend_engine/standalone/proofs/castle_safety/') or name=='docs/experiments/2026-09-26-bend-castle-chain.md',name
+              p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
+          saved={f:digest(Path(f)) for f in files if '/proofs/castle_chain/' in f}
+          assert len(saved)==13
+          assert hashlib.sha256(json.dumps(saved,sort_keys=True,separators=(',',':')).encode()).hexdigest()=='f9e1411f49b866c15a53ffd4162c4331f52378e52305a088b95dc37a113f9d67'
+          for f,h in inherited.items():assert digest(Path(f))==h,f
+          subprocess.run(['git','add','--',*files],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          assert git('write-tree')=='4e23f5697058ea3a2ff1540f59a61d172af4c8dd'
+          hashes={f:digest(Path(f)) for f in git('ls-files','native/bend_engine').splitlines() if Path(f).is_file()};assert len(hashes)==537
+          r={'base':os.environ['BASE'],'source_tree':git('write-tree'),'transport_sha256':hashlib.sha256(raw).hexdigest(),'saved_chain_commit':'fc86363cfc4363ea2d5dc93548f7c8231b923638','saved_chain_primary_sha256s':saved,'candidate_source_sha256s':hashes,'parent_manifest_matches':511,'retained_parent_laws':166,'retained_parent_controls':487,'combined_wrapper_executed':False,'full_saved_commit_identity_claimed':False}
+          (e/'source-identity.json').write_text(json.dumps(r,indent=2)+'\n')
+          PY
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$EVIDENCE/compiler-identity.txt"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'native: publish full-generator provenance and prove mandatory castling checking'
+          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git log -1 --format='%H%n%T' > "$EVIDENCE/source-commit.txt"
+      - name: Recheck preserved chain laws and eighteen controls
+        run: |
+          set -euo pipefail
+          timeout 240 bun native/bend_engine/standalone/proofs/castle_chain/focused.js "$PWD/.compiler" --report "$EVIDENCE/chain-focused.json" > "$EVIDENCE/chain-focused.log" 2>&1
+      - name: Check four mandatory-check laws and fifteen controls
+        run: |
+          set -euo pipefail
+          timeout 240 bun native/bend_engine/standalone/proofs/castle_safety/focused.js "$PWD/.compiler" --report "$EVIDENCE/safety-focused.json" > "$EVIDENCE/safety-focused.log" 2>&1
+      - name: Run both current-table native suites in four modes
+        env:
+          CC: /usr/bin/clang
+        run: |
+          set -euo pipefail
+          timeout 240 bun native/bend_engine/standalone/proofs/castle_chain/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/chain-native.json" > "$EVIDENCE/chain-native.log" 2>&1
+          timeout 240 bun native/bend_engine/standalone/proofs/castle_safety/verify_native.js "$PWD/.compiler" --report "$EVIDENCE/safety-native.json" > "$EVIDENCE/safety-native.log" 2>&1
+      - name: Check original compiler source suite and pin tests
+        run: |
+          set -euo pipefail
+          bun test native/bend_engine/standalone/verify_compiler.test.js > "$EVIDENCE/pin.log" 2>&1
+          (cd .compiler && bun tests/run/u64_proofs.js) > "$EVIDENCE/compiler-proofs.json"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.10'
+          enable-cache: false
+      - name: Install locked CPU development tools
+        run: |
+          set -euo pipefail
+          uv sync --locked --extra dev --extra cpu
+          .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
+      - name: Run unchanged whole-repository lint
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/.venv/bin:$PATH"
+          ./scripts/lint.sh > "$EVIDENCE/lint.log" 2>&1
+      - name: Verify all receipts and publish fresh isolated branch
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SOURCE"
+          test "$(git ls-remote origin refs/heads/feat/bend-castle-emission-20260926 | cut -f1)" = "$BASE"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" > "$RUNNER_TEMP/target.txt"
+          found=$?
+          set -e
+          test "$found" = 2
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler"
+          python3 - <<'PY'
+          import collections,hashlib,json,os,shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE'])
+          def read(n):return json.loads((e/n).read_text())
+          ident=read('source-identity.json')
+          for f,h in ident['candidate_source_sha256s'].items():assert hashlib.sha256(Path(f).read_bytes()).hexdigest()==h,f
+          cats={}
+          for kind,laws,controls in [('chain',5,18),('safety',4,15)]:
+              f=read(kind+'-focused.json');n=read(kind+'-native.json')
+              assert f['focused_gate']=='PASS' and f['consumer']=='PASS' and f['controls_gate']=='PASS' and f['new_law_count']==laws
+              assert f['consumer_raw'].strip()=='All terms check.' and len(f['negative_controls'])==controls and all(x['rejected'] for x in f['negative_controls'])
+              cats[kind]=dict(collections.Counter(x['kind'] for x in f['negative_controls']))
+              for p,h in f['source_sha256s'].items():assert hashlib.sha256((Path('native/bend_engine')/p).read_bytes()).hexdigest()==h,p
+              assert n['native_gate']=='PASS' and len(n['modes'])==4
+              assert len(n['mutations'])==3 and all(x['rejected'] and x['compiled_and_executed'] for x in n['mutations'])
+              assert all(x['invalid_rejections']==7 for x in n['modes'])
+          old=read('chain-native.json');new=read('safety-native.json')
+          assert old['fixture_count']==1062 and old['distinct_inputs']==1062 and old['complete_child_boards_per_mode']==9241 and old['board_fields_per_mode']==175579
+          assert old['destination_attacked_castles_rejected']==4 and old['both_castles_retained_cases']==39
+          assert new['fixture_count']==1080 and new['distinct_inputs']==1080 and new['complete_child_boards_per_mode']==2272 and new['board_fields_per_mode']==43168
+          assert new['zero_ray_requests']==270 and new['duplicate_requests']==360 and new['destination_attacked_zero_ray_rejections']==4 and new['candidate_check_observations_per_mode']==1304
+          assert all(x['output_sha256']=='52418f2b0ed36c3479f66e84aa1eccdd63ba88b993b9d14fb1fe4c2446bf6753' for x in new['modes'])
+          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
+          assert (e/'lint.log').read_text().strip().endswith('lint: OK')
+          d=Path('docs/experiments/evidence/bend-castle-safety');d.mkdir(parents=True,exist_ok=False)
+          for name in ['source-identity.json','chain-focused.json','safety-focused.json','chain-native.json','safety-native.json','compiler-proofs.json','parent-job.json']:
+              shutil.copyfile(e/name,d/('hosted-'+name))
+          for name in ['pin.log','lint.log','compiler-identity.txt']:
+              raw=(e/name).read_bytes();(d/(name+'.json')).write_text(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'raw_text':raw.decode()},indent=2)+'\n')
+          q={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':ident['source_tree'],'saved_chain_laws':5,'saved_chain_controls':18,'new_safety_laws':4,'new_safety_controls':15,'control_categories':cats,'retained_parent_laws':166,'retained_parent_controls':487,'modular_laws':175,'modular_controls':520,'combined_wrapper_executed':False,'native_source_entries':537,'saved_chain_primary_files_unchanged':13,'independent_review':False,'claim':'Full-generator castling provenance and mandatory full checked-step selection for arbitrary rays. Complete pair equivalence on guarded-castle-only lists. Not independent semantic attack correctness.'}
+          (d/'qualification.json').write_text(json.dumps(q,indent=2)+'\n')
+          headline=f"Hosted run **{os.environ['GITHUB_RUN_ID']}** passes both public focused gates, both four-mode native verifiers, all six compiled/executed behavioral corruptions, original compiler source/pin tests and unchanged repository lint on source `{os.environ['SOURCE']}`."
+          paragraphs=['# Generated castling must take the full checked filter path','## Exact publication',headline,
+            'Stacks on #891 at '+os.environ['BASE']+'. The thirteen primary files from saved local chain commit fc86363cfc4363ea2d5dc93548f7c8231b923638 are byte-identical. That saved increment contributes five already-checked laws, now freshly requalified; the safety suite adds four new laws. Original full saved patches/bundles and local logs remain in their review packages. This new publication has different commit identities and does not claim to reproduce the complete saved local tree.',
+            '## Four new operational laws',
+            'guarded_castle_requires_full_check proves that a true producer guard supplies an owned source-king bit inside the actual sensitive mask for arbitrary rays. generated_castle_requires_full_check obtains that certificate from actual legal_moves membership and flag2, without a separate input-consistency or correct-ray premise. generated_castle_fast_step_equals_checked_step preserves the complete actual table/list pair. guarded_castling_blocker_filter_equals_full_filter proves complete pair equality for a list consisting entirely of producer-certified castles, including duplicates. It is not asserted for arbitrary mixed lists.',
+            'The optimized code does not special-case flag2. A forged flag2 move from an empty source can bypass checking; the original closed counterexample remains. The full-generator provenance theorem is therefore essential. Structural Word/limb containment, actual producer certificates, Boolean substitution and list induction connect the actual functions without replacing their code or assuming desired safety results. Actual affine arrays remain explicit.',
+            '## Source and native qualification',
+            'The unchanged chain gate executes its five-law consumer and18 controls; the new safety gate executes its four-law consumer and15 controls. The new fifteen comprise four ordinary implementation/refinement failures, two false closed boundary witnesses, eight manifest/import checks and one synthetic warning-output unit. The synthetic test is not a compiler execution. Crashes, missing imports, affine/parser errors and timeouts never count as semantic rejection. Exact safe output is required.',
+            'The saved chain native suite freshly passes1,062 distinct requests,9,241 complete child Boards and175,579 U32 Board fields per mode, including four final-destination rejection cases. Its independent full-generator move-set comparison is the ordered castling subset, not every noncastling move. Other filter/suffix lists and all returned raw child Boards are compared as described in its saved readout.',
+            'The safety native suite passes1,080 distinct requests,1,304 candidate-check observations,2,272 complete child Boards and43,168 Board fields per mode. There are270 zero-ray and360 duplicate-list requests. Four zero-ray final-destination attack cases are rejected. Actual blocker and full filters agree with the independent coordinate/set reference. Both suites run generic,portable,native-target andUBSan on current actual Tables.build, without changing historical probe pins. Modes repeat fixtures, not disjoint/exhaustive positions.',
+            'The new actual corruptions omit kings from the blocker mask, exempt flag2 from source testing, or bypass a required full check. Each compiles/runs then fails independent values. Source controls target isolated new helper proofs, not merely inherited failures. Candidate probes receive no reference-produced decisions and import no proof predicate.',
+            '## Evidence and remaining scope',
+            'All511 inherited native-source entries and all537 candidate entries match exact source manifests. Modular175 laws/520 controls retains the exact166/487 parent plus the newly executed saved5/18 and new4/15 gates. The complete175-law wrapper did not run. Original compiler16-laws/seven-controls and12 pin tests pass; the locked CPU environment passes unchanged Ruff/Basedpyright/Vulture, resolving the local missing-tools gaps for these exact sources. Old local nonzero lint receipts remain historical, not relabeled passes.',
+            'Earlier local drafts failed substitution orientation or affine-array use; correct ownership-threaded proof composition fixed them without changing source laws. One draft mutation failed in an inherited helper, so the generated connection was split into Connect.bend for isolated tests. Several enclosing local invocations were interrupted without completed receipts; the final supervised file-output gate completed status0 with all15 controls. False closed witnesses were factored into a small imported Boundaries module; original examples remain. A disposable native mutation initially duplicated an affine flag binder; its binder was corrected before the full native gate reran. These are retained construction/harness failures, not accepted proof rejections.',
+            'The new result is mandatory operational checking and complete result equivalence, not a proof that in_check implements independent chess attacks, historical rights validity, metadata legality, reachability or full generator soundness/completeness. No relation between checks on unrelated table states is silently assumed. Existing compiler, snapshot-lowering and literal closed-builder limitations remain.',
+            'Self-review only. No production runtime, earlier accepted law, compiler input, permanent workflow, routine perft, model/GPU, search, training, benchmark or Python application responsibility changed. Export,references,data/control/training and transitional C++/LibTorch/AOTI remain dependencies. Pinned checker/Base,native lowering/storage,ABI,toolchain,OS and hardware remain trust boundaries. Nothing merged or deployed.',
+            'Next decisive acceptance is semantic correctness of start/transit/destination check predicates under explicit board and table conditions, then independent metadata and whole-generator soundness/completeness. Full-generator provenance and mandatory castling check selection are now established and should not be listed as wholly open.'
+          ]
+          rec=Path('docs/experiments/2026-09-26-bend-castle-safety.md');rec.write_text('\n\n'.join(paragraphs)+'\n')
+          oldrec=Path('docs/experiments/2026-09-26-bend-castle-chain.md');oldrec.write_text(oldrec.read_text()+'\n\n## Subsequent hosted publication\n\n'+headline+'\n\nThe exact thirteen primary chain files are now freshly source/native/lint-qualified. The earlier local-only/missing-tools state remains historical. See [the current record](2026-09-26-bend-castle-safety.md).\n')
+          idx=Path('docs/experiments/README.md');text=idx.read_text();a='| Record | Scope |\n| --- | --- |\n';assert text.count(a)==1
+          idx.write_text(text.replace(a,a+'| [Full-generator castling provenance](2026-09-26-bend-castle-chain.md) | Preserved five-law full-generator chain, freshly hosted-qualified with its18 controls and native suite |\n| [Mandatory castling check path](2026-09-26-bend-castle-safety.md) | Four new actual-source laws for mandatory full checking and complete filter-pair equivalence; modular175/520; semantic attacks remain separate |\n',1))
+          m=Path('docs/bend_migration_proofs.md');title,rest=m.read_text().split('\n',1)
+          note='## Latest P3 full-generator provenance and mandatory castling checking\n\n'+headline+'\n\nThe saved full-generator chain is published unchanged. Four new safety laws derive source sensitivity for every generated castle with arbitrary rays, complete checked-step pair equality, and complete blocker/full-filter equality on certified castling-only lists including duplicates. Input consistency and correct rays are not extra premises of source sensitivity. The forged-empty-source counterexample remains: raw flag2 alone is insufficient.\n\nCoverage is modular175/520; both saved5/18 and new4/15 gates reran, not the full aggregate. Actual native current-table checks and unchanged lint pass. These are operational path guarantees, not semantic attack correctness, metadata/history legality or full generation completeness. See [the current record](experiments/2026-09-26-bend-castle-safety.md).\n'
+          m.write_text(title+'\n\n'+note+rest)
+          PY
+          git diff --check
+          git diff --exit-code -- native
+          git add docs/experiments docs/bend_migration_proofs.md
+          git commit -m 'docs: qualify preserved castling provenance and mandatory-check contracts'
+          git switch -c "$TARGET"
+          git push origin "HEAD:refs/heads/$TARGET"
+          mkdir -p "$RUNNER_TEMP/final"
+          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
+          git log -2 --format='%H %s' > "$RUNNER_TEMP/final/published-commits.txt"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
+          git cat-file commit HEAD > "$RUNNER_TEMP/final/commit.raw"
+          git cat-file commit "$SOURCE" > "$RUNNER_TEMP/final/source-commit.raw"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
+          (cd "$RUNNER_TEMP/final" && sha256sum source.tar.gz commit.raw source-commit.raw > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: castle-safety-qualification
+          path: |
+            ${{ runner.temp }}/final/
+            ${{ runner.temp }}/castle-safety-evidence/
+          retention-days: 14
