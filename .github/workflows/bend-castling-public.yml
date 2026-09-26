@@ -15,11 +15,11 @@ jobs:
     env:
       BEND_NO_TELEMETRY: '1'
       TERM: dumb
-      SOURCE: ee35b34927e700f755af7bf896d726b60277d957
+      SOURCE: 237c4e7b9cf9e2122ed87d1f9c6375eb621f6c83
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ee35b34927e700f755af7bf896d726b60277d957
+          ref: 237c4e7b9cf9e2122ed87d1f9c6375eb621f6c83
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
