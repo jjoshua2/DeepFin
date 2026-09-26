@@ -1,0 +1,198 @@
+name: Cached session main reconciliation
+on:
+  push:
+    branches: [work/bend-cache-main-sync-20260926]
+    paths: [.github/workflows/cache-main-sync-work.yml]
+permissions:
+  contents: write
+concurrency:
+  group: cached-session-main-reconciliation
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      FEATURE_PARENT: 83d4e5f4a4ff4bdec0678ecb172cb2112e3866fc
+      MAIN_PARENT: 9a625bd2d5eae59179ab241015800f922d577978
+      COMMON_BASE: 4e8d463e1df6871a2b73b066c95506258d028800
+      BASELINE: e58c821db1be6e2d1afe288201c2e8e3c8a442f7
+      PUBLISH_BRANCH: feat/bend-cache-main-sync-qualified-20260926
+      BEND_NO_TELEMETRY: '1'
+      CAE_TEST_THREADS: '2'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      MAX_JOBS: '1'
+      CUDA_VISIBLE_DEVICES: ''
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Three-way merge exact parents; reconcile only additive experiment links
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=80 origin "$FEATURE_PARENT" "$MAIN_PARENT" "$COMMON_BASE" "$BASELINE"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git worktree add --detach "$RUNNER_TEMP/cache-main-sync" "$FEATURE_PARENT"
+          mkdir "$RUNNER_TEMP/cache-baseline"
+          git archive "$BASELINE" | tar -x -C "$RUNNER_TEMP/cache-baseline"
+          cd "$RUNNER_TEMP/cache-main-sync"
+          mkdir -p artifacts/main-sync
+          python3 - <<'PY'
+          from collections import Counter
+          import difflib,hashlib,json,os,pathlib,re,subprocess
+          out=pathlib.Path('artifacts/main-sync')
+          feature=os.environ['FEATURE_PARENT'];main=os.environ['MAIN_PARENT'];base=os.environ['COMMON_BASE']
+          def git(*args):return subprocess.check_output(['git',*args],text=True).strip()
+          assert git('merge-base',feature,main)==base
+          fpaths=set(git('diff','--name-only',base,feature).splitlines())
+          mpaths=set(git('diff','--name-only',base,main).splitlines())
+          index='docs/experiments/README.md'
+          assert fpaths & mpaths=={index},sorted(fpaths & mpaths)
+          run=subprocess.run(['git','merge','--no-commit','--no-ff',main],capture_output=True,text=True,check=False)
+          (out/'merge.stdout').write_text(run.stdout);(out/'merge.stderr').write_text(run.stderr)
+          conflicts=git('diff','--name-only','--diff-filter=U').splitlines()
+          assert run.returncode==1 and conflicts==[index],(run.returncode,conflicts)
+          versions={name:subprocess.check_output(['git','show',ref+':'+index]) for name,ref in [('base',base),('feature',feature),('main',main)]}
+          for name,raw in versions.items():(out/('index-'+name+'.md')).write_bytes(raw)
+          for name in ('feature','main'):
+              changes=difflib.SequenceMatcher(a=versions['base'].splitlines(),b=versions[name].splitlines()).get_opcodes()
+              assert all(tag in ('equal','insert') for tag,*_ in changes),(name,changes)
+          merge=subprocess.run(['git','merge-file','-p','--union',str(out/'index-feature.md'),str(out/'index-base.md'),str(out/'index-main.md')],capture_output=True,check=False)
+          assert merge.returncode==0 and not merge.stderr
+          resolved=merge.stdout
+          assert not any(marker in resolved for marker in (b'<<<<<<<',b'=======',b'>>>>>>>'))
+          def counts(raw):return Counter(line for line in raw.splitlines() if line.strip())
+          assert counts(resolved)==counts(versions['feature'])|counts(versions['main'])
+          for destination in re.findall(rb'\]\(([^)]+)\)',resolved):
+              target=destination.decode().split('#',1)[0]
+              if target and '://' not in target:
+                  assert (pathlib.Path(index).parent/target).exists(),target
+          pathlib.Path(index).write_bytes(resolved)
+          subprocess.run(['git','add','--',index],check=True)
+          assert not git('diff','--name-only','--diff-filter=U')
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          tree=git('write-tree')
+          def entries(ref):
+              result={}
+              for entry in subprocess.check_output(['git','ls-tree','-rz',ref]).split(b'\0'):
+                  if entry:
+                      fields,path=entry.split(b'\t',1);result[path.decode()]=fields.decode()
+              return result
+          original=entries(base);feature_tree=entries(feature);main_tree=entries(main);actual=entries(tree)
+          expected=dict(original)
+          for paths,source in ((mpaths,main_tree),(fpaths,feature_tree)):
+              for path in paths:
+                  if path in source:expected[path]=source[path]
+                  else:expected.pop(path,None)
+          expected[index]=actual[index]
+          assert actual==expected,'three-way merge altered an unexpected path'
+          for path in fpaths-{index}:assert actual.get(path)==feature_tree.get(path),path
+          for path in mpaths-{index}:assert actual.get(path)==main_tree.get(path),path
+          summary={'status':'prepared','feature_parent':feature,'main_parent':main,'common_base':base,'merged_tree':tree,'conflicted_paths':conflicts,'feature_paths_preserved':sorted(fpaths-{index}),'main_paths_preserved':sorted(mpaths-{index}),'index_resolution':'both sides are insert-only; preserve the maximum multiplicity of every nonempty line and validate relative links','resolved_index_sha256':hashlib.sha256(resolved).hexdigest()}
+          (out/'reconciliation.json').write_text(json.dumps(summary,indent=2)+'\n')
+          (out/'index-resolved.md').write_bytes(resolved)
+          (out/'Search.bend').write_bytes(pathlib.Path('native/bend_engine/session_probe/Search.bend').read_bytes())
+          subprocess.run(['git','diff','--cached','--stat'],check=True)
+          print('EXACT_RECONCILED_TREE',tree)
+          PY
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.12.10
+      - name: Locked environment and unchanged pinned compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-main-sync"
+          uv sync --locked --extra dev --extra cpu
+          bash native/bend_engine/install_ci_bend.sh
+      - name: Map, session and newly landed collections Python contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-main-sync"
+          . .venv/bin/activate
+          python -m pytest -q tests/test_bend_u64_map.py tests/test_bend_map*.py tests/test_bend_session_move_cache.py tests/test_bend_search_sessions.py tests/test_bend_root_advance.py tests/test_bend_search_draws.py tests/test_bend_claim_options.py tests/test_bend_collections.py tests/test_bend_owning_collections.py --junitxml=artifacts/main-sync-python.xml
+      - name: Actual cached sessions with current-main selector and original parent control
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-main-sync"
+          . .venv/bin/activate
+          python -m native.bend_engine.session_probe.cache_probe --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --baseline-root "$RUNNER_TEMP/cache-baseline" --bun bun --cc clang-18 --output artifacts/merged-session-cache --python-chess
+      - name: Upstream collection behavior without re-running performance measurements
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-main-sync"
+          . .venv/bin/activate
+          python -m native.bend_engine.collections_probe.run_probe --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --cc clang-18 --report artifacts/collections-original.json
+          python -m native.bend_engine.collections_probe.owning_benchmark --compiler-root build/bend_toolchain/sources/aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae --cc clang-18 --report artifacts/collections-owning.json
+      - name: Whole-repository static validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-main-sync"
+          . .venv/bin/activate
+          ./scripts/lint.sh
+          git diff --exit-code
+      - name: Publish verified reconciliation on a separate branch, not main
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cache-main-sync"
+          python3 - <<'PY'
+          import hashlib,json,os,pathlib,subprocess,xml.etree.ElementTree as ET
+          out=pathlib.Path('artifacts/main-sync')
+          prepared=json.loads((out/'reconciliation.json').read_text())
+          actual_tree=subprocess.check_output(['git','write-tree'],text=True).strip()
+          assert actual_tree==prepared['merged_tree'],'tested index changed'
+          subprocess.run(['git','diff','--exit-code'],check=True)
+          xml=ET.parse('artifacts/main-sync-python.xml').getroot();tests=list(xml.iter('testcase'))
+          assert tests and not any(list(xml.iter(tag)) for tag in ('failure','error','skipped'))
+          report_raw=pathlib.Path('artifacts/merged-session-cache/summary.json').read_bytes();report=json.loads(report_raw)
+          assert report['status']=='passed' and report['full_history_suites'] is True and report['reset_each_epoch_rejected'] is True
+          assert [m['mode'] for m in report['modes']]==['generic','ubsan']
+          for mode in report['modes']:
+              cases=mode['scenarios'];control=cases['None']['observations'];assert len(control)==21
+              assert all(cases[value]['observations']==control for value in ('0','6','1'))
+              assert cases['6']['stats'][1:3]==[[6,0,16,0],[6,16,16,0]]
+              assert cases['6']['stats'][4:]==[[6,0,16,0],[6,16,16,0]]
+              assert mode['history']['draw'] and mode['history']['claims']
+          record={**prepared,'status':'passed','workflow_run':int(os.environ['GITHUB_RUN_ID']),'tested_workflow_commit':os.environ['GITHUB_SHA'],'focused_python_cases':len(tests),'session_settings':[None,'0','6','1'],'scenarios_per_setting_and_build':21,'native_builds':['generic','ubsan'],'full_history_suites':True,'reset_each_epoch_rejected':True,'session_report_sha256':hashlib.sha256(report_raw).hexdigest(),'scope':'Reconcile exact main into the feature branch; preserve all source changes from both sides; no live deployment or new performance panel.'}
+          path=pathlib.Path('native/bend_engine/session_probe/main-sync-validation.json');assert not path.exists()
+          path.write_text(json.dumps(record,indent=2)+'\n')
+          subprocess.run(['git','add','--',str(path)],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          tree=subprocess.check_output(['git','write-tree'],text=True).strip()
+          commit=subprocess.check_output(['git','commit-tree',tree,'-p',os.environ['FEATURE_PARENT'],'-p',os.environ['MAIN_PARENT'],'-m','Merge current main into legal-cache feature; preserve both experiment indexes and qualify cached sessions'],text=True).strip()
+          (out/'feature.txt').write_text(commit+'\n')
+          (out/'validation.json').write_text(json.dumps(record,indent=2)+'\n')
+          subprocess.run(['git','push','--force-with-lease=refs/heads/'+os.environ['PUBLISH_BRANCH']+':','origin',commit+':refs/heads/'+os.environ['PUBLISH_BRANCH']],check=True)
+          print('QUALIFIED_MAIN_RECONCILIATION',commit)
+          PY
+      - name: Preserve merged tree description and source changes
+        if: always()
+        shell: bash
+        run: |
+          if test -d "$RUNNER_TEMP/cache-main-sync"; then
+            cd "$RUNNER_TEMP/cache-main-sync"
+            mkdir -p artifacts/main-sync
+            git diff --cached --binary > artifacts/main-sync/combined.patch
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cache-main-reconciliation
+          path: |
+            ${{ runner.temp }}/cache-main-sync/artifacts/main-sync/**
+            ${{ runner.temp }}/cache-main-sync/artifacts/main-sync-python.xml
+            ${{ runner.temp }}/cache-main-sync/artifacts/merged-session-cache/*.json
+            ${{ runner.temp }}/cache-main-sync/artifacts/merged-session-cache/*.stdout
+            ${{ runner.temp }}/cache-main-sync/artifacts/merged-session-cache/*.stderr
+            ${{ runner.temp }}/cache-main-sync/artifacts/collections-*.json
+          retention-days: 30
