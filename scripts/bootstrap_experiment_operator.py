@@ -15,10 +15,11 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-LOOP = Path("/home/josh/projects/chess/scratchpad/bt4_joint20/autonomous_loop_20260914")
+PROJECT_ROOT = Path.home() / "projects/chess"
+LOOP = PROJECT_ROOT / "scratchpad/bt4_joint20/autonomous_loop_20260914"
 RUNTIME = Path("/tmp/deepfin-ordered-arena-lookahead-runtime")
-BOOK = "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip"
-CERES = Path("/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run07_complete_v1")
+BOOK = str(PROJECT_ROOT / "data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip")
+CERES = PROJECT_ROOT / "scratchpad/bt4_joint20/g10_ceres_batchv3_run07_complete_v1"
 LOCK = LOOP / "gpu.lock"
 
 
@@ -60,7 +61,7 @@ def mem_avail_gib() -> float:
 
 
 def disk_free_gib() -> float:
-    return shutil.disk_usage("/home/josh/projects/chess").free / 2**30
+    return shutil.disk_usage(PROJECT_ROOT).free / 2**30
 
 
 def gpu_apps() -> str:
