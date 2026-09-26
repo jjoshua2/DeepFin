@@ -4034,3 +4034,31 @@ def test_the_guard_message_names_the_outcome_share_not_only_the_leak() -> None:
     assert all_outcome.leaked_to_outcome == 0.0
     with pytest.raises(ValueBlendMisconfigured, match="RAW GAME OUTCOME"):
         assert_no_silent_outcome_fallback(all_outcome)
+
+
+@pytest.mark.parametrize("epochs", [1, 2])
+def test_hourly_recovery_hooks_single_and_multi_epoch(tmp_path: Path, epochs: int) -> None:
+    rows = [(1, row) for row in range(4)] + [
+        (game, 100 + game) for game in range(2, 14)
+    ]
+    shards = _write_game_rows(tmp_path / "rows", rows)
+    out = tmp_path / "recovery_run"
+    assert lc0_control_train.main([
+        "--config", str(_tiny_config(tmp_path)), "--shards", str(shards),
+        "--out-dir", str(out), "--steps", "0", "--batch-size", "4",
+        "--sampling-mode", "game_epoch", "--epochs", str(epochs),
+        "--train-window-steps", "2", "--recovery-checkpoint-seconds", "0.000001",
+        "--device", "cpu", "--no-compile", "--allow-arch-drift", "--allow-invalid-control",
+    ]) == 0
+    index = json.loads((out / "recovery/latest.json").read_text())
+    assert len(index["snapshots"]) == 2
+    latest = out / "recovery" / index["snapshots"][0]
+    manifest = json.loads((latest / "manifest.json").read_text())
+    state = torch.load(latest / "checkpoint.pt", map_location="cpu", weights_only=False)
+    final = torch.load(out / "checkpoint.pt", map_location="cpu", weights_only=False)
+    assert state["step"] == final["step"] == 4 * epochs
+    assert {"model", "opt", "scheduler", "step", "peak_lr", "zclip"} <= state.keys()
+    assert manifest["progress"]["epoch_index"] == epochs
+    assert manifest["progress"]["run_rows_completed"] == 16 * epochs
+    assert manifest["progress"]["run_steps_completed"] == state["step"]
+    assert "recovery" in lc0_control_train.existing_run_artifacts(out)
