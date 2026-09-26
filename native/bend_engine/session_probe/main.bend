@@ -1,6 +1,7 @@
 import Base
 import ../legal_probe/Chess.bend as Chess
 import ./Search.bend as Search
+import ./CachedSearch.bend as Cache
 
 type Job is Type:
   Job{board: Chess.Board, table: Array<U64>, depth: U32, mode: U32, seed: U32}
@@ -12,7 +13,7 @@ type Config is Data:
   Config{epoch: U32, simulations: U32, capacity: U32, depth: U32}
 
 # Transport only decodes commands. Bend checks the epoch and move semantics.
-# kind: 0=config/quit, 1=advance. The old config wire is unchanged.
+# kind: 0=config/quit, 1=advance, 2=cache, 3=clear_cache. The old config wire is unchanged.
 type Command is Data:
   Command{kind: U32, expected: U32, epoch: U32, simulations: U32,
     capacity: U32, depth: U32, key: U32}
@@ -128,22 +129,35 @@ def step_prepared(r: Search.Prepared) -> IO(Live & Bool):
   Search.Prepared{table, tree, +ticket} = r
   step_read(ticket_needed(ticket), table, tree, ticket)
 
-def step(s: Live) -> IO(Live & Bool):
-  Live{table, tree} = s
-  step_prepared(Search.prepare(table, tree))
+type Progress is Type:
+  Progress{live: Live, cache: Cache.State}
 
-def run(n: Nat, r: Live & Bool) -> IO(Live):
+def attached(cache: Cache.State, result: Live & Bool) -> Progress & Bool:
+  (live, stop) = result
+  (Progress{live, cache}, stop)
+
+def cached_step(result: Cache.Ready) -> IO(Progress & Bool):
+  Cache.Ready{cache, prepared} = result
+  do IO<Progress & Bool>:
+    next : Live & Bool <- step_prepared(prepared)
+    return attached(cache, next)
+
+def step(s: Progress) -> IO(Progress & Bool):
+  Progress{Live{table, tree}, cache} = s
+  cached_step(Cache.prepare(cache, table, tree))
+
+def run(n: Nat, r: Progress & Bool) -> IO(Progress):
   match n:
     case 0n:
       (s, stop) = r
-      IO.pure(Live, s)
+      IO.pure(Progress, s)
     case 1n+p:
       (s, stop) = r
       match stop:
-        case True{}: IO.pure(Live, s)
+        case True{}: IO.pure(Progress, s)
         case False{}:
-          do IO<Live>:
-            next : Live & Bool <- step(s)
+          do IO<Progress>:
+            next : Progress & Bool <- step(s)
             run(p, next)
 
 type Printed is Type:
@@ -190,24 +204,24 @@ def print_nodes(n: Nat, +i: U32, state: Printed) -> IO(Unit):
         print_nodes(p, U32.inc(i), next)
 
 type Connection is Type:
-  Connection{board: Chess.Board, table: Array<U64>, last_epoch: U32}
+  Connection{board: Chess.Board, table: Array<U64>, last_epoch: U32, cache: Cache.State}
 
-def finish(board: Chess.Board, r: Live) -> IO(Connection):
-  Live{table, tree} = r
+def finish(board: Chess.Board, r: Progress) -> IO(Connection):
+  Progress{Live{table, tree}, cache} = r
   Search.Tree{pool, +used, cap, n, pending, +epoch, request, stop, limit} = tree
   do IO<Connection>:
     IO.print("result " ++ U32.show(epoch) ++ " " ++ U32.show(n) ++ " " ++ U32.show(used)
       ++ " " ++ U32.show(stop) ++ " " ++ U32.show(pending) ++ " " ++ U32.show(request))
     print_nodes(U32.to_nat(used), 0, Printed{pool, 4294967295, 0, False{}, 4294967295, 0})
-    return Connection{board, table, epoch}
+    return Connection{board, table, epoch, cache}
 
-def begin_valid(valid: Bool, +board: Chess.Board, table: Array<U64>, config: Config) -> IO(Connection):
+def begin_valid(valid: Bool, +board: Chess.Board, table: Array<U64>, cache: Cache.State, config: Config) -> IO(Connection):
   match valid:
     case False{}: IO.die(Connection, 2, "session epoch must increase")
     case True{}:
       Config{epoch, simulations, capacity, depth} = config
       do IO<Connection>:
-        done : Live <- run(U32.to_nat(simulations), (Live{table, Search.start(board, capacity, epoch, depth)}, False{}))
+        done : Progress <- run(U32.to_nat(simulations), (Progress{Live{table, Search.start(board, capacity, epoch, depth)}, cache}, False{}))
         finish(board, done)
 
 def config_epoch(c: Config) -> U32:
@@ -215,8 +229,8 @@ def config_epoch(c: Config) -> U32:
   epoch
 
 def begin(conn: Connection, +config: Config) -> IO(Connection):
-  Connection{board, table, last} = conn
-  begin_valid(U32.is_gt(config_epoch(config), last), board, table, config)
+  Connection{board, table, last, cache} = conn
+  begin_valid(U32.is_gt(config_epoch(config), last), board, table, cache, config)
 
 def command(quit: Bool, conn: Connection, config: Config) -> IO(Connection & Bool):
   match quit:
@@ -253,41 +267,56 @@ def advance_apply(board: Chess.Board, choice: AdvanceMove) -> Chess.Board & Bool
     case ChosenMove{move}: (Chess.make_move(board, move), True{})
 
 def advance_emit(expected: U32, epoch: U32, key: U32, status: U32, c: Connection) -> IO(Connection & Bool):
-  Connection{+board, table, +last} = c
+  Connection{+board, table, +last, cache} = c
   do IO<Connection & Bool>:
     IO.print("advance_result " ++ U32.show(expected) ++ " " ++ U32.show(epoch)
       ++ " " ++ U32.show(key) ++ " " ++ U32.show(status) ++ " " ++ U32.show(last))
     IO.print("board " ++ board_text(board))
-    return (Connection{board, table, last}, False{})
+    return (Connection{board, table, last, cache}, False{})
 
 def advance_selected(expected: U32, +epoch: U32, key: U32, last: U32,
-  table: Array<U64>, r: Chess.Board & Bool) -> IO(Connection & Bool):
+  table: Array<U64>, cache: Cache.State, r: Chess.Board & Bool) -> IO(Connection & Bool):
   (board, +accepted) = r
   advance_emit(expected, epoch, key, Bool.pick(U32, accepted, 0, 2),
-    Connection{board, table, Bool.pick(U32, accepted, epoch, last)})
+    Connection{board, table, Bool.pick(U32, accepted, epoch, last), cache})
 
 def advance_generated(expected: U32, epoch: U32, +key: U32, last: U32,
-  board: Chess.Board, r: Array<U64> & List<&2, Chess.Ply>) -> IO(Connection & Bool):
+  board: Chess.Board, cache: Cache.State, r: Array<U64> & List<&2, Chess.Ply>) -> IO(Connection & Bool):
   (table, moves) = r
-  advance_selected(expected, epoch, key, last, table, advance_apply(board, advance_find(moves, key)))
+  advance_selected(expected, epoch, key, last, table, cache, advance_apply(board, advance_find(moves, key)))
 
 def advance_valid(valid: Bool, expected: U32, epoch: U32, key: U32, c: Connection) -> IO(Connection & Bool):
   match valid:
     case False{}: advance_emit(expected, epoch, key, 1, c)
     case True{}:
-      Connection{+board, table, last} = c
-      advance_generated(expected, epoch, key, last, board, Chess.legal_moves(table, board))
+      Connection{+board, table, last, cache} = c
+      advance_generated(expected, epoch, key, last, board, cache, Chess.legal_moves(table, board))
 
 def advance(+expected: U32, +epoch: U32, key: U32, c: Connection) -> IO(Connection & Bool):
-  Connection{board, table, +last} = c
+  Connection{board, table, +last, cache} = c
   advance_valid(Bool.and(U32.is_eq(expected, last), U32.is_gt(epoch, last)),
-    expected, epoch, key, Connection{board, table, last})
+    expected, epoch, key, Connection{board, table, last, cache})
+
+# Both controls are idle-boundary commands. Neither resets the search epoch/root.
+def cache_control(cache: Cache.State, clear: Bool) -> IO(Cache.State):
+  match clear:
+    case False{}: IO.pure(Cache.State, cache)
+    case True{}: Cache.clear(cache)
+
+def cache_command(conn: Connection, clear: Bool) -> IO(Connection & Bool):
+  Connection{board, table, last, cache} = conn
+  do IO<Connection & Bool>:
+    cache : Cache.State <- cache_control(cache, clear)
+    cache : Cache.State <- Cache.report(cache)
+    return (Connection{board, table, last, cache}, False{})
 
 def command_dispatch(conn: Connection, command: Command) -> IO(Connection & Bool):
   Command{kind, expected, epoch, simulations, capacity, depth, key} = command
   match kind:
     case 0: dispatch(conn, Config{epoch, simulations, capacity, depth})
     case 1: advance(expected, epoch, key, conn)
+    case 2: cache_command(conn, False{})
+    case 3: cache_command(conn, True{})
     case _: IO.die(Connection & Bool, 2, "unknown session command")
 
 def serve(n: Nat, r: Connection & Bool) -> IO(Unit):
@@ -304,17 +333,18 @@ def serve(n: Nat, r: Connection & Bool) -> IO(Unit):
             next : Connection & Bool <- command_dispatch(conn, command)
             serve(p, next)
 
-def validated(board: Chess.Board, r: Array<U64> & Bool) -> IO(Unit):
+def validated(cache: Cache.State, board: Chess.Board, r: Array<U64> & Bool) -> IO(Unit):
   (table, invalid) = r
   match invalid:
     case True{}: IO.die(Unit, 2, "invalid input: nonmoving king is attacked")
-    case False{}: serve(1024n, (Connection{board, table, 0}, False{}))
+    case False{}: serve(1024n, (Connection{board, table, 0, cache}, False{}))
 
-def start(job: Job) -> IO(Unit):
+def start(cache: Cache.State, job: Job) -> IO(Unit):
   Job{+board, table, depth, mode, seed} = job
-  validated(board, Chess.in_check(table, board, U32.xor(Chess.get_turn(board), 1)))
+  validated(cache, board, Chess.in_check(table, board, U32.xor(Chess.get_turn(board), 1)))
 
 def main() -> IO(Unit):
   do IO<Unit>:
+    cache : Cache.State <- Cache.load()
     job : Job <- Job.load()
-    start(job)
+    start(cache, job)

@@ -53,6 +53,9 @@ static Term command_read_run(Env e, Term *f, IoWork *w) {
     } else if (!strcmp(tag, "advance")) {
         if (n != 3 || !x[1]) { fputs("invalid advance command\n", stderr); exit(2); }
         fields[0] = 1; fields[1] = x[0]; fields[2] = x[1]; fields[6] = x[2];
+    } else if (!strcmp(tag, "cache") || !strcmp(tag, "clear_cache")) {
+        if (n != 0) { fputs("invalid cache command\n", stderr); exit(2); }
+        fields[0] = !strcmp(tag, "cache") ? 2 : 3;
     } else {
         fputs("wrong transport record\n", stderr); exit(2);
     }
