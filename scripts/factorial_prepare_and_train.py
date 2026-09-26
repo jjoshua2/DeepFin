@@ -263,7 +263,7 @@ def cleanup(children, grace=35, adopted=False):
         time.sleep(0.05)
 
 
-def resources(config, children, started, startup=False):
+def resources(config, _children, started, startup=False):
     require(time.monotonic() - started < config["max_seconds"], "combined deadline")
     require(not any(Path(p).exists() for p in config["stop_paths"]), "STOP requested")
     require(
