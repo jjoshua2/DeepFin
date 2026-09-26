@@ -51,8 +51,8 @@ from scripts import derive_corpus_targets as derive
 from scripts import gen_sf_rooted_corpus as corpus
 from scripts.bt4_policy_dump import (
     DEFAULT_ONNX,
+    compact_legal_policy,
     file_sha256,
-    legal_move_probabilities,
     open_session,
     remap_provenance,
     resolve_policy_output,
@@ -761,37 +761,14 @@ def label_shard(
             )
         for offset, board in enumerate(boards):
             row_index = cursor + offset
-            moves, probs_raw = legal_move_probabilities(board, output[offset])
-            probs = np.asarray(probs_raw, dtype=np.float32)
-            indices = np.asarray(
-                [
-                    compact_index_for_move(board, move)
-                    for move in moves
-                ],
-                dtype=np.int64,
+            moves, probs, _ = compact_legal_policy(
+                board, output[offset], row_label=f"{pending.path}:{row_index}",
+                dense_out=bt4_policy[row_index],
             )
-            # The helper enumerates the complete legal Move list itself. Reuse
-            # those objects; a second call to the same compact converter is not
-            # an independent mapping check. Keep injectivity and range checks.
-            if (
-                len(indices) != len(moves)
-                or len(set(indices.tolist())) != len(moves)
-                or bool(np.any(indices < 0))
-                or bool(np.any(indices >= COMPACT_POLICY_SIZE))
-            ):
-                raise ValueError(f"{pending.path}:{row_index}: legal policy mapping mismatch")
-            if (
-                probs.shape != (len(indices),)
-                or not np.isfinite(probs).all()
-                or bool(np.any(probs < 0.0))
-                or not np.isclose(float(probs.sum()), 1.0, atol=2e-6)
-            ):
-                raise ValueError(f"{pending.path}:{row_index}: invalid BT4 legal policy")
-            bt4_policy[row_index, indices] = probs
             positive = probs > 0.0
-            entropy_sum += float(-np.sum(probs[positive] * np.log(probs[positive])))
+            entropy_sum += -float(np.sum(probs[positive] * np.log(probs[positive])))
             top1_sum += float(probs.max())
-            legal_moves_sum += len(indices)
+            legal_moves_sum += len(moves)
         cursor = stop
 
     for row in iter_bt4_input_rows(pending.path):
