@@ -188,6 +188,16 @@ def verify(command: list[str], package: Path, checkpoint: Path, oracle_binary: P
                     policy_values += n
             assert not paths
             assert ref.next() is None
+            metrics = [json.loads(line.removeprefix('info string neural_work ')) for line in lines
+                       if line.startswith('info string neural_work ')]
+            assert len(metrics) == 1, 'missing/duplicate per-search work report'
+            work = metrics[0]
+            assert work['schema'] == 'deepfin.neural-work.v1'
+            assert work['completed_simulations'] == ref.completed
+            assert work['executed_real_rows'] == work['accepted_neural_rows'] == work['forward_calls'] == seen
+            assert work['dispatched_real_rows'] == seen
+            assert work['padded_rows'] == work['rejected_rows'] == work['failed_forward_rows'] == 0
+            assert work['phase_seconds']['gpu'] is None
             assert ref.completed == 4
             assert ref.stop == 0
             assert any(line.startswith('info nodes 4 ') for line in lines)
