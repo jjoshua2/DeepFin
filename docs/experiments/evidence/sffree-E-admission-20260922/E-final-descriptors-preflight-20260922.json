@@ -1,0 +1,108 @@
+{
+  "status": "PASS_CPU_DESCRIPTOR_AND_REFUSAL_CHECKS",
+  "jobs": {
+    "E": {
+      "queue_item": {
+        "id": "factorial58_sffree_20260922_E",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/scheduler_run",
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/registered_command.json",
+        "command_sha256": "ac2cde06eeb4b3daa6db9c0d32ddcbf9a2fd7b13744aa38bae2e8216d6ded20c",
+        "max_seconds": 79800,
+        "estimated_seconds": 47000,
+        "description": "Full fresh exact58M epoch, no clock-truncated epoch",
+        "requires_previous_id": null
+      },
+      "plan_sha256": "a4e69f181281d6b77f4ae7c67af010762bcf318af6988b9ecd6b4b7317060bdf",
+      "cpu_preflight_returncode": 0,
+      "stdout": "PASS_BOUND_CPU_PREFLIGHT_NOT_EXECUTED\n",
+      "stderr": "",
+      "expected_pending_donor_refusal": false,
+      "registered_spec_pass": true
+    },
+    "E_D": {
+      "queue_item": {
+        "id": "factorial58_sffree_20260922_E_D",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/scheduler_run",
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/registered_command.json",
+        "command_sha256": "7551fa839591910903bfade62e9fcdc057835c68c125e4a9369965c533850596",
+        "max_seconds": 3660,
+        "estimated_seconds": 1800,
+        "description": "Full registered256game128pair400sim match; incomplete bank invalid",
+        "requires_previous_id": "factorial58_sffree_20260922_E"
+      },
+      "plan_sha256": "77d6aefeb0c75eeb283cadb0a719ee24ba68a72339623f44314572a07d428b9d",
+      "cpu_preflight_returncode": 1,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/run.py\", line 87, in <module>\n    if __name__=='__main__':raise SystemExit(main())\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/run.py\", line 47, in main\n    bound=bind(p);out=Path(p['out']);require(not out.exists(),'fresh arena output required')\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/run.py\", line 34, in bind\n    result={role:bind_one(p['donors'][role]) for role in ['candidate','reference']}\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/run.py\", line 34, in <dictcomp>\n    result={role:bind_one(p['donors'][role]) for role in ['candidate','reference']}\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/run.py\", line 19, in bind_one\n    terminal=op.load(Path(donor['terminal']));require(terminal['returncode']==0,'training supervisor did not succeed')\n  File \"/tmp/deepfin-bootstrap-operator/scripts/bootstrap_experiment_operator.py\", line 32, in load\n    return json.loads(path.read_text())\n  File \"/usr/lib/python3.10/pathlib.py\", line 1134, in read_text\n    with self.open(mode='r', encoding=encoding, errors=errors) as f:\n  File \"/usr/lib/python3.10/pathlib.py\", line 1119, in open\n    return self._accessor.open(self, mode, buffering, encoding, errors,\nFileNotFoundError: [Errno 2] No such file or directory: '/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E/scheduler_run/parent_outer_terminal.json'\n",
+      "expected_pending_donor_refusal": true,
+      "registered_spec_pass": true
+    },
+    "D122": {
+      "queue_item": {
+        "id": "factorial58_sffree_20260922_D122",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/scheduler_run",
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/registered_command.json",
+        "command_sha256": "a4a6004e64c127108823cf1c923bd859a61c7ef1b5191942d2d800a7cbfa52de",
+        "max_seconds": 79800,
+        "estimated_seconds": 47000,
+        "description": "Full fresh exact58M epoch, no clock-truncated epoch",
+        "requires_previous_id": "factorial58_sffree_20260922_E_D"
+      },
+      "plan_sha256": "b0195ee5adcf150c2233f6f9e8fc3c96c419883b400d277040d91a7401b3b1a4",
+      "cpu_preflight_returncode": 1,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/run.py\", line 106, in <module>\n    if __name__=='__main__':raise SystemExit(main())\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/run.py\", line 35, in main\n    roots,qualification,pins,anchor_value=admit(p)\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/admission.py\", line 56, in admit\n    arena = read(plan['prerequisite_arena']['complete'])\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/D122/admission.py\", line 11, in read\n    return json.loads(Path(path).read_text())\n  File \"/usr/lib/python3.10/pathlib.py\", line 1134, in read_text\n    with self.open(mode='r', encoding=encoding, errors=errors) as f:\n  File \"/usr/lib/python3.10/pathlib.py\", line 1119, in open\n    return self._accessor.open(self, mode, buffering, encoding, errors,\nFileNotFoundError: [Errno 2] No such file or directory: '/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/complete.json'\n",
+      "expected_pending_donor_refusal": true,
+      "registered_spec_pass": true
+    },
+    "E122": {
+      "queue_item": {
+        "id": "factorial58_sffree_20260922_E122",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/scheduler_run",
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/registered_command.json",
+        "command_sha256": "7217ef61ffa53f1b02c1366e0acb3c8e2bae753d5ceba7bb90c062667ebef442",
+        "max_seconds": 79800,
+        "estimated_seconds": 47000,
+        "description": "Full fresh exact58M epoch, no clock-truncated epoch",
+        "requires_previous_id": "factorial58_sffree_20260922_D122"
+      },
+      "plan_sha256": "b315d0c34b74ddf2d7c8a5c49aa9822c7e1da8ecb2e472c2d6804971923acf0e",
+      "cpu_preflight_returncode": 1,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/run.py\", line 106, in <module>\n    if __name__=='__main__':raise SystemExit(main())\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/run.py\", line 35, in main\n    roots,qualification,pins,anchor_value=admit(p)\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/admission.py\", line 56, in admit\n    arena = read(plan['prerequisite_arena']['complete'])\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/admission.py\", line 11, in read\n    return json.loads(Path(path).read_text())\n  File \"/usr/lib/python3.10/pathlib.py\", line 1134, in read_text\n    with self.open(mode='r', encoding=encoding, errors=errors) as f:\n  File \"/usr/lib/python3.10/pathlib.py\", line 1119, in open\n    return self._accessor.open(self, mode, buffering, encoding, errors,\nFileNotFoundError: [Errno 2] No such file or directory: '/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/complete.json'\n",
+      "expected_pending_donor_refusal": true,
+      "registered_spec_pass": true
+    },
+    "E122_D122": {
+      "queue_item": {
+        "id": "factorial58_sffree_20260922_E122_D122",
+        "kind": "registered_command",
+        "status": "queued",
+        "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/scheduler_run",
+        "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/registered_command.json",
+        "command_sha256": "2f85d7d3fe60beb7dcdd25cd2e8e7b682369da90352595f949231fa9f7e8ba17",
+        "max_seconds": 3660,
+        "estimated_seconds": 1800,
+        "description": "Full registered256game128pair400sim match; incomplete bank invalid",
+        "requires_previous_id": "factorial58_sffree_20260922_E122"
+      },
+      "plan_sha256": "256ef65a17b39293a1ebc674519fdcad1e5b71d3616eff77bb3455a5e38a703c",
+      "cpu_preflight_returncode": 1,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/run.py\", line 87, in <module>\n    if __name__=='__main__':raise SystemExit(main())\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/run.py\", line 47, in main\n    bound=bind(p);out=Path(p['out']);require(not out.exists(),'fresh arena output required')\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/run.py\", line 34, in bind\n    result={role:bind_one(p['donors'][role]) for role in ['candidate','reference']}\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/run.py\", line 34, in <dictcomp>\n    result={role:bind_one(p['donors'][role]) for role in ['candidate','reference']}\n  File \"/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122_D122/run.py\", line 19, in bind_one\n    terminal=op.load(Path(donor['terminal']));require(terminal['returncode']==0,'training supervisor did not succeed')\n  File \"/tmp/deepfin-bootstrap-operator/scripts/bootstrap_experiment_operator.py\", line 32, in load\n    return json.loads(path.read_text())\n  File \"/usr/lib/python3.10/pathlib.py\", line 1134, in read_text\n    with self.open(mode='r', encoding=encoding, errors=errors) as f:\n  File \"/usr/lib/python3.10/pathlib.py\", line 1119, in open\n    return self._accessor.open(self, mode, buffering, encoding, errors,\nFileNotFoundError: [Errno 2] No such file or directory: '/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E122/scheduler_run/parent_outer_terminal.json'\n",
+      "expected_pending_donor_refusal": true,
+      "registered_spec_pass": true
+    }
+  },
+  "checked_unix": 1790081803.7033715,
+  "no_gpu_launch": true,
+  "queue_mutated": false
+}

@@ -1,0 +1,1 @@
+{"status": "PASS", "checks": 14, "scope": "synthetic replica admission; existing E121 admission mocked, actual paired-bank validator and hash guards used"}
