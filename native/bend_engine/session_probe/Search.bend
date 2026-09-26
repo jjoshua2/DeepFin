@@ -8,6 +8,8 @@ type Node is Data:
     n: U32, w: F32, prior: F32, value: F32, status: U32, depth: U32}
 
 # Node status: 0=unevaluated, 1=expanded, 2=terminal, 3=depth-cutoff.
+# Reply status 3 is an exact draw adjudication by the history-owning host,
+# NOT a neural WDL prediction. Bend validates identity/payload and caches zero.
 # Tree stop: 0=running/budget done, 1=capacity, 2=cancelled,
 # 3=backend failure, 4=invalid reply. No partial expansion on errors.
 type Tree is Type:
@@ -79,6 +81,15 @@ def key(m: Chess.Ply) -> U32:
   Chess.Ply{src, dst, promotion, flag} = m
   U32.or(src, U32.or(U32.shln(dst, 6n), U32.or(U32.shln(promotion, 12n), U32.shln(flag, 15n))))
 
+# A non-board action: outside every legal packed key. Never send it to an
+# encoder or make_move. Its terminal zero is side-independent, so ordinary
+# alternating backup can use the same code without changing the board.
+def claim_key() -> U32:
+  131072
+
+def is_claim(+a: Node) -> Bool:
+  U32.is_eq(key(node_move(a)), claim_key())
+
 def mean(+a: Node) -> F32:
   F32.div(node_w(a), F32.from_nat(U32.to_nat(U32.max(1, node_n(a)))))
 
@@ -103,7 +114,8 @@ type Scan is Type:
 def choose_seen(+i: U32, fpu: F32, scale: F32, best: U32, +score: F32, +best_key: U32,
   r: Array<Node> & Node) -> Scan:
   (pool, +a) = r
-  q = Bool.pick(F32, U32.is_zero(node_n(a)), fpu, F32.neg(mean(a)))
+  q = Bool.pick(F32, is_claim(a), 0.0,
+    Bool.pick(F32, U32.is_zero(node_n(a)), fpu, F32.neg(mean(a))))
   u = F32.div(F32.mul(scale, node_prior(a)), F32.from_nat(U32.to_nat(U32.inc(node_n(a)))))
   +s = F32.add(q, u)
   +k = key(node_move(a))
@@ -147,12 +159,27 @@ def select_step(r: Array<Node> & U32) -> Array<Node> & U32:
   (pool, +id) = r
   select_seen(id, Array.get(Node, pool, id))
 
-def select(fuel: Nat, r: Array<Node> & U32) -> Array<Node> & U32:
-  match fuel:
-    case 0n: r
-    case 1n+p: select(p, select_step(r))
+# A step that returns the same ID is a fixed point: stop without rereading
+# the leaf for every remaining unit of fuel. Keep select_step's scoring and
+# tie-breaking unchanged, and retain the fuel bound for actual descent.
+type Selecting is Type:
+  Selecting{pool: Array<Node>, id: U32, active: Bool}
 
-# After reaching a leaf, bounded selection only rereads it; no further descent.
+def selection_step(previous: U32, r: Array<Node> & U32) -> Selecting:
+  (pool, +id) = r
+  Selecting{pool, id, Bool.not(U32.is_eq(previous, id))}
+
+def selection_loop(fuel: Nat, state: Selecting) -> Array<Node> & U32:
+  match fuel state:
+    case 0n Selecting{pool, id, active}: (pool, id)
+    case 1n+p Selecting{pool, id, False{}}: (pool, id)
+    case 1n+p Selecting{pool, +id, True{}}:
+      selection_loop(p, selection_step(id, select_step((pool, id))))
+
+def select(fuel: Nat, r: Array<Node> & U32) -> Array<Node> & U32:
+  (pool, id) = r
+  selection_loop(fuel, Selecting{pool, id, True{}})
+
 def bump(a: Node, value: F32) -> Node:
   Node{b, m, parent, first, count, n, w, prior, cached, status, depth} = a
   Node{b, m, parent, first, count, U32.inc(n), F32.add(w, value), prior, cached, status, depth}
@@ -171,11 +198,11 @@ def backup_step(b: Backing) -> Backing:
     case True{}: backup_seen(id, value, Array.get(Node, pool, id))
 
 def backup(fuel: Nat, b: Backing) -> Array<Node>:
-  match fuel:
-    case 0n:
-      Backing{pool, active, id, value} = b
-      pool
-    case 1n+p: backup(p, backup_step(b))
+  match fuel b:
+    case 0n Backing{pool, active, id, value}: pool
+    case 1n+p Backing{pool, False{}, id, value}: pool
+    case 1n+p Backing{pool, True{}, id, value}:
+      backup(p, backup_step(Backing{pool, True{}, id, value}))
 
 def complete(id: U32, value: F32, tree: Tree) -> Tree:
   Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
@@ -283,58 +310,100 @@ def append(ms: List<&2, Chess.Ply>, +b: Chess.Board, +parent: U32, +depth: U32,
       append(rest, b, parent, depth, U32.inc(i), U32.inc(pi), sum,
         append_one(m, b, parent, depth, i, pi, sum, state))
 
-def expand_done(+id: U32, a: Node, +used: U32, +count: U32, +value: F32,
+def append_claim(claim: Bool, +a: Node, parent: U32, i: U32, r: Expanded) -> Expanded:
+  match claim:
+    case False{}: r
+    case True{}:
+      Expanded{pool, policy} = r
+      child = {Node{node_board(a), Chess.Ply{0, 0, 0, 4}, parent, 0, 0,
+        0, 0.0, 0.0, 0.0, 2, U32.inc(node_depth(a))} : Node}
+      Expanded{Array.set(Node, pool, i, child), policy}
+
+def expand_done(+claim: Bool, +id: U32, a: Node, +used: U32, +count: U32, +value: F32,
   cap: U32, n: U32, pending: U32, epoch: U32, request: U32, stop: U32, limit: U32, r: Expanded) -> Tree:
   Expanded{pool, policy} = r
+  +count = U32.add(count, Bool.to_u32(claim))
   pool = Array.set(Node, pool, id, mark(a, used, count, 1, value))
   complete(id, value, Tree{pool, U32.add(used, count), cap, n, pending, epoch, U32.inc(request), stop, limit})
 
-def expand_kind(cut: Bool, +id: U32, +a: Node, ms: List<&2, Chess.Ply>, count: U32,
+def expand_kind(+claim: Bool, cut: Bool, +id: U32, +a: Node, ms: List<&2, Chess.Ply>, +count: U32,
   +value: F32, sum: F32, policy: Array<F32>, tree: Tree) -> Tree:
   match cut:
     case True{}:
       Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
+      +value = Bool.pick(F32, claim, F32.max(0.0, value), value)
       pool = Array.set(Node, pool, id, mark(a, 0, 0, 3, value))
       complete(id, value, Tree{pool, used, cap, n, pending, epoch, U32.inc(request), stop, limit})
     case False{}:
       Tree{pool, +used, cap, n, pending, epoch, request, stop, limit} = tree
-      expand_done(id, a, used, count, value, cap, n, pending, epoch, request, stop, limit,
-        append(ms, node_board(a), id, U32.inc(node_depth(a)), used, 0, sum, Expanded{pool, policy}))
+      expand_done(claim, id, a, used, count, value, cap, n, pending, epoch, request, stop, limit,
+        append_claim(claim, a, id, U32.add(used, count),
+          append(ms, node_board(a), id, U32.inc(node_depth(a)), used, 0, sum, Expanded{pool, policy})))
 
-def accepted_seen(id: U32, ms: List<&2, Chess.Ply>, count: U32, value: F32, sum: F32,
-  policy: Array<F32>, used: U32, cap: U32, n: U32, pending: U32, epoch: U32,
+def expand_room(room: Bool, claim: Bool, cut: Bool, id: U32, a: Node,
+  ms: List<&2, Chess.Ply>, count: U32, value: F32, sum: F32, policy: Array<F32>, tree: Tree) -> Tree:
+  match room:
+    case False{}: halt(tree, 1)
+    case True{}: expand_kind(claim, cut, id, a, ms, count, value, sum, policy, tree)
+
+def accepted_seen(+claim: Bool, id: U32, ms: List<&2, Chess.Ply>, +count: U32, value: F32, sum: F32,
+  policy: Array<F32>, +used: U32, +cap: U32, n: U32, pending: U32, epoch: U32,
   request: U32, stop: U32, +limit: U32, r: Array<Node> & Node) -> Tree:
   (pool, +a) = r
-  expand_kind(U32.is_ge(node_depth(a), limit), id, a, ms, count, value, sum, policy,
+  +cut = U32.is_ge(node_depth(a), limit)
+  room = Bool.or(cut, U32.is_le(U32.add(used, U32.add(count, Bool.to_u32(claim))), cap))
+  expand_room(room, claim, cut, id, a, ms, count, value, sum, policy,
     Tree{pool, used, cap, n, pending, epoch, request, stop, limit})
 
-def accepted(valid: Bool, +id: U32, ms: List<&2, Chess.Ply>, count: U32,
+def accepted(claim: Bool, valid: Bool, +id: U32, ms: List<&2, Chess.Ply>, count: U32,
   value: F32, sum: F32, policy: Array<F32>, tree: Tree) -> Tree:
   match valid:
     case False{}: halt(tree, 4)
     case True{}:
       Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
-      accepted_seen(id, ms, count, value, sum, policy, used, cap, n, pending, epoch,
+      accepted_seen(claim, id, ms, count, value, sum, policy, used, cap, n, pending, epoch,
         request, stop, limit, Array.get(Node, pool, id))
 
-def reply_summed(id: U32, ms: List<&2, Chess.Ply>, count: U32, value: F32,
+def reply_summed(claim: Bool, id: U32, ms: List<&2, Chess.Ply>, count: U32, value: F32,
   tree: Tree, r: Array<F32> & (F32 & Bool)) -> Tree:
   (policy, (+sum, valid)) = r
-  accepted(Bool.and(valid, F32.is_gt(sum, 0.0)), id, ms, count, value, sum, policy, tree)
+  accepted(claim, Bool.and(valid, F32.is_gt(sum, 0.0)), id, ms, count, value, sum, policy, tree)
 
 def reply_values(id: U32, ms: List<&2, Chess.Ply>, tree: Tree, reply: Reply) -> Tree:
   Reply{epoch, request, node, status, +win, +draw, +loss, +count, policy} = reply
   +total = F32.add(F32.add(win, draw), loss)
   wdl_ok = Bool.and(probability(win), Bool.and(probability(draw), Bool.and(probability(loss),
     F32.is_le(F32.abs(F32.sub(total, 1.0)), 0.00001))))
-  reply_summed(id, ms, count, F32.div(F32.sub(win, loss), F32.max(total, 0.00001)), tree,
+  reply_summed(U32.is_eq(status, 4), id, ms, count, F32.div(F32.sub(win, loss), F32.max(total, 0.00001)), tree,
     policy_sum(U32.to_nat(count), 0, (policy, (0.0, wdl_ok))))
+
+# The host owns pre-root history and clocks. A rule draw has no children or
+# neural policy. Validate everything before setting terminal state or backing up.
+def draw_seen(+id: U32, used: U32, cap: U32, n: U32, pending: U32, epoch: U32,
+  request: U32, stop: U32, limit: U32, r: Array<Node> & Node) -> Tree:
+  (pool, a) = r
+  pool = Array.set(Node, pool, id, mark(a, 0, 0, 2, 0.0))
+  complete(id, 0.0, Tree{pool, used, cap, n, pending, epoch, U32.inc(request), stop, limit})
+
+def draw_checked(valid: Bool, +id: U32, tree: Tree) -> Tree:
+  match valid:
+    case False{}: halt(tree, 4)
+    case True{}:
+      Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
+      draw_seen(id, used, cap, n, pending, epoch, request, stop, limit, Array.get(Node, pool, id))
+
+def reply_draw(id: U32, tree: Tree, reply: Reply) -> Tree:
+  Reply{epoch, request, node, status, win, draw, loss, count, policy} = reply
+  draw_checked(Bool.and(U32.is_zero(count), Bool.and(F32.is_eq(win, 0.0),
+    Bool.and(F32.is_eq(draw, 1.0), F32.is_eq(loss, 0.0)))), id, tree)
 
 def reply_status(status: U32, id: U32, ms: List<&2, Chess.Ply>, tree: Tree, reply: Reply) -> Tree:
   match status:
     case 0: reply_values(id, ms, tree, reply)
     case 1: halt(tree, 3)
     case 2: halt(tree, 2)
+    case 3: reply_draw(id, tree, reply)
+    case 4: reply_values(id, ms, tree, reply)
     case _: halt(tree, 4)
 
 def reply_checked(valid: Bool, id: U32, ms: List<&2, Chess.Ply>, tree: Tree, reply: Reply) -> Tree:
@@ -351,7 +420,8 @@ def resume(tree: Tree, ticket: Ticket, reply: Reply) -> Tree:
   identity = Bool.and(needs_reply, Bool.and(U32.is_eq(te, epoch), Bool.and(U32.is_eq(tr, request),
     Bool.and(U32.is_zero(stop), Bool.and(U32.is_eq(pending, id),
       Bool.and(U32.is_eq(epoch, re), Bool.and(U32.is_eq(request, rr), U32.is_eq(id, rn))))))))
-  shape = Bool.or(Bool.not(U32.is_zero(status)), U32.is_eq(count, U32.from_nat(List.length(&2, Chess.Ply, ms))))
+  evaluated = Bool.or(U32.is_zero(status), U32.is_eq(status, 4))
+  shape = Bool.or(Bool.not(evaluated), U32.is_eq(count, U32.from_nat(List.length(&2, Chess.Ply, ms))))
   reply_checked(Bool.and(identity, Bool.and(shape, U32.is_le(count, 256))), id, ms,
     Tree{pool, used, cap, n, pending, epoch, request, stop, limit},
     Reply{re, rr, rn, status, win, draw, loss, count, policy})
