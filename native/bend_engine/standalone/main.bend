@@ -9,6 +9,11 @@ import ./Protocol.bend as Protocol
 import ./Rules.bend as Rules
 import ./SearchHistory.bend as History
 import ./EncodingDiagnostic.bend as EncodingDiagnostic
+import ./ModelInputDiagnostic.bend as ModelInputDiagnostic
+import ./PolicyDiagnostic.bend as PolicyDiagnostic
+import ./EvaluationDiagnostic.bend as EvaluationDiagnostic
+import ./NativeEvaluation.bend as NativeEvaluation
+import ./NeuralWork.bend as Work
 
 type Packet is Data:
   Packet{kind: U32, text: String}
@@ -18,8 +23,8 @@ def Wire.poll() -> IO(Packet):
 
 type Mode is Type:
   Idle{}
-  Running{tree: Search.Tree, budget: U32, infinite: Bool, started: Nat, duration: U32, fallback: U32}
-  Held{key: U32, completed: U32, stop: U32}
+  Running{tree: Search.Tree, budget: U32, infinite: Bool, started: Work.Run, duration: U32, fallback: U32}
+  Held{key: U32, completed: U32, stop: U32, report: String}
 
 type State is Type:
   State{root: Pos.Game, table: Array<U64>, mode: Mode, quit: Bool}
@@ -80,13 +85,20 @@ def rule_reply(ticket: Search.Ticket) -> Search.Reply:
   Search.Ticket{epoch, request, id, b, moves, reply} = ticket
   Search.Reply{epoch, request, id, 3, 0.0, 1.0, 0.0, 0, Array.new(F32, 8n, 0.0)}
 
-def rule_result(reason: U32, tree: Search.Tree, +ticket: Search.Ticket) -> Search.Tree:
+def model_reply(timing: Bool, model: U32, root: Pos.Game, game: Pos.Game, ticket: Search.Ticket,
+  table: Array<U64>) -> IO(NativeEvaluation.Result):
+  match model:
+    case 0: IO.pure(NativeEvaluation.Result, NativeEvaluation.material((table, reply_for(ticket))))
+    case _: NativeEvaluation.evaluate(timing, model, root, game, ticket, table)
+
+def evaluate_reply(timing: Bool, model: U32, reason: U32, root: Pos.Game, game: Pos.Game,
+  ticket: Search.Ticket, table: Array<U64>) -> IO(NativeEvaluation.Result):
   match reason:
-    case 0: Search.resume(tree, ticket, reply_for(ticket))
-    case _: Search.resume(tree, ticket, rule_reply(ticket))
+    case 0: model_reply(timing, model, root, game, ticket, table)
+    case _: IO.pure(NativeEvaluation.Result, NativeEvaluation.material((table, rule_reply(ticket))))
 
 def ready_state(root: Pos.Game, table: Array<U64>, tree: Search.Tree, budget: U32,
-  inf: Bool, started: Nat, duration: U32, fallback: U32) -> State:
+  inf: Bool, started: Work.Run, duration: U32, fallback: U32) -> State:
   State{root, table, Running{tree, budget, inf, started, duration, fallback}, False{}}
 
 def rule_notice(code: U32, node: U32, count: U32, half: U32) -> IO(Unit):
@@ -96,40 +108,65 @@ def rule_notice(code: U32, node: U32, count: U32, half: U32) -> IO(Unit):
       IO.print("info string rule_draw " ++ U32.show(node) ++ " " ++ Rules.name(code)
         ++ " " ++ U32.show(count) ++ " " ++ U32.show(half))
 
-def adjudicated(root: Pos.Game, tree: Search.Tree, +ticket: Search.Ticket, budget: U32,
-  inf: Bool, started: Nat, duration: U32, fallback: U32, r: Array<U64> & Rules.Facts) -> IO(State):
+# Read only scalar completion counts; never duplicate the mutable node arena.
+def resumed_reply(neural: Bool, before: U32, enc: Nat, back: Nat, post: Nat, t0: Nat,
+  root: Pos.Game, table: Array<U64>, tree: Search.Tree, budget: U32,
+  inf: Bool, +started: Work.Run, duration: U32, fallback: U32) -> IO(State):
+  Search.Tree{pool, used, cap, +n, pending, epoch, request, stop, limit} = tree
+  do IO<State>:
+    t1 : Nat <- Work.clock(Work.profiling(started))
+    return ready_state(root, table, Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit}, budget, inf,
+      Work.returned(started, neural, before, n, enc, back, post, Nat.sub(t1, t0)), duration, fallback)
+
+def resume_result(neural: Bool, before: U32, root: Pos.Game, tree: Search.Tree, ticket: Search.Ticket, budget: U32,
+  inf: Bool, +started: Work.Run, duration: U32, fallback: U32, r: NativeEvaluation.Result) -> IO(State):
+  NativeEvaluation.Result{table, reply, enc, back, post} = r
+  do IO<State>:
+    t0 : Nat <- Work.clock(Work.profiling(started))
+    resumed_reply(neural, before, enc, back, post, t0, root, table,
+      Search.resume(tree, ticket, reply), budget, inf, started, duration, fallback)
+
+def resume_reply(neural: Bool, root: Pos.Game, tree: Search.Tree, ticket: Search.Ticket, budget: U32,
+  inf: Bool, started: Work.Run, duration: U32, fallback: U32, r: NativeEvaluation.Result) -> IO(State):
+  Search.Tree{pool, used, cap, +before, pending, epoch, request, stop, limit} = tree
+  resume_result(neural, before, root, Search.Tree{pool, used, cap, before, pending, epoch, request, stop, limit},
+    ticket, budget, inf, started, duration, fallback, r)
+
+def adjudicated(+model: U32, +root: Pos.Game, game: Pos.Game, tree: Search.Tree, +ticket: Search.Ticket, budget: U32,
+  inf: Bool, +started: Work.Run, duration: U32, fallback: U32, r: Array<U64> & Rules.Facts) -> IO(State):
   Search.Ticket{epoch, request, id, b, moves, reply} = ticket
   (table, Rules.Facts{+code, count, half}) = r
   do IO<State>:
     rule_notice(code, id, count, half)
-    return ready_state(root, table, rule_result(code, tree, ticket), budget, inf, started, duration, fallback)
+    r : NativeEvaluation.Result <- evaluate_reply(Work.profiling(started), model, code, root, game, ticket, table)
+    resume_reply(Bool.and(U32.is_gt(model, 0), U32.is_zero(code)), root, tree, ticket, budget, inf, started, duration, fallback, r)
 
-def history_checked(ok: Bool, root: Pos.Game, game: Pos.Game, table: Array<U64>, tree: Search.Tree,
-  +ticket: Search.Ticket, budget: U32, inf: Bool, started: Nat, duration: U32, fallback: U32) -> IO(State):
+def history_checked(+model: U32, ok: Bool, root: Pos.Game, +game: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  +ticket: Search.Ticket, budget: U32, inf: Bool, started: Work.Run, duration: U32, fallback: U32) -> IO(State):
   match ok:
     case False{}: IO.die(State, 2, "invalid native search history")
     case True{}:
       Search.Ticket{epoch, request, id, b, moves, reply} = ticket
-      adjudicated(root, tree, ticket, budget, inf, started, duration, fallback, Rules.automatic(game, moves, table))
+      adjudicated(model, root, game, tree, ticket, budget, inf, started, duration, fallback, Rules.automatic(game, moves, table))
 
-def rebuilt(root: Pos.Game, table: Array<U64>, ticket: Search.Ticket, budget: U32,
-  inf: Bool, started: Nat, duration: U32, fallback: U32, h: History.Rebuilt) -> IO(State):
+def rebuilt(+model: U32, root: Pos.Game, table: Array<U64>, ticket: Search.Ticket, budget: U32,
+  inf: Bool, started: Work.Run, duration: U32, fallback: U32, h: History.Rebuilt) -> IO(State):
   History.Rebuilt{tree, game, valid} = h
-  history_checked(valid, root, game, table, tree, ticket, budget, inf, started, duration, fallback)
+  history_checked(model, valid, root, game, table, tree, ticket, budget, inf, started, duration, fallback)
 
-def evaluated(needed: Bool, +root: Pos.Game, table: Array<U64>, tree: Search.Tree,
-  +ticket: Search.Ticket, budget: U32, inf: Bool, started: Nat, duration: U32, fallback: U32) -> IO(State):
+def evaluated(+model: U32, needed: Bool, +root: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  +ticket: Search.Ticket, budget: U32, inf: Bool, started: Work.Run, duration: U32, fallback: U32) -> IO(State):
   match needed:
     case False{}: IO.pure(State, ready_state(root, table, tree, budget, inf, started, duration, fallback))
     case True{}:
       Search.Ticket{epoch, request, id, b, moves, reply} = ticket
-      rebuilt(root, table, ticket, budget, inf, started, duration, fallback, History.rebuild(root, id, b, tree))
+      rebuilt(model, root, table, ticket, budget, inf, started, duration, fallback, History.rebuild(root, id, b, tree))
 
-def prepared(root: Pos.Game, budget: U32, infinite: Bool, started: Nat, duration: U32, fallback: U32,
+def prepared(+model: U32, root: Pos.Game, budget: U32, infinite: Bool, started: Work.Run, duration: U32, fallback: U32,
   p: Search.Prepared) -> IO(State):
   Search.Prepared{table, tree, +ticket} = p
   Search.Ticket{epoch, request, id, b, moves, needs} = ticket
-  evaluated(needs, root, table, tree, ticket, budget, infinite, started, duration, fallback)
+  evaluated(model, needs, root, table, tree, ticket, budget, infinite, started, duration, fallback)
 
 type Pick is Type:
   Pick{pool: Array<Search.Node>, key: U32, visits: U32}
@@ -159,68 +196,80 @@ def move_key(+key: U32) -> String:
 
 def result_label(n: U32) -> String:
   match n:
-    case 0: "unsearched legal fallback; diagnostic material PUCT"
-    case _: "diagnostic material PUCT"
+    case 0: "unsearched legal fallback; Bend PUCT"
+    case _: "Bend PUCT"
 
-def output(root: Pos.Game, table: Array<U64>, key: U32, +n: U32, stop: U32) -> IO(State):
+def output(report: String, root: Pos.Game, table: Array<U64>, key: U32, +n: U32, stop: U32) -> IO(State):
   do IO<State>:
+    IO.print(report)
     IO.print("info nodes " ++ U32.show(n) ++ " string " ++ result_label(n) ++ "; stop_code " ++ U32.show(stop))
     IO.print("bestmove " ++ move_key(key))
     return State{root, table, Idle{}, False{}}
 
-def output_or_hold(hold: Bool, root: Pos.Game, table: Array<U64>, key: U32, +n: U32, stop: U32) -> IO(State):
+def output_or_hold(report: String, hold: Bool, root: Pos.Game, table: Array<U64>, key: U32, +n: U32, stop: U32) -> IO(State):
   match hold:
-    case True{}: IO.pure(State, State{root, table, Held{key, n, stop}, False{}})
-    case False{}: output(root, table, key, n, stop)
+    case True{}: IO.pure(State, State{root, table, Held{key, n, stop, report}, False{}})
+    case False{}: output(report, root, table, key, n, stop)
 
 def fallback_notice(used: Bool) -> IO(Unit):
   match used:
     case False{}: IO.pure(Unit, Unit{})
     case True{}: IO.print("info string legal protocol fallback; no searched continuation; GUI owns adjudication")
 
-def picked(hold: Bool, root: Pos.Game, table: Array<U64>, +fallback: U32, n: U32, stop: U32, p: Pick) -> IO(State):
+def picked(run: Work.Run, hold: Bool, root: Pos.Game, table: Array<U64>, +fallback: U32, +n: U32, +stop: U32, p: Pick) -> IO(State):
   Pick{pool, +key, visits} = p
   +missing = U32.is_eq(key, 4294967295)
   do IO<State>:
+    now : Nat <- IO.now()
     fallback_notice(Bool.and(missing, Bool.not(U32.is_eq(fallback, 4294967295))))
-    output_or_hold(hold, root, table, Bool.pick(U32, missing, fallback, key), n, stop)
+    output_or_hold(Work.render(now, n, stop, run), hold, root, table, Bool.pick(U32, missing, fallback, key), n, stop)
 
-def finish(hold: Bool, root: Pos.Game, table: Array<U64>, fallback: U32, tree: Search.Tree) -> IO(State):
+def finish(run: Work.Run, hold: Bool, root: Pos.Game, table: Array<U64>, fallback: U32, tree: Search.Tree) -> IO(State):
   Search.Tree{pool, used, cap, n, pending, epoch, request, stop, limit} = tree
-  picked(hold, root, table, fallback, n, stop, pick(U32.to_nat(used), 0, Pick{pool, 4294967295, 0}))
+  picked(run, hold, root, table, fallback, n, stop, pick(U32.to_nat(used), 0, Pick{pool, 4294967295, 0}))
 
 def stop(root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
   match mode:
     case Idle{}: IO.pure(State, State{root, table, Idle{}, False{}})
-    case Held{key, n, code}: output(root, table, key, n, code)
-    case Running{tree, budget, inf, started, duration, fallback}: finish(False{}, root, table, fallback, tree)
+    case Held{key, n, code, report}: output(report, root, table, key, n, code)
+    case Running{tree, budget, inf, started, duration, fallback}: finish(started, False{}, root, table, fallback, tree)
 
-def progress(done: Bool, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
-  budget: U32, inf: Bool, started: Nat, duration: U32, fallback: U32) -> IO(State):
+def selected(model: U32, root: Pos.Game, budget: U32, inf: Bool, +started: Work.Run,
+  duration: U32, fallback: U32, t0: Nat, p: Search.Prepared) -> IO(State):
+  do IO<State>:
+    t1 : Nat <- Work.clock(Work.profiling(started))
+    prepared(model, root, budget, inf, Work.selected(started, Nat.sub(t1, t0)), duration, fallback, p)
+
+def progress(+model: U32, done: Bool, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  budget: U32, inf: Bool, +started: Work.Run, duration: U32, fallback: U32) -> IO(State):
   match done:
-    case True{}: finish(inf, root, table, fallback, tree)
-    case False{}: prepared(root, budget, inf, started, duration, fallback, Search.prepare(table, tree))
+    case True{}: finish(started, inf, root, table, fallback, tree)
+    case False{}:
+      do IO<State>:
+        t0 : Nat <- Work.clock(Work.profiling(started))
+        selected(model, root, budget, inf, started, duration, fallback, t0, Search.prepare(table, tree))
 
-def elapsed(now: Nat, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
-  +budget: U32, inf: Bool, +started: Nat, +duration: U32, fallback: U32) -> IO(State):
+def elapsed(+model: U32, now: Nat, root: Pos.Game, table: Array<U64>, tree: Search.Tree,
+  +budget: U32, inf: Bool, +started: Work.Run, +duration: U32, fallback: U32) -> IO(State):
   Search.Tree{pool, used, cap, +n, pending, epoch, request, +code, limit} = tree
-  done = Bool.or(U32.is_ge(n, budget), Bool.or(U32.is_gt(code, 0),
-    Bool.and(U32.is_gt(duration, 0), Nat.is_ge(Nat.sub(now, started), U32.to_nat(duration)))))
-  progress(done, root, table, Search.Tree{pool, used, cap, n, pending, epoch, request, code, limit}, budget, inf, started, duration, fallback)
+  done = Bool.or(Work.exhausted(started), Bool.or(Bool.and(U32.is_zero(model), Work.has_limit(started)),
+    Bool.or(U32.is_ge(n, budget), Bool.or(U32.is_gt(code, 0),
+      Bool.and(U32.is_gt(duration, 0), Nat.is_ge(Work.wall(now, started), U32.to_nat(duration)))))))
+  progress(model, done, root, table, Search.Tree{pool, used, cap, n, pending, epoch, request, code, limit}, budget, inf, started, duration, fallback)
 
 def idle(s: State) -> IO(State):
   do IO<State>:
     IO.sleep(10)
     return s
 
-def tick_mode(root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
+def tick_mode(+model: U32, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
   match mode:
     case Idle{}: idle(State{root, table, Idle{}, False{}})
-    case Held{k, n, code}: idle(State{root, table, Held{k, n, code}, False{}})
+    case Held{k, n, code, report}: idle(State{root, table, Held{k, n, code, report}, False{}})
     case Running{tree, budget, inf, started, duration, fallback}:
       do IO<State>:
         now : Nat <- IO.now()
-        elapsed(now, root, table, tree, budget, inf, started, duration, fallback)
+        elapsed(model, now, root, table, tree, budget, inf, started, duration, fallback)
 
 def fallback(ms: List<&2, Chess.Ply>, best: U32) -> U32:
   match ms:
@@ -228,11 +277,11 @@ def fallback(ms: List<&2, Chess.Ply>, best: U32) -> U32:
     case Con{m, rest}: fallback(rest, U32.min(best, Search.key(m)))
 
 def start_search(+root: Pos.Game, lim: Protocol.Limits, r: Array<U64> & List<&2, Chess.Ply>) -> IO(State):
-  Protocol.Limits{budget, depth, duration, inf, seen, valid} = lim
+  Protocol.Limits{budget, depth, +duration, inf, seen, valid, evals} = lim
   (table, ms) = r
   do IO<State>:
     now : Nat <- IO.now()
-    return State{root, table, Running{Search.start(Pos.board(root), 4096, 1, depth), budget, inf, now, duration, fallback(ms, 4294967295)}, False{}}
+    return State{root, table, Running{Search.start(Pos.board(root), 4096, 1, depth), budget, inf, Work.start(now, evals, duration, U32.is_gt(U32.and(seen, 32), 0)), duration, fallback(ms, 4294967295)}, False{}}
 
 def checked_go(ok: Bool, +root: Pos.Game, table: Array<U64>, lim: Protocol.Limits) -> IO(State):
   match ok:
@@ -240,9 +289,9 @@ def checked_go(ok: Bool, +root: Pos.Game, table: Array<U64>, lim: Protocol.Limit
     case True{}: start_search(root, lim, Chess.legal_moves(table, Pos.board(root)))
 
 def go_limits(root: Pos.Game, table: Array<U64>, lim: Protocol.Limits) -> IO(State):
-  Protocol.Limits{budget, depth, +duration, +inf, seen, +valid} = lim
+  Protocol.Limits{budget, depth, +duration, +inf, seen, +valid, evals} = lim
   checked_go(Bool.and(valid, Bool.not(Bool.and(inf, U32.is_gt(duration, 0)))), root, table,
-    Protocol.Limits{budget, depth, duration, inf, seen, valid})
+    Protocol.Limits{budget, depth, duration, inf, seen, valid, evals})
 
 def replace(old: Pos.Game, r: Array<U64> & Maybe<&2, Pos.Game>) -> IO(State):
   (table, g) = r
@@ -291,21 +340,39 @@ def encoding_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) ->
     table : Array<U64> <- EncodingDiagnostic.run(args, root, table)
     return State{root, table, Idle{}, False{}}
 
+def input_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO(State):
+  do IO<State>:
+    table : Array<U64> <- ModelInputDiagnostic.run(args, root, table)
+    return State{root, table, Idle{}, False{}}
+
+def policy_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO(State):
+  do IO<State>:
+    table : Array<U64> <- PolicyDiagnostic.run(args, root, table)
+    return State{root, table, Idle{}, False{}}
+
+def evaluation_args(args: List<&2, String>, +root: Pos.Game, table: Array<U64>) -> IO(State):
+  do IO<State>:
+    table : Array<U64> <- EvaluationDiagnostic.run(args, root, table)
+    return State{root, table, Idle{}, False{}}
+
 def idle_command(code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>) -> IO(State):
   match code:
     case 3: replace(root, Protocol.position(Protocol.parse_position(args), table))
-    case 4: go_limits(root, table, Protocol.go(args, Protocol.GoState{Protocol.Limits{64, 4, 0, False{}, 0, True{}}, 0}))
+    case 4: go_limits(root, table, Protocol.go(args, Protocol.GoState{Protocol.Limits{64, 4, 0, False{}, 0, True{}, 0}, 0}))
     case 7: IO.pure(State, State{Pos.start(), table, Idle{}, False{}})
     case 9: perft_args(args, root, table)
     case 10: rules_args(args, root, table)
     case 11: encoding_args(args, root, table)
+    case 12: input_args(args, root, table)
+    case 13: policy_args(args, root, table)
+    case 14: evaluation_args(args, root, table)
     case _: message(State{root, table, Idle{}, False{}}, "unsupported command")
 
 def available(code: U32, args: List<&2, String>, root: Pos.Game, table: Array<U64>, mode: Mode) -> IO(State):
   match mode:
     case Idle{}: idle_command(code, args, root, table)
     case Running{t, n, inf, start, ms, fb}: message(State{root, table, Running{t, n, inf, start, ms, fb}, False{}}, "busy; stop before changing position or search")
-    case Held{k, n, stop}: message(State{root, table, Held{k, n, stop}, False{}}, "busy; stop before changing position or search")
+    case Held{k, n, stop, report}: message(State{root, table, Held{k, n, stop, report}, False{}}, "busy; stop before changing position or search")
 
 def handle(code: U32, args: List<&2, String>, s: State) -> IO(State):
   match code:
@@ -335,17 +402,17 @@ def dispatch(words: List<&2, String>, s: State) -> IO(State):
     case Nil{}: IO.pure(State, s)
     case Con{h, t}: handle(Protocol.command(h), t, s)
 
-def packet(p: Packet, s: State) -> IO(State):
+def packet(+model: U32, p: Packet, s: State) -> IO(State):
   Packet{kind, text} = p
   match kind:
     case 0:
       State{root, table, mode, quit} = s
-      tick_mode(root, table, mode)
+      tick_mode(model, root, table, mode)
     case 1: dispatch(Text.words(text), s)
     case 2: handle(6, Nil{}, s)
     case _: message(s, "invalid or overlong input record")
 
-def serve(fuel: Nat, s: State) -> IO(Unit):
+def serve(+model: U32, fuel: Nat, s: State) -> IO(Unit):
   match fuel:
     case 0n: IO.print("info string event budget exhausted")
     case 1n+p:
@@ -355,8 +422,30 @@ def serve(fuel: Nat, s: State) -> IO(Unit):
         case False{}:
           do IO<Unit>:
             input : Packet <- Wire.poll()
-            next : State <- packet(input, State{root, table, mode, False{}})
-            serve(p, next)
+            next : State <- packet(model, input, State{root, table, mode, False{}})
+            serve(model, p, next)
+
+def launch(model: U32) -> IO(Unit):
+  serve(model, 1000000000n, State{Pos.start(), Tables.build(), Idle{}, False{}})
+
+def native_launch(+model: U32) -> IO(Unit):
+  do IO<Unit>:
+    IO.print("info string evaluator bound native CPU F32 batch=1; Bend input/policy/softmax; profile=" ++ U32.show(model))
+    launch(model)
+
+def opened(+model: U32) -> IO(Unit):
+  match model:
+    case 0:
+      do IO<Unit>:
+        IO.print("info string evaluator diagnostic material; no neural model")
+        launch(model)
+    case 1: native_launch(model)
+    case 2: native_launch(model)
+    case 3: native_launch(model)
+    case 4: native_launch(model)
+    case _: IO.die(Unit, 2, "unsupported bound native model profile")
 
 def main() -> IO(Unit):
-  serve(1000000000n, State{Pos.start(), Tables.build(), Idle{}, False{}})
+  do IO<Unit>:
+    model : U32 <- NativeEvaluation.Native.open()
+    opened(model)

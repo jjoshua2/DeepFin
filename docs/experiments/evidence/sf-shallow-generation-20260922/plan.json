@@ -1,0 +1,213 @@
+{
+  "status": "READY_BOUNDED_CPU_SHALLOW_SCREEN",
+  "runtime": "/tmp/deepfin-sf-throughput-manifest-fix",
+  "runtime_head": "3d9802eab4d98433e97856058216b1cbb3a57dc5",
+  "out": "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922",
+  "affinity": [
+    20,
+    21,
+    22,
+    23
+  ],
+  "cpu_budget_seconds": 2200,
+  "wall_budget_seconds": 700,
+  "launch_disk_gib": 150,
+  "memory_gib": 40,
+  "output_limit_bytes": 1073741824,
+  "env": {
+    "CUDA_VISIBLE_DEVICES": "",
+    "OMP_NUM_THREADS": "2",
+    "MKL_NUM_THREADS": "2",
+    "OPENBLAS_NUM_THREADS": "2",
+    "NUMEXPR_NUM_THREADS": "2",
+    "PYTHONPATH": "/tmp/deepfin-sf-throughput-manifest-fix"
+  },
+  "stockfish": "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+  "cells": [
+    {
+      "id": "d8_c4",
+      "policy": "d8",
+      "concurrency": 4,
+      "seconds": 175,
+      "command": [
+        "/usr/bin/python3",
+        "-m",
+        "scripts.gen_sf_rooted_corpus",
+        "--book",
+        "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "--book-max-games",
+        "200000",
+        "--book-plies",
+        "16",
+        "--cp-draw-width",
+        "120.0",
+        "--cp-slope",
+        "0.006",
+        "--dedup-cache-max",
+        "2000000",
+        "--games",
+        "256",
+        "--max-plies",
+        "400",
+        "--nice",
+        "19",
+        "--out-dir",
+        "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/d8_c4",
+        "--run-id",
+        "shallow20260922_d8_c4",
+        "--seed",
+        "20260922",
+        "--sf-hash-mb",
+        "64",
+        "--sf-read-timeout",
+        "300.0",
+        "--sf-search-timeout",
+        "30.0",
+        "--shard-rows",
+        "256",
+        "--staircase",
+        "all:8",
+        "--staircase-policy",
+        "fixed",
+        "--stockfish",
+        "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+        "--syzygy-path",
+        "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+        "--temp-high",
+        "1.0",
+        "--temp-low",
+        "0.3",
+        "--temp-plies",
+        "20",
+        "--workers",
+        "4",
+        "--worker-concurrency",
+        "4"
+      ],
+      "depth": 8
+    },
+    {
+      "id": "d6_c4",
+      "policy": "d6",
+      "concurrency": 4,
+      "seconds": 175,
+      "command": [
+        "/usr/bin/python3",
+        "-m",
+        "scripts.gen_sf_rooted_corpus",
+        "--book",
+        "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+        "--book-max-games",
+        "200000",
+        "--book-plies",
+        "16",
+        "--cp-draw-width",
+        "120.0",
+        "--cp-slope",
+        "0.006",
+        "--dedup-cache-max",
+        "2000000",
+        "--games",
+        "256",
+        "--max-plies",
+        "400",
+        "--nice",
+        "19",
+        "--out-dir",
+        "/home/josh/chess-artifacts/operations/sf-shallow-generation-screen-20260922/d6_c4",
+        "--run-id",
+        "shallow20260922_d6_c4",
+        "--seed",
+        "20260922",
+        "--sf-hash-mb",
+        "64",
+        "--sf-read-timeout",
+        "300.0",
+        "--sf-search-timeout",
+        "30.0",
+        "--shard-rows",
+        "256",
+        "--staircase",
+        "all:6",
+        "--staircase-policy",
+        "fixed",
+        "--stockfish",
+        "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+        "--syzygy-path",
+        "/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6",
+        "--temp-high",
+        "1.0",
+        "--temp-low",
+        "0.3",
+        "--temp-plies",
+        "20",
+        "--workers",
+        "4",
+        "--worker-concurrency",
+        "4"
+      ],
+      "depth": 6
+    }
+  ],
+  "pins": [
+    {
+      "path": "/tmp/deepfin-sf-throughput-manifest-fix/scripts/gen_sf_rooted_corpus.py",
+      "sha256": "4389dd2af99fadf1574f0f7209baf87f340a223612b2bf9f27dee4e6b4ce3404"
+    },
+    {
+      "path": "/tmp/deepfin-sf-throughput-manifest-fix/scripts/derive_corpus_targets.py",
+      "sha256": "ae7528448f4131fd3c8a8e4e282251b47cf7ca7d49726244ff363fc10144ed73"
+    },
+    {
+      "path": "/tmp/deepfin-sf-throughput-manifest-fix/chess_anti_engine/stockfish/uci.py",
+      "sha256": "f1969a4c930b34806487361a6a8a519df844c96e5d0215d6cb0254b5ee8a42a8"
+    },
+    {
+      "path": "/home/josh/sf213_build/staged/stockfish-dev-20260825-2edd935b-bmi2",
+      "sha256": "e5f3b866a59210c33880eb1c25915d6399698ac80dc985779737fab124ee3ee8"
+    },
+    {
+      "path": "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+      "sha256": "70d0dfa50a6b1191f1db702a093a4911b7433c612a30599517c2c2d92f0cea7c"
+    },
+    {
+      "path": "/tmp/deepfin-sf-throughput-manifest-fix/chess_anti_engine/encoding/_lc0_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "d3a1bad8fe626342ab292752d975324ba7b57170f5faad3ef56e9208fa7613df"
+    },
+    {
+      "path": "/tmp/deepfin-sf-throughput-manifest-fix/chess_anti_engine/encoding/_features_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "a5ae7426d07d62ae7fa681e8d79f5858e3eef238764157d9b686a8d3c5f7e62c"
+    },
+    {
+      "path": "/tmp/deepfin-sf-throughput-manifest-fix/chess_anti_engine/nnue/_nnue_ext.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "c5ce10c2ac0210e825be7f0ad14fe575a6d89745bcb5c3ffcdc24e3f381e4082"
+    },
+    {
+      "path": "/tmp/deepfin-sf-throughput-manifest-fix/chess_anti_engine/mcts/_mcts_tree.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "9d8cc4ba5ab20e78cfc0d183c62801765002ca49d56dbf10010f16a95291e01d"
+    },
+    {
+      "path": "/tmp/deepfin-sf-throughput-manifest-fix/scripts/benchmark_sf_generation.py",
+      "sha256": "a61d95cb727409b103a348f2228db1c27aa7fc6aeeb87e9d3082334c150b78bd"
+    },
+    {
+      "path": "/tmp/benchmark_sf_shallow_generation_20260922.py",
+      "sha256": "25c3ac0be09f3473f3d9e86af1fbe85bf1b88c71776bca405359263f035d02fd"
+    }
+  ],
+  "preregistration": {
+    "arms": "OriginalSF all:d8 then all:d6; retention omitted because generator has no UCI option passthrough",
+    "primary": "Eligible source rows in progress-listed completed-game shards at generation cutoff / cutoff wall seconds, including startup; only those exact shards audited afterstop",
+    "secondary": [
+      "completed games",
+      "unique worker/game/ply/input identities",
+      "unique input keys withinarm",
+      "first manifest/progress-file latency polled about0.2s",
+      "CPUtime",
+      "bankedbytes",
+      "d6/d8 rate ratio"
+    ],
+    "bounds": "175s generation cutoff perarm (5s margin within180s allowance),4workers1SFthread each, cores20-23,nice19, numericalthreads2,700s aggregate+<=10sownedcleanup <=12minutes,<=1GiBartifactcap with75percentstopmargin",
+    "scope": "Actual newlygenerated selfplay; changeddepth changesplay/targets/game lengths. Onefixedorder shortscreen, noquality/strength/fleet orcold-cache scalingclaim; no newjobs afterthisscreen."
+  }
+}
