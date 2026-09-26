@@ -5,7 +5,6 @@ import fcntl
 import gzip
 import json
 import os
-import sys
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -492,25 +491,18 @@ def test_projected_reader_stdlib_corner_cases(line: str) -> None:
 @pytest.mark.parametrize("tail", [
     '[1,]', '{"x":}', '01', 'true garbage', '"bad\ncontrol"',
     r'"\x"', r'"\u12xy"', '[1 2]', '{"x" 1}',
-    '9' * 5000, '[' * 1200 + '0' + ']' * 1200,
+    '9' * 5000,
 ])
 def test_projected_reader_preserves_errors_in_skipped_fields(tail: str) -> None:
     line = '{"game_id": 3, "phases": ' + tail + '}'
-    # 1,200 nested arrays exceed the usual 1,000-frame limit and must stay an
-    # error. A runner with a higher default limit would otherwise accept them.
-    previous_limit = sys.getrecursionlimit()
-    deep = line.count("[") > 900
-    if deep:
-        sys.setrecursionlimit(1000)
-    try:
-        with pytest.raises((ValueError, RecursionError)) as reference:
-            json.loads(line)
-        assert tool._decode_bt4_row(line) is None
-        with pytest.raises(type(reference.value)) as projected:
-            json.loads(line)
-    finally:
-        if deep:
-            sys.setrecursionlimit(previous_limit)
+    # Deep arrays are not in this list. This interpreter's json.loads accepts
+    # 1,200 nested arrays, so that shape is not an error to preserve. The
+    # nesting test covers the preflight that still selects stdlib for them.
+    with pytest.raises((ValueError, RecursionError)) as reference:
+        json.loads(line)
+    assert tool._decode_bt4_row(line) is None
+    with pytest.raises(type(reference.value)) as projected:
+        json.loads(line)
     # JSONDecodeError retains its exact document offset and diagnostic.
     if isinstance(reference.value, json.JSONDecodeError):
         assert str(projected.value) == str(reference.value)
