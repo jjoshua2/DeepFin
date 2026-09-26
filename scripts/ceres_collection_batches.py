@@ -36,7 +36,8 @@ MIN_CHUNK_SECONDS = int(CLEANUP_SECONDS + POLL_SECONDS) + 1
 MAX_CHUNK_TIMEOUT_SECONDS = 1800
 MAX_OVERALL_SECONDS = 108000
 MIN_FREE_GIB = 150
-MIN_PAUSE_SECONDS = 30
+# A pause is an explicit scheduling choice, not a substitute for resource guards.
+MIN_PAUSE_SECONDS = 0
 FIXED32_BATCH = 32
 COMPLETION_FIXED = "fixed_path"
 COMPLETION_CERES = "ceres_invocations"
@@ -398,7 +399,7 @@ def load_plan(plan_path: Path, expected_sha256: str) -> dict[str, Any]:
     return validated
 
 
-def collection_counts_consistent(counts: Any, rows: int, padding: int) -> None:
+def collection_counts_consistent(counts: Any, rows: int, padding: int, batch: int = FIXED32_BATCH) -> None:
     require(isinstance(counts, dict), "collection_counts must be an object")
     real = require_int(counts.get("real_rows"), "collection_counts.real_rows", minimum=1)
     pad = require_int(counts.get("padding_rows"), "collection_counts.padding_rows",
@@ -409,8 +410,9 @@ def collection_counts_consistent(counts: Any, rows: int, padding: int) -> None:
     require(real == rows, "collection real_rows do not match the chunk")
     require(pad == padding, "collection padding_rows do not match the plan")
     require(inputs == real + pad, "collection input_rows are inconsistent")
-    require(inputs % FIXED32_BATCH == 0 and calls == inputs // FIXED32_BATCH,
-            "collection calls are inconsistent with fixed32 batches")
+    require(type(batch) is int and batch in (32, 64, 128, 256, 512), "unsupported inference batch")
+    require(inputs % batch == 0 and calls == inputs // batch,
+            "collection calls are inconsistent with inference batch")
 
 
 def discover_ceres_completion(output: Path, ident: str) -> Path:
@@ -461,8 +463,15 @@ def validate_completion_body(chunk: dict[str, Any], receipt: dict[str, Any]) -> 
         total += item_rows
     require(total == chunk["expected_rows"], f"{ident} selection rows differ")
     counts = receipt.get("collection_counts")
+    namespace = receipt.get("namespace", {})
+    backend = namespace.get("backend", {})
+    batch = backend.get("batch_size", FIXED32_BATCH)
+    batched = {'ceres-c3-batched-compact-v1', 'ceres-c3-batched-soft-sf-selected-v1'}
+    if batch != FIXED32_BATCH or receipt.get('profile') in batched or namespace.get('profile') in batched:
+        require(receipt.get('profile') in batched and namespace.get('profile') == receipt['profile']
+                and batch in (64, 128, 256, 512), 'batch/profile binding differs')
     collection_counts_consistent(counts, chunk["expected_rows"],
-                                 chunk["expected_padding_rows"])
+                                 chunk["expected_padding_rows"], batch)
     if "new_collection_counts" in receipt:
         require(receipt["new_collection_counts"] == counts,
                 f"{ident} cached collection counts are not progress")

@@ -1,0 +1,65 @@
+[
+  {
+    "path": "/tmp/deepfin-505-c616-review.2e2xCG",
+    "head": "c616ecb164ff1d818bdf5d61da515afa6e68286d",
+    "retained_ref": "refs/archive/workspace-cleanup-20260919/deepfin-505-c616-review.2e2xCG",
+    "status": "REMOVED_CLEAN_REVIEW_WORKTREE",
+    "time": 1789842574.2335954
+  },
+  {
+    "path": "/tmp/deepfin-pr501-fix.I1FZDF",
+    "head": "90c39609be21d3a48b35bd8398679daf16ca080a",
+    "retained_ref": "refs/archive/workspace-cleanup-20260919/deepfin-pr501-fix.I1FZDF",
+    "status": "REMOVED_CLEAN_REVIEW_WORKTREE",
+    "time": 1789842574.3419125
+  },
+  {
+    "path": "/tmp/deepfin-pr505-2adffc3f-review",
+    "head": "2adffc3f033bc7d326da59ae4d414ce2f3e5cd83",
+    "retained_ref": "refs/archive/workspace-cleanup-20260919/deepfin-pr505-2adffc3f-review",
+    "status": "REMOVED_CLEAN_REVIEW_WORKTREE",
+    "time": 1789842574.4451625
+  },
+  {
+    "path": "/tmp/deepfin-pr505-e1b63871-review",
+    "head": "e1b63871312d07f0e52a8a843c89dc0a45959e5f",
+    "retained_ref": "refs/archive/workspace-cleanup-20260919/deepfin-pr505-e1b63871-review",
+    "status": "REMOVED_CLEAN_REVIEW_WORKTREE",
+    "time": 1789842574.540559
+  },
+  {
+    "path": "/tmp/deepfin-review-pr393",
+    "head": "6d31bae93c94b83787da34baee9b65b575287130",
+    "retained_ref": "refs/archive/workspace-cleanup-20260919/deepfin-review-pr393",
+    "status": "REMOVED_CLEAN_REVIEW_WORKTREE",
+    "time": 1789842574.6337264
+  },
+  {
+    "path": "/tmp/deepfin-review-pr394",
+    "head": "667b0a782e6f3ab9b31e6f534b2ef51d14839009",
+    "retained_ref": "refs/archive/workspace-cleanup-20260919/deepfin-review-pr394",
+    "status": "REMOVED_CLEAN_REVIEW_WORKTREE",
+    "time": 1789842574.777648
+  },
+  {
+    "path": "/tmp/deepfin-review-pr395",
+    "head": "708bd43c4a3dc6e475f7b7aec905ee6e57fafc7a",
+    "retained_ref": "refs/archive/workspace-cleanup-20260919/deepfin-review-pr395",
+    "status": "REMOVED_CLEAN_REVIEW_WORKTREE",
+    "time": 1789842574.9123497
+  },
+  {
+    "path": "/tmp/claude-1000/review290b",
+    "head": "cfd28dfe2e6b11cf6d1b8b52fb76f9d086a9f520",
+    "retained_ref": "refs/archive/workspace-cleanup-20260919/review290b",
+    "status": "REMOVED_CLEAN_REVIEW_WORKTREE",
+    "time": 1789842997.9889734
+  },
+  {
+    "path": "/tmp/deepfin-portable-grok-review",
+    "head": "37892a8aa984f6302a6bb9e610f3b6b1a6dde4b9",
+    "retained_ref": "refs/archive/workspace-cleanup-20260919/deepfin-portable-grok-review",
+    "status": "REMOVED_CLEAN_REVIEW_WORKTREE",
+    "time": 1789842998.09757
+  }
+]
