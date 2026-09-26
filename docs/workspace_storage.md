@@ -9,7 +9,7 @@ ignored files.
 
 Workspace copying, Git worktrees and tracked-file review snapshots are all valid.
 On this host, group new manual worktrees under
-`/home/josh/projects/chess-worktrees/<task>` rather than creating more top-level
+`~/projects/chess-worktrees/<task>` rather than creating more top-level
 `chess-*` siblings. Tool-managed worktree directories are also fine. Keep new
 worktrees outside other checkouts so copying a workspace does not copy its neighbors.
 
@@ -25,7 +25,7 @@ previous host configuration. Automatic workspace creation remains available.
 
 ## Runtime artifacts
 
-The host shared artifact root is `/home/josh/chess-artifacts/`, with `corpora/`,
+The host shared artifact root is `~/chess-artifacts/`, with `corpora/`,
 `labels/`, `models/`, `tablebases/`, `runs/`, `cache/` and `operations/` subdirectories.
 
 Give corpus, teacher labels, checkpoints, caches and run output explicit paths
