@@ -11,8 +11,16 @@ import shutil
 import signal
 import subprocess
 import time
+from typing import Any
 
-from bootstrap_experiment_operator import dump, registered_spec, terminate_owned_group
+try:
+    from scripts.bootstrap_experiment_operator import dump, registered_spec, terminate_owned_group
+except ModuleNotFoundError:
+    from bootstrap_experiment_operator import (  # pyright: ignore[reportImplicitRelativeImport]
+        dump,
+        registered_spec,
+        terminate_owned_group,
+    )
 
 
 class BatchInterrupted(RuntimeError):
@@ -81,7 +89,7 @@ def run(plan: dict) -> int:
     deadline = started + plan['internal_seconds']
     completed = []
     active = None
-    receipt = {'status': 'INCOMPLETE', 'completed_blocks': completed,
+    receipt: dict[str, Any] = {'status': 'INCOMPLETE', 'completed_blocks': completed,
                'started_unix': time.time()}
     try:
         verify_completion(plan['prerequisite'])
