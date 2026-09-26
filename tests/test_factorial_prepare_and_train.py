@@ -17,6 +17,7 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC
 assert SPEC.loader
 module = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = module
 SPEC.loader.exec_module(module)
 
 
@@ -188,6 +189,7 @@ def test_real_base_a_runner_executes_and_binds_honest_receipt(tmp_path, monkeypa
     if spec is None or spec.loader is None:
         raise AssertionError("base-A runner import spec unavailable")
     runner = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = runner
     spec.loader.exec_module(runner)
     monkeypatch.setattr(
         sys,
@@ -216,7 +218,7 @@ def test_subreaper_cleans_worker_after_child_supervisor_sigkill(tmp_path):
     script = tmp_path / "subreaper.py"
     script.write_text("""import ctypes,importlib.util,subprocess,sys,time,os
 from pathlib import Path
-spec=importlib.util.spec_from_file_location('coordinator',sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+spec=importlib.util.spec_from_file_location('coordinator',sys.argv[1]);m=importlib.util.module_from_spec(spec);sys.modules[spec.name]=m;spec.loader.exec_module(m)
 assert ctypes.CDLL(None).prctl(36,1,0,0,0)==0
 pidfile=Path(sys.argv[2])
 code="import subprocess,sys,time;from pathlib import Path;p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'],start_new_session=True);Path(sys.argv[1]).write_text(str(p.pid));time.sleep(120)"
