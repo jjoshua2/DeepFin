@@ -8,7 +8,9 @@ A successor passes both GPU and coordinator ownership into its training child.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterable
 import ctypes
+from dataclasses import dataclass
 import fcntl
 import hashlib
 import json
@@ -20,7 +22,6 @@ import subprocess
 import sys
 import time
 
-import psutil
 
 GIB = 2**30
 
@@ -121,62 +122,158 @@ def death_signal(parent):
         os.kill(os.getpid(), signal.SIGTERM)
 
 
-def descendants(child):
+@dataclass(frozen=True)
+class ProcRef:
+    """Linux process identity stable across PID reuse."""
+
+    pid: int
+    starttime: int
+
+
+def _proc_fields(pid: int) -> tuple[str, int, int] | None:
+    """Return (state, ppid, starttime_ticks), or None if the process disappeared."""
     try:
-        return psutil.Process(child.pid).children(recursive=True)
-    except psutil.NoSuchProcess:
-        return []
+        raw = Path(f"/proc/{pid}/stat").read_text()
+        fields = raw.rsplit(") ", 1)[1].split()
+        if len(fields) < 20:
+            return None
+        return fields[0], int(fields[1]), int(fields[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def proc_ref(pid: int) -> ProcRef | None:
+    fields = _proc_fields(pid)
+    return None if fields is None else ProcRef(pid, fields[2])
+
+
+def process_running(ref: ProcRef) -> bool:
+    fields = _proc_fields(ref.pid)
+    return fields is not None and fields[2] == ref.starttime and fields[0] != "Z"
+
+
+def _process_table() -> dict[int, tuple[int, int, str]]:
+    table: dict[int, tuple[int, int, str]] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        fields = _proc_fields(pid)
+        if fields is not None:
+            state, ppid, starttime = fields
+            table[pid] = (ppid, starttime, state)
+    return table
+
+
+def descendant_refs(
+    roots: Iterable[int], *, include_roots: bool = False
+) -> dict[tuple[int, int], ProcRef]:
+    """Snapshot descendants from /proc, keyed by PID plus kernel start time."""
+    table = _process_table()
+    children: dict[int, list[int]] = {}
+    for pid, (ppid, _starttime, _state) in table.items():
+        children.setdefault(ppid, []).append(pid)
+    root_list = list(roots)
+    stack = list(root_list)
+    seen: set[int] = set()
+    result: dict[tuple[int, int], ProcRef] = {}
+    root_set = set(root_list)
+    while stack:
+        parent = stack.pop()
+        for pid in children.get(parent, []):
+            if pid not in seen:
+                seen.add(pid)
+                stack.append(pid)
+        if include_roots and parent in root_set and parent in table:
+            seen.add(parent)
+    for pid in seen:
+        item = table.get(pid)
+        if item is None:
+            continue
+        ref = ProcRef(pid, item[1])
+        result[(ref.pid, ref.starttime)] = ref
+    return result
+
+
+def _signal_owned(ref: ProcRef, sig: signal.Signals) -> None:
+    if process_running(ref):
+        try:
+            os.kill(ref.pid, sig)
+        except ProcessLookupError:
+            pass
+
+
+def _reap_if_child(ref: ProcRef) -> None:
+    try:
+        os.waitpid(ref.pid, os.WNOHANG)
+    except (ChildProcessError, ProcessLookupError):
+        pass
+
+
+def _rss_bytes(ref: ProcRef) -> int:
+    if not process_running(ref):
+        return 0
+    try:
+        pages = int(Path(f"/proc/{ref.pid}/statm").read_text().split()[1])
+    except (OSError, ValueError, IndexError):
+        return 0
+    if not process_running(ref):
+        return 0
+    return pages * int(os.sysconf("SC_PAGE_SIZE"))
+
+
+def available_memory_bytes() -> int:
+    for line in Path("/proc/meminfo").read_text().splitlines():
+        if line.startswith("MemAvailable:"):
+            return int(line.split()[1]) * 1024
+    raise RuntimeError("MemAvailable missing from /proc/meminfo")
 
 
 def cleanup(children, grace=35, adopted=False):
-    """Capture separately sessioned workers before terminating their supervisors."""
-    owned = {}
+    """Capture owned process identities before terminating their supervisors."""
+    owned: dict[tuple[int, int], ProcRef] = {}
     if adopted:
-        for process in psutil.Process().children(recursive=True):
-            owned[(process.pid, process.create_time())] = process
+        owned.update(descendant_refs([os.getpid()]))
     for child in children:
-        for process in descendants(child):
-            owned[(process.pid, process.create_time())] = process
+        owned.update(descendant_refs([child.pid]))
         if child.poll() is None:
             child.terminate()
     deadline = time.monotonic() + grace
-    while time.monotonic() < deadline and any(c.poll() is None for c in children):
+    while time.monotonic() < deadline and any(child.poll() is None for child in children):
         time.sleep(0.05)
     for child in children:
         if child.poll() is None:
             child.kill()
         child.wait()
-    for process in owned.values():
-        try:
-            if process.is_running() and process.status() != psutil.STATUS_ZOMBIE:
-                process.kill()
-        except psutil.NoSuchProcess:
-            pass
-    psutil.wait_procs(list(owned.values()), timeout=5)
+    if adopted:
+        # A subreaper may receive grandchildren only after their supervisor exits.
+        owned.update(descendant_refs([os.getpid()]))
+    for ref in owned.values():
+        _signal_owned(ref, signal.SIGKILL)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        alive = False
+        for ref in owned.values():
+            if process_running(ref):
+                alive = True
+            else:
+                _reap_if_child(ref)
+        if not alive:
+            break
+        time.sleep(0.05)
 
 
 def resources(config, children, started, startup=False):
     require(time.monotonic() - started < config["max_seconds"], "combined deadline")
     require(not any(Path(p).exists() for p in config["stop_paths"]), "STOP requested")
     require(
-        psutil.virtual_memory().available >= (40 if startup else 32) * GIB,
+        available_memory_bytes() >= (40 if startup else 32) * GIB,
         "available RAM reserve",
     )
     require(shutil.disk_usage(config["disk_root"]).free >= 80 * GIB, "disk reserve")
-    processes = {}
-    for child in children:
-        try:
-            p = psutil.Process(child.pid)
-            for item in [p, *p.children(recursive=True)]:
-                processes[item.pid] = item
-        except psutil.NoSuchProcess:
-            pass
-    rss = 0
-    for process in processes.values():
-        try:
-            rss += process.memory_info().rss
-        except psutil.NoSuchProcess:
-            pass
+    # This coordinator owns no unrelated children; include adopted subreaper descendants.
+    processes = descendant_refs([os.getpid()])
+    rss = sum(_rss_bytes(process) for process in processes.values())
     require(rss <= config["combined_rss_gib"] * GIB, "combined RSS cap")
 
 
