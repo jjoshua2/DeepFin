@@ -62,6 +62,22 @@ class FakeSession:
         return [policy, wdl]
 
 
+class PositionSession(FakeSession):
+    """Different named outputs per LC0 input, independent of batch order."""
+
+    def __init__(self, rows: dict[bytes, tuple[np.ndarray, np.ndarray]]) -> None:
+        super().__init__()
+        self.rows = rows
+
+    def run(self, names: list[str], feed: dict[str, np.ndarray]) -> list[np.ndarray]:
+        assert names == ["native_policy", "native_wdl"]
+        planes = feed["planes"].copy()
+        self.calls.append((names, planes))
+        selected = [self.rows[row.tobytes()] for row in planes]
+        return [np.stack([policy for policy, _ in selected]),
+                np.stack([wdl for _, wdl in selected])]
+
+
 def make_evaluator(sess: FakeSession, *, history: str = HISTORY, features: str = FEATURES) -> BT4OnnxEvaluator:
     return BT4OnnxEvaluator(
         sess, input_name="planes", input_dtype=np.dtype("float32"),
@@ -141,6 +157,106 @@ def test_root_only_sampling_consumer_never_evaluates_leaves() -> None:
         board.push(moves[int(rng.choice(len(moves), p=weights))])
     assert evaluator.root_calls == len(sess.calls) == 2
     assert evaluator.leaf_calls == evaluator.leaf_rows == 0
+
+
+def test_batched_roots_are_aligned_and_byte_equal_to_singletons() -> None:
+    boards = [chess.Board(), chess.Board("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1"),
+              chess.Board("4k3/P7/8/8/8/8/8/4K3 w - - 0 1")]
+    x_batch = np.stack([encoded(board) for board in boards])
+    feeds = x_to_lc0_planes(x_batch, input_history_encoding=HISTORY)
+    policy_rows = [np.linspace(-3, 3, 1858, dtype=np.float32),
+                   np.linspace(3, -3, 1858, dtype=np.float32),
+                   np.sin(np.arange(1858, dtype=np.float32) / 7)]
+    wdl_rows = [np.array(row, dtype=np.float64) for row in
+                ([0.625, 0.375, 0], [0.1, 0.2, 0.7], [0.3, 0.5, 0.2])]
+    fixtures = {feed.tobytes(): (policy, wdl)
+                for feed, policy, wdl in zip(feeds, policy_rows, wdl_rows, strict=True)}
+    assert len(fixtures) == len(boards)
+    sess = PositionSession(fixtures)
+    evaluator = make_evaluator(sess)
+    roots = evaluator.evaluate_roots(boards, x_batch)
+    assert evaluator.root_calls == 1
+    assert evaluator.root_rows == len(boards)
+    assert evaluator.leaf_calls == evaluator.leaf_rows == 0
+    assert len(sess.calls) == 1
+    np.testing.assert_array_equal(sess.calls[0][1], feeds)
+    for idx, (board, root) in enumerate(zip(boards, roots, strict=True)):
+        _, _, expected = compact_legal_policy(board, policy_rows[idx])
+        assert root.policy_t1.tobytes() == expected.tobytes()
+        assert root.wdl_raw.tobytes() == wdl_rows[idx].tobytes()
+        assert root.wdl_raw.dtype == np.dtype("float64")
+        assert root.fen == board.fen()
+        assert root.input_key == input_tensor_key(x_batch[idx])
+        assert root.source_key == position_fingerprints(
+            x_batch[idx][None], input_history_encoding=HISTORY,
+        )[0]
+        singleton = make_evaluator(PositionSession(fixtures)).evaluate_root(board, x_batch[idx])
+        assert singleton.policy_t1.tobytes() == root.policy_t1.tobytes()
+        assert singleton.wdl_raw.tobytes() == root.wdl_raw.tobytes()
+        for batched_search, single_search in zip(root.search_inputs(), singleton.search_inputs(),
+                                                 strict=True):
+            np.testing.assert_array_equal(batched_search, single_search)
+
+
+def test_batched_roots_reject_second_history_before_any_inference() -> None:
+    first = chess.Board()
+    played = chess.Board()
+    played.push_san("Nf3")
+    played.push_san("Nf6")
+    stale = chess.Board(played.fen())
+    sess = FakeSession()
+    evaluator = make_evaluator(sess)
+    x_batch = np.stack([encoded(first), encoded(played)])
+    with pytest.raises(ValueError, match="root 1 board/history"):
+        evaluator.evaluate_roots([first, stale], x_batch)
+    assert sess.calls == []
+    assert evaluator.root_calls == 0
+    assert evaluator.root_rows == 0
+    roots = evaluator.evaluate_roots([first, played], x_batch)
+    assert len(roots) == 2
+    assert evaluator.root_calls == 1
+    assert evaluator.root_rows == 2
+
+
+@pytest.mark.parametrize("bad", ["empty", "length", "dtype", "shape"])
+def test_batched_roots_reject_bad_contract_before_inference(bad: str) -> None:
+    board = chess.Board()
+    x = encoded(board)
+    boards: list[chess.Board] = [board]
+    batch = x[None]
+    if bad == "empty":
+        boards = []
+        batch = batch[:0]
+    elif bad == "length":
+        boards = [board, board]
+    elif bad == "dtype":
+        batch = batch.astype(np.float16)
+    else:
+        batch = batch[:, :-1]
+    sess = FakeSession()
+    evaluator = make_evaluator(sess)
+    with pytest.raises(ValueError, match=r"equal nonzero length|expected float32"):
+        evaluator.evaluate_roots(boards, batch)
+    assert sess.calls == []
+    assert evaluator.root_calls == 0
+    assert evaluator.root_rows == 0
+
+
+def test_submitted_batch_failure_counts_launch_and_rows() -> None:
+    class FailingSession(FakeSession):
+        def run(self, names: list[str], feed: dict[str, np.ndarray]) -> list[np.ndarray]:
+            self.calls.append((names, feed["planes"].copy()))
+            raise RuntimeError("simulated ONNX failure")
+
+    boards = [chess.Board(), chess.Board("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1")]
+    sess = FailingSession()
+    evaluator = make_evaluator(sess)
+    with pytest.raises(RuntimeError, match="simulated ONNX failure"):
+        evaluator.evaluate_roots(boards, np.stack([encoded(board) for board in boards]))
+    assert len(sess.calls) == 1
+    assert len(sess.calls[0][1]) == len(boards)
+    assert evaluator.root_calls == 1
+    assert evaluator.root_rows == len(boards)
 
 
 def test_root_rejects_history_mismatch_before_inference() -> None:

@@ -29,10 +29,19 @@ handling, including six-man Syzygy adjudication and unresolved-game exclusion,
 is not wired into this adapter. No generator command, corpus schema, GPU
 inference, quality trial, or throughput measurement is part of this change.
 
+The batched-root extension adds `evaluate_roots(boards, x_batch)` for multiple
+game roots. It checks every board, encoded history, and source identity before
+one session call and returns observations in input order. `evaluate_root` uses
+the same batch path with one row. Root counters report submitted ONNX calls and
+rows, including a call that raises; invalid preflight data leaves both at zero.
+Leaf counters remain separate and count successful leaf batches and real rows.
+This makes batching possible for a later scheduler, without measuring a batch
+size, selecting an actor temperature, or implementing that scheduler.
+
 CPU fake-session tests cover reversed policy/WDL output order, both colors,
 castling, promotion, en passant, stale root/leaf histories, mismatched legal
 sets, exact input/source keys, native float16 and float64 WDL, extreme finite
 logits, root-only sampling, and an actual C-search call with padded leaf batches.
-The focused adapter and neighboring conversion/WDL tests pass (88 cases);
+The focused adapter and neighboring conversion/WDL tests pass (95 cases);
 scoped Ruff and basedpyright report no findings. These are interface and
 numerical-contract checks, not evidence of playing strength or speedup.
