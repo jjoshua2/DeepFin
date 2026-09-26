@@ -1,0 +1,39 @@
+name: Bend U64 sliders
+
+on:
+  pull_request:
+    paths:
+      - "native/bend_engine/bitboard_probe/**"
+      - "tests/test_bend_u64_report.py"
+      - "chess_anti_engine/encoding/_cboard_impl.h"
+      - "chess_anti_engine/encoding/_slider_attacks_impl.h"
+      - "chess_anti_engine/encoding/_bitboard_planes_impl.h"
+      - ".github/workflows/bend-u64-sliders.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sliders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - name: Install and verify pinned U64 compiler
+        run: bash native/bend_engine/bitboard_probe/install_toolchain.sh
+      - name: Verify exhaustive CBoard slider parity and corruption rejection
+        run: |
+          python3 native/bend_engine/bitboard_probe/run_probe.py \
+            --report artifacts/bend-u64-sliders.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bend-u64-sliders
+          path: artifacts/bend-u64-sliders.json
+          retention-days: 14
