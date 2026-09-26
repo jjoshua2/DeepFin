@@ -15,8 +15,6 @@ env:
   TORCHINDUCTOR_COMPILE_THREADS: '1'
   CUDA_VISIBLE_DEVICES: ''
   BEND_NO_TELEMETRY: '1'
-  CC: clang-18
-  CXX: clang++-18
 jobs:
   qualify:
     runs-on: ubuntu-24.04
@@ -26,40 +24,29 @@ jobs:
         with:
           ref: 19c9cc017be334e3330b8bf4a6c2e488db5845b6
           persist-credentials: false
-      - name: Recover exact authored candidate before execution
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: deepfin-measured-dispatch-qualification
+          run-id: 36218967289
+          github-token: ${{ github.token }}
+          path: /tmp/dispatch-authored
+      - name: Recover exact candidate unchanged after environment-only failure
         run: |
-          set -euo pipefail
           mkdir -p artifacts/dispatch
           python3 - <<'PY'
-          import base64,gzip,hashlib,json,subprocess
+          import hashlib,json,subprocess
           from pathlib import Path
-          blobs=[('7f2487339511222a30da4848eb755e30246c8b3e','7316d5479c5cab65fdf49c246302448c7c9f4e11c0c358dcb445d3b38168de70'),('139b2e10077e910da7b847fac0dcecf55b387cf7','ba0c5ada13d4f8b3aa825a6be1a5513340d3c27ba08459b34308f255993419e6'),('1388f9ba22f53b8adc64195a292bdbfd17011639','f2e93fb5057fb4a56ac201a830a31f380ae3d0e94dd03f5677b741bcf4dceb90'),('028c8d5862aa0fdcbd5a5c23bf6504322adc55ba','204434c7e98f49ecf6d51ed2726667b3d4f76dfacbf5a7d75da367fffb0ad54f')]
-          parts=[]
-          for i,(sha,digest) in enumerate(blobs):
-              record=json.loads(subprocess.check_output(['gh','api',f'repos/jjoshua2/DeepFin/git/blobs/{sha}']))
-              raw=base64.b64decode(record['content'])
-              if i==0:
-                  # One mistranscribed base64 character; restore authored transport
-                  # bytes and check both component and complete patch hashes.
-                  text=base64.b64encode(raw).decode()
-                  assert len(text)==6000 and text.count('kwfhJkdecRs')==1
-                  text=text.replace('kwfhJkdecRs','kwfhJdecRs')+'8'
-                  raw=base64.b64decode(text,validate=True)
-              assert hashlib.sha256(raw).hexdigest()==digest,(i,hashlib.sha256(raw).hexdigest())
-              parts.append(raw)
-          packed=b''.join(parts)
-          assert hashlib.sha256(packed).hexdigest()=='a5cabef62b26bc628b5b2274d4f318ab0a4c07cced1a38d7a5908d0e633094da'
-          patch=gzip.decompress(packed)
+          source=Path('/tmp/dispatch-authored')
+          patch=(source/'candidate.patch').read_bytes()
           assert hashlib.sha256(patch).hexdigest()=='8d425c5324b94e2dca75616332112e6e32a4ebe9c2c0147a6e3c5dd0e7a0500f'
           subprocess.run(['git','apply','--check','-'],input=patch,check=True)
           subprocess.run(['git','apply','-'],input=patch,check=True)
+          manifest=json.loads((source/'source.json').read_text())
+          assert len(manifest)==19
+          for p,h in manifest.items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
           subprocess.run(['git','add','-N','.'],check=True)
-          paths=subprocess.check_output(['git','diff','--name-only'],text=True).splitlines()
-          assert len(paths)==19 and '.github/workflows/measured-dispatch-work.yml' not in paths
           Path('artifacts/dispatch/candidate.patch').write_bytes(patch)
-          Path('artifacts/dispatch/source.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths},indent=2)+'\n')
+          Path('artifacts/dispatch/source.json').write_text(json.dumps(manifest,indent=2)+'\n')
           PY
           git diff --check
       - uses: actions/setup-python@v5
@@ -74,7 +61,7 @@ jobs:
       - name: Locked CPU dependencies and focused static tests
         run: |
           set -euo pipefail
-          uv sync --locked --extra dev --extra cpu
+          uv sync --locked --extra dev --extra cpu 2>&1 | tee artifacts/dispatch/dependencies.txt
           . .venv/bin/activate
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
           python -c 'import torch; assert str(torch.__version__) == "2.14.0+cpu"'
@@ -83,13 +70,19 @@ jobs:
           python -m pytest tests/test_bend_dispatch.py tests/test_bend_service_profile.py tests/test_bend_live_model.py tests/test_bend_live_cohort.py tests/test_bend_cohort_deadlines.py tests/test_bend_async_cohort.py tests/test_bend_multi_root.py tests/test_bend_async_search.py tests/test_neural_work.py tests/test_neural_search_benchmark.py tests/test_broker_served_count.py -q --junitxml=artifacts/dispatch/tests.xml 2>&1 | tee artifacts/dispatch/tests.txt
           bash -n native/bend_engine/multi_root/qualify_dispatch.sh
       - name: Fresh pinned compiler and original full live qualification
+        env:
+          CC: clang-18
+          CXX: clang++-18
         run: |
           set -euo pipefail
           bash native/bend_engine/install_ci_bend.sh 2>&1 | tee artifacts/dispatch/compiler-install.txt
           pin="$(python -c 'import json;print(json.load(open("native/bend_engine/standalone/toolchain.json"))["revision"])')"
           compiler="$PWD/build/bend_toolchain/sources/$pin"
           bash native/bend_engine/multi_root/qualify_live.sh "$compiler" /tmp/dispatch-live 2>&1 | tee artifacts/dispatch/live.txt
-      - name: Compiled binding, table and policy application controls
+      - name: Compiled binding, table and actual policy controls
+        env:
+          CC: clang-18
+          CXX: clang++-18
         run: |
           set -euo pipefail
           pin="$(python -c 'import json;print(json.load(open("native/bend_engine/standalone/toolchain.json"))["revision"])')"
@@ -101,7 +94,7 @@ jobs:
           run-id: 35759888019
           github-token: ${{ github.token }}
           path: /tmp/dispatch-fixture
-      - name: Recover exact saved checkpoint and export batch four once
+      - name: Recover exact checkpoint and export batch four once
         run: |
           set -euo pipefail
           tar -xzf /tmp/dispatch-fixture/native-build.tar.gz -C /tmp
@@ -115,7 +108,7 @@ jobs:
           Path('/tmp/dispatch-model').mkdir()
           export_checkpoint(load_checkpoint(Path('/tmp/pr1-model/fixture.pt')),Path('/tmp/dispatch-model/b4.pt2'),batch=4,device='cpu',device_index=0)
           PY
-      - name: Actual native CPU model with synthetic gather controls
+      - name: Actual CPU model with synthetic gather controls
         run: |
           set -euo pipefail
           out=/tmp/dispatch-model
