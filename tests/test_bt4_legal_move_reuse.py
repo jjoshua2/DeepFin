@@ -70,6 +70,55 @@ def test_move_objects_preserve_exact_legacy_order_and_probabilities(fen: str, no
     np.testing.assert_array_equal(actual.astype(np.float32), expected.astype(np.float32))
 
 
+@pytest.mark.parametrize('fen', FENS[:-1])
+@pytest.mark.parametrize('nonfinite', [False, True])
+def test_compact_output_matches_frozen_collector_projection(fen: str, nonfinite: bool) -> None:
+    board = chess.Board(fen)
+    ucis, old_probabilities = legacy_policy(board, logits_for(nonfinite))
+    expected = np.zeros(raw.COMPACT_POLICY_SIZE, dtype=np.float32)
+    expected[[raw.compact_index_for_move(board, chess.Move.from_uci(u)) for u in ucis]] = (
+        old_probabilities.astype(np.float32)
+    )
+    moves, probabilities, dense = dump.compact_legal_policy(board, logits_for(nonfinite))
+    assert [m.uci() for m in moves] == ucis
+    np.testing.assert_array_equal(probabilities, old_probabilities.astype(np.float32))
+    np.testing.assert_array_equal(dense, expected)
+    assert dense.tobytes() == expected.tobytes()
+
+
+def test_compact_output_reuses_and_clears_dirty_caller_row() -> None:
+    board = chess.Board(FENS[3])  # Promotion position; most policy slots are illegal.
+    _, _, expected = dump.compact_legal_policy(board, logits_for())
+    owned = np.full((raw.COMPACT_POLICY_SIZE,), np.float32(42.0))
+    _, _, actual = dump.compact_legal_policy(board, logits_for(), dense_out=owned)
+    assert actual is owned
+    np.testing.assert_array_equal(actual, expected)
+    assert actual.tobytes() == expected.tobytes()
+    assert np.count_nonzero(actual == 42.0) == 0
+
+
+@pytest.mark.parametrize('kind', ['shape', 'dtype', 'readonly', 'noncontiguous', 'overlap', 'not_array'])
+def test_compact_output_refuses_invalid_caller_row(kind: str) -> None:
+    owned: Any = np.zeros((raw.COMPACT_POLICY_SIZE,), dtype=np.float32)
+    if kind == 'shape':
+        owned = owned[:-1]
+    elif kind == 'dtype':
+        owned = owned.astype(np.float64)
+    elif kind == 'readonly':
+        owned.flags.writeable = False
+    elif kind == 'noncontiguous':
+        owned = np.zeros((raw.COMPACT_POLICY_SIZE * 2,), dtype=np.float32)[::2]
+    elif kind == 'overlap':
+        owned = np.lib.stride_tricks.as_strided(
+            np.zeros((1,), dtype=np.float32),
+            shape=(raw.COMPACT_POLICY_SIZE,), strides=(0,), writeable=True,
+        )
+    else:
+        owned = owned.tolist()
+    with pytest.raises(ValueError, match='invalid dense policy output buffer'):
+        dump.compact_legal_policy(chess.Board(), logits_for(), dense_out=owned)
+
+
 @pytest.mark.parametrize('index', [-1, raw.COMPACT_POLICY_SIZE])
 def test_teacher_mapping_errors_remain_fatal(monkeypatch: pytest.MonkeyPatch, index: int) -> None:
     monkeypatch.setattr(dump, 'leela_index_for_move', lambda _board, _move: index)
@@ -135,14 +184,14 @@ def test_actual_label_shard_matches_legacy_content_and_maps_compact_once(
         entropy += float(-np.sum(probabilities[positive] * np.log(probabilities[positive])))
         top1 += float(probabilities.max())
         legal_count += len(indices)
-    original = raw.compact_index_for_move
+    original = dump.compact_index_for_move
     calls = []
 
     def counting(board: chess.Board, move: chess.Move) -> int:
         calls.append(move)
         return original(board, move)
 
-    monkeypatch.setattr(raw, 'compact_index_for_move', counting)
+    monkeypatch.setattr(dump, 'compact_index_for_move', counting)
     target, attrs = label(source, logits)
     assert len(calls) == legal_count
     group: Any = zarr.open_group(str(target), mode='r')
@@ -168,8 +217,31 @@ def test_actual_labeler_refuses_bad_compact_mapping_or_logits(
     source, _rows = make_multiboard_source(tmp_path)
     if corruption != 'logit_shape':
         index = {'duplicate': 0, 'negative': -1, 'out_of_range': raw.COMPACT_POLICY_SIZE}[corruption]
-        monkeypatch.setattr(raw, 'compact_index_for_move', lambda _board, _move: index)
+        monkeypatch.setattr(dump, 'compact_index_for_move', lambda _board, _move: index)
     logits = logits_for() if corruption != 'logit_shape' else np.zeros((raw.COMPACT_POLICY_SIZE, 2))
     with pytest.raises(ValueError, match=r'legal policy mapping mismatch|invalid BT4 legal policy'):
         label(source, logits)
     assert not list(source.out_dir.glob('*.bt4.zarr'))
+
+
+def test_bad_history_stops_before_teacher_call(tmp_path: Path) -> None:
+    source, _rows = make_multiboard_source(tmp_path)
+    path = source.inventory.shards[0]
+    with gzip.open(path, 'rt') as stream:
+        rows = [json.loads(line) for line in stream]
+    rows[0]['history_uci'] = ['e2e4']  # The banked FEN still names the root.
+    with gzip.open(path, 'wt') as stream:
+        for row in rows:
+            stream.write(json.dumps(row) + '\n')
+
+    class NoCallSession:
+        def run(self, *_args: Any) -> list[np.ndarray]:
+            raise AssertionError('unverified history reached teacher inference')
+
+    pending = raw.PendingShard(source, path, len(rows), source.out_dir / raw.sidecar_name(path.name))
+    with pytest.raises(raw.derive.CorpusIntegrityError, match='replaying'):
+        raw.label_shard(pending, sess=NoCallSession(), input_name='input',
+            input_dtype=np.dtype(np.float32), providers=['fake'], policy_name='policy',
+            onnx_path=source.out_dir / 'fake.onnx', onnx_sha256='fake-model-hash',
+            remap_stamp={'commit': 'fixed', 'blobs': {}}, batch_size=3)
+    assert not pending.target.exists()
