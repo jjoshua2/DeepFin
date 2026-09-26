@@ -1,0 +1,21 @@
+{
+  "status": "ADOPTED_STORAGE_ONLY_8_QUEUED_JOBS",
+  "time": 1789843266.4634511,
+  "manifest_sha256": "380221e52cc1169760b4337d31a12f01fdaa9f2959c42c5057c2664fa576cbae",
+  "review_sha256": "0fbb9829d3452a6f470c244bd40788d9bb05d0b63ea3cf098d085df8e04e7573",
+  "queue_before_sha256": "4d88b27626c209198e07073594a9408cf1d36b1f63f06c2f39180d737ab895fc",
+  "queue_after_sha256": "6c31b257ec06b12be7d4ee2335223e798f73f19ee78a1714d038e7a2c1f8bb67",
+  "ids": [
+    "factorial58_fresh_A",
+    "factorial58_fresh_B",
+    "factorial58_fresh_C",
+    "factorial58_fresh_D",
+    "factorial58_B_A_400sims",
+    "factorial58_C_A_400sims",
+    "factorial58_D_C_400sims",
+    "factorial58_D_B_400sims"
+  ],
+  "operator_checks": 8,
+  "active_job_unchanged": true,
+  "scientific_settings_unchanged": true
+}
