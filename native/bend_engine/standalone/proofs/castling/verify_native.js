@@ -13,7 +13,7 @@ const engine=path.resolve(suite,'../../..'),cc=process.env.CC||'clang';
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'deepfin-castling-native-'));
 const sha=x=>createHash('sha256').update(x).digest('hex');
 const tracked=['legal_probe/Chess.bend','bitboard_probe/Sliders.bend','standalone/Position.bend','standalone/Text.bend',
- 'standalone/proofs/castling/probe.bend','standalone/proofs/castling/verify_review.js',...['Actual','Fresh','Route','Preserve','consumer'].map(x=>'standalone/proofs/castling/'+x+'.bend')];
+ 'standalone/proofs/castling/probe.bend','standalone/proofs/castling/verify_native.js',...['Actual','Fresh','Route','Preserve','consumer'].map(x=>'standalone/proofs/castling/'+x+'.bend')];
 const hashes=()=>Object.fromEntries(tracked.map(f=>[f,sha(fs.readFileSync(path.join(engine,f)))]));
 const before=hashes();
 function invoke(cmd,argv,timeout=120000){
