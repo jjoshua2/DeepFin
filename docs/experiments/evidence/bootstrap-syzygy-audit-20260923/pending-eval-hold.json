@@ -1,0 +1,22 @@
+{
+  "status": "HELD_ONLY_PENDING_E_D",
+  "before_sha256": "7ce0717feaea6bba5689863f6f08a6d7dab225b32ab8231beef8007666e035ba",
+  "after_sha256": "9891f10394aaa520280ed82d62ddfa4abe3274cf3b02ff47e94337ad7e5d8fbe",
+  "item": {
+    "id": "factorial58_sffree_20260922_E_D",
+    "kind": "registered_command",
+    "status": "held_pending_syzygy_qualification",
+    "out": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/scheduler_run",
+    "command_file": "/home/josh/chess-artifacts/operations/factorial58-sffree-training-20260922/E_D/registered_command.json",
+    "command_sha256": "7551fa839591910903bfade62e9fcdc057835c68c125e4a9369965c533850596",
+    "max_seconds": 3660,
+    "description": "Full registered256game128pair400sim match; incomplete bank invalid",
+    "requires_previous_id": "factorial58_sffree_20260922_E",
+    "estimated_active_seconds": 1800,
+    "hold_reason": "User requires Syzygy support for all evaluations and bootstrap data; original match disables tables. Preserve active E training while adjudication/search support and fail-closed coverage are qualified.",
+    "held_unix": 1790130401.7493145
+  },
+  "active_training_preserved": true,
+  "all_unrelated_items_unchanged": true,
+  "original_plans_unchanged": true
+}

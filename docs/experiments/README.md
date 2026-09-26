@@ -123,6 +123,7 @@ For durable knowledge, use [model heads](../model_heads.md),
 links to supporting experiments. The `experiment-readout` Skill covers the reusable
 analysis workflow.
 
+- [2026-09-23: Bootstrap and evaluation Syzygy correctness audit](2026-09-23-bootstrap-syzygy-correctness-audit.md) — in progress; confirmed arena support gaps, preserved evidence, pending evaluation held.
 - [Owning FIFO and search early-exit screen](2026-09-23-bend-collections-screen.md): isolated native collection/traversal checks; no scheduler adoption.
 
 - [Bounded owning ring and calibrated collection comparison](2026-09-23-bend-owning-collections.md): Search.Tree payloads, layout failure/workaround, and matched-work timings; no scheduler adoption.
