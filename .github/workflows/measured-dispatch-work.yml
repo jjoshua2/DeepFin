@@ -27,34 +27,30 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: deepfin-measured-dispatch-qualification
-          run-id: 36218967289
+          run-id: 36219287290
           github-token: ${{ github.token }}
           path: /tmp/dispatch-authored
-      - name: Recover candidate and checked annotation corrections
+      - name: Recover exact candidate and preserve shape-validation behavior
         run: |
+          set -euo pipefail
           mkdir -p artifacts/dispatch
           python3 - <<'PY'
           import hashlib,json,subprocess
           from pathlib import Path
           source=Path('/tmp/dispatch-authored'); patch=(source/'candidate.patch').read_bytes()
-          assert hashlib.sha256(patch).hexdigest()=='8d425c5324b94e2dca75616332112e6e32a4ebe9c2c0147a6e3c5dd0e7a0500f'
+          assert hashlib.sha256(patch).hexdigest()=='72924feebbcdf5dfcd5295b02e00503696f39859ecb8e0300d7aeeb0da0494b0'
           subprocess.run(['git','apply','--check','-'],input=patch,check=True)
           subprocess.run(['git','apply','-'],input=patch,check=True)
           original=json.loads((source/'source.json').read_text()); assert len(original)==19
           for p,h in original.items():assert hashlib.sha256(Path(p).read_bytes()).hexdigest()==h,p
-          p=Path('tests/test_bend_dispatch.py'); s=p.read_text()
-          for old,new in [('from pathlib import Path\n','from pathlib import Path\nfrom typing import Any\n'),('def compile_policy(r: dict, batch: int = 4, **overrides) -> dict:','def compile_policy(r: dict, batch: int = 4, **overrides: Any) -> dict:'),('    args = {','    args: dict[str, Any] = {'),('def test_identity_mismatch(key: str, bad: object) -> None:','def test_identity_mismatch(key: str, bad: Any) -> None:'),('    kwargs = {key: bad}','    kwargs: dict[str, Any] = {key: bad}')]:
-              assert s.count(old)==1; s=s.replace(old,new)
-          p.write_text(s)
-          assert hashlib.sha256(p.read_bytes()).hexdigest()=='92ab0d977b0a24b2125a72de046017fd5ff2f28bf32fd4bd43d5c95e96ffd046'
           p=Path('native/bend_engine/service_profile/dispatch.py');s=p.read_text()
-          old='        manifest["batch"],\n        manifest["channels"],\n        manifest["checkpoint_sha256"],'
-          new='        integer(manifest["batch"], 1, 16),\n        integer(manifest["channels"], 146, 175),\n        digest(manifest["checkpoint_sha256"]),'
+          old='    if (\n        batch not in BATCHES\n        or type(batch) is not int\n        or type(channels) is not int\n        or channels not in (146, 175)\n    ):\n        raise ValueError("unsupported package shape")\n'
+          new='    try:\n        integer(batch, 1, 16)\n        integer(channels, 146, 175)\n    except ValueError as error:\n        raise ValueError("unsupported package shape") from error\n    if batch not in BATCHES or channels not in (146, 175):\n        raise ValueError("unsupported package shape")\n'
           assert s.count(old)==1;p.write_text(s.replace(old,new))
-          assert hashlib.sha256(p.read_bytes()).hexdigest()=='86abc3b5469e64eb02ba2a238d54ed485adce0c1ac7ab560524df3e106f33a1d'
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=='8fdba5bbe9282e9358d6bed7ec63bb85f20e7e325ac717de807f60d1bfe16720'
           subprocess.run(['git','add','-N','.'],check=True)
           patch=subprocess.check_output(['git','diff','--binary'])
-          assert hashlib.sha256(patch).hexdigest()=='72924feebbcdf5dfcd5295b02e00503696f39859ecb8e0300d7aeeb0da0494b0'
+          assert hashlib.sha256(patch).hexdigest()=='8a724da71c993929f90baa24b86bf7dbd7f1dc670b27e1fb690becf5815fd14f'
           Path('artifacts/dispatch/candidate.patch').write_bytes(patch)
           Path('artifacts/dispatch/source.json').write_text(json.dumps({p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in original},indent=2)+'\n')
           PY
