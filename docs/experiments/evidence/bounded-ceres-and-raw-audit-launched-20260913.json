@@ -1,0 +1,211 @@
+{
+  "status": "ACTUAL_LAUNCH_SNAPSHOTS_NOT_COMPLETED_RESULTS",
+  "ceres": {
+    "outer_started": {
+      "started_unix": 1789325383.6631522,
+      "available_ram_bytes": 88404570112,
+      "free_disk_bytes": 198568243200,
+      "driver_plan_sha256": "07b4295f42d987dcf3c9d7b66e44550734f72fc1654f7296874a096fdfbc289b"
+    },
+    "planned_rows": 131072,
+    "planned_shards": 16,
+    "currently_qualified_rows": 5866975,
+    "currently_qualified_shards": 718,
+    "source_rows": 263916,
+    "source_shards": 33,
+    "whole_seconds": 3600,
+    "command": "set -euo pipefail\nunset PYTHONOPTIMIZE PYTHONHOME LD_PRELOAD\nexec timeout --signal=TERM --kill-after=30s 3570s /usr/bin/python3 /tmp/deepfin-ceres-collection-batches-pr/scripts/ceres_collection_batches.py --plan /home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/driver.plan.json --expected-plan-sha256 07b4295f42d987dcf3c9d7b66e44550734f72fc1654f7296874a096fdfbc289b --execute\n",
+    "independent_preparation_review": {
+      "status": "PASS_INDEPENDENT_PREPARATION_ONLY",
+      "reviewer": "archive_review",
+      "reviewed_unix": 1789325346.2823982,
+      "pins": {
+        "driver.plan.json": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/driver.plan.json",
+          "sha256": "07b4295f42d987dcf3c9d7b66e44550734f72fc1654f7296874a096fdfbc289b"
+        },
+        "command.sh": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/command.sh",
+          "sha256": "eb1541c8a12090e518692d21de43c82f075c95750fb98544e5a247626d8f6d99"
+        },
+        "run_chunk.py": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/run_chunk.py",
+          "sha256": "29865ce46b4ab0d4b58cb273a72f1562a493b69192722b3accb238ac596b82a0"
+        },
+        "wrapper.diff": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/wrapper.diff",
+          "sha256": "35ca242dda17b3778d3652d9a332373b4336bbe61f5ef7c33c9cbd65789c89bf"
+        },
+        "readiness.json": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/readiness.json",
+          "sha256": "d97674d239878f575f34509eb1404468e49473e9ba1b8c4dcf8178a75e3d8a0a"
+        },
+        "README.md": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/README.md",
+          "sha256": "87dbb8afa022db2110adaaf3c5eac467c5579d405087be58a41d66cc55d43a89"
+        }
+      },
+      "findings": [],
+      "verified": [
+        "Exact16 single-shard ranges0..15 from pinned33-shard263916-row source;131072 real rows/no padding/4096fixed32 calls, no duplicate coverage.",
+        "479 unique small source/evidence/plan pins match. Five interpreter/native binary pins and library/model/package identities equal prior qualified run07-large plan; no binary/model rehash repeated.",
+        "Same e9c1b74 C3 fixed32 collector/head/policy/value/value2 settings and native mapped-library evidence; CPU2,3 numeric2 ORT8GiB sampled device8GiB/RSS12GiB,48startup32ongoing host/150disk/128MiB bank-state per chunk.",
+        "Full wrapper delta literal cohort/count/path/time plus approved48GiB startup and sampled-device threshold changes. Actual range argv validation and recorded driver defaultPASS retained; initial absent-parent default failure disclosed.",
+        "Sixteen180s ceilings+fifteen30s gaps=3330s within3600 inclusive. Existing driver own-group cleanup/STOP and outer3570TERM30KILL retained; no automatic retry or inferred resumability.",
+        "Completed prefix is pending independent evidence review, not full-cohort/training qualification; no strength/native-parity claims."
+      ],
+      "limits": [
+        "Parent owns current resource/lease checks and launch/terminal.",
+        "Sampled limits are not hard quotas; sixteen session startups differ from linear historical throughput extrapolation.",
+        "No models/arrays/native binaries read or tests/defaults/imports/jobs repeated; source summaries and compact proof metadata only."
+      ]
+    }
+  },
+  "raw_audit": {
+    "outer_started": {
+      "started_unix": 1789325138.5692518,
+      "available_ram_bytes": 88646012928,
+      "plan_sha256": "fed9cd4ecb929e324d5212a56a0c23953ff68eb4b0d4fb8612e02147dde3e7be"
+    },
+    "selected_rows": 1527153,
+    "selected_shards": 184,
+    "whole_seconds": 1800,
+    "command": "RAW_AUDIT_DEADLINE=\"$(date -u +%s)\"\nRAW_AUDIT_DEADLINE=\"$((RAW_AUDIT_DEADLINE + 1740))\"\ntaskset -c 4,5 env CUDA_VISIBLE_DEVICES= OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 TORCHINDUCTOR_COMPILE_THREADS=2 PYTHONOPTIMIZE= PYTHONPATH=/tmp/deepfin-raw-baseline-eligibility timeout --signal=TERM --kill-after=30 1770 /tmp/deepfin-bt4-sf-close-followup/.venv/bin/python /tmp/deepfin-raw-baseline-eligibility/scripts/audit_raw_baseline.py --manifest /home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/manifest.json --expected-manifest-sha256 5a6a8a519060028c1df648e5396e9ef235c41eb5d4537a850a65f15ab7438e68 --out /home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/execution --deadline-unix \"$RAW_AUDIT_DEADLINE\"\n",
+    "plan": {
+      "status": "PREPARED_NOT_EXECUTED",
+      "runtime_commit": "1cacea59dff150673e41cfe0dd9b6cfb66edf6da",
+      "manifest": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/manifest.json",
+        "sha256": "5a6a8a519060028c1df648e5396e9ef235c41eb5d4537a850a65f15ab7438e68"
+      },
+      "command": {
+        "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/command.txt",
+        "sha256": "bd11684da75244c91c09bc99480ce0d1d9839d0c14c711587d887e85f3ef4dfa"
+      },
+      "selected_shards": 184,
+      "selected_rows": 1527153,
+      "whole_seconds": 1800,
+      "cpus": [
+        4,
+        5
+      ],
+      "diagnostic_bytes_cap": 536870912,
+      "available_ram_gib": [
+        48,
+        32
+      ],
+      "disk_floor_gib": 150,
+      "virtual_memory_cap": null,
+      "import_validation": {
+        "path": "/tmp/raw-baseline-import.log",
+        "sha256": "09e3ad3faab7962e189e8968f7209572179cd0f2d998e0f42d9f46d0b29cb938"
+      },
+      "pins": [
+        {
+          "path": "/tmp/deepfin-raw-baseline-eligibility/scripts/audit_raw_baseline.py",
+          "sha256": "7ae3d89ebac883c9c6efda2267131dc2e584f977986fcf1776b6c65620ddd9ef"
+        },
+        {
+          "path": "/tmp/deepfin-raw-baseline-eligibility/scripts/adaptive_sf_value.py",
+          "sha256": "4179cf3711280cdea7bdf0d18758c87947a78737282bf7fb84062e5228a8a049"
+        },
+        {
+          "path": "/tmp/deepfin-raw-baseline-eligibility/scripts/derive_corpus_targets.py",
+          "sha256": "2328f5729a887c52674d10107add06a1b51de590a9f1cd2ada17bd16d47f721e"
+        },
+        {
+          "path": "/tmp/deepfin-raw-baseline-eligibility/scripts/training_host_memory.py",
+          "sha256": "94e074f17104bc1aa3ca9b6be99f715d9a906ff3e5546892ffe94612fd21dfdc"
+        }
+      ],
+      "notes": [
+        "Completed collection receipt exact roster, not its misleading MAX_NEW_SHARDS reason, determines selection.",
+        "Final independent source/collection review remains prerequisite.",
+        "No actual raw payload audit. Progress preserves completed-shard prefix; failure is not admission."
+      ]
+    },
+    "independent_execution_review": {
+      "status": "PASS_INDEPENDENT_FINAL_STATIC_EXECUTION_BINDING",
+      "reviewer": "archive_review",
+      "reviewed_unix": 1789325105.690511,
+      "pins": {
+        "plan.json": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/plan.json",
+          "sha256": "fed9cd4ecb929e324d5212a56a0c23953ff68eb4b0d4fb8612e02147dde3e7be"
+        },
+        "manifest.json": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/manifest.json",
+          "sha256": "5a6a8a519060028c1df648e5396e9ef235c41eb5d4537a850a65f15ab7438e68"
+        },
+        "command.txt": {
+          "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/command.txt",
+          "sha256": "bd11684da75244c91c09bc99480ce0d1d9839d0c14c711587d887e85f3ef4dfa"
+        }
+      },
+      "findings": [],
+      "verified": [
+        "Exact source commit1cacea59d and4module pins match independently reviewed audit; pinned actual import log uses same qualified venv interpreter and exit0. No repeat import.",
+        "Manifest binds genuine completed raw receiptc17043fa,184shards/1527153rows, same2 source namespaces; both canonical raw manifest pins match actualschema3/history_rep_fixTrue/config identity. No raw payload opened.",
+        "Command actual shell bytes have ordinary quoting; fixed starting epoch+1740deadline,1770TERM+30KILL1800inclusive,CPU4,5/GPUhidden/two numeric threads/compiler2/explicit qualified venv and PYTHONPATH.",
+        "Fresh output namespace checked;48startup/32periodic RAM150disk,512MiB rejected diagnostics enforced by reviewed tool; no AS cap.",
+        "Selection follows exact completed receipt, not misleading MAX_NEW_SHARDS reason. Progress/failure never qualifies failed audit or derived training inputs."
+      ],
+      "limits": [
+        "Parent owns current resource preflight, invocation and outer terminal/log capture.",
+        "Import-only peak is not actual audit peak. Sampling limits and external timeout requirement remain as source review.",
+        "No raw audit/default/tests/models/payloads/process polls executed by reviewer."
+      ]
+    }
+  },
+  "references": {
+    "ceres/outer_started.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/outer_started.json",
+      "sha256": "03541b2f697adae30fb58ee7536a9f9ac24d11e6c12395b13c5e52db1303a498"
+    },
+    "ceres/driver.plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/driver.plan.json",
+      "sha256": "07b4295f42d987dcf3c9d7b66e44550734f72fc1654f7296874a096fdfbc289b"
+    },
+    "ceres/command.sh": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/command.sh",
+      "sha256": "eb1541c8a12090e518692d21de43c82f075c95750fb98544e5a247626d8f6d99"
+    },
+    "ceres/run_chunk.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/run_chunk.py",
+      "sha256": "29865ce46b4ab0d4b58cb273a72f1562a493b69192722b3accb238ac596b82a0"
+    },
+    "ceres/independent_preparation_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/independent_preparation_review.json",
+      "sha256": "96c451165b3e620b23cbe8dc45d5dfe0b962b8785ed50703f535511e38175c43"
+    },
+    "ceres/readiness.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_batchv3_run06_prefix16_v1/readiness.json",
+      "sha256": "d97674d239878f575f34509eb1404468e49473e9ba1b8c4dcf8178a75e3d8a0a"
+    },
+    "audit/outer_started.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/outer_started.json",
+      "sha256": "cf0d39aa28998edfd632cdd707cb41c20822bfbb103eadc5291c4a7f52acbb4d"
+    },
+    "audit/plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/plan.json",
+      "sha256": "fed9cd4ecb929e324d5212a56a0c23953ff68eb4b0d4fb8612e02147dde3e7be"
+    },
+    "audit/manifest.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/manifest.json",
+      "sha256": "5a6a8a519060028c1df648e5396e9ef235c41eb5d4537a850a65f15ab7438e68"
+    },
+    "audit/command.txt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/command.txt",
+      "sha256": "bd11684da75244c91c09bc99480ce0d1d9839d0c14c711587d887e85f3ef4dfa"
+    },
+    "audit/independent_execution_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/raw_baseline_eligibility_v1/execution_preparation_v1/independent_execution_review.json",
+      "sha256": "c25a1f3ef1f05cbff08d25a0302dda642cb1db3d1b6a47cd69b9a6d2119d4a27"
+    }
+  },
+  "limitations": [
+    "Launch snapshots only; no terminal or progress reads in this publication.",
+    "No new corpus qualification, training, playing result or native Ceres parity claim.",
+    "Sampled resource thresholds are not hard quotas."
+  ]
+}

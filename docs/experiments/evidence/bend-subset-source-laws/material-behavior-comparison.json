@@ -1,0 +1,35 @@
+{
+  "comparison": "PASS",
+  "qualification_run": 35626785060,
+  "qualification_job": 106422981932,
+  "qualification_overall": "failure at overstrict byte comparison after both verifiers completed",
+  "excluded_from_equality_only": [
+    "observed_stop_seconds"
+  ],
+  "observed_stop_seconds_normal": 0.010093326999992769,
+  "observed_stop_seconds_empty": 0.010102630000005774,
+  "behavior": {
+    "positions": 10,
+    "exact_children": 137,
+    "searched_roots": 51,
+    "rejected_transactions": 23,
+    "perft_counts": [
+      8902,
+      97862,
+      43238
+    ],
+    "partial_line_ready_and_single_stop": true,
+    "real_uci_client_moves": [
+      "b1a3",
+      "a7a5",
+      "a1b1",
+      "a5a4",
+      "b1a1",
+      "a8a5",
+      "a1b1",
+      "a5b5"
+    ]
+  },
+  "original_reports_unchanged": true,
+  "new_engine_execution_in_publication": false
+}

@@ -1,0 +1,67 @@
+{
+  "status": "COMPLETE_FIXED_RECIPE_Q_DRAW_DIAGNOSTIC",
+  "terminal": {
+    "status": "COMPLETE_FIXED_RECIPE_Q_DRAW_DIAGNOSTIC",
+    "session": 16452,
+    "exit_code": 0,
+    "wall_seconds": 42.27,
+    "peak_rss_kib": 395704,
+    "prior_failed_seconds": 6.07,
+    "total_execution_seconds": 48.34,
+    "plan_sha256": "56fffd4df9c1729c1475bf8599855bc43d4d32848336cfbde0aaf69325321d8f",
+    "readout_sha256": "721b125df97751418e79416f0380bb2254fc7bf2e9543b3d52b82c882279f1d4",
+    "row_q_draw_sha256": "7e3138ed02ccbf934520f664da23a35800d7de0348139d9d7f22982b9b9c3be6",
+    "row_q_draw_size": 31053713,
+    "current_SF_witness": "New current decoded hashes under unchanged completed-source storage, not retroactive historical hashes",
+    "validation": "All6 prior per-row losses reproduced; native/Ceres known hashes matched; final pins/storage stable"
+  },
+  "pins": {
+    "plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/q_draw_preparation/plan.json",
+      "sha256": "dca024be36fb78575fab9494465a04f67e651b379ef6f84d77b2f0ef8ae417da"
+    },
+    "decompose.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/q_draw_preparation/decompose.py",
+      "sha256": "80df20df89d982ee4a2afb22110eaba487e3e7f52878af1fcdfa0c20eb1491b2"
+    },
+    "attempt1_terminal.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/q_draw_preparation/attempt1_terminal.json",
+      "sha256": "a6a45a98f4e3f6958f699ccff4f91758cb397aed0de9dbdc83268a271eefffad"
+    },
+    "plan_v2.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/q_draw_preparation/plan_v2.json",
+      "sha256": "56fffd4df9c1729c1475bf8599855bc43d4d32848336cfbde0aaf69325321d8f"
+    },
+    "decompose_v2.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/q_draw_preparation/decompose_v2.py",
+      "sha256": "636fe627762fbf5ca78225ac31300cf49ad66aa66c7d7e504d47e3c8bb60e1ef"
+    },
+    "independent_review_v2.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/q_draw_preparation/independent_review_v2.json",
+      "sha256": "75fad1aa461198d46eaadffdb94e7818633149c5de2bf90f05bdd58c9a090276"
+    },
+    "terminal_v2.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/q_draw_preparation/terminal_v2.json",
+      "sha256": "dde2010a388885472172936ea370fbdd9eb06010f1a034632f837fe450101eec"
+    },
+    "output_v2/readout.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/q_draw_preparation/output_v2/readout.json",
+      "sha256": "721b125df97751418e79416f0380bb2254fc7bf2e9543b3d52b82c882279f1d4"
+    },
+    "scientific_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/q_draw_preparation/scientific_review.json",
+      "sha256": "cc671d5adfa527a40423c79f9ef612f47fccf9f03aeb79db7736f23f8179dd35"
+    }
+  },
+  "q_draw_bank": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_value_diagnostic_v1/q_draw_preparation/output_v2/row_q_draw.jsonl",
+    "sha256": "7e3138ed02ccbf934520f664da23a35800d7de0348139d9d7f22982b9b9c3be6",
+    "size_bytes": 31053713,
+    "source_rows": 32768,
+    "included_rows": 23993,
+    "scope": "Exact original source-qualified identities, inclusion, fixed strata and all six Q/draw predictions; local bulk artifact, not reread for publication."
+  },
+  "initial_failure": "Incorrect float16 requirement for accepted native float32 WDL. First SF value array read; no native value payload or retained bank read. Failed attempt retained.",
+  "decision": "Retain registered training anchors; no new head, temperature or weight selected. Draw-target change holding Q fixed is a possible later hypothesis, not queued or validated.",
+  "strength_or_true_Q_calibration_claim": false
+}

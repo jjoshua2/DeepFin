@@ -2,7 +2,8 @@
 
 The caller-reviewed manifest pins actual invocation receipts, shard attributes and
 historical producer files separately: completion receipts do not attest producers.
-Only complete, original G10 cohorts in one WDL directory are supported.
+Only complete, original G10 cohorts are supported; schema 2 routes explicitly
+across multiple historical output directories without moving their contents.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from scripts import bt4_derived_wdl_sidecar as wdl
 from scripts.sf_policy_rewrite import require
 
 PROFILE = 'historical-g10-native-wdl-reuse-v1'
+MULTI_PROFILE = 'historical-g10-native-wdl-multi-output-v1'
 PRODUCERS = {'scripts/bt4_derived_wdl_sidecar.py', 'scripts/bt4_raw_corpus_sidecar.py',
              'chess_anti_engine/encoding/lc0.py'}
 
@@ -43,33 +45,57 @@ def read(ref: Any, pins: dict[Path, str]) -> tuple[Path, dict[str, Any]]:
 
 def admit(manifest: Path, expected_sha: str, *, source: Path, sidecar: Path,
           summary_sha: str, model_sha: str, head: str, admission: dict[str, Any],
-          specs: list[dict[str, Any]], pins: dict[Path, str]) -> dict[str, dict[str, Any]]:
+          specs: list[dict[str, Any]], pins: dict[Path, str],
+          shard_roots: dict[str, Path] | None = None) -> dict[str, dict[str, Any]]:
     """Return exact historical bindings; caller still verifies all cached arrays."""
     _, body = read({'path': str(manifest), 'sha256': expected_sha}, pins)
-    require(set(body) == {'schema', 'profile', 'source_dir', 'wdl_dir',
+    multi = body.get('schema') == 2
+    directory_key = 'wdl_dirs' if multi else 'wdl_dir'
+    require(set(body) == {'schema', 'profile', 'source_dir', directory_key,
                          'source_summary_sha256', 'onnx_sha256', 'wdl_output', 'invocations'},
             'native WDL manifest schema')
-    require(body['schema'] == 1 and body['profile'] == PROFILE
-            and body['source_dir'] == str(source) and body['wdl_dir'] == str(sidecar)
+    require(body['schema'] == (2 if multi else 1)
+            and body['profile'] == (MULTI_PROFILE if multi else PROFILE)
+            and body['source_dir'] == str(source)
             and body['source_summary_sha256'] == summary_sha
             and body['onnx_sha256'] == model_sha and body['wdl_output'] == head,
             'native WDL manifest source/model/head differs')
+    directory_names = body['wdl_dirs'] if multi else [body['wdl_dir']]
+    require(isinstance(directory_names, list) and all(isinstance(p, str) for p in directory_names)
+            and len(directory_names) >= (2 if multi else 1), 'native WDL directories required')
+    directories = [Path(p) for p in directory_names]
+    require(directories[0] == sidecar, 'native WDL anchor directory differs')
+    if multi:
+        require(shard_roots is not None, 'native WDL multi-output routing required')
+        require(all(p.is_absolute() and p.resolve() == p and p.is_dir() and not p.is_symlink()
+                    for p in directories), 'native WDL directory path')
+        require(len(set(directories)) == len(directories)
+                and all(a not in b.parents for a in directories for b in directories if a != b),
+                'native WDL overlapping directories')
+    used_directories: set[Path] = set()
     entries = body['invocations']
     require(isinstance(entries, list) and bool(entries), 'native WDL invocations required')
     by_name = {s['path']: s for s in specs}
     bindings: dict[str, dict[str, Any]] = {}
-    namespace_path = sidecar / 'g10_common_source.json'
-    namespace_sha = wdl.file_sha256(namespace_path)
-    namespace = json.loads(namespace_path.read_text())
-    pins[namespace_path] = namespace_sha
     for entry in entries:
-        require(isinstance(entry, dict) and set(entry) == {
-            'completed', 'started', 'producer', 'g10_admission_script', 'attributes'},
-            'native WDL invocation schema')
+        expected_keys = {'completed', 'started', 'producer', 'g10_admission_script', 'attributes'}
+        if multi:
+            expected_keys.add('wdl_dir')
+        require(isinstance(entry, dict) and set(entry) == expected_keys,
+                'native WDL invocation schema')
+        directory = Path(entry['wdl_dir']) if multi else sidecar
+        require(directory in directories, 'native WDL undeclared invocation directory')
+        used_directories.add(directory)
+        namespace_path = directory / 'g10_common_source.json'
+        namespace_sha = wdl.file_sha256(namespace_path)
+        namespace = json.loads(namespace_path.read_text())
+        require(namespace_path not in pins or pins[namespace_path] == namespace_sha,
+                'native WDL conflicting namespace pin')
+        pins[namespace_path] = namespace_sha
         completed_path, completed = read(entry['completed'], pins)
         started_path, started = read(entry['started'], pins)
         require(completed_path.name == 'completed.json'
-                and completed_path.parent.parent == sidecar / 'invocations'
+                and completed_path.parent.parent == directory / 'invocations'
                 and started_path == completed_path.parent / 'started.json'
                 and not (completed_path.parent / 'failed.json').exists(),
                 'native WDL invocation namespace or failure')
@@ -82,7 +108,7 @@ def admit(manifest: Path, expected_sha: str, *, source: Path, sidecar: Path,
                 and math.isfinite(begin) and math.isfinite(end) and end >= begin,
                 'native WDL invocation timing')
         argv = started['argv']
-        required_args = {'source': str(source), 'out': str(sidecar),
+        required_args = {'source': str(source), 'out': str(directory),
                          'invocation': str(completed_path.parent),
                          'expected_source_summary_sha256': summary_sha,
                          'expected_onnx_sha256': model_sha, 'wdl_output': head,
@@ -120,7 +146,7 @@ def admit(manifest: Path, expected_sha: str, *, source: Path, sidecar: Path,
             name = spec['path']
             require(name in by_name and name not in bindings, 'native WDL overlapping selection')
             attrs_path, attrs = read(attrs_refs[name], pins)
-            require(attrs_path == sidecar / name / '.zattrs', 'native WDL attribute namespace')
+            require(attrs_path == directory / name / '.zattrs', 'native WDL attribute namespace')
             expected = {
                 'schema': 1, 'g10_common_admission': admission,
                 'g10_admission_script_sha256': g10_sha,
@@ -135,5 +161,8 @@ def admit(manifest: Path, expected_sha: str, *, source: Path, sidecar: Path,
                     and attrs.get('complete') is True and attrs.get('binding') == expected,
                     'native WDL historical binding differs')
             bindings[name] = expected
+            if shard_roots is not None:
+                shard_roots[name] = directory
     require(set(bindings) == set(by_name), 'native WDL missing complete-cohort coverage')
+    require(used_directories == set(directories), 'native WDL unused directory')
     return bindings

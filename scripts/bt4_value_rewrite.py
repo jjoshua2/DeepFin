@@ -179,6 +179,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         pins[Path(qualification)] = qualification_sha
         pins.update({Path(p): h for p, h in g10_admission['summary_pins'].items()})
     native_bindings = None
+    shard_roots = {s["path"]: side_root for s in specs}
     if native_path:
         if not isinstance(native_sha, str) or not isinstance(g10_admission, dict):
             raise ValueError('native WDL requires G10 admission and manifest digest')
@@ -186,6 +187,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             Path(native_path).resolve(), native_sha, source=sf_root, sidecar=side_root,
             summary_sha=args.expected_sf_summary_sha256, model_sha=args.expected_onnx_sha256,
             head=args.wdl_output, admission=g10_admission, specs=specs, pins=pins,
+            shard_roots=shard_roots,
         )
     require(
         equal_json(
@@ -210,6 +212,14 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         all(policy.get(k) == v for k, v in expected_policy.items()),
         "requires unchanged B100 policy recipe",
     )
+    side_roots = tuple(dict.fromkeys(shard_roots.values()))
+    if len(side_roots) > 1:
+        require(all(p != q and p not in q.parents and q not in p.parents
+                    for p in side_roots for q in (source, sf_root, out, writing)),
+                'native WDL input overlaps')
+    root_specs = {source: specs, sf_root: specs}
+    root_specs.update({root: [s for s in specs if shard_roots[s['path']] == root]
+                       for root in side_roots})
     matched_input = None
     if matched_path:
         if not isinstance(matched_sha, str):
@@ -219,14 +229,14 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             original_sha=args.expected_sf_summary_sha256, summary=sf, specs=specs, pins=pins)
         candidate = matched_input['root']
         require(all(candidate != p and candidate not in p.parents and p not in candidate.parents
-                    for p in (source, side_root, out, writing)), 'matched SF input overlaps')
-        roots = (*roots, candidate)
-    for root in roots:
-        inventory(root, specs)
+                    for p in (source, *side_roots, out, writing)), 'matched SF input overlaps')
+        root_specs[candidate] = specs
+    for root, selected_specs in root_specs.items():
+        inventory(root, selected_specs)
     states = {
         root / s["path"]: wdl.storage_identity(root / s["path"])
-        for root in roots
-        for s in specs
+        for root, selected_specs in root_specs.items()
+        for s in selected_specs
     }
     producer = {
         str(Path(p).resolve()): wdl.file_sha256(Path(p))
@@ -265,7 +275,7 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         for spec in specs:
             guard()
             name, n = spec["path"], spec["rows"]
-            src, original, side = source / name, sf_root / name, side_root / name
+            src, original, side = source / name, sf_root / name, shard_roots[name] / name
             original_group = wdl.source_arrays(original, sf, n)
             matched_group = (matched.verify_shard(matched_input, original, spec, original_group,
                                                    args.batch_size, guard)
@@ -442,8 +452,8 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
         guard()
         for path, state in states.items():
             require(wdl.storage_identity(path) == state, "source or sidecar changed")
-        for root in roots:
-            inventory(root, specs)
+        for root, selected_specs in root_specs.items():
+            inventory(root, selected_specs)
         for path, digest in pins.items():
             require(wdl.file_sha256(path) == digest, "source summary changed")
         recipe = {
@@ -486,10 +496,13 @@ def rewrite(args: argparse.Namespace) -> dict[str, Any]:
             recipe['g10_common_admission'] = g10_admission
         if native_path and native_bindings is not None:
             recipe['native_wdl_reuse'] = {
-                'profile': historical.PROFILE,
+                'profile': historical.MULTI_PROFILE if len(side_roots) > 1 else historical.PROFILE,
                 'manifest': {'path': str(Path(native_path).resolve()), 'sha256': native_sha},
                 'new_teacher_evaluations': 0,
             }
+        if len(side_roots) > 1:
+            recipe.pop('wdl_dir')
+            recipe['wdl_dirs'] = [str(root) for root in side_roots]
         derived = dict(base)
         derived["value_target_postprocess"] = {
             k: v for k, v in recipe.items() if k != "outputs"

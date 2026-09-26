@@ -1,0 +1,39 @@
+{
+  "status": "PASS_COMPLETED_CHUNKS_SNAPSHOT",
+  "reviewed_unix": 1789156492.355426,
+  "recovery": {
+    "shards": 1696,
+    "rows": 13893632,
+    "newly_payload_verified_chunks": 21,
+    "reused_qualified_chunks": 85,
+    "scope": "Only terminal-success receipts frozen at this audit start; excludes other roots and in-progress or failed chunks."
+  },
+  "recovery_shards": "48..1743",
+  "prior_other_roots": {
+    "shards": "0..47 and final2308",
+    "rows": 396564
+  },
+  "total_qualified_rows": 14290196,
+  "total_qualified_shards": 1745,
+  "expected_rows": 18910484,
+  "full_bank_complete": false,
+  "training_or_strength_result": false,
+  "pins": {
+    "completed_snapshot_14.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/completed_snapshot_14.json",
+      "sha256": "d9a4bcd2b1b81e1baf856165cd616cc56fc77f5d3b4f091a389bc115ddda6ba6"
+    },
+    "completed_snapshot_13.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/completed_snapshot_13.json",
+      "sha256": "39a80d443760446d2fe8f0578767a73d8e6531f5fb1868a98a9b85198d6bb9c1"
+    },
+    "audit_completed.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/audit_completed.py",
+      "sha256": "d5d409d083bb35ffb5b2be61aa56ce168464ab7217cda970d1090fc544adbd17"
+    },
+    "audit_saved_chunk.py": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/ceres_teacher_readiness_v1/full_corpus_planning_v1/remaining_collection_v2/audit_saved_chunk.py",
+      "sha256": "c38b1fa61bc458a1e81ee1ee2ca5503f499f6d4c980c2a83e8f41a1b85e627f5"
+    }
+  }
+}

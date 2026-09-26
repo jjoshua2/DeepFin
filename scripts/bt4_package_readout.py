@@ -15,6 +15,7 @@ import chess
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from chess_anti_engine.utils.game_log import read_game_log, settings_fingerprint
 from scripts.bt4_recipe_readout import pinned, read_json, require, same, summary
+from scripts import combined_corpus_train as combined
 
 
 def positive(value: Any) -> bool:
@@ -62,12 +63,60 @@ def panel_fens(ref: dict[str, Any], pairs: int) -> list[str]:
     return fens
 
 
+CERES_PROFILE = 'ceres100_b100_seed0_fixed512'
+CERES_ROLES = ('Ceres100', 'B100')
+V100_PROFILE = 'combined35m_native100_vs_v50_seed101'
+V100_ROLES = ('Combined35M_V100', 'Combined35M_V50')
+
+
+def verify_ceres_training(contract: dict[str, Any]) -> None:
+    from scripts import bt4_recipe_readout as original
+
+    require(set(contract['training']) == {'candidate_training', 'reference_training'}, 'Ceres training fields')
+    same(tuple(contract[s]['role'] for s in ('candidate', 'reference')), CERES_ROLES, 'Ceres direction')
+    original.matched_training_pair({**contract['training'], 'candidate': contract['candidate'], 'reference': contract['reference']})
+    for key, value in {'pairs': 256, 'sims': 400, 'seed': 20260913,
+                       'candidate_prior_temperature': 1.0, 'reference_prior_temperature': 1.0}.items():
+        same(contract[key], value, 'registered Ceres ' + key)
+    same(contract['opening_panel']['sha256'], combined.PANEL_SHA, 'Ceres development panel')
+    for key, value in {'loop': 'rolling', 'compile': 'on', 'eval_max_batch': 4096,
+                       'max_concurrent_games': 128, 'max_seconds': 7140.0}.items():
+        same(contract['execution'][key], value, 'Ceres execution ' + key)
+
+
+def verify_combined_training(contract: dict[str, Any]) -> None:
+    native100 = contract['profile'] == V100_PROFILE
+    same(tuple(contract[s]['role'] for s in ('candidate', 'reference')),
+         V100_ROLES if native100 else ('Combined35M_V50', 'Combined35M_SF100'), 'combined direction')
+    if native100:
+        same(contract['execution']['max_seconds'], 7140.0, 'V100 execution deadline')
+        same(contract['opening_panel']['sha256'], combined.PANEL_SHA, 'V100 development panel')
+    require(set(contract['training']) == {'candidate_training', 'reference_training'}, 'combined training fields')
+    combined.matched_training_pair({**contract['training'], 'candidate': contract['candidate'], 'reference': contract['reference']})
+    for key, value in {'pairs': 256, 'sims': 400, 'seed': 20260913, 'candidate_prior_temperature': 1.0,
+                       'reference_prior_temperature': 1.0}.items():
+        same(contract[key], value, 'registered combined ' + key)
+    for key, value in {'loop': 'rolling', 'compile': 'on', 'eval_max_batch': 4096, 'max_concurrent_games': 128}.items():
+        same(contract['execution'][key], value, 'combined execution ' + key)
+    for side in ('candidate', 'reference'):
+        receipt = read_json(contract['training'][side + '_training'])
+        same(contract['opening_panel'], receipt['opening_panel'], 'combined pretraining panel')
+
+
 def validate(contract: dict[str, Any]) -> None:
-    require(set(contract) == {'schema', 'profile', 'candidate', 'reference', 'candidate_prior_temperature',
+    fields = {'schema', 'profile', 'candidate', 'reference', 'candidate_prior_temperature',
         'reference_prior_temperature', 'sims', 'pairs', 'seed', 'settings', 'execution',
-        'opening_panel', 'bank', 'process', 'results_path'}, 'package contract fields')
+        'opening_panel', 'bank', 'process', 'results_path'}
+    if contract.get('profile') in {combined.PROFILE, CERES_PROFILE, V100_PROFILE}:
+        fields.add('training')
+    require(set(contract) == fields, 'package contract fields')
     same(contract['schema'], 1, 'schema')
-    same(contract['profile'], 'explicit_checkpoint_prior_packages', 'profile')
+    if contract['profile'] in {combined.PROFILE, V100_PROFILE}:
+        verify_combined_training(contract)
+    elif contract['profile'] == CERES_PROFILE:
+        verify_ceres_training(contract)
+    else:
+        same(contract['profile'], 'explicit_checkpoint_prior_packages', 'profile')
     for key in ('candidate_prior_temperature', 'reference_prior_temperature'):
         require(positive(contract[key]), 'positive finite per-side prior required')
     require(type(contract['sims']) is int and contract['sims'] > 0
@@ -143,7 +192,37 @@ def command_check(command: Any, contract: dict[str, Any]) -> None:
     require(args['device'] in (None, ['cuda']), 'command device')
 
 
-def read_contract(path: Path) -> dict[str, Any]:
+def command_observation(process: dict[str, Any], contract: dict[str, Any], *, allow_timeout_preexec: bool,
+                        allow_empty_procfs: bool = False) -> str:
+    if 'arena_cmdline' not in process:
+        return 'not_recorded'
+    observed = process['arena_cmdline']
+    if observed == process['command']:
+        return 'actual_command'
+    empty = observed == [''] and allow_empty_procfs
+    require(empty or allow_timeout_preexec, 'observed arena command differs')
+    seconds = process.get('hard_seconds')
+    require(type(seconds) is int and seconds > 30
+            and seconds == contract['execution']['max_seconds'] + 60, 'preexec hard budget')
+    seconds = cast(int, seconds)
+    expected = ['/usr/bin/timeout', '--signal=TERM', '--kill-after=30s', f'{seconds - 30}s',
+                *process['command']]
+    same(process.get('supervisor_command'), expected, 'preexec supervisor command')
+    if not empty:
+        same(observed, expected, 'preexec observed command')
+    same(process.get('exit_code'), 0, 'preexec process exit')
+    same(process.get('process_complete'), True, 'preexec process completion')
+    pids = [process.get(k) for k in ('owner_pid', 'supervisor_pid', 'arena_pid')]
+    require(all(type(pid) is int and pid > 0 for pid in pids) and len(set(pids)) == 3,
+            'preexec supervisor/child identity')
+    start, end = process.get('started_unix'), process.get('ended_unix')
+    require(positive(start) and positive(end), 'preexec timestamps')
+    require(0 < cast(float, end) - cast(float, start) <= seconds, 'preexec elapsed budget')
+    return 'unavailable_empty_procfs_snapshot' if empty else 'exact_supervised_timeout_preexec_snapshot'
+
+
+def read_contract(path: Path, *, allow_timeout_preexec: bool = False,
+                  allow_empty_procfs: bool = False) -> dict[str, Any]:
     raw = path.read_bytes()
     contract = json.loads(raw)
     validate(contract)
@@ -156,8 +235,8 @@ def read_contract(path: Path) -> dict[str, Any]:
     same(process.get('exit_code'), 0, 'process exit')
     same(process.get('process_complete'), True, 'process completion')
     command_check(process['command'], contract)
-    if 'arena_cmdline' in process:
-        same(process['arena_cmdline'], process['command'], 'observed arena command')
+    observation = command_observation(process, contract, allow_timeout_preexec=allow_timeout_preexec,
+                                      allow_empty_procfs=allow_empty_procfs)
     bank = pinned(contract['bank'])
     log = read_game_log(bank)
     require(not log.truncated_tail, 'torn game bank')
@@ -198,18 +277,35 @@ def read_contract(path: Path) -> dict[str, Any]:
         'sims': contract['sims'], 'seed': contract['seed'], 'execution': contract['execution'],
         'bank': contract['bank'], 'opening_panel': contract['opening_panel'], 'process': contract['process'],
         'pair_scores': [s/2 for s in totals], 'result': summary(totals),
+        'command_observation': observation,
         'checkpoint_content_verified_now': True, 'launch_qualification_verified': False,
+        **({'combined_training_lineage_verified': True, 'training': contract['training']}
+           if contract['profile'] in {combined.PROFILE, V100_PROFILE} else {}),
+        **({'development_panel_reused': True} if contract['profile'] == V100_PROFILE else {}),
+        **({'original_epoch_training_lineage_verified': True, 'training': contract['training'],
+            'development_panel_reused': True} if contract['profile'] == CERES_PROFILE else {}),
         'limitations': ['Fixed-N nominal paired interval for these packages; not optimal temperature or training-seed uncertainty.',
             'Pinned process record and command checked; runtime provenance, checkpoint/book bytes and full history consumed at launch require external evidence.',
-            'Legal panel history and endpoint order verified now; recipe labels and training lineage are declarations requiring separate qualification.']}
+            ('Matched35M native100/V50 lineage verified; reused development panel is not fresh confirmation.'
+             if contract['profile'] == V100_PROFILE else
+             'Combined training lineage and pretraining panel are verified; actual arena launch qualification remains separate.'
+             if contract['profile'] == combined.PROFILE else
+             'Original matched epoch and Ceres endpoint recipe verified; reused development panel is not fresh confirmation.'
+             if contract['profile'] == CERES_PROFILE else
+             'Legal panel history and endpoint order verified now; recipe labels and training lineage are declarations requiring separate qualification.')]}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument('--contract', type=Path, action='append', required=True)
+    parser.add_argument('--allow-timeout-preexec-capture', action='store_true',
+                        help='Admit only the exact recorded timeout fork/exec snapshot; retain all bank checks')
+    parser.add_argument('--allow-empty-procfs-capture', action='store_true',
+                        help="Admit only recorded [''] as unavailable argv with exact supervisor proof; retain all bank checks")
     args = parser.parse_args()
     require(len(args.contract) == 1, 'exactly one contract required')
-    print(json.dumps(read_contract(args.contract[0]), indent=2))
+    print(json.dumps(read_contract(args.contract[0], allow_timeout_preexec=args.allow_timeout_preexec_capture,
+                                   allow_empty_procfs=args.allow_empty_procfs_capture), indent=2))
 
 
 if __name__ == '__main__':

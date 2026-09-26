@@ -1,0 +1,94 @@
+{
+  "status": "COMPLETE_NATIVE_WDL_LABEL_READINESS_NOT_TRAINING",
+  "new_rows": 790282,
+  "new_shards": 97,
+  "last_shard_rows": 3850,
+  "physical_rows": 795926,
+  "no_result_exclusions": 5629,
+  "policy_support_exclusions": 15,
+  "raw_shards": 96,
+  "raw_range": [
+    "w03-00043.jsonl.zst",
+    "w03-00138.jsonl.zst"
+  ],
+  "prior_direct_g10_native_wdl_rows": 4548347,
+  "direct_g10_native_wdl_rows": 5338629,
+  "source": "/home/josh/projects/chess/scratchpad/bt4_joint20/hybrid_endpoint_run01/preparation/G10_common_next96_v1/run06_g10/derived",
+  "output": "/home/josh/projects/chess/data/lc0/bt4_wdl_sidecars/g10_run06_next96_complete_v1/run06_g10",
+  "collection_seconds": 382.22447514533997,
+  "outer_seconds": 382.35239005088806,
+  "qualification_seconds": 3.106452226638794,
+  "saved_array_bytes_decoded": 50578048,
+  "WDL_values": {
+    "native_dtype": "float32",
+    "finite_and_range_valid": true,
+    "max_abs_unit_mass_error": 1.4739634934812784e-07,
+    "min": 2.0970375658180274e-08,
+    "max": 0.9999998807907104,
+    "normalized_rounding_tolerance": 2e-06
+  },
+  "refs": {
+    "plan.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run06_next96_v1/plan.json",
+      "sha256": "d97dbd3115587d29b54e0331e509319366f47cfc3a7f78cc863f95ab7b180497"
+    },
+    "validation.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run06_next96_v1/validation.json",
+      "sha256": "df8fde893c4f987fe4e7884b53c2f7784a6ac0d919cb28186c6701f8bf104161"
+    },
+    "complete.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run06_next96_v1/complete.json",
+      "sha256": "467c97977f405e3f476ea85cf7fbf1c0b8b5922e55a3efc08c3f5b441e041e7e"
+    },
+    "actual_start.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run06_next96_v1/actual_start.json",
+      "sha256": "5c8921101c0fda0e0e4454c347373b147fdf6384c66760c1ab01e882cfafac84"
+    },
+    "independent_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run06_next96_v1/independent_review.json",
+      "sha256": "3d3e95383e4253c9dff4fc2c52e335a2ba8ff8574cf6cdcabc0860afaec8e1dd"
+    },
+    "independent_completed_review/receipt.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run06_next96_v1/independent_completed_review/receipt.json",
+      "sha256": "743343b08ffe9d1a3e010c640b6188ab18282e0653bbae09e0a04529e6ca4cac"
+    },
+    "independent_completed_review/terminal.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run06_next96_v1/independent_completed_review/terminal.json",
+      "sha256": "537a983e84b6c154af76c01db5594500f30ccca7624200fbb92ae75643663b0e"
+    },
+    "independent_completed_review/preparation_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run06_next96_v1/independent_completed_review/preparation_review.json",
+      "sha256": "8b40a6699eb609bb46cb84f05cc45a38ae0cc4863acb385228c8c9af9bbf06cd"
+    },
+    "independent_completed_review/completed_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_wdl_run06_next96_v1/independent_completed_review/completed_review.json",
+      "sha256": "4ee8b094a4213fb1c3c4219a627b27219aa9a8f52a6d71262502d263a9063b31"
+    }
+  },
+  "parent_handles": {
+    "session": 91594,
+    "observer": 41,
+    "exit_code": 0
+  },
+  "qualification_handle": 72038,
+  "bounds": {
+    "inclusive_seconds": 900,
+    "child_seconds": 800,
+    "cpu_affinity": [
+      2,
+      3
+    ],
+    "threads": 2,
+    "ORT_gpu_allowance_gib": 8,
+    "minimum_linux_memavailable_gib": 32,
+    "minimum_free_disk_gib": 150
+  },
+  "limits": [
+    "One complete output, not downstream consumer admission or training",
+    "Existing source/feed binding inherited; all five saved arrays qualified once",
+    "No repeated raw features/models or inference during qualification",
+    "Prior wrong-cwd preimport failure recorded; one successful metadata admission",
+    "GPU allowance is not total device or CPU memory cap; no peak-memory claim",
+    "No further cohort automatically queued"
+  ]
+}

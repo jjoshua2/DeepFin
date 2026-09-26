@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -25,12 +26,17 @@ def write(path: Path, body: Any) -> None:
     path.write_text(json.dumps(body, sort_keys=True))
 
 
-def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, multi: bool = False):
     wargs, qualification = g10_fixture(tmp_path)
     install(monkeypatch, Session())
     # Two genuine invocation receipts covering disjoint parts of the same cohort.
+    original_out = wargs.out
+    output_roots = []
     wargs.max_shards = 1
     for start in (0, 1):
+        if multi:
+            wargs.out = str(tmp_path / f"native_unit_{start}")
+        output_roots.append(Path(wargs.out))
         wargs.start_shard = start
         assert tool.wdl.run(wargs) == 0
     sf = Path(wargs.source)
@@ -67,11 +73,14 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         producer[role] = pin(frozen)
     historical_g10 = pin(runtime / 'scripts/g10_wdl_admission.py')
     entries: list[dict[str, Any]] = []
-    for completed_path in sorted((Path(wargs.out) / 'invocations').glob('*/completed.json')):
+    completed_paths = sorted({p for root in output_roots
+                              for p in (root / 'invocations').glob('*/completed.json')})
+    for completed_path in completed_paths:
+        output_root = completed_path.parent.parent.parent
         completed = json.loads(completed_path.read_text())
         attrs_pins = {}
         for spec in completed['selection']:
-            path = Path(wargs.out) / spec['path'] / '.zattrs'
+            path = output_root / spec['path'] / '.zattrs'
             attrs = json.loads(path.read_text())
             attrs['binding']['producer'] = {k: v['sha256'] for k, v in producer.items()}
             write(path, attrs)
@@ -80,11 +89,18 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
                         'started': pin(completed_path.parent / 'started.json'),
                         'producer': producer, 'g10_admission_script': historical_g10,
                         'attributes': attrs_pins})
+        if multi:
+            entries[-1]['wdl_dir'] = str(output_root)
     manifest_path = tmp_path / 'native.json'
     manifest: dict[str, Any] = {'schema': 1, 'profile': reuse.PROFILE, 'source_dir': str(sf),
                 'wdl_dir': wargs.out, 'source_summary_sha256': wargs.expected_source_summary_sha256,
                 'onnx_sha256': wargs.expected_onnx_sha256, 'wdl_output': 'value',
                 'invocations': entries}
+    if multi:
+        manifest.update(schema=2, profile=reuse.MULTI_PROFILE,
+                        wdl_dirs=[str(root) for root in output_roots])
+        manifest.pop('wdl_dir')
+    wargs.out = str(output_roots[0]) if multi else original_out
     write(manifest_path, manifest)
     args = tool.build_parser().parse_args([
         '--source', str(source), '--sf-source', str(sf), '--wdl', wargs.out,
@@ -101,8 +117,14 @@ def fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return args, manifest
 
 
-def test_g10_historical_native_cache_reaches_real_value_writer(tmp_path, monkeypatch):
-    args, manifest = fixture(tmp_path, monkeypatch)
+@pytest.mark.parametrize("multi", [False, True])
+def test_g10_historical_native_cache_reaches_real_value_writer(tmp_path, monkeypatch, multi):
+    args, manifest = fixture(tmp_path, monkeypatch, multi=multi)
+    # Invocation order must never reorder the original source rows.
+    if multi:
+        manifest["invocations"].reverse()
+        write(args.native_wdl_manifest, manifest)
+        args.expected_native_wdl_manifest_sha256 = tool.wdl.file_sha256(args.native_wdl_manifest)
     original_sf = tool.wdl.storage_identity(args.sf_source)
     original_side = tool.wdl.storage_identity(args.wdl)
     result = tool.rewrite(args)
@@ -112,10 +134,17 @@ def test_g10_historical_native_cache_reaches_real_value_writer(tmp_path, monkeyp
     assert result['g10_common_admission']['source_dir'] == str(args.sf_source)
     assert tool.wdl.storage_identity(args.sf_source) == original_sf
     assert tool.wdl.storage_identity(args.wdl) == original_side
+    assert [o['path'] for o in result['outputs']] == ['shard_000000.zarr', 'shard_000001.zarr']
+    if multi:
+        assert result['native_wdl_reuse']['profile'] == reuse.MULTI_PROFILE
+        assert set(result['wdl_dirs']) == set(manifest['wdl_dirs'])
+        assert 'wdl_dir' not in result
     for output in result['outputs']:
         old: Any = zarr.open_group(str(args.source / output['path']), mode='r')
         new: Any = zarr.open_group(str(args.out / output['path']), mode='r')
-        side: Any = zarr.open_group(str(args.wdl / output['path']), mode='r')
+        entry = next(e for e in manifest['invocations'] if output['path'] in e['attributes'])
+        side_root = Path(entry['wdl_dir']) if multi else args.wdl
+        side: Any = zarr.open_group(str(side_root / output['path']), mode='r')
         assert side.attrs['binding']['producer'] == {
             k: v['sha256'] for k, v in manifest['invocations'][0]['producer'].items()}
         for name in tool.ARRAYS - {'search_wdl'}:
@@ -126,10 +155,11 @@ def test_g10_historical_native_cache_reaches_real_value_writer(tmp_path, monkeyp
         np.testing.assert_array_equal(new['search_wdl'][:], expected)
 
 
+@pytest.mark.parametrize('multi', [False, True])
 @pytest.mark.parametrize('defect', ['source', 'producer', 'head', 'overlap', 'missing',
                                   'incomplete', 'attrs_binding', 'no_qualification', 'both_modes'])
-def test_rejects_wrong_historical_evidence_before_publication(tmp_path, monkeypatch, defect):
-    args, manifest = fixture(tmp_path, monkeypatch)
+def test_rejects_wrong_historical_evidence_before_publication(tmp_path, monkeypatch, defect, multi):
+    args, manifest = fixture(tmp_path, monkeypatch, multi=multi)
     if defect == 'source':
         manifest['source_dir'] = str(tmp_path / 'another_source')
     elif defect == 'producer':
@@ -169,3 +199,33 @@ def test_rejects_wrong_historical_evidence_before_publication(tmp_path, monkeypa
         tool.rewrite(args)
     assert not args.out.exists()
     assert not args.out.with_name(args.out.name + '.writing').exists()
+
+
+@pytest.mark.parametrize('defect', ['wrong_directory', 'duplicate_directory', 'cached_content', 'identity', 'feed'])
+def test_multi_output_rejects_wrong_routing_and_cached_content(tmp_path, monkeypatch, defect):
+    args, manifest = fixture(tmp_path, monkeypatch, multi=True)
+    if defect == 'wrong_directory':
+        manifest['invocations'][1]['wdl_dir'] = manifest['wdl_dirs'][0]
+    elif defect == 'duplicate_directory':
+        manifest['wdl_dirs'][1] = manifest['wdl_dirs'][0]
+    else:
+        root = Path(manifest['wdl_dirs'][1])
+        shard = next(root.glob('shard_*.zarr'))
+        group: Any = zarr.open_group(str(shard), mode='a')
+        column = 'lc0_feed_sha256' if defect == 'feed' else 'game_id'
+        values = np.asarray(group[column][:])
+        values.flat[0] += 1
+        group[column][:] = values
+        if defect in ('identity', 'feed'):
+            # Even a re-pinned, internally consistent cache must match the real
+            # original source row and the actual stored LC0 input.
+            attrs = dict(group.attrs)
+            attrs['array_sha256'][column] = hashlib.sha256(values.tobytes()).hexdigest()
+            group.attrs.update(attrs)
+            entry = next(e for e in manifest['invocations'] if e['wdl_dir'] == str(root))
+            entry['attributes'][shard.name] = pin(shard / '.zattrs')
+    write(args.native_wdl_manifest, manifest)
+    args.expected_native_wdl_manifest_sha256 = tool.wdl.file_sha256(args.native_wdl_manifest)
+    with pytest.raises(ValueError, match=r"native WDL|sidecar content differs|WDL (feed )?identity differs"):
+        tool.rewrite(args)
+    assert not args.out.exists()

@@ -1,0 +1,570 @@
+{
+  "status": "V100_REWRITE_COMPLETE_PROSPECTIVE_LAUNCHED_NOT_TRAINING",
+  "rewrite": {
+    "terminal": {
+      "returncode": 0,
+      "ended_unix": 1789328831.8313375,
+      "elapsed_seconds": 7705.347953557968
+    },
+    "independent_completed_review": {
+      "changed_rows": 35314577,
+      "cohorts": 21,
+      "cohorts_reviewed": [
+        {
+          "changed_rows": 18910484,
+          "copied_B100_policy_summary_sha256": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+          "derive_summary_sha256": "b1d24a0db901d6eaadae5dc3721e741f18302fba0afe916ee4d9e55b2c221f8c",
+          "name": "original18910484",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/original18910484",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 320932,
+            "seconds": 3517.32
+          },
+          "rewrite_summary_sha256": "c063b74d093e6332aeed8c7a7b4396feaf0f9b8c1d1b25ccb24525562dc5745d",
+          "rows": 18910484,
+          "shards": 2309,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 263916,
+          "copied_B100_policy_summary_sha256": "6f156df79de8e89e40dc2f9a56e670fd0602bdb35fe84b17e64e35aa69c94a6a",
+          "derive_summary_sha256": "ee5b0a2d1ea1f266ab96ea50513463af4495291ec0f3c53ea943c284418d7150",
+          "name": "G10_common_batch_v3__run06_g10",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_batch_v3__run06_g10",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 393760,
+            "seconds": 52.7
+          },
+          "rewrite_summary_sha256": "f23f5777f98c893e6650c9750dabb0313504d55f9b9994be2541fcdb3e0cdf0e",
+          "rows": 263916,
+          "shards": 33,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 264629,
+          "copied_B100_policy_summary_sha256": "aeaf0cd523d272aeec7adb6b66cfef385d2e6e4389759f2bb19c89eb60ecf7f8",
+          "derive_summary_sha256": "e038a650eaa683eeb93b6ed020689830473290189f4cfe3ac3571dc3aefe5d13",
+          "name": "G10_common_batch_v3__run07_g10_companion4",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 393900,
+            "seconds": 55.85
+          },
+          "rewrite_summary_sha256": "5e83d41d3d5f5ffe489846411f445adcca00802cabfb31c254d5b7d97fcaa4fc",
+          "rows": 264629,
+          "shards": 33,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 262079,
+          "copied_B100_policy_summary_sha256": "ee5491701674b821bcb65deecaecd1b780e8cebaa444759c4829a8f9f60bc5e4",
+          "derive_summary_sha256": "1ec4c6dbda5a723b90c06e11b07fa622803668e142e914740b11608ed40e1974",
+          "name": "G10_common_increment_v1__run06_g10",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_increment_v1__run06_g10",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 394232,
+            "seconds": 60.3
+          },
+          "rewrite_summary_sha256": "4f478ca2a3784e04662b50cb722348c43e58e46d3920fd9258e7d7b651f9339f",
+          "rows": 262079,
+          "shards": 32,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 264297,
+          "copied_B100_policy_summary_sha256": "1b28ef3dad0c70f6bd0cd5cd99108ee6b8d155d95fc8e8d198db87121a189f61",
+          "derive_summary_sha256": "db91bbb2f95db13fe0131f22de5561744e91b3edae97fc626285796d399d4725",
+          "name": "G10_common_increment_v1__run07_g10_companion4",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 394136,
+            "seconds": 52.3
+          },
+          "rewrite_summary_sha256": "ead99683c6491d6633abc18adf8158e5a33eddb03ba458bc450689d7f667d305",
+          "rows": 264297,
+          "shards": 33,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 2013019,
+          "copied_B100_policy_summary_sha256": "0b56d999f7e0dc039995295600c24a3e209d087963c47d3c99789e842553f5e7",
+          "derive_summary_sha256": "0fab19d4112a462fccf015ce4ca4e8dccf842e188554f4e1ea9ce35875ac5475",
+          "name": "G10_common_large_v1__run06_g10",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_large_v1__run06_g10",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 400240,
+            "seconds": 371.78
+          },
+          "rewrite_summary_sha256": "f6b334115cc9a632667df72383c0871c21a07bd6e78a13a9f54272f5c3cad8a4",
+          "rows": 2013019,
+          "shards": 246,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 2008952,
+          "copied_B100_policy_summary_sha256": "9ce06c426df24deec2d5edd4cbd2e730fe07dd12917d8be129f5a45905314d4c",
+          "derive_summary_sha256": "8346fd85ead6513e9dc51690a8167fdf88b71772df28cc58b77d10f03a1a7385",
+          "name": "G10_common_large_v1__run07_g10_companion4",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 399836,
+            "seconds": 369.65
+          },
+          "rewrite_summary_sha256": "3a67e68359f4a7c57a106d986a6e311417f5fabce1cf8e22c2f4d512c52c743b",
+          "rows": 2008952,
+          "shards": 246,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 790282,
+          "copied_B100_policy_summary_sha256": "7eeffc6632c0852d856b5db8a71103a0f3309c0126f77e28cfdb091a52b6b837",
+          "derive_summary_sha256": "1672af669f43cfe57c3cbe7c007c7e22c23a2ee4d8ff3a4e2f80ea3a03d5790c",
+          "name": "G10_common_next96_v1__run06_g10",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next96_v1__run06_g10",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 401444,
+            "seconds": 147.77
+          },
+          "rewrite_summary_sha256": "132fa23516f89782f52a8f2a8f6cb7e1934858f7feda09e01a509f38648b292d",
+          "rows": 790282,
+          "shards": 97,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 792643,
+          "copied_B100_policy_summary_sha256": "c7d6881364ee7d09c5cfc8f624fabcb7d4a903a1db9452afdaf43c07f6afd61a",
+          "derive_summary_sha256": "56c266202a0c89289c8d92a62929820b353744daaf031a35f7414907ac019d3e",
+          "name": "G10_common_next96_v1__run07_g10_companion4",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 401240,
+            "seconds": 143.49
+          },
+          "rewrite_summary_sha256": "45974b65647cf72e799330053d3e2f23b83f7bcaba87515ba6a30c9a438e6830",
+          "rows": 792643,
+          "shards": 97,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 921494,
+          "copied_B100_policy_summary_sha256": "0b713d24c804a9a4351ac2888816c6c69fac8fd00f90cbba93945f925dc1f505",
+          "derive_summary_sha256": "0a42bbbcaa87a01077865322cf059648398cb636e768dffcf0cebf4ee6136bc8",
+          "name": "G10_common_next_distinct2_v1__run06_g10",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 401868,
+            "seconds": 161.44
+          },
+          "rewrite_summary_sha256": "33d2125a56d71f7ad2fd722ca671dfcaf9a493a63eee489f095c3f2883372ea2",
+          "rows": 921494,
+          "shards": 113,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 925311,
+          "copied_B100_policy_summary_sha256": "c8675358386f8fb3683903783fb9c75def7724a03e83f1dfaa407498786ebbf7",
+          "derive_summary_sha256": "800173032f9f0d03ae736419b5f9ca8c0a8b12fc1c5b103f748c689a9fabd43c",
+          "name": "G10_common_next_distinct2_v1__run07_g10_companion4",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 401380,
+            "seconds": 158.0
+          },
+          "rewrite_summary_sha256": "172de720fb2b72136ddaadd03aa47340ce8100df448dba34b39fa71ffa4b04a5",
+          "rows": 925311,
+          "shards": 113,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 923911,
+          "copied_B100_policy_summary_sha256": "44a7e1e7e68f278cbfaa7d48a374f243e3ffb1886983113d18b5462ae95dde59",
+          "derive_summary_sha256": "c5773315c74821fca34d48a0e62f4f8e0f1815fc3f14a9860cbb5fac909d52a1",
+          "name": "G10_common_next_distinct_v1__run06_g10",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 401596,
+            "seconds": 166.09
+          },
+          "rewrite_summary_sha256": "718017ad0cbcee3412c98603796cb5391618c72a457d8b94bf1f3f485d024956",
+          "rows": 923911,
+          "shards": 113,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 921653,
+          "copied_B100_policy_summary_sha256": "29bead0b4f5f684b7e836184ffa390ef319b2eb5768223b3fe439ba90f84bfec",
+          "derive_summary_sha256": "605f61053c5aada027fec69c32ace91c1af669ed22c067e180c6ca4083c87b34",
+          "name": "G10_common_next_distinct_v1__run07_g10_companion4",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 401848,
+            "seconds": 170.74
+          },
+          "rewrite_summary_sha256": "cd75f9c5548ba8b138e0a76e440d3bee3f1283cf01621473ab23ab2e73ec3235",
+          "rows": 921653,
+          "shards": 113,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 527604,
+          "copied_B100_policy_summary_sha256": "df7dc00fd1e3a1b3c9564e023c90fb8c9eefefcff4a0d5a1f7402bd124ee695d",
+          "derive_summary_sha256": "c624d296811b143f27d103202d039038bba61d1eff878ad3b33a54896c8db0e2",
+          "name": "G10_common_parallel_next_v2__run06_g10",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 397980,
+            "seconds": 95.05
+          },
+          "rewrite_summary_sha256": "516e080508c49be831245a1384348adbca2f6f12562d12c61418fdf34f884079",
+          "rows": 527604,
+          "shards": 65,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 525414,
+          "copied_B100_policy_summary_sha256": "0c60a69a8df0ccb5169e40e4f72427693477ae0e3ee6891c7aadca2095f6cdd3",
+          "derive_summary_sha256": "63a1fde044268725f36c4c50cd8191d81602e3427321aa034d860b0a8c9699c9",
+          "name": "G10_common_parallel_next_v2__run07_g10_companion4",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 397956,
+            "seconds": 96.1
+          },
+          "rewrite_summary_sha256": "1c60a94ad75dde53fd60dafc7bf25e8f73a0636119bc63e4fea7bec2abc7509a",
+          "rows": 525414,
+          "shards": 65,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 528983,
+          "copied_B100_policy_summary_sha256": "2ca877aecb97ea72434dc3d87dcc7f4370f956c3d32aa92f99e4063e5dcc33fb",
+          "derive_summary_sha256": "05cab3785acdc9ecc685be3cafb8520e598686442dcc1adcfc7c33af028fb8d4",
+          "name": "G10_common_parallel_v1__run06_g10",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_v1__run06_g10",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 397896,
+            "seconds": 96.43
+          },
+          "rewrite_summary_sha256": "1322a002c4cf3f262290c5b5f7d24f676b9d92520dc7cefa3d241d1012c70833",
+          "rows": 528983,
+          "shards": 65,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 528343,
+          "copied_B100_policy_summary_sha256": "1046898a9a7d6f6a38f4047bb6fb19d768fbd01f544cd59faa70b4c17d4511a0",
+          "derive_summary_sha256": "a22d49ddd70db7d043fb12e4ab3398fc29b7d4a6aa540ef7a931b5e32fe4785e",
+          "name": "G10_common_parallel_v1__run07_g10_companion4",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 398300,
+            "seconds": 118.1
+          },
+          "rewrite_summary_sha256": "4e98af6ef10249a0660d4ab4c319ebe1801db2e3e012c285d701738f372b55ee",
+          "rows": 528343,
+          "shards": 65,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 914832,
+          "copied_B100_policy_summary_sha256": "c49e6ce415983a21c9c227e1a316b1c5a5daf7cdefa7f8625a09bf63f1988fb4",
+          "derive_summary_sha256": "6ada9b8c9a59fc88a4742875f01f28d7ab882b568247ce3c2b47cb38c02f0bec",
+          "name": "G10_common_worker03_tail111_v1__run06_g10",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 401644,
+            "seconds": 165.68
+          },
+          "rewrite_summary_sha256": "d784a8cd1f502b47b9c0f879a9a4213753e65f8502b760220056d26541596d9c",
+          "rows": 914832,
+          "shards": 112,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 915453,
+          "copied_B100_policy_summary_sha256": "9fcb5aeda11a154378ad7e677f0b5245e091efa47e7a8fee839b3966932ce401",
+          "derive_summary_sha256": "881d93cd10c1a55803db674caf7153fd57ba645cf64ad2e2e00be0d5d9b6f92e",
+          "name": "G10_tail111_run07_recovery_v1__run07_g10_companion4",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 401828,
+            "seconds": 171.3
+          },
+          "rewrite_summary_sha256": "25fa772cc2004e42481729bcf99dc164895c1dbb247378fcecbf11d4c7042a02",
+          "rows": 915453,
+          "shards": 112,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 1054312,
+          "copied_B100_policy_summary_sha256": "8538fe8213c72117318f182a91ec3cfa84b7e4c6db5d2025f4a01e76e7fb6a70",
+          "derive_summary_sha256": "529786c667cc70381485671c6d625d6c6e67edeeb2d6321e7a69cb1c029c20d9",
+          "name": "G10_worker01_postderive_recovery_v1__run06_g10",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 401708,
+            "seconds": 192.14
+          },
+          "rewrite_summary_sha256": "7afa92775d58f3dbb72d49406d55b9a6117fc53c379e507956e96375fb4ab87d",
+          "rows": 1054312,
+          "shards": 129,
+          "stored_mass_error_max": 0.0003662109375
+        },
+        {
+          "changed_rows": 1056966,
+          "copied_B100_policy_summary_sha256": "bfb7b2fb7f604ecadff770b0af19e6910c05dec7620b55c010a8601be6508082",
+          "derive_summary_sha256": "5b238036608290c4694cdb8ef886ff53324a8b27deb3b8795f9353b94f1a2235",
+          "name": "G10_worker01_postderive_recovery_v1__run07_g10_companion4",
+          "output": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4",
+          "resource_receipt": {
+            "exit_code": 0,
+            "max_rss_kib": 401752,
+            "seconds": 189.94
+          },
+          "rewrite_summary_sha256": "24492ef1a5385c0d7db06565d7060e2a6a69466306db3e97f59fbbc4ef06962c",
+          "rows": 1056966,
+          "shards": 130,
+          "stored_mass_error_max": 0.0003662109375
+        }
+      ],
+      "evidence_sha256": {
+        "/home/josh/projects/chess/data/nnue_derived/armB/qtemp_0.0005_hist_20m_bt4_global_B100T05/derive_targets_summary.json": "47e0e0cca578a89278383d1faef70c5f1f8c45fbc5a256cb91400243315dbb43",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_batch_v3__run06_g10.time.json": "3ec471907839dcc569510947109fe161e720fe4cb2a49ac9f8f390a80bf08b2d",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_batch_v3__run06_g10/bt4_policy_mix_summary.json": "6f156df79de8e89e40dc2f9a56e670fd0602bdb35fe84b17e64e35aa69c94a6a",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_batch_v3__run06_g10/bt4_value_rewrite_summary.json": "f23f5777f98c893e6650c9750dabb0313504d55f9b9994be2541fcdb3e0cdf0e",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_batch_v3__run06_g10/derive_targets_summary.json": "ee5b0a2d1ea1f266ab96ea50513463af4495291ec0f3c53ea943c284418d7150",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4.time.json": "7e60e5049d6be9236140b95d39f391772a96ef8440bdf1a5596e9b1fbaf06c1b",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/bt4_policy_mix_summary.json": "aeaf0cd523d272aeec7adb6b66cfef385d2e6e4389759f2bb19c89eb60ecf7f8",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/bt4_value_rewrite_summary.json": "5e83d41d3d5f5ffe489846411f445adcca00802cabfb31c254d5b7d97fcaa4fc",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/derive_targets_summary.json": "e038a650eaa683eeb93b6ed020689830473290189f4cfe3ac3571dc3aefe5d13",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_increment_v1__run06_g10.time.json": "1a38e65a6fe4eec6d7a93b28cc79c8505b1d97a0ca7192ffdf247f41c24ee0e2",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_increment_v1__run06_g10/bt4_policy_mix_summary.json": "ee5491701674b821bcb65deecaecd1b780e8cebaa444759c4829a8f9f60bc5e4",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_increment_v1__run06_g10/bt4_value_rewrite_summary.json": "4f478ca2a3784e04662b50cb722348c43e58e46d3920fd9258e7d7b651f9339f",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_increment_v1__run06_g10/derive_targets_summary.json": "1ec4c6dbda5a723b90c06e11b07fa622803668e142e914740b11608ed40e1974",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4.time.json": "d7ce5f1e3a53cb14c9ebd3c47c04c5639260e42d07bd54577b870dd5d72d5ba8",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/bt4_policy_mix_summary.json": "1b28ef3dad0c70f6bd0cd5cd99108ee6b8d155d95fc8e8d198db87121a189f61",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/bt4_value_rewrite_summary.json": "ead99683c6491d6633abc18adf8158e5a33eddb03ba458bc450689d7f667d305",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/derive_targets_summary.json": "db91bbb2f95db13fe0131f22de5561744e91b3edae97fc626285796d399d4725",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_large_v1__run06_g10.time.json": "0c3f865a7f075e08b769caf420f2db89ca6d6a870a01313968dae195ab64edd1",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_large_v1__run06_g10/bt4_policy_mix_summary.json": "0b56d999f7e0dc039995295600c24a3e209d087963c47d3c99789e842553f5e7",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_large_v1__run06_g10/bt4_value_rewrite_summary.json": "f6b334115cc9a632667df72383c0871c21a07bd6e78a13a9f54272f5c3cad8a4",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_large_v1__run06_g10/derive_targets_summary.json": "0fab19d4112a462fccf015ce4ca4e8dccf842e188554f4e1ea9ce35875ac5475",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4.time.json": "83851aa138f4903d5d876a6e323d8b3b07b63635b3820ae50c43b1129963a417",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/bt4_policy_mix_summary.json": "9ce06c426df24deec2d5edd4cbd2e730fe07dd12917d8be129f5a45905314d4c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/bt4_value_rewrite_summary.json": "3a67e68359f4a7c57a106d986a6e311417f5fabce1cf8e22c2f4d512c52c743b",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/derive_targets_summary.json": "8346fd85ead6513e9dc51690a8167fdf88b71772df28cc58b77d10f03a1a7385",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next96_v1__run06_g10.time.json": "368e1668b1198e5f9b4453b3ccb3774c7e3947fc6c1f3e0c2d056ff0a1ab736b",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next96_v1__run06_g10/bt4_policy_mix_summary.json": "7eeffc6632c0852d856b5db8a71103a0f3309c0126f77e28cfdb091a52b6b837",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next96_v1__run06_g10/bt4_value_rewrite_summary.json": "132fa23516f89782f52a8f2a8f6cb7e1934858f7feda09e01a509f38648b292d",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next96_v1__run06_g10/derive_targets_summary.json": "1672af669f43cfe57c3cbe7c007c7e22c23a2ee4d8ff3a4e2f80ea3a03d5790c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4.time.json": "04cf277a162a55375676b69df4dee5fe1b8022cb2a2efe3cf7f1431706d9fb40",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/bt4_policy_mix_summary.json": "c7d6881364ee7d09c5cfc8f624fabcb7d4a903a1db9452afdaf43c07f6afd61a",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/bt4_value_rewrite_summary.json": "45974b65647cf72e799330053d3e2f23b83f7bcaba87515ba6a30c9a438e6830",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/derive_targets_summary.json": "56c266202a0c89289c8d92a62929820b353744daaf031a35f7414907ac019d3e",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10.time.json": "87ffacd8bd0b1bbdbb82bf11e61188a4e190c67981c42c908f3d43ba7d847dd9",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/bt4_policy_mix_summary.json": "0b713d24c804a9a4351ac2888816c6c69fac8fd00f90cbba93945f925dc1f505",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/bt4_value_rewrite_summary.json": "33d2125a56d71f7ad2fd722ca671dfcaf9a493a63eee489f095c3f2883372ea2",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/derive_targets_summary.json": "0a42bbbcaa87a01077865322cf059648398cb636e768dffcf0cebf4ee6136bc8",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4.time.json": "2f50e20dcc12a3e616abc65fa7f0bf8eefa36a927f0fee47234f87a622666400",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/bt4_policy_mix_summary.json": "c8675358386f8fb3683903783fb9c75def7724a03e83f1dfaa407498786ebbf7",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/bt4_value_rewrite_summary.json": "172de720fb2b72136ddaadd03aa47340ce8100df448dba34b39fa71ffa4b04a5",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/derive_targets_summary.json": "800173032f9f0d03ae736419b5f9ca8c0a8b12fc1c5b103f748c689a9fabd43c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10.time.json": "2a17faa4d84990ea2deb60a8f69ebe630e7c2731a384f478485223080613c79c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/bt4_policy_mix_summary.json": "44a7e1e7e68f278cbfaa7d48a374f243e3ffb1886983113d18b5462ae95dde59",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/bt4_value_rewrite_summary.json": "718017ad0cbcee3412c98603796cb5391618c72a457d8b94bf1f3f485d024956",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/derive_targets_summary.json": "c5773315c74821fca34d48a0e62f4f8e0f1815fc3f14a9860cbb5fac909d52a1",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4.time.json": "a23b89abef54ddbbed8f8e801fb448c7c663e29768442d4ef7425dd4f5c0ec6c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/bt4_policy_mix_summary.json": "29bead0b4f5f684b7e836184ffa390ef319b2eb5768223b3fe439ba90f84bfec",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/bt4_value_rewrite_summary.json": "cd75f9c5548ba8b138e0a76e440d3bee3f1283cf01621473ab23ab2e73ec3235",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/derive_targets_summary.json": "605f61053c5aada027fec69c32ace91c1af669ed22c067e180c6ca4083c87b34",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10.time.json": "f3286b0584aa7bb4a0575a5f0c82dd977d5cc0357197564115837dde47c26a49",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/bt4_policy_mix_summary.json": "df7dc00fd1e3a1b3c9564e023c90fb8c9eefefcff4a0d5a1f7402bd124ee695d",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/bt4_value_rewrite_summary.json": "516e080508c49be831245a1384348adbca2f6f12562d12c61418fdf34f884079",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/derive_targets_summary.json": "c624d296811b143f27d103202d039038bba61d1eff878ad3b33a54896c8db0e2",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4.time.json": "062a8c99a9d11311bd31e01064812566cf81a732e6e6f7b8d52109f187d9d42c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/bt4_policy_mix_summary.json": "0c60a69a8df0ccb5169e40e4f72427693477ae0e3ee6891c7aadca2095f6cdd3",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/bt4_value_rewrite_summary.json": "1c60a94ad75dde53fd60dafc7bf25e8f73a0636119bc63e4fea7bec2abc7509a",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/derive_targets_summary.json": "63a1fde044268725f36c4c50cd8191d81602e3427321aa034d860b0a8c9699c9",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_v1__run06_g10.time.json": "24f3293028598fa311e3052987d58fc7fa9524b546e257667958384de6e97430",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_v1__run06_g10/bt4_policy_mix_summary.json": "2ca877aecb97ea72434dc3d87dcc7f4370f956c3d32aa92f99e4063e5dcc33fb",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_v1__run06_g10/bt4_value_rewrite_summary.json": "1322a002c4cf3f262290c5b5f7d24f676b9d92520dc7cefa3d241d1012c70833",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_v1__run06_g10/derive_targets_summary.json": "05cab3785acdc9ecc685be3cafb8520e598686442dcc1adcfc7c33af028fb8d4",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4.time.json": "939dd48df2d64213c3f33f8ef2ad16d8fa89a59102fce052b653d5ab37f0b1ca",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/bt4_policy_mix_summary.json": "1046898a9a7d6f6a38f4047bb6fb19d768fbd01f544cd59faa70b4c17d4511a0",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/bt4_value_rewrite_summary.json": "4e98af6ef10249a0660d4ab4c319ebe1801db2e3e012c285d701738f372b55ee",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/derive_targets_summary.json": "a22d49ddd70db7d043fb12e4ab3398fc29b7d4a6aa540ef7a931b5e32fe4785e",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10.time.json": "e8ec0388b3c4519e63d3e8c5441237de4bb42d84f0cdee12f4d6d71642559a72",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/bt4_policy_mix_summary.json": "c49e6ce415983a21c9c227e1a316b1c5a5daf7cdefa7f8625a09bf63f1988fb4",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/bt4_value_rewrite_summary.json": "d784a8cd1f502b47b9c0f879a9a4213753e65f8502b760220056d26541596d9c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/derive_targets_summary.json": "6ada9b8c9a59fc88a4742875f01f28d7ab882b568247ce3c2b47cb38c02f0bec",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4.time.json": "f061d5f6fcd6e1d8567613409598d8044f16629ea6a00b3d8fb206302089fe88",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/bt4_policy_mix_summary.json": "9fcb5aeda11a154378ad7e677f0b5245e091efa47e7a8fee839b3966932ce401",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/bt4_value_rewrite_summary.json": "25fa772cc2004e42481729bcf99dc164895c1dbb247378fcecbf11d4c7042a02",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/derive_targets_summary.json": "881d93cd10c1a55803db674caf7153fd57ba645cf64ad2e2e00be0d5d9b6f92e",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10.time.json": "5fa5f9a956db0954cab7a47d3a33573126651ef5cafce0cac33a257d6922b595",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/bt4_policy_mix_summary.json": "8538fe8213c72117318f182a91ec3cfa84b7e4c6db5d2025f4a01e76e7fb6a70",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/bt4_value_rewrite_summary.json": "7afa92775d58f3dbb72d49406d55b9a6117fc53c379e507956e96375fb4ab87d",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/derive_targets_summary.json": "529786c667cc70381485671c6d625d6c6e67edeeb2d6321e7a69cb1c029c20d9",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4.time.json": "061ec4277190f43ba7c855172657e806b6ca1086591f2b54ce8db9aaa9395af2",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/bt4_policy_mix_summary.json": "bfb7b2fb7f604ecadff770b0af19e6910c05dec7620b55c010a8601be6508082",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/bt4_value_rewrite_summary.json": "24492ef1a5385c0d7db06565d7060e2a6a69466306db3e97f59fbbc4ef06962c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/derive_targets_summary.json": "5b238036608290c4694cdb8ef886ff53324a8b27deb3b8795f9353b94f1a2235",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/original18910484.time.json": "9606e20efbbc2587268abc8e0cb554d80e9f203170074185821961390103cf0c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/original18910484/bt4_policy_mix_summary.json": "221a8296608ee5c698a4d8bf59145208c409de43a2fc1427824c5ad5d453fd38",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/original18910484/bt4_value_rewrite_summary.json": "c063b74d093e6332aeed8c7a7b4396feaf0f9b8c1d1b25ccb24525562dc5745d",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/original18910484/derive_targets_summary.json": "b1d24a0db901d6eaadae5dc3721e741f18302fba0afe916ee4d9e55b2c221f8c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/status.json": "b542dd439afbd9c2738cf5f27aad06ffebb98fda2be9c404ec8a8757aef54080",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/outer_terminal.json": "3b25cef4b78d4d9b181c6c1973c432b515c98e340c9495656c35f7104d570cfa",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/plan.json": "bbabe00621e67944bd00e52ad34af8e39ade76c7c9ac766bdfafa80831c1807d",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_batch_v3__run06_g10/derive_targets_summary.json": "c2961312efea094c5b0a22a629eec71f21fabda92d0a5abecbc43fbe68b8dba4",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_batch_v3__run07_g10_companion4/derive_targets_summary.json": "eccdf1ee70247318b3cd47c0ee1b35bf3b29d3807b131738d7b51690fca24a54",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_increment_v1__run07_g10_companion4/derive_targets_summary.json": "fc6a4a6e22d3e3ae97254d6cb967110258e390fcc227331187b2fb0bf34deb60",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_large_v1__run06_g10/derive_targets_summary.json": "21bbf13e997c1ce427c82325f2c9eed7558425ecd87fbc2a7f47602b42153f3f",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_large_v1__run07_g10_companion4/derive_targets_summary.json": "63047d88efdcd1fdaaa30fc0ef069b636c171cbe1761a2c08315148fdf93d9bd",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next96_v1__run06_g10/derive_targets_summary.json": "d43944cbfd9562917070d81feb82b3457c2a60bc6463a1e40a8360e7c96fc4c0",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next96_v1__run07_g10_companion4/derive_targets_summary.json": "1f8f216d6cbb46cfe5761af15bbac6dfab8f6a751abcaa4c2eb6f49c1072f4e0",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next_distinct2_v1__run06_g10/derive_targets_summary.json": "8bd9a026ab3eca91c5489d90647478be8039dc2e3d93576c3c544f9d40a126de",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next_distinct2_v1__run07_g10_companion4/derive_targets_summary.json": "6f47fe3878ded72c700f5bc87a2e2fd933dab7f899eded50d17d00ac6e3307dc",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next_distinct_v1__run06_g10/derive_targets_summary.json": "d1ca1dee588a7f24e15e5ab88ce7769d58d4035d5b4f4d9c86be0582ceb95b5e",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_next_distinct_v1__run07_g10_companion4/derive_targets_summary.json": "78f90685460771a53da99a9b1d3e588e3fa51e2ed42c43b09ee8a6d99eb129f9",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_parallel_next_v2__run06_g10/derive_targets_summary.json": "3a330242012c981626b30c2801f82ae842980d4d9f48a8c7f99e3d1dae108764",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_parallel_next_v2__run07_g10_companion4/derive_targets_summary.json": "edcc4cb2787a488e12096c9f3ac1faf23ce7bd9d5715507b2e70265e566e6c15",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_parallel_v1__run06_g10/derive_targets_summary.json": "818116f514558197fa2df6c633263f2d721e0054a491320d86efeca169c9cd9e",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_parallel_v1__run07_g10_companion4/derive_targets_summary.json": "91546ef585c93a2a758d7ae40a707bff9d6b72d2a4e6c1df0698e712861fd439",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_common_worker03_tail111_v1__run06_g10/derive_targets_summary.json": "8a898cf849c734120debb6ea4e07beefbcadc4aa0adeac757d8bfa474e238291",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_tail111_run07_recovery_v1__run07_g10_companion4/derive_targets_summary.json": "04fc7c1dece11f5942a3454c846ac906e82b02baf286d824abe636e4a14da88f",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run06_g10/derive_targets_summary.json": "0c8b8e7195408cc80e9a4bfbea89f7fb26376546a70ea84f3da9d193b6269cbd",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_b100_remaining19_preparation_v1/execution/G10_worker01_postderive_recovery_v1__run07_g10_companion4/derive_targets_summary.json": "7eb4ca9813655da5e480ecacf5f966423fa5f3b58d5e19b2c26994cb04a730eb",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_run06_value_materialization_v1/execution/B100/derive_targets_summary.json": "57ce6e73fcb78fc81ceef34a5bf37e6449beae787acce2132acfca20d6178e83",
+        "/tmp/deepfin-b100v50-rewrite-tools/chess_anti_engine/encoding/lc0.py": "a20b56a7c0666e134791855c0f124a66504013983f8f97948539a015dac9c3ee",
+        "/tmp/deepfin-b100v50-rewrite-tools/scripts/bt4_raw_corpus_sidecar.py": "1c63aa4147ef8717855d226f30094cbc03431e556cd7106d0619adee7945363a",
+        "/tmp/deepfin-b100v50-rewrite-tools/scripts/sf_policy_rewrite.py": "85152a4e70e85f2f9ddf8d799ff726f3b4e6ccbc385c1693079cb97edb606a3b"
+      },
+      "max_child_rss_kib": 401868,
+      "operator_whole_seconds": 7701.947195407993,
+      "outer_elapsed_seconds": 7705.347953557968,
+      "plan_sha256": "bbabe00621e67944bd00e52ad34af8e39ade76c7c9ac766bdfafa80831c1807d",
+      "reviewed_unix": 1789329240.7723825,
+      "reviewer": "archive_review",
+      "rows": 35314577,
+      "scope": [
+        "All actual ordered stage argv/counts/output paths equal frozen plan; all21 exit0.",
+        "All42 actual rewrite/derive summary pins match terminal; copied21 B100 policy summaries match original source pins.",
+        "Exact alpha1 SF0/native100 search_wdl only;16 other arrays unchanged according to pinned producer proofs; original and G10 recipe/source lineage preserved.",
+        "Source and output tree/content validation was performed by completed frozen producer/operator; reviewer only read saved summaries and compact receipts, no tree walk/array/model/hash repeat.",
+        "Peak child RSS from saved per-stage time receipts is not aggregate host peak.",
+        "Prospective schedule, selected-subset compatibility, training and arena remain separate future steps."
+      ],
+      "shards": 4321,
+      "status": "PASS_COMPLETED_REWRITE_METADATA_NOT_TRAINING_ADMISSION",
+      "stored_mass_error_max": 0.0003662109375,
+      "unchanged_arrays": [
+        "game_id",
+        "has_game_id",
+        "has_is_network_turn",
+        "has_is_selfplay",
+        "has_legal_mask",
+        "has_ply_index",
+        "has_policy",
+        "has_search_wdl",
+        "is_network_turn",
+        "is_selfplay",
+        "legal_mask",
+        "ply_index",
+        "policy_target",
+        "priority",
+        "wdl_target",
+        "x"
+      ]
+    }
+  },
+  "prospective": {
+    "outer_started": {
+      "started_unix": 1789329327.0417778,
+      "available_ram_bytes": 88348295168,
+      "free_disk_bytes": 184630718464,
+      "command_sha256": "4911106dc59bd91ea1a1a619c006d5d49cca297ee19c9cc6ba1adfb944b5f02e"
+    },
+    "command": "V100_PROSPECTIVE_DEADLINE=\"$(date -u +%s)\"\nV100_PROSPECTIVE_DEADLINE=\"$((V100_PROSPECTIVE_DEADLINE + 1740))\"\n/usr/bin/timeout --signal=TERM --kill-after=30s 1770s /bin/bash -c 'set -e\n/usr/bin/python3 -c '\"'\"'from pathlib import Path\nimport shutil\nn=[int(x.split()[1])*1024 for x in Path('\"'\"'\"'\"'\"'\"'\"'\"'/proc/meminfo'\"'\"'\"'\"'\"'\"'\"'\"').read_text().splitlines() if x.startswith('\"'\"'\"'\"'\"'\"'\"'\"'MemAvailable:'\"'\"'\"'\"'\"'\"'\"'\"')]\nif len(n)!=1 or n[0]<48*1024**3 or shutil.disk_usage('\"'\"'\"'\"'\"'\"'\"'\"'/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1'\"'\"'\"'\"'\"'\"'\"'\"').free<150*1024**3:\n raise SystemExit('\"'\"'\"'\"'\"'\"'\"'\"'startup memory/disk guard refused'\"'\"'\"'\"'\"'\"'\"'\"')'\"'\"'\nexec /usr/bin/taskset -c 4,5 /usr/bin/nice -n 19 /usr/bin/env -u PYTHONOPTIMIZE PYTHONOPTIMIZE= CUDA_VISIBLE_DEVICES= OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 MKL_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2 TORCHINDUCTOR_COMPILE_THREADS=2 /usr/bin/python3 /tmp/deepfin-combined35m-v100/scripts/combined_corpus_schedule.py --manifest /home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/corpus_manifest.final.json --expected-manifest-sha256 446fc6041d25d0efa1a51ad9ba994572c65536e70fa0275198d85260cafae1f2 --output /home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/prospective_v1/prospective.json --execute --deadline-unix \"$1\"' bash \"$V100_PROSPECTIVE_DEADLINE\"\n",
+    "independent_final_review": {
+      "checks": [
+        "Actual21 ordered complete rewritten roots/42 summary pins match independent completed review; original source/B100 policy pins preserved.",
+        "Exact ec6 schedule source and actual import receipt pinned; no runtime import/default/admission repeated.",
+        "Shell command inner exec exactly equals JSON producer argv; shell additionally wraps actual48GiB/150GiB startup guard under same1770TERM+30KILL1800 outer.",
+        "CPU4,5/noGPU/two threads/compiler2, deadline1740. No AS cap; existing32GiB callback guard.",
+        "Prospective result remains absent/unclaimed; subset qualification follows actual prospective completion."
+      ],
+      "completed_rewrite_review_sha256": "40d400e9ae83cbc42862591a9a1c305d1316f878fc5568b148fc85e67e57e984",
+      "evidence_sha256": {
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/corpus_manifest.final.json": "446fc6041d25d0efa1a51ad9ba994572c65536e70fa0275198d85260cafae1f2",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/parent_import_check.json": "7696e49558cdafcb9d83ec4f7b3411fa0cd8ca4425ffc9c075b479fbcb5b06f9",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/prospective_v1/command.final.json": "801cba9f88ed0c9b2bc76f27c656a5978e6b18edc87d60a5a6ff0e28211bd20c",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/prospective_v1/command.final.txt": "4911106dc59bd91ea1a1a619c006d5d49cca297ee19c9cc6ba1adfb944b5f02e",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/status.json": "b542dd439afbd9c2738cf5f27aad06ffebb98fda2be9c404ec8a8757aef54080",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/independent_completed_review.json": "40d400e9ae83cbc42862591a9a1c305d1316f878fc5568b148fc85e67e57e984",
+        "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/plan.json": "bbabe00621e67944bd00e52ad34af8e39ade76c7c9ac766bdfafa80831c1807d",
+        "/tmp/deepfin-combined35m-v100/scripts/combined_corpus_schedule.py": "073b9150d9e917c12ac23546c1214bd7f3bbc1d305de7c92caa7a19c8efa9cb9"
+      },
+      "limitations": [
+        "No payload/model/tree scans or tests; this is final command binding review, not prospective completion."
+      ],
+      "reviewed_unix": 1789329297.9307997,
+      "reviewer": "archive_review",
+      "status": "PASS_STATIC_FINAL_BINDING_NOT_EXECUTED"
+    }
+  },
+  "references": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/outer_terminal.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/outer_terminal.json",
+      "sha256": "3b25cef4b78d4d9b181c6c1973c432b515c98e340c9495656c35f7104d570cfa"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/status.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/execution/status.json",
+      "sha256": "b542dd439afbd9c2738cf5f27aad06ffebb98fda2be9c404ec8a8757aef54080"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/independent_completed_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_rewrite_preparation_v1/independent_completed_review.json",
+      "sha256": "40d400e9ae83cbc42862591a9a1c305d1316f878fc5568b148fc85e67e57e984"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/corpus_manifest.final.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/corpus_manifest.final.json",
+      "sha256": "446fc6041d25d0efa1a51ad9ba994572c65536e70fa0275198d85260cafae1f2"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/prospective_v1/outer_started.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/prospective_v1/outer_started.json",
+      "sha256": "d813e43dfc7a4033a317e75a426dfe61b9b2815e9c936a3bdd18494fb9c4d1b1"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/prospective_v1/command.final.txt": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/prospective_v1/command.final.txt",
+      "sha256": "4911106dc59bd91ea1a1a619c006d5d49cca297ee19c9cc6ba1adfb944b5f02e"
+    },
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/prospective_v1/independent_final_review.json": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/combined35m_v100_handoff_v1/prospective_v1/independent_final_review.json",
+      "sha256": "bcbdde81ecd0f14ab917704766d5e574e4e382f64d3ef7aebefbd203bc0fdd17"
+    }
+  },
+  "limitations": [
+    "No completed prospective schedule, training or arena claimed.",
+    "No payload/model/tree checks repeated for publication."
+  ]
+}

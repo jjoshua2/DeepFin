@@ -1,0 +1,1122 @@
+{
+  "status": "PASS_DESCRIPTIVE_SAVED_BANK_READOUT",
+  "summary_sha256": "4ecfcb6197d625ba4591806fa959979163375a836705473cf8092b3fd4c91af8",
+  "row_bank_sha256": "5e4dcabcc0ba6473d2d109b82fe9ff236931ea8664ae6acf69c57e3daa7a70fa",
+  "rows": 32768,
+  "ordinary": 23993,
+  "mate_excluded": 8775,
+  "ordinary_source_qualified_game_clusters": 167,
+  "layout": {
+    "shard_000000.zarr": 8192,
+    "shard_000001.zarr": 8192,
+    "shard_000002.zarr": 8192,
+    "shard_000003.zarr": 8192
+  },
+  "strata": {
+    "all_ordinary": {
+      "rows": 23993,
+      "policy": {
+        "bt4": {
+          "valid": 23375,
+          "invalid": 618,
+          "zero": 0,
+          "mass": 19141.048971832042,
+          "regret": 8777838.57171857,
+          "regret_rows": 23375,
+          "best": 12857.66476292253,
+          "mean_scored_mass_valid_final": 0.8188684052120659,
+          "mean_regret_valid_positive_mass_cp": 375.5225057419709
+        },
+        "ceres": {
+          "valid": 23375,
+          "invalid": 618,
+          "zero": 0,
+          "mass": 18767.753571908564,
+          "regret": 9087377.690905483,
+          "regret_rows": 23375,
+          "best": 12487.485883396386,
+          "mean_scored_mass_valid_final": 0.8028985485308476,
+          "mean_regret_valid_positive_mass_cp": 388.7648210013041
+        },
+        "arithmetic50": {
+          "valid": 23375,
+          "invalid": 618,
+          "zero": 0,
+          "mass": 18954.401271870192,
+          "regret": 8920740.62847285,
+          "regret_rows": 23375,
+          "best": 12684.99848363292,
+          "mean_scored_mass_valid_final": 0.8108834768714521,
+          "mean_regret_valid_positive_mass_cp": 381.63596271541604
+        },
+        "geometric50": {
+          "valid": 23375,
+          "invalid": 618,
+          "zero": 0,
+          "mass": 18997.585873381955,
+          "regret": 8886358.236870155,
+          "regret_rows": 23375,
+          "best": 12739.820228095341,
+          "mean_scored_mass_valid_final": 0.812730946454843,
+          "mean_regret_valid_positive_mass_cp": 380.1650582618248
+        },
+        "tactical300_preview": {
+          "valid": 23375,
+          "invalid": 618,
+          "zero": 0,
+          "mass": 19216.900446678494,
+          "regret": 7370872.496475786,
+          "regret_rows": 23375,
+          "best": 13002.24922541977,
+          "mean_scored_mass_valid_final": 0.8221133880931976,
+          "mean_regret_valid_positive_mass_cp": 315.3314436994989
+        }
+      },
+      "common_rows": 23375,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 309539.119186805,
+        "arithmetic50": 142902.05675429743,
+        "geometric50": 108519.66515154896,
+        "tactical300_preview": -1406966.0752428132
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -373.2953999235853,
+        "arithmetic50": -186.64769996179243,
+        "geometric50": -143.463098450153,
+        "tactical300_preview": 75.85147484647139
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": 13.242315259328555,
+        "arithmetic50": 6.11345697344588,
+        "geometric50": 4.642552519852362,
+        "tactical300_preview": -60.19106204247329
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": -0.015969856681222902,
+        "arithmetic50": -0.00798492834061144,
+        "geometric50": -0.006137458757225797,
+        "tactical300_preview": 0.003244982881132466
+      }
+    },
+    "positive_d9_best_gt100": {
+      "rows": 12290,
+      "policy": {
+        "bt4": {
+          "valid": 11930,
+          "invalid": 360,
+          "zero": 0,
+          "mass": 9801.501910561232,
+          "regret": 3318373.782431572,
+          "regret_rows": 11930,
+          "best": 6687.183885870042,
+          "mean_scored_mass_valid_final": 0.8215844015558451,
+          "mean_regret_valid_positive_mass_cp": 278.15371185511924
+        },
+        "ceres": {
+          "valid": 11930,
+          "invalid": 360,
+          "zero": 0,
+          "mass": 9540.293160031782,
+          "regret": 3560928.176534085,
+          "regret_rows": 11930,
+          "best": 6456.362616333923,
+          "mean_scored_mass_valid_final": 0.79968928416025,
+          "mean_regret_valid_positive_mass_cp": 298.4851782509711
+        },
+        "arithmetic50": {
+          "valid": 11930,
+          "invalid": 360,
+          "zero": 0,
+          "mass": 9670.8975352965,
+          "regret": 3429623.423819294,
+          "regret_rows": 11930,
+          "best": 6578.53697029255,
+          "mean_scored_mass_valid_final": 0.810636842858047,
+          "mean_regret_valid_positive_mass_cp": 287.4789123067304
+        },
+        "geometric50": {
+          "valid": 11930,
+          "invalid": 360,
+          "zero": 0,
+          "mass": 9695.51210462697,
+          "regret": 3410529.169219543,
+          "regret_rows": 11930,
+          "best": 6604.950636663749,
+          "mean_scored_mass_valid_final": 0.8127000925923697,
+          "mean_regret_valid_positive_mass_cp": 285.8783880318142
+        },
+        "tactical300_preview": {
+          "valid": 11930,
+          "invalid": 360,
+          "zero": 0,
+          "mass": 9861.207068732794,
+          "regret": 2356481.042532178,
+          "regret_rows": 11930,
+          "best": 6802.234030834527,
+          "mean_scored_mass_valid_final": 0.8265890250404689,
+          "mean_regret_valid_positive_mass_cp": 197.52565318794453
+        }
+      },
+      "common_rows": 11930,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 242554.39410253073,
+        "arithmetic50": 111249.64138773832,
+        "geometric50": 92155.38678799199,
+        "tactical300_preview": -961892.7398993773
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -261.20875052951027,
+        "arithmetic50": -130.60437526475508,
+        "geometric50": -105.98980593425576,
+        "tactical300_preview": 59.70515817153814
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": 20.331466395853372,
+        "arithmetic50": 9.3252004516126,
+        "geometric50": 7.72467617669673,
+        "tactical300_preview": -80.62805866717329
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": -0.02189511739560019,
+        "arithmetic50": -0.01094755869780009,
+        "geometric50": -0.008884308963474917,
+        "tactical300_preview": 0.005004623484621805
+      }
+    },
+    "not_in_check": {
+      "rows": 22501,
+      "policy": {
+        "bt4": {
+          "valid": 21949,
+          "invalid": 552,
+          "zero": 0,
+          "mass": 17750.900192499983,
+          "regret": 8187394.1103148125,
+          "regret_rows": 21949,
+          "best": 11915.84009745938,
+          "mean_scored_mass_valid_final": 0.8087338918629543,
+          "mean_regret_valid_positive_mass_cp": 373.0190036135957
+        },
+        "ceres": {
+          "valid": 21949,
+          "invalid": 552,
+          "zero": 0,
+          "mass": 17378.145447216586,
+          "regret": 8472845.141311824,
+          "regret_rows": 21949,
+          "best": 11567.303172458076,
+          "mean_scored_mass_valid_final": 0.7917511252091934,
+          "mean_regret_valid_positive_mass_cp": 386.0241988843147
+        },
+        "arithmetic50": {
+          "valid": 21949,
+          "invalid": 552,
+          "zero": 0,
+          "mass": 17564.522819858117,
+          "regret": 8317956.803428505,
+          "regret_rows": 21949,
+          "best": 11753.98100224769,
+          "mean_scored_mass_valid_final": 0.8002425085360662,
+          "mean_regret_valid_positive_mass_cp": 378.96746108836413
+        },
+        "geometric50": {
+          "valid": 21949,
+          "invalid": 552,
+          "zero": 0,
+          "mass": 17607.590983484108,
+          "regret": 8287357.238293342,
+          "regret_rows": 21949,
+          "best": 11805.458859881042,
+          "mean_scored_mass_valid_final": 0.8022047010562717,
+          "mean_regret_valid_positive_mass_cp": 377.57333993773483
+        },
+        "tactical300_preview": {
+          "valid": 21949,
+          "invalid": 552,
+          "zero": 0,
+          "mass": 17826.525023004415,
+          "regret": 6862237.868927943,
+          "regret_rows": 21949,
+          "best": 12049.466553606984,
+          "mean_scored_mass_valid_final": 0.8121793714066433,
+          "mean_regret_valid_positive_mass_cp": 312.6446703233834
+        }
+      },
+      "common_rows": 21949,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 285451.0309969234,
+        "arithmetic50": 130562.69311366396,
+        "geometric50": 99963.12797849016,
+        "tactical300_preview": -1325156.24138689
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -372.7547452834987,
+        "arithmetic50": -186.37737264174936,
+        "geometric50": -143.30920901581177,
+        "tactical300_preview": 75.6248305044611
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": 13.005195270714994,
+        "arithmetic50": 5.948457474767141,
+        "geometric50": 4.554336324137325,
+        "tactical300_preview": -60.37433329021322
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": -0.01698276665376549,
+        "arithmetic50": -0.008491383326882745,
+        "geometric50": -0.006529190806679656,
+        "tactical300_preview": 0.0034454795436904234
+      }
+    },
+    "legal_gt_30": {
+      "rows": 9472,
+      "policy": {
+        "bt4": {
+          "valid": 9261,
+          "invalid": 211,
+          "zero": 0,
+          "mass": 7939.414890317716,
+          "regret": 746189.7262538525,
+          "regret_rows": 9261,
+          "best": 5302.551892215446,
+          "mean_scored_mass_valid_final": 0.8572956365746373,
+          "mean_regret_valid_positive_mass_cp": 80.57334264699843
+        },
+        "ceres": {
+          "valid": 9261,
+          "invalid": 211,
+          "zero": 0,
+          "mass": 7750.394315086756,
+          "regret": 795505.1455418216,
+          "regret_rows": 9261,
+          "best": 5164.65269895964,
+          "mean_scored_mass_valid_final": 0.8368852516020685,
+          "mean_regret_valid_positive_mass_cp": 85.89840681803494
+        },
+        "arithmetic50": {
+          "valid": 9261,
+          "invalid": 211,
+          "zero": 0,
+          "mass": 7844.904602702257,
+          "regret": 769275.2413096786,
+          "regret_rows": 9261,
+          "best": 5239.888768292772,
+          "mean_scored_mass_valid_final": 0.8470904440883551,
+          "mean_regret_valid_positive_mass_cp": 83.06610963283433
+        },
+        "geometric50": {
+          "valid": 9261,
+          "invalid": 211,
+          "zero": 0,
+          "mass": 7868.745686576302,
+          "regret": 763396.5862829682,
+          "regret_rows": 9261,
+          "best": 5269.7097258177855,
+          "mean_scored_mass_valid_final": 0.849664797168373,
+          "mean_regret_valid_positive_mass_cp": 82.43133422772576
+        },
+        "tactical300_preview": {
+          "valid": 9261,
+          "invalid": 211,
+          "zero": 0,
+          "mass": 7953.618416433376,
+          "regret": 605649.7797454637,
+          "regret_rows": 9261,
+          "best": 5336.3930904990575,
+          "mean_scored_mass_valid_final": 0.8588293290609412,
+          "mean_regret_valid_positive_mass_cp": 65.39788141080486
+        }
+      },
+      "common_rows": 9261,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 49315.419287976205,
+        "arithmetic50": 23085.515055828815,
+        "geometric50": 17206.860029118456,
+        "tactical300_preview": -140539.9465083863
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -189.02057523092455,
+        "arithmetic50": -94.51028761546223,
+        "geometric50": -70.6692037414049,
+        "tactical300_preview": 14.203526115657985
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": 5.325064171037275,
+        "arithmetic50": 2.492766985836175,
+        "geometric50": 1.8579915807276164,
+        "tactical300_preview": -15.175461236193314
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": -0.020410384972565008,
+        "arithmetic50": -0.0102051924862825,
+        "geometric50": -0.0076308394062633515,
+        "tactical300_preview": 0.0015336924863036372
+      }
+    },
+    "ply_40_79": {
+      "rows": 4838,
+      "policy": {
+        "bt4": {
+          "valid": 4775,
+          "invalid": 63,
+          "zero": 0,
+          "mass": 3976.3054863003945,
+          "regret": 177742.9399414306,
+          "regret_rows": 4775,
+          "best": 2558.3334480283984,
+          "mean_scored_mass_valid_final": 0.8327341332566272,
+          "mean_regret_valid_positive_mass_cp": 37.2236523437551
+        },
+        "ceres": {
+          "valid": 4775,
+          "invalid": 63,
+          "zero": 0,
+          "mass": 3863.8078820763576,
+          "regret": 193079.7553523632,
+          "regret_rows": 4775,
+          "best": 2456.3757314089726,
+          "mean_scored_mass_valid_final": 0.8091744255657294,
+          "mean_regret_valid_positive_mass_cp": 40.435550859133656
+        },
+        "arithmetic50": {
+          "valid": 4775,
+          "invalid": 63,
+          "zero": 0,
+          "mass": 3920.056684188373,
+          "regret": 184885.40267187596,
+          "regret_rows": 4775,
+          "best": 2511.2730605824995,
+          "mean_scored_mass_valid_final": 0.8209542794111776,
+          "mean_regret_valid_positive_mass_cp": 38.719456056937375
+        },
+        "geometric50": {
+          "valid": 4775,
+          "invalid": 63,
+          "zero": 0,
+          "mass": 3931.4593169284985,
+          "regret": 182645.92315271596,
+          "regret_rows": 4775,
+          "best": 2523.5117803147855,
+          "mean_scored_mass_valid_final": 0.82334226532534,
+          "mean_regret_valid_positive_mass_cp": 38.250455110516434
+        },
+        "tactical300_preview": {
+          "valid": 4775,
+          "invalid": 63,
+          "zero": 0,
+          "mass": 3978.383322276278,
+          "regret": 174342.61448397135,
+          "regret_rows": 4775,
+          "best": 2565.370109974021,
+          "mean_scored_mass_valid_final": 0.8331692821521001,
+          "mean_regret_valid_positive_mass_cp": 36.511542300308136
+        }
+      },
+      "common_rows": 4775,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 15336.81541093252,
+        "arithmetic50": 7142.462730445381,
+        "geometric50": 4902.983211285566,
+        "tactical300_preview": -3400.325457459154
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -112.49760422402649,
+        "arithmetic50": -56.24880211201323,
+        "geometric50": -44.8461693718977,
+        "tactical300_preview": 2.077835975888396
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": 3.211898515378538,
+        "arithmetic50": 1.4958037131822788,
+        "geometric50": 1.026802766761375,
+        "tactical300_preview": -0.7121100434469433
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": -0.0235597076908956,
+        "arithmetic50": -0.011779853845447797,
+        "geometric50": -0.009391867931287478,
+        "tactical300_preview": 0.00043514889547400967
+      }
+    },
+    "ply_lt_40": {
+      "rows": 6038,
+      "policy": {
+        "bt4": {
+          "valid": 6022,
+          "invalid": 16,
+          "zero": 0,
+          "mass": 5367.062048809973,
+          "regret": 125186.3159730628,
+          "regret_rows": 6022,
+          "best": 3741.2274093665874,
+          "mean_scored_mass_valid_final": 0.8912424524759172,
+          "mean_regret_valid_positive_mass_cp": 20.788162732159215
+        },
+        "ceres": {
+          "valid": 6022,
+          "invalid": 16,
+          "zero": 0,
+          "mass": 5307.1309939401945,
+          "regret": 133138.72321156296,
+          "regret_rows": 6022,
+          "best": 3694.6044728170295,
+          "mean_scored_mass_valid_final": 0.881290434065127,
+          "mean_regret_valid_positive_mass_cp": 22.108721888336593
+        },
+        "arithmetic50": {
+          "valid": 6022,
+          "invalid": 16,
+          "zero": 0,
+          "mass": 5337.096521375098,
+          "regret": 128851.0984016285,
+          "regret_rows": 6022,
+          "best": 3720.8587985350573,
+          "mean_scored_mass_valid_final": 0.8862664432705244,
+          "mean_regret_valid_positive_mass_cp": 21.39672839615219
+        },
+        "geometric50": {
+          "valid": 6022,
+          "invalid": 16,
+          "zero": 0,
+          "mass": 5349.699203417147,
+          "regret": 126230.90444737104,
+          "regret_rows": 6022,
+          "best": 3743.522222336411,
+          "mean_scored_mass_valid_final": 0.888359216774684,
+          "mean_regret_valid_positive_mass_cp": 20.961624783688315
+        },
+        "tactical300_preview": {
+          "valid": 6022,
+          "invalid": 16,
+          "zero": 0,
+          "mass": 5367.190486666177,
+          "regret": 124221.99743610721,
+          "regret_rows": 6022,
+          "best": 3742.8450433643743,
+          "mean_scored_mass_valid_final": 0.891263780582228,
+          "mean_regret_valid_positive_mass_cp": 20.628030128878645
+        }
+      },
+      "common_rows": 6022,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 7952.407238500036,
+        "arithmetic50": 3664.782428565921,
+        "geometric50": 1044.588474308302,
+        "tactical300_preview": -964.3185369556289
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -59.93105486975601,
+        "arithmetic50": -29.96552743487798,
+        "geometric50": -17.36284539280382,
+        "tactical300_preview": 0.12843785620304196
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": 1.3205591561773558,
+        "arithmetic50": 0.6085656639930124,
+        "geometric50": 0.17346205152911026,
+        "tactical300_preview": -0.16013260328057605
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": -0.009952018410786452,
+        "arithmetic50": -0.0049760092053932215,
+        "geometric50": -0.002883235701229462,
+        "tactical300_preview": 2.132810631070109e-05
+      }
+    },
+    "legal_11_30": {
+      "rows": 11300,
+      "policy": {
+        "bt4": {
+          "valid": 11104,
+          "invalid": 196,
+          "zero": 0,
+          "mass": 8462.528878872277,
+          "regret": 5016167.1917157145,
+          "regret_rows": 11104,
+          "best": 5831.316662814154,
+          "mean_scored_mass_valid_final": 0.7621153529243766,
+          "mean_regret_valid_positive_mass_cp": 451.7441635190665
+        },
+        "ceres": {
+          "valid": 11104,
+          "invalid": 196,
+          "zero": 0,
+          "mass": 8277.27970616401,
+          "regret": 5223059.240104315,
+          "regret_rows": 11104,
+          "best": 5635.944427418702,
+          "mean_scored_mass_valid_final": 0.7454322501948857,
+          "mean_regret_valid_positive_mass_cp": 470.37637248778054
+        },
+        "arithmetic50": {
+          "valid": 11104,
+          "invalid": 196,
+          "zero": 0,
+          "mass": 8369.904292518158,
+          "regret": 5108498.914630065,
+          "regret_rows": 11104,
+          "best": 5739.670796854105,
+          "mean_scored_mass_valid_final": 0.7537738015596325,
+          "mean_regret_valid_positive_mass_cp": 460.0593402944943
+        },
+        "geometric50": {
+          "valid": 11104,
+          "invalid": 196,
+          "zero": 0,
+          "mass": 8389.048242808873,
+          "regret": 5087092.433564011,
+          "regret_rows": 11104,
+          "best": 5760.5584213624015,
+          "mean_scored_mass_valid_final": 0.755497860483508,
+          "mean_regret_valid_positive_mass_cp": 458.1315231956062
+        },
+        "tactical300_preview": {
+          "valid": 11104,
+          "invalid": 196,
+          "zero": 0,
+          "mass": 8518.468569411934,
+          "regret": 4075771.596796705,
+          "regret_rows": 11104,
+          "best": 5913.870793352267,
+          "mean_scored_mass_valid_final": 0.7671531492626021,
+          "mean_regret_valid_positive_mass_cp": 367.0543585011442
+        }
+      },
+      "common_rows": 11104,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 206892.04838857977,
+        "arithmetic50": 92331.72291436071,
+        "geometric50": 70925.24184832086,
+        "tactical300_preview": -940395.5949189938
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -185.24917270826822,
+        "arithmetic50": -92.62458635413412,
+        "geometric50": -73.48063606342897,
+        "tactical300_preview": 55.939690539651174
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": 18.632208968712156,
+        "arithmetic50": 8.31517677542874,
+        "geometric50": 6.387359676541864,
+        "tactical300_preview": -84.6898050179209
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": -0.016683102729491014,
+        "arithmetic50": -0.008341551364745509,
+        "geometric50": -0.006617492440870765,
+        "tactical300_preview": 0.00503779633822507
+      }
+    },
+    "ply_ge_80": {
+      "rows": 13117,
+      "policy": {
+        "bt4": {
+          "valid": 12578,
+          "invalid": 539,
+          "zero": 0,
+          "mass": 9797.68143672175,
+          "regret": 8474909.31580408,
+          "regret_rows": 12578,
+          "best": 6558.103905527477,
+          "mean_scored_mass_valid_final": 0.7789538429576841,
+          "mean_regret_valid_positive_mass_cp": 673.7883062334297
+        },
+        "ceres": {
+          "valid": 12578,
+          "invalid": 539,
+          "zero": 0,
+          "mass": 9596.814695891986,
+          "regret": 8761159.212341499,
+          "regret_rows": 12578,
+          "best": 6336.50567917039,
+          "mean_scored_mass_valid_final": 0.7629841545469856,
+          "mean_regret_valid_positive_mass_cp": 696.5462881492684
+        },
+        "arithmetic50": {
+          "valid": 12578,
+          "invalid": 539,
+          "zero": 0,
+          "mass": 9697.248066306893,
+          "regret": 8607004.127399392,
+          "regret_rows": 12578,
+          "best": 6452.866624515368,
+          "mean_scored_mass_valid_final": 0.7709689987523368,
+          "mean_regret_valid_positive_mass_cp": 684.2903583558111
+        },
+        "geometric50": {
+          "valid": 12578,
+          "invalid": 539,
+          "zero": 0,
+          "mass": 9716.42735303629,
+          "regret": 8577481.409270067,
+          "regret_rows": 12578,
+          "best": 6472.786225444168,
+          "mean_scored_mass_valid_final": 0.7724938267638964,
+          "mean_regret_valid_positive_mass_cp": 681.9431872531458
+        },
+        "tactical300_preview": {
+          "valid": 12578,
+          "invalid": 539,
+          "zero": 0,
+          "mass": 9871.326637736152,
+          "regret": 7072307.884555719,
+          "regret_rows": 12578,
+          "best": 6694.034072081311,
+          "mean_scored_mass_valid_final": 0.7848089233372676,
+          "mean_regret_valid_positive_mass_cp": 562.2760283475686
+        }
+      },
+      "common_rows": 12578,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 286249.8965373735,
+        "arithmetic50": 132094.8115952859,
+        "geometric50": 102572.09346595539,
+        "tactical300_preview": -1402601.4312483992
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -200.86674082979908,
+        "arithmetic50": -100.4333704148996,
+        "geometric50": -81.25408368545186,
+        "tactical300_preview": 73.64520101438006
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": 22.757981915835067,
+        "arithmetic50": 10.502052122379226,
+        "geometric50": 8.15488101971342,
+        "tactical300_preview": -111.51227788586414
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": -0.015969688410701153,
+        "arithmetic50": -0.00798484420535058,
+        "geometric50": -0.006460016193786919,
+        "tactical300_preview": 0.005855080379581814
+      }
+    },
+    "negative_d9_best_lt_minus100": {
+      "rows": 9453,
+      "policy": {
+        "bt4": {
+          "valid": 9198,
+          "invalid": 255,
+          "zero": 0,
+          "mass": 7365.19876316712,
+          "regret": 5435797.98305878,
+          "regret_rows": 9198,
+          "best": 4576.116618972189,
+          "mean_scored_mass_valid_final": 0.8007391566826615,
+          "mean_regret_valid_positive_mass_cp": 590.9760799150664
+        },
+        "ceres": {
+          "valid": 9198,
+          "invalid": 255,
+          "zero": 0,
+          "mass": 7266.385985895075,
+          "regret": 5507425.771965639,
+          "regret_rows": 9198,
+          "best": 4419.767544495135,
+          "mean_scored_mass_valid_final": 0.7899963020107713,
+          "mean_regret_valid_positive_mass_cp": 598.7634020401869
+        },
+        "arithmetic50": {
+          "valid": 9198,
+          "invalid": 255,
+          "zero": 0,
+          "mass": 7315.792374531096,
+          "regret": 5469812.021994887,
+          "regret_rows": 9198,
+          "best": 4502.686266826668,
+          "mean_scored_mass_valid_final": 0.7953677293467163,
+          "mean_regret_valid_positive_mass_cp": 594.6740619694376
+        },
+        "geometric50": {
+          "valid": 9198,
+          "invalid": 255,
+          "zero": 0,
+          "mass": 7328.399211857124,
+          "regret": 5456736.476515865,
+          "regret_rows": 9198,
+          "best": 4519.927258459468,
+          "mean_scored_mass_valid_final": 0.7967383357096243,
+          "mean_regret_valid_positive_mass_cp": 593.252497990418
+        },
+        "tactical300_preview": {
+          "valid": 9198,
+          "invalid": 255,
+          "zero": 0,
+          "mass": 7381.155763793103,
+          "regret": 4992153.307918489,
+          "regret_rows": 9198,
+          "best": 4605.112656806524,
+          "mean_scored_mass_valid_final": 0.8024739904102091,
+          "mean_regret_valid_positive_mass_cp": 542.7433472405402
+        }
+      },
+      "common_rows": 9198,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 71627.78890684307,
+        "arithmetic50": 34014.03893613214,
+        "geometric50": 20938.49345710397,
+        "tactical300_preview": -443644.67514027696
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -98.81277727203431,
+        "arithmetic50": -49.40638863601721,
+        "geometric50": -36.79955131001554,
+        "tactical300_preview": 15.95700062597874
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": 7.787322125118838,
+        "arithmetic50": 3.69798205437401,
+        "geometric50": 2.2764180753537695,
+        "tactical300_preview": -48.23273267452456
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": -0.010742854671888923,
+        "arithmetic50": -0.005371427335944467,
+        "geometric50": -0.004000820973039306,
+        "tactical300_preview": 0.0017348337275471558
+      }
+    },
+    "legal_le_10": {
+      "rows": 3221,
+      "policy": {
+        "bt4": {
+          "valid": 3010,
+          "invalid": 211,
+          "zero": 0,
+          "mass": 2739.105202642131,
+          "regret": 3015481.653749041,
+          "regret_rows": 3010,
+          "best": 1723.7962078928763,
+          "mean_scored_mass_valid_final": 0.9100017284525352,
+          "mean_regret_valid_positive_mass_cp": 1001.8211474249305
+        },
+        "ceres": {
+          "valid": 3010,
+          "invalid": 211,
+          "zero": 0,
+          "mass": 2740.0795506577374,
+          "regret": 3068813.305259294,
+          "regret_rows": 3010,
+          "best": 1686.8887570180339,
+          "mean_scored_mass_valid_final": 0.9103254321122051,
+          "mean_regret_valid_positive_mass_cp": 1019.5393040728551
+        },
+        "arithmetic50": {
+          "valid": 3010,
+          "invalid": 211,
+          "zero": 0,
+          "mass": 2739.592376649933,
+          "regret": 3042966.4725331496,
+          "regret_rows": 3010,
+          "best": 1705.4389184860306,
+          "mean_scored_mass_valid_final": 0.9101635802823698,
+          "mean_regret_valid_positive_mass_cp": 1010.952316456196
+        },
+        "geometric50": {
+          "valid": 3010,
+          "invalid": 211,
+          "zero": 0,
+          "mass": 2739.791943996806,
+          "regret": 3035869.217023153,
+          "regret_rows": 3010,
+          "best": 1709.5520809151842,
+          "mean_scored_mass_valid_final": 0.9102298817265136,
+          "mean_regret_valid_positive_mass_cp": 1008.5944242601837
+        },
+        "tactical300_preview": {
+          "valid": 3010,
+          "invalid": 211,
+          "zero": 0,
+          "mass": 2744.813460833291,
+          "regret": 2689451.119933606,
+          "regret_rows": 3010,
+          "best": 1751.985341568383,
+          "mean_scored_mass_valid_final": 0.9118981597452794,
+          "mean_regret_valid_positive_mass_cp": 893.5053554596698
+        }
+      },
+      "common_rows": 3010,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 53331.65151025145,
+        "arithmetic50": 27484.818784106923,
+        "geometric50": 20387.563274109692,
+        "tactical300_preview": -326030.5338154311
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 0.9743480156113714,
+        "arithmetic50": 0.4871740078056872,
+        "geometric50": 0.6867413546801421,
+        "tactical300_preview": 5.708258191162288
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": 17.718156647924072,
+        "arithmetic50": 9.131169031264758,
+        "geometric50": 6.773276835252389,
+        "tactical300_preview": -108.3157919652595
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": 0.000323703659671552,
+        "arithmetic50": 0.00016185182983577648,
+        "geometric50": 0.00022815327398011364,
+        "tactical300_preview": 0.001896431292744946
+      }
+    },
+    "in_check": {
+      "rows": 1492,
+      "policy": {
+        "bt4": {
+          "valid": 1426,
+          "invalid": 66,
+          "zero": 0,
+          "mass": 1390.1487793321044,
+          "regret": 590444.4614037531,
+          "regret_rows": 1426,
+          "best": 941.8246654631215,
+          "mean_scored_mass_valid_final": 0.97485889153724,
+          "mean_regret_valid_positive_mass_cp": 414.05642454681146
+        },
+        "ceres": {
+          "valid": 1426,
+          "invalid": 66,
+          "zero": 0,
+          "mass": 1389.608124692017,
+          "regret": 614532.5495936349,
+          "regret_rows": 1426,
+          "best": 920.1827109383412,
+          "mean_scored_mass_valid_final": 0.9744797508359166,
+          "mean_regret_valid_positive_mass_cp": 430.9484920011465
+        },
+        "arithmetic50": {
+          "valid": 1426,
+          "invalid": 66,
+          "zero": 0,
+          "mass": 1389.87845201206,
+          "regret": 602783.8250443857,
+          "regret_rows": 1426,
+          "best": 931.0174813852649,
+          "mean_scored_mass_valid_final": 0.9746693211865779,
+          "mean_regret_valid_positive_mass_cp": 422.70955472958326
+        },
+        "geometric50": {
+          "valid": 1426,
+          "invalid": 66,
+          "zero": 0,
+          "mass": 1389.9948898977618,
+          "regret": 599000.9985768127,
+          "regret_rows": 1426,
+          "best": 934.3613682142951,
+          "mean_scored_mass_valid_final": 0.9747509746828624,
+          "mean_regret_valid_positive_mass_cp": 420.0568012460117
+        },
+        "tactical300_preview": {
+          "valid": 1426,
+          "invalid": 66,
+          "zero": 0,
+          "mass": 1390.3754236741147,
+          "regret": 508634.62754783034,
+          "regret_rows": 1426,
+          "best": 952.7826718127641,
+          "mean_scored_mass_valid_final": 0.9750178286634745,
+          "mean_regret_valid_positive_mass_cp": 356.6862745777211
+        }
+      },
+      "common_rows": 1426,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": 24088.08818988154,
+        "arithmetic50": 12339.363640633163,
+        "geometric50": 8556.537173058761,
+        "tactical300_preview": -81809.83385592305
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -0.5406546400865841,
+        "arithmetic50": -0.2703273200432891,
+        "geometric50": -0.15388943434141378,
+        "tactical300_preview": 0.22664434201031292
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": 16.892067454334878,
+        "arithmetic50": 8.653130182772204,
+        "geometric50": 6.000376699199692,
+        "tactical300_preview": -57.3701499690905
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": -0.0003791407013229903,
+        "arithmetic50": -0.00018957035066149305,
+        "geometric50": -0.000107916854376868,
+        "tactical300_preview": 0.00015893712623444103
+      }
+    },
+    "balanced_abs_d9_best_le100": {
+      "rows": 2250,
+      "policy": {
+        "bt4": {
+          "valid": 2247,
+          "invalid": 3,
+          "zero": 0,
+          "mass": 1974.3482981037496,
+          "regret": 23666.806228262376,
+          "regret_rows": 2247,
+          "best": 1594.364258080214,
+          "mean_scored_mass_valid_final": 0.8786596787288605,
+          "mean_regret_valid_positive_mass_cp": 10.53262404462055
+        },
+        "ceres": {
+          "valid": 2247,
+          "invalid": 3,
+          "zero": 0,
+          "mass": 1961.0744259817081,
+          "regret": 19023.742405695528,
+          "regret_rows": 2247,
+          "best": 1611.3557225673267,
+          "mean_scored_mass_valid_final": 0.8727523035076583,
+          "mean_regret_valid_positive_mass_cp": 8.466285004759914
+        },
+        "arithmetic50": {
+          "valid": 2247,
+          "invalid": 3,
+          "zero": 0,
+          "mass": 1967.711362042735,
+          "regret": 21305.182658688736,
+          "regret_rows": 2247,
+          "best": 1603.7752465136864,
+          "mean_scored_mass_valid_final": 0.8757059911182621,
+          "mean_regret_valid_positive_mass_cp": 9.4816122201552
+        },
+        "geometric50": {
+          "valid": 2247,
+          "invalid": 3,
+          "zero": 0,
+          "mass": 1973.6745568978633,
+          "regret": 19092.59113471583,
+          "regret_rows": 2247,
+          "best": 1614.9423329721517,
+          "mean_scored_mass_valid_final": 0.8783598384058137,
+          "mean_regret_valid_positive_mass_cp": 8.4969252935985
+        },
+        "tactical300_preview": {
+          "valid": 2247,
+          "invalid": 3,
+          "zero": 0,
+          "mass": 1974.5376141527051,
+          "regret": 22238.146025104023,
+          "regret_rows": 2247,
+          "best": 1594.902537778624,
+          "mean_scored_mass_valid_final": 0.878743931532134,
+          "mean_regret_valid_positive_mass_cp": 9.896816210549186
+        }
+      },
+      "common_rows": 2247,
+      "common_regret_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -4643.063822566878,
+        "arithmetic50": -2361.623569573657,
+        "geometric50": -4574.215093546571,
+        "tactical300_preview": -1428.660203158355
+      },
+      "common_mass_delta_sum": {
+        "bt4": 0.0,
+        "ceres": -13.27387212203781,
+        "arithmetic50": -6.636936061018902,
+        "geometric50": -0.6737412058822544,
+        "tactical300_preview": 0.18931604895451867
+      },
+      "mean_common_regret_delta_cp": {
+        "bt4": 0.0,
+        "ceres": -2.0663390398606487,
+        "arithmetic50": -1.0510118244653568,
+        "geometric50": -2.035698751022061,
+        "tactical300_preview": -0.635807834071364
+      },
+      "mean_common_mass_delta": {
+        "bt4": 0.0,
+        "ceres": -0.0059073752212006276,
+        "arithmetic50": -0.0029536876106003125,
+        "geometric50": -0.00029984032304506206,
+        "tactical300_preview": 8.425280327303902e-05
+      }
+    }
+  },
+  "neural_pair": {
+    "adjudicable_disagreements": 2573,
+    "bt4_entropy_sum": 29460.114787425442,
+    "ceres_entropy_sum": 32419.477374793227,
+    "deeper_bt4": 1308,
+    "deeper_ceres": 1099,
+    "deeper_third": 38,
+    "deeper_tie": 128,
+    "js_sum": 519.4828408417753,
+    "mean_bt4_entropy": 1.2278629094913285,
+    "mean_ceres_entropy": 1.3512056589335735,
+    "mean_js": 0.021651433369806832,
+    "rows": 23993,
+    "top_agree": 20182,
+    "top_disagree": 3811
+  },
+  "value_rows": {
+    "bt4_native": 0,
+    "ceres_dual": 0,
+    "ceres_primary": 0,
+    "ceres_secondary": 0,
+    "registered_sf50_bt425_ceres25": 0,
+    "sf_saved": 0
+  },
+  "raw_summary_path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_policy_diagnostic_v1/execution/audit/teacher_adjudication_audit.json",
+  "cluster_sufficient_stats": {
+    "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/g10_ceres_first4_policy_diagnostic_v1/readout/cluster_sufficient_stats.json",
+    "sha256": "cd2f18fd483248f1c29edb7cce9bc2ace718eae32744d979faf3152ea1b4d86d"
+  },
+  "limitations": [
+    "Descriptive fixed convenience prefix, no bootstrap or strength inference.",
+    "Coverage conditions on valid ordinary final scores; absent final scores are invalid, not zero regret.",
+    "Common valid sets verified across all five policies; mean regret renormalizes each policy onto saved roster, which can hide outside errors.",
+    "Neural top-agreement and scored disagreement outcomes inherited from pinned summary because top sets are not banked; entropy/JS and policy aggregates reconstructed.",
+    "No native BT4 value join, all value metrics unavailable."
+  ],
+  "elapsed_seconds": 6.387286304001464
+}

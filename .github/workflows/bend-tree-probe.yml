@@ -1,0 +1,64 @@
+name: Bend MCTS tree probe
+
+on:
+  pull_request:
+    paths:
+      - "native/bend_engine/tree_probe/**"
+      - "native/bend_engine/install_bend.sh"
+      - "native/bend_engine/install_ci_bend.sh"
+      - "native/bend_engine/resolve_latest.py"
+      - "native/bend_engine/probe/chess_bridge.c"
+      - "native/bend_engine/probe/chess_call.c"
+      - "tests/test_bend_mcts_tree_probe.py"
+      - ".github/workflows/bend-tree-probe.yml"
+      - "chess_anti_engine/encoding/_cboard_impl.h"
+      - "chess_anti_engine/encoding/_lc0_ext.c"
+      - "chess_anti_engine/encoding/_bitboard_planes_impl.h"
+      - "chess_anti_engine/encoding/_slider_attacks_impl.h"
+      - "chess_anti_engine/mcts/_mcts_tree.c"
+      - "chess_anti_engine/mcts/_mcts_tree.pyi"
+  workflow_dispatch:
+    inputs:
+      compiler:
+        description: "PR checks use the pinned U64 fork; upstream latest is opt-in compatibility testing"
+        type: choice
+        default: pinned-fork
+        options: [pinned-fork, upstream-latest]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          activate-environment: true
+
+      - name: Install DeepFin CPU test environment
+        run: uv sync --locked --extra dev --extra cpu
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: Install explicitly selected Bend compiler
+        env:
+          BEND_NO_TELEMETRY: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+          BEND_COMPILER: ${{ inputs.compiler || 'pinned-fork' }}
+        run: |
+          case "$BEND_COMPILER" in
+            pinned-fork) native/bend_engine/install_ci_bend.sh ;;
+            upstream-latest) native/bend_engine/install_bend.sh ;;
+            *) echo "error: unsupported compiler selection" >&2; exit 2 ;;
+          esac
+
+      - name: Build and verify Bend two-ply MCTS parity
+        env:
+          BEND_NO_TELEMETRY: "1"
+          CAE_REQUIRE_BEND_TREE_PROBE: "1"
+        run: pytest -q tests/test_bend_mcts_tree_probe.py

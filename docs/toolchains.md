@@ -35,6 +35,17 @@ The generator also supports the validated G10 staircase policy, with its decisio
 rule stamped through generation, derivation and repair. A policy flag must not change
 an existing corpus identity during resume.
 
+For lower resident memory, keep the original logical `--workers` and add
+`--worker-concurrency 2` (or another positive process limit). All original worker
+IDs, game partitions, seeds and dedup capacities remain unchanged; queued workers
+start as slots free. The default runs all logical workers concurrently. The
+effective limit is recorded separately in `execution_invocations.jsonl` and
+`summary.json` under `execution`, so it can change on resume without changing the
+scientific manifest. It bounds active workers, not RAM bytes; a worker can still
+hold its full dedup cache. Uneven progress across workers is expected until all
+finish. Preserve unlisted tails before recovery: existing resume cleanup removes
+them. Merging this option does not update a running generator.
+
 Repair is conditional on a known corpus defect; it is not an obligatory stage for a
 new healthy corpus. Never mutate a populated corpus to reuse its identity for different
 worker or teacher settings. Keep a companion corpus separate when scaling changes the
@@ -613,7 +624,7 @@ This is a separate value intervention from the equal-weight policy mixture.
 
 `scripts/ceres_materialize.py` runs either `CeresB50` or `B100CeresV25` from a
 pinned, complete teacher manifest. It constructs the registered producer command,
-uses the shared preparation lock, keeps the GPU hidden and preserves the existing
+defaults to the shared preparation lock and CPUs 0–1, keeps the GPU hidden and preserves the existing
 STOP, disk, process-cleanup and eight-hour enclosing bounds. Run it with the exact
 planned interpreter and an external timeout; a merged tool does not start a rewrite.
 
@@ -625,6 +636,24 @@ and `corpus`, `producer_manifest` (path/hash), `producer_sha256`, `pins`,
 The deadline includes preflight, waiting, publication checks and cleanup; at the
 maximum eight-hour allocation, use an outer timeout of 28,770 seconds followed by
 30 seconds of kill grace.
+
+A reviewed independent allocation may optionally set `cpu_affinity` (a nonempty
+list of unique available CPU IDs) and `preparation_lock`. The lock must be either
+the existing `hybrid_endpoint_run01/preparation.lock` or the fixed
+`hybrid_endpoint_run01/{profile}.preparation.lock`; arbitrary lock paths and
+symlinks are rejected. This permits disjoint policy/value outputs to use separate
+CPU allocations while reading shared immutable teacher data. It does not schedule
+resources automatically or make overlapping writes safe. Duplicate attempts on
+the same selected lock still contend, and the child inherits its lock FD and CPU
+affinity. The receipt records the realized affinity and lock. Numeric thread
+limits, batch 128, recipe/input pins, STOP, 150 GiB reserve, sampled 32 GiB output
+cap and deadline cleanup stay unchanged. There is no implicit memory-limit guard.
+
+Never edit a supervisor or producer checkout serving an active materialization.
+Prepare a separately pinned runtime and plan; preserve producer bytes when only
+the allocation changes. Concurrent SSD traffic can slow both jobs despite distinct
+cores. Choose allocations against current memory/disk use and the existing run's
+deadline, and stop only the newly owned job if it threatens that allocation.
 
 Both Ceres producers bind each completed shard's storage identity into the summary
 and recheck it before publication. `scripts/ceres_corpus_qualification.py` consumes
@@ -640,3 +669,183 @@ sources, plus the profile, corpus, deadline, disk reserve and STOP paths. Run wi
 two CPU threads, GPU hidden and a separately bounded enclosing process. The emitted
 `PASS_REGISTERED_CORPUS_QUALIFICATION` receipt still precedes the frozen prospective
 schedule check and exact training manifest; it does not launch training.
+
+### Combined original/G10 value comparison
+
+`scripts/combined_corpus_train.py --manifest PLAN.json` inspects the explicit
+`combined35m_value_seed101` training plan; `--execute` performs one fresh arm.
+This is the registered 21-cohort comparison, not a replacement for the historical
+single-source coordinator. `Combined35M_SF100` uses the admission report's ordered
+**B100** roots, and `Combined35M_V50` uses its V50 roots. The `source` arm exists
+only for identity proof. Both use seed 101, batch 512 and two planner/loader
+workers under the unchanged frozen trainer. Its history/value/encoding gates
+remain in force.
+
+The plan binds `corpus_manifest`, actually passed `prospective`, `runtime_manifest`,
+`preregistration`, `selected_subset_qualification`, the pretraining `opening_panel`, absolute `state`/`run` and
+`stop_paths`, plus exact `code_pins` for the coordinator and its schedule, stage,
+original-coordinator and memory helpers. It selects `schema: 1`, the profile and
+role, `training_seconds: 21600` and `coordinator_seconds: 27000`. V50 additionally
+requires the same comparison's completed SF100 `previous_training` receipt.
+No existing output is adopted or resumed.
+
+The selected-subset qualification binds the same manifest, prospective schedule,
+runtime/config and ordered roots, plus the frozen preflight's exact per-arm
+`partial_corpus` records. The explicit `--allow-partial-corpus` flag permits the
+complete selected G10 products whose global raw producers are still running.
+Every flagged derivation must be finalized, and no original-corpus or unselected
+shard may appear. Completed training must reproduce those exact records. This
+does not enable `--allow-leak` or `--allow-mixed-history`, or admit unfinished
+selected products. The frozen trainer still runs its preflights before staging
+or constructing a model.
+
+The GPU lease wait counts toward the inclusive coordinator allowance; the full
+training stage must still fit before it can start. The existing owned-stage
+wait loop applies STOP, disk, deadline and host-memory checks, retaining its
+failure cleanup. Startup requires 48 GiB available RAM, running work 32 GiB and
+150 GiB free SSD. There is no CUDA address-space cap. An outer bounded operator
+still owns terminal evidence and the absolute launch deadline.
+
+After training, the lease is released and a 1,800-second CPU stage checks actual
+staged link order, full game columns against the prospective witnesses, summary
+window totals and the actual planned/realized physical hash. It does not rerun
+all prospective planners, open feature/target arrays or load a model. Canonical
+row-order equivalence inherits the frozen sampler and matching game-column proof;
+it is not a newly recorded per-row training trace. Failed completion preserves
+the run and cannot produce a valid training receipt.
+
+The fixed `bt4_package_readout.py` accepts this explicit combined profile with
+`training: {candidate_training: PIN, reference_training: PIN}`. It requires V50
+versus SF100, matching admitted corpus/schedule/panel and completed process
+receipts, 256 pairs, 400 simulations, arena seed 20260913 and both priors 1.0.
+The same seed regenerates the pretraining opening panel from the pinned book. Its generic
+`launch_qualification_verified: false` remains honest: actual arena launch
+qualification is still separate from completed training and bank validation.
+The historical generic package schema and two-depth recipe launcher are unchanged.
+
+`combined_corpus_arena.py` prepares and runs the registered Combined35M V50/SF100
+value comparison after both actual training receipts qualify. It uses the pinned
+original combined-training verifier, the existing arena runtime qualification,
+and the existing owned-stage supervisor. Its separate CPU probe checks the actual
+checkpoint pair and regenerates the frozen 256-pair panel at seed 20260913.
+The explicit command fixes 512 games, 400 simulations, priors 1.0, rolling 128
+and batch 4096; legacy direct-screen defaults do not select this experiment.
+Preparation and execution require pinned manifests and absolute owned deadlines;
+no-flag inspection is static only. The active trainer and arena implementation are
+unchanged. Final host adoption still binds genuine completion, runtime and source
+pins; metadata drafts do not authorize a match.
+
+The fixed-package reader rejects mismatched observed argv by default. Its separate
+`--allow-empty-procfs-capture` option admits only the literal `['']` observation
+with the exact requested command, timeout supervisor, distinct process IDs,
+successful completion and bounded timestamps, while retaining all complete-bank
+checks. The observation remains `unavailable_empty_procfs_snapshot`; it does not
+prove actual exec, and launch qualification still requires external evidence.
+The combined host enables this and the exact timeout-preexec case explicitly.
+Future owned stages retain an empty sample as provisional evidence and retry the
+same child within the existing ten-second capture window. Original process and
+failure receipts are never rewritten to recover a completed bank.
+
+The explicit native endpoint uses corpus kind
+`matched-b100-sf-native100-corpus-set` and role `Combined35M_V100`. Its ordered
+`source`/`B100`/`V100` mapping accepts only the unchanged value writer's alpha 1
+recipe: normalized native BT4 `search_wdl`, original B100 policy, and all other
+arrays unchanged. A half-mix recipe cannot acquire this role by renaming its root.
+The same prospective tool produces the canonical witnesses; the subset preflight
+must record full required `search_wdl` coverage and zero unused `sf_wdl` coverage.
+
+V100 requires `previous_training` for the completed seed-101 Combined35M V50
+reference and `previous_verifier` for its exact historical coordinator source.
+That verifier checks the old receipt under its original code identity. The new
+coordinator additionally matches ordered original-source/B100 roots, source
+identity records, game-column witnesses and the canonical schedule. It does not
+rewrite the historical receipt or pretend both runs used the new coordinator.
+Completion checks the realized search-only WDL masks, no outcome leakage, absent
+categorical targets and zero categorical/SF-eval loss in every window. The coupled
+categorical output may still change through shared features; this is a native-only
+supervised WDL endpoint, not independent native supervision of every value head.
+
+Arena profile `combined35m_native100_vs_v50_seed101` binds V100 versus that exact
+V50 receipt, 512 games / 400 simulations, seed 20260913 and the reused 256-pair
+development panel, priors 1.0, rolling 128 / batch 4096. Existing combined and
+Ceres profiles retain their directions and contracts. Future host commands supply
+`TORCHINDUCTOR_COMPILE_THREADS=2` before Python; no active runtime is changed.
+Actual rewrite, qualification, prospective and completed-training pins remain
+prerequisites to a runnable endpoint; adding this profile launches no work.
+
+
+### Receipt-selected raw baseline eligibility
+
+`scripts/audit_raw_baseline.py` audits at most 192 closed raw shards selected by
+an immutable completed joint policy/native-WDL collection receipt. Its schema-1
+manifest contains `collection: {path, sha256}`, the registered `teacher_sha256`,
+and `sources: [{id, source_dir, manifest: {path, sha256}}]`. Source IDs must match
+the collection receipts; the source manifest pin binds its raw configuration.
+It verifies compressed source hashes and physical row counts, then streams rows
+through the existing deriver identity checks and phase0 uniform-d9 policy
+selector plus the existing consumed composite-d9 baseline validator. It does
+not select adaptive labels, repair repeated moves, or derive targets.
+
+Policy and composite-value rejection counters are separate and can overlap:
+the value validator also requires complete phase0 support. Diagnostics identify
+source namespace, shard, physical row, game and ply. Whole-shard exclusion counts
+include eligible rows lost as collateral. Rows without results remain excluded
+by the historical derivation rule; they do not alone disqualify a shard. Identity
+faults are fatal even on these rows. A completed eligibility report is neither
+sidecar-content qualification nor training admission.
+
+Run only after the exact completed receipt and source manifest pins are reviewed.
+An example bounded invocation (substitute qualified absolute paths and digest):
+
+```bash
+taskset -c 4,5 env CUDA_VISIBLE_DEVICES= OPENBLAS_NUM_THREADS=2 OMP_NUM_THREADS=2 \
+  PYTHONPATH="$AUDIT_RUNTIME" timeout --signal=TERM --kill-after=30 1770 \
+  "$QUALIFIED_PYTHON" "$AUDIT_RUNTIME/scripts/audit_raw_baseline.py" \
+  --manifest "$AUDIT_MANIFEST" --expected-manifest-sha256 "$AUDIT_MANIFEST_SHA" \
+  --out "$FRESH_AUDIT_OUTPUT" --deadline-unix "$AUDIT_DEADLINE"
+```
+
+The deadline is capped internally at 1740 seconds, leaving the external cleanup
+reserve within 1800 seconds. The tool requires two numeric threads, at most two
+CPUs, hidden GPUs, 48 GiB available RAM at startup, 32 GiB during execution and
+150 GiB free disk. Rejected-row diagnostics stop at 512 MiB. The unchanged
+deriver import loads Torch transitively, but no model is constructed; use a
+qualified interpreter/native-extension environment without a small virtual-memory
+cap. Physical-memory guards remain active. Streaming bounds resident raw data
+without making a full-run throughput guarantee. Failures retain evidence and do
+not emit a completed eligibility report. No production audit is implied by the
+source fixtures.
+
+
+### Deriving with exact audited baseline exclusions
+
+`derive_corpus_targets.py --baseline-exclusions MANIFEST --source-shards SELECTION
+--row-provenance` consumes a schema-1 manifest with three `{path, sha256}` pins:
+`audit` (successful audit complete.json), `diagnostics` (rejected.jsonl), and
+`selection` (the existing closed-shard selection). It requires the complete
+roster for one source within the completed audit, rather than a timed-out audit
+prefix. Raw hashes remain checked by the existing source selection path.
+
+The audit may bind either the original completed collection (at most 192 shards)
+or a saved joint `receipt_selection` (at most 512). The saved route reuses the
+auditor's metadata admission: exact pinned snapshot membership, native WDL layout,
+teacher and source/history identity, and the complete ordered audited roster must
+match. Source manifests and receipt snapshots remain pinned through derivation
+binding. This does not fabricate a collection receipt, rerun the raw audit, or
+change which physical rows qualify for exclusion.
+
+This opt-in is limited to full uniform-d9 derivation with phase0 policy,
+latest-phase value, no value-depth override, search value scheme, and no other
+skip allowances. It removes only diagnosed baseline failures with a result.
+Ordinary missing-result skips retain their existing counter. Exclusion IDs must
+match source namespace, original shard/physical offset and worker/game/ply;
+duplicate, unknown, changed and unused IDs are refused. The original no-flag
+path is unchanged.
+
+Both sequential and parallel paths retain physical raw offsets for the existing
+row provenance sidecar. The existing raw BT4 adapter therefore joins surviving
+rows without renumbering or new inference. Every output shard and the summary
+record the exclusion evidence pins, and completed coverage must equal the audit's
+physical, eligible, no-result and exclusion counts. Use a fresh output directory.
+A filtered corpus needs its own later schedule qualification; this command does
+not reuse a previous corpus's training schedule or allocate training.
