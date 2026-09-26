@@ -1,0 +1,102 @@
+{
+  "status": "passed",
+  "scope": "native timer/probe with deterministic callback, not a model",
+  "cases": [
+    {
+      "batch": 1,
+      "channels": 146,
+      "ubsan": false,
+      "native_calls_checked": 5,
+      "negative_controls": 21,
+      "status": "passed"
+    },
+    {
+      "batch": 1,
+      "channels": 175,
+      "ubsan": false,
+      "native_calls_checked": 5,
+      "negative_controls": 21,
+      "status": "passed"
+    },
+    {
+      "batch": 2,
+      "channels": 146,
+      "ubsan": false,
+      "native_calls_checked": 10,
+      "negative_controls": 21,
+      "status": "passed"
+    },
+    {
+      "batch": 2,
+      "channels": 175,
+      "ubsan": false,
+      "native_calls_checked": 10,
+      "negative_controls": 21,
+      "status": "passed"
+    },
+    {
+      "batch": 4,
+      "channels": 146,
+      "ubsan": false,
+      "native_calls_checked": 20,
+      "negative_controls": 21,
+      "status": "passed"
+    },
+    {
+      "batch": 4,
+      "channels": 175,
+      "ubsan": false,
+      "native_calls_checked": 20,
+      "negative_controls": 21,
+      "status": "passed"
+    },
+    {
+      "batch": 8,
+      "channels": 146,
+      "ubsan": false,
+      "native_calls_checked": 40,
+      "negative_controls": 21,
+      "status": "passed"
+    },
+    {
+      "batch": 8,
+      "channels": 175,
+      "ubsan": false,
+      "native_calls_checked": 40,
+      "negative_controls": 21,
+      "status": "passed"
+    },
+    {
+      "batch": 16,
+      "channels": 146,
+      "ubsan": false,
+      "native_calls_checked": 80,
+      "negative_controls": 21,
+      "status": "passed"
+    },
+    {
+      "batch": 16,
+      "channels": 175,
+      "ubsan": false,
+      "native_calls_checked": 80,
+      "negative_controls": 21,
+      "status": "passed"
+    },
+    {
+      "batch": 4,
+      "channels": 146,
+      "ubsan": true,
+      "native_calls_checked": 20,
+      "negative_controls": 21,
+      "status": "passed"
+    },
+    {
+      "batch": 4,
+      "channels": 175,
+      "ubsan": true,
+      "native_calls_checked": 20,
+      "negative_controls": 21,
+      "status": "passed"
+    }
+  ]
+}
