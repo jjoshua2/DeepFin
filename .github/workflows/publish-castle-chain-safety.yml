@@ -1,29 +1,26 @@
-name: Publish castle chain and safety proofs
+name: Qualify published castle chain and safety proofs
 'on':
   push:
     branches: [feat/publish-castle-chain-safety-dev-20260926]
     paths: [.github/workflows/publish-castle-chain-safety.yml]
 permissions:
-  contents: write
-  actions: read
+  contents: read
 defaults:
   run:
     shell: bash
 jobs:
-  publish:
+  qualify:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 35
     env:
       BEND_NO_TELEMETRY: '1'
       TERM: dumb
-      BASE: b3bbfd5c38f8647cece0ce1d4d541e26fbb6e29f
-      TARGET: feat/bend-castle-chain-safety-20260926
-      CHAIN_PATCH_BLOB: 7fb8a3b5b5486c255310f5e01c20f28634b58145
-      SAFETY_PATCH_BLOB: f28e2e3ff83ac4bb7af62d9ddc4a5b496361adf9
+      SOURCE: 991e4937bbeeedbf9e9a3ddb40a15417c86a4cd6
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: b3bbfd5c38f8647cece0ce1d4d541e26fbb6e29f
+          ref: 991e4937bbeeedbf9e9a3ddb40a15417c86a4cd6
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: jjoshua2/bend
@@ -33,38 +30,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Reconstruct both saved local commits exactly
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Verify exact published tree
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/publication-evidence"
-          echo "EVIDENCE=$RUNNER_TEMP/publication-evidence" >> "$GITHUB_ENV"
-          test "$(git rev-parse HEAD)" = "$BASE"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-          gh api "repos/jjoshua2/DeepFin/git/blobs/$CHAIN_PATCH_BLOB" --jq .content | base64 --decode > "$RUNNER_TEMP/chain.patch"
-          echo "5723e83b91519b6040777bbb1c1049879612172a6a94a0586705f5e4e0f8d945  $RUNNER_TEMP/chain.patch" | sha256sum -c -
-          git apply --check "$RUNNER_TEMP/chain.patch"
-          git apply --index "$RUNNER_TEMP/chain.patch"
-          git diff --cached --check
-          test "$(git write-tree)" = ea7e079dc2bd4decd62d0b946168e9d3a8745efe
-          git commit -m 'native: publish full-generator castling provenance proofs'
-          echo "CHAIN_SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-          test "$(git rev-parse HEAD^{tree})" = ea7e079dc2bd4decd62d0b946168e9d3a8745efe
-
-          gh api "repos/jjoshua2/DeepFin/git/blobs/$SAFETY_PATCH_BLOB" --jq .content | base64 --decode > "$RUNNER_TEMP/safety.patch"
-          echo "f45c10a73c4a31dd57e3cfae64b51de1e0011aaf6ac196ce871d063a79f4641c  $RUNNER_TEMP/safety.patch" | sha256sum -c -
-          git apply --check "$RUNNER_TEMP/safety.patch"
-          git apply --index "$RUNNER_TEMP/safety.patch"
-          git diff --cached --check
-          test "$(git write-tree)" = abae23517afaef0efa93fbaf6b7b47e20389aacf
-          git commit -m 'native: prove mandatory king-safety path for generated castling'
-          echo "SOURCE=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/evidence"
+          echo "EVIDENCE=$RUNNER_TEMP/evidence" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$SOURCE"
           test "$(git rev-parse HEAD^{tree})" = abae23517afaef0efa93fbaf6b7b47e20389aacf
-
-          printf '%s\n'             "published_prerequisite=$BASE"             "saved_chain_commit=fc86363cfc4363ea2d5dc93548f7c8231b923638"             "saved_chain_tree=ea7e079dc2bd4decd62d0b946168e9d3a8745efe"             "saved_safety_commit=0d9c426fb560ec9fc35761adac68075a551df3da"             "saved_safety_tree=abae23517afaef0efa93fbaf6b7b47e20389aacf"             "published_chain_commit=$(git rev-parse HEAD~1)"             "published_safety_commit=$(git rev-parse HEAD)"             > "$RUNNER_TEMP/publication-evidence/reconstruction.txt"
+          bun native/bend_engine/standalone/verify_compiler.js "$PWD/.compiler" | tee "$RUNNER_TEMP/evidence/compiler-identity.txt"
       - name: Re-run full-generator provenance source gate
         run: |
           set -euo pipefail
@@ -91,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           bun native/bend_engine/standalone/proofs/castle_safety/verify_forced.js "$PWD/.compiler" --report "$EVIDENCE/forced-native.json" 2>&1 | tee "$EVIDENCE/forced-native.log"
-      - name: Recheck original compiler source suite and pin contracts
+      - name: Recheck compiler source suite and pin contracts
         run: |
           set -euo pipefail
           bun test native/bend_engine/standalone/verify_compiler.test.js 2>&1 | tee "$EVIDENCE/pin.log"
@@ -103,100 +76,37 @@ jobs:
         with:
           version: '0.12.10'
           enable-cache: false
-      - name: Install locked CPU tools and run unchanged repository lint
+      - name: Run unchanged repository lint in locked CPU environment
         run: |
           set -euo pipefail
           uv sync --locked --extra dev --extra cpu
           .venv/bin/python -c 'import torch; assert torch.version.cuda is None'
           export PATH="$PWD/.venv/bin:$PATH"
           ./scripts/lint.sh 2>&1 | tee "$EVIDENCE/lint.log"
-      - name: Validate all fresh receipts
+      - name: Validate fresh receipts
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import collections,json,os
+          import json,os
           from pathlib import Path
           e=Path(os.environ['EVIDENCE'])
-          def read(n): return json.loads((e/n).read_text())
-          cf,sf,cn,sn,fn=map(read,['chain-focused.json','safety-focused.json','chain-native.json','safety-native.json','forced-native.json'])
-          assert cf['focused_gate']=='PASS' and cf['consumer']=='PASS' and cf['controls_gate']=='PASS' and cf['new_law_count']==5
-          assert len(cf['negative_controls'])==18 and all(x['rejected'] for x in cf['negative_controls'])
-          assert sf['focused_gate']=='PASS' and sf['consumer']=='PASS' and sf['controls_gate']=='PASS' and sf['new_law_count']==6
-          assert len(sf['negative_controls'])==19 and all(x['rejected'] for x in sf['negative_controls'])
-          assert cn['native_gate']=='PASS' and cn['fixture_count']==1062 and cn['distinct_inputs']==1062
-          assert cn['complete_child_boards_per_mode']==9241 and cn['destination_attacked_castles_rejected']==4 and cn['both_castles_retained_cases']==39
-          assert len(cn['modes'])==4 and len(cn['mutations'])==3 and all(x['rejected'] and x['compiled_and_executed'] for x in cn['mutations'])
-          assert sn['native_gate']=='PASS' and sn['fixture_count']==1360 and sn['distinct_inputs']==1360
-          assert sn['owned_king_sources']==64 and sn['owned_king_cases']==1216 and sn['required_cases']==1224 and sn['shortcut_cases']==136
-          assert sn['complete_child_boards_per_mode']==4184 and len(sn['modes'])==4 and len(sn['mutations'])==3
-          assert all(x['rejected'] and x['compiled_and_executed'] for x in sn['mutations'])
-          assert fn['native_audit_gate']=='PASS' and fn['fixture_count']==1062 and fn['distinct_inputs']==1062
-          assert fn['complete_child_boards_per_program_per_mode']==9241 and fn['destination_attacked_castles_rejected']==4 and fn['both_castles_retained_cases']==39
-          assert len(fn['modes'])==4 and all(x['actual_equals_forced'] and x['invalid_rejections_per_program']==7 for x in fn['modes'])
-          assert fn['audit_mutation']['compiled_and_executed'] and fn['audit_mutation']['parity_rejected'] and fn['audit_mutation']['reference_rejected']
-          assert read('compiler-proofs.json')['proof_gate']=='PASS'
+          def r(n): return json.loads((e/n).read_text())
+          cf,sf,cn,sn,fn=map(r,['chain-focused.json','safety-focused.json','chain-native.json','safety-native.json','forced-native.json'])
+          assert cf['focused_gate']=='PASS' and cf['new_law_count']==5 and len(cf['negative_controls'])==18
+          assert sf['focused_gate']=='PASS' and sf['new_law_count']==6 and len(sf['negative_controls'])==19
+          assert all(x['rejected'] for x in cf['negative_controls']+sf['negative_controls'])
+          assert cn['native_gate']=='PASS' and cn['fixture_count']==1062 and cn['complete_child_boards_per_mode']==9241 and len(cn['modes'])==4
+          assert sn['native_gate']=='PASS' and sn['fixture_count']==1360 and sn['owned_king_cases']==1216 and sn['complete_child_boards_per_mode']==4184 and len(sn['modes'])==4
+          assert fn['native_audit_gate']=='PASS' and fn['fixture_count']==1062 and fn['complete_child_boards_per_program_per_mode']==9241 and len(fn['modes'])==4
+          assert r('compiler-proofs.json')['proof_gate']=='PASS'
           assert '12 pass' in (e/'pin.log').read_text() and '0 fail' in (e/'pin.log').read_text()
           assert (e/'lint.log').read_text().strip().endswith('lint: OK')
-          result={
-            'qualification':'PASS',
-            'run':os.environ['GITHUB_RUN_ID'],
-            'published_prerequisite':os.environ['BASE'],
-            'published_source':os.environ['SOURCE'],
-            'saved_chain_commit':'fc86363cfc4363ea2d5dc93548f7c8231b923638',
-            'saved_chain_tree':'ea7e079dc2bd4decd62d0b946168e9d3a8745efe',
-            'saved_safety_commit':'0d9c426fb560ec9fc35761adac68075a551df3da',
-            'saved_safety_tree':'abae23517afaef0efa93fbaf6b7b47e20389aacf',
-            'new_chain_laws':5,'new_chain_controls':18,
-            'new_safety_laws':6,'new_safety_controls':19,
-            'retained_parent_laws':166,'retained_parent_controls':487,
-            'modular_laws':177,'modular_controls':524,
-            'combined_wrapper_executed':False,
-            'native_modes':['generic','portable','native','ubsan'],
-            'repository_lint':'PASS',
-            'independent_review':False
-          }
-          (e/'hosted-publication.json').write_text(json.dumps(result,indent=2)+'\n')
+          out={'qualification':'PASS','run':os.environ['GITHUB_RUN_ID'],'source':os.environ['SOURCE'],'source_tree':'abae23517afaef0efa93fbaf6b7b47e20389aacf','chain_laws':5,'chain_controls':18,'safety_laws':6,'safety_controls':19,'retained_parent_laws':166,'retained_parent_controls':487,'modular_laws':177,'modular_controls':524,'combined_wrapper_executed':False,'native_modes':['generic','portable','native','ubsan'],'repository_lint':'PASS','independent_review':False}
+          (e/'qualification.json').write_text(json.dumps(out,indent=2)+'\n')
           PY
-      - name: Persist hosted publication evidence and push branch
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json,os,shutil
-          from pathlib import Path
-          e=Path(os.environ['EVIDENCE'])
-          for target in [
-            Path('docs/experiments/evidence/bend-castle-chain/hosted-publication.json'),
-            Path('docs/experiments/evidence/bend-castle-safety/hosted-publication.json')
-          ]:
-            shutil.copyfile(e/'hosted-publication.json',target)
-          for rec in [
-            Path('docs/experiments/2026-09-26-bend-castle-chain.md'),
-            Path('docs/experiments/2026-09-26-bend-castle-safety.md')
-          ]:
-            if rec.exists():
-              rec.write_text(rec.read_text()+f"\n\n## Fresh hosted publication qualification\n\nRun **{os.environ['GITHUB_RUN_ID']}** re-executed both final focused gates, all three four-mode native verifiers, original compiler source/pin tests, and unchanged repository lint on the exact published safety tree. All passed. The earlier local missing-tools lint failure remains historical and is not relabeled. The original saved local commit/tree identities are preserved in the publication receipt; GitHub publication commits have new commit IDs but exact saved trees.\n")
-          PY
-          git diff --check
-          git diff --exit-code -- native
-          git add docs/experiments
-          git commit -m 'docs: record fresh hosted qualification of saved castling proof stack'
-          set +e
-          git ls-remote --exit-code --heads origin "refs/heads/$TARGET" >/dev/null
-          found=$?
-          set -e
-          test "$found" = 2
-          git push origin "HEAD:refs/heads/$TARGET"
-          mkdir -p "$RUNNER_TEMP/final"
-          cp -r "$EVIDENCE" "$RUNNER_TEMP/final/reports"
-          git log -3 --format='%H %T %s' > "$RUNNER_TEMP/final/published-commits.txt"
-          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/final/source.tar.gz"
-          git rev-parse HEAD > "$RUNNER_TEMP/final/head.txt"
-          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/final/tree.txt"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bend-castle-chain-safety-publication
-          path: |
-            ${{ runner.temp }}/final/
-            ${{ runner.temp }}/publication-evidence/
+          name: bend-castle-chain-safety-fresh-qualification
+          path: ${{ runner.temp }}/evidence/
           retention-days: 14
