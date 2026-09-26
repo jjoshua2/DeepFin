@@ -34,9 +34,9 @@ The CPU producer takes `--plan PATH --plan-sha256 HEX --review PATH
 `APPROVED_HOST_OVERLAP_CPU_QUALIFICATION`, `runtime` =
 `/tmp/deepfin-factorial58-runtime`, `runtime_commit` =
 `502cd02e072471c901255f3fdb580d6ea7b826d0`, `root` =
-`/home/josh/chess-artifacts/operations/packed-trainer256-20260921/directory`,
+`~/chess-artifacts/operations/packed-trainer256-20260921/directory`,
 `config` = the frozen `configs/lc0_positive_control.yaml`, `preparation_receipt`
-= `/home/josh/chess-artifacts/operations/packed-trainer256-20260921/receipt.json`,
+= `~/chess-artifacts/operations/packed-trainer256-20260921/receipt.json`,
 `python` = the exact intended interpreter, `out` = a new output directory,
 `cpu_qualification_seconds` ≤ 1,800, `runtime_files` = the exact `inventory(runtime)`
 mapping, `cpu_producer_sha256` = the producer's own SHA-256, and `pins` =
