@@ -38,6 +38,7 @@ class FakeSession:
         self.providers = ["CPUExecutionProvider"]
         self.options: dict[str, dict[str, str]] = {"CPUExecutionProvider": {"arena": "1"}}
         self.calls: list[tuple[list[str], np.ndarray]] = []
+        self.fallback_disabled = False
 
     def get_inputs(self) -> list[Meta]:
         return self.inputs
@@ -51,7 +52,11 @@ class FakeSession:
     def get_provider_options(self) -> dict[str, dict[str, str]]:
         return self.options
 
+    def disable_fallback(self) -> None:
+        self.fallback_disabled = True
+
     def run(self, names: list[str], feed: dict[str, np.ndarray]) -> list[np.ndarray]:
+        assert self.fallback_disabled, "verified sessions must disable ORT provider fallback"
         assert names == ["policy", "wdl"]
         rows = feed["planes"].copy()
         self.calls.append((names, rows))
@@ -134,6 +139,7 @@ def test_verified_session_stamps_exact_batched_feeds_and_order(
     session = FakeSession()
     open_fake(monkeypatch, session)
     verified = build(model, sha)
+    assert session.fallback_disabled
     assert verified.provenance.onnx_sha256 == sha
     assert verified.provenance.providers == ("CPUExecutionProvider",)
     assert verified.provenance.input_shape == ("batch", 112, 8, 8)
@@ -276,6 +282,34 @@ def test_fixed_output_shape_is_stamped_with_fixed_input(
     fixed = build(model, sha).provenance
     assert fixed.policy_shape == (1, 1858)
     assert fixed.wdl_shape == (1, 3)
+
+
+def test_inline_model_traversal_handles_repeated_protobuf_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model.onnx"
+    sha = tiny_model(model)
+    session = FakeSession()
+    open_fake(monkeypatch, session)
+    verified = build(model, sha)
+    assert verified.provenance.onnx_sha256 == sha
+    assert session.fallback_disabled
+
+
+def test_session_without_fallback_control_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = tmp_path / "model.onnx"
+    sha = tiny_model(model)
+
+    class NoFallbackSession(FakeSession):
+        disable_fallback = None  # type: ignore[assignment]
+
+    session = NoFallbackSession()
+    open_fake(monkeypatch, session)
+    with pytest.raises(ValueError, match="cannot disable execution-provider fallback"):
+        build(model, sha)
+    assert session.calls == []
 
 
 def test_artifact_hash_and_external_data_refused_before_session(
