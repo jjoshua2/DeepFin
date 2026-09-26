@@ -9,6 +9,8 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Full-generator castling provenance](2026-09-26-bend-castle-chain.md) | Preserved five-law full-generator chain, freshly hosted-qualified with its18 controls and native suite |
+| [Mandatory castling check path](2026-09-26-bend-castle-safety.md) | Four new actual-source laws for mandatory full checking and complete filter-pair equivalence; modular175/520; semantic attacks remain separate |
 | [Actual castling emission](2026-09-26-bend-castle-emission.md) | Six actual-source output/tail, guard, route and derived update-preservation laws; current-table native producer checks; modular166/487; final legal_moves safety remains separate |
 | [Castling producer geometry](2026-09-26-bend-castle-producer-geometry.md) | Six route/mask geometry laws plus exact source-link anchors; modular160/470; list-membership/legal-soundness theorem remains open |
 | [Castling update contracts](2026-09-26-bend-castling-update.md) | Two public laws for exact raw flag-two update and conditional representation preservation; 17 controls, four native modes; modular154/470, not legal castling |

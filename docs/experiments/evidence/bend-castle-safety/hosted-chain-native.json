@@ -1,0 +1,98 @@
+{
+  "native_gate": "PASS",
+  "compiler_identity": {
+    "source_files": 84,
+    "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4"
+  },
+  "cc": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+  "fixture_count": 1062,
+  "distinct_inputs": 1062,
+  "deduplicated_candidates": 0,
+  "fixture_sha256": "30710c1ebce64763388ea2d46ff715199f348e25a4da09f63da91d7378942cab",
+  "cases_by_operation": {
+    "filter": 386,
+    "filtered_castling_suffix": 386,
+    "full_legal_moves": 290
+  },
+  "destination_attacked_castles_rejected": 4,
+  "both_castles_retained_cases": 39,
+  "complete_child_boards_per_mode": 9241,
+  "board_fields_per_mode": 175579,
+  "modes": [
+    {
+      "mode": "generic",
+      "records": 9241,
+      "castles": 1542,
+      "noncastle": 7699,
+      "output_sha256": "6dde6b9e3ad7b9ec0b4c27c4acb823bd06ec6c0d6bc2fb2d15cc0ecbecd02d10",
+      "invalid_rejections": 7
+    },
+    {
+      "mode": "portable",
+      "records": 9241,
+      "castles": 1542,
+      "noncastle": 7699,
+      "output_sha256": "6dde6b9e3ad7b9ec0b4c27c4acb823bd06ec6c0d6bc2fb2d15cc0ecbecd02d10",
+      "invalid_rejections": 7
+    },
+    {
+      "mode": "native",
+      "records": 9241,
+      "castles": 1542,
+      "noncastle": 7699,
+      "output_sha256": "6dde6b9e3ad7b9ec0b4c27c4acb823bd06ec6c0d6bc2fb2d15cc0ecbecd02d10",
+      "invalid_rejections": 7
+    },
+    {
+      "mode": "ubsan",
+      "records": 9241,
+      "castles": 1542,
+      "noncastle": 7699,
+      "output_sha256": "6dde6b9e3ad7b9ec0b4c27c4acb823bd06ec6c0d6bc2fb2d15cc0ecbecd02d10",
+      "invalid_rejections": 7
+    }
+  ],
+  "mutations": [
+    {
+      "name": "forge-scan-tail-castle",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "first_batch_index": 0,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: full legal_moves castling subset: rights-full\n+ actual - expected\n\n+ [\n+   [\n+     0,\n+     0,\n+     0,\n+     2\n+   ]\n+ ]\n- []\n",
+      "output_sha256": "43fe7e6f998cf812bc858e1ab7a91a7e60865334eb48ad4c351a5ecdb87bee04"
+    },
+    {
+      "name": "duplicate-kingside-stage",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "first_batch_index": 0,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: full legal_moves castling subset: rights-full\n+ actual - expected\n\n  [\n    [\n      4,\n      6,\n      0,\n      2\n    ],\n+   [\n+     4,\n+     6,\n+     0,\n+     2\n+   ]\n  ]\n",
+      "output_sha256": "dd283547408b869792f5008fb0d6f9b0c212d14ed1249b5defbeecb898dfdefa"
+    },
+    {
+      "name": "disable-destination-rejection",
+      "compiled_and_executed": true,
+      "rejected": true,
+      "first_batch_index": 256,
+      "diagnostic": "AssertionError [ERR_ASSERTION]: exact filter/chain ordered list: path-blocker\n+ actual - expected\n\n  [\n    [\n      4,\n      6,\n      0,\n      2\n    ],\n+   [\n+     60,\n+     58,\n+     0,\n+     2\n+   ]\n  ]\n",
+      "output_sha256": "ed10c0e6ac1ca774487e86593b714ddc9e0de119f12747b1cebad5bf7c1b7546"
+    }
+  ],
+  "source_sha256s": {
+    "Chain.bend": "8bf4ef99800c0dd3bafee049e82d1f4087c4bc64732133fc738a06e3c640a648",
+    "Filter.bend": "caf41d448c2bc0c6d487bfabd6ba0a4874dde3c08a9079a98c261982ff63f82a",
+    "LAWS.bend": "45654b2938ed5e497c74a3b91622e819c40817f00c61ef7c5153abaf21039920",
+    "Lists.bend": "a926aae4a71453a1c88c3e46ae110b2b2e97f12f5d960e456b0887cbe0ccab17",
+    "PROOF.bend": "988b47c362dec5874d172a3fdf53bf6e984e6a7451c7aaa24352440873ba3823",
+    "Scan.bend": "beb9064868c651bdb9357b110353d5e626f9b49b0fb6daa5ca73e9dccd8595fd",
+    "Sides.bend": "0e99d76cbfc8dbfb73d299e87aad279fbbc89e58257aaee345c8abe6815db88d",
+    "Spec.bend": "01a68962c025f257ed45ce7d7631c778a0d07a47cc47cd001d83419f9cc52e99",
+    "consumer.bend": "e39e4891677a9b362950830acc44f90d3cbeddcbe5e494d7eaab67b750e03211",
+    "focused.js": "dfca25e83c27e804c620ac6f174ada49466577563e8f4682bc1057d727876dab",
+    "probe.bend": "39f5c84e54ae183c6437be5c166b2e5feea333beb11da634cf5819cb15c487db",
+    "verify_native.js": "f3f01d21c1cb9de502b86cad1a599cf3479e7d0081d868b9e6e7665ca9a09459"
+  },
+  "chess_sha256": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+  "generated_c_sha256": "5d5f8ff63d73fd2a9b9248555bdfeac02a91f7c32c1523d2d4fe342bf2f0d4c2",
+  "scope": "Real current tables and actual filter_prepare, both castle_side stages and full legal_moves. Exact ordered lists for filter/suffix; independent ordered castling subset for full legal_moves, not its complete non-castling move-set correctness. All returned raw child Boards compared. No native compiler proof, general king-safety proof, historical rights or generation completeness claim."
+}

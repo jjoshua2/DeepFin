@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest P3 full-generator provenance and mandatory castling checking
+
+Hosted run **36255843579** passes both public focused gates, both four-mode native verifiers, all six compiled/executed behavioral corruptions, original compiler source/pin tests and unchanged repository lint on source `22518a81880d8746e6ca238e62c65f883474c2f3`.
+
+The saved full-generator chain is published unchanged. Four new safety laws derive source sensitivity for every generated castle with arbitrary rays, complete checked-step pair equality, and complete blocker/full-filter equality on certified castling-only lists including duplicates. Input consistency and correct rays are not extra premises of source sensitivity. The forged-empty-source counterexample remains: raw flag2 alone is insufficient.
+
+Coverage is modular175/520; both saved5/18 and new4/15 gates reran, not the full aggregate. Actual native current-table checks and unchanged lint pass. These are operational path guarantees, not semantic attack correctness, metadata/history legality or full generation completeness. See [the current record](experiments/2026-09-26-bend-castle-safety.md).
+
 ## Latest P3 actual castling output provenance
 
 Hosted run **36249795989** passes all six public laws, importing consumer, seventeen classified controls, four native producer modes, three compiled/executed actual-code corruptions, original compiler source/pin checks and unchanged repository lint on source `f3e5db1fb2e7b671fcfefaf7ea03d52b0f88a536`.

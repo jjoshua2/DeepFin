@@ -158,3 +158,10 @@ runtime, earlier accepted law, compiler input, permanent workflow, routine perft
 search, model/GPU, training or benchmark changed. No additional Python application
 responsibility moved into Bend; export, references, data/control/training and
 transitional C++/LibTorch/AOTI remain dependencies.
+
+
+## Subsequent hosted publication
+
+Hosted run **36255843579** passes both public focused gates, both four-mode native verifiers, all six compiled/executed behavioral corruptions, original compiler source/pin tests and unchanged repository lint on source `22518a81880d8746e6ca238e62c65f883474c2f3`.
+
+The exact thirteen primary chain files are now freshly source/native/lint-qualified. The earlier local-only/missing-tools state remains historical. See [the current record](2026-09-26-bend-castle-safety.md).

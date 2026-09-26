@@ -1,0 +1,181 @@
+{
+  "focused_gate": "PASS",
+  "consumer": "PASS",
+  "controls_gate": "PASS",
+  "compiler_revision": "aaeb9bc91ff0ff0b3f58dba6a9744c6607e167ae",
+  "source_files": 84,
+  "source_sha256": "d9550e30dbf17f12013aa5db89b27cf6724957fe68213c9c7e409e99f1405ef4",
+  "new_law_count": 4,
+  "new_laws": [
+    "guarded_castle_requires_full_check",
+    "generated_castle_requires_full_check",
+    "generated_castle_fast_step_equals_checked_step",
+    "guarded_castling_blocker_filter_equals_full_filter"
+  ],
+  "consumer_seconds": 8.854615202000002,
+  "consumer_raw": "All terms check.\n",
+  "negative_controls": [
+    {
+      "name": "actual-exempts-castling-source",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Required.bend",
+      "location": "guard",
+      "diagnostic_sha256": "5e4d12a069b98670e8c97bd3dddfebdb6bc181ae0709cb4891f8960743d8cea9",
+      "diagnostic_excerpt": "/../../legal_probe/Chess.get_kings(b))), U64.shln.go(Nat.min(U32.to_nat(U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 4)), 64n), U64{1, 0})), U64{0, 0}))) == True{} : Bool}\nContext:\n- b    : ../../../legal_probe/Chess.Board\n- side : Bool\n- rays : U64\n- e    : {Bool.and(Bool.not(Cmp.is_eq(U32.cmp(U32.and(../../../legal_probe/Chess.get_rights(b), U32.mul(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 1, 4), Bool.pick(U32, side, 1, 2))), 0))), Bool.and(Bool.not(Cmp.is_eq(U64.cmp(U64.and(U64.and(../../../legal_probe/Chess.get_kings(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), U64.shln.go(Nat.min(U32.to_nat(U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 4)), 64n), U64{1, 0})), U64{0, 0}))), Bool.and(Bool.not(Cmp.is_eq(U64.cmp(U64.and(U64.and(../../../legal_probe/Chess.get_rooks(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), U64.shln.go(Nat.min(U32.to_nat(U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), Bool.pick(U32, side, 7, 0))), 64n), U64{1, 0})), U64{0, 0}))), U64.is_zero(U64.and(U64.or(../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56)), 64n), U64{Bool.pick(U32, side, 96, 14), 0})))))) == True{} : Bool}\nLocation: guard\n21 |   {Chess.filter_requires(S.sensitive(b,rays),E.move(b,side)) == True{} : Bool}:\n22>|   Cover.actual_bit(Chess.color(b,Chess.get_turn(b)),Chess.get_kings(b),rays,U32.to_nat(E.src(b)),\n23 |     source_bound(U32.is_eq(Chess.get_turn(b),1)),king(b,side,e))\n"
+    },
+    {
+      "name": "actual-blocker-mask-omits-kings",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Filter.bend",
+      "location": "blockers",
+      "diagnostic_sha256": "eae2368ccdef058d9ecd95973e7957fcd1c1a5dae200ef9135a5700d5bc7cd52",
+      "diagnostic_excerpt": "urn(b), 1)), 0, 56), 4), U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 6), 0, 2} : ../../../legal_probe/Chess.Ply}>, Sigma<&1, &1, {Bool.and(Bool.not(Cmp.is_eq(U32.cmp(U32.and(../../../legal_probe/Chess.get_rights(b), U32.mul(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 1, 4), 2)), 0))), Bool.and(Bool.not(Cmp.is_eq(U64.cmp(U64.and(U64.and(../../../legal_probe/Chess.get_kings(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), U64.shln.go(Nat.min(U32.to_nat(U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 4)), 64n), U64{1, 0})), U64{0, 0}))), Bool.and(Bool.not(Cmp.is_eq(U64.cmp(U64.and(U64.and(../../../legal_probe/Chess.get_rooks(b), ../../../legal_probe/Chess.select_u64(Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), ../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b))), U64.shln.go(Nat.min(U32.to_nat(U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 0)), 64n), U64{1, 0})), U64{0, 0}))), U64.is_zero(U64.and(U64.or(../../../legal_probe/Chess.get_white(b), ../../../legal_probe/Chess.get_black(b)), U64.shln.go(Nat.min(U32.to_nat(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56)), 64n), U64{14, 0})))))) == True{} : Bool}, _ => {m == ../../../legal_probe/Chess.Ply{U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 4), U32.add(Bool.pick(U32, Cmp.is_eq(U32.cmp(../../../legal_probe/Chess.get_turn(b), 1)), 0, 56), 2), 0, 2} : ../../../legal_probe/Chess.Ply}>>, xs)\nLocation: blockers\n29 |   {Chess.filter_blockers(b,xs,(table,rays)) == Chess.filter_legal(xs,b,(table,Nil{})) : Array<U64> & List<&2,Chess.Ply>}:\n30>|   all(xs,b,rays,(table,Nil{}),good)\n31 | \n"
+    },
+    {
+      "name": "actual-fast-step-bypasses-check",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Filter.bend",
+      "location": "step",
+      "diagnostic_sha256": "75ebc2ab1c257c3b857d54226777d92adb03048eaf10fd61bb244fbb4983a066",
+      "diagnostic_excerpt": "Error:\n- expected : ../../../legal_probe/Chess.filter_fast_step(True{}, b, m, r)\n- observed : ../../../legal_probe/Chess.filter_step(b, m, r)\nContext:\n- required : Bool\n- b        : ../../../legal_probe/Chess.Board\n- m        : ../../../legal_probe/Chess.Ply\n- r        : Sigma<&1, &1, Array<U64>, _ => List<&2, ../../../legal_probe/Chess.Ply>>\n- e        : {required == True{} : Bool}\nLocation: step\n11 |   %Equal.sym(Bool,required,True{},e) : {Chess.filter_fast_step(_,b,m,r) == Chess.filter_step(b,m,r) : Array<U64> & List<&2,Chess.Ply>}\n12>|   {==}\n13 | \n"
+    },
+    {
+      "name": "bit-cover-drops-owned-king",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Cover.bend",
+      "location": "head",
+      "diagnostic_sha256": "057591c390b93e9a449862386e950cdb7c0d307f909438d5fc24e0d614ad6149",
+      "diagnostic_excerpt": "Error:\n- expected : False{}\n- observed : True{}\nContext:\n- e : {True{} == True{} : Bool}\nLocation: head\n14 |     case True{} False{} True{}: {==}\n15>|     case True{} True{} False{}: {==}\n16 |     case True{} True{} True{}: {==}\n"
+    },
+    {
+      "name": "false-empty-source-boundary",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Boundaries.bend",
+      "location": "empty_source",
+      "diagnostic_sha256": "1ec5e2a60d21d06233ef2f9803c4bbd9c2cbded612c8c9bc159615ff8c69c684",
+      "diagnostic_excerpt": "Error:\n- expected : False{}\n- observed : True{}\nLocation: empty_source\n 8 |   {Chess.filter_requires(S.sensitive(Position.empty(),U64.zero()),Chess.Ply{4,6,0,2}) == True{} : Bool}:\n 9>|   {==}\n10 | \n"
+    },
+    {
+      "name": "false-owned-king-boundary",
+      "kind": "source semantic/refinement",
+      "rejected": true,
+      "entry": "Boundaries.bend",
+      "location": "king_source",
+      "diagnostic_sha256": "52b42b541f1f9f27d6af9042c67aec9f04c3a023612c8469a27665eee47083eb",
+      "diagnostic_excerpt": "Error:\n- expected : True{}\n- observed : False{}\nLocation: king_source\n12 |   {Chess.filter_requires(S.sensitive(Position.put(5,True{},4,Position.empty()),U64.zero()),Chess.Ply{4,6,0,2}) == False{} : Bool}:\n13>|   {==}\n14 | \n"
+    },
+    {
+      "name": "missing-law",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-proof",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-laws-import",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "missing-consumer-import",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "hole",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "foreign",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "unsafe",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "symlink",
+      "kind": "manifest/import policy",
+      "rejected": true
+    },
+    {
+      "name": "warning-on-zero-exit",
+      "kind": "synthetic output-wrapper unit; not compiler execution",
+      "rejected": true
+    }
+  ],
+  "source_sha256s": {
+    "bitboard_probe/Sliders.bend": "e572bc14cacd3a7325c2b5a370230d432cc7613601900f3f724ab873881bcc20",
+    "legal_probe/Chess.bend": "3c60db6c73a215e09043e63dff41d93643c77edb7f66237e47fa851362b181f9",
+    "standalone/Position.bend": "13138eb916f7e0cd403d21ab8fe10e3d4b6b0cf9203d8c24979c375eeebf69c6",
+    "standalone/Subsets.bend": "00af8b74b29108095b56f26bbc014a39b72bd93d39effcb335d0e7c579d6a189",
+    "standalone/Tables.bend": "8453d5d7b69d2228ac3dae071c41ec79102566705008f30de1bf14db9fa54b7e",
+    "standalone/Text.bend": "5bfb6771704a04d8b84a0b8b251646d3c65ef3fd4c0e602469c71eb4aeb7104d",
+    "standalone/proofs/board/Actual.bend": "c27ac87812368df1f565cfd2f0406a28ceaf212f4f1cd93d9e3c0f4f28ac4b5b",
+    "standalone/proofs/board/Rows.bend": "5a03bfbd266f4ef984127a86a9007a5e73a79e135a43acc6e90ce47bb831a342",
+    "standalone/proofs/board/Spec.bend": "d0e60648dc7a0b803fa715c05c53ad92274657995a994996470afb7fc45f581a",
+    "standalone/proofs/board/Words.bend": "614c05950398a65d56d5c4953882ec3c7952236b71029624ccabc5db2bd94fff",
+    "standalone/proofs/castle_chain/Chain.bend": "8bf4ef99800c0dd3bafee049e82d1f4087c4bc64732133fc738a06e3c640a648",
+    "standalone/proofs/castle_chain/Filter.bend": "caf41d448c2bc0c6d487bfabd6ba0a4874dde3c08a9079a98c261982ff63f82a",
+    "standalone/proofs/castle_chain/LAWS.bend": "45654b2938ed5e497c74a3b91622e819c40817f00c61ef7c5153abaf21039920",
+    "standalone/proofs/castle_chain/Lists.bend": "a926aae4a71453a1c88c3e46ae110b2b2e97f12f5d960e456b0887cbe0ccab17",
+    "standalone/proofs/castle_chain/PROOF.bend": "988b47c362dec5874d172a3fdf53bf6e984e6a7451c7aaa24352440873ba3823",
+    "standalone/proofs/castle_chain/Scan.bend": "beb9064868c651bdb9357b110353d5e626f9b49b0fb6daa5ca73e9dccd8595fd",
+    "standalone/proofs/castle_chain/Sides.bend": "0e99d76cbfc8dbfb73d299e87aad279fbbc89e58257aaee345c8abe6815db88d",
+    "standalone/proofs/castle_chain/Spec.bend": "01a68962c025f257ed45ce7d7631c778a0d07a47cc47cd001d83419f9cc52e99",
+    "standalone/proofs/castle_chain/consumer.bend": "e39e4891677a9b362950830acc44f90d3cbeddcbe5e494d7eaab67b750e03211",
+    "standalone/proofs/castle_emission/Flow.bend": "b1e5c47b85d1fbbd27b5d7afc8eebcb0d1185cb93c97074712fa3665d678d50d",
+    "standalone/proofs/castle_emission/Fresh.bend": "ee691f0b272ea0f4f83e71afb5d41cefe2b27b4e528e9872af531d5bc6121312",
+    "standalone/proofs/castle_emission/Guard.bend": "81fa2ff45e442e6ba50fcb140bd23c8a02d42d7fc5efe87d8165f642ffe3fcfb",
+    "standalone/proofs/castle_emission/Membership.bend": "9d8e9b3a640e86eb71be7e3289b0c12a0bd8d264111d9ea75e985b9c5fca41cd",
+    "standalone/proofs/castle_emission/Spec.bend": "b07ca190932a44fbb59ce2c90bb02e02806d1da170b7cbd43c0f8c3890d135ee",
+    "standalone/proofs/castle_safety/Boundaries.bend": "fe21cf18bd7cdfd4662a0d6cab39f3807e22b9fbd395730451136c44d4c4ad65",
+    "standalone/proofs/castle_safety/Connect.bend": "b7b819ecd8f154fcf25d7f25e80f16d030b13156ce95393a6fb9de5e0695d1f1",
+    "standalone/proofs/castle_safety/Cover.bend": "910cb49517766e62c191e4579880ace1a2ce52e0c50882a2a42c61fcf5a0b5fe",
+    "standalone/proofs/castle_safety/Filter.bend": "c622390188217b96171c2fe3f31fede778af5c8e7ebe52a6532d8c922bfb95b0",
+    "standalone/proofs/castle_safety/LAWS.bend": "7349534006e1a415ca763e2535273faccb6d4a951b02f9e93b2b16f225848701",
+    "standalone/proofs/castle_safety/PROOF.bend": "ba0b0e6921b42413ac04e0fbdf6c10311bcd52596c0a2f9ce07dad9e70811064",
+    "standalone/proofs/castle_safety/Required.bend": "92ba0bb48a8b1dcfed839619b40d82767c0431eb5ccdb8a7b5f82b86b523e517",
+    "standalone/proofs/castle_safety/Spec.bend": "53f4acbf368e1c1597f015530473ab51cd8c8d946bc8d598824a5a32881fdc60",
+    "standalone/proofs/castle_safety/consumer.bend": "1c2bf0628c5f9779a39ecfaf32fbe13a2a4bd16766d914d8715435dbdd846644",
+    "standalone/proofs/castle_safety/focused.js": "9a4940f5ff713796bbcaea73e796b8f939bd8e23b67f50fc125944ae8a2dbcbd",
+    "standalone/proofs/castle_safety/probe.bend": "edf2fd7d8f63394c5a390137e00a749cfdf39368ea1bc9234174fdb6ea976081",
+    "standalone/proofs/castle_safety/verify_native.js": "a61f995971b6254295420ae684830209bce2aa78d1a3cf635588588f32f5ee11",
+    "standalone/proofs/castling/Actual.bend": "fe3cd9b30a9b1334d65116f783e55e0a3c4b4c657eb7d236c0c72422fa82b5ab",
+    "standalone/proofs/castling/Fresh.bend": "a74efdb25443e2191b00782c6a9fbf28fa3578a341b930aa7860e91595898604",
+    "standalone/proofs/castling/LAWS.bend": "128ff2fc7ff402e769088035492deead02614003063d6b1bf888fdd14a4cd9a3",
+    "standalone/proofs/castling/PROOF.bend": "2f5d581f2a9de66a40f3b0321ba9fee362c89bf0b6823cf2e272e4b91589c9eb",
+    "standalone/proofs/castling/Preserve.bend": "f6699f74ab216df9f2f0f57923796703ff1859811e5e61d83fa6de4067f8fee7",
+    "standalone/proofs/castling/Route.bend": "bdc3b458d9288576d2307238aa25c9f8732db742b9aa677653f366d2b08be7e4",
+    "standalone/proofs/decoder/Bits.bend": "62b0794004f4fcc5f4bf5d02e927fc5737d6644c436313ed6ee381a8821272be",
+    "standalone/proofs/move_update/Clear.bend": "d17e4cfa8bab35d0a97b01723c8967b554fe54204f51d1e30c2302c5e9de82c9",
+    "standalone/proofs/move_update/Core.bend": "03622895c74c320c298f5ffde8be5bb866c395be90fb51d7fd38dc0ad3987034",
+    "standalone/proofs/move_update/Ordinary.bend": "6ebcad3f9b60661ef8ba7053e5e369d94cb3820556709bb64bcbf104e499f4ad",
+    "standalone/proofs/move_update/Rows.bend": "664efb66f2afd0fe4287060ba808f34510cdac51190ee9ad6ad916527f3470e6",
+    "standalone/proofs/move_update/Selection.bend": "3e4def8b492e0136265d3da5155a4bada2d87e30b3bfef8949f2ce00c3554ee8",
+    "standalone/proofs/move_update/Spec.bend": "45dfe5836c7f0656cc8d76a63f1bf59e7c24d0c6b8d0ef9aad6808712695e901",
+    "standalone/proofs/move_update/Words.bend": "932612b475100accde1d82fdb27cd39686ce49e171ddc0fe72039f20b49de64b",
+    "standalone/proofs/ray/Algebra.bend": "9b654dc68a5bb5c1d47232e2be23200eebcbd1bfa6b071a5bee60d7c7077ab69",
+    "standalone/proofs/ray/Frame.bend": "eacd6b86d18f3ead0dd56f4843f36b134b5c61630ae16fc6147dae7be8f8ccc9",
+    "standalone/proofs/ray/Grid.bend": "c8916820c4a903a749521df71a81ec9f067dfef112fbb57f20519a8f7a34ba4a",
+    "standalone/proofs/ray/Masking.bend": "c129c86d11aeda8ccc417f57906ebddbf8607550e8fe6bc881df89254d235149",
+    "standalone/proofs/ray/Path.bend": "92595303f046ac947264f179a3489b40cd7822b674807511d846955eda6269ad",
+    "standalone/proofs/ray/Rays.bend": "f90217fa004d1c221ecf5a83c69167cb7cf3044055ab97d7cf612a5e12400054",
+    "standalone/proofs/u64/Words.bend": "6e4623460f67676a4a369dfdd1d1ccdd5998b170c57827554bc07290c1a18bba",
+    "standalone/toolchain.json": "b9ed914273ebe4e29a8230029e325a15cd2d066adfca73c8c6b2fba51ebece55",
+    "standalone/verify_compiler.js": "ada378ed8c4b28280ae213069bb8bf2bb7e43dab13bb820d927e29dc78de4141"
+  },
+  "inherited_gate_run": false,
+  "scope": "Generated castle source is always sensitive, independently of ray values. Actual fast-step complete pair equals full checked step; actual filter_blockers equals full filter on guarded-castle-only lists. No semantic attack-correctness or unrestricted full-generator legality theorem."
+}
