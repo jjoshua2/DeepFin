@@ -1,0 +1,326 @@
+{
+  "status": "PREPARED_NOT_EXECUTED",
+  "rows": 58090688,
+  "shards": 7108,
+  "cohorts": [
+    {
+      "cohort": 0,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort00.json",
+        "sha256": "697623fbde145eea79ae0382a977ad7c45958d9fcdd7607cb9f35441ab20a186"
+      },
+      "shards": 2309,
+      "rows": 18910484
+    },
+    {
+      "cohort": 1,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort01.json",
+        "sha256": "c7044d619f3180551e4448a862dee90c07e22681eca02a3ecf3f9c5f284a202b"
+      },
+      "shards": 33,
+      "rows": 263916
+    },
+    {
+      "cohort": 2,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort02.json",
+        "sha256": "52a0eccacf76b3093fe0443b96cd3a1056dc715af85f6257e1482b102732f36b"
+      },
+      "shards": 33,
+      "rows": 264629
+    },
+    {
+      "cohort": 3,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort03.json",
+        "sha256": "9869da3012cd159896f83ca8b3a77ef6481bcace5889ddb0d2e0ec1e9b44db82"
+      },
+      "shards": 32,
+      "rows": 262079
+    },
+    {
+      "cohort": 4,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort04.json",
+        "sha256": "c0f2b3d4d44f64cd3843a49f27de14cddcb1ab7f41e2a543d844fe8c6abb96fa"
+      },
+      "shards": 33,
+      "rows": 264297
+    },
+    {
+      "cohort": 5,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort05.json",
+        "sha256": "88ded3c84cd83698a63fa29c5682ae2014e15282e10cda745601a5a8e87b1595"
+      },
+      "shards": 246,
+      "rows": 2013019
+    },
+    {
+      "cohort": 6,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort06.json",
+        "sha256": "ebe249212daa960770f7c14dd83fe39b397963f295ad6e1613099cf2ee46d04c"
+      },
+      "shards": 246,
+      "rows": 2008952
+    },
+    {
+      "cohort": 7,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort07.json",
+        "sha256": "79849f53209dd8aa407a7a638252559e5c7c4ee9840dd416533f211ebec704d5"
+      },
+      "shards": 97,
+      "rows": 790282
+    },
+    {
+      "cohort": 8,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort08.json",
+        "sha256": "66700ce27edd211414e29861854e76fbb40f7cb0033d047191bc4df8e753a7c7"
+      },
+      "shards": 97,
+      "rows": 792643
+    },
+    {
+      "cohort": 9,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort09.json",
+        "sha256": "923d49533a3b7df988899d66ffef876eca655e606da3b5fcf0eb9593cbaa033f"
+      },
+      "shards": 113,
+      "rows": 921494
+    },
+    {
+      "cohort": 10,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort10.json",
+        "sha256": "4bdc601b10ef7d3e4e984bf3bfb869ef3eac65c26273b3624270154038d57b00"
+      },
+      "shards": 113,
+      "rows": 925311
+    },
+    {
+      "cohort": 11,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort11.json",
+        "sha256": "42865f3adbe82e4321fc8390595e456a7a471543df34e4dd9713bd92e9836e86"
+      },
+      "shards": 113,
+      "rows": 923911
+    },
+    {
+      "cohort": 12,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort12.json",
+        "sha256": "89df7f80d73c61d531abc1a7dfd29a82a9d6aded93a0f5e8dcf598c94a4f0004"
+      },
+      "shards": 113,
+      "rows": 921653
+    },
+    {
+      "cohort": 13,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort13.json",
+        "sha256": "9dba0572eb48c919c04e3234a6b9f2d7a60d7cc93ed8f6f3fd850e22f97fda0d"
+      },
+      "shards": 65,
+      "rows": 527604
+    },
+    {
+      "cohort": 14,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort14.json",
+        "sha256": "eb53c2b02c307f6001951a5995a7b899d09cb755ae53c12ab446d033a5171ecf"
+      },
+      "shards": 65,
+      "rows": 525414
+    },
+    {
+      "cohort": 15,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort15.json",
+        "sha256": "fc2c35ff13d6030052632767a62168f816aaa26cbcb6de53f1fc434f1f562d4b"
+      },
+      "shards": 65,
+      "rows": 528983
+    },
+    {
+      "cohort": 16,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort16.json",
+        "sha256": "cace6358879be3b1c9bd241cc9bb6d4058988bb89a0a0044d7326fc29e97e18a"
+      },
+      "shards": 65,
+      "rows": 528343
+    },
+    {
+      "cohort": 17,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort17.json",
+        "sha256": "845916c89f003187f71ae80043713f1662f7882b314eeb2be0ee144c7250cc97"
+      },
+      "shards": 112,
+      "rows": 914832
+    },
+    {
+      "cohort": 18,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort18.json",
+        "sha256": "6151df1442f231ad600ca4d93d7a7fc645e699a949aaecefd02df5b0a6ea0a0f"
+      },
+      "shards": 112,
+      "rows": 915453
+    },
+    {
+      "cohort": 19,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort19.json",
+        "sha256": "3cbc75e3e1f05ca1021a9a5725eb8e6a55ebd517c247ba1c60cc9f0c1fa791ee"
+      },
+      "shards": 129,
+      "rows": 1054312
+    },
+    {
+      "cohort": 20,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort20.json",
+        "sha256": "f794f1e12706fcb890a35cb28ce9607b0131e5a974e8d189217162156d691ac4"
+      },
+      "shards": 130,
+      "rows": 1056966
+    },
+    {
+      "cohort": 21,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort21.json",
+        "sha256": "6abf1f4471de84514d64a5976e63a6fc2dc3d1bc9d94b0e5c4f90455bd06474a"
+      },
+      "shards": 123,
+      "rows": 1006190
+    },
+    {
+      "cohort": 22,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort22.json",
+        "sha256": "40f6058629e76d6d485ee395ed9bedb8d13a4fc0db3d70b9c9dec76f98910335"
+      },
+      "shards": 63,
+      "rows": 511735
+    },
+    {
+      "cohort": 23,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort23.json",
+        "sha256": "76a968941c1311dca1d848b1b5b306205303c578361589b8489a544959248dcb"
+      },
+      "shards": 387,
+      "rows": 3165724
+    },
+    {
+      "cohort": 24,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort24.json",
+        "sha256": "12e663ddeebb4a0c46e63461f85e5b71bf28605610343b5e08aba9f9965874d3"
+      },
+      "shards": 129,
+      "rows": 1053702
+    },
+    {
+      "cohort": 25,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort25.json",
+        "sha256": "c1bca98dcd2cc8cd481c19c59694d05472bec401327e6e709e47f15186d13c44"
+      },
+      "shards": 387,
+      "rows": 3165952
+    },
+    {
+      "cohort": 26,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort26.json",
+        "sha256": "244a8cdc91247208cc6dddb1ba3a23e246abce75e5d7e13f3787195437ea2a18"
+      },
+      "shards": 129,
+      "rows": 1054695
+    },
+    {
+      "cohort": 27,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort27.json",
+        "sha256": "10238a2ac2c6c1a4fa7436012bbbbf53ff27580bdfd24ed3c736cf4c3f147e2e"
+      },
+      "shards": 387,
+      "rows": 3165245
+    },
+    {
+      "cohort": 28,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort28.json",
+        "sha256": "8b77c9ca938da4299c3bce89185790f1472f088e7af2af7eeec7557b2761ad3e"
+      },
+      "shards": 129,
+      "rows": 1053748
+    },
+    {
+      "cohort": 29,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort29.json",
+        "sha256": "15e20d3e36c7142bf8cf9113a0bccad59927a8b75c1cce205b3c2f37cfe23537"
+      },
+      "shards": 97,
+      "rows": 791786
+    },
+    {
+      "cohort": 30,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort30.json",
+        "sha256": "4ac87280b0b9a28295ff1814e9d1eea49e33b957174c50818ce6b9b635c761b5"
+      },
+      "shards": 33,
+      "rows": 264715
+    },
+    {
+      "cohort": 31,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort31.json",
+        "sha256": "53b0faffd4e296ad54bbd123bf87082aeee020b12046e332d01e51dc04f7a8fa"
+      },
+      "shards": 387,
+      "rows": 3166068
+    },
+    {
+      "cohort": 32,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort32.json",
+        "sha256": "fe879b258d41205571c4ffbab591b026facb5acfba0d67bfd4ce72bdc97a4b9f"
+      },
+      "shards": 129,
+      "rows": 1053910
+    },
+    {
+      "cohort": 33,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort33.json",
+        "sha256": "f7caba87351c92ac524ce319ed01ede5e9f43f864fbdd70bd5f9b0e76b8cc88b"
+      },
+      "shards": 387,
+      "rows": 3165618
+    },
+    {
+      "cohort": 34,
+      "manifest": {
+        "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-preparation-20260921/cohort34.json",
+        "sha256": "2fbaec11cfea126d9fab81fcb31eeca15daa0cd6d80f6afdf9f8a7ea1006e23c"
+      },
+      "shards": 20,
+      "rows": 157023
+    }
+  ],
+  "readiness": {
+    "path": "/home/josh/chess-artifacts/operations/factorial58-sffree-readiness-20260921/receipt.json",
+    "sha256": "6a7eedeb34dd9b47416b0f195ee5ead4ebabcd5712daa3bae3a78ef67acf027a"
+  }
+}
