@@ -1,0 +1,30 @@
+name: Recover castle chain safety parent
+'on':
+  push:
+    branches: [feat/recover-castle-chain-safety-20260926]
+    paths: [.github/workflows/recover-castle-chain-safety.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b3bbfd5c38f8647cece0ce1d4d541e26fbb6e29f
+          persist-credentials: false
+      - name: Archive exact parent
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/parent
+          git archive --format=tar HEAD | gzip > /tmp/parent/source.tar.gz
+          git cat-file commit HEAD > /tmp/parent/commit.raw
+          git rev-parse HEAD^{tree} > /tmp/parent/tree.txt
+          cd /tmp/parent
+          sha256sum source.tar.gz commit.raw > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: castle-chain-safety-parent
+          path: /tmp/parent/
+          retention-days: 7
