@@ -1,0 +1,66 @@
+{
+  "status": "EVENING_CONTINUATION_RUNNING",
+  "completed_previous_blocks": [
+    "02",
+    "03",
+    "04",
+    "05",
+    "06",
+    "07"
+  ],
+  "qualified_rows_this_reboot": 4334519,
+  "failure": "NVML reported GPU access blocked by operating system; matching dxg transport errors; current host queries recovered. Not evidence of a VRAM limit breach.",
+  "adoption": {
+    "status": "QUEUED",
+    "unix": 1789597602.2530422,
+    "id": "ceres_evening_4cohorts_3956842",
+    "rows": 3956842,
+    "expected_hours": 7.79,
+    "cap_hours": 10,
+    "batch_plan_sha256": "673b2c995cae1b097c3943e10bc93c36aef9503b564d7fb7b204111d222d70f1",
+    "review": "Independent plan checks passed; parent fresh NVML success and no orphan; recovered OS transport failure, guards unchanged."
+  },
+  "supervisor": {
+    "pid": 35784,
+    "started_unix": 1789597602.2539032,
+    "argv": [
+      "/bin/bash",
+      "/tmp/deepfin-bootstrap-operator/scripts/supervise_bootstrap_queue.sh",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/autonomous_loop_20260914",
+      "/tmp/deepfin-ordered-arena-lookahead-runtime"
+    ]
+  },
+  "last_match": {
+    "id": "ceresv25_vs_b100_512_s7",
+    "result": {
+      "elo": 33.35,
+      "elo_ci95": [
+        6.08,
+        61.04
+      ],
+      "score": 0.54785,
+      "pentanomial": {
+        "WW": 52,
+        "WD_DW": 49,
+        "DD_WL": 83,
+        "LD_DL": 40,
+        "LL": 32
+      },
+      "pairs": 256,
+      "games": 512,
+      "duration_s": 1943.0,
+      "truncated": false,
+      "seed": 20262062
+    },
+    "out": "/home/josh/projects/chess/scratchpad/bt4_joint20/B100CeresV25_B100_fixed400_512_run02"
+  },
+  "raw_closed_rows": {
+    "run06": 48306029,
+    "run07": 14676578
+  },
+  "refs": {
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_continuation_20260916_evening/batch.plan.json": "673b2c995cae1b097c3943e10bc93c36aef9503b564d7fb7b204111d222d70f1",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_continuation_20260916_evening/registered_batch.json": "a9db523f68c0b70a0af88585d5d353b56ee356444a06daf4f977bed958eaee94",
+    "/home/josh/projects/chess/scratchpad/bt4_joint20/takeover_20260916/ceres_continuation_20260916_evening/independent_review.json": "8b2fc434917834dbf4dffc67d05efffa0080661412744c8d40f4d37ff6fc489a"
+  }
+}
