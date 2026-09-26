@@ -52,6 +52,16 @@ EXTENSION_SPECS: tuple[ExtensionSpec, ...] = (
         ),
     ),
     ExtensionSpec(
+        "chess_anti_engine.encoding._perft_ext",
+        (
+            _SETUP_DEP,
+            "chess_anti_engine/encoding/_perft_ext.c",
+            "chess_anti_engine/encoding/_cboard_impl.h",
+            "chess_anti_engine/encoding/_bitboard_planes_impl.h",
+            "chess_anti_engine/encoding/_slider_attacks_impl.h",
+        ),
+    ),
+    ExtensionSpec(
         "chess_anti_engine.mcts._mcts_tree",
         (
             _SETUP_DEP,
