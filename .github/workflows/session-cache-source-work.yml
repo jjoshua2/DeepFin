@@ -1,0 +1,27 @@
+name: Session cache source snapshot
+on:
+  push:
+    branches: [work/bend-session-cache-20260926]
+    paths: [.github/workflows/session-cache-source-work.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e58c821db1be6e2d1afe288201c2e8e3c8a442f7
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          git rev-parse HEAD > artifacts/commit.txt
+          git archive HEAD | gzip > artifacts/source.tar.gz
+          sha256sum artifacts/source.tar.gz > artifacts/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: session-cache-parent
+          path: artifacts/
+          retention-days: 7
