@@ -1,5 +1,27 @@
 # Bend migration and proof inventory
 
+## Latest P3 full-generator castling provenance (local)
+
+Five public source laws now extend actual ordinary-scan tag exclusion and full/fast
+filter member provenance through both castling-side calls into `Chess.legal_moves`.
+A flag-2 member of the initialized full generator has an exact guarded side certificate;
+applying it to a consistent input Board preserves representation. The caller no longer
+supplies absence from an arbitrary input tail. The general suffix law separately
+preserves an old-member alternative for arbitrary lists.
+
+The final local focused gate passed all five laws and 18 controls. Four native modes
+passed 1,062 requests, exact filter/suffix lists, the ordered castling subset of full
+legal_moves, and 9,241 complete child Boards per mode. No independent oracle for the
+whole noncastling move set is claimed. Four destination-only attacked castles are
+rejected by the actual final generator. Original compiler source/pin gates passed.
+
+Qualification is modular171/505 with exact parent166/487 retained, not a full wrapper
+execution. Whole-repository lint failed because its three tools are missing. No new
+hosted qualification or remote publication is claimed. Semantic king safety, attack
+correctness, rights history, metadata validity and whole legal-move soundness/completeness
+remain distinct. See [the dated record](experiments/2026-09-26-bend-castle-chain.md).
+
+
 ## Latest P3 actual castling output provenance
 
 Hosted run **36249795989** passes all six public laws, importing consumer, seventeen classified controls, four native producer modes, three compiled/executed actual-code corruptions, original compiler source/pin checks and unchanged repository lint on source `f3e5db1fb2e7b671fcfefaf7ea03d52b0f88a536`.
