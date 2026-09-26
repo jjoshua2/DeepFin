@@ -28,6 +28,12 @@ import numpy as np
 _DEFAULT_READ_TIMEOUT_S = 60.0
 
 
+def _retention_flag(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError("retain_syzygy_on_new_game must be a bool")
+    return value
+
+
 def _stockfish_child_nice(current_nice: int, configured_nice: int) -> int:
     """Return the absolute child nice value without raising process priority."""
     target_nice = min(19, max(0, int(configured_nice)))
@@ -411,7 +417,10 @@ class StockfishUCI:
         # value is unchanged either way; what changes is that the call site can
         # be written with named arguments.
         read_timeout_s: float | None = None,
+        retain_syzygy_on_new_game: bool = False,
     ):
+        self.retain_syzygy_on_new_game = _retention_flag(retain_syzygy_on_new_game)
+        self.retain_syzygy_option_sent = False
         self.path = path
         self.nodes = int(nodes)
         self.multipv = int(multipv)
@@ -523,6 +532,9 @@ class StockfishUCI:
                 self._send(f"setoption name SyzygyProbeLimit value {self.syzygy_probe_limit}")
             if self.multipv > 1:
                 self._send(f"setoption name MultiPV value {self.multipv}")
+            if self.retain_syzygy_on_new_game:
+                self._send("setoption name SyzygyRetainOnNewGame value true")
+                self.retain_syzygy_option_sent = True
             self._send("isready")
             self._wait_for("readyok")
             self.syzygy_ready_after_requests = self.syzygy_50_move_rule is not None
@@ -686,12 +698,24 @@ class StockfishUCI:
             line = self._readline_with_deadline(deadline).strip()
             if line == "uciok":
                 break
-            for name in ("SyzygyPath", "Syzygy50MoveRule", "SyzygyProbeLimit"):
+            for name in (
+                "SyzygyPath", "Syzygy50MoveRule", "SyzygyProbeLimit",
+                "SyzygyRetainOnNewGame",
+            ):
                 if line.startswith(f"option name {name} "):
                     if name in found and self.syzygy_50_move_rule is not None:
                         raise RuntimeError(f"duplicate UCI {name} option")
                     found[name] = line
         self.syzygy_option_capabilities = found
+        if self.retain_syzygy_on_new_game:
+            retain = found.get("SyzygyRetainOnNewGame", "")
+            if re.fullmatch(
+                r"option name SyzygyRetainOnNewGame type check default (?:true|false)",
+                retain,
+            ) is None:
+                raise ValueError(
+                    "engine does not advertise SyzygyRetainOnNewGame as a check option"
+                )
         if self.syzygy_50_move_rule is None:
             return
         path = found.get("SyzygyPath", "")
