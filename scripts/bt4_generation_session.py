@@ -90,7 +90,7 @@ def _reject_external_data(path: Path) -> None:
         for field, value in message.ListFields():
             if field.type != field.TYPE_MESSAGE:
                 continue
-            if field.label == field.LABEL_REPEATED:
+            if field.is_repeated:
                 for child in value:
                     yield from tensors(child)
             else:
