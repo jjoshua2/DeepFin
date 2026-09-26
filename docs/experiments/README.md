@@ -9,6 +9,7 @@ For future bootstrap choices, see the [adaptive decision policy](2026-09-08-boot
 
 | Record | Scope |
 | --- | --- |
+| [Castling through the final legal filter](2026-09-26-bend-castle-filter.md) | Six source contracts compose scan, both castling sides and final filters into actual legal_moves provenance and guarded update preservation; modular172/504; independent king-safety semantics remain separate |
 | [Actual castling emission](2026-09-26-bend-castle-emission.md) | Six actual-source output/tail, guard, route and derived update-preservation laws; current-table native producer checks; modular166/487; final legal_moves safety remains separate |
 | [Castling producer geometry](2026-09-26-bend-castle-producer-geometry.md) | Six route/mask geometry laws plus exact source-link anchors; modular160/470; list-membership/legal-soundness theorem remains open |
 | [Castling update contracts](2026-09-26-bend-castling-update.md) | Two public laws for exact raw flag-two update and conditional representation preservation; 17 controls, four native modes; modular154/470, not legal castling |

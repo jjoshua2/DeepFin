@@ -1,5 +1,13 @@
 # Bend migration and proof inventory
 
+## Latest P3 full legal-list castling provenance
+
+Hosted run **36253137463** passes all six public laws, importing consumer, seventeen controls, all four native modes and three actual-code corruptions, original compiler source/pin checks and unchanged whole-repository lint on source `a6a7453e595b5bb9ca7b3cff34d95623a705c6db`.
+
+Every flag-two member of actual Chess.legal_moves now has a true king-side or queen-side producer guard and the exact complete route Ply. The ordinary scan is proved not to manufacture flag two; both producer calls and full/fast final filters preserve the classification. Therefore the theorem needs no assumed absence from an intermediate caller list. On a consistent input Board, applying that member preserves representation by the existing guard-derived castling update result.
+
+The source proof retains arbitrary actual affine tables and raw metadata. It is not independent attack correctness or universal justification of fast-path king-safety bypass. Native actual current tables and complete legal lists pass402 requests across four modes, including four destination-attacked castles correctly removed after filtering. Modular172/504 retains exact166/487 parent evidence; no full aggregate was executed. See [the dated readout](experiments/2026-09-26-bend-castle-filter.md). No additional application responsibility moved into Bend.
+
 ## Latest P3 actual castling output provenance
 
 Hosted run **36249795989** passes all six public laws, importing consumer, seventeen classified controls, four native producer modes, three compiled/executed actual-code corruptions, original compiler source/pin checks and unchanged repository lint on source `f3e5db1fb2e7b671fcfefaf7ea03d52b0f88a536`.

@@ -1,0 +1,21 @@
+{
+  "qualification": "PASS",
+  "run": "36253137463",
+  "source": "a6a7453e595b5bb9ca7b3cff34d95623a705c6db",
+  "source_tree": "af7e8858e9c6a0e41e609b00f37de32b417081af",
+  "new_laws": 6,
+  "new_controls": 17,
+  "control_categories": {
+    "source semantic/refinement": 8,
+    "manifest/import policy": 8,
+    "synthetic output-wrapper unit; not compiler execution": 1
+  },
+  "retained_parent_laws": 166,
+  "retained_parent_controls": 487,
+  "modular_laws": 172,
+  "modular_controls": 504,
+  "combined_wrapper_executed": false,
+  "native_source_entries": 524,
+  "independent_review": false,
+  "claim": "Every flag-two member of actual complete legal_moves has either exact guarded castling route and preserves a consistent input Board. No assumed absence from scan; not semantic attack or general move-generation soundness/completeness."
+}

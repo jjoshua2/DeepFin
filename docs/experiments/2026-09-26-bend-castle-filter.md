@@ -56,3 +56,28 @@ No source theorem claims independent semantic attack correctness. Freshness and 
 input Board partition are derived/reused exactly within the stated domains. The
 original source/lint receipts and all intermediate failures are preserved in the
 conversation review package; hosted status is still pending.
+
+
+## Completed hosted qualification
+
+Hosted run **36253137463** passes all six public laws, importing consumer, seventeen controls, all four native modes and three actual-code corruptions, original compiler source/pin checks and unchanged whole-repository lint on source `a6a7453e595b5bb9ca7b3cff34d95623a705c6db`.
+
+The actual full legal_moves result now has a flag-two provenance theorem: actual ordinary scanning produces no castling tags, both actual castle_side calls attach their guards/routes, and both final-filter paths preserve that classification. A flag-two result member therefore has a certified route without a caller-supplied absence-from-tail premise. Input Board consistency plus the prior guarded-update theorem yields complete actual child-Board representation consistency.
+
+Continuation-based dependent proofs thread real affine tables once through scan, producer and filter operations. They do not clone tables or assume equality between separate executions. All actual output branches are connected to their imported implementation. The generic filter theorem preserves arbitrary per-Ply predicates; it does not prove that an ordinary fast-path safety bypass is semantically justified.
+
+The focused command executes all six laws and seventeen controls together. Eight controls require ordinary expected/observed semantic/refinement failures at specified locations; eight enforce manifests/import safety; one synthetic warning-output unit is not another compiler execution. Crashes, missing imports, affine/parser errors and timeouts are not counted as semantic rejection.
+
+The native probe constructs actual current Tables.build and checks three stages per request: both castling sides with selected old tails, those sides plus the final filter, and actual complete legal_moves. Each mode passes402 distinct requests,11,699 complete child Boards and222,281 U32 Board-field comparisons, including292 full-list castling occurrences and seven malformed requests. Full move ordering, raw metadata and all eight child bitboards are compared against independent square sets and geometric movement/attacks.
+
+Four destination-only attack examples retain the castle before filtering but remove it in both final-filter and complete-legal stages. An independent slow king-check oracle agrees with the external optimized reference on all finite full-list fixtures. These are actual executable checks, not universal semantic attack proofs. Fixtures have representation consistency and one king per color, but are not asserted reachable; modes repeat fixtures rather than disjoint games. Arbitrary inherited tail children are compared, not certified legal or consistent.
+
+Actual-code mutations make scan manufacture flag two, make the fast filter invent a move, or bypass the final checked filter. All compile and execute before independent wrong-value rejection. The third also fails the exact continuation refinement at Filter.after_then. The earlier local expectation that this consumer would still pass was a harness mistake: exact branching refinement is stronger than the abstract predicate-preservation consequence. That failure is retained; no proof was changed to force the expectation.
+
+All511 inherited source-manifest entries remain unchanged; all524 candidate entries match before evidence publication. Retaining exact166-law/487-control parent receipts yields modular172 laws/504 controls with this newly executed6/17 gate. The complete172-law wrapper was not run. The two-castle source example uses a small arbitrary zero table only as a nonvacuity witness, not a correct attack table.
+
+Original compiler16-laws/seven-controls and all12 pin tests pass. Hosted Bun1.4.2 uses system Clang only for native probes; locked Python3.13/uv0.12.10 CPU dependencies use the normal extension compiler. Unchanged Ruff/Basedpyright/Vulture passes, resolving the local missing-tools gap without relabeling its failed receipt. Earlier affine/dependent-binding/template failures remain historical and were resolved without editing production or compiler sources.
+
+Only documentation,index and evidence follow source checking. Self-review only. No earlier contract, production runtime, compiler input, permanent workflow, routine perft, search, model/GPU, training or benchmark changed. No additional Python application responsibility moved into Bend. Checker/Base,native lowering/storage,ABI,toolchain,libraries,OS and hardware remain trust boundaries; existing strict-TypeScript,snapshot-lowering and closed-builder limitations remain.
+
+Next decisive P3 work is independent semantic start/transit/destination attack correctness and justification of the ordinary fast-filter bypass, followed by legal metadata and general move-generation soundness/completeness. The castling full-list provenance and guard-derived representation-preservation connection is now established, not still wholly open.
