@@ -1,0 +1,152 @@
+{
+  "status": "PASS_ACTUAL_OPERATOR_AND_STORAGE_ONLY_DIFF",
+  "unix": 1789843093.5355613,
+  "operator": "/tmp/deepfin-disk-pressure-operator/bootstrap_experiment_operator.py",
+  "operator_sha256": "2e24cf88752bf1280b4c9f7b4fe1c59f5a7d73d0b8d1b2226b159a2d8e4669e0",
+  "checks": [
+    {
+      "group": "training",
+      "name": "A",
+      "changed_json_paths": [
+        "/out",
+        "/command_prefix/6",
+        "/initial_anchor"
+      ],
+      "scientific_settings_unchanged": true
+    },
+    {
+      "group": "training",
+      "name": "B",
+      "changed_json_paths": [
+        "/out",
+        "/command_prefix/6",
+        "/initial_anchor"
+      ],
+      "scientific_settings_unchanged": true
+    },
+    {
+      "group": "training",
+      "name": "C",
+      "changed_json_paths": [
+        "/out",
+        "/command_prefix/6",
+        "/initial_anchor"
+      ],
+      "scientific_settings_unchanged": true
+    },
+    {
+      "group": "training",
+      "name": "D",
+      "changed_json_paths": [
+        "/out",
+        "/command_prefix/6",
+        "/initial_anchor"
+      ],
+      "scientific_settings_unchanged": true
+    },
+    {
+      "group": "arenas",
+      "name": "B_A",
+      "changed_json_paths": [
+        "/command/4",
+        "/command/6",
+        "/donors/candidate/plan_sha256",
+        "/donors/candidate/checkpoint",
+        "/donors/reference/plan_sha256",
+        "/donors/reference/checkpoint"
+      ],
+      "scientific_settings_unchanged": true
+    },
+    {
+      "group": "arenas",
+      "name": "C_A",
+      "changed_json_paths": [
+        "/command/4",
+        "/command/6",
+        "/donors/candidate/plan_sha256",
+        "/donors/candidate/checkpoint",
+        "/donors/reference/plan_sha256",
+        "/donors/reference/checkpoint"
+      ],
+      "scientific_settings_unchanged": true
+    },
+    {
+      "group": "arenas",
+      "name": "D_C",
+      "changed_json_paths": [
+        "/command/4",
+        "/command/6",
+        "/donors/candidate/plan_sha256",
+        "/donors/candidate/checkpoint",
+        "/donors/reference/plan_sha256",
+        "/donors/reference/checkpoint"
+      ],
+      "scientific_settings_unchanged": true
+    },
+    {
+      "group": "arenas",
+      "name": "D_B",
+      "changed_json_paths": [
+        "/command/4",
+        "/command/6",
+        "/donors/candidate/plan_sha256",
+        "/donors/candidate/checkpoint",
+        "/donors/reference/plan_sha256",
+        "/donors/reference/checkpoint"
+      ],
+      "scientific_settings_unchanged": true
+    }
+  ],
+  "queue_snapshot_sha256": "4d88b27626c209198e07073594a9408cf1d36b1f63f06c2f39180d737ab895fc",
+  "queue_items": [
+    {
+      "id": "factorial58_fresh_A",
+      "status": "queued",
+      "old_command_sha256": "b0344facf6a1a4d4c97356629b5ad2ed9053f892d415ad7466dda70f2db2f708",
+      "new_command_sha256": "a4a5b3b8dc1f84f9f4da4dd12ef887a1fb0bed615423e83ddba6584af9706206"
+    },
+    {
+      "id": "factorial58_fresh_B",
+      "status": "queued",
+      "old_command_sha256": "d7c1004a036d8934832ee481e63eeea0698c0c45e52a2b3e5d57768b3de94dbc",
+      "new_command_sha256": "02a4194bbb3161267166a7d82801c508ecf17de1ecf7831dc8829b70ba5d44c7"
+    },
+    {
+      "id": "factorial58_fresh_C",
+      "status": "queued",
+      "old_command_sha256": "cb24dec72207414ebcd1a89638637350aee2843f2139be2599d6762cf3d4a666",
+      "new_command_sha256": "e87785198d4d77eac30dbdff3946a94b80ac1f73acaae936c8c2ef47d01fd5b1"
+    },
+    {
+      "id": "factorial58_fresh_D",
+      "status": "queued",
+      "old_command_sha256": "def804a1a17a26c28322928361ca942f8982f38d9a8ebed9c9fec2746a958fd5",
+      "new_command_sha256": "04cc52756f3a9967eba5a5dc4fb8adc3dc388217cbd7b07fc74f173580927aff"
+    },
+    {
+      "id": "factorial58_B_A_400sims",
+      "status": "queued",
+      "old_command_sha256": "9008ca46b006f67e1428f9dd400194d09543f140817ae2f4ac6ae6c9f45850ca",
+      "new_command_sha256": "f7eb8a7c50065a5bd82ea8effd4f806a7da6f4941608b44678e4b39518eda54f"
+    },
+    {
+      "id": "factorial58_C_A_400sims",
+      "status": "queued",
+      "old_command_sha256": "346d3edd8badc6d71cc4b8d587ac6b5251159d788e74fdd5e38724472d9f250f",
+      "new_command_sha256": "bdb268ea9f0472e8930eda1598a4e51378276aa069a458a3c6442e240e2bc623"
+    },
+    {
+      "id": "factorial58_D_C_400sims",
+      "status": "queued",
+      "old_command_sha256": "647c59e3417b47ee322cdb2e927def5b13bb8eaa577038faf4b6fc0d009044be",
+      "new_command_sha256": "682dc2bdeae5d1a45f1a4cb3b822a26e0adc5e33c8948566a54cafdf62e9d985"
+    },
+    {
+      "id": "factorial58_D_B_400sims",
+      "status": "queued",
+      "old_command_sha256": "3cbce635f547ec1d07c5457607e55a2d39dcb4b7eff297c80c0721a087e5d110",
+      "new_command_sha256": "dd55402134b26c47ee3a0e22a3945cf5b9610d5e29f98875f25cac47a2536674"
+    }
+  ],
+  "scope": "No live queue mutation. Eight staged descriptors pass actual disk-pressure operator registered_spec; validation-only plan paths point at staged bytes. Root must reread queue under lock."
+}

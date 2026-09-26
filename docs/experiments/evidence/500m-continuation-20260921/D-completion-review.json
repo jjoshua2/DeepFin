@@ -1,0 +1,121 @@
+{
+  "status": "PASS_INDEPENDENT_D_COMPLETION_AND_D_C_BINDING_AUDIT",
+  "observed_utc": "2026-09-22T02:13:38.650978+00:00",
+  "D": {
+    "completion": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/complete.json",
+      "sha256": "4c1a64422aafd0891dec670e42147f8f6cd8bb6ae4fe403059d5b351ec5a2845"
+    },
+    "scheduler_terminal": {
+      "path": "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/training/D/scheduler_run/parent_outer_terminal.json",
+      "sha256": "87da7dbf803b2b9eae9829e67be41a7b23cc64ff4821374500081e78e6fdbdd3",
+      "returncode": 0
+    },
+    "plan_sha256": "5bfaaa0f0f0ffd3aced5818fea805d80175a9ee4f0b4942b1122aa09d2bb6324",
+    "registered_command_sha256": "04cc52756f3a9967eba5a5dc4fb8adc3dc388217cbd7b07fc74f173580927aff",
+    "rows": 58090688,
+    "updates": 113459,
+    "batch_size": 512,
+    "seed": 121,
+    "epochs": 1,
+    "schedule_plan_and_realized_sha256": "e73fc32c2c8ea693ee1542097422e4f72c12ca657c38907069663fea03463bbc",
+    "same_game_repeats_max": 0,
+    "summary": {
+      "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/summary.json",
+      "sha256": "a004f281b2bec41d056bca3d5ec56d8626ccca7c8fdb6e439dfc8f3cde53b405"
+    },
+    "checkpoint": {
+      "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/checkpoint.pt",
+      "sha256": "2aef77229a1aad76ab02a4d640ddfe1d394ee30f329c04bcaa8547a37522c7f2"
+    },
+    "initial_state": {
+      "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/initial_state.json",
+      "sha256": "4a580089ea387b58c3281862cc9aee79219ed33eec1ccf373ea3b67f71af3c59"
+    },
+    "initial_tensor_sha256": "9f367063cf16f82f3fe82f726a2b0e39ab262d91f8f9a640e6b06cafc7c8a4bf",
+    "initial_matches_A_anchor": true,
+    "config": {
+      "path": "/tmp/deepfin-factorial58-runtime/configs/lc0_positive_control.yaml",
+      "sha256": "413dbea9dcde2774eafc2fde706e639fef9e944e301717b938b39b4729633de2"
+    },
+    "runtime_head": "502cd02e072471c901255f3fdb580d6ea7b826d0",
+    "runtime_and_operator_pins_checked": 1089,
+    "active_seconds": 46768.09384598903,
+    "disk_pause_seconds": 0.0
+  },
+  "D_C": {
+    "state": "RUNNING_NO_ARENA_RESULT",
+    "registered_plan_sha256": "84104dc59aa39310d70a25e4544ae9af7180c1eeae7dc3c9faf58351fbd3b891",
+    "bound_inputs_sha256": "444d2a050e232c9af4fc2cc4a9505ac7eca578c22dcaaae66909871945e82157",
+    "candidate_checkpoint": {
+      "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_D/checkpoint.pt",
+      "sha256": "2aef77229a1aad76ab02a4d640ddfe1d394ee30f329c04bcaa8547a37522c7f2"
+    },
+    "reference_checkpoint": {
+      "path": "/home/josh/chess-artifacts/runs/factorial58_20260919_C/checkpoint.pt",
+      "sha256": "cdac8e59bd29ec45ac670317260ee643c0264502036d2785a2752e26e9735c67"
+    },
+    "started_after_D_terminal": true,
+    "games_registered": 256,
+    "sims_registered": 400,
+    "seed": 20260920,
+    "outer_pid": 1910303,
+    "arena_pid": 1910358,
+    "live_argv": [
+      "/usr/bin/python3",
+      "-m",
+      "scripts.arena_standard",
+      "--candidate",
+      "/home/josh/chess-artifacts/runs/factorial58_20260919_D/checkpoint.pt",
+      "--reference",
+      "/home/josh/chess-artifacts/runs/factorial58_20260919_C/checkpoint.pt",
+      "--games",
+      "256",
+      "--mode",
+      "matched_sims",
+      "--sims",
+      "400",
+      "--seed",
+      "20260920",
+      "--openings",
+      "/home/josh/projects/chess/data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip",
+      "--opening-plies",
+      "16",
+      "--max-plies",
+      "300",
+      "--temperature",
+      "0.1",
+      "--search-shape",
+      "training",
+      "--cand-gumbel",
+      "policy_temp=1.0",
+      "--ref-gumbel",
+      "policy_temp=1.0",
+      "--compile",
+      "on",
+      "--device",
+      "cuda",
+      "--max-concurrent-games",
+      "128",
+      "--eval-max-batch",
+      "4096",
+      "--max-seconds",
+      "2400",
+      "--syzygy-max-pieces",
+      "0",
+      "--games-out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/arena/arena.games.jsonl",
+      "--out",
+      "/home/josh/projects/chess/scratchpad/bt4_joint20/factorial58_20260919/arenas/D_C/arena/arena.results.jsonl"
+    ],
+    "results_present": false
+  },
+  "scope": "Independent byte hashes of registered runtime/operator pins, config, receipts and D/C final checkpoints; validates banked summary/initialization records, not a corpus reread or tensor reconstruction. No arena outcome claim, no GPU action or code changes.",
+  "hashes_checked": 1108,
+  "wall_seconds": 1.0740098690148443,
+  "cpu_affinity": [
+    18,
+    19
+  ],
+  "nice": 19
+}
